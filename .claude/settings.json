@@ -24,7 +24,8 @@
   },
   "enabledPlugins": {
     "vibe@vibe-plugins": true,
-    "design-and-refine@design-plugins": true
+    "design-and-refine@design-plugins": true,
+    "claude-hud@claude-hud": true
   },
   "alwaysThinkingEnabled": true
 }

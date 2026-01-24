@@ -1,0 +1,34 @@
+{
+  "claude-plugins-official": {
+    "source": {
+      "source": "github",
+      "repo": "anthropics/claude-plugins-official"
+    },
+    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/claude-plugins-official",
+    "lastUpdated": "2026-01-24T16:11:58.792Z"
+  },
+  "vibe-plugins": {
+    "source": {
+      "source": "git",
+      "url": "https://github.com/bflynn4141/vibe-plugin.git"
+    },
+    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/vibe-plugins",
+    "lastUpdated": "2026-01-16T22:56:39.442Z"
+  },
+  "design-plugins": {
+    "source": {
+      "source": "github",
+      "repo": "0xdesign/design-plugin"
+    },
+    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/design-plugins",
+    "lastUpdated": "2026-01-17T19:03:43.215Z"
+  },
+  "claude-hud": {
+    "source": {
+      "source": "github",
+      "repo": "jarrodwatts/claude-hud"
+    },
+    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/claude-hud",
+    "lastUpdated": "2026-01-24T16:11:59.373Z"
+  }
+}

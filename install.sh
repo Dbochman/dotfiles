@@ -48,6 +48,10 @@ link_file "$DOTFILES_DIR/.claude/skills" "$HOME/.claude/skills"
 link_file "$DOTFILES_DIR/.claude/commands" "$HOME/.claude/commands"
 link_file "$DOTFILES_DIR/.claude/hooks" "$HOME/.claude/hooks"
 
+# Link plugin marketplace references
+mkdir -p "$HOME/.claude/plugins"
+link_file "$DOTFILES_DIR/.claude/plugins/known_marketplaces.json" "$HOME/.claude/plugins/known_marketplaces.json"
+
 # Link scripts
 mkdir -p "$HOME/.local/bin"
 for script in "$DOTFILES_DIR/.local/bin"/*; do
@@ -56,3 +60,5 @@ done
 
 echo ""
 echo "Done! Restart your shell or run: source ~/.zshrc"
+echo ""
+echo "To install Claude Code plugins, see: ~/dotfiles/setup-plugins.md"
