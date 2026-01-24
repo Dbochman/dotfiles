@@ -1,0 +1,7 @@
+tap "steipete/tap"
+brew "ffmpeg"
+brew "gh"
+brew "steipete/tap/imsg"
+cask "1password-cli"
+cask "android-platform-tools"
+cask "steipete/tap/codexbar"

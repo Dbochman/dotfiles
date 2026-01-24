@@ -65,6 +65,19 @@ export CODEX_API_KEY=$(op read "op://Private/API Credentials - Codex/credential"
 
 **Per-project secrets:** See `setup-1password.md` for direnv integration.
 
+## Homebrew Packages
+
+Install all packages from Brewfile:
+```bash
+brew bundle --file=~/dotfiles/Brewfile
+```
+
+To update Brewfile after installing new packages:
+```bash
+brew bundle dump --file=~/dotfiles/Brewfile --force
+cd ~/dotfiles && git add Brewfile && git commit -m "Update Brewfile"
+```
+
 ## Adding new dotfiles
 
 1. Copy the file to `~/dotfiles/`
