@@ -43,6 +43,7 @@ link_file "$DOTFILES_DIR/ssh_config" "$HOME/.ssh/config"
 # Link config directories
 mkdir -p "$HOME/.codex"
 link_file "$DOTFILES_DIR/.codex/config.toml" "$HOME/.codex/config.toml"
+link_file "$DOTFILES_DIR/.codex/rules" "$HOME/.codex/rules"
 
 # Link Claude Code config
 mkdir -p "$HOME/.claude"
@@ -53,6 +54,8 @@ link_file "$DOTFILES_DIR/.claude/session-notes.md" "$HOME/.claude/session-notes.
 link_file "$DOTFILES_DIR/.claude/skills" "$HOME/.claude/skills"
 link_file "$DOTFILES_DIR/.claude/commands" "$HOME/.claude/commands"
 link_file "$DOTFILES_DIR/.claude/hooks" "$HOME/.claude/hooks"
+link_file "$DOTFILES_DIR/.claude/rules" "$HOME/.claude/rules"
+link_file "$DOTFILES_DIR/.claude/docs" "$HOME/.claude/docs"
 
 # Link plugin marketplace references
 mkdir -p "$HOME/.claude/plugins"

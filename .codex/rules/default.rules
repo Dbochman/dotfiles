@@ -1,0 +1,5 @@
+prefix_rule(pattern=["/bin/zsh", "-lc", "git for-each-ref --format='%(refname)' | grep 78"], decision="allow")
+prefix_rule(pattern=["/bin/zsh", "-lc", "rg \"PageLayout\" src -g\"*.test.tsx\" -n"], decision="allow")
+prefix_rule(pattern=["/bin/zsh", "-lc", "rg \"<Header\" src -g\"*.test.tsx\""], decision="allow")
+prefix_rule(pattern=["git", "remote", "-v"], decision="allow")
+prefix_rule(pattern=["git", "fetch", "origin", "pull/80/head:pr-80"], decision="allow")

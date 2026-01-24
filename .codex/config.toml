@@ -1,5 +1,28 @@
-model = "gpt-5.2-codex"
-model_reasoning_effort = "xhigh"
+model = "gpt-5-codex"
+
+[model_providers.groq]
+base_url = "https://api.groq.com/openai/v1"
+env_key = "GROQ_API_KEY"
+name = "groq"
+wire_api = "responses"
+
+[otel]
+log_user_prompt = false
+
+[otel.exporter.otlp-http]
+endpoint = "http://observability-common:8427/insert/opentelemetry/v1/logs"
+protocol = "binary"
+
+[otel.exporter.otlp-http.headers]
+Authorization = "Bearer codex"
+
+[profiles.groq-gpt]
+model = "openai/gpt-oss-120b"
+model_provider = "groq"
+
+[profiles.groq-kimi]
+model = "moonshotai/kimi-k2-instruct-0905"
+model_provider = "groq"
 
 [sandbox_workspace_write]
 network_access = true
@@ -8,3 +31,8 @@ network_access = true
 unified_exec = true
 shell_snapshot = true
 steer = true
+
+# Note: [projects] section with trust levels should be configured locally
+# as paths are machine-specific. Add trusted projects manually:
+# [projects."/path/to/your/repo"]
+# trust_level = "trusted"
