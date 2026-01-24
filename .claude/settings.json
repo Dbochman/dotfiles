@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/hooks/no-rm.mjs"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/continuous-learning-activator.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "vibe@vibe-plugins": true,
+    "design-and-refine@design-plugins": true
+  },
+  "alwaysThinkingEnabled": true
+}

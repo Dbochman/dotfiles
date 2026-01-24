@@ -39,6 +39,15 @@ link_file "$DOTFILES_DIR/gitconfig" "$HOME/.gitconfig"
 mkdir -p "$HOME/.codex"
 link_file "$DOTFILES_DIR/.codex/config.toml" "$HOME/.codex/config.toml"
 
+# Link Claude Code config
+mkdir -p "$HOME/.claude"
+link_file "$DOTFILES_DIR/.claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+link_file "$DOTFILES_DIR/.claude/preferences.md" "$HOME/.claude/preferences.md"
+link_file "$DOTFILES_DIR/.claude/settings.json" "$HOME/.claude/settings.json"
+link_file "$DOTFILES_DIR/.claude/skills" "$HOME/.claude/skills"
+link_file "$DOTFILES_DIR/.claude/commands" "$HOME/.claude/commands"
+link_file "$DOTFILES_DIR/.claude/hooks" "$HOME/.claude/hooks"
+
 # Link scripts
 mkdir -p "$HOME/.local/bin"
 for script in "$DOTFILES_DIR/.local/bin"/*; do
