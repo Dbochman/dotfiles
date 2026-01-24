@@ -1,0 +1,5 @@
+#!/bin/bash
+# Quick Codex review with lower reasoning effort for faster responses
+# Usage: codex-quick review --uncommitted
+#        codex-quick review --base main
+exec codex -c 'model_reasoning_effort="medium"' "$@"
