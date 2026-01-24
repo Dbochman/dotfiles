@@ -3,18 +3,8 @@ model = "gpt-5-codex"
 [model_providers.groq]
 base_url = "https://api.groq.com/openai/v1"
 env_key = "GROQ_API_KEY"
-name = "groq"
-wire_api = "responses"
-
-[otel]
-log_user_prompt = false
-
-[otel.exporter.otlp-http]
-endpoint = "http://observability-common:8427/insert/opentelemetry/v1/logs"
-protocol = "binary"
-
-[otel.exporter.otlp-http.headers]
-Authorization = "Bearer codex"
+name = "Groq"
+wire_api = "chat"
 
 [profiles.groq-gpt]
 model = "openai/gpt-oss-120b"
@@ -32,7 +22,6 @@ unified_exec = true
 shell_snapshot = true
 steer = true
 
-# Note: [projects] section with trust levels should be configured locally
-# as paths are machine-specific. Add trusted projects manually:
-# [projects."/path/to/your/repo"]
-# trust_level = "trusted"
+# Machine-specific: Add trusted projects locally after install
+[projects."/Users/dbochman/repos/personal-website"]
+trust_level = "trusted"
