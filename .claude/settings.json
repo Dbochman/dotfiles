@@ -1,8 +1,4 @@
 {
-  "statusLine": {
-    "type": "command",
-    "command": "bash -c 'node \"$(ls -td ~/.claude/plugins/cache/claude-hud/claude-hud/*/ 2>/dev/null | head -1)dist/index.js\"'"
-  },
   "hooks": {
     "PreToolUse": [
       {
@@ -25,6 +21,10 @@
         ]
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash -c 'p=$(ls -td ~/.claude/plugins/cache/claude-hud/claude-hud/*/ 2>/dev/null | head -1); [ -n \"$p\" ] && [ -f \"${p}dist/index.js\" ] && node \"${p}dist/index.js\"'"
   },
   "enabledPlugins": {
     "code-simplifier@claude-plugins-official": true,
