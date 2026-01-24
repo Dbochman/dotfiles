@@ -27,6 +27,44 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `.claude/commands/` - Custom slash commands (rams, ui-skills, etc.)
 - `.claude/hooks/` - Pre-tool hooks (no-rm safety, continuous learning)
 
+### SSH & Secrets (via 1Password)
+- `ssh_config` - Uses 1Password SSH Agent for all hosts
+- `setup-1password.md` - Guide for SSH keys and environment variables
+
+## SSH Keys
+
+SSH keys are stored in 1Password and served via the SSH Agent. No keys on disk.
+
+**Setup:**
+1. Install 1Password desktop app
+2. Settings → Developer → Enable "SSH Agent"
+3. Settings → Developer → Enable "Integrate with 1Password CLI"
+4. Run `install.sh` (links `~/.ssh/config`)
+
+## API Keys & Secrets
+
+Secrets are stored in 1Password and accessed via `op` CLI. Never in dotfiles.
+
+**Install CLI:**
+```bash
+brew install 1password-cli
+op signin
+```
+
+**Common references:**
+```bash
+# OpenAI
+export OPENAI_API_KEY=$(op read "op://Private/OpenAI API Key/password")
+
+# GitHub
+export GITHUB_TOKEN=$(op read "op://Private/GitHub Personal Access Token/token")
+
+# Codex
+export CODEX_API_KEY=$(op read "op://Private/API Credentials - Codex/credential")
+```
+
+**Per-project secrets:** See `setup-1password.md` for direnv integration.
+
 ## Adding new dotfiles
 
 1. Copy the file to `~/dotfiles/`
