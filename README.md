@@ -12,6 +12,8 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 ## What's included
 
 - `.zshrc` - Shell config with PATH and aliases
+- `.gitconfig` - Git user info, LFS, sensible defaults
+- `.codex/config.toml` - Codex model and feature settings
 - `.local/bin/codex-quick` - Fast Codex CLI wrapper (medium reasoning)
 
 ## Adding new dotfiles

@@ -33,6 +33,11 @@ link_file() {
 
 # Link dotfiles
 link_file "$DOTFILES_DIR/zshrc" "$HOME/.zshrc"
+link_file "$DOTFILES_DIR/gitconfig" "$HOME/.gitconfig"
+
+# Link config directories
+mkdir -p "$HOME/.codex"
+link_file "$DOTFILES_DIR/.codex/config.toml" "$HOME/.codex/config.toml"
 
 # Link scripts
 mkdir -p "$HOME/.local/bin"
