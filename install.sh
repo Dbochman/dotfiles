@@ -35,6 +35,11 @@ link_file() {
 link_file "$DOTFILES_DIR/zshrc" "$HOME/.zshrc"
 link_file "$DOTFILES_DIR/gitconfig" "$HOME/.gitconfig"
 
+# SSH config (uses 1Password SSH Agent)
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+link_file "$DOTFILES_DIR/ssh_config" "$HOME/.ssh/config"
+
 # Link config directories
 mkdir -p "$HOME/.codex"
 link_file "$DOTFILES_DIR/.codex/config.toml" "$HOME/.codex/config.toml"
