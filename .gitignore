@@ -1,0 +1,20 @@
+# Backup directory for sync operations (created by install.sh and sync.sh)
+# Location: $DOTFILES_DIR/.backup/
+.backup/
+
+# Local-only settings (machine-specific, not synced)
+.claude/settings.local.json
+
+# Plans directory (temporary planning files)
+.claude/plans/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
