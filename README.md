@@ -78,6 +78,54 @@ brew bundle dump --file=~/dotfiles/Brewfile --force
 cd ~/dotfiles && git add Brewfile && git commit -m "Update Brewfile"
 ```
 
+## Sync Workflow
+
+The `sync.sh` script manages synchronization between your local Claude Code config and this repo.
+
+### Check Status
+```bash
+./sync.sh              # Show what's synced vs local-only
+```
+
+### Add Local Items to Repo
+```bash
+# Created a new skill locally? Add it to the repo:
+./sync.sh add skill my-new-skill
+
+# Same for commands and hooks:
+./sync.sh add command my-command
+./sync.sh add hook my-hook
+```
+
+### Remove Items (Keep Local)
+```bash
+# Remove from repo but keep your local copy:
+./sync.sh remove skill experimental-skill
+```
+
+### Sync with Remote
+```bash
+# Pull latest changes and reinstall:
+./sync.sh pull
+
+# Push your changes:
+./sync.sh push "Add new skill for X"
+```
+
+### Undo Last Operation
+```bash
+./sync.sh undo         # Restore from last backup
+```
+
+### Validate Configuration
+```bash
+./sync.sh validate     # Check all skills, commands, hooks
+```
+
+### Flags
+- `-n, --dry-run`: Preview changes without making them
+- `-f, --force`: Replace conflicts without prompting
+
 ## Adding new dotfiles
 
 1. Copy the file to `~/dotfiles/`
