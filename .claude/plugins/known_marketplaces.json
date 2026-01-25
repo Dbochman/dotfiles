@@ -1,23 +1,17 @@
 {
-  "_security_note": "Plugins are pinned to reviewed commits. Update manually after reviewing changes.",
   "claude-plugins-official": {
     "source": {
       "source": "github",
       "repo": "anthropics/claude-plugins-official"
     },
-    "pinnedCommit": "e30768372b4150ca1bc0839d93283e8edc30d60d",
-    "reviewedAt": "2026-01-24",
     "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/claude-plugins-official",
-    "lastUpdated": "2026-01-24T17:28:33.870Z"
+    "lastUpdated": "2026-01-25T14:55:32.425Z"
   },
   "vibe-plugins": {
     "source": {
       "source": "git",
       "url": "https://github.com/bflynn4141/vibe-plugin.git"
     },
-    "pinnedCommit": null,
-    "reviewedAt": null,
-    "status": "unreviewed - disabled until reviewed",
     "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/vibe-plugins",
     "lastUpdated": "2026-01-16T22:56:39.442Z"
   },
@@ -26,9 +20,6 @@
       "source": "github",
       "repo": "0xdesign/design-plugin"
     },
-    "pinnedCommit": null,
-    "reviewedAt": null,
-    "status": "unreviewed - disabled until reviewed",
     "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/design-plugins",
     "lastUpdated": "2026-01-17T19:03:43.215Z"
   },
@@ -37,8 +28,6 @@
       "source": "github",
       "repo": "jarrodwatts/claude-hud"
     },
-    "pinnedCommit": "f851ecc7454cf84354e2601d8a5b78ef431d3434",
-    "reviewedAt": "2026-01-24",
     "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/claude-hud",
     "lastUpdated": "2026-01-24T16:11:59.373Z"
   },

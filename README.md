@@ -1,6 +1,6 @@
 # Dotfiles
 
-Personal dotfiles managed with git and symlinks.
+macOS dotfiles with extensive Claude Code customization - shell config, git, Homebrew, plus Claude commands, hooks, skills, and plugins for AI-assisted development.
 
 ## Install on new machine
 

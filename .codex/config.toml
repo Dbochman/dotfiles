@@ -1,4 +1,4 @@
-model = "gpt-5-codex"
+model = "gpt-5.2-codex"
 
 [model_providers.groq]
 base_url = "https://api.groq.com/openai/v1"
@@ -25,3 +25,6 @@ steer = true
 # Machine-specific: Add trusted projects locally after install
 [projects."/Users/dbochman/repos/personal-website"]
 trust_level = "trusted"
+
+[notice.model_migrations]
+gpt-5-codex = "gpt-5.2-codex"
