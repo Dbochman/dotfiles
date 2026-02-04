@@ -22,9 +22,10 @@ unified_exec = true
 shell_snapshot = true
 steer = true
 
-# Machine-specific: Add trusted projects locally after install
-[projects."/Users/dbochman/repos/personal-website"]
-trust_level = "trusted"
+# Note: [projects] section with trust levels should be configured locally
+# as paths are machine-specific. Add trusted projects manually:
+# [projects."/path/to/your/repo"]
+# trust_level = "trusted"
 
 [notice.model_migrations]
 gpt-5-codex = "gpt-5.2-codex"
