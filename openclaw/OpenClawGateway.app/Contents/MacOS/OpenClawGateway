@@ -4,10 +4,11 @@
 export OP_BIOMETRIC_UNLOCK_ENABLED=true
 export HOME="/Users/dbochman"
 
-# Fetch API keys from 1Password (requires desktop app with CLI integration enabled)
+# Fetch secrets from 1Password (requires desktop app with CLI integration enabled)
 if command -v /opt/homebrew/bin/op &>/dev/null; then
   export OPENAI_API_KEY=$(/opt/homebrew/bin/op read "op://Private/OpenAI API Key/password" 2>/dev/null)
   export ELEVENLABS_API_KEY=$(/opt/homebrew/bin/op read "op://Private/ElevenLabs API Key/password" 2>/dev/null)
+  export OPENCLAW_GATEWAY_TOKEN=$(/opt/homebrew/bin/op read "op://Private/OpenClaw Gateway Token/password" 2>/dev/null)
 fi
 
 /opt/homebrew/Cellar/node@22/22.22.0/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789

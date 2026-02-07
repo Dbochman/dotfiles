@@ -1,0 +1,32 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.3-1"
+  },
+  "auth": {
+    "profiles": {
+      "anthropic:claudebotbochman": {
+        "provider": "anthropic",
+        "mode": "token"
+      },
+      "anthropic:clawdbotbochman": {
+        "provider": "anthropic",
+        "mode": "token"
+      }
+    }
+  },
+  "gateway": {
+    "mode": "remote",
+    "remote": {
+      "url": "wss://dylans-mac-mini.tail3e55f9.ts.net",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "wizard": {
+    "lastRunVersion": "2026.2.3-1",
+    "lastRunMode": "remote"
+  }
+}

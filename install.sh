@@ -528,18 +528,33 @@ install_dotfiles() {
   if [[ -d "$DOTFILES_DIR/openclaw" ]]; then
     if [[ "$DRY_RUN" != true ]]; then
       mkdir -p "$HOME/.openclaw"
-      mkdir -p "$HOME/Applications"
-      mkdir -p "$HOME/Library/LaunchAgents"
     fi
 
-    # Config file (symlink so edits flow back to repo)
-    link_file "$DOTFILES_DIR/openclaw/openclaw.json" "$HOME/.openclaw/openclaw.json"
+    # Detect if this is the gateway host (dylans-mac-mini) or a remote client
+    local hostname
+    hostname=$(hostname -s 2>/dev/null || echo "unknown")
 
-    # FDA .app wrapper for gateway LaunchAgent
-    link_file "$DOTFILES_DIR/openclaw/OpenClawGateway.app" "$HOME/Applications/OpenClawGateway.app"
+    if [[ "$hostname" = "Dylans-Mac-mini" ]]; then
+      log "  Detected gateway host: $hostname"
+      if [[ "$DRY_RUN" != true ]]; then
+        mkdir -p "$HOME/Applications"
+        mkdir -p "$HOME/Library/LaunchAgents"
+      fi
 
-    # LaunchAgent plist
-    link_file "$DOTFILES_DIR/openclaw/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+      # Gateway config (full config with local gateway, channels, skills)
+      link_file "$DOTFILES_DIR/openclaw/openclaw.json" "$HOME/.openclaw/openclaw.json"
+
+      # FDA .app wrapper for gateway LaunchAgent
+      link_file "$DOTFILES_DIR/openclaw/OpenClawGateway.app" "$HOME/Applications/OpenClawGateway.app"
+
+      # LaunchAgent plist
+      link_file "$DOTFILES_DIR/openclaw/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+    else
+      log "  Detected remote client: $hostname"
+
+      # Remote config (thin client pointing to gateway over Tailscale)
+      link_file "$DOTFILES_DIR/openclaw/openclaw-remote.json" "$HOME/.openclaw/openclaw.json"
+    fi
   fi
   log ""
 

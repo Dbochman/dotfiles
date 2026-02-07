@@ -29,7 +29,7 @@
     <key>OPENCLAW_GATEWAY_PORT</key>
     <string>18789</string>
     <key>OPENCLAW_GATEWAY_TOKEN</key>
-    <string>REPLACE_WITH_YOUR_TOKEN</string>
+    <string>set-by-wrapper-via-1password</string>
     <key>OPENCLAW_LAUNCHD_LABEL</key>
     <string>ai.openclaw.gateway</string>
     <key>OPENCLAW_SYSTEMD_UNIT</key>
