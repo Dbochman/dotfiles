@@ -94,7 +94,8 @@ for d in data.get('devices', []):
 }
 
 _resolve_device() {
-  local query="${1,,}"  # lowercase
+  local query
+  query="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
   _build_device_map
   local match
   match=$(echo "$_device_map" | awk -F'\t' -v q="$query" 'tolower($1) ~ q {print $2; exit}')
@@ -147,7 +148,8 @@ cmd_set() {
 }
 
 cmd_mode() {
-  local room="$1" mode="${2^^}"  # uppercase
+  local room="$1" mode
+  mode="$(echo "$2" | tr '[:lower:]' '[:upper:]')"
   local device_path
   device_path=$(_device_path "$room")
 
@@ -159,8 +161,8 @@ cmd_mode() {
 }
 
 cmd_eco() {
-  local room="$1" mode="${2:-MANUAL_ECO}"
-  mode="${mode^^}"
+  local room="$1" mode
+  mode="$(echo "${2:-MANUAL_ECO}" | tr '[:lower:]' '[:upper:]')"
   local device_path
   device_path=$(_device_path "$room")
 
