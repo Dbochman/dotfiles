@@ -37,7 +37,7 @@
         "ttl": "5m"
       },
       "heartbeat": {
-        "every": "2h"
+        "every": "6h"
       },
       "maxConcurrent": 4,
       "subagents": {
