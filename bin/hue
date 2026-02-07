@@ -12,7 +12,7 @@ OP_VAULT="Private"
 
 # Cache credentials (bridge IP and API key rarely change)
 CACHE_DIR="${HOME}/.cache/hue"
-CACHE_TTL=86400  # 24 hours
+CACHE_TTL=31536000  # 1 year (credentials never change unless rotated)
 
 _op_read() {
   /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null

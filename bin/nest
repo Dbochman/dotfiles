@@ -10,30 +10,53 @@ export OP_BIOMETRIC_UNLOCK_ENABLED=true
 OP_ITEM="Google Nest SDM API"
 OP_VAULT="Private"
 
-# Cache access token for 55 minutes (tokens last 60)
-TOKEN_CACHE="${HOME}/.cache/nest-sdm/access_token"
-TOKEN_TTL=3300
+# Cache directory
+CACHE_DIR="${HOME}/.cache/nest-sdm"
+TOKEN_TTL=3300       # 55 minutes (access tokens last 60)
+CREDS_TTL=31536000   # 1 year (credentials never change unless rotated)
 
 _op_read() {
   /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null
 }
 
-_get_access_token() {
-  mkdir -p "$(dirname "$TOKEN_CACHE")"
+_cached_op_read() {
+  local label="$1"
+  local cache_file="$CACHE_DIR/$(echo "$label" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')"
+  mkdir -p "$CACHE_DIR"
 
-  # Use cached token if fresh
-  if [[ -f "$TOKEN_CACHE" ]]; then
-    local age=$(( $(date +%s) - $(stat -f %m "$TOKEN_CACHE") ))
-    if (( age < TOKEN_TTL )); then
-      cat "$TOKEN_CACHE"
+  if [[ -f "$cache_file" ]]; then
+    local age=$(( $(date +%s) - $(stat -f %m "$cache_file") ))
+    if (( age < CREDS_TTL )); then
+      cat "$cache_file"
       return
     fi
   fi
 
-  # Refresh token from 1Password
-  local client_id=$(_op_read "Client ID")
-  local client_secret=$(_op_read "Client Secret")
-  local refresh_token=$(_op_read "Refresh Token")
+  local val
+  val=$(_op_read "$label")
+  if [[ -n "$val" ]]; then
+    echo "$val" > "$cache_file"
+  fi
+  echo "$val"
+}
+
+_get_access_token() {
+  mkdir -p "$CACHE_DIR"
+  local token_cache="$CACHE_DIR/access_token"
+
+  # Use cached token if fresh
+  if [[ -f "$token_cache" ]]; then
+    local age=$(( $(date +%s) - $(stat -f %m "$token_cache") ))
+    if (( age < TOKEN_TTL )); then
+      cat "$token_cache"
+      return
+    fi
+  fi
+
+  # Refresh token using cached 1Password credentials
+  local client_id=$(_cached_op_read "Client ID")
+  local client_secret=$(_cached_op_read "Client Secret")
+  local refresh_token=$(_cached_op_read "Refresh Token")
 
   local resp
   resp=$(curl -s -L -X POST "https://www.googleapis.com/oauth2/v4/token" \
@@ -50,12 +73,12 @@ _get_access_token() {
     exit 1
   fi
 
-  echo "$token" > "$TOKEN_CACHE"
+  echo "$token" > "$token_cache"
   echo "$token"
 }
 
 _project_id() {
-  _op_read "Project ID"
+  _cached_op_read "Project ID"
 }
 
 _api() {
