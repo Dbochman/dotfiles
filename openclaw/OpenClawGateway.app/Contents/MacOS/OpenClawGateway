@@ -1,17 +1,30 @@
 #!/bin/bash
 
 export HOME="/Users/dbochman"
+export OP_BIOMETRIC_UNLOCK_ENABLED=true
 
-# Load 1Password service account token from local file (not in repo)
-if [[ -f "$HOME/.openclaw/.env-token" ]]; then
-  export OP_SERVICE_ACCOUNT_TOKEN=$(cat "$HOME/.openclaw/.env-token")
-fi
+CACHE_DIR="$HOME/.cache/openclaw-gateway"
 
-# Fetch API keys from 1Password via service account
-if command -v /opt/homebrew/bin/op &>/dev/null; then
-  export OPENAI_API_KEY=$(/opt/homebrew/bin/op read "op://OpenClaw/OpenAI API Key/password" 2>/dev/null)
-  export ELEVENLABS_API_KEY=$(/opt/homebrew/bin/op read "op://OpenClaw/ElevenLabs API Key/password" 2>/dev/null)
-  export OPENCLAW_GATEWAY_TOKEN=$(/opt/homebrew/bin/op read "op://OpenClaw/OpenClaw Gateway Token/password" 2>/dev/null)
-fi
+# Try 1Password first, fall back to cached secrets
+_secret() {
+  local op_path="$1" cache_file="$2"
+  local val=""
+  if command -v /opt/homebrew/bin/op &>/dev/null; then
+    val=$(/opt/homebrew/bin/op read "$op_path" 2>/dev/null)
+  fi
+  if [[ -n "$val" ]]; then
+    # Update cache on successful read
+    mkdir -p "$CACHE_DIR"
+    echo "$val" > "$cache_file"
+    echo "$val"
+  elif [[ -f "$cache_file" ]]; then
+    # Fall back to cache
+    cat "$cache_file"
+  fi
+}
+
+export OPENAI_API_KEY=$(_secret "op://Private/OpenAI API Key/password" "$CACHE_DIR/openai_api_key")
+export ELEVENLABS_API_KEY=$(_secret "op://Private/ElevenLabs API Key/password" "$CACHE_DIR/elevenlabs_api_key")
+export OPENCLAW_GATEWAY_TOKEN=$(_secret "op://Private/OpenClaw Gateway Token/password" "$CACHE_DIR/gateway_token")
 
 /opt/homebrew/Cellar/node@22/22.22.0/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789

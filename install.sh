@@ -549,6 +549,19 @@ install_dotfiles() {
 
       # LaunchAgent plist
       link_file "$DOTFILES_DIR/openclaw/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+
+      # OpenClaw skills (gateway host only)
+      if [[ -d "$DOTFILES_DIR/openclaw/skills" ]]; then
+        if [[ "$DRY_RUN" != true ]]; then
+          mkdir -p "$HOME/.openclaw/skills"
+        fi
+        for skill_dir in "$DOTFILES_DIR/openclaw/skills"/*/; do
+          [[ -d "$skill_dir" ]] || continue
+          local skill_name
+          skill_name=$(basename "$skill_dir")
+          link_file "$skill_dir" "$HOME/.openclaw/skills/$skill_name"
+        done
+      fi
     else
       log "  Detected remote client: $hostname"
 
