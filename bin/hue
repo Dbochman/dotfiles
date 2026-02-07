@@ -1,0 +1,303 @@
+#!/bin/bash
+# hue — CLI wrapper for Philips Hue Bridge REST API
+# Credentials stored in 1Password; bridge accessed over local network.
+
+set -euo pipefail
+
+export OP_BIOMETRIC_UNLOCK_ENABLED=true
+
+# 1Password paths
+OP_ITEM="Philips Hue Bridge"
+OP_VAULT="Private"
+
+# Cache credentials (bridge IP and API key rarely change)
+CACHE_DIR="${HOME}/.cache/hue"
+CACHE_TTL=86400  # 24 hours
+
+_op_read() {
+  /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null
+}
+
+_get_creds() {
+  mkdir -p "$CACHE_DIR"
+  local ip_cache="$CACHE_DIR/bridge_ip"
+  local key_cache="$CACHE_DIR/api_key"
+
+  if [[ -f "$ip_cache" && -f "$key_cache" ]]; then
+    local age=$(( $(date +%s) - $(stat -f %m "$ip_cache") ))
+    if (( age < CACHE_TTL )); then
+      HUE_BRIDGE=$(cat "$ip_cache")
+      HUE_KEY=$(cat "$key_cache")
+      return
+    fi
+  fi
+
+  HUE_BRIDGE=$(_op_read "Bridge IP")
+  HUE_KEY=$(_op_read "API Key")
+
+  if [[ -z "$HUE_BRIDGE" || -z "$HUE_KEY" ]]; then
+    echo "Error: Could not read Hue credentials from 1Password" >&2
+    exit 1
+  fi
+
+  echo "$HUE_BRIDGE" > "$ip_cache"
+  echo "$HUE_KEY" > "$key_cache"
+}
+
+_api_get() {
+  _get_creds
+  curl -s "http://${HUE_BRIDGE}/api/${HUE_KEY}${1}"
+}
+
+_api_put() {
+  _get_creds
+  curl -s -X PUT "http://${HUE_BRIDGE}/api/${HUE_KEY}${1}" -d "$2"
+}
+
+# === Room/Group resolution ===
+
+_group_map=""
+_build_group_map() {
+  [[ -n "$_group_map" ]] && return
+  _group_map=$(_api_get /groups | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for gid, g in data.items():
+    if g.get('type') == 'Room':
+        print(f\"{g['name']}\t{gid}\")
+")
+}
+
+_resolve_group() {
+  local query="${1,,}"
+  _build_group_map
+  local match
+  match=$(echo "$_group_map" | awk -F'\t' -v q="$query" 'tolower($1) ~ q {print $2; exit}')
+  if [[ -z "$match" ]]; then
+    echo "No room matching '$1'. Available:" >&2
+    echo "$_group_map" | awk -F'\t' '{print "  - " $1}' >&2
+    exit 1
+  fi
+  echo "$match"
+}
+
+_resolve_light() {
+  local query="${1,,}"
+  local data
+  data=$(_api_get /lights)
+  local match
+  match=$(echo "$data" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+q = '${query}'
+for lid, l in data.items():
+    if q in l['name'].lower():
+        print(lid)
+        break
+" 2>/dev/null)
+  if [[ -z "$match" ]]; then
+    echo "No light matching '$1'." >&2
+    exit 1
+  fi
+  echo "$match"
+}
+
+# === Commands ===
+
+cmd_status() {
+  local filter="${1:-}"
+  local data
+  data=$(_api_get /groups)
+  python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+filt = '${filter}'.lower()
+for gid, g in sorted(data.items(), key=lambda x: int(x[0])):
+    if g.get('type') != 'Room':
+        continue
+    name = g['name']
+    if filt and filt not in name.lower():
+        continue
+    action = g.get('action', {})
+    on = g.get('state', {}).get('any_on', False)
+    bri = action.get('bri', 0)
+    pct = round(bri / 254 * 100)
+    ct = action.get('ct')
+    n_lights = len(g.get('lights', []))
+    status = 'ON' if on else 'OFF'
+    ct_str = f'{ct} mired' if ct else ''
+    print(f'{name:20s}  {status:3s}  {pct:3d}%  {n_lights} lights  {ct_str}')
+" <<< "$data"
+}
+
+cmd_on() {
+  local target="$1"
+  shift
+  local bri_arg=""
+  if [[ $# -gt 0 ]]; then
+    local pct="$1"
+    local bri=$(python3 -c "print(round(${pct} / 100 * 254))")
+    bri_arg=", \"bri\": ${bri}"
+  fi
+  local gid
+  gid=$(_resolve_group "$target")
+  _api_put "/groups/${gid}/action" "{\"on\": true${bri_arg}}" > /dev/null
+  echo "Turned on $target"
+}
+
+cmd_off() {
+  local target="$1"
+  local gid
+  gid=$(_resolve_group "$target")
+  _api_put "/groups/${gid}/action" "{\"on\": false}" > /dev/null
+  echo "Turned off $target"
+}
+
+cmd_brightness() {
+  local target="$1" pct="$2"
+  local bri
+  bri=$(python3 -c "print(round(${pct} / 100 * 254))")
+  local gid
+  gid=$(_resolve_group "$target")
+  _api_put "/groups/${gid}/action" "{\"on\": true, \"bri\": ${bri}}" > /dev/null
+  echo "Set $target to ${pct}%"
+}
+
+cmd_color() {
+  local target="$1" color="$2"
+  local gid
+  gid=$(_resolve_group "$target")
+
+  # Map common color names to hue/sat values
+  local payload
+  case "${color,,}" in
+    red)        payload='{"on":true,"hue":0,"sat":254}' ;;
+    orange)     payload='{"on":true,"hue":5000,"sat":254}' ;;
+    yellow)     payload='{"on":true,"hue":10000,"sat":254}' ;;
+    green)      payload='{"on":true,"hue":21845,"sat":254}' ;;
+    blue)       payload='{"on":true,"hue":43690,"sat":254}' ;;
+    purple)     payload='{"on":true,"hue":50000,"sat":254}' ;;
+    pink)       payload='{"on":true,"hue":56000,"sat":200}' ;;
+    warm|warm-white)  payload='{"on":true,"ct":400}' ;;
+    cool|cool-white)  payload='{"on":true,"ct":200}' ;;
+    daylight)   payload='{"on":true,"ct":153}' ;;
+    *)
+      # Try as mired color temperature (number)
+      if [[ "$color" =~ ^[0-9]+$ ]]; then
+        payload="{\"on\":true,\"ct\":${color}}"
+      else
+        echo "Unknown color: $color. Use: red, orange, yellow, green, blue, purple, pink, warm, cool, daylight, or a mired value (153-500)." >&2
+        exit 1
+      fi
+      ;;
+  esac
+
+  _api_put "/groups/${gid}/action" "$payload" > /dev/null
+  echo "Set $target to $color"
+}
+
+cmd_scene() {
+  local target="$1" scene_query="${2,,}"
+  local gid
+  gid=$(_resolve_group "$target")
+
+  local scenes
+  scenes=$(_api_get /scenes)
+  local scene_id
+  scene_id=$(echo "$scenes" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+q = '${scene_query}'
+gid = '${gid}'
+for sid, s in data.items():
+    if q in s['name'].lower() and s.get('group') == gid:
+        print(sid)
+        break
+" 2>/dev/null)
+
+  if [[ -z "$scene_id" ]]; then
+    echo "No scene matching '$2' in $target. Available scenes:" >&2
+    echo "$scenes" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+gid = '${gid}'
+for sid, s in data.items():
+    if s.get('group') == gid:
+        print(f\"  - {s['name']}\")
+" >&2
+    exit 1
+  fi
+
+  _api_put "/groups/${gid}/action" "{\"scene\": \"${scene_id}\"}" > /dev/null
+  echo "Activated scene '$2' in $target"
+}
+
+cmd_all_on() {
+  _api_put "/groups/0/action" '{"on": true}' > /dev/null
+  echo "All lights on"
+}
+
+cmd_all_off() {
+  _api_put "/groups/0/action" '{"on": false}' > /dev/null
+  echo "All lights off"
+}
+
+cmd_lights() {
+  local filter="${1:-}"
+  _api_get /lights | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+filt = '${filter}'.lower()
+for lid, l in sorted(data.items(), key=lambda x: int(x[0])):
+    name = l['name']
+    if filt and filt not in name.lower():
+        continue
+    s = l['state']
+    on = 'ON' if s.get('on') else 'OFF'
+    bri = s.get('bri', 0)
+    pct = round(bri / 254 * 100)
+    reach = 'ok' if s.get('reachable') else 'UNREACHABLE'
+    print(f'  {lid:>3}  {name:30s}  {on:3s}  {pct:3d}%  {reach}')
+"
+}
+
+cmd_raw() {
+  local endpoint="${1:-/lights}"
+  _api_get "$endpoint" | python3 -m json.tool
+}
+
+cmd_help() {
+  cat <<'HELP'
+Usage: hue <command> [args]
+
+Commands:
+  status [room]                Show all rooms (or one room)
+  on <room> [brightness%]      Turn on a room (optional brightness 0-100)
+  off <room>                   Turn off a room
+  bri <room> <percent>         Set brightness (0-100)
+  color <room> <color>         Set color (red, blue, warm, cool, daylight, etc.)
+  scene <room> <scene>         Activate a scene
+  all-on                       Turn on all lights
+  all-off                      Turn off all lights
+  lights [filter]              List individual lights
+  raw [endpoint]               Raw JSON dump (default: /lights)
+  help                         Show this help
+
+Room names are fuzzy-matched (e.g. "bed" matches "Bedroom").
+HELP
+}
+
+case "${1:-help}" in
+  status)     cmd_status "${2:-}" ;;
+  on)         cmd_on "${2:?room required}" "${@:3}" ;;
+  off)        cmd_off "${2:?room required}" ;;
+  bri|brightness) cmd_brightness "${2:?room required}" "${3:?percent required}" ;;
+  color)      cmd_color "${2:?room required}" "${3:?color required}" ;;
+  scene)      cmd_scene "${2:?room required}" "${3:?scene required}" ;;
+  all-on)     cmd_all_on ;;
+  all-off)    cmd_all_off ;;
+  lights)     cmd_lights "${2:-}" ;;
+  raw)        cmd_raw "${2:-/lights}" ;;
+  help|--help|-h) cmd_help ;;
+  *)          echo "Unknown command: $1. Run 'hue help'." >&2; exit 1 ;;
+esac

@@ -33,6 +33,11 @@ See [openclaw-imessage.md](openclaw-imessage.md) for full details.
 - SDM credentials (client ID, secret, refresh token, project ID) in 1Password "Google Nest SDM API"
 - Access tokens cached at `~/.cache/nest-sdm/` (55min TTL)
 - Refresh token expires after 6 months of non-use — must be renewed
+- Hue lights: 21 lights across 8 rooms via Hue Bridge (BSB002, 192.168.1.195)
+- `hue` CLI at `dotfiles/bin/hue` — status, on/off, brightness, color, scenes; fuzzy room matching
+- Hue Bridge credentials (API key, bridge IP) in 1Password "Philips Hue Bridge"
+- Credentials cached at `~/.cache/hue/` (24hr TTL)
+- OpenClaw skills: `nest-thermostat` and `hue-lights` at `~/.openclaw/skills/`
 
 ## Lessons Learned
 - NEVER run `tccutil reset` without a specific bundle_id — it resets ALL permissions for that service
