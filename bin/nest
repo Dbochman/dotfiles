@@ -1,0 +1,206 @@
+#!/bin/bash
+# nest — CLI wrapper for Google Nest SDM API
+# Credentials stored in 1Password; tokens auto-refresh.
+
+set -euo pipefail
+
+export OP_BIOMETRIC_UNLOCK_ENABLED=true
+
+# 1Password paths
+OP_ITEM="Google Nest SDM API"
+OP_VAULT="Private"
+
+# Cache access token for 55 minutes (tokens last 60)
+TOKEN_CACHE="${HOME}/.cache/nest-sdm/access_token"
+TOKEN_TTL=3300
+
+_op_read() {
+  /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null
+}
+
+_get_access_token() {
+  mkdir -p "$(dirname "$TOKEN_CACHE")"
+
+  # Use cached token if fresh
+  if [[ -f "$TOKEN_CACHE" ]]; then
+    local age=$(( $(date +%s) - $(stat -f %m "$TOKEN_CACHE") ))
+    if (( age < TOKEN_TTL )); then
+      cat "$TOKEN_CACHE"
+      return
+    fi
+  fi
+
+  # Refresh token from 1Password
+  local client_id=$(_op_read "Client ID")
+  local client_secret=$(_op_read "Client Secret")
+  local refresh_token=$(_op_read "Refresh Token")
+
+  local resp
+  resp=$(curl -s -L -X POST "https://www.googleapis.com/oauth2/v4/token" \
+    -d "client_id=${client_id}" \
+    -d "client_secret=${client_secret}" \
+    -d "refresh_token=${refresh_token}" \
+    -d "grant_type=refresh_token")
+
+  local token
+  token=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null)
+
+  if [[ -z "$token" ]]; then
+    echo "Error refreshing token: $resp" >&2
+    exit 1
+  fi
+
+  echo "$token" > "$TOKEN_CACHE"
+  echo "$token"
+}
+
+_project_id() {
+  _op_read "Project ID"
+}
+
+_api() {
+  local method="$1" path="$2"
+  shift 2
+  local token project_id
+  token=$(_get_access_token)
+  project_id=$(_project_id)
+  curl -s -X "$method" \
+    "https://smartdevicemanagement.googleapis.com/v1/enterprises/${project_id}${path}" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${token}" \
+    "$@"
+}
+
+_c_to_f() {
+  python3 -c "print(round($1 * 9/5 + 32, 1))"
+}
+
+_f_to_c() {
+  python3 -c "print(round(($1 - 32) * 5/9, 6))"
+}
+
+# Map room names to device IDs (cached per session)
+_device_map=""
+_build_device_map() {
+  if [[ -n "$_device_map" ]]; then return; fi
+  _device_map=$(_api GET /devices | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for d in data.get('devices', []):
+    room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
+    did = d['name'].split('/')[-1]
+    print(f'{room}\t{did}')
+")
+}
+
+_resolve_device() {
+  local query="${1,,}"  # lowercase
+  _build_device_map
+  local match
+  match=$(echo "$_device_map" | awk -F'\t' -v q="$query" 'tolower($1) ~ q {print $2; exit}')
+  if [[ -z "$match" ]]; then
+    echo "No thermostat matching '$1'. Available:" >&2
+    echo "$_device_map" | awk -F'\t' '{print "  - " $1}' >&2
+    exit 1
+  fi
+  echo "$match"
+}
+
+_device_path() {
+  echo "/devices/$(_resolve_device "$1")"
+}
+
+cmd_status() {
+  local data
+  data=$(_api GET /devices)
+  python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for d in data.get('devices', []):
+    t = d['traits']
+    room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
+    temp_c = t.get('sdm.devices.traits.Temperature', {}).get('ambientTemperatureCelsius', 0)
+    temp_f = round(temp_c * 9/5 + 32, 1)
+    humidity = t.get('sdm.devices.traits.Humidity', {}).get('ambientHumidityPercent', 0)
+    mode = t.get('sdm.devices.traits.ThermostatMode', {}).get('mode', '?')
+    hvac = t.get('sdm.devices.traits.ThermostatHvac', {}).get('status', '?')
+    eco = t.get('sdm.devices.traits.ThermostatEco', {}).get('mode', 'OFF')
+    setpoint = t.get('sdm.devices.traits.ThermostatTemperatureSetpoint', {})
+    set_c = setpoint.get('heatCelsius') or setpoint.get('coolCelsius') or 0
+    set_f = round(set_c * 9/5 + 32, 1)
+    status = f'ECO' if eco != 'OFF' else hvac
+    print(f'{room:15s}  {temp_f:5.1f}°F  set:{set_f:.0f}°F  {mode:4s}  {status:8s}  {humidity}% humidity')
+" <<< "$data"
+}
+
+cmd_set() {
+  local room="$1" temp_f="$2"
+  local device_path temp_c
+  device_path=$(_device_path "$room")
+  temp_c=$(_f_to_c "$temp_f")
+
+  _api POST "${device_path}:executeCommand" \
+    -d "{\"command\": \"sdm.devices.commands.ThermostatTemperatureSetpoint.SetHeat\", \"params\": {\"heatCelsius\": ${temp_c}}}" \
+    > /dev/null
+
+  echo "Set $room to ${temp_f}°F"
+}
+
+cmd_mode() {
+  local room="$1" mode="${2^^}"  # uppercase
+  local device_path
+  device_path=$(_device_path "$room")
+
+  _api POST "${device_path}:executeCommand" \
+    -d "{\"command\": \"sdm.devices.commands.ThermostatMode.SetMode\", \"params\": {\"mode\": \"${mode}\"}}" \
+    > /dev/null
+
+  echo "Set $room mode to ${mode}"
+}
+
+cmd_eco() {
+  local room="$1" mode="${2:-MANUAL_ECO}"
+  mode="${mode^^}"
+  local device_path
+  device_path=$(_device_path "$room")
+
+  _api POST "${device_path}:executeCommand" \
+    -d "{\"command\": \"sdm.devices.commands.ThermostatEco.SetMode\", \"params\": {\"mode\": \"${mode}\"}}" \
+    > /dev/null
+
+  echo "Set $room eco to ${mode}"
+}
+
+cmd_help() {
+  cat <<'HELP'
+Usage: nest <command> [args]
+
+Commands:
+  status                    Show all thermostats
+  set <room> <temp°F>       Set temperature (e.g. nest set bedroom 72)
+  mode <room> <HEAT|OFF>    Set thermostat mode
+  eco <room> [on|off]       Toggle eco mode
+  raw                       Raw JSON device dump
+  help                      Show this help
+
+Room names are fuzzy-matched (e.g. "bed" matches "Bedroom").
+HELP
+}
+
+cmd_raw() {
+  _api GET /devices | python3 -m json.tool
+}
+
+case "${1:-help}" in
+  status)           cmd_status ;;
+  set)              cmd_set "${2:?room required}" "${3:?temperature required}" ;;
+  mode)             cmd_mode "${2:?room required}" "${3:?mode required}" ;;
+  eco)
+    room="${2:?room required}"
+    toggle="${3:-on}"
+    [[ "$toggle" == "off" ]] && cmd_eco "$room" "OFF" || cmd_eco "$room" "MANUAL_ECO"
+    ;;
+  raw)              cmd_raw ;;
+  help|--help|-h)   cmd_help ;;
+  *)                echo "Unknown command: $1. Run 'nest help'." >&2; exit 1 ;;
+esac

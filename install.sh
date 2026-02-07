@@ -577,6 +577,15 @@ install_dotfiles() {
   fi
   log ""
 
+  # === Bin scripts (symlinked to /opt/homebrew/bin) ===
+  log "${BLUE}Bin scripts:${NC}"
+  if [[ -d "$DOTFILES_DIR/bin" ]]; then
+    for script in "$DOTFILES_DIR/bin"/*; do
+      [[ -f "$script" ]] && link_file "$script" "/opt/homebrew/bin/$(basename "$script")"
+    done
+  fi
+  log ""
+
   # === Local bin scripts ===
   log "${BLUE}Local bin scripts:${NC}"
   if [[ -d "$DOTFILES_DIR/.local/bin" ]]; then
