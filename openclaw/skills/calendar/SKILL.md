@@ -172,6 +172,22 @@ gog calendar events --today
 # Julia's events
 gog calendar events --today --account=juliajoyjennings@gmail.com
 
+# Create event on Julia's calendar
+gog calendar create primary \
+  --summary="Dinner reservation" \
+  --from="2026-02-14T19:00:00-05:00" \
+  --to="2026-02-14T21:00:00-05:00" \
+  --location="Restaurant" \
+  --account=juliajoyjennings@gmail.com
+
+# Create event on both calendars (invite each other)
+gog calendar create primary \
+  --summary="Date night" \
+  --from="2026-02-14T19:00:00-05:00" \
+  --to="2026-02-14T21:00:00-05:00" \
+  --attendees="juliajoyjennings@gmail.com" \
+  --send-updates=all
+
 # Check both calendars for conflicts
 gog calendar freebusy "dylanbochman@gmail.com,juliajoyjennings@gmail.com" --from=... --to=...
 ```
@@ -179,6 +195,8 @@ gog calendar freebusy "dylanbochman@gmail.com,juliajoyjennings@gmail.com" --from
 ## Notes
 
 - Default account: dylanbochman@gmail.com
+- **Always confirm with Dylan before creating, updating, or deleting events** — summarize what will be created (title, time, attendees) and wait for approval
+- When creating events on Julia's calendar, double-confirm since it affects her schedule
 - When showing upcoming events, default to today + next 7 days
 - `gog` uses OAuth2 -- tokens refresh automatically
 - Calendar ID `primary` refers to the default calendar
