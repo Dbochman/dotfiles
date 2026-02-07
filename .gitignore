@@ -14,6 +14,10 @@
 # But keep memory files
 !.claude/projects/-Users-dbochman/memory/
 
+# Skill local overrides (sensitive data like addresses, credentials references)
+# Convention: SKILL.md is checked in, *.local.md is machine-local only
+openclaw/skills/**/*.local.md
+
 # OS files
 .DS_Store
 Thumbs.db

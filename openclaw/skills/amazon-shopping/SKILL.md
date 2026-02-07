@@ -95,11 +95,15 @@ browser type <name_ref> <name>
 
 ### 6. Fill Shipping Address (if needed)
 
+Read the local-only address file for field values:
+```bash
+cat ~/.openclaw/skills/amazon-shopping/address.local.md
+```
+
+If the file doesn't exist, fall back to:
 ```bash
 cat ~/.cache/openclaw-gateway/visa_billing_address
 ```
-
-Address is stored locally on the Mac Mini at `~/.cache/openclaw-gateway/visa_billing_address`. Read the file for current address fields.
 
 ### 7. Review Order (MANDATORY)
 
