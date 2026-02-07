@@ -1,0 +1,113 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.3-1",
+    "lastTouchedAt": "2026-02-07T00:37:06.179Z"
+  },
+  "auth": {
+    "profiles": {
+      "anthropic:claudebotbochman": {
+        "provider": "anthropic",
+        "mode": "token"
+      },
+      "anthropic:clawdbotbochman": {
+        "provider": "anthropic",
+        "mode": "token"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-5-20250929",
+        "fallbacks": ["anthropic/claude-haiku-4-5-20251001"]
+      },
+      "models": {
+        "anthropic/claude-sonnet-4-5-20250929": {}
+      },
+      "workspace": "/Users/dbochman/.openclaw/workspace",
+      "compaction": {
+        "mode": "safeguard",
+        "memoryFlush": {
+          "enabled": true,
+          "softThresholdTokens": 4000
+        }
+      },
+      "contextPruning": {
+        "mode": "cache-ttl",
+        "ttl": "5m"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions",
+    "tts": {
+      "auto": "inbound",
+      "provider": "elevenlabs",
+      "maxTextLength": 2000
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "session": {
+    "dmScope": "per-channel-peer",
+    "reset": {
+      "mode": "daily",
+      "atHour": 4,
+      "idleMinutes": 120
+    }
+  },
+  "channels": {
+    "imessage": {
+      "enabled": true,
+      "cliPath": "/opt/homebrew/bin/imsg",
+      "dbPath": "/Users/dbochman/Library/Messages/chat.db",
+      "dmPolicy": "allowlist",
+      "groupPolicy": "allowlist"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
+    },
+    "tailscale": {
+      "mode": "serve",
+      "resetOnExit": false
+    }
+  },
+  "plugins": {
+    "entries": {
+      "imessage": {
+        "enabled": true
+      }
+    }
+  },
+  "skills": {
+    "install": {
+      "nodeManager": "npm"
+    },
+    "entries": {
+      "openai-whisper-api": {
+        "apiKey": "${OPENAI_API_KEY}"
+      },
+      "sag": {
+        "apiKey": "${ELEVENLABS_API_KEY}"
+      }
+    }
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-07T00:37:06.166Z",
+    "lastRunVersion": "2026.2.3-1",
+    "lastRunCommand": "onboard",
+    "lastRunMode": "local"
+  }
+}

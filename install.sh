@@ -523,6 +523,45 @@ install_dotfiles() {
   link_file "$DOTFILES_DIR/.claude/plugins/known_marketplaces.json" "$HOME/.claude/plugins/known_marketplaces.json"
   log ""
 
+  # === OpenClaw Config ===
+  log "${BLUE}OpenClaw config:${NC}"
+  if [[ -d "$DOTFILES_DIR/openclaw" ]]; then
+    if [[ "$DRY_RUN" != true ]]; then
+      mkdir -p "$HOME/.openclaw"
+      mkdir -p "$HOME/Applications"
+      mkdir -p "$HOME/Library/LaunchAgents"
+    fi
+
+    # Config file (symlink so edits flow back to repo)
+    link_file "$DOTFILES_DIR/openclaw/openclaw.json" "$HOME/.openclaw/openclaw.json"
+
+    # FDA .app wrapper for gateway LaunchAgent
+    link_file "$DOTFILES_DIR/openclaw/OpenClawGateway.app" "$HOME/Applications/OpenClawGateway.app"
+
+    # LaunchAgent plist
+    link_file "$DOTFILES_DIR/openclaw/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+  fi
+  log ""
+
+  # === Claude Memory (per-project) ===
+  log "${BLUE}Claude memory:${NC}"
+  local memory_repo="$DOTFILES_DIR/.claude/projects/-Users-dbochman/memory"
+  local memory_target="$HOME/.claude/projects/-Users-dbochman/memory"
+
+  if [[ -d "$memory_repo" ]]; then
+    if [[ "$DRY_RUN" != true ]]; then
+      mkdir -p "$memory_target"
+    fi
+
+    for mem_file in "$memory_repo"/*.md; do
+      [[ -f "$mem_file" ]] || continue
+      local mem_name
+      mem_name=$(basename "$mem_file")
+      link_file "$mem_file" "$memory_target/$mem_name"
+    done
+  fi
+  log ""
+
   # === Local bin scripts ===
   log "${BLUE}Local bin scripts:${NC}"
   if [[ -d "$DOTFILES_DIR/.local/bin" ]]; then

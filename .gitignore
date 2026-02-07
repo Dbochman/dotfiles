@@ -8,6 +8,12 @@
 # Plans directory (temporary planning files)
 .claude/plans/
 
+# Claude session data (not config)
+.claude/projects/-Users-dbochman/*.jsonl
+.claude/projects/-Users-dbochman/*/
+# But keep memory files
+!.claude/projects/-Users-dbochman/memory/
+
 # OS files
 .DS_Store
 Thumbs.db

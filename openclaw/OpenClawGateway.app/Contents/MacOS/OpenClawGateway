@@ -1,0 +1,2 @@
+#!/bin/bash
+/opt/homebrew/Cellar/node@22/22.22.0/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789
