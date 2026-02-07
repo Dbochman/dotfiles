@@ -99,13 +99,7 @@ browser type <name_ref> <name>
 cat ~/.cache/openclaw-gateway/visa_billing_address
 ```
 
-Address fields:
-- Name: Dylan Bochman
-- Street: 19 Crosstown Ave
-- City: West Roxbury
-- State: MA
-- Zip: 02132
-- Country: US
+Address is stored locally on the Mac Mini at `~/.cache/openclaw-gateway/visa_billing_address`. Read the file for current address fields.
 
 ### 7. Review Order (MANDATORY)
 
