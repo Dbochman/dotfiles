@@ -70,8 +70,8 @@
       "enabled": true,
       "cliPath": "/opt/homebrew/bin/imsg",
       "dbPath": "/Users/dbochman/Library/Messages/chat.db",
-      "dmPolicy": "allowlist",
-      "groupPolicy": "allowlist"
+      "dmPolicy": "open",
+      "groupPolicy": "open"
     }
   },
   "gateway": {
