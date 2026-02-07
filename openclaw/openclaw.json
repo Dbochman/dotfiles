@@ -18,11 +18,11 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-sonnet-4-5-20250929",
-        "fallbacks": ["anthropic/claude-haiku-4-5-20251001"]
+        "primary": "anthropic/claude-haiku-4-5-20251001",
+        "fallbacks": []
       },
       "models": {
-        "anthropic/claude-sonnet-4-5-20250929": {}
+        "anthropic/claude-haiku-4-5-20251001": {}
       },
       "workspace": "/Users/dbochman/.openclaw/workspace",
       "compaction": {
@@ -35,6 +35,9 @@
       "contextPruning": {
         "mode": "cache-ttl",
         "ttl": "5m"
+      },
+      "heartbeat": {
+        "every": "2h"
       },
       "maxConcurrent": 4,
       "subagents": {
