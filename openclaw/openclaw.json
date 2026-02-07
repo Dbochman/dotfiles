@@ -71,7 +71,8 @@
       "cliPath": "/opt/homebrew/bin/imsg",
       "dbPath": "/Users/dbochman/Library/Messages/chat.db",
       "dmPolicy": "open",
-      "groupPolicy": "open"
+      "groupPolicy": "open",
+      "allowFrom": ["*"]
     }
   },
   "gateway": {
