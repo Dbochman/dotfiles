@@ -1,6 +1,6 @@
 ---
 name: calendar
-description: View, create, and manage Google Calendar events. Use when asked about schedule, appointments, meetings, calendar, what's coming up, free time, conflicts, or availability.
+description: View, create, and manage Google Calendar events for Dylan or Julia. Use when asked about schedule, appointments, meetings, calendar, what's coming up, free time, conflicts, availability, or Julia's calendar.
 allowed-tools: Bash(calendar:*)
 metadata: {"openclaw":{"emoji":"📅","requires":{"bins":["gog"]}}}
 ---
@@ -155,9 +155,30 @@ gog calendar time
 | `--force` | Skip confirmations for destructive commands |
 | `--no-input` | Never prompt; fail instead |
 
+## Accounts
+
+| Account | Owner | Default |
+|---------|-------|---------|
+| dylanbochman@gmail.com | Dylan | Yes (no `--account` needed) |
+| juliajoyjennings@gmail.com | Julia | Use `--account=juliajoyjennings@gmail.com` |
+
+When Dylan asks about "my calendar", use his account (default). When he mentions "Julia's calendar" or asks about her schedule, use `--account=juliajoyjennings@gmail.com`.
+
+### Examples
+```bash
+# Dylan's events (default)
+gog calendar events --today
+
+# Julia's events
+gog calendar events --today --account=juliajoyjennings@gmail.com
+
+# Check both calendars for conflicts
+gog calendar freebusy "dylanbochman@gmail.com,juliajoyjennings@gmail.com" --from=... --to=...
+```
+
 ## Notes
 
-- Account: dylanbochman@gmail.com
+- Default account: dylanbochman@gmail.com
 - When showing upcoming events, default to today + next 7 days
 - `gog` uses OAuth2 -- tokens refresh automatically
 - Calendar ID `primary` refers to the default calendar

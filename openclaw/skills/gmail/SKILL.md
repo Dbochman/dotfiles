@@ -1,6 +1,6 @@
 ---
 name: gmail
-description: Read, search, send, and manage Gmail messages. Use when asked about email, inbox, unread messages, sending emails, or checking mail.
+description: Read, search, send, and manage Gmail messages for Dylan or Julia. Use when asked about email, inbox, unread messages, sending emails, checking mail, or Julia's email.
 allowed-tools: Bash(gmail:*)
 metadata: {"openclaw":{"emoji":"E","requires":{"bins":["gog"]}}}
 ---
@@ -178,9 +178,30 @@ Combine queries: `from:boss@co.com is:unread after:2026/01/01`
 | `--verbose` | Enable verbose logging |
 | `-z, --timezone=IANA` | Set output timezone (e.g. America/New_York) |
 
+## Accounts
+
+| Account | Owner | Default |
+|---------|-------|---------|
+| dylanbochman@gmail.com | Dylan | Yes (no `--account` needed) |
+| juliajoyjennings@gmail.com | Julia | Use `--account=juliajoyjennings@gmail.com` |
+
+When Dylan asks about "my email", use his account (default). When he mentions "Julia's email" or asks to check/send on her behalf, use `--account=juliajoyjennings@gmail.com`.
+
+### Examples
+```bash
+# Dylan's inbox (default)
+gog gmail search "is:unread"
+
+# Julia's inbox
+gog gmail search "is:unread" --account=juliajoyjennings@gmail.com
+
+# Send from Julia's account
+gog gmail send --to="someone@example.com" --subject="Hi" --body="..." --account=juliajoyjennings@gmail.com
+```
+
 ## Notes
 
-- Account: dylanbochman@gmail.com
+- Default account: dylanbochman@gmail.com
 - Always check inbox/unread first before reporting on emails
 - When sending emails, confirm the recipient and content with the user first
 - gog uses OAuth2 -- tokens refresh automatically
