@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""speaker — CLI for controlling Google Nest/Cast speakers.
+
+Uses pychromecast for Cast protocol control. Connects by IP (no mDNS needed)
+so it works over Tailscale subnet routing.
+
+Usage:
+  speaker status                    Show all speakers
+  speaker volume <name> <0-100>     Set volume
+  speaker mute <name>               Mute
+  speaker unmute <name>             Unmute
+  speaker play <name>               Resume playback
+  speaker pause <name>              Pause playback
+  speaker stop <name>               Stop playback
+  speaker tts <name> "message"      Text-to-speech announcement
+  speaker cast <name> <url>         Play a media URL
+  speaker help                      Show this help
+
+Speaker names are fuzzy-matched (e.g. "bed" for "Bedroom speaker").
+"""
+
+import argparse
+import json
+import os
+import sys
+import time
+
+# Speaker config: name -> IP mapping
+# Loaded from ~/.openclaw/speakers.json or defaults
+CONFIG_FILE = os.path.expanduser("~/.openclaw/speakers.json")
+
+DEFAULT_SPEAKERS = {
+    "Bedroom speaker": "192.168.165.146",
+    "Living Room speaker": "192.168.165.113",
+}
+
+
+def load_speakers():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    return DEFAULT_SPEAKERS
+
+
+def resolve_speaker(query, speakers):
+    """Fuzzy-match a speaker name."""
+    q = query.lower()
+    for name, ip in speakers.items():
+        if q in name.lower():
+            return name, ip
+    print(f"No speaker matching '{query}'. Available:", file=sys.stderr)
+    for name in speakers:
+        print(f"  - {name}", file=sys.stderr)
+    sys.exit(1)
+
+
+def get_cast(ip, timeout=10):
+    """Connect to a Cast device by IP."""
+    try:
+        import pychromecast
+    except ImportError:
+        print("Error: pychromecast not installed. Run: pip3 install pychromecast", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        # pychromecast v14+: use get_chromecast_from_host with (host, port, uuid, model, name) tuple
+        cast = pychromecast.get_chromecast_from_host((ip, 8009, None, None, None))
+        cast.wait(timeout=timeout)
+        return cast
+    except Exception as e:
+        print(f"Error connecting to {ip}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def disconnect(cast):
+    """Disconnect from cast device (compatible with pychromecast v14+)."""
+    try:
+        cast.disconnect()
+    except Exception:
+        pass
+
+
+def cmd_status(args):
+    speakers = load_speakers()
+    import pychromecast
+
+    for name, ip in speakers.items():
+        try:
+            cast = pychromecast.get_chromecast_from_host((ip, 8009, None, None, None))
+            cast.wait(timeout=5)
+            vol = round(cast.status.volume_level * 100)
+            muted = "MUTED" if cast.status.volume_muted else ""
+            app = cast.status.display_name or "Idle"
+
+            mc = cast.media_controller
+            mc.update_status()
+            time.sleep(0.5)
+            ms = mc.status
+            if ms and ms.player_state and ms.player_state != "UNKNOWN":
+                state = ms.player_state
+                title = ms.title or ""
+                info = f"{state} {title}".strip()
+            else:
+                info = app
+
+            print(f"  {name:25s}  {vol:3d}%  {muted:5s}  {info}")
+            disconnect(cast)
+        except Exception as e:
+            print(f"  {name:25s}  UNREACHABLE ({e})")
+
+
+def cmd_volume(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+    vol = max(0, min(100, args.level))
+    cast = get_cast(ip)
+    cast.set_volume(vol / 100)
+    print(f"Set {name} volume to {vol}%")
+    disconnect(cast)
+
+
+def cmd_mute(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+    cast = get_cast(ip)
+    cast.set_volume_muted(True)
+    print(f"Muted {name}")
+    disconnect(cast)
+
+
+def cmd_unmute(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+    cast = get_cast(ip)
+    cast.set_volume_muted(False)
+    print(f"Unmuted {name}")
+    disconnect(cast)
+
+
+def cmd_play(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+    cast = get_cast(ip)
+    cast.media_controller.play()
+    print(f"Resumed {name}")
+    disconnect(cast)
+
+
+def cmd_pause(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+    cast = get_cast(ip)
+    cast.media_controller.pause()
+    print(f"Paused {name}")
+    disconnect(cast)
+
+
+def cmd_stop(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+    cast = get_cast(ip)
+    cast.media_controller.stop()
+    print(f"Stopped {name}")
+    disconnect(cast)
+
+
+def cmd_cast(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+    cast = get_cast(ip)
+
+    # Guess content type from URL
+    url = args.url
+    ct = "audio/mpeg"
+    if url.endswith(".mp3"):
+        ct = "audio/mpeg"
+    elif url.endswith(".wav"):
+        ct = "audio/wav"
+    elif url.endswith(".ogg"):
+        ct = "audio/ogg"
+    elif url.endswith(".mp4") or url.endswith(".m4a"):
+        ct = "audio/mp4"
+    elif url.endswith(".flac"):
+        ct = "audio/flac"
+    elif "youtube" in url or "youtu.be" in url:
+        ct = "video/mp4"
+
+    cast.media_controller.play_media(url, ct)
+    cast.media_controller.block_until_active(timeout=10)
+    print(f"Casting to {name}: {url}")
+    disconnect(cast)
+
+
+def cmd_tts(args):
+    speakers = load_speakers()
+    name, ip = resolve_speaker(args.name, speakers)
+
+    # Generate TTS audio using Google Translate TTS (no API key needed)
+    import urllib.request
+    import urllib.parse
+    import tempfile
+    from http.server import HTTPServer, SimpleHTTPRequestHandler
+    import threading
+
+    text = args.message
+    # Google Translate TTS URL (works for short messages)
+    tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=en&q={urllib.parse.quote(text)}"
+
+    cast = get_cast(ip)
+    cast.media_controller.play_media(tts_url, "audio/mpeg")
+    cast.media_controller.block_until_active(timeout=10)
+    print(f"TTS on {name}: \"{text}\"")
+    time.sleep(max(2, len(text) * 0.08))  # rough wait for speech to finish
+    disconnect(cast)
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("help", "--help", "-h"):
+        print(__doc__)
+        return
+
+    cmd = sys.argv[1]
+    rest = sys.argv[2:]
+
+    if cmd == "status":
+        cmd_status(argparse.Namespace())
+    elif cmd == "volume" and len(rest) >= 2:
+        cmd_volume(argparse.Namespace(name=rest[0], level=int(rest[1])))
+    elif cmd == "mute" and len(rest) >= 1:
+        cmd_mute(argparse.Namespace(name=rest[0]))
+    elif cmd == "unmute" and len(rest) >= 1:
+        cmd_unmute(argparse.Namespace(name=rest[0]))
+    elif cmd == "play" and len(rest) >= 1:
+        cmd_play(argparse.Namespace(name=rest[0]))
+    elif cmd == "pause" and len(rest) >= 1:
+        cmd_pause(argparse.Namespace(name=rest[0]))
+    elif cmd == "stop" and len(rest) >= 1:
+        cmd_stop(argparse.Namespace(name=rest[0]))
+    elif cmd == "cast" and len(rest) >= 2:
+        cmd_cast(argparse.Namespace(name=rest[0], url=rest[1]))
+    elif cmd == "tts" and len(rest) >= 2:
+        cmd_tts(argparse.Namespace(name=rest[0], message=" ".join(rest[1:])))
+    else:
+        print(f"Unknown command or missing args: {cmd} {' '.join(rest)}", file=sys.stderr)
+        print("Run 'speaker help' for usage.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
