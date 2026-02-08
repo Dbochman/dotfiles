@@ -46,9 +46,11 @@ speaker cast <name> "https://example.com/audio.mp3"
 
 ## Speakers
 
-### 19 Crosstown Ave
+### Crosstown (Boston — 19 Crosstown Ave)
 - **Bedroom speaker** — Google Nest Mini (`192.168.165.146`)
 - **Living Room speaker** — Nest Audio (`192.168.165.113`)
+
+These speakers are at **Crosstown only**. The Cabin (Philly) speakers are controlled via `catt`/`spogo` in the `spotify-speakers` skill.
 
 Speaker names are fuzzy-matched (e.g. "bed" for Bedroom, "living" for Living Room).
 

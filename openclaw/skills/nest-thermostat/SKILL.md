@@ -73,17 +73,23 @@ Shows indoor/outdoor min/max/avg temperature, humidity, setpoints, HVAC heating 
 nest raw
 ```
 
-## Rooms
+## Rooms & Home Disambiguation
 
-There are 3 thermostats:
-- **Solarium** (matches: solar, sol)
-- **Living Room** (matches: living, liv)
-- **Bedroom** (matches: bed, bedroom)
+There are two homes. Rooms are prefixed with home name in the Nest API.
 
-There is 1 camera:
-- **Kitchen** (matches: kitchen, kit)
+### Cabin (Philly)
+- **Philly Solarium** (matches: solar, sol)
+- **Philly Living Room** (matches: philly living)
+- **Philly Bedroom** (matches: bed, bedroom)
+- **Kitchen** camera (matches: kitchen, kit)
 
-Room names are fuzzy-matched — use any substring.
+### Crosstown (Boston — 19 Crosstown Ave)
+- **19Crosstown Living Room** (matches: crosstown)
+- **Cat room** cameras x2
+
+Room names are fuzzy-matched — use any substring. "crosstown" matches the Crosstown thermostat, "solar" matches Philly Solarium, etc.
+
+**Disambiguation:** When the user says "living room" without context, it's ambiguous — ask which home. Use "philly living" for Cabin or "crosstown" for Crosstown. Unique rooms (solarium, cat room) are unambiguous.
 
 ## Notes
 

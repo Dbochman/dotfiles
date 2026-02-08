@@ -5,18 +5,20 @@ allowed-tools: Bash(hue:*) Bash(nest:*) Bash(catt:*) Bash(spogo:*)
 metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest"]}}}
 ---
 
-# Cabin Routines
+# Cabin Routines (Philly)
 
-Predefined routines that combine lights, thermostats, speakers, and music. Run these when the user triggers a routine by name or intent.
+Predefined routines for the **Cabin (Philly)** home. These only apply to Cabin — do NOT run these for Crosstown (Boston). For Crosstown routines, see the `crosstown-routines` skill.
+
+**Important:** All `hue` commands in this skill must use the `--cabin` flag. The Cabin speakers are "Kitchen speaker" and "Bedroom speaker" (on the Cabin LAN at `192.168.1.x`).
 
 ## Goodnight
 
 **Triggers:** "goodnight", "good night", "going to bed", "bedtime", "time for bed"
 
 Steps:
-1. Turn off all lights except bedroom: `hue all-off`
-2. Set bedroom to dim warm light: `hue on bedroom 5` then `hue color bedroom warm`
-3. Set all thermostats to eco: `nest eco solarium on` then `nest eco living on` then `nest eco bedroom on`
+1. Turn off all lights except bedroom: `hue --cabin all-off`
+2. Set bedroom to dim warm light: `hue --cabin on bedroom 5` then `hue --cabin color bedroom warm`
+3. Set all thermostats to eco: `nest eco solarium on` then `nest eco "philly living" on` then `nest eco bedroom on`
 4. Stop all speakers: `catt -d "Kitchen speaker" stop` and `catt -d "Bedroom speaker" stop`
 5. Pause Spotify: `spogo pause`
 
@@ -27,8 +29,8 @@ Confirm: "Goodnight! Lights off, thermostats in eco mode, speakers stopped. Bedr
 **Triggers:** "we're leaving", "heading out", "leaving the cabin", "away mode", "gone for the day"
 
 Steps:
-1. Turn off all lights: `hue all-off`
-2. Set all thermostats to eco: `nest eco solarium on` then `nest eco living on` then `nest eco bedroom on`
+1. Turn off all lights: `hue --cabin all-off`
+2. Set all thermostats to eco: `nest eco solarium on` then `nest eco "philly living" on` then `nest eco bedroom on`
 3. Stop all speakers: `catt -d "Kitchen speaker" stop` and `catt -d "Bedroom speaker" stop`
 4. Pause Spotify: `spogo pause`
 
@@ -39,10 +41,10 @@ Confirm: "Away mode set. All lights off, thermostats in eco, audio stopped."
 **Triggers:** "we're home", "I'm home", "just got home", "back at the cabin", "welcome home"
 
 Steps:
-1. Turn on main lights: `hue on kitchen 80` then `hue on living 60` then `hue on hallway 100`
-2. Set warm color: `hue color kitchen warm` then `hue color living warm`
-3. Disable eco on main rooms: `nest eco living off` then `nest eco bedroom off`
-4. Set comfortable temperature: `nest set living 70` then `nest set bedroom 68`
+1. Turn on main lights: `hue --cabin on kitchen 80` then `hue --cabin on living 60` then `hue --cabin on hallway 100`
+2. Set warm color: `hue --cabin color kitchen warm` then `hue --cabin color living warm`
+3. Disable eco on main rooms: `nest eco "philly living" off` then `nest eco bedroom off`
+4. Set comfortable temperature: `nest set "philly living" 70` then `nest set bedroom 68`
 
 Confirm: "Welcome home! Kitchen and living room lights on, thermostats set to 70°F/68°F."
 
@@ -51,8 +53,8 @@ Confirm: "Welcome home! Kitchen and living room lights on, thermostats set to 70
 **Triggers:** "movie night", "movie mode", "watching a movie", "film time"
 
 Steps:
-1. Dim living room: `hue on living 10` then `hue color living warm`
-2. Turn off other lights: `hue off kitchen` then `hue off hallway` then `hue off office`
+1. Dim living room: `hue --cabin on living 10` then `hue --cabin color living warm`
+2. Turn off other lights: `hue --cabin off kitchen` then `hue --cabin off hallway` then `hue --cabin off office`
 3. Set speaker volume low: `catt -d "Kitchen speaker" volume 20`
 4. Pause any music: `spogo pause`
 
@@ -63,10 +65,10 @@ Confirm: "Movie mode set. Living room dimmed, other lights off."
 **Triggers:** "good morning", "morning routine", "wake up", "rise and shine"
 
 Steps:
-1. Turn on kitchen and living room lights: `hue on kitchen 100` then `hue on living 80`
-2. Set daylight color: `hue color kitchen daylight` then `hue color living daylight`
-3. Turn on hallway: `hue on hallway 100`
-4. Disable eco on all rooms: `nest eco solarium off` then `nest eco living off` then `nest eco bedroom off`
+1. Turn on kitchen and living room lights: `hue --cabin on kitchen 100` then `hue --cabin on living 80`
+2. Set daylight color: `hue --cabin color kitchen daylight` then `hue --cabin color living daylight`
+3. Turn on hallway: `hue --cabin on hallway 100`
+4. Disable eco on all rooms: `nest eco solarium off` then `nest eco "philly living" off` then `nest eco bedroom off`
 5. Check thermostat status: `nest status`
 
 Confirm with current temperature readings from `nest status`.
@@ -74,7 +76,7 @@ Confirm with current temperature readings from `nest status`.
 ## Custom Adjustments
 
 The user may ask to modify routines:
-- "Goodnight but leave the staircase on" — run goodnight, then `hue on staircase 30`
+- "Goodnight but leave the staircase on" — run goodnight, then `hue --cabin on staircase 30`
 - "Away mode but keep heat on" — run away but skip the eco steps
 - "Welcome home but it's late" — use dimmer lights (30% instead of 80%)
 

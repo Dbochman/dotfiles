@@ -46,9 +46,11 @@ spogo queue add spotify:track:<id> # add track to queue
 
 ## Speaker Commands (catt)
 
-### Available speakers
+### Available speakers (Cabin — Philly)
 - **Kitchen speaker** — Nest Audio (192.168.1.66)
 - **Bedroom speaker** — Nest Mini (192.168.1.163)
+
+These speakers are at the **Cabin (Philly)** only. For Crosstown (Boston) speakers, use the `google-speakers` skill.
 
 ### Control
 ```bash

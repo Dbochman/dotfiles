@@ -77,6 +77,25 @@ hue lights
 
 Room names are fuzzy-matched — use any substring (e.g. "bed" for Bedroom, "living" for Living room).
 
+## Home Disambiguation
+
+There are two homes with overlapping room names. **You must always select the correct bridge.**
+
+| Home | Location | Flag | Unique rooms |
+|------|----------|------|-------------|
+| **Crosstown** | Boston (19 Crosstown Ave) | `--crosstown` (default) | Entryway, Movie Room, Cat Room, Downstairs, Master Bath |
+| **Cabin** | Philly | `--cabin` | Bathroom, Hallway, Solarium, Staircase |
+
+**Shared room names** (exist in both homes): Kitchen, Living room, Bedroom, Office
+
+When the user mentions a shared room name, determine the correct home from context:
+- If they say "cabin kitchen" or "philly kitchen" → `hue --cabin on kitchen`
+- If they say "crosstown kitchen" or "boston kitchen" → `hue on kitchen` (or `hue --crosstown on kitchen`)
+- If a unique room is mentioned (e.g. "solarium", "movie room"), the home is unambiguous
+- If unclear, **ask which home they mean** — don't guess
+
+When running routines or multi-room commands, make sure every command targets the same bridge.
+
 ## Connection
 
 The CLI tries the local bridge first (LAN), then falls back to the Hue Cloud API (remote). Override with `HUE_MODE=local` or `HUE_MODE=remote`.
@@ -84,8 +103,8 @@ The CLI tries the local bridge first (LAN), then falls back to the Hue Cloud API
 Both bridges have remote API access. Use `--crosstown` (default) or `--cabin` to select, or `HUE_BRIDGE=cabin`.
 
 ```bash
-hue --cabin status          # Cabin lights
-hue --crosstown on kitchen  # Crosstown kitchen
+hue --cabin status          # Cabin (Philly) lights
+hue --crosstown on kitchen  # Crosstown (Boston) kitchen
 hue status                  # defaults to Crosstown
 ```
 
