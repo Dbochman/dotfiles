@@ -1,57 +1,189 @@
 #!/bin/bash
 # hue — CLI wrapper for Philips Hue Bridge REST API
-# Credentials stored in 1Password; bridge accessed over local network.
+# Supports local (LAN) and remote (cloud) access. Tries local first, falls back to remote.
+# Credentials stored in 1Password + local cache files.
 
 set -euo pipefail
 
 export OP_BIOMETRIC_UNLOCK_ENABLED=true
 
-# 1Password paths
-OP_ITEM="Philips Hue Bridge"
+# 1Password paths — bridge selection via HUE_BRIDGE env or --bridge flag
 OP_VAULT="Private"
+_BRIDGE_NAME="${HUE_BRIDGE:-crosstown}"
 
-# Cache credentials (bridge IP and API key rarely change)
-CACHE_DIR="${HOME}/.cache/hue"
-CACHE_TTL=31536000  # 1 year (credentials never change unless rotated)
+# Parse --bridge flag from args (strip it before dispatch)
+_ORIG_ARGS=("$@")
+_CLEAN_ARGS=()
+for _arg in "$@"; do
+  case "$_arg" in
+    --bridge=*) _BRIDGE_NAME="${_arg#--bridge=}" ;;
+    --cabin)    _BRIDGE_NAME="cabin" ;;
+    --crosstown) _BRIDGE_NAME="crosstown" ;;
+    *)          _CLEAN_ARGS+=("$_arg") ;;
+  esac
+done
+set -- "${_CLEAN_ARGS[@]+"${_CLEAN_ARGS[@]}"}"
+
+case "$(echo "$_BRIDGE_NAME" | tr '[:upper:]' '[:lower:]')" in
+  cabin|cab)     OP_ITEM="Philips Hue Bridge - Cabin" ;;
+  crosstown|ct)  OP_ITEM="Philips Hue Bridge - Crosstown" ;;
+  *)             OP_ITEM="Philips Hue Bridge - $_BRIDGE_NAME" ;;
+esac
+
+# Cache credentials — per-bridge subdirectory
+CACHE_DIR="${HOME}/.cache/hue/$(echo "$_BRIDGE_NAME" | tr '[:upper:]' '[:lower:]')"
+CACHE_TTL=31536000       # 1 year for static creds
+TOKEN_TTL=604800         # 7 days for access tokens (actual expiry)
+TOKEN_REFRESH_AT=518400  # Refresh after 6 days (proactive)
+
+# Remote API base
+REMOTE_API="https://api.meethue.com/route"
+
+# Connection mode: auto (try local, fall back to remote), local, remote
+HUE_MODE="${HUE_MODE:-auto}"
 
 _op_read() {
   /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null
 }
 
-_get_creds() {
+_cached_read() {
+  local label="$1" ttl="${2:-$CACHE_TTL}"
+  local cache_file="$CACHE_DIR/$(echo "$label" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')"
   mkdir -p "$CACHE_DIR"
-  local ip_cache="$CACHE_DIR/bridge_ip"
-  local key_cache="$CACHE_DIR/api_key"
 
-  if [[ -f "$ip_cache" && -f "$key_cache" ]]; then
-    local age=$(( $(date +%s) - $(stat -f %m "$ip_cache") ))
-    if (( age < CACHE_TTL )); then
-      HUE_BRIDGE=$(cat "$ip_cache")
-      HUE_KEY=$(cat "$key_cache")
+  if [[ -f "$cache_file" ]]; then
+    local age=$(( $(date +%s) - $(stat -f %m "$cache_file") ))
+    if (( age < ttl )); then
+      cat "$cache_file"
       return
     fi
   fi
 
-  HUE_BRIDGE=$(_op_read "Bridge IP")
-  HUE_KEY=$(_op_read "API Key")
+  local val
+  val=$(_op_read "$label")
+  if [[ -n "$val" ]]; then
+    echo "$val" > "$cache_file"
+  fi
+  echo "$val"
+}
 
-  if [[ -z "$HUE_BRIDGE" || -z "$HUE_KEY" ]]; then
-    echo "Error: Could not read Hue credentials from 1Password" >&2
-    exit 1
+# --- Local API ---
+
+_HUE_BRIDGE=""
+_HUE_KEY=""
+
+_get_local_creds() {
+  if [[ -n "$_HUE_BRIDGE" && -n "$_HUE_KEY" ]]; then return; fi
+  _HUE_BRIDGE=$(_cached_read "Bridge IP")
+  _HUE_KEY=$(_cached_read "API Key")
+}
+
+_local_reachable() {
+  _get_local_creds
+  [[ -n "$_HUE_BRIDGE" ]] && curl -s --connect-timeout 2 --max-time 3 "http://${_HUE_BRIDGE}/api/${_HUE_KEY}/config" >/dev/null 2>&1
+}
+
+# --- Remote API ---
+
+_REMOTE_TOKEN=""
+_REMOTE_USERNAME=""
+
+_get_remote_creds() {
+  if [[ -n "$_REMOTE_TOKEN" && -n "$_REMOTE_USERNAME" ]]; then return; fi
+  _REMOTE_USERNAME=$(_cached_read "Remote_Username")
+  _REMOTE_TOKEN=$(_cached_read "Remote_Access_Token" "$TOKEN_REFRESH_AT")
+
+  # If token cache expired, refresh it
+  if [[ -z "$_REMOTE_TOKEN" ]]; then
+    _refresh_remote_token
+  fi
+}
+
+_refresh_remote_token() {
+  local client_id client_secret refresh_token
+  client_id=$(_cached_read "Remote_ClientId")
+  client_secret=$(_cached_read "Remote_Client_Secret")
+  refresh_token=$(_cached_read "Remote_Refresh_Token" "$CACHE_TTL")
+
+  if [[ -z "$client_id" || -z "$client_secret" || -z "$refresh_token" ]]; then
+    echo "Error: Missing remote API credentials. Run OAuth setup first." >&2
+    return 1
   fi
 
-  echo "$HUE_BRIDGE" > "$ip_cache"
-  echo "$HUE_KEY" > "$key_cache"
+  local resp
+  resp=$(curl -s -X POST "https://api.meethue.com/v2/oauth2/token" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -u "${client_id}:${client_secret}" \
+    -d "grant_type=refresh_token&refresh_token=${refresh_token}")
+
+  local new_token new_refresh
+  new_token=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
+  new_refresh=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
+
+  if [[ -z "$new_token" ]]; then
+    echo "Error: Failed to refresh remote token: $resp" >&2
+    return 1
+  fi
+
+  mkdir -p "$CACHE_DIR"
+  echo "$new_token" > "$CACHE_DIR/remote_access_token"
+  _REMOTE_TOKEN="$new_token"
+
+  if [[ -n "$new_refresh" ]]; then
+    echo "$new_refresh" > "$CACHE_DIR/remote_refresh_token"
+  fi
+
+  echo "Remote token refreshed" >&2
+}
+
+# --- Unified API layer ---
+
+_USE_REMOTE=""
+
+_resolve_mode() {
+  if [[ -n "$_USE_REMOTE" ]]; then return; fi
+
+  case "$HUE_MODE" in
+    local)
+      _USE_REMOTE=false
+      ;;
+    remote)
+      _USE_REMOTE=true
+      ;;
+    auto)
+      if _local_reachable; then
+        _USE_REMOTE=false
+      else
+        _USE_REMOTE=true
+      fi
+      ;;
+  esac
 }
 
 _api_get() {
-  _get_creds
-  curl -s "http://${HUE_BRIDGE}/api/${HUE_KEY}${1}"
+  _resolve_mode
+  if [[ "$_USE_REMOTE" == "true" ]]; then
+    _get_remote_creds
+    curl -s "${REMOTE_API}/api/${_REMOTE_USERNAME}${1}" \
+      -H "Authorization: Bearer ${_REMOTE_TOKEN}"
+  else
+    _get_local_creds
+    curl -s "http://${_HUE_BRIDGE}/api/${_HUE_KEY}${1}"
+  fi
 }
 
 _api_put() {
-  _get_creds
-  curl -s -X PUT "http://${HUE_BRIDGE}/api/${HUE_KEY}${1}" -d "$2"
+  _resolve_mode
+  if [[ "$_USE_REMOTE" == "true" ]]; then
+    _get_remote_creds
+    curl -s -X PUT "${REMOTE_API}/api/${_REMOTE_USERNAME}${1}" \
+      -H "Authorization: Bearer ${_REMOTE_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "$2"
+  else
+    _get_local_creds
+    curl -s -X PUT "http://${_HUE_BRIDGE}/api/${_HUE_KEY}${1}" -d "$2"
+  fi
 }
 
 # === Room/Group resolution ===
@@ -288,6 +420,10 @@ Commands:
   help                         Show this help
 
 Room names are fuzzy-matched (e.g. "bed" matches "Bedroom").
+
+Bridges: --crosstown (default), --cabin, or HUE_BRIDGE=cabin
+Connection: tries local LAN first, falls back to Hue Cloud API.
+Override with HUE_MODE=local or HUE_MODE=remote.
 HELP
 }
 

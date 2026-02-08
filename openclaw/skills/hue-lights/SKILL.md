@@ -7,7 +7,7 @@ metadata: {"openclaw":{"emoji":"L","requires":{"bins":["hue"]}}}
 
 # Hue Lights Control
 
-Control Philips Hue lights via the `hue` CLI. Credentials are managed via 1Password.
+Control Philips Hue lights via the `hue` CLI. Two bridges (Crosstown and Cabin) with credentials managed via 1Password. The CLI auto-detects local vs remote access — works from any device on the tailnet.
 
 ## Available Commands
 
@@ -54,7 +54,18 @@ hue lights
 
 ## Rooms
 
-There are 8 rooms:
+### 19 Crosstown Ave (9 rooms)
+- **Entryway** (1 light)
+- **Kitchen** (1 light)
+- **Living room** (9 lights)
+- **Bedroom** (5 lights)
+- **Office** (1 light)
+- **Movie Room** (2 lights)
+- **Cat Room** (3 lights)
+- **Downstairs** (3 lights)
+- **Master Bath** (3 lights)
+
+### Cabin (8 rooms)
 - **Kitchen** (2 lights)
 - **Living room** (3 lights)
 - **Bathroom** (4 lights)
@@ -65,6 +76,22 @@ There are 8 rooms:
 - **Staircase** (1 light)
 
 Room names are fuzzy-matched — use any substring (e.g. "bed" for Bedroom, "living" for Living room).
+
+## Connection
+
+The CLI tries the local bridge first (LAN), then falls back to the Hue Cloud API (remote). Override with `HUE_MODE=local` or `HUE_MODE=remote`.
+
+Both bridges have remote API access. Use `--crosstown` (default) or `--cabin` to select, or `HUE_BRIDGE=cabin`.
+
+```bash
+hue --cabin status          # Cabin lights
+hue --crosstown on kitchen  # Crosstown kitchen
+hue status                  # defaults to Crosstown
+```
+
+1Password items:
+- "Philips Hue Bridge - Crosstown" (Private vault) — local + remote credentials
+- "Philips Hue Bridge - Cabin" (Private vault) — local credentials only
 
 ## Notes
 
