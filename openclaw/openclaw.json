@@ -75,6 +75,22 @@
       "allowFrom": ["*"]
     }
   },
+  "browser": {
+    "enabled": true,
+    "evaluateEnabled": true,
+    "defaultProfile": "openclaw",
+    "headless": true,
+    "noSandbox": false,
+    "snapshotDefaults": {
+      "mode": "efficient"
+    },
+    "profiles": {
+      "openclaw": {
+        "cdpPort": 18800,
+        "color": "#FF4500"
+      }
+    }
+  },
   "gateway": {
     "port": 18789,
     "mode": "local",

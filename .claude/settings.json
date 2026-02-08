@@ -31,5 +31,8 @@
     "claude-hud@claude-hud": true,
     "claude-delegator@jarrodwatts-claude-delegator": true
   },
-  "alwaysThinkingEnabled": false
+  "alwaysThinkingEnabled": false,
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
 }

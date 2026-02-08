@@ -1,5 +1,5 @@
 #!/bin/bash
-# nest — CLI wrapper for Google Nest SDM API
+# nest — CLI wrapper for Google Nest SDM API + local weather (Open-Meteo)
 # Credentials stored in 1Password; tokens auto-refresh.
 
 set -euo pipefail
@@ -7,13 +7,35 @@ set -euo pipefail
 export OP_BIOMETRIC_UNLOCK_ENABLED=true
 
 # 1Password paths
-OP_ITEM="Google Nest SDM API"
-OP_VAULT="Private"
+OP_ITEM="Google Nest"
+OP_VAULT="OpenClaw"
 
 # Cache directory
 CACHE_DIR="${HOME}/.cache/nest-sdm"
 TOKEN_TTL=3300       # 55 minutes (access tokens last 60)
 CREDS_TTL=31536000   # 1 year (credentials never change unless rotated)
+
+# History directory (JSONL snapshots, one file per day)
+HISTORY_DIR="${HOME}/.openclaw/nest-history"
+
+# Dashboard
+DASHBOARD_LABEL="ai.openclaw.nest-dashboard"
+DASHBOARD_PLIST="${HOME}/Library/LaunchAgents/${DASHBOARD_LABEL}.plist"
+DASHBOARD_SCRIPT="${HOME}/.openclaw/bin/nest-dashboard.py"
+DASHBOARD_PORT=8550
+
+# Location config (lat/lon for weather)
+LOCATION_FILE="${HOME}/.openclaw/nest-location.conf"
+DEFAULT_LAT="42.6021"
+DEFAULT_LON="-72.1510"
+
+_get_location() {
+  if [[ -f "$LOCATION_FILE" ]]; then
+    source "$LOCATION_FILE"
+  fi
+  NEST_LAT="${NEST_LAT:-$DEFAULT_LAT}"
+  NEST_LON="${NEST_LON:-$DEFAULT_LON}"
+}
 
 _op_read() {
   /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null
@@ -54,9 +76,9 @@ _get_access_token() {
   fi
 
   # Refresh token using cached 1Password credentials
-  local client_id=$(_cached_op_read "Client ID")
-  local client_secret=$(_cached_op_read "Client Secret")
-  local refresh_token=$(_cached_op_read "Refresh Token")
+  local client_id=$(_cached_op_read "clientID")
+  local client_secret=$(_cached_op_read "client_secret")
+  local refresh_token=$(_cached_op_read "refresh_token")
 
   local resp
   resp=$(curl -s -L -X POST "https://www.googleapis.com/oauth2/v4/token" \
@@ -92,6 +114,49 @@ _api() {
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${token}" \
     "$@"
+}
+
+_get_weather() {
+  # Returns JSON: {"temp_f":12.0,"feels_like_f":4.7,"humidity":73,"wind_mph":1.9,"code":3,"description":"Overcast"}
+  _get_location
+  local resp
+  resp=$(curl -s --connect-timeout 5 --max-time 10 \
+    "https://api.open-meteo.com/v1/forecast?latitude=${NEST_LAT}&longitude=${NEST_LON}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,weather_code,apparent_temperature&temperature_unit=fahrenheit&wind_speed_unit=mph" 2>/dev/null) || true
+
+  if [[ -z "$resp" ]]; then
+    echo '{}'
+    return
+  fi
+
+  python3 -c "
+import json, sys
+WMO_CODES = {
+    0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+    45: 'Fog', 48: 'Rime fog',
+    51: 'Light drizzle', 53: 'Drizzle', 55: 'Dense drizzle',
+    61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+    66: 'Light freezing rain', 67: 'Freezing rain',
+    71: 'Light snow', 73: 'Snow', 75: 'Heavy snow',
+    77: 'Snow grains', 80: 'Light showers', 81: 'Showers', 82: 'Heavy showers',
+    85: 'Light snow showers', 86: 'Snow showers',
+    95: 'Thunderstorm', 96: 'Thunderstorm w/ hail', 99: 'Thunderstorm w/ heavy hail',
+}
+try:
+    data = json.loads(sys.stdin.read())
+    c = data['current']
+    code = c.get('weather_code', 0)
+    print(json.dumps({
+        'temp_f': c['temperature_2m'],
+        'feels_like_f': c['apparent_temperature'],
+        'humidity': c['relative_humidity_2m'],
+        'wind_mph': c['wind_speed_10m'],
+        'wind_gusts_mph': c.get('wind_gusts_10m', 0),
+        'code': code,
+        'description': WMO_CODES.get(code, f'Code {code}'),
+    }))
+except Exception:
+    print('{}')
+" <<< "$resp"
 }
 
 _c_to_f() {
@@ -135,13 +200,25 @@ _device_path() {
 }
 
 cmd_status() {
-  local data
+  local data weather
   data=$(_api GET /devices)
-  python3 -c "
-import json, sys
+  weather=$(_get_weather)
+
+  WEATHER_JSON="$weather" python3 -c "
+import json, sys, os
+
 data = json.load(sys.stdin)
+weather_raw = os.environ.get('WEATHER_JSON', '{}')
+weather = json.loads(weather_raw) if weather_raw and weather_raw != '{}' else None
+
+if weather:
+    print(f'Outside:  {weather[\"temp_f\"]:.1f}\u00b0F  (feels {weather[\"feels_like_f\"]:.1f}\u00b0F)  {weather[\"description\"]}  {weather[\"wind_mph\"]:.0f} mph wind  {weather[\"humidity\"]}% humidity')
+    print()
+
 for d in data.get('devices', []):
     t = d['traits']
+    if 'sdm.devices.traits.ThermostatMode' not in t:
+        continue
     room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
     temp_c = t.get('sdm.devices.traits.Temperature', {}).get('ambientTemperatureCelsius', 0)
     temp_f = round(temp_c * 9/5 + 32, 1)
@@ -153,8 +230,26 @@ for d in data.get('devices', []):
     set_c = setpoint.get('heatCelsius') or setpoint.get('coolCelsius') or 0
     set_f = round(set_c * 9/5 + 32, 1)
     status = f'ECO' if eco != 'OFF' else hvac
-    print(f'{room:15s}  {temp_f:5.1f}°F  set:{set_f:.0f}°F  {mode:4s}  {status:8s}  {humidity}% humidity')
+    print(f'{room:15s}  {temp_f:5.1f}\u00b0F  set:{set_f:.0f}\u00b0F  {mode:4s}  {status:8s}  {humidity}% humidity')
 " <<< "$data"
+}
+
+cmd_weather() {
+  local weather
+  weather=$(_get_weather)
+  if [[ "$weather" == "{}" ]]; then
+    echo "Failed to fetch weather data" >&2
+    exit 1
+  fi
+  WEATHER_JSON="$weather" python3 -c "
+import json, os
+w = json.loads(os.environ['WEATHER_JSON'])
+print(f'Current weather:')
+print(f'  Temperature:  {w[\"temp_f\"]:.1f}\u00b0F  (feels like {w[\"feels_like_f\"]:.1f}\u00b0F)')
+print(f'  Conditions:   {w[\"description\"]}')
+print(f'  Humidity:     {w[\"humidity\"]}%')
+print(f'  Wind:         {w[\"wind_mph\"]:.1f} mph (gusts {w[\"wind_gusts_mph\"]:.1f} mph)')
+"
 }
 
 cmd_set() {
@@ -196,20 +291,273 @@ cmd_eco() {
   echo "Set $room eco to ${mode}"
 }
 
+cmd_snapshot() {
+  # Record current state + weather as a JSON line to daily history file
+  mkdir -p "$HISTORY_DIR"
+  local data weather ts today
+
+  # Tolerate network failures — skip snapshot rather than crash
+  data=$(_api GET /devices) || { echo "Snapshot skipped: Nest API unreachable" >&2; return 0; }
+  if [[ -z "$data" ]] || ! echo "$data" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+    echo "Snapshot skipped: invalid API response" >&2
+    return 0
+  fi
+
+  weather=$(_get_weather)
+  ts=$(date -u +%FT%TZ)
+  today=$(date +%Y-%m-%d)
+
+  WEATHER_JSON="$weather" SNAP_TS="$ts" python3 -c "
+import json, sys, os
+data = json.load(sys.stdin)
+ts = os.environ['SNAP_TS']
+weather_raw = os.environ.get('WEATHER_JSON', '{}')
+weather = json.loads(weather_raw) if weather_raw and weather_raw != '{}' else None
+snapshot = {'timestamp': ts, 'rooms': []}
+if weather:
+    snapshot['weather'] = weather
+for d in data.get('devices', []):
+    t = d['traits']
+    if 'sdm.devices.traits.ThermostatMode' not in t:
+        continue
+    room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
+    temp_c = t.get('sdm.devices.traits.Temperature', {}).get('ambientTemperatureCelsius', 0)
+    humidity = t.get('sdm.devices.traits.Humidity', {}).get('ambientHumidityPercent', 0)
+    mode = t.get('sdm.devices.traits.ThermostatMode', {}).get('mode', '?')
+    hvac = t.get('sdm.devices.traits.ThermostatHvac', {}).get('status', '?')
+    eco = t.get('sdm.devices.traits.ThermostatEco', {}).get('mode', 'OFF')
+    setpoint = t.get('sdm.devices.traits.ThermostatTemperatureSetpoint', {})
+    set_c = setpoint.get('heatCelsius') or setpoint.get('coolCelsius') or 0
+    conn = t.get('sdm.devices.traits.Connectivity', {}).get('status', '?')
+    snapshot['rooms'].append({
+        'room': room,
+        'temp_c': round(temp_c, 2),
+        'temp_f': round(temp_c * 9/5 + 32, 1),
+        'humidity': humidity,
+        'mode': mode,
+        'hvac': hvac,
+        'eco': eco,
+        'setpoint_c': round(set_c, 2),
+        'setpoint_f': round(set_c * 9/5 + 32, 1),
+        'connectivity': conn,
+    })
+print(json.dumps(snapshot))
+" <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"
+
+  # Prune history files older than 90 days
+  find "$HISTORY_DIR" -name '*.jsonl' -mtime +1000 -delete 2>/dev/null || true
+
+  echo "Snapshot recorded at $ts → $HISTORY_DIR/${today}.jsonl"
+}
+
+cmd_history() {
+  # Show history summary. Usage: nest history [hours] [room]
+  local hours="${1:-24}" room_filter="${2:-}"
+  mkdir -p "$HISTORY_DIR"
+
+  python3 -c "
+import json, sys, os
+from datetime import datetime, timedelta, timezone
+
+hours = int('$hours')
+room_filter = '$room_filter'.lower()
+history_dir = '$HISTORY_DIR'
+cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+# Collect snapshots from recent daily files
+records = []
+for i in range(max(1, hours // 24 + 2)):
+    day = (datetime.now(timezone.utc) - timedelta(days=i)).strftime('%Y-%m-%d')
+    path = os.path.join(history_dir, f'{day}.jsonl')
+    if os.path.exists(path):
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                ts = datetime.fromisoformat(rec['timestamp'].replace('Z', '+00:00'))
+                if ts >= cutoff:
+                    records.append(rec)
+
+if not records:
+    print(f'No history data found for the last {hours} hours.')
+    print(f'Run \"nest snapshot\" to start recording data.')
+    sys.exit(0)
+
+records.sort(key=lambda r: r['timestamp'])
+
+# Aggregate outdoor weather
+weather_temps = []
+weather_feels = []
+weather_humidity = []
+weather_wind = []
+weather_descriptions = {}
+for rec in records:
+    w = rec.get('weather')
+    if w:
+        weather_temps.append(w['temp_f'])
+        weather_feels.append(w['feels_like_f'])
+        weather_humidity.append(w['humidity'])
+        weather_wind.append(w['wind_mph'])
+        desc = w.get('description', '?')
+        weather_descriptions[desc] = weather_descriptions.get(desc, 0) + 1
+
+# Aggregate per room
+rooms = {}
+for rec in records:
+    for r in rec['rooms']:
+        name = r['room']
+        if room_filter and room_filter not in name.lower():
+            continue
+        if name not in rooms:
+            rooms[name] = {'temps': [], 'humidities': [], 'hvac_heating': 0, 'total': 0, 'setpoints': []}
+        rooms[name]['temps'].append(r['temp_f'])
+        rooms[name]['humidities'].append(r['humidity'])
+        rooms[name]['setpoints'].append(r['setpoint_f'])
+        rooms[name]['total'] += 1
+        if r['hvac'] == 'HEATING':
+            rooms[name]['hvac_heating'] += 1
+
+print(f'Climate history — last {hours}h ({len(records)} snapshots)')
+print(f'Period: {records[0][\"timestamp\"]} → {records[-1][\"timestamp\"]}')
+print()
+
+if weather_temps:
+    top_conditions = sorted(weather_descriptions.items(), key=lambda x: -x[1])
+    conditions_str = ', '.join(f'{d}' for d, _ in top_conditions[:3])
+    print(f'Outside:')
+    print(f'  Temperature:  {min(weather_temps):.1f}°F — {max(weather_temps):.1f}°F  (avg {sum(weather_temps)/len(weather_temps):.1f}°F)')
+    print(f'  Feels like:   {min(weather_feels):.1f}°F — {max(weather_feels):.1f}°F')
+    print(f'  Humidity:     {min(weather_humidity)}% — {max(weather_humidity)}%')
+    print(f'  Wind:         {min(weather_wind):.0f} — {max(weather_wind):.0f} mph')
+    print(f'  Conditions:   {conditions_str}')
+    print()
+
+for name in sorted(rooms.keys()):
+    d = rooms[name]
+    t = d['temps']
+    h = d['humidities']
+    s = d['setpoints']
+    heat_pct = round(100 * d['hvac_heating'] / d['total'])
+    print(f'{name}:')
+    print(f'  Temperature:  {min(t):.1f}°F — {max(t):.1f}°F  (avg {sum(t)/len(t):.1f}°F)')
+    print(f'  Humidity:     {min(h)}% — {max(h)}%  (avg {sum(h)//len(h)}%)')
+    print(f'  Setpoint:     {min(s):.0f}°F — {max(s):.0f}°F')
+    print(f'  HVAC heating: {heat_pct}% of snapshots')
+    if weather_temps:
+        avg_indoor = sum(t) / len(t)
+        avg_outdoor = sum(weather_temps) / len(weather_temps)
+        print(f'  Δ vs outside: +{avg_indoor - avg_outdoor:.1f}°F')
+    print()
+"
+}
+
+cmd_dashboard() {
+  local subcmd="${1:-open}"
+  case "$subcmd" in
+    open)
+      open "http://localhost:${DASHBOARD_PORT}/"
+      ;;
+    start)
+      if [[ ! -f "$DASHBOARD_PLIST" ]]; then
+        echo "LaunchAgent plist not found at $DASHBOARD_PLIST" >&2
+        echo "Install it first: cp <dotfiles>/openclaw/ai.openclaw.nest-dashboard.plist ~/Library/LaunchAgents/" >&2
+        exit 1
+      fi
+      if launchctl list "$DASHBOARD_LABEL" &>/dev/null; then
+        echo "Dashboard already running"
+      else
+        launchctl load -w "$DASHBOARD_PLIST"
+        echo "Dashboard started on port $DASHBOARD_PORT"
+      fi
+      ;;
+    stop)
+      if launchctl list "$DASHBOARD_LABEL" &>/dev/null; then
+        launchctl unload "$DASHBOARD_PLIST"
+        echo "Dashboard stopped"
+      else
+        echo "Dashboard not running"
+      fi
+      ;;
+    restart)
+      cmd_dashboard stop
+      sleep 1
+      cmd_dashboard start
+      ;;
+    status)
+      if launchctl list "$DASHBOARD_LABEL" &>/dev/null; then
+        local pid
+        pid=$(launchctl list "$DASHBOARD_LABEL" | awk -F'"PID" = ' 'NF>1{gsub(/[^0-9]/,"",$2); print $2}')
+        echo "Dashboard running (PID: ${pid:-?}) on port $DASHBOARD_PORT"
+      else
+        echo "Dashboard not running"
+      fi
+      ;;
+    *)
+      echo "Usage: nest dashboard [open|start|stop|restart|status]" >&2
+      exit 1
+      ;;
+  esac
+}
+
 cmd_help() {
   cat <<'HELP'
 Usage: nest <command> [args]
 
 Commands:
-  status                    Show all thermostats
+  status                    Show all thermostats + outdoor weather
+  weather                   Show current outdoor weather only
   set <room> <temp°F>       Set temperature (e.g. nest set bedroom 72)
   mode <room> <HEAT|OFF>    Set thermostat mode
   eco <room> [on|off]       Toggle eco mode
+  camera snap [room] [out]  Capture camera snapshot (default: kitchen)
+  snapshot                  Record current state + weather to history
+  history [hours] [room]    Show history summary (default: 24h, all rooms)
+  dashboard                 Open dashboard in browser
+  dashboard start|stop      Start/stop dashboard LaunchAgent
+  dashboard restart|status  Restart or check dashboard status
   raw                       Raw JSON device dump
   help                      Show this help
 
 Room names are fuzzy-matched (e.g. "bed" matches "Bedroom").
+History is stored in ~/.openclaw/nest-history/ as daily JSONL files.
+Weather data from Open-Meteo. Location: ~/.openclaw/nest-location.conf
 HELP
+}
+
+cmd_camera_snap() {
+  # Capture a single frame from a camera via WebRTC
+  local room="${1:-kitchen}"
+  local output="${2:-${HOME}/.openclaw/workspace/camera-snap.jpg}"
+
+  # Find camera device ID
+  local data camera_id
+  data=$(_api GET /devices)
+  camera_id=$(python3 -c "
+import json, sys
+query = '$room'.lower()
+data = json.load(sys.stdin)
+for d in data.get('devices', []):
+    if 'CAMERA' not in d.get('type', ''):
+        continue
+    room = d.get('parentRelations', [{}])[0].get('displayName', '').lower()
+    if query in room:
+        print(d['name'].split('/')[-1])
+        break
+" <<< "$data")
+
+  if [[ -z "$camera_id" ]]; then
+    echo "No camera matching '$room'" >&2
+    exit 1
+  fi
+
+  local token project_id
+  token=$(_get_access_token)
+  project_id=$(_project_id)
+
+  mkdir -p "$(dirname "$output")"
+  /usr/bin/python3 "${HOME}/.openclaw/bin/nest-camera-snap.py" "$camera_id" "$token" "$project_id" "$output"
 }
 
 cmd_raw() {
@@ -218,6 +566,7 @@ cmd_raw() {
 
 case "${1:-help}" in
   status)           cmd_status ;;
+  weather)          cmd_weather ;;
   set)              cmd_set "${2:?room required}" "${3:?temperature required}" ;;
   mode)             cmd_mode "${2:?room required}" "${3:?mode required}" ;;
   eco)
@@ -225,6 +574,15 @@ case "${1:-help}" in
     toggle="${3:-on}"
     [[ "$toggle" == "off" ]] && cmd_eco "$room" "OFF" || cmd_eco "$room" "MANUAL_ECO"
     ;;
+  camera)
+    case "${2:-}" in
+      snap)  cmd_camera_snap "${3:-kitchen}" "${4:-}" ;;
+      *)     echo "Usage: nest camera snap [room] [output_path]" >&2; exit 1 ;;
+    esac
+    ;;
+  snapshot)         cmd_snapshot ;;
+  history)          cmd_history "${2:-24}" "${3:-}" ;;
+  dashboard)        cmd_dashboard "${2:-open}" ;;
   raw)              cmd_raw ;;
   help|--help|-h)   cmd_help ;;
   *)                echo "Unknown command: $1. Run 'nest help'." >&2; exit 1 ;;
