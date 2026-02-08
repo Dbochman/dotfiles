@@ -1,0 +1,412 @@
+#!/usr/bin/env python3
+# websearch — CLI for web search via ddgr (DuckDuckGo) and Tavily API
+# Primary: ddgr (free, no API key). Fallback: Tavily (AI-optimized results).
+
+import sys
+import os
+import time
+import json
+import subprocess
+import logging
+from pathlib import Path
+
+import warnings
+warnings.filterwarnings("ignore", message="urllib3.*OpenSSL")
+
+try:
+    import requests
+except ImportError:
+    print("Error: 'requests' module not found. Install with: pip3 install requests", file=sys.stderr)
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
+# Globals
+# ---------------------------------------------------------------------------
+
+CACHE_DIR = Path.home() / ".cache" / "openclaw-gateway"
+LOG_DIR = Path.home() / ".openclaw" / "logs"
+LOG_FILE = LOG_DIR / "websearch.log"
+
+TAVILY_API_URL = "https://api.tavily.com/search"
+TTL_LONG = 365 * 24 * 3600  # 1 year — api_key
+
+DEFAULT_NUM_RESULTS = 5
+MAX_RESULTS = 20
+
+# Find ddgr binary — PATH may not include /opt/homebrew/bin in launchd/SSH
+DDGR_BIN = "ddgr"
+for p in ("/opt/homebrew/bin/ddgr", "/usr/local/bin/ddgr"):
+    if os.path.isfile(p):
+        DDGR_BIN = p
+        break
+
+# Set up logging
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=str(LOG_FILE),
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("websearch")
+
+# Global flags
+JSON_OUTPUT = False
+
+
+# ---------------------------------------------------------------------------
+# Credentials (1Password + file cache)
+# ---------------------------------------------------------------------------
+
+def _cache_path(name):
+    return CACHE_DIR / f"tavily_{name}"
+
+
+def _read_cache(name, ttl=TTL_LONG):
+    path = _cache_path(name)
+    if not path.exists():
+        return None
+    age = time.time() - path.stat().st_mtime
+    if age > ttl:
+        return None
+    return path.read_text().strip()
+
+
+def _write_cache(name, value):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = _cache_path(name)
+    path.write_text(value)
+    path.chmod(0o600)
+
+
+def _op_read(ref):
+    try:
+        result = subprocess.run(
+            ["timeout", "5", "op", "read", ref],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except FileNotFoundError:
+        pass
+    return None
+
+
+def get_tavily_key():
+    """Get Tavily API key from cache or 1Password."""
+    cached = _read_cache("api_key")
+    if cached:
+        return cached
+    val = _op_read("op://OpenClaw/Tavily/api_key")
+    if val:
+        _write_cache("api_key", val)
+        return val
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Search Providers
+# ---------------------------------------------------------------------------
+
+def search_ddgr(query, num_results=DEFAULT_NUM_RESULTS, site=None):
+    """Search via ddgr (DuckDuckGo CLI)."""
+    cmd = [DDGR_BIN, "--json", "-n", str(num_results)]
+    if site:
+        cmd.extend(["-w", site])
+    cmd.append(query)
+
+    log.info("ddgr search: %s", query)
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            log.warning("ddgr failed (rc=%d): %s", result.returncode, result.stderr[:200])
+            return None
+        data = json.loads(result.stdout)
+        return [
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("abstract", ""),
+                "source": "duckduckgo",
+            }
+            for r in data
+        ]
+    except subprocess.TimeoutExpired:
+        log.warning("ddgr timed out")
+        return None
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        log.warning("ddgr error: %s", e)
+        return None
+
+
+def search_tavily(query, num_results=DEFAULT_NUM_RESULTS, topic="general",
+                  include_answer=False, include_raw_content=False):
+    """Search via Tavily API."""
+    api_key = get_tavily_key()
+    if not api_key:
+        print("Error: Tavily API key not found. Add 'Tavily' item to 1Password 'OpenClaw' vault with field 'api_key'.", file=sys.stderr)
+        print("Or seed manually: echo 'tvly-YOUR_KEY' > ~/.cache/openclaw-gateway/tavily_api_key && chmod 600 ~/.cache/openclaw-gateway/tavily_api_key", file=sys.stderr)
+        return None
+
+    log.info("tavily search: %s (topic=%s)", query, topic)
+    try:
+        resp = requests.post(
+            TAVILY_API_URL,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            json={
+                "query": query,
+                "max_results": num_results,
+                "topic": topic,
+                "include_answer": include_answer,
+                "include_raw_content": include_raw_content,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 401:
+            log.error("Tavily auth failed (401)")
+            print("Error: Tavily API key is invalid or expired.", file=sys.stderr)
+            return None
+        if not resp.ok:
+            log.error("Tavily error %d: %s", resp.status_code, resp.text[:200])
+            print(f"Error: Tavily API returned {resp.status_code}", file=sys.stderr)
+            return None
+
+        data = resp.json()
+        results = []
+
+        # Include AI answer if requested
+        answer = data.get("answer")
+        if include_answer and answer:
+            results.append({
+                "title": "AI Answer",
+                "url": "",
+                "snippet": answer,
+                "source": "tavily-answer",
+            })
+
+        for r in data.get("results", []):
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "snippet": r.get("content", ""),
+                "score": r.get("score"),
+                "source": "tavily",
+            })
+        return results
+    except requests.RequestException as e:
+        log.error("Tavily network error: %s", e)
+        print(f"Error: Tavily request failed: {e}", file=sys.stderr)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+def output(results, query):
+    if JSON_OUTPUT:
+        print(json.dumps(results, indent=2, default=str))
+        return
+
+    if not results:
+        print(f"No results for '{query}'")
+        return
+
+    print(f"Results for '{query}':\n")
+    for i, r in enumerate(results, 1):
+        title = r.get("title", "Untitled")
+        url = r.get("url", "")
+        snippet = r.get("snippet", "")
+        source = r.get("source", "")
+
+        if source == "tavily-answer":
+            print(f"  AI Answer: {snippet}\n")
+            continue
+
+        tag = f" [{source}]" if source else ""
+        print(f"  {i}. {title}{tag}")
+        if url:
+            print(f"     {url}")
+        if snippet:
+            # Truncate long snippets
+            if len(snippet) > 200:
+                snippet = snippet[:200] + "..."
+            print(f"     {snippet}")
+        print()
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_search(args):
+    """Default search: tries ddgr first, falls back to Tavily."""
+    query, opts = parse_search_args(args)
+    if not query:
+        print("Usage: websearch <query> [options]", file=sys.stderr)
+        sys.exit(1)
+
+    num = opts.get("num", DEFAULT_NUM_RESULTS)
+    site = opts.get("site")
+    provider = opts.get("provider")
+
+    if provider == "tavily":
+        results = search_tavily(
+            query, num_results=num,
+            topic=opts.get("topic", "general"),
+            include_answer=opts.get("answer", False),
+        )
+        if results is None:
+            sys.exit(1)
+    elif provider == "ddgr":
+        results = search_ddgr(query, num_results=num, site=site)
+        if results is None:
+            print("Error: ddgr search failed.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Default: ddgr first, Tavily fallback
+        results = search_ddgr(query, num_results=num, site=site)
+        if results is None:
+            log.info("ddgr failed, falling back to Tavily")
+            results = search_tavily(query, num_results=num)
+            if results is None:
+                print("Error: All search providers failed.", file=sys.stderr)
+                sys.exit(1)
+
+    output(results, query)
+
+
+def cmd_tavily(args):
+    """Search via Tavily with AI features."""
+    query, opts = parse_search_args(args)
+    if not query:
+        print("Usage: websearch tavily <query> [options]", file=sys.stderr)
+        sys.exit(1)
+
+    results = search_tavily(
+        query,
+        num_results=opts.get("num", DEFAULT_NUM_RESULTS),
+        topic=opts.get("topic", "general"),
+        include_answer=opts.get("answer", True),  # default on for tavily command
+    )
+    if results is None:
+        sys.exit(1)
+    output(results, query)
+
+
+def cmd_status():
+    """Show provider status."""
+    print("Web Search Providers:\n")
+
+    # Check ddgr
+    try:
+        result = subprocess.run(
+            [DDGR_BIN, "--version"], capture_output=True, text=True, timeout=5,
+        )
+        ddgr_ok = result.returncode == 0
+        ddgr_ver = result.stdout.strip() if ddgr_ok else "not found"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        ddgr_ok = False
+        ddgr_ver = "not installed"
+    print(f"  ddgr:   {'OK' if ddgr_ok else 'MISSING'} ({ddgr_ver})")
+
+    # Check Tavily
+    tavily_key = get_tavily_key()
+    if tavily_key:
+        masked = tavily_key[:8] + "..." + tavily_key[-4:]
+        print(f"  tavily: OK (key: {masked})")
+    else:
+        print("  tavily: NO API KEY")
+        print("          Add 'Tavily' to 1Password 'OpenClaw' vault with field 'api_key'")
+
+    print(f"\n  Logs: {LOG_FILE}")
+
+
+def cmd_help():
+    print("""Usage: websearch <query> [options]
+       websearch tavily <query> [options]
+       websearch status
+       websearch help
+
+Commands:
+  <query>              Search (ddgr primary, Tavily fallback)
+  tavily <query>       Search via Tavily with AI answer
+  status               Show provider status
+  help                 Show this help
+
+Options:
+  -n, --num N          Number of results (default: 5, max: 20)
+  -s, --site DOMAIN    Restrict to domain (ddgr only)
+  -p, --provider NAME  Force provider: ddgr, tavily
+  -t, --topic TOPIC    Tavily topic: general, news (default: general)
+  --answer             Include AI-generated answer (Tavily only)
+  --json               Output raw JSON""")
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+def parse_search_args(args):
+    """Parse search arguments and options. Returns (query_string, options_dict)."""
+    opts = {}
+    query_parts = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-n", "--num") and i + 1 < len(args):
+            opts["num"] = min(int(args[i + 1]), MAX_RESULTS)
+            i += 2
+        elif arg in ("-s", "--site") and i + 1 < len(args):
+            opts["site"] = args[i + 1]
+            i += 2
+        elif arg in ("-p", "--provider") and i + 1 < len(args):
+            opts["provider"] = args[i + 1]
+            i += 2
+        elif arg in ("-t", "--topic") and i + 1 < len(args):
+            opts["topic"] = args[i + 1]
+            i += 2
+        elif arg == "--answer":
+            opts["answer"] = True
+            i += 1
+        else:
+            query_parts.append(arg)
+            i += 1
+    return " ".join(query_parts), opts
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    global JSON_OUTPUT
+
+    args = sys.argv[1:]
+
+    # Extract global flags
+    if "--json" in args:
+        JSON_OUTPUT = True
+        args.remove("--json")
+
+    if not args or args[0] in ("help", "--help", "-h"):
+        cmd_help()
+        return
+
+    command = args[0]
+
+    if command == "status":
+        cmd_status()
+    elif command == "tavily":
+        cmd_tavily(args[1:])
+    else:
+        cmd_search(args)
+
+
+if __name__ == "__main__":
+    main()
