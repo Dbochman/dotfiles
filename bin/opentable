@@ -1,0 +1,819 @@
+#!/usr/bin/env python3
+# opentable — CLI for OpenTable reservations via undocumented mobile API
+# Auth token extracted from browser cookie (authCke → atk field).
+# This tool uses undocumented internal APIs and may break when OpenTable changes them.
+
+import sys
+import os
+import time
+import json
+import subprocess
+import logging
+from collections import deque
+from pathlib import Path
+from datetime import datetime
+
+import warnings
+warnings.filterwarnings("ignore", message="urllib3.*OpenSSL")
+
+try:
+    from curl_cffi import requests
+except ImportError:
+    try:
+        import requests as _requests
+        print("Warning: curl_cffi not found, falling back to requests (may be blocked by bot detection).", file=sys.stderr)
+        print("Install with: pip3 install curl_cffi", file=sys.stderr)
+        requests = _requests
+    except ImportError:
+        print("Error: Neither 'curl_cffi' nor 'requests' found. Install with: pip3 install curl_cffi", file=sys.stderr)
+        sys.exit(1)
+
+HAS_CURL_CFFI = hasattr(requests, "Session") and "impersonate" in str(type(requests))
+# Check properly
+try:
+    from curl_cffi import requests as _cffi_check
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+
+# ---------------------------------------------------------------------------
+# Globals
+# ---------------------------------------------------------------------------
+
+CACHE_DIR = Path.home() / ".cache" / "openclaw-gateway"
+LOG_DIR = Path.home() / ".openclaw" / "logs"
+LOG_FILE = LOG_DIR / "opentable.log"
+MOBILE_API_URL = "https://mobile-api.opentable.com"
+
+TTL_AUTH = 7 * 24 * 3600        # 7 days — auth_token (from browser cookie)
+TTL_LONG = 365 * 24 * 3600     # 1 year — name, email, phone
+
+# Set up logging
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=str(LOG_FILE),
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("opentable")
+
+# Per-command result caps
+MAX_AVAILABILITY_SLOTS = 50
+
+# Global flags
+JSON_OUTPUT = False
+DRY_RUN = False
+
+
+# ---------------------------------------------------------------------------
+# Log redaction
+# ---------------------------------------------------------------------------
+
+_REDACT_PATTERNS = None
+
+def _redact(text):
+    global _REDACT_PATTERNS
+    if _REDACT_PATTERNS is None:
+        import re
+        _REDACT_PATTERNS = [
+            (re.compile(r'(auth.token[=":]+\s*)"?[^"&\s,}]+"?', re.IGNORECASE), r'\1"[REDACTED]"'),
+            (re.compile(r'(Bearer\s+)[A-Za-z0-9_\-]+', re.IGNORECASE), r'\1[REDACTED]'),
+            (re.compile(r'(token[=":]+\s*)"?[A-Za-z0-9_\-]{20,}"?'), r'\1"[REDACTED]"'),
+        ]
+    for pattern, replacement in _REDACT_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Auth Token Refresh Checklist
+# ---------------------------------------------------------------------------
+
+AUTH_REFRESH_CHECKLIST = """
+Auth token missing or expired. To refresh:
+
+  1. Open Chrome -> navigate to opentable.com
+  2. Log in to your account
+  3. Open DevTools (Cmd+Opt+I) -> Application tab -> Cookies
+  4. Find the cookie named "authCke"
+  5. Copy the "atk" value from it (the part after atk= and before &rtk=)
+     Example: atk=60aade3f-42f9-457e-b837-e5bf9713777e&rtk=... -> copy just 60aade3f-42f9-457e-b837-e5bf9713777e
+  6. Update 1Password:
+     op item edit "OpenTable" --vault "OpenClaw" "auth_token=<atk_value>"
+  7. Clear local cache:
+     rm ~/.cache/openclaw-gateway/opentable_auth_token
+
+Note: The auth token (atk) typically lasts ~14 days. The mobile API does
+not use Akamai bot detection, so no browser cookies are needed.
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiter
+# ---------------------------------------------------------------------------
+
+class RateLimiter:
+    """Enforces min 3s between requests, max 20/minute."""
+
+    def __init__(self, min_interval=3.0, max_per_minute=20):
+        self.min_interval = min_interval
+        self.max_per_minute = max_per_minute
+        self.timestamps = deque()
+
+    def wait(self):
+        now = time.time()
+        while self.timestamps and now - self.timestamps[0] > 60:
+            self.timestamps.popleft()
+        if len(self.timestamps) >= self.max_per_minute:
+            sleep_until = self.timestamps[0] + 60
+            wait_time = sleep_until - now
+            if wait_time > 0:
+                log.info("Rate limit: sleeping %.1fs (max/min)", wait_time)
+                time.sleep(wait_time)
+        if self.timestamps:
+            elapsed = now - self.timestamps[-1]
+            if elapsed < self.min_interval:
+                time.sleep(self.min_interval - elapsed)
+        self.timestamps.append(time.time())
+
+
+# ---------------------------------------------------------------------------
+# Credentials (1Password + file cache)
+# ---------------------------------------------------------------------------
+
+class OpenTableCredentials:
+    OP_REF_PREFIX = "op://OpenClaw/OpenTable"
+
+    FIELDS = {
+        "auth_token": {"ttl": TTL_AUTH},
+        "first_name": {"ttl": TTL_LONG},
+        "last_name":  {"ttl": TTL_LONG},
+        "email":      {"ttl": TTL_LONG},
+        "phone":      {"ttl": TTL_LONG},
+    }
+
+    def __init__(self):
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _cache_path(self, name):
+        return CACHE_DIR / f"opentable_{name}"
+
+    def _read_cache(self, name):
+        path = self._cache_path(name)
+        if not path.exists():
+            return None
+        age = time.time() - path.stat().st_mtime
+        ttl = self.FIELDS[name]["ttl"]
+        if age > ttl:
+            return None
+        return path.read_text().strip()
+
+    def _write_cache(self, name, value):
+        path = self._cache_path(name)
+        path.write_text(value)
+        path.chmod(0o600)
+
+    def _clear_cache(self, name):
+        path = self._cache_path(name)
+        if path.exists():
+            path.unlink()
+
+    def _op_read(self, field):
+        ref = f"{self.OP_REF_PREFIX}/{field}"
+        try:
+            result = subprocess.run(
+                ["timeout", "5", "op", "read", ref],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except FileNotFoundError:
+            pass
+        return None
+
+    def get(self, name):
+        cached = self._read_cache(name)
+        if cached:
+            return cached
+        val = self._op_read(name)
+        if val:
+            self._write_cache(name, val)
+            return val
+        if name == "auth_token":
+            print(f"Error: {AUTH_REFRESH_CHECKLIST}", file=sys.stderr)
+            sys.exit(1)
+        print(
+            f"Error: Could not read '{name}' from 1Password.\n"
+            f"Create a 1Password item named 'OpenTable' in vault 'OpenClaw' "
+            f"with fields: auth_token, first_name, last_name, email, phone",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    def clear(self, name):
+        self._clear_cache(name)
+
+
+# ---------------------------------------------------------------------------
+# API Client (Mobile API)
+# ---------------------------------------------------------------------------
+
+class OpenTableAPI:
+    """OpenTable mobile API client using bearer token auth."""
+
+    def __init__(self):
+        self.creds = OpenTableCredentials()
+        self.limiter = RateLimiter()
+
+    def _headers(self):
+        auth_token = self.creds.get("auth_token")
+        return {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "user-agent": "com.contextoptional.OpenTable/16.5.0.25 (iPhone; iOS 18.3.1; Scale/3.00)",
+            "authorization": f"Bearer {auth_token}",
+        }
+
+    def _request(self, method, path, **kwargs):
+        self.limiter.wait()
+        url = f"{MOBILE_API_URL}{path}"
+        headers = self._headers()
+        headers.update(kwargs.pop("headers", {}))
+        log.info("%s %s", method, path)
+
+        req_kwargs = dict(headers=headers, timeout=30)
+        if HAS_CURL_CFFI:
+            req_kwargs["impersonate"] = "chrome"
+        req_kwargs.update(kwargs)
+
+        try:
+            resp = requests.request(method, url, **req_kwargs)
+        except Exception as e:
+            log.error("Network error: %s", e)
+            time.sleep(5)
+            try:
+                resp = requests.request(method, url, **req_kwargs)
+            except Exception as e2:
+                log.error("Network error (retry): %s", e2)
+                print(f"Error: Network request failed: {e2}", file=sys.stderr)
+                sys.exit(1)
+
+        if resp.status_code == 401:
+            log.error("Auth error 401 — token expired")
+            self.creds.clear("auth_token")
+            print(f"Error: Auth token expired (HTTP 401).\n", file=sys.stderr)
+            print(AUTH_REFRESH_CHECKLIST, file=sys.stderr)
+            sys.exit(1)
+
+        if resp.status_code == 429:
+            for attempt, delay in enumerate([5, 10, 20], 1):
+                log.warning("Rate limited (429), backing off %ds (attempt %d)", delay, attempt)
+                time.sleep(delay)
+                try:
+                    resp = requests.request(method, url, **req_kwargs)
+                except Exception:
+                    continue
+                if resp.status_code != 429:
+                    break
+
+        if not resp.ok:
+            log.error("API error %d: %s", resp.status_code, _redact(resp.text[:500]))
+            try:
+                err = resp.json()
+                msg = err.get("message", err.get("detail", resp.text[:200]))
+            except Exception:
+                msg = resp.text[:200] if resp.text else f"HTTP {resp.status_code}"
+            print(f"Error: API returned {resp.status_code}: {msg}", file=sys.stderr)
+            sys.exit(1)
+
+        ct = resp.headers.get("content-type", "")
+        if "application/json" in ct and resp.text:
+            return resp.json()
+        return resp.text if resp.text else {}
+
+    def get_restaurant(self, restaurant_id):
+        return self._request("GET", f"/api/v3/restaurant/{restaurant_id}")
+
+    def find_availability(self, restaurant_id, date, time_str, party_size):
+        return self._request("PUT", "/api/v3/restaurant/availability",
+            data=json.dumps({
+                "rids": [str(restaurant_id)],
+                "dateTime": f"{date}T{time_str}",
+                "partySize": int(party_size),
+                "includeNextAvailable": True,
+                "forceNextAvailable": "true",
+                "requestTicket": "true",
+                "allowPop": True,
+                "includeOffers": True,
+                "requestPremium": "true",
+                "requestDateMessages": True,
+                "requestAttributeTables": "true",
+                "attribution": {"partnerId": "84"},
+            }),
+        )
+
+    def book(self, restaurant_id, slot_token, slot_hash, date_time, party_size, dining_area_id=None):
+        payload = {
+            "rid": str(restaurant_id),
+            "dateTime": date_time,
+            "partySize": int(party_size),
+            "slotAvailabilityToken": slot_token,
+            "slotHash": slot_hash,
+            "firstName": self.creds.get("first_name"),
+            "lastName": self.creds.get("last_name"),
+            "email": self.creds.get("email"),
+            "phoneNumber": self.creds.get("phone"),
+            "countryCode": "US",
+            "points": 100,
+        }
+        if dining_area_id:
+            payload["diningAreaId"] = dining_area_id
+        return self._request("POST", "/api/v3/reservation/book",
+            data=json.dumps(payload),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+def output(data, human_str=None):
+    if JSON_OUTPUT:
+        print(json.dumps(data, indent=2, default=str))
+    elif human_str:
+        print(human_str)
+    else:
+        print(json.dumps(data, indent=2, default=str))
+
+
+def fmt_time(time_str):
+    """Format ISO datetime or HH:MM to 12h display."""
+    if not time_str:
+        return "?"
+    try:
+        # Handle ISO format: 2026-03-20T19:00
+        if "T" in time_str:
+            time_str = time_str.split("T")[1]
+        h, m = map(int, time_str.split(":")[:2])
+        ampm = "AM" if h < 12 else "PM"
+        h12 = h % 12 or 12
+        return f"{h12}:{m:02d} {ampm}"
+    except Exception:
+        return time_str
+
+
+def _extract_time(dt_str):
+    """Extract HH:MM from ISO datetime string."""
+    if not dt_str:
+        return ""
+    if "T" in dt_str:
+        return dt_str.split("T")[1][:5]
+    return dt_str[:5]
+
+
+# ---------------------------------------------------------------------------
+# Command handlers
+# ---------------------------------------------------------------------------
+
+def cmd_info(api, args):
+    if not args:
+        print("Usage: opentable info <restaurant_id>", file=sys.stderr)
+        sys.exit(1)
+    rid = args[0]
+    data = api.get_restaurant(rid)
+    if JSON_OUTPUT:
+        output(data)
+        return
+    name = data.get("name", "?")
+    line1 = data.get("line1", "")
+    city = data.get("city", "")
+    state = data.get("state", "")
+    cuisine = data.get("cuisineForDisplay", data.get("cuisine", ""))
+    price = data.get("priceBandForDisplay", "")
+    desc = data.get("description", "")
+    print(f"  [{rid}] {name}")
+    if line1:
+        print(f"  Address:  {line1}, {city}, {state}")
+    if cuisine or price:
+        parts = [p for p in [cuisine, price] if p]
+        print(f"  Cuisine:  {' | '.join(parts)}")
+    if desc:
+        # Truncate description
+        if len(desc) > 200:
+            desc = desc[:200] + "..."
+        print(f"  About:    {desc}")
+
+
+def cmd_availability(api, args):
+    if len(args) < 3:
+        print("Usage: opentable availability <restaurant_id> <date> <party_size> [--time HH:MM]", file=sys.stderr)
+        print("  date format: YYYY-MM-DD", file=sys.stderr)
+        print("  default time: 19:00", file=sys.stderr)
+        sys.exit(1)
+    restaurant_id, day, party_size = args[0], args[1], args[2]
+    _validate_date(day)
+    _validate_party_size(party_size)
+
+    time_str = "19:00"
+    i = 3
+    while i < len(args):
+        if args[i] == "--time" and i + 1 < len(args):
+            time_str = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    data = api.find_availability(restaurant_id, day, time_str, party_size)
+    if JSON_OUTPUT:
+        output(data)
+        return
+
+    # Parse mobile API response
+    suggested = data.get("suggestedAvailability", [])
+    if not suggested:
+        print(f"No availability for restaurant {restaurant_id} on {day} (party of {party_size})")
+        return
+
+    # Get restaurant name
+    rname = f"Restaurant {restaurant_id}"
+    try:
+        info = api.get_restaurant(restaurant_id)
+        rname = info.get("name", rname)
+    except SystemExit:
+        pass
+
+    print(f"{rname} -- {day} -- party of {party_size}\n")
+
+    all_slots = []
+    for avail_day in suggested:
+        avail_date = avail_day.get("dateTime", "?").split("T")[0] if "T" in avail_day.get("dateTime", "") else avail_day.get("dateTime", "?")
+        timeslots = avail_day.get("timeslots", [])
+        for slot in timeslots:
+            if slot.get("available", False):
+                slot["_date"] = avail_date
+                all_slots.append(slot)
+
+    if not all_slots:
+        no_reasons = []
+        for s in suggested:
+            no_reasons.extend(s.get("noTimesReasons", []))
+        if no_reasons:
+            print(f"  No available slots. Reasons: {', '.join(no_reasons)}")
+        else:
+            print("  No available slots")
+        return
+
+    total_slots = len(all_slots)
+    display_slots = all_slots[:MAX_AVAILABILITY_SLOTS]
+    if total_slots > MAX_AVAILABILITY_SLOTS:
+        print(f"  Showing {MAX_AVAILABILITY_SLOTS}/{total_slots} slots\n")
+
+    for slot in display_slots:
+        slot_dt = slot.get("dateTime", "?")
+        slot_date = slot.get("_date", "")
+        slot_time_display = fmt_time(slot_dt)
+        slot_type = slot.get("type", "Standard")
+        points = slot.get("points", 0)
+        token = slot.get("token", "")
+        slot_hash = slot.get("slotHash", "")
+        areas = slot.get("diningAreas", [])
+        area_names = [a.get("environment", "") for a in areas]
+        area_str = "/".join(a for a in area_names if a)
+
+        token_short = token[:20] + "..." if len(token) > 20 else token
+        line = f"  {slot_date} {slot_time_display:10s}  {slot_type:10s}"
+        if area_str:
+            line += f"  {area_str:10s}"
+        if points:
+            line += f"  {points}pts"
+        print(line)
+
+
+def cmd_book(api, args):
+    if len(args) < 4:
+        print("Usage: opentable book <restaurant_id> <date> <time> <party_size>", file=sys.stderr)
+        print("  date format: YYYY-MM-DD", file=sys.stderr)
+        print("  time format: HH:MM", file=sys.stderr)
+        sys.exit(1)
+    restaurant_id, day, time_str, party_size = args[0], args[1], args[2], args[3]
+    _validate_date(day)
+    _validate_party_size(party_size)
+
+    print(f"Looking up availability for restaurant {restaurant_id} on {day} at {time_str}...")
+    data = api.find_availability(restaurant_id, day, time_str, party_size)
+
+    # Find matching slot
+    slot_token = None
+    slot_hash = None
+    matched_dt = None
+    dining_area_id = None
+    target_minutes = int(time_str.split(":")[0]) * 60 + int(time_str.split(":")[1])
+
+    best_slot = None
+    best_diff = 999
+
+    suggested = data.get("suggestedAvailability", [])
+    for avail_day in suggested:
+        for slot in avail_day.get("timeslots", []):
+            if not slot.get("available", False):
+                continue
+            sdt = slot.get("dateTime", "")
+            st = _extract_time(sdt)
+            if not st:
+                continue
+            # Check if this is on the requested date
+            if day not in sdt:
+                continue
+            sh, sm = int(st.split(":")[0]), int(st.split(":")[1])
+            slot_minutes = sh * 60 + sm
+            diff = abs(slot_minutes - target_minutes)
+            if diff < best_diff:
+                best_diff = diff
+                best_slot = slot
+                matched_dt = sdt
+
+    if not best_slot or best_diff > 30:
+        print(f"Error: No slot found near {time_str} on {day}. Run 'opentable availability' to see available times.", file=sys.stderr)
+        sys.exit(1)
+
+    slot_token = best_slot.get("token", "")
+    slot_hash = best_slot.get("slotHash", "")
+    areas = best_slot.get("diningAreas", [])
+    if areas:
+        dining_area_id = areas[0].get("id")
+
+    # Get restaurant name
+    rname = f"Restaurant {restaurant_id}"
+    try:
+        info = api.get_restaurant(restaurant_id)
+        rname = info.get("name", rname)
+    except SystemExit:
+        pass
+
+    print(f"\nBooking Summary:")
+    print(f"  Restaurant: {rname}")
+    print(f"  Date:       {day}")
+    print(f"  Time:       {fmt_time(matched_dt)}")
+    print(f"  Party:      {party_size}")
+    print(f"  Type:       {best_slot.get('type', 'Standard')}")
+    print(f"  Name:       {api.creds.get('first_name')} {api.creds.get('last_name')}")
+
+    if DRY_RUN:
+        print("\n[DRY RUN] Would book -- stopping before confirmation.")
+        return
+
+    confirm = input("\nBook this reservation? (yes/no): ").strip().lower()
+    if confirm != "yes":
+        print("Booking cancelled.")
+        return
+
+    result = api.book(restaurant_id, slot_token, slot_hash, matched_dt, party_size, dining_area_id)
+    output(result, "Reservation booked successfully!")
+
+
+def cmd_snipe(api, args):
+    if len(args) < 3:
+        print("Usage: opentable snipe <restaurant_id> <date> <party_size> [--time HH:MM] [--duration SECS] [--confirm]", file=sys.stderr)
+        sys.exit(1)
+
+    restaurant_id = args[0]
+    day = args[1]
+    party_size = args[2]
+    _validate_date(day)
+    _validate_party_size(party_size)
+
+    target_time = None
+    duration = 1800
+    auto_confirm = False
+    i = 3
+    while i < len(args):
+        if args[i] == "--time" and i + 1 < len(args):
+            target_time = args[i + 1]
+            i += 2
+        elif args[i] == "--duration" and i + 1 < len(args):
+            duration = int(args[i + 1])
+            i += 2
+        elif args[i] == "--confirm":
+            auto_confirm = True
+            i += 1
+        else:
+            i += 1
+
+    search_time = target_time or "19:00"
+
+    print(f"Snipe Mode:")
+    print(f"  Restaurant: {restaurant_id}")
+    print(f"  Date:       {day}")
+    print(f"  Party:      {party_size}")
+    if target_time:
+        print(f"  Target:     {fmt_time(target_time)} (+/- 30 min)")
+    print(f"  Duration:   {duration}s")
+    if auto_confirm:
+        print(f"\n  *** AUTO-BOOKING ENABLED ***")
+    else:
+        print(f"\n  [DRY RUN] Will poll but NOT book (add --confirm to auto-book)")
+    print(f"\nPolling every 30s... (Ctrl+C to stop)\n")
+
+    start_time = time.time()
+    poll_count = 0
+
+    try:
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed > duration:
+                print(f"\nNo matching slots found in {duration}s. Stopping.")
+                return
+
+            poll_count += 1
+            log.info("Snipe poll #%d for restaurant %s on %s", poll_count, restaurant_id, day)
+
+            try:
+                data = api.find_availability(restaurant_id, day, search_time, party_size)
+            except SystemExit:
+                log.warning("API error during snipe poll, continuing")
+                time.sleep(30)
+                continue
+
+            # Extract available slots on target date
+            all_slots = []
+            suggested = data.get("suggestedAvailability", [])
+            for avail_day in suggested:
+                for slot in avail_day.get("timeslots", []):
+                    if slot.get("available", False):
+                        sdt = slot.get("dateTime", "")
+                        if day in sdt:
+                            all_slots.append(slot)
+
+            if not all_slots:
+                _snipe_status(poll_count, elapsed, duration)
+                time.sleep(30)
+                continue
+
+            # Filter by time if specified
+            matching = all_slots
+            if target_time:
+                matching = _filter_by_time(all_slots, target_time)
+
+            if not matching:
+                _snipe_status(poll_count, elapsed, duration)
+                time.sleep(30)
+                continue
+
+            slot = matching[0]
+            slot_dt = slot.get("dateTime", "?")
+            slot_type = slot.get("type", "Standard")
+
+            print(f"\n  MATCH FOUND: {fmt_time(slot_dt)} ({slot_type})")
+
+            if not auto_confirm:
+                print(f"  [DRY RUN] Would book this slot")
+                print(f"  Run with --confirm to auto-book")
+                return
+
+            try:
+                slot_token = slot.get("token", "")
+                slot_hash = slot.get("slotHash", "")
+                areas = slot.get("diningAreas", [])
+                dining_area_id = areas[0].get("id") if areas else None
+                result = api.book(restaurant_id, slot_token, slot_hash, slot_dt, party_size, dining_area_id)
+                print(f"  BOOKED successfully!")
+                if JSON_OUTPUT:
+                    output(result)
+            except SystemExit:
+                print("  Error during booking", file=sys.stderr)
+            return
+
+    except KeyboardInterrupt:
+        print(f"\n\nStopped after {poll_count} polls ({int(time.time() - start_time)}s)")
+
+
+def _snipe_status(poll_count, elapsed, duration):
+    remaining = int(duration - elapsed)
+    print(f"  Poll #{poll_count}: no match ({remaining}s remaining)", end="\r")
+    sys.stdout.flush()
+
+
+def _filter_by_time(slots, target_time):
+    """Filter slots within +/- 30 minutes of target time."""
+    try:
+        target_h, target_m = map(int, target_time.split(":"))
+        target_minutes = target_h * 60 + target_m
+    except ValueError:
+        return slots
+
+    matched = []
+    for slot in slots:
+        st = _extract_time(slot.get("dateTime", ""))
+        if not st:
+            continue
+        try:
+            parts = st.split(":")
+            slot_minutes = int(parts[0]) * 60 + int(parts[1])
+            if abs(slot_minutes - target_minutes) <= 30:
+                matched.append(slot)
+        except (ValueError, IndexError):
+            continue
+    return matched
+
+
+def cmd_help():
+    print("""Usage: opentable <command> [args] [--json] [--dry-run]
+
+Commands:
+  info <restaurant_id>                          Show restaurant details
+  availability <restaurant_id> <date> <party>   Check available slots
+  book <restaurant_id> <date> <time> <party>    Book a reservation
+  snipe <restaurant_id> <date> <party> [opts]   Auto-book when slot appears
+  help                                          Show this help
+
+Availability options:
+  --time HH:MM       Center time for search (default: 19:00)
+
+Snipe options:
+  --time HH:MM       Target time (matches +/- 30 min window)
+  --duration SECS    How long to poll (default: 1800 = 30 min)
+  --confirm          Actually book (without this, dry-run only)
+
+Global flags:
+  --json             Output raw JSON
+  --dry-run          Stop before booking
+
+Restaurant IDs:
+  From URLs: opentable.com/r/carbone-new-york?rid=8033 -> ID is 8033
+  Use 'opentable info <id>' to verify you have the right restaurant
+
+Auth Setup:
+  This tool uses a bearer token extracted from your OpenTable browser session.
+  1. Log in to opentable.com in Chrome
+  2. DevTools -> Application -> Cookies -> find "authCke"
+  3. Copy the "atk" value (UUID after "atk=" and before "&rtk=")
+  4. Store in 1Password: op item edit "OpenTable" --vault "OpenClaw" "auth_token=<value>"
+  Or write directly to cache: echo -n "<value>" > ~/.cache/openclaw-gateway/opentable_auth_token""")
+
+
+# ---------------------------------------------------------------------------
+# Validators
+# ---------------------------------------------------------------------------
+
+def _validate_date(day):
+    try:
+        datetime.strptime(day, "%Y-%m-%d")
+    except ValueError:
+        print(f"Error: Invalid date '{day}'. Use YYYY-MM-DD format.", file=sys.stderr)
+        sys.exit(1)
+    d = datetime.strptime(day, "%Y-%m-%d").date()
+    if d < datetime.now().date():
+        print(f"Error: Date '{day}' is in the past.", file=sys.stderr)
+        sys.exit(1)
+
+
+def _validate_party_size(ps):
+    try:
+        n = int(ps)
+        if n < 1 or n > 20:
+            raise ValueError
+    except ValueError:
+        print(f"Error: Invalid party size '{ps}'. Must be 1-20.", file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    global JSON_OUTPUT, DRY_RUN
+
+    args = sys.argv[1:]
+
+    if "--json" in args:
+        JSON_OUTPUT = True
+        args.remove("--json")
+    if "--dry-run" in args:
+        DRY_RUN = True
+        args.remove("--dry-run")
+
+    if not args or args[0] in ("help", "--help", "-h"):
+        cmd_help()
+        return
+
+    command = args[0]
+    rest = args[1:]
+    api = OpenTableAPI()
+
+    if command == "info":
+        cmd_info(api, rest)
+    elif command == "availability":
+        cmd_availability(api, rest)
+    elif command == "book":
+        cmd_book(api, rest)
+    elif command == "snipe":
+        cmd_snipe(api, rest)
+    else:
+        print(f"Unknown command: {command}. Run 'opentable help'.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
