@@ -186,12 +186,52 @@ browser snapshot
 - NEVER change account settings (address book, payment methods, Prime membership)
 - NEVER share card details in messages — mask as `****0298`
 - If CAPTCHA or 2FA appears, notify Dylan
-- If the session expires (login required), notify Dylan to re-authenticate in Chrome
+- If the session expires (login required), notify Dylan — see Re-Auth Procedure below
+
+## Re-Auth Procedure
+
+The OpenClaw browser is a **separate Playwright Chromium instance** with its own profile at `~/.openclaw/browser/openclaw/user-data/`. It does NOT share cookies with regular Chrome. When Amazon asks to sign in:
+
+1. **Stop the OpenClaw gateway** (it holds the browser profile lock):
+   ```bash
+   launchctl bootout gui/$(id -u)/ai.openclaw.gateway
+   sleep 2
+   pkill -f 'Google Chrome for Testing'
+   rm -f ~/.openclaw/browser/openclaw/user-data/SingletonLock
+   ```
+
+2. **Launch visible Chromium** with the OpenClaw profile (must run in GUI session via `.command` file):
+   ```bash
+   # /tmp/amazon_login.js
+   const { chromium } = require("/opt/homebrew/lib/node_modules/openclaw/node_modules/playwright");
+   (async () => {
+     const browser = await chromium.launchPersistentContext(
+       "/Users/dbochman/.openclaw/browser/openclaw/user-data",
+       { headless: false }
+     );
+     const page = browser.pages()[0] || await browser.newPage();
+     await page.goto("https://www.amazon.com");
+     await new Promise(r => setTimeout(r, 300000));
+     await browser.close();
+   })();
+   ```
+   Launch via: `open /tmp/amazon_login.command` (wrapper that runs node with the above script)
+
+3. **Dylan signs in** on the Mac Mini screen (email, password, 2FA)
+
+4. **Close browser and restart gateway**:
+   ```bash
+   pkill -f 'Google Chrome for Testing'
+   rm -f ~/.openclaw/browser/openclaw/user-data/SingletonLock
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
+   ```
 
 ## Notes
 
-- Amazon must be logged in via Chrome on the Mac Mini (not Firefox)
-- Browser control uses Chrome DevTools Protocol via OpenClaw's browser service
+- Browser is Playwright Chromium (NOT regular Chrome) — separate cookie store
+- Browser profile: `~/.openclaw/browser/openclaw/user-data/`
+- Playwright location: `/opt/homebrew/lib/node_modules/openclaw/node_modules/playwright`
+- Must stop gateway before launching visible browser (SingletonLock conflict)
 - Use `browser snapshot` frequently to stay oriented on the page
 - Amazon's DOM changes frequently — always snapshot before interacting
 - If a page looks wrong or unexpected, take a `browser screenshot` for visual confirmation
