@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""samsung-tv — CLI for controlling Samsung The Frame TVs.
+
+Uses samsungtvws (NickWaterton fork) for WebSocket control and art mode.
+Connects by IP so it works over Tailscale subnet routing.
+
+Usage:
+  samsung-tv status                     Show TV status (power, volume, app)
+  samsung-tv power <name> on            Power on via Wake-on-LAN (same LAN only)
+  samsung-tv power <name> off           Power off
+  samsung-tv volume <name> up|down|N     Volume up/down (N = number of presses, negative = down)
+  samsung-tv mute <name>                Toggle mute
+  samsung-tv key <name> <KEY_NAME>      Send remote key (KEY_HOME, KEY_SOURCE, etc.)
+  samsung-tv app <name> list            List installed apps
+  samsung-tv app <name> launch <app>    Launch app by ID or fuzzy name
+  samsung-tv app <name> close <app>     Close app by ID or fuzzy name
+  samsung-tv art <name>                 Show current art mode state
+  samsung-tv art <name> on              Enter art mode
+  samsung-tv art <name> off             Exit art mode
+  samsung-tv art <name> list            List available artwork
+  samsung-tv art <name> select <id>     Select artwork to display
+  samsung-tv help                       Show this help
+
+TV names are fuzzy-matched (e.g. "frame" for "Samsung The Frame 65").
+"""
+
+import json
+import os
+import sys
+import time
+
+CONFIG_FILE = os.path.expanduser("~/.openclaw/samsung-tvs.json")
+CACHE_DIR = os.path.expanduser("~/.cache/samsung-tv")
+
+DEFAULT_TVS = {
+    "Samsung The Frame 65": {
+        "ip": "192.168.165.2",
+        "mac": "A0:D7:F3:B2:C0:AC",
+    }
+}
+
+# Common Samsung TV app IDs for fuzzy matching
+KNOWN_APPS = {
+    "netflix": "3201907018807",
+    "youtube": "111299001912",
+    "spotify": "3201606009684",
+    "disney": "3201901017640",
+    "disney+": "3201901017640",
+    "hulu": "3201601007625",
+    "prime": "3201910019365",
+    "prime video": "3201910019365",
+    "amazon": "3201910019365",
+    "hbo": "3202301029760",
+    "hbo max": "3202301029760",
+    "max": "3202301029760",
+    "apple": "3201807016597",
+    "apple tv": "3201807016597",
+    "plex": "3201512006963",
+    "paramount": "3201908019041",
+    "paramount+": "3201908019041",
+    "peacock": "3201909019858",
+    "tubi": "3201504001965",
+}
+
+
+def load_tvs():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    return DEFAULT_TVS
+
+
+def resolve_tv(query, tvs):
+    """Fuzzy-match a TV name."""
+    q = query.lower()
+    for name, info in tvs.items():
+        if q in name.lower():
+            return name, info
+    print(f"No TV matching '{query}'. Available:", file=sys.stderr)
+    for name in tvs:
+        print(f"  - {name}", file=sys.stderr)
+    sys.exit(1)
+
+
+def token_path(name):
+    """Get token file path for a TV."""
+    slug = name.lower().replace(" ", "_")
+    d = os.path.join(CACHE_DIR, slug)
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, "token.txt")
+
+
+def get_tv(ip, name, timeout=5):
+    """Connect to a Samsung TV."""
+    try:
+        from samsungtvws import SamsungTVWS
+    except ImportError:
+        print("Error: samsungtvws not installed. Run:", file=sys.stderr)
+        print('  pip3 install "git+https://github.com/NickWaterton/samsung-tv-ws-api.git#egg=samsungtvws[encrypted]"', file=sys.stderr)
+        sys.exit(1)
+
+    tp = token_path(name)
+    try:
+        tv = SamsungTVWS(
+            host=ip,
+            port=8002,
+            token_file=tp,
+            timeout=timeout,
+            name="OpenClaw",
+        )
+        tv.open()
+        return tv
+    except Exception as e:
+        print(f"Error connecting to {name} ({ip}): {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def resolve_app_id(query, installed_apps=None):
+    """Resolve an app name to an app ID. Check known apps first, then fuzzy-match installed."""
+    q = query.lower()
+
+    # Exact app ID (numeric)
+    if q.isdigit():
+        return query
+
+    # Known apps
+    if q in KNOWN_APPS:
+        return KNOWN_APPS[q]
+
+    # Fuzzy match known apps
+    for app_name, app_id in KNOWN_APPS.items():
+        if q in app_name:
+            return app_id
+
+    # Fuzzy match installed apps
+    if installed_apps:
+        for app in installed_apps:
+            if q in app.get("name", "").lower():
+                return app["appId"]
+
+    return query  # Return as-is, let the TV reject it if invalid
+
+
+def cmd_status(_args):
+    tvs = load_tvs()
+    try:
+        from samsungtvws import SamsungTVWS
+    except ImportError:
+        print("Error: samsungtvws not installed.", file=sys.stderr)
+        sys.exit(1)
+
+    for name, info in tvs.items():
+        ip = info["ip"]
+        tp = token_path(name)
+        tv = SamsungTVWS(host=ip, port=8002, token_file=tp, timeout=5, name="OpenClaw")
+
+        # Check power via REST API (doesn't require WS)
+        try:
+            device_info = tv.rest_device_info()
+            dev = device_info.get("device", device_info)
+            power = dev.get("PowerState", "Unknown")
+            model = dev.get("modelName", "Unknown")
+            print(f"  {name}")
+            print(f"    Model:  {model}")
+            print(f"    IP:     {ip}")
+            print(f"    Power:  {power}")
+        except Exception:
+            print(f"  {name}")
+            print(f"    IP:     {ip}")
+            print(f"    Power:  UNREACHABLE")
+            continue
+
+        if power != "on":
+            continue
+
+        # Check art mode via WS
+        try:
+            tv.open()
+            art = tv.art()
+            if art.supported():
+                mode = art.get_artmode()
+                print(f"    Art:    {mode}")
+                if mode == "off":
+                    current = art.get_current()
+                    if isinstance(current, dict):
+                        cid = current.get("content_id", "")
+                        if cid:
+                            print(f"    Artwork: {cid}")
+            art.close()
+            tv.close()
+        except Exception:
+            pass
+
+
+def cmd_power_on(name, info):
+    try:
+        from wakeonlan import send_magic_packet
+    except ImportError:
+        print("Error: wakeonlan not installed. Run: pip3 install wakeonlan", file=sys.stderr)
+        sys.exit(1)
+
+    mac = info.get("mac")
+    if not mac:
+        print(f"No MAC address configured for {name}", file=sys.stderr)
+        sys.exit(1)
+
+    send_magic_packet(mac)
+    print(f"Sent Wake-on-LAN to {name} ({mac})")
+    print("Note: WoL only works from the same LAN (not over Tailscale)")
+
+
+def cmd_power_off(name, info):
+    tv = get_tv(info["ip"], name)
+    tv.send_key("KEY_POWER")
+    print(f"Sent power off to {name}")
+    tv.close()
+
+
+def cmd_volume(name, info, direction):
+    """Send volume up/down key presses. direction: 'up', 'down', or a number of presses."""
+    tv = get_tv(info["ip"], name)
+    d = direction.lower() if isinstance(direction, str) else str(direction)
+    if d in ("up", "+"):
+        tv.send_key("KEY_VOLUP")
+        print(f"Volume up on {name}")
+    elif d in ("down", "-"):
+        tv.send_key("KEY_VOLDOWN")
+        print(f"Volume down on {name}")
+    else:
+        # Treat as number of presses: positive = up, negative = down
+        try:
+            n = int(d)
+        except ValueError:
+            print(f"Invalid volume direction: {direction}. Use 'up', 'down', or a number.", file=sys.stderr)
+            tv.close()
+            sys.exit(1)
+        key = "KEY_VOLUP" if n > 0 else "KEY_VOLDOWN"
+        times = abs(n)
+        for _ in range(times):
+            tv.send_key(key, key_press_delay=0.1)
+        print(f"Volume {'up' if n > 0 else 'down'} {times}x on {name}")
+    tv.close()
+
+
+def cmd_mute(name, info):
+    tv = get_tv(info["ip"], name)
+    tv.send_key("KEY_MUTE")
+    print(f"Toggled mute on {name}")
+    tv.close()
+
+
+def cmd_key(name, info, key):
+    key = key.upper()
+    if not key.startswith("KEY_"):
+        key = "KEY_" + key
+    tv = get_tv(info["ip"], name)
+    tv.send_key(key)
+    print(f"Sent {key} to {name}")
+    tv.close()
+
+
+def cmd_app_list(name, info):
+    """List apps using REST API for known apps (WS app_list often returns empty)."""
+    try:
+        from samsungtvws import SamsungTVWS
+    except ImportError:
+        print("Error: samsungtvws not installed.", file=sys.stderr)
+        sys.exit(1)
+
+    tp = token_path(name)
+    tv = SamsungTVWS(host=info["ip"], port=8002, token_file=tp, timeout=5, name="OpenClaw")
+
+    # Check each known app via REST API (deduplicate by app ID)
+    found = []
+    seen_ids = set()
+    for app_name, app_id in sorted(KNOWN_APPS.items()):
+        if app_id in seen_ids:
+            continue
+        seen_ids.add(app_id)
+        try:
+            status = tv.rest_app_status(app_id)
+            if status and status.get("name"):
+                running = " [RUNNING]" if status.get("running") else ""
+                visible = " [VISIBLE]" if status.get("visible") else ""
+                print(f"  {status['name']:30s}  {app_id}  {running}{visible}")
+                found.append(status)
+        except Exception:
+            pass
+
+    if not found:
+        print("No apps detected. TV may be off or unreachable.")
+
+
+def cmd_app_launch(name, info, app_query):
+    """Launch app via REST API (more reliable than WebSocket run_app)."""
+    try:
+        from samsungtvws import SamsungTVWS
+    except ImportError:
+        print("Error: samsungtvws not installed.", file=sys.stderr)
+        sys.exit(1)
+
+    tp = token_path(name)
+    tv = SamsungTVWS(host=info["ip"], port=8002, token_file=tp, timeout=10, name="OpenClaw")
+    app_id = resolve_app_id(app_query)
+    result = tv.rest_app_run(app_id)
+    if result:
+        print(f"Launched app {app_query} ({app_id}) on {name}")
+    else:
+        print(f"Failed to launch app {app_query} ({app_id}) on {name}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_app_close(name, info, app_query):
+    tv = get_tv(info["ip"], name)
+    app_id = resolve_app_id(app_query)
+    tv.rest_app_close(app_id)
+    print(f"Closed app {app_query} ({app_id}) on {name}")
+    tv.close()
+
+
+def cmd_art(name, info, subcmd=None, arg=None):
+    tv = get_tv(info["ip"], name)
+    try:
+        art = tv.art()
+        if not art.supported():
+            print(f"{name} does not support art mode", file=sys.stderr)
+            tv.close()
+            sys.exit(1)
+
+        if subcmd is None or subcmd == "status":
+            # Show art mode state
+            try:
+                mode = art.get_artmode()
+                print(f"  Art mode:    {mode}")
+            except Exception as e:
+                print(f"  Art mode:    unknown ({e})")
+
+            try:
+                current = art.get_current()
+                if isinstance(current, dict):
+                    cid = current.get("content_id", "?")
+                    cat = current.get("category_id", "")
+                    ctype = current.get("content_type", "")
+                    matte = current.get("matte_id", "")
+                    print(f"  Content ID:  {cid}")
+                    print(f"  Category:    {cat}")
+                    print(f"  Type:        {ctype}")
+                    if matte and matte != "none":
+                        print(f"  Matte:       {matte}")
+                else:
+                    print(f"  Current:     {current}")
+            except Exception:
+                pass
+
+            try:
+                brightness = art.get_brightness()
+                print(f"  Brightness:  {brightness}")
+            except Exception:
+                pass
+
+        elif subcmd == "on":
+            art.set_artmode("on")
+            print(f"Art mode enabled on {name}")
+
+        elif subcmd == "off":
+            art.set_artmode("off")
+            print(f"Art mode disabled on {name}")
+
+        elif subcmd == "list":
+            artworks = art.available()
+            if not artworks:
+                print("No artwork available")
+            else:
+                if isinstance(artworks, str):
+                    artworks = json.loads(artworks)
+                if isinstance(artworks, list):
+                    for item in artworks[:50]:  # Limit output
+                        if isinstance(item, dict):
+                            cid = item.get("content_id", "?")
+                            title = item.get("title", "")
+                            category = item.get("category_id", "")
+                            print(f"  {cid:40s}  {title:30s}  {category}")
+                        else:
+                            print(f"  {item}")
+                else:
+                    print(artworks)
+
+        elif subcmd == "select" and arg:
+            art.select_image(arg, show=True)
+            print(f"Selected artwork {arg} on {name}")
+
+        else:
+            print(f"Unknown art subcommand: {subcmd}", file=sys.stderr)
+            sys.exit(1)
+
+        art.close()
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"Art mode error: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        tv.close()
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("help", "--help", "-h"):
+        print(__doc__)
+        return
+
+    cmd = sys.argv[1]
+    rest = sys.argv[2:]
+    tvs = load_tvs()
+
+    if cmd == "status":
+        cmd_status(rest)
+
+    elif cmd == "power" and len(rest) >= 2:
+        name, info = resolve_tv(rest[0], tvs)
+        action = rest[1].lower()
+        if action == "on":
+            cmd_power_on(name, info)
+        elif action == "off":
+            cmd_power_off(name, info)
+        else:
+            print(f"Unknown power action: {action}. Use 'on' or 'off'.", file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd == "volume" and len(rest) >= 2:
+        name, info = resolve_tv(rest[0], tvs)
+        cmd_volume(name, info, rest[1])
+
+    elif cmd == "mute" and len(rest) >= 1:
+        name, info = resolve_tv(rest[0], tvs)
+        cmd_mute(name, info)
+
+    elif cmd == "key" and len(rest) >= 2:
+        name, info = resolve_tv(rest[0], tvs)
+        cmd_key(name, info, rest[1])
+
+    elif cmd == "app" and len(rest) >= 2:
+        name, info = resolve_tv(rest[0], tvs)
+        subcmd = rest[1].lower()
+        if subcmd == "list":
+            cmd_app_list(name, info)
+        elif subcmd == "launch" and len(rest) >= 3:
+            cmd_app_launch(name, info, " ".join(rest[2:]))
+        elif subcmd == "close" and len(rest) >= 3:
+            cmd_app_close(name, info, " ".join(rest[2:]))
+        else:
+            print(f"Unknown app subcommand: {subcmd}", file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd == "art" and len(rest) >= 1:
+        name, info = resolve_tv(rest[0], tvs)
+        subcmd = rest[1].lower() if len(rest) >= 2 else None
+        arg = rest[2] if len(rest) >= 3 else None
+        cmd_art(name, info, subcmd, arg)
+
+    else:
+        print(f"Unknown command or missing args: {cmd} {' '.join(rest)}", file=sys.stderr)
+        print("Run 'samsung-tv help' for usage.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
