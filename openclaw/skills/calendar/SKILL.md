@@ -160,9 +160,9 @@ gog calendar time
 | Account | Owner | Default |
 |---------|-------|---------|
 | dylanbochman@gmail.com | Dylan | Yes (no `--account` needed) |
-| juliajoyjennings@gmail.com | Julia | Use `--account=juliajoyjennings@gmail.com` |
+| julia.joy.jennings@gmail.com | Julia | Use `--account=julia.joy.jennings@gmail.com` |
 
-When Dylan asks about "my calendar", use his account (default). When he mentions "Julia's calendar" or asks about her schedule, use `--account=juliajoyjennings@gmail.com`.
+When Dylan asks about "my calendar", use his account (default). When he mentions "Julia's calendar" or asks about her schedule, use `--account=julia.joy.jennings@gmail.com`.
 
 ### Examples
 ```bash
@@ -170,7 +170,7 @@ When Dylan asks about "my calendar", use his account (default). When he mentions
 gog calendar events --today
 
 # Julia's events
-gog calendar events --today --account=juliajoyjennings@gmail.com
+gog calendar events --today --account=julia.joy.jennings@gmail.com
 
 # Create event on Julia's calendar
 gog calendar create primary \
@@ -178,18 +178,18 @@ gog calendar create primary \
   --from="2026-02-14T19:00:00-05:00" \
   --to="2026-02-14T21:00:00-05:00" \
   --location="Restaurant" \
-  --account=juliajoyjennings@gmail.com
+  --account=julia.joy.jennings@gmail.com
 
 # Create event on both calendars (invite each other)
 gog calendar create primary \
   --summary="Date night" \
   --from="2026-02-14T19:00:00-05:00" \
   --to="2026-02-14T21:00:00-05:00" \
-  --attendees="juliajoyjennings@gmail.com" \
+  --attendees="julia.joy.jennings@gmail.com" \
   --send-updates=all
 
 # Check both calendars for conflicts
-gog calendar freebusy "dylanbochman@gmail.com,juliajoyjennings@gmail.com" --from=... --to=...
+gog calendar freebusy "dylanbochman@gmail.com,julia.joy.jennings@gmail.com" --from=... --to=...
 ```
 
 ## Notes

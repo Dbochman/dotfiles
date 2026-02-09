@@ -183,9 +183,9 @@ Combine queries: `from:boss@co.com is:unread after:2026/01/01`
 | Account | Owner | Default |
 |---------|-------|---------|
 | dylanbochman@gmail.com | Dylan | Yes (no `--account` needed) |
-| juliajoyjennings@gmail.com | Julia | Use `--account=juliajoyjennings@gmail.com` |
+| julia.joy.jennings@gmail.com | Julia | Use `--account=julia.joy.jennings@gmail.com` |
 
-When Dylan asks about "my email", use his account (default). When he mentions "Julia's email" or asks to check/send on her behalf, use `--account=juliajoyjennings@gmail.com`.
+When Dylan asks about "my email", use his account (default). When he mentions "Julia's email" or asks to check/send on her behalf, use `--account=julia.joy.jennings@gmail.com`.
 
 ### Examples
 ```bash
@@ -193,10 +193,10 @@ When Dylan asks about "my email", use his account (default). When he mentions "J
 gog gmail search "is:unread"
 
 # Julia's inbox
-gog gmail search "is:unread" --account=juliajoyjennings@gmail.com
+gog gmail search "is:unread" --account=julia.joy.jennings@gmail.com
 
 # Send from Julia's account
-gog gmail send --to="someone@example.com" --subject="Hi" --body="..." --account=juliajoyjennings@gmail.com
+gog gmail send --to="someone@example.com" --subject="Hi" --body="..." --account=julia.joy.jennings@gmail.com
 ```
 
 ## Notes
