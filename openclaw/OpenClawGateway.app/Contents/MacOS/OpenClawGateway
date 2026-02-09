@@ -5,20 +5,29 @@ export OP_BIOMETRIC_UNLOCK_ENABLED=true
 
 CACHE_DIR="$HOME/.cache/openclaw-gateway"
 
-# Try 1Password first, fall back to cached secrets
+# Try 1Password with 5s timeout, fall back to cached secrets
 _secret() {
   local op_path="$1" cache_file="$2"
-  local val=""
+  local val="" tmpf
   if command -v /opt/homebrew/bin/op &>/dev/null; then
-    val=$(/opt/homebrew/bin/op read "$op_path" 2>/dev/null)
+    tmpf=$(mktemp)
+    /opt/homebrew/bin/op read "$op_path" >"$tmpf" 2>/dev/null &
+    local pid=$!
+    local i=0
+    while kill -0 $pid 2>/dev/null && [[ $i -lt 5 ]]; do
+      sleep 1
+      i=$((i + 1))
+    done
+    kill $pid 2>/dev/null
+    wait $pid 2>/dev/null
+    val=$(cat "$tmpf")
+    rm -f "$tmpf"
   fi
   if [[ -n "$val" ]]; then
-    # Update cache on successful read
     mkdir -p "$CACHE_DIR"
     echo "$val" > "$cache_file"
     echo "$val"
   elif [[ -f "$cache_file" ]]; then
-    # Fall back to cache
     cat "$cache_file"
   fi
 }
