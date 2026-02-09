@@ -171,7 +171,7 @@ browser snapshot
 
 ## Tips
 
-- **Prime**: Dylan's account may have Prime — prefer Prime-eligible items for free shipping
+- **Prime**: Dylan has Amazon Prime. Always filter results to Prime-eligible items with free shipping. Do not suggest non-Prime items unless specifically asked or no Prime option exists.
 - **Compare**: When asked to "find" something, show 2-3 options at different price points
 - **Reviews**: Mention review count and rating — avoid items below 4 stars unless specifically requested
 - **Subscribe & Save**: Mention if available for recurring purchases, but don't auto-enroll
@@ -190,47 +190,83 @@ browser snapshot
 
 ## Re-Auth Procedure
 
-The OpenClaw browser is a **separate Playwright Chromium instance** with its own profile at `~/.openclaw/browser/openclaw/user-data/`. It does NOT share cookies with regular Chrome. When Amazon asks to sign in:
+OpenClaw uses **system Google Chrome** (not Playwright Chromium) with a separate profile at `~/.openclaw/browser/openclaw/user-data/`. You MUST re-auth using system Chrome — Playwright Chromium cookies are incompatible.
 
 1. **Stop the OpenClaw gateway** (it holds the browser profile lock):
    ```bash
    launchctl bootout gui/$(id -u)/ai.openclaw.gateway
    sleep 2
-   pkill -f 'Google Chrome for Testing'
+   pkill -f "Google Chrome"
    rm -f ~/.openclaw/browser/openclaw/user-data/SingletonLock
+   rm -f ~/.openclaw/browser/openclaw/user-data/SingletonCookie
+   rm -f ~/.openclaw/browser/openclaw/user-data/SingletonSocket
    ```
 
-2. **Launch visible Chromium** with the OpenClaw profile (must run in GUI session via `.command` file):
+2. **Launch system Chrome** with the OpenClaw profile (must run in GUI session via `.command` file):
    ```bash
-   # /tmp/amazon_login.js
-   const { chromium } = require("/opt/homebrew/lib/node_modules/openclaw/node_modules/playwright");
-   (async () => {
-     const browser = await chromium.launchPersistentContext(
-       "/Users/dbochman/.openclaw/browser/openclaw/user-data",
-       { headless: false }
-     );
-     const page = browser.pages()[0] || await browser.newPage();
-     await page.goto("https://www.amazon.com");
-     await new Promise(r => setTimeout(r, 300000));
-     await browser.close();
-   })();
+   # /tmp/amazon_chrome_login.command
+   #!/bin/bash
+   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+     --user-data-dir=/Users/dbochman/.openclaw/browser/openclaw/user-data \
+     --no-first-run --no-default-browser-check \
+     --password-store=basic \
+     "https://www.amazon.com"
    ```
-   Launch via: `open /tmp/amazon_login.command` (wrapper that runs node with the above script)
+   Launch via: `open /tmp/amazon_chrome_login.command`
 
-3. **Dylan signs in** on the Mac Mini screen (email, password, 2FA)
+3. **Dylan signs in** on the Mac Mini screen (email, password, 2FA). **Do NOT sign into Google** — only sign into Amazon.
 
 4. **Close browser and restart gateway**:
    ```bash
-   pkill -f 'Google Chrome for Testing'
+   pkill -f "Google Chrome"
    rm -f ~/.openclaw/browser/openclaw/user-data/SingletonLock
+   rm -f ~/.openclaw/browser/openclaw/user-data/SingletonCookie
+   rm -f ~/.openclaw/browser/openclaw/user-data/SingletonSocket
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
    ```
 
+## Troubleshooting: Browser CDP Failure
+
+If the browser fails with **"Failed to start Chrome CDP on port 18800"**:
+
+### Cause 1: Stale SingletonLock files
+After a gateway crash or unclean Chrome shutdown, lock files prevent new Chrome from starting.
+```bash
+rm -f ~/.openclaw/browser/openclaw/user-data/SingletonLock
+rm -f ~/.openclaw/browser/openclaw/user-data/SingletonCookie
+rm -f ~/.openclaw/browser/openclaw/user-data/SingletonSocket
+pkill -f "Google Chrome.*--remote-debugging-port=18800"
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+```
+
+### Cause 2: Corrupted profile with encrypted tokens
+OpenClaw uses **system Google Chrome** (not Playwright Chromium) with `--headless=new`. When a visible browser session signs into a Google account, Chrome stores encrypted tokens that require macOS Keychain access. The gateway runs headless and can't access the Keychain, causing Chrome to crash with `Trace/BPT trap` (SIGTRAP) immediately after starting.
+
+**Diagnosis**: Chrome starts CDP (`DevTools listening on ws://...`) but dies within 1-2 seconds. Stderr shows `errKCInteractionNotAllowed` and `Failed to decrypt token for service AccountId-*`.
+
+**Fix**: Replace the corrupted profile with a fresh one:
+```bash
+launchctl bootout gui/$(id -u)/ai.openclaw.gateway
+pkill -f "Google Chrome"
+mv ~/.openclaw/browser/openclaw/user-data ~/.openclaw/browser/openclaw/user-data.broken
+mkdir -p ~/.openclaw/browser/openclaw/user-data
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
+```
+
+**Note**: This loses all browser cookies (Amazon login, etc). You'll need to re-auth via the Re-Auth Procedure above. When re-authing, **do NOT sign into Google** in the visible Chromium — only sign into the target site (Amazon).
+
+### Cause 3: Orphaned Chrome process on port 18800
+```bash
+lsof -i :18800
+# If a Chrome process is found, kill it
+kill <PID>
+```
+
 ## Notes
 
-- Browser is Playwright Chromium (NOT regular Chrome) — separate cookie store
+- OpenClaw uses **system Google Chrome** (at `/Applications/Google Chrome.app`) in headless mode — NOT Playwright Chromium
 - Browser profile: `~/.openclaw/browser/openclaw/user-data/`
-- Playwright location: `/opt/homebrew/lib/node_modules/openclaw/node_modules/playwright`
+- Playwright Chromium at `~/Library/Caches/ms-playwright/chromium-1208/` is only used for the visible re-auth procedure
 - Must stop gateway before launching visible browser (SingletonLock conflict)
 - Use `browser snapshot` frequently to stay oriented on the page
 - Amazon's DOM changes frequently — always snapshot before interacting
