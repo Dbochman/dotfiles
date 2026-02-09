@@ -238,7 +238,12 @@ canvas { width: 100% !important; }
 <body>
 <h1>Nest Climate Dashboard <span class="updated" id="lastUpdate"></span></h1>
 <div class="cards" id="cards"><div class="loading">Loading...</div></div>
-<div class="controls">
+<div class="controls" id="structureControls">
+  <button data-structure="all" class="active">Both</button>
+  <button data-structure="Philly">Philly</button>
+  <button data-structure="19Crosstown">Crosstown</button>
+</div>
+<div class="controls" id="timeControls">
   <button data-hours="24" class="active">24h</button>
   <button data-hours="168">7d</button>
   <button data-hours="720">30d</button>
@@ -254,13 +259,48 @@ const COLORS = {
   'Living Room': '#4A90D9',
   'Bedroom': '#8B5CF6',
   'Outside': '#6B7280',
+  'Outside (Philly)': '#6B7280',
+  'Outside (19Crosstown)': '#9CA3AF',
 };
+
+const STRUCTURES = ['Philly', '19Crosstown'];
 
 let tempChart, humidChart, hvacChart;
 let currentHours = 24;
+let currentStructure = 'all';
 
+// Consistent color cache so random colors don't change on re-render
+const colorCache = {};
 function roomColor(name) {
-  return COLORS[name] || '#' + (Math.random().toString(16) + '000000').slice(2, 8);
+  if (colorCache[name]) return colorCache[name];
+  const c = COLORS[name] || '#' + (Math.random().toString(16) + '000000').slice(2, 8);
+  colorCache[name] = c;
+  return c;
+}
+
+function stripPrefix(roomName) {
+  for (const s of STRUCTURES) {
+    if (roomName.startsWith(s + ' ')) return roomName.slice(s.length + 1);
+  }
+  return roomName;
+}
+
+function roomStructure(roomName) {
+  for (const s of STRUCTURES) {
+    if (roomName.startsWith(s + ' ')) return s;
+  }
+  return null;
+}
+
+function filterRooms(rooms) {
+  if (!rooms) return [];
+  if (currentStructure === 'all') return rooms;
+  return rooms.filter(r => roomStructure(r.room) === currentStructure);
+}
+
+function displayName(roomName) {
+  if (currentStructure === 'all') return roomName;
+  return stripPrefix(roomName);
 }
 
 async function fetchData(hours) {
@@ -273,6 +313,28 @@ async function fetchData(hours) {
   }
 }
 
+function getWeatherEntries(snapshot) {
+  // Returns array of {label, data} for weather card(s).
+  // Handles old format (flat dict with temp_f) and new format (dict of dicts).
+  const w = snapshot.weather;
+  if (!w) return [];
+  if (w.temp_f != null) {
+    // Old single-location format
+    return [{label: 'Outside', data: w}];
+  }
+  // New per-structure format: {"Philly": {...}, "19Crosstown": {...}}
+  const entries = [];
+  if (currentStructure === 'all') {
+    for (const [name, wd] of Object.entries(w)) {
+      if (wd && wd.temp_f != null) entries.push({label: 'Outside (' + name + ')', data: wd});
+    }
+  } else {
+    const wd = w[currentStructure];
+    if (wd && wd.temp_f != null) entries.push({label: 'Outside', data: wd});
+  }
+  return entries;
+}
+
 function renderCards(snapshot) {
   const el = document.getElementById('cards');
   if (!snapshot || !snapshot.rooms) {
@@ -280,21 +342,23 @@ function renderCards(snapshot) {
     return;
   }
 
+  const rooms = filterRooms(snapshot.rooms);
   let html = '';
   // Room cards
-  for (const r of snapshot.rooms) {
+  for (const r of rooms) {
+    const label = displayName(r.room);
+    const colorKey = stripPrefix(r.room);
     const hvacLabel = r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
-    html += `<div class="card" data-room="${r.room}">
-      <div class="card-label">${r.room}</div>
+    html += `<div class="card" data-room="${colorKey}">
+      <div class="card-label">${label}</div>
       <div class="card-value">${(r.temp_f ?? 0).toFixed(1)}°F</div>
       <div class="card-sub">Set: ${(r.setpoint_f ?? 0).toFixed(0)}°F · ${hvacLabel} · ${r.humidity ?? 0}% RH</div>
     </div>`;
   }
-  // Weather card
-  const w = snapshot.weather;
-  if (w && w.temp_f != null) {
+  // Weather card(s)
+  for (const {label, data: w} of getWeatherEntries(snapshot)) {
     html += `<div class="card" data-room="Outside">
-      <div class="card-label">Outside</div>
+      <div class="card-label">${label}</div>
       <div class="card-value">${w.temp_f.toFixed(1)}°F</div>
       <div class="card-sub">${w.description || '—'} · ${w.humidity ?? 0}% RH · ${(w.wind_mph ?? 0).toFixed(0)} mph</div>
     </div>`;
@@ -310,30 +374,39 @@ function renderCards(snapshot) {
 }
 
 function buildTimeSeries(snapshots) {
-  // Collect room names
+  // Collect room names (filtered + display names)
   const roomNames = new Set();
   for (const s of snapshots) {
-    for (const r of (s.rooms || [])) roomNames.add(r.room);
+    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayName(r.room));
+  }
+
+  // Collect weather series names from all snapshots
+  const weatherNames = new Set();
+  for (const s of snapshots) {
+    for (const {label} of getWeatherEntries(s)) weatherNames.add(label);
   }
 
   const series = {};
   for (const name of roomNames) {
     series[name] = { temps: [], humids: [], setpoints: [] };
   }
-  series['Outside'] = { temps: [], humids: [] };
+  for (const name of weatherNames) {
+    series[name] = { temps: [], humids: [] };
+  }
 
   for (const s of snapshots) {
     const ts = s.timestamp;
-    for (const r of (s.rooms || [])) {
-      if (!series[r.room]) continue;
-      series[r.room].temps.push({ x: ts, y: r.temp_f });
-      series[r.room].humids.push({ x: ts, y: r.humidity });
-      series[r.room].setpoints.push({ x: ts, y: r.setpoint_f });
+    for (const r of filterRooms(s.rooms || [])) {
+      const name = displayName(r.room);
+      if (!series[name]) continue;
+      series[name].temps.push({ x: ts, y: r.temp_f });
+      series[name].humids.push({ x: ts, y: r.humidity });
+      series[name].setpoints.push({ x: ts, y: r.setpoint_f });
     }
-    const w = s.weather;
-    if (w && w.temp_f != null) {
-      series['Outside'].temps.push({ x: ts, y: w.temp_f });
-      series['Outside'].humids.push({ x: ts, y: w.humidity });
+    for (const {label, data: w} of getWeatherEntries(s)) {
+      if (!series[label]) series[label] = { temps: [], humids: [] };
+      series[label].temps.push({ x: ts, y: w.temp_f });
+      series[label].humids.push({ x: ts, y: w.humidity });
     }
   }
   return series;
@@ -344,7 +417,7 @@ function computeHvacDuty(snapshots) {
   // Duty cycle = count(hvac=="HEATING") / total snapshots in that hour bucket.
   const roomNames = new Set();
   for (const s of snapshots) {
-    for (const r of (s.rooms || [])) roomNames.add(r.room);
+    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayName(r.room));
   }
 
   const buckets = {}; // room -> hourKey -> {heating: n, total: n}
@@ -353,11 +426,12 @@ function computeHvacDuty(snapshots) {
   for (const s of snapshots) {
     const d = new Date(s.timestamp);
     const hourKey = d.toISOString().slice(0, 13) + ':00:00Z'; // YYYY-MM-DDTHH:00:00Z
-    for (const r of (s.rooms || [])) {
-      if (!buckets[r.room]) continue;
-      if (!buckets[r.room][hourKey]) buckets[r.room][hourKey] = { heating: 0, total: 0 };
-      buckets[r.room][hourKey].total++;
-      if (r.hvac === 'HEATING') buckets[r.room][hourKey].heating++;
+    for (const r of filterRooms(s.rooms || [])) {
+      const name = displayName(r.room);
+      if (!buckets[name]) continue;
+      if (!buckets[name][hourKey]) buckets[name][hourKey] = { heating: 0, total: 0 };
+      buckets[name][hourKey].total++;
+      if (r.hvac === 'HEATING') buckets[name][hourKey].heating++;
     }
   }
 
@@ -434,19 +508,20 @@ async function refresh() {
   const tempDS = [];
   for (const [name, s] of Object.entries(series)) {
     if (s.temps.length === 0) continue;
+    const color = roomColor(name);
     tempDS.push({
       label: name,
       data: s.temps,
-      borderColor: roomColor(name),
-      backgroundColor: roomColor(name) + '22',
+      borderColor: color,
+      backgroundColor: color + '22',
       fill: false,
     });
     // Setpoint lines (dotted) for rooms (not outside)
-    if (name !== 'Outside' && s.setpoints && s.setpoints.length > 0) {
+    if (!name.startsWith('Outside') && s.setpoints && s.setpoints.length > 0) {
       tempDS.push({
         label: name + ' setpoint',
         data: s.setpoints,
-        borderColor: roomColor(name),
+        borderColor: color,
         borderDash: [4, 4],
         borderWidth: 1,
         fill: false,
@@ -459,11 +534,12 @@ async function refresh() {
   const humidDS = [];
   for (const [name, s] of Object.entries(series)) {
     if (s.humids.length === 0) continue;
+    const color = roomColor(name);
     humidDS.push({
       label: name,
       data: s.humids,
-      borderColor: roomColor(name),
-      backgroundColor: roomColor(name) + '22',
+      borderColor: color,
+      backgroundColor: color + '22',
       fill: false,
     });
   }
@@ -472,11 +548,12 @@ async function refresh() {
   const hvacDS = [];
   for (const [name, buckets] of Object.entries(hvacDuty)) {
     if (buckets.length === 0) continue;
+    const color = roomColor(name);
     hvacDS.push({
       label: name,
       data: buckets,
-      backgroundColor: roomColor(name) + '99',
-      borderColor: roomColor(name),
+      backgroundColor: color + '99',
+      borderColor: color,
       borderWidth: 1,
     });
   }
@@ -491,10 +568,19 @@ async function refresh() {
   hvacChart = createBarChart(document.getElementById('hvacChart'), hvacDS);
 }
 
-// Time range buttons
-document.querySelector('.controls').addEventListener('click', e => {
+// Structure filter buttons
+document.getElementById('structureControls').addEventListener('click', e => {
   if (e.target.tagName !== 'BUTTON') return;
-  document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#structureControls button').forEach(b => b.classList.remove('active'));
+  e.target.classList.add('active');
+  currentStructure = e.target.dataset.structure;
+  refresh();
+});
+
+// Time range buttons
+document.getElementById('timeControls').addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  document.querySelectorAll('#timeControls button').forEach(b => b.classList.remove('active'));
   e.target.classList.add('active');
   currentHours = parseInt(e.target.dataset.hours);
   refresh();

@@ -100,7 +100,7 @@ _get_access_token() {
 }
 
 _project_id() {
-  _cached_op_read "Project ID"
+  _cached_op_read "project_id"
 }
 
 _api() {
@@ -118,10 +118,12 @@ _api() {
 
 _get_weather() {
   # Returns JSON: {"temp_f":12.0,"feels_like_f":4.7,"humidity":73,"wind_mph":1.9,"code":3,"description":"Overcast"}
+  # Optional: _get_weather [lat] [lon] — uses positional args if provided, else NEST_LAT/NEST_LON
   _get_location
+  local lat="${1:-$NEST_LAT}" lon="${2:-$NEST_LON}"
   local resp
   resp=$(curl -s --connect-timeout 5 --max-time 10 \
-    "https://api.open-meteo.com/v1/forecast?latitude=${NEST_LAT}&longitude=${NEST_LON}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,weather_code,apparent_temperature&temperature_unit=fahrenheit&wind_speed_unit=mph" 2>/dev/null) || true
+    "https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_gusts_10m,weather_code,apparent_temperature&temperature_unit=fahrenheit&wind_speed_unit=mph" 2>/dev/null) || true
 
   if [[ -z "$resp" ]]; then
     echo '{}'
@@ -159,6 +161,30 @@ except Exception:
 " <<< "$resp"
 }
 
+_get_all_weather() {
+  # If NEST_LOCATIONS is set (space-separated "name:lat:lon" entries),
+  # returns a JSON dict keyed by structure name: {"Philly": {...}, "19Crosstown": {...}}
+  # Otherwise falls back to single-location _get_weather (returns flat dict).
+  _get_location
+  if [[ -z "${NEST_LOCATIONS:-}" ]]; then
+    _get_weather
+    return
+  fi
+
+  local results=()
+  for entry in $NEST_LOCATIONS; do
+    local name lat lon w
+    IFS=':' read -r name lat lon <<< "$entry"
+    w=$(_get_weather "$lat" "$lon")
+    results+=("\"$name\": $w")
+  done
+
+  # Join into JSON object
+  local joined
+  joined=$(IFS=','; echo "${results[*]}")
+  echo "{$joined}"
+}
+
 _c_to_f() {
   python3 -c "print(round($1 * 9/5 + 32, 1))"
 }
@@ -167,18 +193,49 @@ _f_to_c() {
   python3 -c "print(round(($1 - 32) * 5/9, 6))"
 }
 
+# Structure name map (cached per session)
+_structure_map=""
+_build_structure_map() {
+  if [[ -n "$_structure_map" ]]; then return; fi
+  _structure_map=$(_api GET /structures | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for s in data.get('structures', []):
+    sid = s['name'].split('/')[-1]
+    name = s.get('traits', {}).get('sdm.structures.traits.Info', {}).get('customName', 'Unknown')
+    print(f'{sid}\t{name}')
+")
+}
+
 # Map room names to device IDs (cached per session)
+# Uses "Home Room" format when multiple structures exist
 _device_map=""
 _build_device_map() {
   if [[ -n "$_device_map" ]]; then return; fi
-  _device_map=$(_api GET /devices | python3 -c "
-import sys, json
+  _build_structure_map
+  local devices_json structures_json
+  devices_json=$(_api GET /devices)
+  structures_json="$_structure_map"
+  _device_map=$(STRUCT_MAP="$structures_json" python3 -c "
+import sys, json, os
 data = json.load(sys.stdin)
+struct_map = {}
+for line in os.environ.get('STRUCT_MAP', '').strip().split('\n'):
+    if '\t' in line:
+        sid, name = line.split('\t', 1)
+        struct_map[sid] = name
+multi = len(struct_map) > 1
 for d in data.get('devices', []):
     room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
     did = d['name'].split('/')[-1]
+    if multi:
+        parent = d.get('parentRelations', [{}])[0].get('parent', '')
+        for sid, sname in struct_map.items():
+            if sid in parent:
+                room = f'{sname} {room}'
+                break
     print(f'{room}\t{did}')
-")
+" <<< "$devices_json")
 }
 
 _resolve_device() {
@@ -202,17 +259,34 @@ _device_path() {
 cmd_status() {
   local data weather
   data=$(_api GET /devices)
-  weather=$(_get_weather)
+  weather=$(_get_all_weather)
 
-  WEATHER_JSON="$weather" python3 -c "
+  # Build structure map for prefixing
+  _build_structure_map
+  WEATHER_JSON="$weather" STRUCT_MAP="$_structure_map" python3 -c "
 import json, sys, os
 
 data = json.load(sys.stdin)
 weather_raw = os.environ.get('WEATHER_JSON', '{}')
 weather = json.loads(weather_raw) if weather_raw and weather_raw != '{}' else None
 
+struct_map = {}
+for line in os.environ.get('STRUCT_MAP', '').strip().split('\n'):
+    if '\t' in line:
+        sid, name = line.split('\t', 1)
+        struct_map[sid] = name
+multi = len(struct_map) > 1
+
 if weather:
-    print(f'Outside:  {weather[\"temp_f\"]:.1f}\u00b0F  (feels {weather[\"feels_like_f\"]:.1f}\u00b0F)  {weather[\"description\"]}  {weather[\"wind_mph\"]:.0f} mph wind  {weather[\"humidity\"]}% humidity')
+    # Detect format: 'temp_f' at top level = single-location, else dict-of-dicts
+    if 'temp_f' in weather:
+        locations = {'Outside': weather}
+    else:
+        locations = {f'Outside ({k})': v for k, v in weather.items()}
+    for label, w in locations.items():
+        if not w or 'temp_f' not in w:
+            continue
+        print(f'{label}:  {w[\"temp_f\"]:.1f}\u00b0F  (feels {w[\"feels_like_f\"]:.1f}\u00b0F)  {w[\"description\"]}  {w[\"wind_mph\"]:.0f} mph wind  {w[\"humidity\"]}% humidity')
     print()
 
 for d in data.get('devices', []):
@@ -220,6 +294,12 @@ for d in data.get('devices', []):
     if 'sdm.devices.traits.ThermostatMode' not in t:
         continue
     room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
+    if multi:
+        parent = d.get('parentRelations', [{}])[0].get('parent', '')
+        for sid, sname in struct_map.items():
+            if sid in parent:
+                room = f'{sname} {room}'
+                break
     temp_c = t.get('sdm.devices.traits.Temperature', {}).get('ambientTemperatureCelsius', 0)
     temp_f = round(temp_c * 9/5 + 32, 1)
     humidity = t.get('sdm.devices.traits.Humidity', {}).get('ambientHumidityPercent', 0)
@@ -230,25 +310,34 @@ for d in data.get('devices', []):
     set_c = setpoint.get('heatCelsius') or setpoint.get('coolCelsius') or 0
     set_f = round(set_c * 9/5 + 32, 1)
     status = f'ECO' if eco != 'OFF' else hvac
-    print(f'{room:15s}  {temp_f:5.1f}\u00b0F  set:{set_f:.0f}\u00b0F  {mode:4s}  {status:8s}  {humidity}% humidity')
+    print(f'{room:25s}  {temp_f:5.1f}\u00b0F  set:{set_f:.0f}\u00b0F  {mode:4s}  {status:8s}  {humidity}% humidity')
 " <<< "$data"
 }
 
 cmd_weather() {
   local weather
-  weather=$(_get_weather)
+  weather=$(_get_all_weather)
   if [[ "$weather" == "{}" ]]; then
     echo "Failed to fetch weather data" >&2
     exit 1
   fi
   WEATHER_JSON="$weather" python3 -c "
 import json, os
-w = json.loads(os.environ['WEATHER_JSON'])
-print(f'Current weather:')
-print(f'  Temperature:  {w[\"temp_f\"]:.1f}\u00b0F  (feels like {w[\"feels_like_f\"]:.1f}\u00b0F)')
-print(f'  Conditions:   {w[\"description\"]}')
-print(f'  Humidity:     {w[\"humidity\"]}%')
-print(f'  Wind:         {w[\"wind_mph\"]:.1f} mph (gusts {w[\"wind_gusts_mph\"]:.1f} mph)')
+raw = json.loads(os.environ['WEATHER_JSON'])
+# Detect format: if 'temp_f' is a top-level key, it's a single-location dict
+if 'temp_f' in raw:
+    locations = {'Weather': raw}
+else:
+    locations = raw
+for name, w in locations.items():
+    if not w or 'temp_f' not in w:
+        continue
+    print(f'{name}:')
+    print(f'  Temperature:  {w[\"temp_f\"]:.1f}\u00b0F  (feels like {w[\"feels_like_f\"]:.1f}\u00b0F)')
+    print(f'  Conditions:   {w[\"description\"]}')
+    print(f'  Humidity:     {w[\"humidity\"]}%')
+    print(f'  Wind:         {w[\"wind_mph\"]:.1f} mph (gusts {w[\"wind_gusts_mph\"]:.1f} mph)')
+    print()
 "
 }
 
@@ -303,16 +392,23 @@ cmd_snapshot() {
     return 0
   fi
 
-  weather=$(_get_weather)
+  weather=$(_get_all_weather)
   ts=$(date -u +%FT%TZ)
   today=$(date +%Y-%m-%d)
 
-  WEATHER_JSON="$weather" SNAP_TS="$ts" python3 -c "
+  _build_structure_map
+  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" python3 -c "
 import json, sys, os
 data = json.load(sys.stdin)
 ts = os.environ['SNAP_TS']
 weather_raw = os.environ.get('WEATHER_JSON', '{}')
 weather = json.loads(weather_raw) if weather_raw and weather_raw != '{}' else None
+struct_map = {}
+for line in os.environ.get('STRUCT_MAP', '').strip().split('\n'):
+    if '\t' in line:
+        sid, name = line.split('\t', 1)
+        struct_map[sid] = name
+multi = len(struct_map) > 1
 snapshot = {'timestamp': ts, 'rooms': []}
 if weather:
     snapshot['weather'] = weather
@@ -321,6 +417,12 @@ for d in data.get('devices', []):
     if 'sdm.devices.traits.ThermostatMode' not in t:
         continue
     room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
+    if multi:
+        parent = d.get('parentRelations', [{}])[0].get('parent', '')
+        for sid, sname in struct_map.items():
+            if sid in parent:
+                room = f'{sname} {room}'
+                break
     temp_c = t.get('sdm.devices.traits.Temperature', {}).get('ambientTemperatureCelsius', 0)
     humidity = t.get('sdm.devices.traits.Humidity', {}).get('ambientHumidityPercent', 0)
     mode = t.get('sdm.devices.traits.ThermostatMode', {}).get('mode', '?')
