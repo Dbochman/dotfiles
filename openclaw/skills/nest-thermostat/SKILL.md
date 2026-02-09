@@ -99,6 +99,8 @@ Room names are fuzzy-matched — use any substring. "crosstown" matches the Cros
 - The HVAC status shows whether the system is actively HEATING or OFF
 - History snapshots are taken every 30 minutes automatically and stored in `~/.openclaw/nest-history/`
 - Use `nest history` when the user asks about temperature trends, overnight temperatures, or how long the heat was running
-- Weather data comes from Open-Meteo (no API key needed). Location config: `~/.openclaw/nest-location.conf`
+- Weather data comes from Open-Meteo (no API key needed), fetched per-structure using `NEST_LOCATIONS` in `~/.openclaw/nest-location.conf`
+- `nest weather` and `nest status` show weather for each structure (Philly + 19Crosstown)
+- Snapshots store weather as `{"Philly": {...}, "19Crosstown": {...}}` — old single-location snapshots still render fine
 - Camera snapshots use WebRTC via the SDM API. Requires `aiortc` and `Pillow` Python packages.
 - When asked "what does the kitchen look like?" or similar, use `nest camera snap` and then view the image

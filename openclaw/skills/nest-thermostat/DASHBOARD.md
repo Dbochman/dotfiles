@@ -21,24 +21,33 @@ The existing `nest snapshot` LaunchAgent records thermostat + weather data every
 
 ```json
 {
-  "timestamp": "2026-02-08T13:02:37Z",
+  "timestamp": "2026-02-09T14:08:42Z",
   "weather": {
-    "temp_f": 48.5, "feels_like_f": 42.3, "humidity": 73,
-    "wind_mph": 8.5, "wind_gusts_mph": 12.1,
-    "code": 3, "description": "Overcast"
+    "Philly": {
+      "temp_f": 8.9, "feels_like_f": -2.7, "humidity": 66,
+      "wind_mph": 11.5, "wind_gusts_mph": 28.4,
+      "code": 0, "description": "Clear sky"
+    },
+    "19Crosstown": {
+      "temp_f": 14.8, "feels_like_f": 3.0, "humidity": 57,
+      "wind_mph": 12.4, "wind_gusts_mph": 33.3,
+      "code": 0, "description": "Clear sky"
+    }
   },
   "rooms": [
     {
-      "room": "Solarium", "temp_c": 14.14, "temp_f": 57.5,
+      "room": "Philly Solarium", "temp_c": 5.3, "temp_f": 41.5,
       "humidity": 19, "mode": "HEAT", "hvac": "HEATING",
-      "eco": "OFF", "setpoint_c": 14.44, "setpoint_f": 58.0,
+      "eco": "OFF", "setpoint_c": 13.89, "setpoint_f": 57.0,
       "connectivity": "ONLINE"
     }
   ]
 }
 ```
 
-Rooms: Solarium, Living Room, Bedroom. File-per-day structure acts as a natural date index.
+**Weather format:** Per-structure dict keyed by structure name (`NEST_LOCATIONS` in `nest-location.conf`). Old snapshots with a flat `weather` dict (single `temp_f` at top level) are detected and rendered correctly — backwards compatible per-snapshot.
+
+Rooms: Philly Solarium, Philly Living Room, Philly Bedroom, 19Crosstown Living Room. File-per-day structure acts as a natural date index.
 
 ## API Endpoints
 
@@ -64,7 +73,8 @@ Rooms: Solarium, Living Room, Bedroom. File-per-day structure acts as a natural 
 
 ## Dashboard UI
 
-- **Status cards:** Current temp, setpoint, HVAC status, humidity per room + outdoor weather
+- **Structure filter buttons:** Both, Philly, Crosstown — filters room cards, weather cards, and all charts
+- **Status cards:** Current temp, setpoint, HVAC status, humidity per room + outdoor weather per structure
 - **Temperature chart** (line): Per-room temps + outdoor temp + setpoint lines (dotted)
 - **Humidity chart** (line): Per-room + outdoor humidity
 - **HVAC duty cycle chart** (bar): Heating percentage per hour per room
@@ -79,7 +89,8 @@ Rooms: Solarium, Living Room, Bedroom. File-per-day structure acts as a natural 
 | Solarium | `#FF8C00` (orange) |
 | Living Room | `#4A90D9` (blue) |
 | Bedroom | `#8B5CF6` (purple) |
-| Outside | `#6B7280` (gray) |
+| Outside (Philly) | `#6B7280` (gray) |
+| Outside (19Crosstown) | `#9CA3AF` (light gray) |
 
 **CDN dependencies** (loaded in `<script>` tags):
 - Chart.js 4.x
