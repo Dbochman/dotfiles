@@ -35,5 +35,6 @@ _secret() {
 export OPENAI_API_KEY=$(_secret "op://Private/OpenAI API Key/password" "$CACHE_DIR/openai_api_key")
 export ELEVENLABS_API_KEY=$(_secret "op://Private/ElevenLabs API Key/password" "$CACHE_DIR/elevenlabs_api_key")
 export OPENCLAW_GATEWAY_TOKEN=$(_secret "op://Private/OpenClaw Gateway Token/password" "$CACHE_DIR/gateway_token")
+export GOG_KEYRING_PASSWORD=$(_secret "op://OpenClaw/GOG CLI/password" "$CACHE_DIR/gog_keyring_password")
 
 /opt/homebrew/Cellar/node@22/22.22.0/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789
