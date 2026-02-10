@@ -71,6 +71,60 @@ gog calendar create primary \
 ```
 Additional flags: `--all-day`, `--rrule`, `--reminder=popup:15m`, `--event-color=<1-11>`, `--visibility=<default|public|private>`, `--transparency=<busy|free>`, `--with-meet`, `--send-updates=<all|externalOnly|none>`, `--attachment=<url>`.
 
+### Recurring Events
+
+Use `--rrule` with RFC 5545 RRULE format to create recurring events.
+
+#### Common RRULE patterns
+
+| Pattern | RRULE |
+|---------|-------|
+| Every Monday | `RRULE:FREQ=WEEKLY;BYDAY=MO` |
+| Every weekday (Mon–Fri) | `RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR` |
+| Every other Tuesday | `RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU` |
+| Daily | `RRULE:FREQ=DAILY` |
+| 1st of every month | `RRULE:FREQ=MONTHLY;BYMONTHDAY=1` |
+| First Friday of every month | `RRULE:FREQ=MONTHLY;BYDAY=1FR` |
+| Yearly on March 15 | `RRULE:FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=15` |
+| Weekly until end of year | `RRULE:FREQ=WEEKLY;BYDAY=WE;UNTIL=20261231T235959Z` |
+| Daily for 10 occurrences | `RRULE:FREQ=DAILY;COUNT=10` |
+
+#### Examples
+
+Weekly standup Mon–Fri at 9am:
+```bash
+gog calendar create primary \
+  --summary="Team Standup" \
+  --from="2026-02-10T09:00:00-05:00" \
+  --to="2026-02-10T09:15:00-05:00" \
+  --rrule="RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR" \
+  --location="Zoom" \
+  --force --no-input
+```
+
+Biweekly 1:1 on Tuesdays with Google Meet:
+```bash
+gog calendar create primary \
+  --summary="1:1 with Alice" \
+  --from="2026-02-11T14:00:00-05:00" \
+  --to="2026-02-11T14:30:00-05:00" \
+  --rrule="RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU" \
+  --attendees="alice@example.com" \
+  --with-meet \
+  --send-updates=all \
+  --force --no-input
+```
+
+Monthly team review, first Friday, ending Dec 2026:
+```bash
+gog calendar create primary \
+  --summary="Monthly Team Review" \
+  --from="2026-03-06T15:00:00-05:00" \
+  --to="2026-03-06T16:00:00-05:00" \
+  --rrule="RRULE:FREQ=MONTHLY;BYDAY=1FR;UNTIL=20261231T235959Z" \
+  --force --no-input
+```
+
 ### Update an event
 ```bash
 gog calendar update primary <eventId> \
@@ -78,13 +132,52 @@ gog calendar update primary <eventId> \
   --from="2026-02-10T10:00:00-05:00" \
   --to="2026-02-10T10:30:00-05:00"
 ```
-Set any field to empty string to clear it. For recurring events use `--scope=<single|future|all>` with `--original-start`. Supports `--add-attendee` to add without replacing.
+Set any field to empty string to clear it. Supports `--add-attendee` to add without replacing.
+
+For recurring events, use `--scope` with `--original-start` (the original start time of the instance):
+- `--scope=single` — update only this occurrence
+- `--scope=future` — this and all future occurrences
+- `--scope=all` — every occurrence in the series
+
+```bash
+# Change the title of a single occurrence
+gog calendar update primary <eventId> \
+  --summary="Canceled - Team Standup" \
+  --scope=single \
+  --original-start="2026-02-12T09:00:00-05:00" \
+  --force --no-input
+
+# Move all future occurrences to a new time
+gog calendar update primary <eventId> \
+  --from="2026-02-12T10:00:00-05:00" \
+  --to="2026-02-12T10:15:00-05:00" \
+  --scope=future \
+  --original-start="2026-02-12T09:00:00-05:00" \
+  --force --no-input
+```
 
 ### Delete an event
 ```bash
 gog calendar delete primary <eventId>
 ```
-For recurring events: `--scope=<single|future|all>` with `--original-start`.
+
+For recurring events, use `--scope` with `--original-start`:
+- `--scope=single` — delete only this occurrence
+- `--scope=future` — this and all future occurrences
+- `--scope=all` — delete the entire series
+
+```bash
+# Delete a single occurrence
+gog calendar delete primary <eventId> \
+  --scope=single \
+  --original-start="2026-02-12T09:00:00-05:00" \
+  --force --no-input
+
+# Delete the entire recurring series
+gog calendar delete primary <eventId> \
+  --scope=all \
+  --force --no-input
+```
 
 ### Respond to an invitation
 ```bash
@@ -205,3 +298,7 @@ gog calendar freebusy "dylanbochman@gmail.com,julia.joy.jennings@gmail.com" --fr
 - Relative time values (`today`, `tomorrow`, `monday`) are supported in `--from`/`--to` for events, search, and conflicts
 - Use `--all` with events to fetch across all calendars
 - Always use `--force` and `--no-input` for non-interactive operation
+- When the user says "weekly", "every Tuesday", "biweekly", "monthly", "recurring", "repeating", etc. → use `--rrule`
+- Always confirm the recurrence pattern back to the user before creating (e.g., "I'll create a weekly event every Monday at 9am — sound good?")
+- Default to no end date (`UNTIL`/`COUNT`) unless the user specifies one
+- When modifying or deleting a recurring event, ask whether they mean this instance only, this and future instances, or the entire series
