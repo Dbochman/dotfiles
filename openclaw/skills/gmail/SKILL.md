@@ -199,6 +199,29 @@ gog gmail search "is:unread" --account=julia.joy.jennings@gmail.com
 gog gmail send --to="someone@example.com" --subject="Hi" --body="..." --account=julia.joy.jennings@gmail.com
 ```
 
+## Automated Inbox Management (Julia)
+
+Julia's inbox has automated daily triage via two cron jobs:
+
+- **Morning Triage** (7 AM ET): Searches unread inbox, categorizes with labels, creates draft replies, sends summary via iMessage
+- **Evening Cleanup** (8 PM ET): Archives old read emails, identifies unsubscribe candidates, cleans spam, sends digest via iMessage
+
+### OpenClaw Labels
+
+These labels are created and managed by the automated triage system on Julia's account:
+
+| Label | Purpose |
+|-------|---------|
+| `OpenClaw/Urgent` | Time-sensitive, needs immediate attention |
+| `OpenClaw/Action` | Requires response or action from Julia |
+| `OpenClaw/FYI` | Informational, no action needed |
+| `OpenClaw/Financial` | Bills, bank alerts, transactions |
+| `OpenClaw/Shopping` | Orders, shipping, receipts |
+| `OpenClaw/Newsletters` | Subscriptions, digests, promotions |
+| `OpenClaw/Social` | Social media notifications, invites |
+
+When working with Julia's inbox manually, be aware these labels exist and respect the triage system's categorization.
+
 ## Notes
 
 - Default account: dylanbochman@gmail.com

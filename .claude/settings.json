@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -32,7 +35,6 @@
     "claude-delegator@jarrodwatts-claude-delegator": true
   },
   "alwaysThinkingEnabled": false,
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  }
+  "skipDangerousModePermissionPrompt": true,
+  "effortLevel": "medium"
 }
