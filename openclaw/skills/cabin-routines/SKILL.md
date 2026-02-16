@@ -1,7 +1,7 @@
 ---
 name: cabin-routines
 description: Run cabin routines like goodnight, away, and welcome home. Use when the user says goodnight, good night, bedtime, going to bed, leaving, heading out, we're home, or asks to run a routine.
-allowed-tools: Bash(hue:*) Bash(nest:*) Bash(catt:*) Bash(spogo:*)
+allowed-tools: Bash(hue:*) Bash(nest:*) Bash(catt:*) Bash(spogo:*) Bash(roomba:*)
 metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest"]}}}
 ---
 
@@ -34,7 +34,9 @@ Steps:
 3. Stop all speakers: `catt -d "Kitchen speaker" stop` and `catt -d "Bedroom speaker" stop`
 4. Pause Spotify: `spogo pause`
 
-Confirm: "Away mode set. All lights off, thermostats in eco, audio stopped."
+5. Start both Roombas: `roomba start floomba` then `roomba start philly`
+
+Confirm: "Away mode set. All lights off, thermostats in eco, audio stopped. Floomba and Philly are vacuuming."
 
 ## Welcome Home
 
@@ -46,7 +48,9 @@ Steps:
 3. Disable eco on main rooms: `nest eco "philly living" off` then `nest eco bedroom off`
 4. Set comfortable temperature: `nest set "philly living" 70` then `nest set bedroom 68`
 
-Confirm: "Welcome home! Kitchen and living room lights on, thermostats set to 70°F/68°F."
+5. Dock both Roombas: `roomba dock floomba` then `roomba dock philly`
+
+Confirm: "Welcome home! Kitchen and living room lights on, thermostats set to 70°F/68°F. Roombas docking."
 
 ## Movie Night
 
@@ -84,10 +88,10 @@ Always adapt to the user's specific request. These routines are starting points,
 
 ## Quick Reference
 
-| Routine | Lights | Thermostats | Audio |
-|---------|--------|-------------|-------|
-| Goodnight | All off, bedroom dim | All eco | Stop all |
-| Away | All off | All eco | Stop all |
-| Welcome Home | Kitchen+living+hallway on | Eco off, 70°F/68°F | — |
-| Movie Night | Living dim, others off | — | Pause music |
-| Morning | Kitchen+living+hallway on daylight | Eco off | — |
+| Routine | Lights | Thermostats | Audio | Roombas |
+|---------|--------|-------------|-------|---------|
+| Goodnight | All off, bedroom dim | All eco | Stop all | — |
+| Away | All off | All eco | Stop all | Start both |
+| Welcome Home | Kitchen+living+hallway on | Eco off, 70°F/68°F | — | Dock both |
+| Movie Night | Living dim, others off | — | Pause music | — |
+| Morning | Kitchen+living+hallway on daylight | Eco off | — | — |

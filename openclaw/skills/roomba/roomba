@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""CLI to control iRobot Roombas via Google Assistant text commands.
+
+Usage:
+    roomba start <name>     Start vacuuming
+    roomba stop <name>      Stop vacuuming
+    roomba dock <name>      Send back to dock
+    roomba status <name>    Check status
+    roomba list             List known Roombas
+    roomba setup            Run first-time OAuth flow
+"""
+
+import json
+import os
+import sys
+import warnings
+from pathlib import Path
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*urllib3.*")
+
+CONFIG_DIR = Path.home() / ".openclaw" / "roomba"
+CREDS_FILE = CONFIG_DIR / "credentials.json"
+CLIENT_SECRET_FILE = CONFIG_DIR / "client_secret.json"
+
+# Known Roombas at the Cabin
+ROOMBAS = {
+    "floomba": "Floomba",
+    "philly": "Philly",
+}
+
+COMMANDS = {
+    "start": "start {name}",
+    "stop": "stop {name}",
+    "dock": "dock {name}",
+    "status": "is {name} running",
+    "locate": "locate {name}",
+}
+
+
+def get_config_dir():
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    return CONFIG_DIR
+
+
+def resolve_name(name_input):
+    """Fuzzy match a Roomba name."""
+    key = name_input.lower().strip()
+    if key in ROOMBAS:
+        return ROOMBAS[key]
+    # Partial match
+    for k, v in ROOMBAS.items():
+        if key in k or key in v.lower():
+            return v
+    # Fall through — use as-is (Google Assistant will fuzzy match too)
+    return name_input
+
+
+def ensure_credentials():
+    """Check that OAuth credentials exist."""
+    if not CREDS_FILE.exists():
+        print(f"Error: No credentials found at {CREDS_FILE}", file=sys.stderr)
+        print("Run 'roomba setup' first to authenticate.", file=sys.stderr)
+        sys.exit(1)
+
+
+def setup():
+    """Run the one-time OAuth flow to get credentials."""
+    get_config_dir()
+
+    if not CLIENT_SECRET_FILE.exists():
+        print(f"Error: Place your client_secret.json at {CLIENT_SECRET_FILE}")
+        sys.exit(1)
+
+    try:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+    except ImportError:
+        print("Installing dependencies...")
+        os.system(f"{sys.executable} -m pip install --quiet google-auth-oauthlib[tool] gassist-text")
+        from google_auth_oauthlib.flow import InstalledAppFlow
+
+    SCOPES = [
+        "https://www.googleapis.com/auth/assistant-sdk-prototype",
+    ]
+
+    flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_FILE), scopes=SCOPES)
+    creds = flow.run_local_server(port=0)
+
+    # Save credentials
+    creds_data = {
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "token_uri": creds.token_uri,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+        "scopes": list(creds.scopes) if creds.scopes else SCOPES,
+    }
+    CREDS_FILE.write_text(json.dumps(creds_data, indent=2))
+    print(f"Credentials saved to {CREDS_FILE}")
+    print("Setup complete! Try: roomba start floomba")
+
+
+def load_credentials():
+    """Load and refresh OAuth credentials."""
+    ensure_credentials()
+
+    import google.oauth2.credentials
+
+    data = json.loads(CREDS_FILE.read_text())
+    creds = google.oauth2.credentials.Credentials(token=None, **{
+        k: v for k, v in data.items() if k != "token"
+    })
+    return creds
+
+
+def send_command(text):
+    """Send a text command to Google Assistant and return the response."""
+    try:
+        from gassist_text import TextAssistant
+    except ImportError:
+        print("Installing gassist-text...", file=sys.stderr)
+        os.system(f"{sys.executable} -m pip install --quiet gassist-text")
+        from gassist_text import TextAssistant
+
+    creds = load_credentials()
+
+    with TextAssistant(creds, language_code="en-US", display=True) as assistant:
+        text_response, html_response, _audio = assistant.assist(text)
+
+    # Save refreshed token
+    data = json.loads(CREDS_FILE.read_text())
+    if creds.token:
+        data["token"] = creds.token
+    if creds.refresh_token:
+        data["refresh_token"] = creds.refresh_token
+    CREDS_FILE.write_text(json.dumps(data, indent=2))
+
+    # Try to extract meaningful text from HTML if text response is empty
+    result = text_response
+    if not result and html_response:
+        import re
+        html_str = html_response.decode('utf-8', errors='replace')
+        # Look for content in show_text divs or card content
+        for pattern in [
+            r'class="[^"]*show_text[^"]*"[^>]*>(.*?)</div>',
+            r'class="[^"]*card[^"]*"[^>]*>(.*?)</div>',
+            r'<span[^>]*>(.*?)</span>',
+        ]:
+            matches = re.findall(pattern, html_str, re.DOTALL)
+            for m in matches:
+                clean = re.sub(r'<[^>]+>', '', m).strip()
+                if clean and len(clean) > 2 and not clean.startswith('{'):
+                    result = clean
+                    break
+            if result:
+                break
+
+    return result or "OK (command sent)"
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip())
+        sys.exit(1)
+
+    cmd = sys.argv[1].lower()
+
+    if cmd == "setup":
+        setup()
+        return
+
+    if cmd == "list":
+        print("Known Roombas (Cabin):")
+        for key, name in ROOMBAS.items():
+            print(f"  {key} → {name}")
+        return
+
+    if cmd == "help" or cmd == "--help" or cmd == "-h":
+        print(__doc__.strip())
+        return
+
+    if cmd not in COMMANDS:
+        print(f"Unknown command: {cmd}", file=sys.stderr)
+        print(f"Available: {', '.join(COMMANDS.keys())}, list, setup", file=sys.stderr)
+        sys.exit(1)
+
+    if len(sys.argv) < 3:
+        print(f"Usage: roomba {cmd} <name>", file=sys.stderr)
+        print(f"Names: {', '.join(ROOMBAS.keys())}", file=sys.stderr)
+        sys.exit(1)
+
+    name = resolve_name(sys.argv[2])
+    assistant_text = COMMANDS[cmd].format(name=name)
+
+    print(f"Sending: \"{assistant_text}\"")
+    response = send_command(assistant_text)
+    print(f"Response: {response}")
+
+
+if __name__ == "__main__":
+    main()
