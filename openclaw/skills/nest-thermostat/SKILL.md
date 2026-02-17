@@ -104,3 +104,46 @@ Room names are fuzzy-matched — use any substring. "crosstown" matches the Cros
 - Snapshots store weather as `{"Philly": {...}, "19Crosstown": {...}}` — old single-location snapshots still render fine
 - Camera snapshots use WebRTC via the SDM API. Requires `aiortc` and `Pillow` Python packages.
 - When asked "what does the kitchen look like?" or similar, use `nest camera snap` and then view the image
+
+## Troubleshooting
+
+### "Error refreshing token: invalid_grant"
+The Google OAuth refresh token has been revoked. Common causes:
+1. **GCP OAuth consent screen in "Testing" mode** — tokens expire after 7 days. Fix: switch to "In production" at [Google Auth Platform > Audience](https://console.cloud.google.com/apis/credentials/consent)
+2. **User revoked access** or **password change** — need to re-authorize
+
+**Re-auth flow:**
+1. Get credentials from 1Password (vault "OpenClaw", item "Google Nest"): `clientID`, `client_secret`, `project_id`
+2. Open auth URL:
+   ```
+   https://nestservices.google.com/partnerconnections/<PROJECT_ID>/auth?redirect_uri=https://www.google.com&access_type=offline&prompt=consent&client_id=<CLIENT_ID>&response_type=code&scope=https://www.googleapis.com/auth/sdm.service
+   ```
+3. Authorize and copy the `code=` parameter from the redirect URL
+4. Exchange the code:
+   ```bash
+   curl -s -X POST "https://www.googleapis.com/oauth2/v4/token" \
+     -d "client_id=<CLIENT_ID>" \
+     -d "client_secret=<CLIENT_SECRET>" \
+     -d "code=<AUTH_CODE>" \
+     -d "grant_type=authorization_code" \
+     -d "redirect_uri=https://www.google.com"
+   ```
+5. Update `refresh_token` in 1Password
+6. Clear cache on Mac Mini: `rm -rf ~/.cache/nest-sdm/`
+7. Write new credentials to cache (if 1Password biometric is unavailable via SSH):
+   ```bash
+   mkdir -p ~/.cache/nest-sdm
+   echo -n '<REFRESH_TOKEN>' > ~/.cache/nest-sdm/refresh_token
+   echo -n '<CLIENT_ID>' > ~/.cache/nest-sdm/clientid
+   echo -n '<CLIENT_SECRET>' > ~/.cache/nest-sdm/client_secret
+   echo -n '<PROJECT_ID>' > ~/.cache/nest-sdm/project_id
+   ```
+
+### "Can't link to HomeAutomation"
+The OAuth consent screen is blocking auth. Check:
+- GCP project OAuth consent screen publishing status — must be "In production" (not "Testing")
+- Your Google account must be listed as a test user if still in Testing mode
+- Device Access project must exist at [console.nest.google.com/device-access](https://console.nest.google.com/device-access)
+
+### 1Password unreachable via SSH
+Mac Mini 1Password requires biometric unlock which can't be triggered over SSH. Workaround: write credentials directly to `~/.cache/nest-sdm/` cache files (see re-auth flow above). The `nest` CLI reads from cache first before hitting 1Password.
