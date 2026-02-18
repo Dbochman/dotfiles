@@ -244,7 +244,7 @@ gog uses file-based OAuth2 with an encrypted keyring at `~/Library/Application S
 
 ### Cron job error reporting
 
-Both Gmail cron jobs have a Step 0 auth health check. If auth fails, they stop immediately and send an error message via iMessage to Julia with re-auth instructions.
+Both Gmail cron jobs have a Step 0 auth health check. If auth fails, they stop immediately, send Dylan a direct iMessage with re-auth instructions, and Julia just sees "Gmail triage skipped — auth error. Dylan has been notified."
 
 ## Cron Job Sync
 
