@@ -222,12 +222,50 @@ These labels are created and managed by the automated triage system on Julia's a
 
 When working with Julia's inbox manually, be aware these labels exist and respect the triage system's categorization.
 
+## Auth Troubleshooting
+
+gog uses file-based OAuth2 with an encrypted keyring at `~/Library/Application Support/gogcli/keyring`. The keyring passphrase is stored in 1Password at `op://OpenClaw/GOG CLI/password` and injected via `GOG_KEYRING_PASSWORD` env var by the OpenClaw gateway startup script.
+
+### Common failures
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `aes.KeyUnwrap(): integrity check failed` | Keyring passphrase mismatch or corrupted token | Re-auth with correct 1Password passphrase |
+| `oauth2: "invalid_grant" "Token has been expired or revoked."` | Google revoked the refresh token | Re-auth: `gog auth add <email>` |
+| `no TTY available for keyring file backend password prompt` | Non-interactive session missing `GOG_KEYRING_PASSWORD` | Set env var from 1Password or cache |
+
+### Re-authentication steps
+
+1. VNC into Mac Mini (`vnc://100.93.66.71` via Tailscale)
+2. Open Terminal and run: `gog auth add julia.joy.jennings@gmail.com`
+3. Complete Google OAuth flow in the browser
+4. When prompted for keyring passphrase, use the value from: `/opt/homebrew/bin/op read "op://OpenClaw/GOG CLI/password"`
+5. Verify: `GOG_KEYRING_PASSWORD=$(cat ~/.cache/openclaw-gateway/gog_keyring_password) gog gmail search "is:unread" --account=julia.joy.jennings@gmail.com --max=1`
+
+### Cron job error reporting
+
+Both Gmail cron jobs have a Step 0 auth health check. If auth fails, they stop immediately and send an error message via iMessage to Julia with re-auth instructions.
+
+## Cron Job Sync
+
+Job definitions are tracked in the dotfiles repo (state-stripped) and synced to the Mac Mini:
+
+```bash
+# Save live jobs to dotfiles (strips runtime state)
+~/dotfiles/openclaw/sync-cron-jobs.sh save
+
+# Deploy definitions to live file (preserves runtime state)
+~/dotfiles/openclaw/sync-cron-jobs.sh deploy
+```
+
+Deploy runs automatically on the Mac Mini after every `dotfiles-pull`.
+
 ## Notes
 
 - Default account: dylanbochman@gmail.com
 - Always check inbox/unread first before reporting on emails
 - When sending emails, confirm the recipient and content with the user first
-- gog uses OAuth2 -- tokens refresh automatically
+- gog uses OAuth2 -- tokens refresh automatically but can expire if the Google Cloud OAuth app was in "Testing" mode (7-day token lifespan). The app has been upgraded to Production for longer-lived tokens.
 - Use `--json` when you need to parse output programmatically or extract IDs
 - Thread search (`gog gmail search`) groups messages into conversations; message search (`gog gmail messages search`) returns individual messages
 - The `--plain` flag outputs TSV format, useful for piping to other tools
