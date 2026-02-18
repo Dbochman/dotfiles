@@ -1,9 +1,7 @@
-# Mac Mini (via Tailscale, dedicated key — no 1Password agent)
+# Mac Mini (via Tailscale, keys in 1Password)
 Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
-  IdentityFile ~/.ssh/mac_mini_ed25519
-  IdentitiesOnly yes
 
 # 1Password SSH Agent
 Host *

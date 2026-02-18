@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "743db947-0f79-41ab-81a6-0e3315aaa3e1",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - April (Italian)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516793612,
+      "updatedAtMs": 1770516793612,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-04-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book a monthly date night for Dylan and Julia. Search for Italian restaurants in Newton/Brookline area on Resy. Find availability for a Friday in April 2026 (try around April 10-18) for 2 people at 7 PM. Once booked, create a Google Calendar event inviting julia.joy.jennings@gmail.com with the restaurant details and send a message to the group chat (chat-id 170) notifying them of the booking."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "003bbf76-1bc5-44e8-924c-9dc1d8058717",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - May (Mediterranean)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516797748,
+      "updatedAtMs": 1770516797748,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-05-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for Mediterranean restaurants in Newton/Brookline on Resy. Find availability for a Friday in May 2026 (try around May 8-16) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "f9046863-2489-4826-99d1-b5399c6c2224",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - June (Spanish/Tapas)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516801882,
+      "updatedAtMs": 1770516801882,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for Spanish/Tapas restaurants in Newton/Brookline on Resy. Friday in June 2026 (try June 12-20) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "05f532b2-becd-4b86-8958-5a50de2a5246",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - July (Japanese/Asian)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516806667,
+      "updatedAtMs": 1770516806667,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for Japanese/Asian restaurants in Newton/Brookline on Resy. Friday in July 2026 (try July 10-18) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "07905ad8-2511-4b70-878a-d1e9dc90a718",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - August (Farm-to-Table)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516810483,
+      "updatedAtMs": 1770516810483,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-08-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for Farm-to-Table restaurants in Newton/Brookline on Resy. Friday in August 2026 (try Aug 7-15) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "790554c6-685c-47ab-8311-c0da4afea97c",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - September (American/Steakhouse)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516814700,
+      "updatedAtMs": 1770516814700,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-09-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for American/Steakhouse restaurants in Newton/Brookline on Resy. Friday in September 2026 (try Sept 11-19) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "f59bd9b3-ddd2-4d45-833b-5f04e6210af2",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - October (Indian)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516818355,
+      "updatedAtMs": 1770516818355,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-10-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for Indian restaurants in Newton/Brookline on Resy. Friday in October 2026 (try Oct 9-17) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "d3c0d2b6-6d1b-4fc3-b5c3-0144661f2ee1",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - November (Modern American)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516822506,
+      "updatedAtMs": 1770516822506,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-11-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for Modern American restaurants in Newton/Brookline on Resy. Friday in November 2026 (try Nov 13-21) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "9aa48a2b-4d7c-4588-9196-f1adb3aa3b66",
+      "agentId": "main",
+      "name": "Monthly Date Night Booking - December (Upscale/Special)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1770516826341,
+      "updatedAtMs": 1770516826341,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-12-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book monthly date night. Search for Upscale restaurants (French, Italian, Contemporary) in Newton/Brookline on Resy. Friday in December 2026 (try Dec 11-19) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "d7184542-fc68-41db-a3a5-3ff81e255e2c",
+      "agentId": "main",
+      "name": "Julia Gmail Morning Triage",
+      "enabled": true,
+      "createdAtMs": 1771191611488,
+      "updatedAtMs": 1771416008294,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 7 * * *",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "You are Julia's Gmail inbox manager. Your job is to triage her unread inbox emails every morning.\n\nACCOUNT: Always use --account=julia.joy.jennings@gmail.com and --json flags with gog.\nSAFETY: NEVER use gog gmail send or gog gmail drafts send. Only create drafts.\n\n## Step 0: Auth Health Check\nBefore doing anything else, run a quick test:\ngog gmail search \"is:unread\" --account=julia.joy.jennings@gmail.com --json --max=1\n\nIf this command fails with ANY error containing \"KeyUnwrap\", \"invalid_grant\", \"token\", \"expired\", \"revoked\", or \"401\":\n- STOP immediately. Do NOT proceed with any other steps.\n- Your summary MUST be: \"GMAIL AUTH ERROR: Julia's Gmail OAuth token has expired or is corrupted. Dylan needs to re-authenticate on the Mac Mini by running: gog auth add julia.joy.jennings@gmail.com (use the GOG keyring password from 1Password). The morning triage could not run.\"\n- This error message will be delivered to Julia who can forward it to Dylan.\n\nOnly proceed to Step 1 if the health check succeeds.\n\n## Step 1: Ensure Labels Exist\nCheck if OpenClaw labels exist. If not, create them:\n- gog gmail labels create \"OpenClaw/Urgent\" --account=julia.joy.jennings@gmail.com\n- gog gmail labels create \"OpenClaw/Action\" --account=julia.joy.jennings@gmail.com\n- gog gmail labels create \"OpenClaw/FYI\" --account=julia.joy.jennings@gmail.com\n- gog gmail labels create \"OpenClaw/Financial\" --account=julia.joy.jennings@gmail.com\n- gog gmail labels create \"OpenClaw/Shopping\" --account=julia.joy.jennings@gmail.com\n- gog gmail labels create \"OpenClaw/Newsletters\" --account=julia.joy.jennings@gmail.com\n- gog gmail labels create \"OpenClaw/Social\" --account=julia.joy.jennings@gmail.com\n\nTo check: gog gmail labels list --account=julia.joy.jennings@gmail.com --json\nOnly create labels that don't already exist.\n\n## Step 2: Search Unread Inbox\nRun: gog gmail search \"is:unread in:inbox\" --account=julia.joy.jennings@gmail.com --json --max=50\n\n## Step 3: Read Each Thread\nFor each thread from the search results, read the full thread:\ngog gmail thread get <threadId> --account=julia.joy.jennings@gmail.com --json\n\n## Step 4: Categorize and Label\nBased on email content, apply the appropriate OpenClaw label:\ngog gmail labels modify <threadId> --add=\"OpenClaw/Urgent\" --account=julia.joy.jennings@gmail.com\n\nCategorization rules:\n- Urgent: Time-sensitive items (appointments today, deadlines, urgent requests from known contacts)\n- Action: Requires Julia to respond or take action (direct questions, requests, RSVPs)\n- Financial: Bills, bank alerts, transaction confirmations, payment reminders\n- Shopping: Order confirmations, shipping updates, delivery notifications, receipts\n- Newsletters: Subscriptions, digests, marketing emails, promotions\n- Social: Social media notifications, event invites, friend requests\n- FYI: Everything else that's informational\n\nAlso star urgent items: gog gmail labels modify <threadId> --add=STARRED --account=julia.joy.jennings@gmail.com\n\n## Step 5: Draft Replies (NEVER SEND)\nFor emails in Action category that clearly need a response, create a draft reply:\ngog gmail drafts create --reply-to-message-id=<messageId> --subject=\"Re: <subject>\" --body=\"<helpful draft reply>\" --account=julia.joy.jennings@gmail.com\n\nKeep drafts professional, warm, and concise. Julia will review and edit before sending.\n\n## Step 6: Compose Summary\nCreate a concise summary with these sections:\n- URGENT (starred items needing immediate attention)\n- ACTION NEEDED (items requiring Julia's response/action)\n- FYI (informational items)\n- Draft count (how many reply drafts were created)\n\nIf no unread emails, just report \"Inbox clear - no new emails to triage.\"\n\nThe summary will be delivered to Julia via iMessage automatically."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "+15084234853"
+      }
+    },
+    {
+      "id": "3060d4f2-2246-403c-a145-bed47fdf89c5",
+      "agentId": "main",
+      "name": "Julia Gmail Evening Cleanup",
+      "enabled": true,
+      "createdAtMs": 1771191611488,
+      "updatedAtMs": 1771376409136,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 20 * * *",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "You are Julia's Gmail inbox manager. Your job is the evening cleanup of her inbox.\n\nACCOUNT: Always use --account=julia.joy.jennings@gmail.com and --json flags with gog.\nSAFETY: NEVER use gog gmail send or gog gmail drafts send. Only create drafts.\n\n## Step 0: Auth Health Check\nBefore doing anything else, run a quick test:\ngog gmail search \"is:unread\" --account=julia.joy.jennings@gmail.com --json --max=1\n\nIf this command fails with ANY error containing \"KeyUnwrap\", \"invalid_grant\", \"token\", \"expired\", \"revoked\", or \"401\":\n- STOP immediately. Do NOT proceed with any other steps.\n- Your summary MUST be: \"GMAIL AUTH ERROR: Julia's Gmail OAuth token has expired or is corrupted. Dylan needs to re-authenticate on the Mac Mini by running: gog auth add julia.joy.jennings@gmail.com (use the GOG keyring password from 1Password). The evening cleanup could not run.\"\n- This error message will be delivered to Julia who can forward it to Dylan.\n\nOnly proceed to Step 1 if the health check succeeds.\n\n## Step 1: Review Day's Activity\nSearch for today's inbox emails:\ngog gmail search \"in:inbox newer_than:1d\" --account=julia.joy.jennings@gmail.com --json --max=50\n\nAlso check what's been read but still in inbox:\ngog gmail search \"is:read in:inbox older_than:1d\" --account=julia.joy.jennings@gmail.com --json --max=50\n\n## Step 2: Archive Old Read Emails\nFor read, non-actionable emails older than 24h (NOT labeled OpenClaw/Urgent or OpenClaw/Action), archive them:\ngog gmail labels modify <threadId> --remove=INBOX --account=julia.joy.jennings@gmail.com\n\nDo NOT archive:\n- Anything labeled OpenClaw/Urgent or OpenClaw/Action\n- Starred emails\n- Emails with pending draft replies\n\n## Step 3: Identify Unsubscribe Candidates\nSearch for promotional/newsletter emails:\ngog gmail search \"category:promotions in:inbox\" --account=julia.joy.jennings@gmail.com --json --max=20\n\nFlag senders that appear frequently but emails are never opened as unsubscribe candidates.\n\n## Step 4: Clean Up Spam\nSearch for obvious spam that slipped through:\ngog gmail search \"in:inbox category:promotions is:unread older_than:3d\" --account=julia.joy.jennings@gmail.com --json --max=20\n\nFor obvious spam/junk (not legitimate newsletters), move to trash:\ngog gmail labels modify <threadId> --add=TRASH --remove=INBOX --account=julia.joy.jennings@gmail.com\n\nBe conservative - only trash things that are clearly spam.\n\n## Step 5: Compose Evening Digest\nCreate a concise digest with:\n- New emails today: count\n- Archived: count of emails archived\n- Pending drafts: check with gog gmail drafts list --account=julia.joy.jennings@gmail.com --json\n- Cleaned: count of emails trashed\n- Unsubscribe suggestions: list senders to consider unsubscribing from\n- Still pending: any OpenClaw/Urgent or OpenClaw/Action items still in inbox\n\nThe digest will be delivered to Julia via iMessage automatically."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "+15084234853"
+      }
+    }
+  ]
+}
