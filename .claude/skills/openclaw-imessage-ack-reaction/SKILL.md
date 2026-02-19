@@ -58,13 +58,25 @@ a text-based acknowledgment via SOUL.md:
    ```markdown
    ## Acknowledgment
 
-   When you receive a message, immediately reply with just "👀" before you start
-   working on your response. This lets the sender know you've seen their message
-   and are on it. Send the 👀 as a separate message first, then follow up with
-   your actual reply.
+   When you receive a message, your FIRST action — before thinking, processing,
+   or drafting anything — must be to send a message containing only "👀"
+   (nothing else, no other text). This is a read receipt so the sender knows
+   you saw it.
+
+   Then, AFTER that message is sent, begin working on your actual response and
+   send it as a second, separate message.
+
+   Critical: "👀" must be its own standalone message. Never combine it with your
+   actual reply. Never append text after it. Two separate messages every time.
    ```
 
-3. The agent will pick this up on the next session reset or `/reset`.
+   **Important**: The initial simpler instruction ("send 👀 first, then follow up")
+   resulted in the agent combining the 👀 with its reply in a single message.
+   The stronger, more explicit instruction above is needed to force two separate
+   messages.
+
+3. Changes to SOUL.md take effect immediately — no session reset needed. SOUL.md
+   is loaded fresh as a context file on each inbound message.
 
 ## Trade-offs
 
