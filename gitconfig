@@ -12,3 +12,9 @@
 	rebase = false
 [push]
 	autoSetupRemote = true
+[credential "https://github.com"]
+	helper = 
+	helper = !/Users/dbochman/.local/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !/Users/dbochman/.local/bin/gh auth git-credential
