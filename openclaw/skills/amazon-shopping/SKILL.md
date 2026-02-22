@@ -22,7 +22,7 @@ Before clicking "Place your order":
 
 ```bash
 # Read the spending cap before any purchase
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
+# OP_SERVICE_ACCOUNT_TOKEN is pre-loaded by the gateway from ~/.openclaw/.secrets-cache
 op read "op://OpenClaw/Visa/credit limit"
 ```
 
@@ -79,7 +79,7 @@ browser snapshot
 Amazon should have saved payment methods. If it asks for card details:
 
 ```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
+# OP_SERVICE_ACCOUNT_TOKEN is pre-loaded by the gateway from ~/.openclaw/.secrets-cache
 CARD_NUMBER=$(op read "op://OpenClaw/Visa/number")
 CARD_EXPIRY=$(op read "op://OpenClaw/Visa/expiry date")
 CARD_CVV=$(op read "op://OpenClaw/Visa/verification number")
@@ -103,7 +103,7 @@ cat ~/.openclaw/skills/amazon-shopping/address.local.md
 
 If the file doesn't exist, fall back to 1Password:
 ```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
+# OP_SERVICE_ACCOUNT_TOKEN is pre-loaded by the gateway
 op read "op://OpenClaw/Visa/address"
 ```
 

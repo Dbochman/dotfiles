@@ -224,7 +224,7 @@ When working with Julia's inbox manually, be aware these labels exist and respec
 
 ## Auth Troubleshooting
 
-gog uses file-based OAuth2 with an encrypted keyring at `~/Library/Application Support/gogcli/keyring`. The keyring passphrase is stored in 1Password at `op://OpenClaw/GOG CLI/password` and injected via `GOG_KEYRING_PASSWORD` env var by the OpenClaw gateway startup script.
+gog uses file-based OAuth2 with an encrypted keyring at `~/Library/Application Support/gogcli/keyring`. The keyring passphrase is stored in 1Password at `op://OpenClaw/GOG CLI/password` and injected via `GOG_KEYRING_PASSWORD` env var from the gateway's secrets cache (`~/.openclaw/.secrets-cache`).
 
 ### Common failures
 
