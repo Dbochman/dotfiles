@@ -264,6 +264,30 @@
         "channel": "imessage",
         "to": "+15084234853"
       }
+    },
+    {
+      "id": "a1b2c3d4-weekly-token-review-0001",
+      "agentId": "main",
+      "name": "Weekly Token Spend Review",
+      "enabled": true,
+      "createdAtMs": 1771700000000,
+      "updatedAtMs": 1771700000000,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 10 * * 0",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Generate a weekly token spend report for Dylan. Analyze the past 7 days of your own activity.\n\n## Step 1: Count API Calls from Logs\nParse the structured runtime logs at /tmp/openclaw/openclaw-*.log to extract:\n- Total \"embedded run start\" entries from the past 7 days\n- Breakdown by day\n- Average response duration from \"embedded run prompt end\" durationMs values\n- Number of unique sessions\n- Number of tool executions\n\nUse python3 to parse the JSON log lines. Filter by the \"time\" field to only include the last 7 days.\n\n## Step 2: Estimate Token Usage\nBased on the API call count, estimate tokens using these averages:\n- Input: ~2,000 tokens per call (system prompt + context + user message)\n- Output: ~500 tokens per call (agent response)\n- For calls with tool use (duration > 10s), estimate 4,000 input + 1,000 output\n\nCalculate estimated cost using the current model's pricing:\n- claude-sonnet-4-6: $3/MTok input, $15/MTok output\n- claude-haiku-4-5: $0.80/MTok input, $4/MTok output\n\n## Step 3: Compare to Previous Week\nIf logs from 8-14 days ago exist, calculate the same metrics and show week-over-week change.\n\n## Step 4: Compose Report\nFormat a concise iMessage-friendly report:\n\nOpenClaw Weekly Token Report (Mon-Sun)\n- API calls: X (prev: Y)\n- Est. input tokens: ~X\n- Est. output tokens: ~X\n- Est. cost: $X.XX\n- Avg response time: Xs\n- Sessions: X\n- Busiest day: [day] (X calls)\n- Model: [current model]\n\nIf cost exceeds $5/week, add a note suggesting review. If usage is very low (<10 calls), note that too."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "dylanbochman@gmail.com"
+      }
     }
   ]
 }
