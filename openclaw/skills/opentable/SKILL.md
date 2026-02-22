@@ -82,7 +82,7 @@ If auth errors occur, the token needs refreshing:
 4. Find the cookie named "authCke"
 5. Copy the "atk" value (UUID after `atk=` and before `&rtk=`)
 6. Update 1Password: `op item edit "OpenTable" --vault "OpenClaw" "auth_token=<atk_value>"`
-7. Clear cache: `rm ~/.cache/openclaw-gateway/opentable_auth_token`
+7. The updated token will be read from 1Password on next use
 
 Auth tokens typically last ~14 days.
 

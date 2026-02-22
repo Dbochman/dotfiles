@@ -1,13 +1,13 @@
 ---
 name: amazon-shopping
-description: Search, browse, and purchase products on Amazon. Use when asked to buy something, find a product on Amazon, check prices, compare products, track orders, or manage the Amazon cart. Requires browser control and cached payment details.
+description: Search, browse, and purchase products on Amazon. Use when asked to buy something, find a product on Amazon, check prices, compare products, track orders, or manage the Amazon cart. Requires browser control and payment details from 1Password.
 allowed-tools: browser(*), Bash(amazon:*)
 metadata: {"openclaw":{"emoji":"📦","requires":{"services":["browser"]}}}
 ---
 
 # Amazon Shopping
 
-Search, browse, and purchase products on Amazon using browser automation. Payment details are cached locally from 1Password.
+Search, browse, and purchase products on Amazon using browser automation. Payment details are read from 1Password at runtime.
 
 ## Important: Purchase Approval Required
 
@@ -22,7 +22,8 @@ Before clicking "Place your order":
 
 ```bash
 # Read the spending cap before any purchase
-cat ~/.cache/openclaw-gateway/visa_credit_limit
+export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
+op read "op://OpenClaw/Visa/credit limit"
 ```
 
 - **Hard cap**: Never exceed the credit limit (currently $250)
@@ -78,11 +79,11 @@ browser snapshot
 Amazon should have saved payment methods. If it asks for card details:
 
 ```bash
-# Read cached card details
-cat ~/.cache/openclaw-gateway/visa_number
-cat ~/.cache/openclaw-gateway/visa_expiry
-cat ~/.cache/openclaw-gateway/visa_cvv
-cat ~/.cache/openclaw-gateway/visa_cardholder
+export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
+CARD_NUMBER=$(op read "op://OpenClaw/Visa/number")
+CARD_EXPIRY=$(op read "op://OpenClaw/Visa/expiry date")
+CARD_CVV=$(op read "op://OpenClaw/Visa/verification number")
+CARD_NAME=$(op read "op://OpenClaw/Visa/cardholder name")
 ```
 
 Then fill the form fields:
@@ -100,9 +101,10 @@ Read the local-only address file for field values:
 cat ~/.openclaw/skills/amazon-shopping/address.local.md
 ```
 
-If the file doesn't exist, fall back to:
+If the file doesn't exist, fall back to 1Password:
 ```bash
-cat ~/.cache/openclaw-gateway/visa_billing_address
+export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
+op read "op://OpenClaw/Visa/address"
 ```
 
 ### 7. Review Order (MANDATORY)

@@ -1,40 +1,26 @@
 #!/bin/bash
 
 export HOME="/Users/dbochman"
-export OP_BIOMETRIC_UNLOCK_ENABLED=true
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
-CACHE_DIR="$HOME/.cache/openclaw-gateway"
+# Use 1Password service account (works headlessly in launchd)
+export OP_SERVICE_ACCOUNT_TOKEN=$(cat "$HOME/.openclaw/.env-token")
 
-# Try 1Password with 5s timeout, fall back to cached secrets
+# Read secrets from 1Password at startup — no plaintext caching
 _secret() {
-  local op_path="$1" cache_file="$2"
-  local val="" tmpf
-  if command -v /opt/homebrew/bin/op &>/dev/null; then
-    tmpf=$(mktemp)
-    /opt/homebrew/bin/op read "$op_path" >"$tmpf" 2>/dev/null &
-    local pid=$!
-    local i=0
-    while kill -0 $pid 2>/dev/null && [[ $i -lt 5 ]]; do
-      sleep 1
-      i=$((i + 1))
-    done
-    kill $pid 2>/dev/null
-    wait $pid 2>/dev/null
-    val=$(cat "$tmpf")
-    rm -f "$tmpf"
-  fi
-  if [[ -n "$val" ]]; then
-    mkdir -p "$CACHE_DIR"
-    echo "$val" > "$cache_file"
-    echo "$val"
-  elif [[ -f "$cache_file" ]]; then
-    cat "$cache_file"
-  fi
+  local op_path="$1"
+  /opt/homebrew/bin/op read "$op_path" 2>/dev/null
 }
 
-export OPENAI_API_KEY=$(_secret "op://Private/OpenAI API Key/password" "$CACHE_DIR/openai_api_key")
-export ELEVENLABS_API_KEY=$(_secret "op://Private/ElevenLabs API Key/password" "$CACHE_DIR/elevenlabs_api_key")
-export OPENCLAW_GATEWAY_TOKEN=$(_secret "op://Private/OpenClaw Gateway Token/password" "$CACHE_DIR/gateway_token")
-export GOG_KEYRING_PASSWORD=$(_secret "op://OpenClaw/GOG CLI/password" "$CACHE_DIR/gog_keyring_password")
+export OPENAI_API_KEY=$(_secret "op://OpenClaw/OpenAI API Key/password")
+export ELEVENLABS_API_KEY=$(_secret "op://OpenClaw/ElevenLabs API Key/password")
+export OPENCLAW_GATEWAY_TOKEN=$(_secret "op://OpenClaw/OpenClaw Gateway Token/password")
+export GOG_KEYRING_PASSWORD=$(_secret "op://OpenClaw/GOG CLI/password")
 
-/opt/homebrew/Cellar/node@22/22.22.0/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789
+# Verify critical secrets loaded
+if [[ -z "$OPENCLAW_GATEWAY_TOKEN" ]]; then
+  echo "FATAL: Failed to read gateway token from 1Password" >&2
+  exit 1
+fi
+
+exec /opt/homebrew/Cellar/node@22/22.22.0/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789

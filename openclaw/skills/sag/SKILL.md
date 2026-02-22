@@ -80,6 +80,6 @@ sag-wrapper --model-id eleven_flash_v2_5 "Quick response"
 ## Notes
 
 - Binary at `/opt/homebrew/bin/sag-wrapper` (wraps `/opt/homebrew/bin/sag`)
-- API key read from `~/.cache/openclaw-gateway/elevenlabs_api_key`
+- API key loaded by the gateway wrapper from 1Password at startup
 - 1Password item: "ElevenLabs API Key" in "OpenClaw" vault
 - Audio plays through Mac Mini speakers (or connected Bluetooth/AirPlay output)

@@ -240,7 +240,7 @@ gog uses file-based OAuth2 with an encrypted keyring at `~/Library/Application S
 2. Open Terminal and run: `gog auth add julia.joy.jennings@gmail.com`
 3. Complete Google OAuth flow in the browser
 4. When prompted for keyring passphrase, use the value from: `/opt/homebrew/bin/op read "op://OpenClaw/GOG CLI/password"`
-5. Verify: `GOG_KEYRING_PASSWORD=$(cat ~/.cache/openclaw-gateway/gog_keyring_password) gog gmail search "is:unread" --account=julia.joy.jennings@gmail.com --max=1`
+5. Verify: `GOG_KEYRING_PASSWORD=$(OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token) op read "op://OpenClaw/GOG CLI/password") gog gmail search "is:unread" --account=julia.joy.jennings@gmail.com --max=1`
 
 ### Cron job error reporting
 

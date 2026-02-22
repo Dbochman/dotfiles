@@ -78,5 +78,5 @@ Shows whether ddgr and Tavily are available and configured.
 - ddgr is always tried first (free, no rate limits)
 - Tavily is used as fallback or when explicitly requested
 - Tavily API key is stored in 1Password: `op://OpenClaw/Tavily/api_key`
-- Cached at `~/.cache/openclaw-gateway/tavily_api_key`
+- The gateway wrapper loads the key from 1Password at startup via `op read`
 - Logs are written to `~/.openclaw/logs/websearch.log`
