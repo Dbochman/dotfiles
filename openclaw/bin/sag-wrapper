@@ -1,0 +1,5 @@
+#!/bin/bash
+export PATH="/opt/homebrew/bin:$PATH"
+export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
+export ELEVENLABS_API_KEY="$(op read 'op://OpenClaw/ElevenLabs API Key/password')"
+exec /opt/homebrew/bin/sag "$@"
