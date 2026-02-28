@@ -4,39 +4,23 @@
       "source": "github",
       "repo": "anthropics/claude-plugins-official"
     },
-    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/claude-plugins-official",
-    "lastUpdated": "2026-02-15T21:23:36.137Z"
-  },
-  "vibe-plugins": {
-    "source": {
-      "source": "git",
-      "url": "https://github.com/bflynn4141/vibe-plugin.git"
-    },
-    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/vibe-plugins",
-    "lastUpdated": "2026-02-15T21:29:34.734Z"
-  },
-  "design-plugins": {
-    "source": {
-      "source": "github",
-      "repo": "0xdesign/design-plugin"
-    },
-    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/design-plugins",
-    "lastUpdated": "2026-02-15T21:29:36.492Z"
+    "installLocation": "/Users/dylanbochman/.claude/plugins/marketplaces/claude-plugins-official",
+    "lastUpdated": "2026-02-28T16:51:38.036Z"
   },
   "claude-hud": {
     "source": {
       "source": "github",
       "repo": "jarrodwatts/claude-hud"
     },
-    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/claude-hud",
-    "lastUpdated": "2026-02-15T21:29:38.331Z"
+    "installLocation": "/Users/dylanbochman/.claude/plugins/marketplaces/claude-hud",
+    "lastUpdated": "2026-02-22T15:38:43.000Z"
   },
   "jarrodwatts-claude-delegator": {
     "source": {
       "source": "github",
       "repo": "jarrodwatts/claude-delegator"
     },
-    "installLocation": "/Users/dbochman/.claude/plugins/marketplaces/jarrodwatts-claude-delegator",
-    "lastUpdated": "2026-02-15T21:29:39.281Z"
+    "installLocation": "/Users/dylanbochman/.claude/plugins/marketplaces/jarrodwatts-claude-delegator",
+    "lastUpdated": "2026-02-22T15:38:43.000Z"
   }
 }
