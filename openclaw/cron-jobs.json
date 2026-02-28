@@ -223,7 +223,7 @@
       "name": "Julia Gmail Morning Triage",
       "enabled": true,
       "createdAtMs": 1771191611488,
-      "updatedAtMs": 1771416008294,
+      "updatedAtMs": 1772280064256,
       "schedule": {
         "kind": "cron",
         "expr": "0 7 * * *",
@@ -282,6 +282,30 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Generate a weekly activity report for Dylan. Analyze the past 7 days of your own activity. Note: We run on Dylan's Claude Max subscription (not pay-per-token API), so focus on volume and health, not cost.\n\n## Step 1: Parse Activity from Logs\nParse the structured runtime logs at /tmp/openclaw/openclaw-*.log. Each line is JSON with a \"time\" field. Filter to the last 7 days only.\n\nExtract:\n- Count of \"embedded run start\" entries (= API calls)\n- Breakdown by day\n- Per-call duration from \"embedded run prompt end\" durationMs\n- Unique sessionIds (= conversations)\n- Count of tool-related log lines (tool executions)\n- Count of \"delivered reply\" lines (= messages sent)\n- Any ERROR-level log entries (logLevelName=ERROR)\n\nUse python3 to parse. Handle malformed lines gracefully.\n\n## Step 2: Health Check\nAlso parse for:\n- Any lines containing \"error\", \"fail\", \"timeout\", \"rate.limit\", \"429\", \"503\" (case-insensitive)\n- Calls with durationMs > 60000 (slow responses over 1 min)\n- Gateway restarts (\"listening on ws://\")\n\n## Step 3: Compare to Previous Week\nIf logs from 8-14 days ago exist, calculate the same metrics for comparison.\n\n## Step 4: Compose Report\nFormat a concise iMessage-friendly summary (no markdown, plain text only):\n\nOpenClaw Weekly Report (Mon-Sun)\n\nActivity:\n- API calls: X (prev week: Y)\n- Messages sent: X\n- Sessions: X\n- Tool executions: X\n- Busiest day: [day] (X calls)\n\nPerformance:\n- Avg response: Xs\n- Slowest response: Xs\n- Calls over 60s: X\n\nHealth:\n- Errors: X (list briefly if any)\n- Gateway restarts: X\n- Rate limits hit: X\n\nModel: [current model name]\nPlan: Claude Max (included)\n\nIf there were errors, briefly describe the top 2-3. If usage was very low (<10 calls), note it. If there were rate limit hits, flag it prominently."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "dylanbochman@gmail.com"
+      }
+    },
+    {
+      "id": "b778befe-f3ed-4731-9f89-dccf040241a7",
+      "agentId": "main",
+      "name": "Weekly Security Audit Reminder",
+      "enabled": true,
+      "createdAtMs": 1772295462382,
+      "updatedAtMs": 1772295462382,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 18 * * 0",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Send Dylan a weekly security audit reminder. Message: Weekly security audit reminder. Run ./scripts/security-audit.sh from openclaw-operator on your laptop."
       },
       "delivery": {
         "mode": "announce",

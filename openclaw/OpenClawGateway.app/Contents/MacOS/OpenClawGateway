@@ -6,19 +6,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 CACHE="$HOME/.openclaw/.secrets-cache"
 
 # Source secrets from cache file (KEY=VALUE format, one per line).
-#
-# Why cache instead of op read?
-# On macOS Tahoe (26.x), `op read` hangs indefinitely under launchd.
-# The 1Password CLI spawns an `op daemon` that connects to the desktop app
-# via a Mach bootstrap service, which blocks waiting for user interaction
-# that can't happen in a non-GUI launchd context. Every workaround was
-# tested (OP_SERVICE_ACCOUNT_TOKEN, env -i, config isolation, background +
-# kill timer) — none work reliably. The kill-timer approach also triggers
-# incessant TCC "op would like to access data" popups on Tahoe that don't
-# persist across restarts.
-#
 # Cache is populated/refreshed via: ssh dylans-mac-mini ~/bin/openclaw-refresh-secrets
-# See: openclaw/skills/1password/SKILL.md for full context.
 if [[ -f "$CACHE" ]]; then
   set -a
   source "$CACHE"
