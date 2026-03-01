@@ -1,15 +1,57 @@
 ---
 name: opentable
-description: Check restaurant availability and book reservations on OpenTable. Use when asked about OpenTable reservations, restaurant availability on OpenTable, booking a table via OpenTable, or sniping hard-to-get OpenTable reservations.
-allowed-tools: Bash(opentable:*)
-metadata: {"openclaw":{"emoji":"O","requires":{"bins":["opentable"]}}}
+description: Search restaurants, check availability, and book reservations on OpenTable. Use when asked about OpenTable reservations, restaurant availability on OpenTable, booking a table via OpenTable, or searching for restaurants by cuisine/location.
+allowed-tools: Bash(opentable:*),Bash(pinchtab:*),Bash(bash:*)
+metadata: {"openclaw":{"emoji":"O","requires":{"bins":["pinchtab","opentable"]}}}
 ---
 
 # OpenTable Reservations
 
-Check availability, get restaurant info, and book reservations via the `opentable` CLI. Auth uses a bearer token extracted from browser cookies and stored in 1Password.
+Two methods are available for OpenTable bookings. **Prefer Pinchtab** (browser automation) for search-based bookings. Fall back to the `opentable` CLI when you have a specific restaurant ID.
 
-## Available Commands
+## Method 1: Pinchtab Booking Script (Primary)
+
+The `opentable-book.sh` script uses Pinchtab (headless browser automation) to search OpenTable, select a timeslot, and complete the reservation using the card on file.
+
+### Usage
+```bash
+bash ~/.openclaw/workspace/scripts/opentable-book.sh "<search_term>" <date> [time] [party_size]
+```
+
+### Examples
+```bash
+# Search by cuisine + area
+bash ~/.openclaw/workspace/scripts/opentable-book.sh "Italian brookline newton" 2026-04-11 19:00 2
+
+# Broader search
+bash ~/.openclaw/workspace/scripts/opentable-book.sh "sushi south end boston" 2026-05-15 20:00 2
+```
+
+### Output
+```json
+{"success": true, "restaurant": "Carbone", "date": "Fri, Apr 11", "time": "7:00 PM", "url": "..."}
+{"success": false, "error": "No available timeslots found for search: ..."}
+```
+
+### How it works
+1. Starts a Pinchtab browser session
+2. Navigates to OpenTable search with cuisine, date, time, party size
+3. Dismisses cookie consent overlay
+4. Finds available timeslots, picks the closest to requested time
+5. Clicks through to booking details page
+6. Clicks "Complete reservation" (uses card on file)
+7. Verifies confirmation page
+8. Cleans up Pinchtab process
+
+### Tips
+- If no slots found, retry with a different search term (just the cuisine, or a different neighborhood)
+- Try multiple dates: e.g. both Fridays and Saturdays in the target week
+- The script handles the full booking flow — no manual steps needed
+- metroId=7 is hardcoded (Boston metro area)
+
+## Method 2: OpenTable CLI (Fallback)
+
+Use the `opentable` CLI when you already have a specific restaurant ID (from an OpenTable URL). Auth uses a bearer token from browser cookies stored in 1Password.
 
 ### Get restaurant info by ID
 ```bash
@@ -30,51 +72,43 @@ Date format is YYYY-MM-DD, last positional argument is party size. Default searc
 opentable book <restaurant_id> 2026-03-20 19:00 2
 opentable book <restaurant_id> 2026-03-20 19:00 2 --dry-run
 ```
-Always use `--dry-run` first to preview. The CLI will look up availability, find the matching slot, and prompt for confirmation.
+Always use `--dry-run` first to preview.
 
 ### Snipe mode (auto-book when slot appears)
 ```bash
-# Dry-run: poll but don't book
 opentable snipe <restaurant_id> 2026-03-20 2 --time 19:00
-
-# With auto-booking enabled
 opentable snipe <restaurant_id> 2026-03-20 2 --time 19:00 --confirm
-
-# Custom poll duration (seconds)
 opentable snipe <restaurant_id> 2026-03-20 2 --time 20:00 --duration 3600 --confirm
 ```
 
-## Global Flags
-
+### CLI Global Flags
 - `--json` — Machine-readable JSON output
 - `--dry-run` — Stop before booking
 
 ## Typical Workflow
 
+### For search-based bookings (most common)
+1. Use the Pinchtab script: `bash ~/.openclaw/workspace/scripts/opentable-book.sh "cuisine area" DATE TIME PARTY`
+2. If it fails, try different search terms or dates
+3. If Pinchtab keeps failing, fall back to Resy
+
+### For specific restaurant bookings
 1. Find the restaurant ID from its OpenTable URL (e.g. `?rid=8033`)
-2. Verify the restaurant: `opentable info 8033`
-3. Check availability: `opentable availability 8033 2026-03-20 2`
-4. Preview booking: `opentable book 8033 2026-03-20 19:00 2 --dry-run`
-5. Confirm booking: `opentable book 8033 2026-03-20 19:00 2`
+2. Check availability: `opentable availability 8033 2026-03-20 2`
+3. Preview: `opentable book 8033 2026-03-20 19:00 2 --dry-run`
+4. Confirm: `opentable book 8033 2026-03-20 19:00 2`
 
 ## Safety Rules
 
-- **Never book without user confirmation** — always use `--dry-run` first and show the user what will be booked
+- **Cron jobs can book directly** — datenight and group dinner jobs are pre-approved
+- **Ad-hoc bookings need user confirmation** — use `--dry-run` first
 - **Snipe mode requires `--confirm`** — without it, snipe only reports matches
-- **Never exceed rate limits** — the CLI enforces 3s between requests and max 20/minute
 - **Validate dates** — must be YYYY-MM-DD and not in the past
 - **Party size** — must be 1-20
 
-## Limitations
+## CLI Auth Token Refresh
 
-- **No search** — restaurant IDs must be found from OpenTable URLs
-- **No cancel/list reservations** — manage existing reservations at opentable.com directly
-- **No programmatic login** — requires auth token from browser cookies
-- **Fragile** — uses undocumented mobile API that may break when OpenTable changes it
-
-## Auth Token Refresh
-
-If auth errors occur, the token needs refreshing:
+If the `opentable` CLI gives auth errors, the token needs refreshing:
 
 1. Open Chrome -> navigate to opentable.com
 2. Log in (if not already)
@@ -82,12 +116,12 @@ If auth errors occur, the token needs refreshing:
 4. Find the cookie named "authCke"
 5. Copy the "atk" value (UUID after `atk=` and before `&rtk=`)
 6. Update 1Password: `op item edit "OpenTable" --vault "OpenClaw" "auth_token=<atk_value>"`
-7. The updated token will be read from 1Password on next use
 
-Auth tokens typically last ~14 days.
+Auth tokens typically last ~14 days. Pinchtab does not need auth tokens (uses browser session).
 
 ## Notes
 
-- Logs are written to `~/.openclaw/logs/opentable.log`
-- Rate limiting is conservative (3s intervals) — OpenTable blocks aggressively
-- Uses undocumented mobile API (`mobile-api.opentable.com`) — may break without notice
+- Pinchtab booking script: `~/.openclaw/workspace/scripts/opentable-book.sh`
+- CLI logs: `~/.openclaw/logs/opentable.log`
+- CLI uses undocumented mobile API (`mobile-api.opentable.com`) — may break without notice
+- Pinchtab uses the real OpenTable website — more resilient to API changes
