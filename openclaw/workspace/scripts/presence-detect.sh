@@ -36,8 +36,11 @@ log() {
 
 # ── Known devices ────────────────────────────────────────────────────────────
 
-# All tracked people (used by the evaluator)
-TRACKED_PEOPLE='["Dylan","Julia"]'
+# Tracked people per location — vacancy requires all tracked people for THAT
+# location to be absent AND confirmed at the other location.
+# Julia is not yet trackable at Crosstown (MAC unknown).
+CABIN_TRACKED='["Dylan","Julia"]'
+CROSSTOWN_TRACKED='["Dylan"]'
 
 # Cabin (Philly) — matched by device name from Starlink gRPC API
 CABIN_DEVICES='[
@@ -194,7 +197,12 @@ evaluate() {
 const fs = require('fs');
 const cabin = JSON.parse(process.argv[1]);
 const crosstown = JSON.parse(process.argv[2]);
-const tracked = $TRACKED_PEOPLE;
+// Per-location tracked people — vacancy requires all tracked people for THAT
+// location to be absent AND confirmed at the other location.
+// Julia is not yet trackable at Crosstown (MAC unknown).
+const cabinTracked = $CABIN_TRACKED;
+const crosstownTracked = $CROSSTOWN_TRACKED;
+const allTracked = [...new Set([...cabinTracked, ...crosstownTracked])];
 
 const stateDir = '$STATE_DIR';
 const prevFile = stateDir + '/prev-evaluated.json';
@@ -214,9 +222,9 @@ const crosstownAge = crosstown.timestamp ? (Date.now() - new Date(crosstown.time
 const cabinFresh = cabinAge < 30;
 const crosstownFresh = crosstownAge < 30;
 
-// Per-person location
+// Per-person location (union of all tracked people)
 const people = {};
-for (const person of tracked) {
+for (const person of allTracked) {
   const atCabin = cabinPresence[person]?.present === true;
   const atCrosstown = crosstownPresence[person]?.present === true;
   people[person] = {
@@ -226,26 +234,23 @@ for (const person of tracked) {
   };
 }
 
-// Occupancy per location — vacancy requires ALL tracked people confirmed at the OTHER location
-const allAtCrosstown = tracked.every(p => people[p].crosstown);
-const allAtCabin = tracked.every(p => people[p].cabin);
-const anyAtCabin = tracked.some(p => people[p].cabin);
-const anyAtCrosstown = tracked.some(p => people[p].crosstown);
-const noneAtCabin = tracked.every(p => !people[p].cabin);
-const noneAtCrosstown = tracked.every(p => !people[p].crosstown);
-
+// Occupancy per location — uses that location's tracked list
+// Cabin vacancy: all cabin-tracked people absent at cabin AND present at crosstown
+// Crosstown vacancy: all crosstown-tracked people absent at crosstown AND present at cabin
 function occupancy(location) {
-  if (location === 'cabin') {
-    if (anyAtCabin) return 'occupied';
-    if (noneAtCabin && allAtCrosstown && crosstownFresh) return 'confirmed_vacant';
-    if (noneAtCabin) return 'possibly_vacant';
-    return 'unknown';
-  } else {
-    if (anyAtCrosstown) return 'occupied';
-    if (noneAtCrosstown && allAtCabin && cabinFresh) return 'confirmed_vacant';
-    if (noneAtCrosstown) return 'possibly_vacant';
-    return 'unknown';
-  }
+  const tracked = location === 'cabin' ? cabinTracked : crosstownTracked;
+  const otherFresh = location === 'cabin' ? crosstownFresh : cabinFresh;
+  const here = location === 'cabin' ? 'cabin' : 'crosstown';
+  const there = location === 'cabin' ? 'crosstown' : 'cabin';
+
+  const anyHere = tracked.some(p => people[p]?.[here]);
+  const noneHere = tracked.every(p => !people[p]?.[here]);
+  const allThere = tracked.every(p => people[p]?.[there]);
+
+  if (anyHere) return 'occupied';
+  if (noneHere && allThere && otherFresh) return 'confirmed_vacant';
+  if (noneHere) return 'possibly_vacant';
+  return 'unknown';
 }
 
 const cabinOccupancy = occupancy('cabin');
@@ -264,7 +269,7 @@ if (prevCrosstown && prevCrosstown !== crosstownOccupancy) {
 }
 
 // Per-person transitions
-for (const person of tracked) {
+for (const person of allTracked) {
   const prevLoc = prev.people?.[person]?.location;
   const currLoc = people[person].location;
   if (prevLoc && prevLoc !== currLoc && currLoc !== 'unknown') {
