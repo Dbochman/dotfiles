@@ -31,19 +31,55 @@ ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crossto
 
 ## Output
 
-JSON with presence state per person:
+JSON with presence state, occupancy, and transitions:
 
 ```json
 {
   "location": "cabin",
-  "timestamp": "2026-03-01T21:57:42.231Z",
+  "timestamp": "2026-03-01T22:08:57.598Z",
   "totalClients": 19,
+  "occupancy": "occupied",
   "presence": {
-    "Dylan": { "present": true, "device": "Dylan's iPhone", "ip": "192.168.1.x", ... },
-    "Julia": { "present": true, "device": "iPhone", "ip": "192.168.1.92", ... }
-  }
+    "Dylan": { "present": false },
+    "Julia": { "present": true, "device": "iPhone", "ip": "192.168.1.92", "signal": -82, "connectedMinutes": 7 }
+  },
+  "transitions": [
+    { "person": "Julia", "event": "arrived", "location": "cabin", "timestamp": "...", "device": "iPhone" }
+  ]
 }
 ```
+
+### Key fields
+- **occupancy**: `"occupied"` if anyone is present, `"vacant"` if empty
+- **transitions**: Arrivals/departures detected since the last scan (empty if no changes)
+- **events.json**: Rolling log of the last 100 transitions at `~/.openclaw/presence/events.json`
+
+## Reading State (No Scan Needed)
+
+LaunchAgents run every 15 minutes, so you can read cached state instantly:
+
+**Cabin** (on Mac Mini):
+```bash
+cat ~/.openclaw/presence/state.json
+```
+
+**Crosstown** (on MacBook Pro):
+```bash
+ssh dylans-macbook-pro "cat ~/.openclaw/presence/state.json"
+```
+
+**Recent events**:
+```bash
+cat ~/.openclaw/presence/events.json
+```
+
+## Automation Use Cases
+
+Use `occupancy` and `transitions` to trigger routines:
+- **Welcome home**: When `transitions` contains `arrived` and previous `occupancy` was `vacant`
+- **Away mode**: When `occupancy` is `vacant` (all departed)
+- **Eco heating**: Set thermostats to eco when `occupancy` is `vacant`
+- **Lights on**: Turn on lights when someone arrives after dark
 
 ## Detection Methods
 

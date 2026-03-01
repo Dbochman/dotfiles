@@ -252,9 +252,74 @@ console.log(JSON.stringify({ locations: [c, x], timestamp: new Date().toISOStrin
     ;;
 esac
 
-# Update state file
-echo "$result" > "$STATE_FILE"
-log "Result: $(echo "$result" | tr -d '\n' | head -c 500)"
+# ── Transition detection & state update ──────────────────────────────────────
+
+EVENTS_FILE="${STATE_DIR}/events.json"
+PREV_STATE_FILE="${STATE_DIR}/prev-state.json"
+
+# Compare current scan against previous state, detect arrivals/departures
+transitions=$($NODE -e "
+const fs = require('fs');
+const current = JSON.parse(process.argv[1]);
+const prevFile = '$PREV_STATE_FILE';
+const eventsFile = '$EVENTS_FILE';
+
+let prev = {};
+try { prev = JSON.parse(fs.readFileSync(prevFile, 'utf8')); } catch {}
+
+const prevPresence = prev.presence || {};
+const currPresence = current.presence || {};
+const location = current.location || 'unknown';
+const now = new Date().toISOString();
+
+const transitions = [];
+
+for (const [person, curr] of Object.entries(currPresence)) {
+  const wasPresentBefore = prevPresence[person]?.present === true;
+  const isPresentNow = curr.present === true;
+
+  if (isPresentNow && !wasPresentBefore) {
+    transitions.push({ person, event: 'arrived', location, timestamp: now, device: curr.device || '' });
+  } else if (!isPresentNow && wasPresentBefore) {
+    transitions.push({ person, event: 'departed', location, timestamp: now });
+  }
+}
+
+// Load existing events (keep last 100)
+let events = [];
+try { events = JSON.parse(fs.readFileSync(eventsFile, 'utf8')); } catch {}
+events.push(...transitions);
+events = events.slice(-100);
+fs.writeFileSync(eventsFile, JSON.stringify(events, null, 2));
+
+// Save current as previous for next run
+fs.writeFileSync(prevFile, JSON.stringify(current, null, 2));
+
+// Output transitions for this run
+console.log(JSON.stringify(transitions));
+" "$result" 2>/dev/null || echo '[]')
+
+# Update state file with occupancy summary
+enriched=$($NODE -e "
+const current = JSON.parse(process.argv[1]);
+const transitions = JSON.parse(process.argv[2]);
+
+// Add occupancy field: 'occupied' if anyone present, 'vacant' otherwise
+const presence = current.presence || {};
+const anyoneHome = Object.values(presence).some(p => p.present);
+current.occupancy = anyoneHome ? 'occupied' : 'vacant';
+current.transitions = transitions;
+
+console.log(JSON.stringify(current, null, 2));
+" "$result" "$transitions" 2>/dev/null || echo "$result")
+
+echo "$enriched" > "$STATE_FILE"
+
+# Log transitions
+if [ "$transitions" != "[]" ] && [ -n "$transitions" ]; then
+  log "TRANSITION: $transitions"
+fi
+log "Result: $(echo "$enriched" | tr -d '\n' | head -c 500)"
 
 # Output
-echo "$result"
+echo "$enriched"
