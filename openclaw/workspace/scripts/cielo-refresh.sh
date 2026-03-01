@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# cielo-refresh.sh — Self-contained Cielo token refresh
+# cielo-refresh.sh — Cielo token refresh with auto-login fallback
 #
-# Starts pinchtab if needed, navigates to Cielo (auto-login via persisted cookies),
-# captures fresh access token via CDP, verifies it works, saves to config.
-#
-# No persistent browser process needed — cookies persist in ~/.pinchtab/chrome-profile/
-# Only requires manual re-login when Cielo session cookies expire (weeks/months).
+# Method 1: API refresh using stored refreshToken (fast, no browser)
+# Method 2: Browser CDP capture (pinchtab + persisted cookies)
+# Method 3: Headless login with username/password (if cookies expired)
 #
 # Runs as a LaunchAgent every 30 minutes.
 
@@ -15,7 +13,12 @@ API_HOST="api.smartcielo.com"
 API_KEY="3iCWYuBqpY2g7yRq3yyTk1XCS4CMjt1n9ECCjdpd"
 GRAB_SCRIPT="$HOME/.openclaw/workspace/scripts/grab-cielo-tokens.py"
 
-# --- Method 1: API refresh (if we have a refresh token) ---
+# Load credentials for Method 3
+if [[ -f "$HOME/.openclaw/.secrets-cache" ]]; then
+  set -a; source "$HOME/.openclaw/.secrets-cache"; set +a
+fi
+
+# ── Method 1: API refresh token ─────────────────────────────────────────────
 if [[ -f "$CONFIG_FILE" ]]; then
   REFRESH_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('refreshToken',''))" 2>/dev/null)
 
@@ -50,7 +53,7 @@ print(json.dumps({'success': True, 'method': 'api-refresh'}))
   fi
 fi
 
-# --- Method 2: Browser-based token capture via CDP ---
+# ── Start pinchtab ──────────────────────────────────────────────────────────
 STARTED_PINCHTAB=false
 if ! pgrep -f "pinchtab" >/dev/null 2>&1; then
   /opt/homebrew/bin/pinchtab --headless &
@@ -61,7 +64,11 @@ if ! pgrep -f "pinchtab" >/dev/null 2>&1; then
   done
 fi
 
-# Find Chrome CDP port (retry loop for startup timing)
+cleanup() {
+  [[ "$STARTED_PINCHTAB" == true ]] && pkill -f pinchtab 2>/dev/null
+}
+
+# Find Chrome CDP port
 CDP_PORT=""
 for attempt in $(seq 1 15); do
   CDP_PORT=$(python3 -c "
@@ -86,50 +93,167 @@ done
 
 if [[ -z "$CDP_PORT" ]]; then
   echo '{"success":false,"error":"Could not find Chrome debug port"}'
-  [[ "$STARTED_PINCHTAB" == true ]] && pkill -f pinchtab 2>/dev/null
-  exit 1
+  cleanup; exit 1
 fi
 
-# Navigate to Cielo if not already there (auto-login via persisted cookies)
+# ── Navigate to Cielo dashboard ─────────────────────────────────────────────
 HAS_CIELO=$(curl -s "http://localhost:$CDP_PORT/json" 2>/dev/null | python3 -c "
 import json, sys
 tabs = json.load(sys.stdin)
-print('yes' if any('cielowigle' in t.get('url','') for t in tabs) else 'no')
+print('yes' if any('cielowigle' in t.get('url','') and 'login' not in t.get('url','') for t in tabs) else 'no')
 " 2>/dev/null || echo "no")
 
 if [[ "$HAS_CIELO" != "yes" ]]; then
   /opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/" 2>/dev/null
-  sleep 8
+  # Wait for Angular SPA to fully load and settle (may redirect to login)
+  sleep 12
 fi
 
-# Check if logged in (not redirected to login page)
-IS_LOGGED_IN=$(/opt/homebrew/bin/pinchtab eval "!window.location.href.includes('login')" 2>/dev/null | python3 -c "
+# ── Check if logged in (poll for URL to settle) ─────────────────────────────
+IS_LOGGED_IN="no"
+for check in $(seq 1 5); do
+  CURRENT_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" 2>/dev/null | python3 -c "
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
-    print('yes' if d.get('result') == True else 'no')
+    print(d.get('result', ''))
 except:
-    print('no')
+    print('')
 " 2>/dev/null)
 
+  if [[ -n "$CURRENT_URL" ]] && [[ "$CURRENT_URL" != *"login"* ]] && [[ "$CURRENT_URL" != *"auth"* ]]; then
+    IS_LOGGED_IN="yes"
+    break
+  fi
+  sleep 3
+done
+
+# ── Method 3: Headless login with credentials ───────────────────────────────
 if [[ "$IS_LOGGED_IN" != "yes" ]]; then
-  echo '{"success":false,"error":"Cielo session expired. Manual re-login required."}'
-  [[ "$STARTED_PINCHTAB" == true ]] && pkill -f pinchtab 2>/dev/null
-  exit 1
+  if [[ -z "${CIELO_USERNAME:-}" ]] || [[ -z "${CIELO_PASSWORD:-}" ]]; then
+    echo '{"success":false,"error":"Cookies expired and no CIELO_USERNAME/CIELO_PASSWORD available"}'
+    cleanup; exit 1
+  fi
+
+  echo '{"info":"Cookies expired, attempting headless login..."}'
+
+  # Navigate to login page
+  /opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/auth/login" 2>/dev/null
+  sleep 8
+
+  # Fill login form and submit
+  LOGIN_RESULT=$(/opt/homebrew/bin/pinchtab eval "
+    (async () => {
+      // Wait for Angular form to render
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Find form inputs — Cielo uses .input100 class
+      const inputs = document.querySelectorAll('input');
+      let emailInput = null;
+      let passInput = null;
+      for (const inp of inputs) {
+        if (inp.type === 'email' || inp.type === 'text' || inp.name === 'user' || inp.getAttribute('formcontrolname') === 'user') {
+          emailInput = inp;
+        }
+        if (inp.type === 'password' || inp.name === 'password' || inp.getAttribute('formcontrolname') === 'password') {
+          passInput = inp;
+        }
+      }
+
+      if (!emailInput || !passInput) {
+        return 'NO_FORM_FIELDS (found ' + inputs.length + ' inputs)';
+      }
+
+      // Set values using Angular-compatible method
+      function setNgValue(el, value) {
+        el.focus();
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.blur();
+      }
+
+      setNgValue(emailInput, '${CIELO_USERNAME}');
+      setNgValue(passInput, '${CIELO_PASSWORD}');
+
+      await new Promise(r => setTimeout(r, 500));
+
+      // Find and click submit button
+      const btns = document.querySelectorAll('button[type=submit], button.login100-form-btn, .container-login100-form-btn button');
+      let submitBtn = null;
+      for (const btn of btns) {
+        if (!btn.disabled) { submitBtn = btn; break; }
+      }
+      if (!submitBtn) {
+        // Fallback: find any button with Sign In text
+        for (const btn of document.querySelectorAll('button')) {
+          if (btn.textContent.includes('Sign In') || btn.textContent.includes('Login')) {
+            submitBtn = btn; break;
+          }
+        }
+      }
+
+      if (!submitBtn) {
+        return 'NO_SUBMIT_BUTTON';
+      }
+
+      submitBtn.click();
+      return 'SUBMITTED';
+    })()
+  " 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('result', 'ERROR'))
+except:
+    print('PARSE_ERROR')
+" 2>/dev/null)
+
+  if [[ "$LOGIN_RESULT" != "SUBMITTED" ]]; then
+    echo "{\"success\":false,\"error\":\"Login form fill failed: $LOGIN_RESULT\"}"
+    cleanup; exit 1
+  fi
+
+  # Wait for login to complete and redirect
+  sleep 10
+
+  # Check if we landed on dashboard
+  FINAL_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" 2>/dev/null | python3 -c "
+import json, sys
+try: d = json.loads(sys.stdin.read()); print(d.get('result',''))
+except: print('')
+" 2>/dev/null)
+
+  if [[ "$FINAL_URL" == *"login"* ]] || [[ "$FINAL_URL" == *"auth"* ]]; then
+    # Check if reCAPTCHA is blocking
+    HAS_CAPTCHA=$(/opt/homebrew/bin/pinchtab eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" 2>/dev/null | python3 -c "
+import json, sys
+try: d = json.loads(sys.stdin.read()); print(d.get('result','none'))
+except: print('none')
+" 2>/dev/null)
+
+    if [[ "$HAS_CAPTCHA" != "none" ]]; then
+      echo '{"success":false,"error":"Login blocked by reCAPTCHA. Manual login required."}'
+    else
+      echo '{"success":false,"error":"Login failed (still on login page after submit)"}'
+    fi
+    cleanup; exit 1
+  fi
+
+  IS_LOGGED_IN="yes"
+  echo '{"info":"Headless login successful"}'
 fi
 
-# Capture tokens via CDP network monitoring
+# ── Method 2: Capture tokens via CDP ────────────────────────────────────────
 if [[ ! -f "$GRAB_SCRIPT" ]]; then
   echo '{"success":false,"error":"Grab script not found at '"$GRAB_SCRIPT"'"}'
-  [[ "$STARTED_PINCHTAB" == true ]] && pkill -f pinchtab 2>/dev/null
-  exit 1
+  cleanup; exit 1
 fi
 
 GRAB_OUTPUT=$(python3 "$GRAB_SCRIPT" "$CDP_PORT" 2>&1)
 GRAB_EXIT=$?
 
-# Clean up pinchtab if we started it
-[[ "$STARTED_PINCHTAB" == true ]] && pkill -f pinchtab 2>/dev/null
+cleanup
 
 if [[ $GRAB_EXIT -ne 0 ]]; then
   echo '{"success":false,"error":"CDP token capture failed"}'
