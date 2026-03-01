@@ -156,8 +156,16 @@ scan_crosstown() {
   # Crosstown scan must run ON the MacBook Pro (192.168.165.x subnet).
   # OpenClaw invokes this via: ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crosstown"
   # The Mac Mini cannot SSH to MacBook Pro (1Password agent needs GUI approval).
-  local cmd="for i in \$(seq 1 254); do ping -c1 -W1 192.168.165.\$i >/dev/null 2>&1 & done; wait; arp -a | grep '192.168.165'"
-  arp_output=$(eval "$cmd" 2>/dev/null || echo "")
+  # Phase 1: Targeted ping of known device IPs with longer timeout (iPhones sleep)
+  # Phase 2: Broader /24 sweep to catch unknown devices
+  # Phase 3: Read ARP table
+  local known_ips="192.168.165.124"  # Dylan's iPhone
+  for ip in $known_ips; do
+    ping -c3 -W2 "$ip" >/dev/null 2>&1 &
+  done
+  for i in $(seq 1 254); do ping -c1 -W1 "192.168.165.$i" >/dev/null 2>&1 & done
+  wait
+  arp_output=$(arp -a | grep '192.168.165' 2>/dev/null || echo "")
 
   if [ -z "$arp_output" ]; then
     log "ERROR: ARP scan returned no results"
