@@ -19,7 +19,10 @@ ssh dylans-macbook-pro "<command>"
 - **User**: `dbochman`
 - **OS**: macOS 26.3 (arm64)
 - **Python**: `/usr/bin/python3` (system)
-- **No Homebrew or Node.js installed**
+- **Homebrew**: `/opt/homebrew/bin/brew`
+- **Node.js**: `/opt/homebrew/bin/node` (v25.6.1)
+- **npm**: `/opt/homebrew/bin/npm` (v11.9.0)
+- **sudo**: Passwordless for `dbochman`
 
 ## Network
 
@@ -84,7 +87,6 @@ ssh dylans-macbook-pro "dns-sd -B _googlecast._tcp local. & PID=\$!; sleep 5; ki
 
 ## Limitations
 
-- **No Homebrew or Node.js** — only system Python and standard macOS tools
-- **No LaunchAgents configured** — the MacBook Pro doesn't run scheduled tasks yet
 - **SSH required** — all commands must be wrapped in `ssh dylans-macbook-pro "..."`
-- **MacBook Pro may sleep** — if SSH fails, the machine may be asleep or off the network
+- **PATH note** — Homebrew's `/opt/homebrew/bin` is in the system PATH via `/etc/paths.d/homebrew`, but for npm use `PATH=/opt/homebrew/bin:$PATH npm ...`
+- **Sleep disabled** — `pmset disablesleep 1` is set so the machine stays reachable
