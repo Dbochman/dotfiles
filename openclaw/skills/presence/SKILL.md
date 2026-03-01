@@ -11,14 +11,23 @@ Detect who is home at each location by querying local network devices.
 
 ## Usage
 
+**Cabin** (run on Mac Mini — local Starlink API):
 ```bash
-~/.openclaw/workspace/scripts/presence-detect.sh [location]
+~/.openclaw/workspace/scripts/presence-detect.sh cabin
 ```
 
-- `cabin` — Scans cabin WiFi via Starlink gRPC API (runs locally on Mac Mini)
-- `crosstown` — Scans Crosstown LAN via SSH to MacBook Pro (ARP scan)
-- `all` — Scans both locations
-- No argument — auto-detects based on hostname
+**Crosstown** (run on MacBook Pro via crosstown-network skill):
+```bash
+ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crosstown"
+```
+
+**Both** (run cabin locally, Crosstown requires separate SSH call):
+```bash
+~/.openclaw/workspace/scripts/presence-detect.sh cabin
+ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crosstown"
+```
+
+**Important**: Crosstown scan must run ON the MacBook Pro (it does a local ARP scan of 192.168.165.0/24). The Mac Mini cannot SSH to the MacBook Pro directly.
 
 ## Output
 
@@ -64,12 +73,7 @@ Check if anyone is at the cabin:
 ~/.openclaw/workspace/scripts/presence-detect.sh cabin
 ```
 
-Check Crosstown:
+Check Crosstown (via crosstown-network skill):
 ```bash
-~/.openclaw/workspace/scripts/presence-detect.sh crosstown
-```
-
-Scan both locations:
-```bash
-~/.openclaw/workspace/scripts/presence-detect.sh all
+ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crosstown"
 ```

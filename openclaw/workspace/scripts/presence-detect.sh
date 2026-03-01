@@ -153,22 +153,11 @@ console.log(JSON.stringify(output, null, 2));
 scan_crosstown() {
   local arp_output
 
-  # If running on Mac Mini, SSH to MacBook Pro for the scan
-  # If running on MacBook Pro directly, scan locally
-  local hostname
-  hostname=$(hostname -s 2>/dev/null || echo "unknown")
-
+  # Crosstown scan must run ON the MacBook Pro (192.168.165.x subnet).
+  # OpenClaw invokes this via: ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crosstown"
+  # The Mac Mini cannot SSH to MacBook Pro (1Password agent needs GUI approval).
   local cmd="for i in \$(seq 1 254); do ping -c1 -W1 192.168.165.\$i >/dev/null 2>&1 & done; wait; arp -a | grep '192.168.165'"
-
-  if echo "$hostname" | grep -qi "mac-mini"; then
-    arp_output=$(ssh dylans-macbook-pro "$cmd" 2>/dev/null || echo "")
-  elif echo "$hostname" | grep -qi "macbook"; then
-    arp_output=$(eval "$cmd" 2>/dev/null || echo "")
-  else
-    log "ERROR: Cannot scan Crosstown from $hostname"
-    echo '{"error":"wrong_host","location":"crosstown"}'
-    return 1
-  fi
+  arp_output=$(eval "$cmd" 2>/dev/null || echo "")
 
   if [ -z "$arp_output" ]; then
     log "ERROR: ARP scan returned no results"
