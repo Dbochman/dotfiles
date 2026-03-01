@@ -39,7 +39,7 @@ pt() { pinchtab eval "$1" 2>/dev/null; }
 
 # Navigate to search results
 pinchtab nav "https://www.opentable.com/s?covers=${PARTY}&dateTime=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${DATETIME}'))")&metroId=7&term=${ENCODED_SEARCH}" 2>/dev/null
-sleep 6
+sleep 8
 
 # Dismiss cookie consent
 pt "(function(){
@@ -50,12 +50,13 @@ pt "(function(){
 
 sleep 2
 
-# Find available timeslots and pick the closest to requested time
-BOOKING_URL=$(pt "(function(){
+# Find available timeslots and click the closest to requested time.
+# Uses dispatchEvent with full mousedown/mouseup/click sequence and coordinates
+# to properly trigger React's synthetic event system (simple .click() doesn't work).
+CLICK_RESULT=$(pt "(function(){
   const els = Array.from(document.querySelectorAll('a[role=button]'));
   const timeEls = els.filter(e => /\d:\d\d [AP]M/.test(e.textContent.trim()) && e.getBoundingClientRect().width > 0);
   if(!timeEls.length) return '';
-  // Prefer 7:00 PM or closest
   const target = '${TIME}'.split(':');
   const targetMins = parseInt(target[0])*60 + parseInt(target[1]);
   let best = null, bestDiff = 9999;
@@ -67,20 +68,27 @@ BOOKING_URL=$(pt "(function(){
     const diff = Math.abs(mins-targetMins);
     if(diff < bestDiff) { bestDiff=diff; best=el; }
   });
-  if(best) { best.click(); return 'clicked:'+best.textContent.trim(); }
-  return '';
+  if(!best) return '';
+  const rect = best.getBoundingClientRect();
+  const x = rect.x + rect.width/2;
+  const y = rect.y + rect.height/2;
+  const opts = {bubbles:true, cancelable:true, clientX:x, clientY:y, button:0};
+  best.dispatchEvent(new MouseEvent('mousedown', opts));
+  best.dispatchEvent(new MouseEvent('mouseup', opts));
+  best.dispatchEvent(new MouseEvent('click', opts));
+  return 'clicked:'+best.textContent.trim();
 })()")
 
-if [[ -z "$BOOKING_URL" || "$BOOKING_URL" == '{"result":""}' ]]; then
+if [[ -z "$CLICK_RESULT" || "$CLICK_RESULT" == '{"result":""}' ]]; then
   echo '{"success":false,"error":"No available timeslots found for search: '"$SEARCH"'"}'
   exit 1
 fi
 
-sleep 8
+sleep 10
 
 # Verify we landed on the booking details page
-PAGE=$(pt "JSON.stringify({url:window.location.href,title:document.title,body:document.body.innerText.slice(0,200)})")
-if ! echo "$PAGE" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); exit(0 if 'almost done' in d.get('result','').lower() or 'booking/details' in d.get('result','') else 1)" 2>/dev/null; then
+PAGE=$(pt "JSON.stringify({url:window.location.href,title:document.title,body:document.body.innerText.slice(0,300)})")
+if ! echo "$PAGE" | python3 -c "import json,sys; d=json.loads(sys.stdin.read()); r=d.get('result',''); exit(0 if 'almost done' in r.lower() or 'booking/details' in r else 1)" 2>/dev/null; then
   echo '{"success":false,"error":"Did not reach booking page. Page: '"$(echo $PAGE | head -c 100)"'"}'
   exit 1
 fi
