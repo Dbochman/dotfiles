@@ -29,57 +29,61 @@ ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crossto
 
 **Important**: Crosstown scan must run ON the MacBook Pro (it does a local ARP scan of 192.168.165.0/24). The Mac Mini cannot SSH to the MacBook Pro directly.
 
-## Output
+## Correlated State (on Mac Mini)
 
-JSON with presence state, occupancy, and transitions:
+The Mac Mini maintains a correlated view of both locations at `~/.openclaw/presence/state.json`:
 
 ```json
 {
-  "location": "cabin",
-  "timestamp": "2026-03-01T22:08:57.598Z",
-  "totalClients": 19,
-  "occupancy": "occupied",
-  "presence": {
-    "Dylan": { "present": false },
-    "Julia": { "present": true, "device": "iPhone", "ip": "192.168.1.92", "signal": -82, "connectedMinutes": 7 }
+  "timestamp": "2026-03-01T22:16:06.997Z",
+  "people": {
+    "Dylan": { "cabin": false, "crosstown": true, "location": "crosstown" },
+    "Julia": { "cabin": true, "crosstown": false, "location": "cabin" }
   },
-  "transitions": [
-    { "person": "Julia", "event": "arrived", "location": "cabin", "timestamp": "...", "device": "iPhone" }
-  ]
+  "cabin": { "occupancy": "occupied", "scanAge": "0min", "fresh": true },
+  "crosstown": { "occupancy": "occupied", "scanAge": "0min", "fresh": true },
+  "transitions": []
 }
 ```
 
-### Key fields
-- **occupancy**: `"occupied"` if anyone is present, `"vacant"` if empty
-- **transitions**: Arrivals/departures detected since the last scan (empty if no changes)
-- **events.json**: Rolling log of the last 100 transitions at `~/.openclaw/presence/events.json`
+### Occupancy values
+- **`occupied`**: At least one tracked person is present
+- **`confirmed_vacant`**: ALL tracked people are absent AND confirmed present at the other location
+- **`possibly_vacant`**: Nobody detected, but can't confirm they're at the other location (phones may be sleeping)
+
+**Vacancy is only `confirmed_vacant` when everyone has left AND arrived at the other location.** This prevents false vacants from sleeping phones or network glitches.
+
+### Transitions
+- `{"location":"cabin","from":"occupied","to":"confirmed_vacant"}` — cabin emptied, everyone at Crosstown
+- `{"person":"Dylan","event":"relocated","from":"cabin","to":"crosstown"}` — Dylan moved
 
 ## Reading State (No Scan Needed)
 
-LaunchAgents run every 15 minutes, so you can read cached state instantly:
+LaunchAgents update every 15 minutes. Read cached state instantly:
 
-**Cabin** (on Mac Mini):
 ```bash
 cat ~/.openclaw/presence/state.json
 ```
 
-**Crosstown** (on MacBook Pro):
-```bash
-ssh dylans-macbook-pro "cat ~/.openclaw/presence/state.json"
-```
-
-**Recent events**:
+**Recent events** (last 100 transitions):
 ```bash
 cat ~/.openclaw/presence/events.json
 ```
 
+## Architecture
+
+1. **Cabin scan** (`com.openclaw.presence-cabin`): Runs every 15 min on Mac Mini, queries Starlink gRPC API, then evaluates correlated state
+2. **Crosstown scan** (`com.openclaw.presence-crosstown`): Runs every 15 min on MacBook Pro, ARP scans the LAN, pushes results to Mac Mini via `tailscale file cp`
+3. **Receiver** (`com.openclaw.presence-receive`): KeepAlive daemon on Mac Mini, accepts Tailscale file transfers and triggers re-evaluation
+4. **Evaluator**: Reads both scan files, correlates presence across locations, writes `state.json`
+
 ## Automation Use Cases
 
 Use `occupancy` and `transitions` to trigger routines:
-- **Welcome home**: When `transitions` contains `arrived` and previous `occupancy` was `vacant`
-- **Away mode**: When `occupancy` is `vacant` (all departed)
-- **Eco heating**: Set thermostats to eco when `occupancy` is `vacant`
-- **Lights on**: Turn on lights when someone arrives after dark
+- **Away mode**: When occupancy is `confirmed_vacant` → eco thermostats, lights off, start Roombas
+- **Welcome home**: When occupancy transitions from `confirmed_vacant` to `occupied` → lights on, comfortable temp
+- **Eco heating**: Set thermostats to eco when `confirmed_vacant` (safe — everyone is confirmed elsewhere)
+- **Ignore `possibly_vacant`**: Don't turn off heat just because phones went to sleep
 
 ## Detection Methods
 

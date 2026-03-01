@@ -4,23 +4,29 @@
 # Detects who is home at each location by querying local network devices.
 #
 # Usage:
-#   presence-detect.sh [location]
+#   presence-detect.sh cabin       # Scan cabin WiFi (run on Mac Mini)
+#   presence-detect.sh crosstown   # Scan Crosstown LAN (run on MacBook Pro)
+#   presence-detect.sh evaluate    # Correlate both locations (run on Mac Mini)
 #
-#   location: "cabin" or "crosstown" (default: auto-detect based on hostname)
+# Cabin (Philly):   Starlink gRPC API via grpcurl (Mac Mini, local)
+# Crosstown (Boston): ARP scan (MacBook Pro, local)
 #
-# Cabin (Philly):   Starlink gRPC API via grpcurl on Mac Mini (local)
-# Crosstown (Boston): ARP scan via SSH to MacBook Pro
+# Vacancy rules:
+#   A location is only "confirmed_vacant" when ALL tracked people are
+#   absent there AND confirmed present at the other location.
+#   Otherwise it's "possibly_vacant" (phones may be sleeping).
 #
-# Output: JSON to stdout with presence state per person per location.
-# Logs: /tmp/presence-detect.log
+# Crosstown pushes its state to the Mac Mini via `tailscale file cp`
+# after each scan. The Mac Mini's `evaluate` mode reads both.
 
 set -euo pipefail
 
 LOG_FILE="/tmp/presence-detect.log"
 NODE="/opt/homebrew/bin/node"
 GRPCURL="/opt/homebrew/bin/grpcurl"
+TAILSCALE="/usr/local/bin/tailscale"
+[ -x "$TAILSCALE" ] || TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 STATE_DIR="${HOME}/.openclaw/presence"
-STATE_FILE="${STATE_DIR}/state.json"
 
 mkdir -p "$STATE_DIR"
 
@@ -30,8 +36,10 @@ log() {
 
 # ── Known devices ────────────────────────────────────────────────────────────
 
+# All tracked people (used by the evaluator)
+TRACKED_PEOPLE='["Dylan","Julia"]'
+
 # Cabin (Philly) — matched by device name from Starlink gRPC API
-# iPhones use randomized MACs per-network, so we match by name reported to Starlink
 CABIN_DEVICES='[
   {"person":"Dylan","match":"name","pattern":"Dylan","require":"iPhone"},
   {"person":"Dylan","match":"name","pattern":"Dylan","require":"phone"},
@@ -40,24 +48,9 @@ CABIN_DEVICES='[
 ]'
 
 # Crosstown (Boston) — matched by MAC address via ARP scan
-# Dylan has private WiFi address OFF at Crosstown, so real MAC is known
 CROSSTOWN_DEVICES='[
   {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"}
 ]'
-
-# ── Location detection ───────────────────────────────────────────────────────
-
-detect_location() {
-  local hostname
-  hostname=$(hostname -s 2>/dev/null || echo "unknown")
-  case "$hostname" in
-    *mac-mini*|*dylans-mac-mini*) echo "cabin" ;;
-    *macbook-pro*) echo "crosstown" ;;
-    *) echo "unknown" ;;
-  esac
-}
-
-LOCATION="${1:-$(detect_location)}"
 
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
 
@@ -68,46 +61,35 @@ scan_cabin() {
 
   if [ "$grpc_response" = "{}" ] || [ -z "$grpc_response" ]; then
     log "ERROR: Starlink gRPC API unreachable"
-    echo '{"error":"starlink_unreachable","location":"cabin","clients":[]}'
+    echo '{"error":"starlink_unreachable","location":"cabin"}'
     return 1
   fi
 
-  # Parse gRPC response and match against known devices using Node.js
   $NODE -e "
 const devices = $CABIN_DEVICES;
 const response = JSON.parse(process.argv[1]);
 const clients = response?.wifiGetClients?.clients || [];
-
-const now = Date.now();
 const results = {};
 
 for (const dev of devices) {
-  if (results[dev.person]) continue; // already found
-
+  if (results[dev.person]) continue;
   for (const client of clients) {
     const name = (client.name || '').toLowerCase();
     const pattern = dev.pattern.toLowerCase();
-
     let matched = false;
+
     if (dev.match === 'name') {
       matched = name.includes(pattern);
-      // Require check: name must also contain this string (e.g., require 'iPhone')
-      if (matched && dev.require && !name.includes(dev.require.toLowerCase())) {
-        matched = false;
-      }
+      if (matched && dev.require && !name.includes(dev.require.toLowerCase())) matched = false;
     } else if (dev.match === 'name_fallback') {
-      // Match by name but exclude devices containing any of excludeNames
       matched = name.includes(pattern);
       if (matched && dev.excludeNames) {
         for (const excl of dev.excludeNames) {
           if (name.includes(excl.toLowerCase())) { matched = false; break; }
         }
-        // Also check: is this device already claimed by someone else?
         if (matched) {
-          for (const [person, info] of Object.entries(results)) {
-            if (info.present && info.mac === (client.macAddress || '').toLowerCase()) {
-              matched = false; break;
-            }
+          for (const [, info] of Object.entries(results)) {
+            if (info.present && info.mac === (client.macAddress || '').toLowerCase()) { matched = false; break; }
           }
         }
       }
@@ -130,41 +112,30 @@ for (const dev of devices) {
   }
 }
 
-// Mark missing people as absent
 for (const dev of devices) {
-  if (!results[dev.person]) {
-    results[dev.person] = { present: false };
-  }
+  if (!results[dev.person]) results[dev.person] = { present: false };
 }
 
-const output = {
+console.log(JSON.stringify({
   location: 'cabin',
   timestamp: new Date().toISOString(),
   totalClients: clients.length,
   presence: results
-};
-
-console.log(JSON.stringify(output, null, 2));
+}, null, 2));
 " "$grpc_response" 2>/dev/null || echo '{"error":"parse_failed","location":"cabin"}'
 }
 
-# ── Crosstown: ARP scan via SSH to MacBook Pro ──────────────────────────────
+# ── Crosstown: ARP scan ─────────────────────────────────────────────────────
 
 scan_crosstown() {
-  local arp_output
-
-  # Crosstown scan must run ON the MacBook Pro (192.168.165.x subnet).
-  # OpenClaw invokes this via: ssh dylans-macbook-pro "~/.openclaw/workspace/scripts/presence-detect.sh crosstown"
-  # The Mac Mini cannot SSH to MacBook Pro (1Password agent needs GUI approval).
-  # Phase 1: Targeted ping of known device IPs with longer timeout (iPhones sleep)
-  # Phase 2: Broader /24 sweep to catch unknown devices
-  # Phase 3: Read ARP table
-  local known_ips="192.168.165.124"  # Dylan's iPhone
+  # Targeted ping for known devices (iPhones sleep, need longer timeout)
+  local known_ips="192.168.165.124"
   for ip in $known_ips; do
     ping -c3 -W2 "$ip" >/dev/null 2>&1 &
   done
   for i in $(seq 1 254); do ping -c1 -W1 "192.168.165.$i" >/dev/null 2>&1 & done
   wait
+  local arp_output
   arp_output=$(arp -a | grep '192.168.165' 2>/dev/null || echo "")
 
   if [ -z "$arp_output" ]; then
@@ -173,77 +144,204 @@ scan_crosstown() {
     return 1
   fi
 
-  # Parse ARP output and match against known devices
   $NODE -e "
 const devices = $CROSSTOWN_DEVICES;
 const arpLines = process.argv[1].split('\n').filter(Boolean);
-
 const results = {};
 
 for (const dev of devices) {
   for (const line of arpLines) {
-    // ARP format: hostname (192.168.165.x) at aa:bb:cc:dd:ee:ff on en0 ...
     const macMatch = line.match(/at\s+([0-9a-f:]+)/i);
     const ipMatch = line.match(/\(([0-9.]+)\)/);
     if (!macMatch || !ipMatch) continue;
-
     const mac = macMatch[1].toLowerCase();
     const ip = ipMatch[1];
-
     let matched = false;
-    if (dev.match === 'mac') {
-      matched = mac === dev.pattern.toLowerCase();
-    } else if (dev.match === 'name') {
-      const nameMatch = line.match(/^(\S+)/);
-      matched = nameMatch && nameMatch[1].toLowerCase().includes(dev.pattern.toLowerCase());
+    if (dev.match === 'mac') matched = mac === dev.pattern.toLowerCase();
+    else if (dev.match === 'name') {
+      const nm = line.match(/^(\S+)/);
+      matched = nm && nm[1].toLowerCase().includes(dev.pattern.toLowerCase());
     }
-
     if (matched) {
-      results[dev.person] = {
-        present: true,
-        ip: ip,
-        mac: mac,
-        device: dev.match === 'mac' ? 'phone (MAC match)' : line.match(/^(\S+)/)?.[1] || 'unknown'
-      };
+      results[dev.person] = { present: true, ip, mac, device: dev.match === 'mac' ? 'phone (MAC match)' : line.match(/^(\S+)/)?.[1] || 'unknown' };
       break;
     }
   }
-
-  if (!results[dev.person]) {
-    results[dev.person] = { present: false };
-  }
+  if (!results[dev.person]) results[dev.person] = { present: false };
 }
 
-const output = {
+console.log(JSON.stringify({
   location: 'crosstown',
   timestamp: new Date().toISOString(),
   totalDevices: arpLines.length,
   presence: results
+}, null, 2));
+" "$arp_output" 2>/dev/null || echo '{"error":"parse_failed","location":"crosstown"}'
+}
+
+# ── Evaluate: Correlate both locations (runs on Mac Mini) ────────────────────
+
+evaluate() {
+  local cabin_state crosstown_state
+
+  # Read cabin state (local, from last cabin scan)
+  cabin_state=$(cat "${STATE_DIR}/cabin-scan.json" 2>/dev/null || echo '{}')
+
+  # Read crosstown state (pushed by MacBook Pro via Tailscale)
+  crosstown_state=$(cat "${STATE_DIR}/crosstown-scan.json" 2>/dev/null || echo '{}')
+
+  $NODE -e "
+const fs = require('fs');
+const cabin = JSON.parse(process.argv[1]);
+const crosstown = JSON.parse(process.argv[2]);
+const tracked = $TRACKED_PEOPLE;
+
+const stateDir = '$STATE_DIR';
+const prevFile = stateDir + '/prev-evaluated.json';
+const eventsFile = stateDir + '/events.json';
+
+// Load previous evaluated state
+let prev = {};
+try { prev = JSON.parse(fs.readFileSync(prevFile, 'utf8')); } catch {}
+
+const now = new Date().toISOString();
+const cabinPresence = cabin.presence || {};
+const crosstownPresence = crosstown.presence || {};
+
+// Staleness check: if a scan is >30 min old, don't trust it for cross-correlation
+const cabinAge = cabin.timestamp ? (Date.now() - new Date(cabin.timestamp).getTime()) / 60000 : 999;
+const crosstownAge = crosstown.timestamp ? (Date.now() - new Date(crosstown.timestamp).getTime()) / 60000 : 999;
+const cabinFresh = cabinAge < 30;
+const crosstownFresh = crosstownAge < 30;
+
+// Per-person location
+const people = {};
+for (const person of tracked) {
+  const atCabin = cabinPresence[person]?.present === true;
+  const atCrosstown = crosstownPresence[person]?.present === true;
+  people[person] = {
+    cabin: atCabin,
+    crosstown: atCrosstown,
+    location: atCabin ? 'cabin' : atCrosstown ? 'crosstown' : 'unknown'
+  };
+}
+
+// Occupancy per location — vacancy requires ALL tracked people confirmed at the OTHER location
+const allAtCrosstown = tracked.every(p => people[p].crosstown);
+const allAtCabin = tracked.every(p => people[p].cabin);
+const anyAtCabin = tracked.some(p => people[p].cabin);
+const anyAtCrosstown = tracked.some(p => people[p].crosstown);
+const noneAtCabin = tracked.every(p => !people[p].cabin);
+const noneAtCrosstown = tracked.every(p => !people[p].crosstown);
+
+function occupancy(location) {
+  if (location === 'cabin') {
+    if (anyAtCabin) return 'occupied';
+    if (noneAtCabin && allAtCrosstown && crosstownFresh) return 'confirmed_vacant';
+    if (noneAtCabin) return 'possibly_vacant';
+    return 'unknown';
+  } else {
+    if (anyAtCrosstown) return 'occupied';
+    if (noneAtCrosstown && allAtCabin && cabinFresh) return 'confirmed_vacant';
+    if (noneAtCrosstown) return 'possibly_vacant';
+    return 'unknown';
+  }
+}
+
+const cabinOccupancy = occupancy('cabin');
+const crosstownOccupancy = occupancy('crosstown');
+
+// Transition detection — compare against previous evaluation
+const transitions = [];
+const prevCabin = prev.cabin?.occupancy;
+const prevCrosstown = prev.crosstown?.occupancy;
+
+if (prevCabin && prevCabin !== cabinOccupancy) {
+  transitions.push({ location: 'cabin', from: prevCabin, to: cabinOccupancy, timestamp: now });
+}
+if (prevCrosstown && prevCrosstown !== crosstownOccupancy) {
+  transitions.push({ location: 'crosstown', from: prevCrosstown, to: crosstownOccupancy, timestamp: now });
+}
+
+// Per-person transitions
+for (const person of tracked) {
+  const prevLoc = prev.people?.[person]?.location;
+  const currLoc = people[person].location;
+  if (prevLoc && prevLoc !== currLoc && currLoc !== 'unknown') {
+    transitions.push({ person, event: 'relocated', from: prevLoc, to: currLoc, timestamp: now });
+  }
+}
+
+// Build result
+const result = {
+  timestamp: now,
+  people,
+  cabin: {
+    occupancy: cabinOccupancy,
+    scanAge: Math.round(cabinAge) + 'min',
+    fresh: cabinFresh
+  },
+  crosstown: {
+    occupancy: crosstownOccupancy,
+    scanAge: Math.round(crosstownAge) + 'min',
+    fresh: crosstownFresh
+  },
+  transitions
 };
 
-console.log(JSON.stringify(output, null, 2));
-" "$arp_output" 2>/dev/null || echo '{"error":"parse_failed","location":"crosstown"}'
+// Save state
+fs.writeFileSync(prevFile, JSON.stringify(result, null, 2));
+
+// Append transitions to events log
+if (transitions.length > 0) {
+  let events = [];
+  try { events = JSON.parse(fs.readFileSync(eventsFile, 'utf8')); } catch {}
+  events.push(...transitions);
+  events = events.slice(-100);
+  fs.writeFileSync(eventsFile, JSON.stringify(events, null, 2));
+}
+
+// Write combined state
+fs.writeFileSync(stateDir + '/state.json', JSON.stringify(result, null, 2));
+
+console.log(JSON.stringify(result, null, 2));
+" "$cabin_state" "$crosstown_state" 2>/dev/null || echo '{"error":"evaluate_failed"}'
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-log "Scanning $LOCATION..."
+LOCATION="${1:-}"
+if [ -z "$LOCATION" ]; then
+  hostname=$(hostname -s 2>/dev/null || echo "unknown")
+  case "$hostname" in
+    *mac-mini*|*dylans-mac-mini*) LOCATION="cabin" ;;
+    *macbook-pro*) LOCATION="crosstown" ;;
+    *) LOCATION="unknown" ;;
+  esac
+fi
+
+log "Running: $LOCATION"
 
 case "$LOCATION" in
   cabin)
     result=$(scan_cabin)
+    echo "$result" > "${STATE_DIR}/cabin-scan.json"
+    log "Cabin scan: $(echo "$result" | tr -d '\n' | head -c 300)"
+    # After scanning, run evaluate to update correlated state
+    evaluate
     ;;
   crosstown)
     result=$(scan_crosstown)
+    echo "$result" > "${STATE_DIR}/crosstown-scan.json"
+    log "Crosstown scan: $(echo "$result" | tr -d '\n' | head -c 300)"
+    # Push state to Mac Mini via Tailscale
+    echo "$result" | $TAILSCALE file cp - dylans-mac-mini: 2>/dev/null && \
+      log "Pushed crosstown state to Mac Mini via Tailscale" || \
+      log "WARN: Failed to push crosstown state to Mac Mini"
+    echo "$result"
     ;;
-  all)
-    cabin_result=$(scan_cabin 2>/dev/null || echo '{"error":"cabin_scan_failed"}')
-    crosstown_result=$(scan_crosstown 2>/dev/null || echo '{"error":"crosstown_scan_failed"}')
-    result=$($NODE -e "
-const c = JSON.parse(process.argv[1]);
-const x = JSON.parse(process.argv[2]);
-console.log(JSON.stringify({ locations: [c, x], timestamp: new Date().toISOString() }, null, 2));
-" "$cabin_result" "$crosstown_result" 2>/dev/null)
+  evaluate)
+    evaluate
     ;;
   *)
     log "ERROR: Unknown location '$LOCATION'"
@@ -251,75 +349,3 @@ console.log(JSON.stringify({ locations: [c, x], timestamp: new Date().toISOStrin
     exit 1
     ;;
 esac
-
-# ── Transition detection & state update ──────────────────────────────────────
-
-EVENTS_FILE="${STATE_DIR}/events.json"
-PREV_STATE_FILE="${STATE_DIR}/prev-state.json"
-
-# Compare current scan against previous state, detect arrivals/departures
-transitions=$($NODE -e "
-const fs = require('fs');
-const current = JSON.parse(process.argv[1]);
-const prevFile = '$PREV_STATE_FILE';
-const eventsFile = '$EVENTS_FILE';
-
-let prev = {};
-try { prev = JSON.parse(fs.readFileSync(prevFile, 'utf8')); } catch {}
-
-const prevPresence = prev.presence || {};
-const currPresence = current.presence || {};
-const location = current.location || 'unknown';
-const now = new Date().toISOString();
-
-const transitions = [];
-
-for (const [person, curr] of Object.entries(currPresence)) {
-  const wasPresentBefore = prevPresence[person]?.present === true;
-  const isPresentNow = curr.present === true;
-
-  if (isPresentNow && !wasPresentBefore) {
-    transitions.push({ person, event: 'arrived', location, timestamp: now, device: curr.device || '' });
-  } else if (!isPresentNow && wasPresentBefore) {
-    transitions.push({ person, event: 'departed', location, timestamp: now });
-  }
-}
-
-// Load existing events (keep last 100)
-let events = [];
-try { events = JSON.parse(fs.readFileSync(eventsFile, 'utf8')); } catch {}
-events.push(...transitions);
-events = events.slice(-100);
-fs.writeFileSync(eventsFile, JSON.stringify(events, null, 2));
-
-// Save current as previous for next run
-fs.writeFileSync(prevFile, JSON.stringify(current, null, 2));
-
-// Output transitions for this run
-console.log(JSON.stringify(transitions));
-" "$result" 2>/dev/null || echo '[]')
-
-# Update state file with occupancy summary
-enriched=$($NODE -e "
-const current = JSON.parse(process.argv[1]);
-const transitions = JSON.parse(process.argv[2]);
-
-// Add occupancy field: 'occupied' if anyone present, 'vacant' otherwise
-const presence = current.presence || {};
-const anyoneHome = Object.values(presence).some(p => p.present);
-current.occupancy = anyoneHome ? 'occupied' : 'vacant';
-current.transitions = transitions;
-
-console.log(JSON.stringify(current, null, 2));
-" "$result" "$transitions" 2>/dev/null || echo "$result")
-
-echo "$enriched" > "$STATE_FILE"
-
-# Log transitions
-if [ "$transitions" != "[]" ] && [ -n "$transitions" ]; then
-  log "TRANSITION: $transitions"
-fi
-log "Result: $(echo "$enriched" | tr -d '\n' | head -c 500)"
-
-# Output
-echo "$enriched"
