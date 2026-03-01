@@ -48,6 +48,13 @@ Returns device name, online status, power, mode, temperature setpoint, fan speed
 /usr/local/bin/node ~/repos/cielo-cli/cli.js off -d "living room"
 ```
 
+### Turn on and set temperature
+To reliably turn on a unit and set its temperature, use separate commands — **do NOT use `set --power on`** as it updates the API state but often fails to send the IR signal to the physical unit:
+```bash
+/usr/local/bin/node ~/repos/cielo-cli/cli.js on -d bedroom
+/usr/local/bin/node ~/repos/cielo-cli/cli.js temp 72 -d bedroom
+```
+
 ### Set temperature (Fahrenheit)
 ```bash
 /usr/local/bin/node ~/repos/cielo-cli/cli.js temp 72 -d bedroom
@@ -79,6 +86,8 @@ Valid positions: `auto`, `auto/stop`, `adjust`, `pos1`, `pos2`, `pos3`, `pos4`, 
 ```
 All flags are optional — only include what you want to change. Available flags: `--temp`, `--mode`, `--fan`, `--swing`, `--power`
 
+**WARNING:** `set --power on` is unreliable — it updates the cloud state but often does not send the IR signal. Use the explicit `on` command instead, then `set` for other parameters.
+
 ### JSON output (for any status command)
 ```bash
 /usr/local/bin/node ~/repos/cielo-cli/cli.js status --json
@@ -88,19 +97,23 @@ All flags are optional — only include what you want to change. Available flags
 
 ## Token Management
 
-Tokens expire approximately every hour. When a command fails with "Token expired", the tokens need to be refreshed.
+Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes to automatically refresh tokens via CDP browser capture. This should keep tokens fresh indefinitely as long as the Cielo session cookies haven't expired.
 
-### Refresh via HAR file
-1. On a computer with Chrome, go to https://home.cielowigle.com/ and log in
-2. Open DevTools (F12) > Network tab
-3. Right-click in the network list > "Save all as HAR with content"
-4. Transfer the HAR file to the Mac Mini
-5. Run:
+### Automated refresh (default)
+The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` starts pinchtab, auto-logs in via persisted cookies in `~/.pinchtab/chrome-profile/`, captures a fresh token via Chrome DevTools Protocol, and verifies it works. Logs at `/tmp/cielo-refresh.log`.
+
+### If automated refresh fails (session expired)
+Cookies persist for weeks/months. If they expire, a one-time manual re-login is needed:
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js load-har /path/to/file.har
+BRIDGE_HEADLESS=false pinchtab &
+sleep 5
+pinchtab nav "https://home.cielowigle.com/"
+# Sign in manually in the visible browser window, solve CAPTCHA
+# Then kill pinchtab — cookies are now persisted
+pkill -f pinchtab
 ```
 
-### Manual token refresh
+### Manual token refresh (fallback)
 ```bash
 /usr/local/bin/node ~/repos/cielo-cli/cli.js setup
 ```
@@ -123,4 +136,6 @@ The Nest thermostats control central HVAC. The Cielo minisplits are supplemental
 - If the command returns "command sent (no ack received)", the command was sent but the device didn't confirm — it usually still works
 - If a command returns "is already on/off", the device is already in the requested state
 - The `set` command with `--temp` will automatically turn the unit on if it's off
+- **`set --power on` is unreliable** — use explicit `on` command then `temp`/`mode`/etc. separately
+- To turn on and configure: `on -d <name>` → `temp <F> -d <name>` → `mode <mode> -d <name>`
 - Room temperature and humidity are from the Cielo Breez sensor, not the minisplit itself
