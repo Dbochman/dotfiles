@@ -17,7 +17,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book a monthly date night for Dylan and Julia. Search for Italian restaurants in Newton/Brookline area on Resy. Find availability for a Friday in April 2026 (try around April 10-18) for 2 people at 7 PM. Once booked, create a Google Calendar event inviting julia.joy.jennings@gmail.com with the restaurant details and send a message to the group chat (chat-id 170) notifying them of the booking."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"Italian brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-04-10, 2026-04-11, 2026-04-17, 2026-04-18\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -41,7 +41,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Mediterranean restaurants in Newton/Brookline on Resy. Find availability for a Friday in May 2026 (try around May 8-16) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"Mediterranean brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-05-08, 2026-05-09, 2026-05-15, 2026-05-16\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -65,7 +65,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Spanish/Tapas restaurants in Newton/Brookline on Resy. Friday in June 2026 (try June 12-20) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"Spanish tapas brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-06-12, 2026-06-13, 2026-06-19, 2026-06-20\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -89,7 +89,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Japanese/Asian restaurants in Newton/Brookline on Resy. Friday in July 2026 (try July 10-18) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"Japanese brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-07-10, 2026-07-11, 2026-07-17, 2026-07-18\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -113,7 +113,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Farm-to-Table restaurants in Newton/Brookline on Resy. Friday in August 2026 (try Aug 7-15) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"farm to table brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-08-07, 2026-08-08, 2026-08-14, 2026-08-15\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -137,7 +137,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for American/Steakhouse restaurants in Newton/Brookline on Resy. Friday in September 2026 (try Sept 11-19) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"American steakhouse brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-09-11, 2026-09-12, 2026-09-18, 2026-09-19\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -161,7 +161,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Indian restaurants in Newton/Brookline on Resy. Friday in October 2026 (try Oct 9-17) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"Indian brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-10-09, 2026-10-10, 2026-10-16, 2026-10-17\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -185,7 +185,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Modern American restaurants in Newton/Brookline on Resy. Friday in November 2026 (try Nov 13-21) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"modern American brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-11-13, 2026-11-14, 2026-11-20, 2026-11-21\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -209,7 +209,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Upscale restaurants (French, Italian, Contemporary) in Newton/Brookline on Resy. Friday in December 2026 (try Dec 11-19) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "Book the monthly date night for Dylan and Julia using OpenTable via pinchtab.\n\nSETUP: When running resy commands (fallback only), prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\n## Primary: OpenTable via pinchtab\n\nUse the booking script:\nbash ~/.openclaw/workspace/scripts/opentable-book.sh \"upscale french italian brookline newton\" <DATE> 19:00 2\n\nTry these dates in order: 2026-12-11, 2026-12-12, 2026-12-18, 2026-12-19\n\nThe script handles everything (pinchtab start/stop, cookie dismissal, timeslot selection, booking with card on file). It outputs JSON with success/restaurant/date/time.\n\nIf the script returns success:false or no slots are found for the first restaurant search, try a different search term (e.g., just the cuisine, or \"south end boston\").\n\n## Fallback: Resy\nOnly use Resy if OpenTable fails after 2-3 attempts.\nexport OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\nresy availability VENUE_ID DATE 2\necho 'yes' | resy book 'CONFIG_TOKEN' DATE 2\n\n## After booking (either method):\n1. Create a Google Calendar event on Julia's calendar:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Date Night @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all --force --no-input\n2. Report: restaurant name, date, time, address."
       },
       "delivery": {
         "mode": "announce",
@@ -223,7 +223,7 @@
       "name": "Julia Gmail Morning Triage",
       "enabled": true,
       "createdAtMs": 1771191611488,
-      "updatedAtMs": 1772280064256,
+      "updatedAtMs": 1771416008294,
       "schedule": {
         "kind": "cron",
         "expr": "0 7 * * *",
@@ -282,6 +282,102 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Generate a weekly activity report for Dylan. Analyze the past 7 days of your own activity. Note: We run on Dylan's Claude Max subscription (not pay-per-token API), so focus on volume and health, not cost.\n\n## Step 1: Parse Activity from Logs\nParse the structured runtime logs at /tmp/openclaw/openclaw-*.log. Each line is JSON with a \"time\" field. Filter to the last 7 days only.\n\nExtract:\n- Count of \"embedded run start\" entries (= API calls)\n- Breakdown by day\n- Per-call duration from \"embedded run prompt end\" durationMs\n- Unique sessionIds (= conversations)\n- Count of tool-related log lines (tool executions)\n- Count of \"delivered reply\" lines (= messages sent)\n- Any ERROR-level log entries (logLevelName=ERROR)\n\nUse python3 to parse. Handle malformed lines gracefully.\n\n## Step 2: Health Check\nAlso parse for:\n- Any lines containing \"error\", \"fail\", \"timeout\", \"rate.limit\", \"429\", \"503\" (case-insensitive)\n- Calls with durationMs > 60000 (slow responses over 1 min)\n- Gateway restarts (\"listening on ws://\")\n\n## Step 3: Compare to Previous Week\nIf logs from 8-14 days ago exist, calculate the same metrics for comparison.\n\n## Step 4: Compose Report\nFormat a concise iMessage-friendly summary (no markdown, plain text only):\n\nOpenClaw Weekly Report (Mon-Sun)\n\nActivity:\n- API calls: X (prev week: Y)\n- Messages sent: X\n- Sessions: X\n- Tool executions: X\n- Busiest day: [day] (X calls)\n\nPerformance:\n- Avg response: Xs\n- Slowest response: Xs\n- Calls over 60s: X\n\nHealth:\n- Errors: X (list briefly if any)\n- Gateway restarts: X\n- Rate limits hit: X\n\nModel: [current model name]\nPlan: Claude Max (included)\n\nIf there were errors, briefly describe the top 2-3. If usage was very low (<10 calls), note it. If there were rate limit hits, flag it prominently."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "dylanbochman@gmail.com"
+      }
+    },
+    {
+      "id": "qd-booking-2026-07-june15",
+      "agentId": "main",
+      "name": "Quarterly Group Dinner - Book July Reservation (run June 15)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1750000000000,
+      "updatedAtMs": 1750000000000,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-15T14:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book the Q3 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. The April dinner was at La Morra (Italian, Brookline), so pick a DIFFERENT restaurant this time.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in July 2026.\nTry these Fridays in order: July 10, July 17, July 24, July 31.\n\nRESTAURANTS TO TRY (in priority order \u2014 avoid La Morra):\n1. Washington Square Tavern [77292] - Gastropub, Brookline\n2. Iru [88311] - Korean, Brookline\n3. Barlette [70725] - Cocktail Bar, Brookline\n4. Tres Gatos [82739] - Tapas, Jamaica Plain\n5. Tonino [73777] - Italian, Jamaica Plain\n6. La Morra [4757] - Italian, Brookline (last resort only)\n7. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Create calendar event on Julia's calendar inviting Dylan:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Quarterly Dinner @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --location='RESTAURANT_ADDRESS' \\\n     --description='Quarterly group dinner for 4. Booked via Resy under Dylan account. Forward to other attendees.' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all \\\n     --force --no-input\n5. Report the booking details: restaurant name, date, time, address.\n\nThe result will be announced to the group chat automatically."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "qd-booking-2026-10-sep15",
+      "agentId": "main",
+      "name": "Quarterly Group Dinner - Book October Reservation (run Sep 15)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1750000000001,
+      "updatedAtMs": 1750000000001,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-09-15T14:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book the Q4 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. The April dinner was at La Morra (Italian, Brookline). The July dinner was at a different Brookline/JP restaurant. Pick something different again.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in October 2026.\nTry these Fridays in order: October 9, October 16, October 23, October 30.\n\nRESTAURANTS TO TRY (in priority order \u2014 vary from previous quarters):\n1. Tres Gatos [82739] - Tapas, Jamaica Plain\n2. Tonino [73777] - Italian, Jamaica Plain\n3. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n4. Ssaanjh [91854] - Indian, Brookline\n5. Maguro [82623] - Japanese, Brookline\n6. Washington Square Tavern [77292] - Gastropub, Brookline\n7. La Morra [4757] - Italian, Brookline (last resort only)\n8. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Create calendar event on Julia's calendar inviting Dylan:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Quarterly Dinner @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-04:00' \\\n     --to='DATEThh+2:mm:00-04:00' \\\n     --location='RESTAURANT_ADDRESS' \\\n     --description='Quarterly group dinner for 4. Booked via Resy under Dylan account. Forward to other attendees.' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all \\\n     --force --no-input\n5. Report the booking details: restaurant name, date, time, address.\n\nThe result will be announced to the group chat automatically."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "qd-booking-2027-01-dec15",
+      "agentId": "main",
+      "name": "Quarterly Group Dinner - Book January 2027 Reservation (run Dec 15)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1750000000002,
+      "updatedAtMs": 1750000000002,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-12-15T15:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book the Q1 2027 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. Previous quarters covered Brookline/Jamaica Plain. Pick a fresh restaurant for the new year.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in January 2027.\nTry these Fridays in order: January 9, January 16, January 23, January 30.\n\nRESTAURANTS TO TRY (in priority order \u2014 try to vary from previous quarters):\n1. Akami Omakase [94662] - Japanese, Brookline\n2. Maguro [82623] - Japanese, Brookline\n3. Ssaanjh [91854] - Indian, Brookline\n4. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n5. Tonino [73777] - Italian, Jamaica Plain\n6. La Morra [4757] - Italian, Brookline\n7. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Create calendar event on Julia's calendar inviting Dylan:\n   gog calendar create primary \\\n     --account=julia.joy.jennings@gmail.com \\\n     --summary='Quarterly Dinner @ RESTAURANT_NAME' \\\n     --from='DATEThh:mm:00-05:00' \\\n     --to='DATEThh+2:mm:00-05:00' \\\n     --location='RESTAURANT_ADDRESS' \\\n     --description='Quarterly group dinner for 4. Booked via Resy under Dylan account. Forward to other attendees.' \\\n     --attendees='dylanbochman@gmail.com' \\\n     --send-updates=all \\\n     --force --no-input\n5. Report the booking details: restaurant name, date, time, address.\n\nNOTE: January is EST (UTC-5), so use -05:00 for timezone offset.\n\nThe result will be announced to the group chat automatically."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      }
+    },
+    {
+      "id": "weekly-upgrade-verify-0001",
+      "agentId": "main",
+      "name": "Weekly OpenClaw Upgrade Verification",
+      "enabled": true,
+      "createdAtMs": 1771934400000,
+      "updatedAtMs": 1771934400000,
+      "schedule": {
+        "kind": "cron",
+        "expr": "15 9 * * 0",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Verify the weekly OpenClaw upgrade that ran at 4:00 AM. Check the upgrade log and report status to Dylan.\n\n## Step 1: Read Upgrade Log\nRead the last 30 lines of /Users/dbochman/.openclaw/logs/weekly-upgrade.log\n\nLook for the most recent entry. It will end with one of:\n- OK:old_ver:new_ver \u2014 upgrade succeeded\n- SKIP:ver \u2014 already up to date, no action needed\n- WARN:old_ver:new_ver:scope-repair-needed \u2014 upgraded but new scopes needed\n- FAIL:old_ver:new_ver:gateway-down \u2014 upgrade broke the gateway\n\n## Step 2: Check Gateway Health\nVerify the gateway is running and healthy. Check:\n- Read the last 10 lines of /Users/dbochman/.openclaw/logs/gateway.log for clean startup\n- Check /Users/dbochman/.openclaw/devices/pending.json \u2014 if not empty, there are scope issues\n\n## Step 3: If Scope Repair Needed\nIf pending.json is not empty ({}):\n- Read the pending request to identify which scopes are missing\n- Read /Users/dbochman/.openclaw/devices/paired.json\n- Add the missing scopes to BOTH the device scopes array AND tokens.operator.scopes array\n- Write the fixed paired.json back\n- Clear pending.json to {}\n- Restart the gateway: run launchctl bootout then bootstrap for ai.openclaw.gateway\n- Verify gateway comes back up\n\n## Step 4: Compose Report\nSend a brief status report. Format:\n\nIf OK: \"OpenClaw upgraded: [old] -> [new]. Gateway healthy, no scope issues.\"\nIf SKIP: \"OpenClaw already at latest ([ver]). No action needed.\"\nIf WARN (and you fixed it): \"OpenClaw upgraded: [old] -> [new]. New scopes were required \u2014 auto-fixed [list scopes added]. Gateway restarted and healthy.\"\nIf FAIL: \"OpenClaw upgrade FAILED. Gateway is down. Previous version: [old]. Manual intervention needed.\"\n\nKeep it short \u2014 this goes to Dylan via iMessage."
       },
       "delivery": {
         "mode": "announce",
