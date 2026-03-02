@@ -48,6 +48,8 @@ Files:
 - `openclaw/workspace/scripts/bb-watchdog.sh`
 - `openclaw/com.openclaw.poke-messages.plist`
 - `openclaw/workspace/scripts/poke-messages.scpt`
+- `openclaw/com.openclaw.bb-lag-summary.plist`
+- `openclaw/workspace/scripts/bb-lag-summary.sh`
 
 Behavior:
 - Runs every 1 minute
@@ -56,6 +58,7 @@ Behavior:
 - Uses poke-first recovery (`Messages` chat-count query) before restart
 - Restarts BlueBubbles only after repeated unresolved lag checks
 - Uses cooldown logic to prevent restart loops
+- Emits daily lag summaries to `/tmp/bb-lag-summary.log` (08:05 local time)
 
 ## 3. Host/runtime state validated on March 2, 2026
 
@@ -145,7 +148,9 @@ Quick health checks:
    - `tail -n 100 /tmp/bb-watchdog.log`
 5. Ingest lag metrics:
    - `tail -n 100 /tmp/bb-ingest-lag.log`
-6. OpenClaw errors:
+6. Daily lag summary:
+   - `tail -n 30 /tmp/bb-lag-summary.log`
+7. OpenClaw errors:
    - `tail -n 200 ~/.openclaw/logs/gateway.err.log`
 
 ## 8. Health snapshot procedure
@@ -192,6 +197,7 @@ echo "last gateway.err line:"; tail -n 1 ~/.openclaw/logs/gateway.err.log;
 echo "last send-fail line:"; grep "BlueBubbles send failed (500)" ~/.openclaw/logs/gateway.err.log | tail -n 1;
 echo "last watchdog line:"; tail -n 1 /tmp/bb-watchdog.log;
 echo "last lag metric:"; tail -n 1 /tmp/bb-ingest-lag.log 2>/dev/null || echo "none";
+echo "last lag summary:"; tail -n 1 /tmp/bb-lag-summary.log 2>/dev/null || echo "none";
 '
 ```
 
