@@ -5,7 +5,7 @@ Host dylans-mac-mini
 
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro
-  HostName dylans-macbook-pro
+  HostName 100.107.209.85
   User dbochman
 
 # 1Password SSH Agent
