@@ -141,6 +141,12 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
   /opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/auth/login" 2>/dev/null
   sleep 8
 
+  # Start passive CDP listener BEFORE login to capture the auth response (refreshToken)
+  if [[ -n "$CDP_PORT" ]] && [[ -f "$GRAB_SCRIPT" ]]; then
+    python3 "$GRAB_SCRIPT" "$CDP_PORT" --passive > /tmp/cielo-passive-grab.log 2>&1 &
+    PASSIVE_GRAB_PID=$!
+  fi
+
   # Fill login form and submit
   LOGIN_RESULT=$(/opt/homebrew/bin/pinchtab eval "
     (async () => {
@@ -242,6 +248,30 @@ except: print('none')
 
   IS_LOGGED_IN="yes"
   echo '{"info":"Headless login successful"}'
+
+  # Wait for passive grabber to capture the login response (refreshToken)
+  if [[ -n "${PASSIVE_GRAB_PID:-}" ]]; then
+    # Give the grabber time to see the login response and post-login API calls
+    sleep 5
+    # Check if it's still running (may have captured and exited already)
+    if kill -0 "$PASSIVE_GRAB_PID" 2>/dev/null; then
+      # Wait up to 15 more seconds
+      for i in $(seq 1 15); do
+        if ! kill -0 "$PASSIVE_GRAB_PID" 2>/dev/null; then break; fi
+        sleep 1
+      done
+      # Kill if still running (timed out)
+      kill "$PASSIVE_GRAB_PID" 2>/dev/null
+      wait "$PASSIVE_GRAB_PID" 2>/dev/null
+    fi
+    echo '{"info":"Passive grab log:","log":"'"$(cat /tmp/cielo-passive-grab.log 2>/dev/null | tr '\n' ' ')"'"}'
+
+    # If passive grab captured tokens, we may be able to skip the normal Method 2 grab
+    PASSIVE_REFRESH=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('refreshToken',''))" 2>/dev/null)
+    if [[ -n "$PASSIVE_REFRESH" ]]; then
+      echo '{"info":"refreshToken captured during login"}'
+    fi
+  fi
 fi
 
 # ── Method 2: Capture tokens via CDP ────────────────────────────────────────
