@@ -23,6 +23,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/skill-to-dotfiles.sh"
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
