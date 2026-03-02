@@ -101,7 +101,7 @@ curl -s -X POST "http://localhost:1234/api/v1/chat/${CHAT_GUID}/typing?password=
 ```
 
 Replace `${CHAT_GUID}` with the chat GUID from the inbound message (e.g.,
-`iMessage;-;dylanbochman@gmail.com` or `iMessage;+;chat123456`).
+`any;-;dylanbochman@gmail.com` for DMs or `iMessage;+;chat123456` for groups).
 `$BLUEBUBBLES_PASSWORD` is already in your environment — no 1Password lookup needed.
 
 This makes the "..." typing bubble appear on the sender's phone immediately.
