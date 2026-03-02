@@ -24,7 +24,9 @@ Important keys:
 - `channels.bluebubbles.webhookPath: "/bluebubbles-webhook"`
 - `channels.bluebubbles.password: "${BLUEBUBBLES_PASSWORD}"`
 
-Current mitigation keys (set live on Mac Mini; should be preserved operationally):
+**Config drift note:** Dotfiles now tracks the mitigated state (Private API disabled). When Private API is enabled, flip `sendReadReceipts` to `true`, `session.typingMode` to `"auto"`, and all `actions.*` back to `true` (except `sendAttachment` which stays `true` regardless).
+
+Current mitigation keys:
 - `session.typingMode: "never"` (suppresses typing calls while Private API is disabled)
 - `channels.bluebubbles.sendReadReceipts: false`
 - `channels.bluebubbles.actions` for Private-API features set to `false`:
@@ -65,7 +67,7 @@ This means base messaging works, but Private-API-only features are not available
 
 ## 4. Known constraints and failure modes
 
-## A) Private API disabled
+### A) Private API disabled
 
 Observed errors:
 - `typing start failed (500)`
@@ -83,7 +85,7 @@ Mitigation currently in place:
 Long-term fix:
 - Enable BlueBubbles Private API (requires SIP-related physical Mac workflow documented in `openclaw/plans/bluebubbles-private-api.md`)
 
-## B) Phone-handle send failure (`+17813544611`)
+### B) Phone-handle send failure (`+17813544611`)
 
 Reproduced directly via BlueBubbles API:
 - `chatGuid: any;-;+17813544611` fails
@@ -140,7 +142,53 @@ Quick health checks:
 5. OpenClaw errors:
    - `tail -n 200 ~/.openclaw/logs/gateway.err.log`
 
-## 8. Remaining gaps
+## 8. Health snapshot procedure
+
+Use this to capture a point-in-time status check and compare against prior snapshots.
+
+### A) Run the snapshot
+
+On your laptop:
+```bash
+ssh dbochman@100.93.66.71 '
+echo "=== timestamp ==="; date;
+echo "=== gateway status ==="; launchctl print gui/$(id -u)/ai.openclaw.gateway | egrep "state =|pid =";
+echo "=== bluebubbles server info ===";
+if [[ -f ~/.openclaw/.secrets-cache ]]; then set -a; source ~/.openclaw/.secrets-cache; set +a; fi;
+curl -sS --max-time 8 "http://localhost:1234/api/v1/server/info?password=${BLUEBUBBLES_PASSWORD:-}" | python3 -m json.tool;
+echo "=== latest gateway error ==="; tail -n 1 ~/.openclaw/logs/gateway.err.log;
+echo "=== latest watchdog line ==="; tail -n 1 /tmp/bb-watchdog.log;
+echo "=== delivery queue ==="; ls -la ~/.openclaw/delivery-queue ~/.openclaw/delivery-queue/archived 2>/dev/null || true;
+'
+```
+
+### B) Interpret results
+
+Healthy snapshot indicators:
+1. Gateway `state = running`
+2. BlueBubbles API responds successfully
+3. `private_api` / `helper_connected` are expected values for current mode
+4. Watchdog latest line is `OK:` (idle or recent webhook)
+5. Active `~/.openclaw/delivery-queue/` has no `.json` files pending
+
+Warning indicators:
+1. New `BlueBubbles send failed (500)` lines after prior known timestamp
+2. Repeated watchdog `STALL DETECTED` entries in short intervals
+3. New `typing start failed` / `mark read failed` entries if typing/read mitigations are enabled
+4. Growing active delivery queue
+
+### C) Minimal delta check (fast)
+
+For quick follow-ups:
+```bash
+ssh dbochman@100.93.66.71 '
+echo "last gateway.err line:"; tail -n 1 ~/.openclaw/logs/gateway.err.log;
+echo "last send-fail line:"; grep "BlueBubbles send failed (500)" ~/.openclaw/logs/gateway.err.log | tail -n 1;
+echo "last watchdog line:"; tail -n 1 /tmp/bb-watchdog.log;
+'
+```
+
+## 9. Remaining gaps
 
 Current telemetry is usable but not comprehensive:
 1. No automatic alert on send-failure spikes by recipient handle
