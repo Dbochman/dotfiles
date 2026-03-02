@@ -12,12 +12,24 @@
 #   - 15-min restart cooldown prevents restart loops
 #   - Idle detection: no restart if newest message is >15 min old
 #   - Graceful quit before force-kill
+#   - Daily log rotation (keeps 7 days)
 
 set -euo pipefail
 
 STATE_DIR="${HOME}/.openclaw/bb-watchdog"
 STATE_FILE="${STATE_DIR}/state.json"
 LOG_FILE="/tmp/bb-watchdog.log"
+
+# Rotate log daily — keep 7 days
+if [[ -f "$LOG_FILE" ]]; then
+  log_date=$(stat -f '%Sm' -t '%Y-%m-%d' "$LOG_FILE" 2>/dev/null || echo "")
+  today=$(date '+%Y-%m-%d')
+  if [[ -n "$log_date" && "$log_date" != "$today" ]]; then
+    mv "$LOG_FILE" "${LOG_FILE}.${log_date}"
+    # Remove logs older than 7 days
+    find /tmp -maxdepth 1 -name 'bb-watchdog.log.*' -mtime +7 -delete 2>/dev/null || true
+  fi
+fi
 NODE="/opt/homebrew/bin/node"
 BB_LOG="${HOME}/Library/Logs/bluebubbles-server/main.log"
 
@@ -128,7 +140,7 @@ if (!latestGuid) {
 } else if (msgAgeMin > 15) {
   action = 'ok';
   reason = 'no recent messages (' + msgAgeMin + 'min old), probably idle';
-} else if (webhookAgeMin > 10) {
+} else if (webhookAgeMin > 5) {
   action = 'restart';
   reason = 'messages are ' + msgAgeMin + 'min old but last webhook was ' + webhookAgeMin + 'min ago';
 } else {
