@@ -46,7 +46,6 @@
     }
   },
   "messages": {
-    "ackReactionScope": "group-mentions",
     "tts": {
       "auto": "inbound",
       "provider": "elevenlabs",
