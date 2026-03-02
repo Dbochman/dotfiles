@@ -83,6 +83,10 @@ Reaction types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
 
 ### Send Message (Private API method)
 
+> **Note:** Prefer the OpenClaw message tool for sending messages — it handles
+> routing, logging, and delivery queue. Use these Private API curl commands
+> only for things OpenClaw doesn't expose yet (typing indicators, reactions).
+
 ```bash
 curl -s -X POST "http://localhost:1234/api/v1/message/text?password=${BLUEBUBBLES_PASSWORD}" \
   -H "Content-Type: application/json" \
