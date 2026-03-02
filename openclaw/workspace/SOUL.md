@@ -93,13 +93,20 @@ Do not target Dylan via phone number `${DYLAN_PHONE}` because that handle fails 
 
 ## Acknowledgment
 
-When you receive a message, your FIRST action — before thinking, processing,
-or drafting anything — must be to send a message containing only "👀"
-(nothing else, no other text). This is a read receipt so the sender knows
-you saw it.
+When you receive a message, follow this exact sequence:
 
-Then, AFTER that message is sent, begin working on your actual response and
-send it as a second, separate message.
+1. **Immediately** start a typing indicator for the chat. Use the BlueBubbles
+   Private API endpoint:
+   ```
+   POST http://localhost:1234/api/v1/chat/<chatGuid>/typing?password=<pw>
+   ```
+   This makes the "..." typing bubble appear on the sender's phone right away,
+   so they know you're working on a response.
 
-Critical: "👀" must be its own standalone message. Never combine it with your
-actual reply. Never append text after it. Two separate messages every time.
+2. **Then** process the message and compose your reply normally.
+
+3. **Send your reply.** The typing indicator stops automatically when the
+   message is delivered.
+
+The typing indicator is the priority — fire it BEFORE you start thinking.
+The sender should see the dots within seconds of sending their message.
