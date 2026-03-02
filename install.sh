@@ -539,6 +539,7 @@ install_dotfiles() {
       if [[ "$DRY_RUN" != true ]]; then
         mkdir -p "$HOME/Applications"
         mkdir -p "$HOME/Library/LaunchAgents"
+        mkdir -p "$HOME/.openclaw/workspace/scripts"
       fi
 
       # Gateway config (full config with local gateway, channels, skills)
@@ -549,6 +550,10 @@ install_dotfiles() {
 
       # LaunchAgent plist
       link_file "$DOTFILES_DIR/openclaw/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+      link_file "$DOTFILES_DIR/openclaw/com.openclaw.bb-watchdog.plist" "$HOME/Library/LaunchAgents/com.openclaw.bb-watchdog.plist"
+      link_file "$DOTFILES_DIR/openclaw/com.openclaw.poke-messages.plist" "$HOME/Library/LaunchAgents/com.openclaw.poke-messages.plist"
+      link_file "$DOTFILES_DIR/openclaw/workspace/scripts/bb-watchdog.sh" "$HOME/.openclaw/workspace/scripts/bb-watchdog.sh"
+      link_file "$DOTFILES_DIR/openclaw/workspace/scripts/poke-messages.scpt" "$HOME/.openclaw/workspace/scripts/poke-messages.scpt"
 
       # OpenClaw skills (gateway host only)
       if [[ -d "$DOTFILES_DIR/openclaw/skills" ]]; then

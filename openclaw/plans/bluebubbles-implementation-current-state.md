@@ -46,11 +46,15 @@ Behavior:
 Files:
 - `openclaw/com.openclaw.bb-watchdog.plist`
 - `openclaw/workspace/scripts/bb-watchdog.sh`
+- `openclaw/com.openclaw.poke-messages.plist`
+- `openclaw/workspace/scripts/poke-messages.scpt`
 
 Behavior:
-- Runs every 5 minutes
+- Runs every 1 minute
 - Detects probable observer stalls
-- Restarts BlueBubbles when stalled
+- Logs ingest lag alerts to `/tmp/bb-ingest-lag.log` (default threshold: 90s)
+- Uses poke-first recovery (`Messages` chat-count query) before restart
+- Restarts BlueBubbles only after repeated unresolved lag checks
 - Uses cooldown logic to prevent restart loops
 
 ## 3. Host/runtime state validated on March 2, 2026
@@ -139,7 +143,9 @@ Quick health checks:
    - `curl "http://localhost:1234/api/v1/server/info?password=$BLUEBUBBLES_PASSWORD"`
 4. Watchdog:
    - `tail -n 100 /tmp/bb-watchdog.log`
-5. OpenClaw errors:
+5. Ingest lag metrics:
+   - `tail -n 100 /tmp/bb-ingest-lag.log`
+6. OpenClaw errors:
    - `tail -n 200 ~/.openclaw/logs/gateway.err.log`
 
 ## 8. Health snapshot procedure
@@ -185,8 +191,28 @@ ssh dbochman@100.93.66.71 '
 echo "last gateway.err line:"; tail -n 1 ~/.openclaw/logs/gateway.err.log;
 echo "last send-fail line:"; grep "BlueBubbles send failed (500)" ~/.openclaw/logs/gateway.err.log | tail -n 1;
 echo "last watchdog line:"; tail -n 1 /tmp/bb-watchdog.log;
+echo "last lag metric:"; tail -n 1 /tmp/bb-ingest-lag.log 2>/dev/null || echo "none";
 '
 ```
+
+### D) Recent snapshot example (March 2, 2026, 11:39 AM EST)
+
+Observed during live check:
+1. BlueBubbles showed inbound ingest delay, then recovered:
+   - `11:38:43 EST`: `New Message from dy**********@gmail.com, "Just checking i..."; Date: 3/2/2026, 11:34:02 AM`
+   - `11:38:43 EST`: webhook dispatched to OpenClaw (`/bluebubbles-webhook`)
+2. OpenClaw processed immediately after webhook arrival:
+   - `16:38:44Z` (`11:38:44 EST`): lane enqueue/dequeue and embedded run start
+   - `16:39:06Z` (`11:39:06 EST`): embedded run completed and response sent
+3. End-to-end conclusion:
+   - Primary delay was upstream of OpenClaw response generation (message reached BlueBubbles late).
+   - Once webhook fired, OpenClaw turnaround was normal (~22s run time including one transient LLM retry).
+
+Use this as a reference pattern for future incidents:
+1. Confirm BlueBubbles `New Message` timestamp vs message `Date:` inside the same line
+2. Confirm webhook dispatch timestamp
+3. Confirm OpenClaw enqueue/start/end timestamps in `/tmp/openclaw/openclaw-YYYY-MM-DD.log`
+4. Attribute delay to ingress (BB-side) vs processing (OpenClaw-side)
 
 ## 9. Remaining gaps
 
