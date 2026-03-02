@@ -3,6 +3,11 @@ Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
 
+# MacBook Pro at 19 Crosstown (via Tailscale)
+Host dylans-macbook-pro
+  HostName dylans-macbook-pro
+  User dbochman
+
 # 1Password SSH Agent
 Host *
   IdentityAgent "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"

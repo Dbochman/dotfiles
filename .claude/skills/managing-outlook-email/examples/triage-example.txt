@@ -1,0 +1,329 @@
+Email Triage Example Session
+================================
+
+This example demonstrates a complete email triage workflow using the outlook-cli skill.
+
+USER: Triage my inbox
+
+ASSISTANT: Let me check your inbox...
+
+$ outlook-cli find --only-unread --json
+
+Found 23 unread emails in your inbox.
+
+Here are the 10 most recent:
+
+1. From: boss@company.com
+   Subject: Q4 Planning Meeting - Action Required
+   Received: 2 hours ago
+   Has attachments: Yes (agenda.pdf)
+   Preview: Please review the attached agenda and confirm your attendance...
+
+2. From: newsletter@tech.com
+   Subject: Weekly Tech Digest - Nov 2025
+   Received: 4 hours ago
+   Has attachments: No
+   Preview: This week's top stories in technology...
+
+3. From: alice@company.com
+   Subject: Re: Project Alpha Timeline
+   Received: 1 day ago
+   Has attachments: No
+   Preview: Thanks for the update! I have a few questions about...
+
+4. From: hr@company.com
+   Subject: Benefits Open Enrollment Reminder
+   Received: 1 day ago
+   Has attachments: Yes (enrollment_guide.pdf)
+   Preview: Don't forget: Open enrollment ends this Friday...
+
+5. From: security@company.com
+   Subject: Security Training Required
+   Received: 2 days ago
+   Has attachments: No
+   Preview: You have until Nov 15 to complete your annual security...
+
+6. From: newsletter@business.com
+   Subject: Your Daily Business Brief
+   Received: 2 days ago
+   Has attachments: No
+   Preview: Today's market updates and business news...
+
+7. From: bob@company.com
+   Subject: Coffee catch-up?
+   Received: 3 days ago
+   Has attachments: No
+   Preview: Hey! Want to grab coffee sometime this week to...
+
+8. From: reports@system.com
+   Subject: Weekly Status Report - Team Alpha
+   Received: 3 days ago
+   Has attachments: Yes (report.xlsx)
+   Preview: Automated weekly report for Team Alpha...
+
+9. From: client@external.com
+   Subject: Question about the proposal
+   Received: 3 days ago
+   Has attachments: No
+   Preview: Hi, I had a quick question about section 3 of...
+
+10. From: newsletter@tech.com
+    Subject: Breaking: New AI Announcement
+    Received: 4 days ago
+    Has attachments: No
+    Preview: Major tech company just announced...
+
+What would you like to do with email #1 (Q4 Planning Meeting)?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: R
+
+ASSISTANT: $ outlook-cli read AAMkAGI...xyz --json
+
+From: boss@company.com
+To: you@company.com, team@company.com
+Subject: Q4 Planning Meeting - Action Required
+Date: Nov 8, 2025 @ 2:30 PM
+Attachments: agenda.pdf (124 KB)
+
+Hi team,
+
+We need to finalize our Q4 planning. Please review the attached agenda
+and confirm you can attend the meeting next Tuesday at 2 PM.
+
+Key topics:
+- Budget allocation for Q4
+- Resource planning
+- Project prioritization
+
+Please come prepared with your team's top 3 priorities.
+
+Thanks,
+Boss
+
+---
+After reading, what would you like to do?
+[A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip
+
+USER: F
+
+ASSISTANT: $ outlook-cli mark AAMkAGI...xyz --flag --json
+
+✓ Flagged for follow-up: Q4 Planning Meeting - Action Required
+
+Moving to email #2 (Weekly Tech Digest)...
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: A
+
+ASSISTANT: $ outlook-cli move AAMkAGI...abc Archive --json
+
+✓ Archived: Weekly Tech Digest - Nov 2025
+
+Moving to email #3 (Re: Project Alpha Timeline)...
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: R
+
+ASSISTANT: $ outlook-cli read AAMkAGI...def --json
+
+From: alice@company.com
+To: you@company.com
+Subject: Re: Project Alpha Timeline
+Date: Nov 7, 2025 @ 3:15 PM
+
+Thanks for the update!
+
+I have a few questions about the timeline:
+1. Can we push the beta release to Nov 20 instead of Nov 15?
+2. Do we need additional QA resources?
+3. What's the plan for deployment?
+
+Let's discuss in our 1:1 tomorrow.
+
+- Alice
+
+---
+After reading, what would you like to do?
+[A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip
+
+USER: F
+
+ASSISTANT: $ outlook-cli mark AAMkAGI...def --flag --json
+
+✓ Flagged for follow-up: Re: Project Alpha Timeline
+
+Moving to email #4 (Benefits Open Enrollment Reminder)...
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: M
+
+ASSISTANT: $ outlook-cli mark AAMkAGI...ghi --read --json
+
+✓ Marked as read: Benefits Open Enrollment Reminder
+
+Moving to email #5 (Security Training Required)...
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: F
+
+ASSISTANT: $ outlook-cli mark AAMkAGI...jkl --flag --json
+
+✓ Flagged for follow-up: Security Training Required
+
+Moving to email #6 (Your Daily Business Brief)...
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: A
+
+ASSISTANT: $ outlook-cli move AAMkAGI...mno Archive --json
+
+✓ Archived: Your Daily Business Brief
+
+I noticed you've archived 2 newsletters so far. Would you like to archive
+all unread newsletters?
+
+Available newsletter senders:
+- newsletter@tech.com (3 unread)
+- newsletter@business.com (1 unread)
+
+[Y] Yes, archive all / [N] No, continue manual triage
+
+USER: Y
+
+ASSISTANT: $ outlook-cli move --all --from newsletter@tech.com --only-unread Archive --json
+$ outlook-cli move --all --from newsletter@business.com --only-unread Archive --json
+
+✓ Archived 4 newsletter emails
+
+Remaining unread emails: 17
+
+Continuing triage from email #7...
+
+7. From: bob@company.com
+   Subject: Coffee catch-up?
+   Received: 3 days ago
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: M
+
+ASSISTANT: $ outlook-cli mark AAMkAGI...pqr --read --json
+
+✓ Marked as read: Coffee catch-up?
+
+Moving to email #8 (Weekly Status Report - Team Alpha)...
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: A
+
+ASSISTANT: $ outlook-cli move AAMkAGI...stu Archive --json
+
+✓ Archived: Weekly Status Report - Team Alpha
+
+Moving to email #9 (Question about the proposal)...
+
+What would you like to do?
+[R] Read / [A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip / [Q] Quit
+
+USER: R
+
+ASSISTANT: $ outlook-cli read AAMkAGI...vwx --json
+
+From: client@external.com
+To: you@company.com
+Subject: Question about the proposal
+Date: Nov 5, 2025 @ 10:45 AM
+
+Hi,
+
+I had a quick question about section 3 of your proposal. Can you clarify
+what "flexible deployment options" includes? Does this cover both cloud
+and on-premise?
+
+Also, what's the typical implementation timeline?
+
+Thanks,
+Client
+
+---
+After reading, what would you like to do?
+[A] Archive / [M] Mark read / [F] Flag / [D] Delete / [S] Skip
+
+USER: F
+
+ASSISTANT: $ outlook-cli mark AAMkAGI...vwx --flag --json
+
+✓ Flagged for follow-up: Question about the proposal
+
+You've processed 10 emails. Continue with remaining 13?
+[Y] Yes, continue / [N] No, stop here / [S] Show summary
+
+USER: S
+
+ASSISTANT: Triage Complete!
+
+Summary of actions:
+- Emails processed: 10
+- Flagged for follow-up: 4
+  • Q4 Planning Meeting
+  • Re: Project Alpha Timeline
+  • Security Training Required
+  • Question about the proposal
+- Archived: 6 (including 4 newsletters via bulk operation)
+- Marked as read: 2
+- Skipped: 0
+
+Remaining unread: 13
+
+Your flagged emails need action:
+1. Respond to boss about Q4 meeting attendance
+2. Discuss timeline with Alice in 1:1
+3. Complete security training by Nov 15
+4. Reply to client about proposal details
+
+Would you like to:
+- Continue triaging the remaining 13 emails
+- View your flagged emails
+- Perform bulk operations on remaining emails
+- Exit triage
+
+USER: Exit
+
+ASSISTANT: Triage session complete!
+
+Quick stats:
+- Started with: 23 unread
+- Triaged: 10 emails
+- Remaining: 13 unread
+- Time saved with bulk archive: ~2 minutes
+
+Great job staying on top of your inbox! The 4 flagged items are now
+easy to find for follow-up action.
+
+========================================
+Key Takeaways from This Example:
+========================================
+
+1. Bulk Operations: Identified newsletter pattern and archived 4 emails at once
+2. Flagging Important Items: Used flags to mark 4 action items for follow-up
+3. Quick Decisions: Archive/Read/Flag without reading every email in detail
+4. Time Efficiency: Processed 10 emails in ~5 minutes
+5. Remaining Work: Clear view of what's left (13 emails) and what needs action (4 flags)
+
+Typical triage session processes 10-20 emails, identifies patterns for bulk
+operations, and flags important items. Sessions typically take 5-15 minutes
+depending on inbox size and email complexity.

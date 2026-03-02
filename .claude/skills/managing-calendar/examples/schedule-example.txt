@@ -1,0 +1,399 @@
+Meeting Scheduling Example Session
+===================================
+
+This example demonstrates various meeting scheduling scenarios using the calendar-cli skill.
+
+========================================
+Example 1: Simple Meeting Scheduling
+========================================
+
+USER: Schedule a meeting with John tomorrow at 2pm for 1 hour
+
+A: I'll help you schedule that. A few questions:
+
+1. What's the meeting about? (subject)
+2. What's John's full email address?
+
+USER: Project sync, and his email is john.doe@company.com
+
+A: Perfect! Here's what I'll schedule:
+
+Subject: Project sync
+When: Saturday, November 9, 2025 @ 2:00 PM - 3:00 PM
+Duration: 1 hour
+Attendees: john.doe@company.com
+
+Is this correct? [Y/N]
+
+USER: Yes
+
+A: Let me check for conflicts...
+
+$ calendar-cli find --after 2025-11-09 --before 2025-11-10 --json
+
+Good news! No scheduling conflicts found on November 9.
+
+Creating the meeting...
+
+$ calendar-cli create \
+  --subject "Project sync" \
+  --start "2025-11-09T14:00:00" \
+  --end "2025-11-09T15:00:00" \
+  --attendees "john.doe@company.com" \
+  --json
+
+✓ Meeting created successfully!
+
+Event Details:
+- Subject: Project sync
+- When: Saturday, November 9, 2025 @ 2:00 PM - 3:00 PM
+- Duration: 1 hour
+- Attendees: john.doe@company.com
+- Event ID: AAMkAGI2TG93Li1vQeRGsVcS42MTIyMQBG...
+
+Meeting invite has been sent to john.doe@company.com.
+
+========================================
+Example 2: Meeting with Conflict Detection
+========================================
+
+USER: Set up a 30-minute 1:1 with Alice next Monday at 10am
+
+A: I'll help schedule that. What's Alice's email address?
+
+USER: alice@company.com
+
+A: Great! Here's what I'll schedule:
+
+Subject: 1:1 with Alice
+When: Monday, November 11, 2025 @ 10:00 AM - 10:30 AM
+Duration: 30 minutes
+Attendees: alice@company.com
+
+Checking for conflicts...
+
+$ calendar-cli find --after 2025-11-11 --before 2025-11-12 --json
+
+⚠️ Warning: Scheduling conflict detected!
+
+Your new meeting (10:00 AM - 10:30 AM) overlaps with:
+- "Team Standup" (9:30 AM - 10:15 AM) with team@company.com
+
+Overlap: 15 minutes (10:00 AM - 10:15 AM)
+
+Would you like to:
+  [1] Create anyway (15-minute overlap)
+  [2] Find alternative time
+  [3] Cancel
+
+USER: 2
+
+A: Let me find available time slots on Monday, November 11...
+
+$ calendar-cli find --after 2025-11-11 --before 2025-11-12 --json
+
+Current schedule:
+  9:30 AM - 10:15 AM: Team Standup
+  11:00 AM - 12:00 PM: Project Review
+  2:00 PM - 3:00 PM: Client Call
+
+Available time slots:
+  10:15 AM - 11:00 AM (45 minutes free)
+  12:00 PM - 2:00 PM (2 hours free)
+  3:00 PM - 5:00 PM (2 hours free)
+
+Your meeting needs 30 minutes. Suggested times:
+  [A] 10:15 AM - 10:45 AM (right after Team Standup)
+  [B] 12:00 PM - 12:30 PM (lunch time)
+  [C] 3:00 PM - 3:30 PM (after Client Call)
+
+Which would you prefer? Or specify a different time.
+
+USER: A
+
+A: Perfect! Creating meeting for 10:15 AM - 10:45 AM...
+
+$ calendar-cli create \
+  --subject "1:1 with Alice" \
+  --start "2025-11-11T10:15:00" \
+  --end "2025-11-11T10:45:00" \
+  --attendees "alice@company.com" \
+  --json
+
+✓ Meeting created successfully!
+
+Event Details:
+- Subject: 1:1 with Alice
+- When: Monday, November 11, 2025 @ 10:15 AM - 10:45 AM
+- Duration: 30 minutes
+- Attendees: alice@company.com
+- Event ID: AAMkAGI2TG93Li1vQeRGsVcS42MTIyMQBG...
+
+No conflicts! Your Monday schedule:
+  9:30 AM - 10:15 AM: Team Standup
+  10:15 AM - 10:45 AM: 1:1 with Alice ← New
+  11:00 AM - 12:00 PM: Project Review
+  2:00 PM - 3:00 PM: Client Call
+
+========================================
+Example 3: Multi-Attendee Meeting with Location
+========================================
+
+USER: Schedule a team meeting next Tuesday 3pm for 2 hours, invite Bob and Carol, and set the location to Conference Room A
+
+A: Let me gather the details:
+
+Subject: What's the meeting about?
+
+USER: Sprint planning
+
+A: Got it! And what are Bob and Carol's email addresses?
+
+USER: bob@company.com and carol@company.com
+
+A: Perfect! Here's what I'll schedule:
+
+Subject: Sprint planning
+When: Tuesday, November 12, 2025 @ 3:00 PM - 5:00 PM
+Duration: 2 hours
+Location: Conference Room A
+Attendees:
+  • bob@company.com
+  • carol@company.com
+
+Is this correct? [Y/N]
+
+USER: Yes
+
+A: Checking for conflicts on Tuesday, November 12...
+
+$ calendar-cli find --after 2025-11-12 --before 2025-11-13 --json
+
+Current schedule:
+  9:00 AM - 10:00 AM: Team Standup
+  1:00 PM - 2:30 PM: Design Review
+
+No conflicts! 3:00 PM - 5:00 PM is available.
+
+Creating the meeting...
+
+$ calendar-cli create \
+  --subject "Sprint planning" \
+  --start "2025-11-12T15:00:00" \
+  --end "2025-11-12T17:00:00" \
+  --attendees "bob@company.com,carol@company.com" \
+  --location "Conference Room A" \
+  --json
+
+✓ Meeting created successfully!
+
+Event Details:
+- Subject: Sprint planning
+- When: Tuesday, November 12, 2025 @ 3:00 PM - 5:00 PM
+- Duration: 2 hours
+- Location: Conference Room A
+- Attendees:
+  • bob@company.com
+  • carol@company.com
+- Event ID: AAMkAGI2TG93Li1vQeRGsVcS42MTIyMQBG...
+
+Meeting invites have been sent to all attendees.
+
+Note: Conference Room A is listed as the location. Make sure the room
+is actually available for that time!
+
+========================================
+Example 4: Virtual Meeting with Zoom Link
+========================================
+
+USER: Schedule a virtual standup tomorrow at 9am for 30 minutes with the team
+
+A: I'll help set that up. Questions:
+
+1. What email address should I use for "the team"?
+2. Do you have a Zoom link to include?
+
+USER: Use team@company.com, and the Zoom link is https://zoom.us/j/123456789
+
+A: Perfect! Here's what I'll schedule:
+
+Subject: Virtual standup
+When: Saturday, November 9, 2025 @ 9:00 AM - 9:30 AM
+Duration: 30 minutes
+Attendees: team@company.com
+Location: https://zoom.us/j/123456789
+
+Is this correct? [Y/N]
+
+USER: Yes
+
+A: Checking for conflicts...
+
+$ calendar-cli find --after 2025-11-09 --before 2025-11-10 --json
+
+No conflicts on Saturday morning.
+
+Creating the meeting...
+
+$ calendar-cli create \
+  --subject "Virtual standup" \
+  --start "2025-11-09T09:00:00" \
+  --end "2025-11-09T09:30:00" \
+  --attendees "team@company.com" \
+  --location "https://zoom.us/j/123456789" \
+  --body "Join Zoom Meeting: https://zoom.us/j/123456789" \
+  --json
+
+✓ Meeting created successfully!
+
+Event Details:
+- Subject: Virtual standup
+- When: Saturday, November 9, 2025 @ 9:00 AM - 9:30 AM
+- Duration: 30 minutes
+- Location: https://zoom.us/j/123456789 (Zoom)
+- Attendees: team@company.com
+- Event ID: AAMkAGI2TG93Li1vQeRGsVcS42MTIyMQBG...
+
+The Zoom link is included in both the location field and the meeting body,
+so attendees can easily join from their calendar.
+
+========================================
+Example 5: All-Day Event (PTO)
+========================================
+
+USER: Block off next Friday as PTO
+
+A: I'll create an all-day event for Friday, November 15, 2025.
+
+Subject: PTO
+When: Friday, November 15, 2025 (All day)
+
+Is this correct? [Y/N]
+
+USER: Yes
+
+A: Creating all-day PTO event...
+
+$ calendar-cli create \
+  --subject "PTO" \
+  --start "2025-11-15T00:00:00" \
+  --end "2025-11-16T00:00:00" \
+  --json
+
+✓ Event created successfully!
+
+Event Details:
+- Subject: PTO
+- When: Friday, November 15, 2025 (All day)
+- Event ID: AAMkAGI2TG93Li1vQeRGsVcS42MTIyMQBG...
+
+Your calendar is now blocked for that day. Other people will see you as
+"Out of Office" when trying to schedule meetings on November 15.
+
+========================================
+Example 6: Meeting with Agenda in Body
+========================================
+
+USER: Schedule a client presentation next Wednesday at 2pm for 1 hour with client@external.com
+
+A: I'll help schedule that. A few more details:
+
+1. What's the presentation title/subject?
+2. Would you like to include an agenda in the meeting details?
+
+USER: Title is "Q4 Product Roadmap", and yes, add an agenda
+
+A: What should the agenda include?
+
+USER:
+1. Welcome and introductions (5 min)
+2. Product overview (15 min)
+3. Q4 roadmap walkthrough (30 min)
+4. Q&A (10 min)
+
+A: Perfect! Here's what I'll schedule:
+
+Subject: Q4 Product Roadmap
+When: Wednesday, November 13, 2025 @ 2:00 PM - 3:00 PM
+Duration: 1 hour
+Attendees: client@external.com
+
+Agenda:
+1. Welcome and introductions (5 min)
+2. Product overview (15 min)
+3. Q4 roadmap walkthrough (30 min)
+4. Q&A (10 min)
+
+Is this correct? [Y/N]
+
+USER: Yes
+
+A: Checking for conflicts...
+
+$ calendar-cli find --after 2025-11-13 --before 2025-11-14 --json
+
+Current schedule for Wednesday:
+  9:00 AM - 10:00 AM: Team Standup
+  11:00 AM - 11:30 AM: 1:1 with Manager
+
+No conflicts at 2:00 PM!
+
+However, I notice you don't have any prep time before this important
+client presentation. Would you like me to block 1:30 PM - 2:00 PM for
+preparation?
+
+USER: Yes, good idea
+
+A: Creating both the prep time and the presentation...
+
+$ calendar-cli create \
+  --subject "PREP: Q4 Product Roadmap Presentation" \
+  --start "2025-11-13T13:30:00" \
+  --end "2025-11-13T14:00:00" \
+  --json
+
+$ calendar-cli create \
+  --subject "Q4 Product Roadmap" \
+  --start "2025-11-13T14:00:00" \
+  --end "2025-11-13T15:00:00" \
+  --attendees "client@external.com" \
+  --body "Agenda:
+1. Welcome and introductions (5 min)
+2. Product overview (15 min)
+3. Q4 roadmap walkthrough (30 min)
+4. Q&A (10 min)" \
+  --json
+
+✓ Both events created successfully!
+
+Your Wednesday schedule:
+  9:00 AM - 10:00 AM: Team Standup
+  11:00 AM - 11:30 AM: 1:1 with Manager
+  1:30 PM - 2:00 PM: PREP: Q4 Product Roadmap Presentation ← New (prep)
+  2:00 PM - 3:00 PM: Q4 Product Roadmap ← New (presentation)
+
+Prep Time Event ID: AAMkAGI2TG93Li1vQeRGsVcS42MTIyMQBG...
+Presentation Event ID: AAMkAGI2TG93Li1vQeRGsVcS42MTIyMQBH...
+
+You now have 30 minutes to prepare before the client presentation!
+
+========================================
+Key Takeaways from These Examples:
+========================================
+
+1. Conflict Detection: Always checks existing calendar before creating events
+2. Alternative Times: Suggests available slots when conflicts are detected
+3. Multi-Attendee Support: Can invite multiple people with comma-separated emails
+4. Location Flexibility: Supports physical locations and virtual meeting links
+5. All-Day Events: Creates proper all-day events for PTO, conferences, etc.
+6. Meeting Details: Can include agenda and preparation notes in meeting body
+7. Prep Time: Proactively suggests blocking prep time before important meetings
+
+Typical scheduling workflow:
+1. Gather requirements (subject, time, attendees)
+2. Check for conflicts
+3. Suggest alternatives if needed
+4. Create event with all details
+5. Confirm creation with event ID
+
+Most meetings are scheduled in under 2 minutes with this workflow!
