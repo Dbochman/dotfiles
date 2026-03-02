@@ -58,7 +58,7 @@
     "nativeSkills": "auto"
   },
   "session": {
-    "typingMode": "never",
+    "typingMode": "auto",
     "dmScope": "per-channel-peer",
     "reset": {
       "mode": "daily",
@@ -72,7 +72,7 @@
       "serverUrl": "http://localhost:1234",
       "password": "${BLUEBUBBLES_PASSWORD}",
       "webhookPath": "/bluebubbles-webhook",
-      "sendReadReceipts": false,
+      "sendReadReceipts": true,
       "dmPolicy": "open",
       "groupPolicy": "open",
       "allowFrom": [
@@ -82,16 +82,16 @@
         "*": {}
       },
       "actions": {
-        "reactions": false,
-        "edit": false,
-        "unsend": false,
-        "reply": false,
-        "sendWithEffect": false,
-        "renameGroup": false,
-        "setGroupIcon": false,
-        "addParticipant": false,
-        "removeParticipant": false,
-        "leaveGroup": false,
+        "reactions": true,
+        "edit": true,
+        "unsend": true,
+        "reply": true,
+        "sendWithEffect": true,
+        "renameGroup": true,
+        "setGroupIcon": true,
+        "addParticipant": true,
+        "removeParticipant": true,
+        "leaveGroup": true,
         "sendAttachment": true
       }
     }
