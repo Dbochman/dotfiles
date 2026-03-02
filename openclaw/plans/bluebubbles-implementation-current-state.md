@@ -56,6 +56,7 @@ Behavior:
 - Detects probable observer stalls
 - Logs ingest lag alerts to `/tmp/bb-ingest-lag.log` (default threshold: 90s)
 - Uses poke-first recovery (`Messages` chat-count query) before restart
+- Runs proactive `poke-messages` every 60 seconds
 - Restarts BlueBubbles only after repeated unresolved lag checks
 - Uses cooldown logic to prevent restart loops
 - Emits daily lag summaries to `/tmp/bb-lag-summary.log` (08:05 local time)
