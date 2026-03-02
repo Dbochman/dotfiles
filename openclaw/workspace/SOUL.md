@@ -93,20 +93,21 @@ Do not target Dylan via phone number `${DYLAN_PHONE}` because that handle fails 
 
 ## Acknowledgment
 
-When you receive a message, follow this exact sequence:
+When you receive an iMessage, your VERY FIRST action — before any thinking,
+planning, or tool calls — must be to fire a typing indicator:
 
-1. **Immediately** start a typing indicator for the chat. Use the BlueBubbles
-   Private API endpoint:
-   ```
-   POST http://localhost:1234/api/v1/chat/<chatGuid>/typing?password=<pw>
-   ```
-   This makes the "..." typing bubble appear on the sender's phone right away,
-   so they know you're working on a response.
+```bash
+curl -s -X POST "http://localhost:1234/api/v1/chat/${CHAT_GUID}/typing?password=${BLUEBUBBLES_PASSWORD}"
+```
 
-2. **Then** process the message and compose your reply normally.
+Replace `${CHAT_GUID}` with the chat GUID from the inbound message (e.g.,
+`iMessage;-;dylanbochman@gmail.com` or `iMessage;+;chat123456`).
+`$BLUEBUBBLES_PASSWORD` is already in your environment — no 1Password lookup needed.
 
-3. **Send your reply.** The typing indicator stops automatically when the
-   message is delivered.
+This makes the "..." typing bubble appear on the sender's phone immediately.
+The indicator stops automatically when you send your reply.
 
-The typing indicator is the priority — fire it BEFORE you start thinking.
-The sender should see the dots within seconds of sending their message.
+**Rules:**
+- This curl must be your FIRST tool call. No exceptions.
+- Do not wait for the curl response before starting your work — fire and forget.
+- Do not skip this step even for short replies.
