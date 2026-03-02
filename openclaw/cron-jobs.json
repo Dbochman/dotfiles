@@ -401,7 +401,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Send Dylan a weekly security audit reminder. Message: Weekly security audit reminder. Run ./scripts/security-audit.sh from openclaw-operator on your laptop."
+        "message": "Send Dylan a weekly security audit reminder via BlueBubbles to dylanbochman@gmail.com. Do NOT use +17813544611 or any phone number. Message: Weekly security audit reminder. Run ./scripts/security-audit.sh from openclaw-operator on your laptop."
       },
       "delivery": {
         "mode": "announce",
