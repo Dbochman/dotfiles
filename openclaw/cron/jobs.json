@@ -245,6 +245,114 @@
       }
     },
     {
+      "id": "3991f31b-f9bf-4d5b-a029-945bcfc41362",
+      "agentId": "main",
+      "name": "Quarterly Double Date - Q2 April (Thai)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1772412431651,
+      "updatedAtMs": 1772412431651,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-04-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Thai restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around April 16-18, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      },
+      "state": {
+        "nextRunAtMs": 1775044800000
+      }
+    },
+    {
+      "id": "9db7973b-e783-4458-a7d9-dc2236994fea",
+      "agentId": "main",
+      "name": "Quarterly Double Date - Q3 July (Korean)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1772412431651,
+      "updatedAtMs": 1772412431651,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Korean restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around July 16-18, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      },
+      "state": {
+        "nextRunAtMs": 1782907200000
+      }
+    },
+    {
+      "id": "92a66c5f-c34b-4bed-ac4e-460ab03753e2",
+      "agentId": "main",
+      "name": "Quarterly Double Date - Q4 October (Mexican)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1772412431651,
+      "updatedAtMs": 1772412431651,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-10-01T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Mexican restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around October 15-17, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      },
+      "state": {
+        "nextRunAtMs": 1790856000000
+      }
+    },
+    {
+      "id": "ec4d4a8c-bd19-451c-b82c-63d6295c5a12",
+      "agentId": "main",
+      "name": "Quarterly Double Date - Q1 January 2027 (French)",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1772412431651,
+      "updatedAtMs": 1772412431651,
+      "schedule": {
+        "kind": "at",
+        "at": "2027-01-02T12:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for French restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around January 15-17, 2027 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "7010feab69b14fa19071a88340495f2f"
+      },
+      "state": {
+        "nextRunAtMs": 1798891200000
+      }
+    },
+    {
       "id": "d7184542-fc68-41db-a3a5-3ff81e255e2c",
       "agentId": "main",
       "name": "Julia Gmail Morning Triage",
