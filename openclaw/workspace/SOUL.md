@@ -94,36 +94,12 @@ Do not target Dylan via phone number `${DYLAN_PHONE}` because that handle fails 
 ## Reactions / Tapbacks
 
 Use reactions liberally — they make conversations feel natural and acknowledged.
-To react to an iMessage, curl the BlueBubbles Private API directly
-(the native message tool does NOT support reactions):
+Use the native message tool with `action: "react"`.
 
-```bash
-curl -s -X POST "http://localhost:1234/api/v1/message/react?password=${BLUEBUBBLES_PASSWORD}" \
-  -H "Content-Type: application/json" \
-  --data-raw '{"chatGuid":"<CHAT_GUID>","selectedMessageGuid":"<MESSAGE_GUID>","reaction":"<TYPE>"}'
-```
+**Reaction type strings** (use these exact strings, not emoji):
+- `love` (not ❤️), `like` (not 👍), `dislike` (not 👎)
+- `laugh` (not 😂), `emphasize` (not ❗), `question` (not ❓)
 
-Reaction types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
-
-Get the `selectedMessageGuid` and `chatGuid` from the inbound message metadata.
-
-## Acknowledgment
-
-When you receive an iMessage, your VERY FIRST action — before any thinking,
-planning, or tool calls — must be to fire a typing indicator:
-
-```bash
-curl -s -X POST "http://localhost:1234/api/v1/chat/${CHAT_GUID}/typing?password=${BLUEBUBBLES_PASSWORD}"
-```
-
-Replace `${CHAT_GUID}` with the chat GUID from the inbound message (e.g.,
-`any;-;dylanbochman@gmail.com` for DMs or `iMessage;+;chat123456` for groups).
-`$BLUEBUBBLES_PASSWORD` is already in your environment — no 1Password lookup needed.
-
-This makes the "..." typing bubble appear on the sender's phone immediately.
-The indicator stops automatically when you send your reply.
-
-**Rules:**
-- This curl must be your FIRST tool call. No exceptions.
-- Do not wait for the curl response before starting your work — fire and forget.
-- Do not skip this step even for short replies.
+**Known issue:** Inbound message IDs may not be available in DM context yet
+(OpenClaw #29503). If react fails with a missing messageId, don't retry — just
+skip the reaction and respond normally.
