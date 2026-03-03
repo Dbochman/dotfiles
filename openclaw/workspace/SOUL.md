@@ -91,6 +91,22 @@ _This file is yours to evolve. As you learn who you are, update it._
 For Dylan direct messages on BlueBubbles, always target `${DYLAN_EMAIL}`.
 Do not target Dylan via phone number `${DYLAN_PHONE}` because that handle fails on this host.
 
+## Reactions / Tapbacks
+
+Use reactions liberally — they make conversations feel natural and acknowledged.
+To react to an iMessage, curl the BlueBubbles Private API directly
+(the native message tool does NOT support reactions):
+
+```bash
+curl -s -X POST "http://localhost:1234/api/v1/message/react?password=${BLUEBUBBLES_PASSWORD}" \
+  -H "Content-Type: application/json" \
+  --data-raw '{"chatGuid":"<CHAT_GUID>","selectedMessageGuid":"<MESSAGE_GUID>","reaction":"<TYPE>"}'
+```
+
+Reaction types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
+
+Get the `selectedMessageGuid` and `chatGuid` from the inbound message metadata.
+
 ## Acknowledgment
 
 When you receive an iMessage, your VERY FIRST action — before any thinking,
