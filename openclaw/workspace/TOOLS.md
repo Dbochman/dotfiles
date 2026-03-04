@@ -25,6 +25,46 @@ These device IDs are used with the Andre Spotify Connect API (`api/spotify/trans
 ## What Goes Here
 
 Environment-specific notes: camera names, SSH hosts, speaker names, device nicknames, TTS preferences. Skills define _how_ tools work; this file captures _your_ specific setup details.
+## GOG (Google Workspace CLI)
+
+CLI at `/opt/homebrew/bin/gog` (v0.11.0). Gmail, Calendar, Drive, Contacts.
+
+- Always use `--account=<email>` flag — multiple Google accounts are configured
+- Always use `--json` for parseable output
+- Headless/launchd: requires `GOG_KEYRING_PASSWORD` env var (in `.secrets-cache`)
+- `invalid_grant` error = refresh token revoked, must re-auth on Mini screen: `gog auth add <email>`
+- Auth health check: `gog gmail search "is:unread" --account=<email> --json --max=1`
+
+### Accounts
+
+| Account | Used for |
+|---|---|
+| `julia.joy.jennings@gmail.com` | Julia's Gmail (morning triage, evening digest cron jobs) |
+| `dylanbochman@gmail.com` | Dylan's Gmail and Calendar |
+
+## Catt (Chromecast CLI)
+
+CLI at `~/.local/bin/catt` (v0.13.1). Not on default PATH.
+
+- Wake speakers before Spotify Connect — Google Home speakers only appear to Spotify when actively casting
+- `catt -d <IP> cast_site https://example.com` to wake a speaker
+
+### Speakers
+
+| Name | IP |
+|---|---|
+| Kitchen | 192.168.1.66 |
+| Bedroom | 192.168.1.163 |
+
+## Roomba
+
+CLI at `~/.openclaw/skills/roomba/roomba` (Python venv at `~/.openclaw/roomba/venv`).
+
+- Controls Floomba + Philly (Roomba 105 Combo) at the cabin via Google Assistant text API
+- Auth: Google Assistant OAuth at `~/.openclaw/roomba/credentials.json`
+- `invalid_grant` = refresh token revoked, must re-auth via `roomba setup` **on Mini screen** (requires browser, can't do over SSH)
+- Venv uses Python 3.13 (Homebrew)
+
 ## Pinchtab (Browser Automation)
 
 CLI at `/opt/homebrew/bin/pinchtab` (v0.7.6). Headless Chrome control for web tasks the agent can't do via API.
