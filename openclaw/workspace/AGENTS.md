@@ -126,6 +126,10 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 Periodically (every few days), use a quiet heartbeat to review recent `memory/YYYY-MM-DD.md` files and distill significant learnings into `MEMORY.md`. Daily files are raw notes; MEMORY.md is curated wisdom.
 
+## Reference
+
+For full system documentation (infrastructure, skills, cron jobs, LaunchAgents, operational notes), see `~/dotfiles/openclaw/plans/openclaw-workspace-state.md`. Don't load it every session — read it on-demand when you need to look something up about your own setup.
+
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
