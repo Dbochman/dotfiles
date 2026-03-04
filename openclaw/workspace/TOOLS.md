@@ -4,11 +4,16 @@ Skills define _how_ tools work. This file is for _your_ specifics — the stuff 
 
 ## Smart Home Devices
 
-### Both Houses
+### Cabin (Philly)
 - Philips Hue lights
-- iRobot Roombas
-- Nest thermostats
+- iRobot Roombas (Floomba + Philly)
+- Nest thermostats (Solarium, Living Room, Bedroom)
 - Google Nest cameras
+- Google smart speakers
+
+### Crosstown (Boston)
+- Philips Hue lights
+- Cielo Breez Plus smart AC controllers (Basement, Living Room, Dylan's Office, Bedroom)
 - Google smart speakers
 
 ## Spotify Connect Devices
@@ -64,6 +69,165 @@ CLI at `~/.openclaw/skills/roomba/roomba` (Python venv at `~/.openclaw/roomba/ve
 - Auth: Google Assistant OAuth at `~/.openclaw/roomba/credentials.json`
 - `invalid_grant` = refresh token revoked, must re-auth via `roomba setup` **on Mini screen** (requires browser, can't do over SSH)
 - Venv uses Python 3.13 (Homebrew)
+
+## Nest Climate Dashboard
+
+Single-file Python server at `~/.openclaw/bin/nest-dashboard.py`, port 8550. LaunchAgent: `ai.openclaw.nest-dashboard`.
+
+### Data Sources
+
+| Source | Path | Interval | Format |
+|---|---|---|---|
+| Nest + Cielo snapshots | `~/.openclaw/nest-history/YYYY-MM-DD.jsonl` | 30 min (`ai.openclaw.nest-snapshot`) | temp, humidity, setpoint, HVAC state per room (Nest rooms have `source: "nest"`, Cielo rooms have `source: "cielo"`) |
+| Presence history | `~/.openclaw/presence/history/YYYY-MM-DD.jsonl` | 15 min (presence-detect cron) | occupancy + people list per location |
+| Current presence | `~/.openclaw/presence/state.json` | Written by `presence-detect.sh evaluate` | Full evaluated state |
+
+### API Endpoints
+
+| Endpoint | Returns |
+|---|---|
+| `GET /` | Dashboard HTML (embedded Chart.js UI) |
+| `GET /api/data?hours=N` | `{ snapshots, presence, meta }` — climate + presence history |
+| `GET /api/current` | Latest nest snapshot |
+| `GET /api/presence` | Current presence state from `state.json` |
+
+### Dashboard UI Features
+
+- **Presence cards** — occupancy badges (Occupied / Vacant / Possibly Vacant) per location with who's there
+- **Climate cards** — current temp, setpoint, HVAC status, humidity per room
+- **Weather cards** — outside conditions per structure
+- **Temperature chart** — actual + setpoint (dotted) lines per room
+- **Humidity chart** — per room + outside
+- **HVAC duty cycle chart** — active % per hour per room (heating, cooling, fan, etc.)
+- **Occupancy overlay bands** — colored background on charts (green=occupied, gray=vacant) when a single structure is selected
+- **Location tags** — each card shows a Cabin or Crosstown badge
+- **Structure filter** — Both / Cabin / Crosstown
+- **Time range** — 24h / 7d / 30d / 1Y (downsampled to ~1/hour beyond 7d)
+
+### Restart
+
+```bash
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.nest-dashboard
+```
+
+## Cielo AC (Crosstown)
+
+CLI at `~/repos/cielo-cli/cli.js` (Node.js). Controls Mr Cool minisplits via Cielo Breez Plus sensors at Crosstown.
+
+### Devices
+
+| Room | Device Type | Sensor Data |
+|---|---|---|
+| Basement | Breez Plus | temp (°F), humidity (%) |
+| Living Room | Breez Plus | temp (°F), humidity (%) |
+| Dylan's Office | Breez Plus | temp (°F), humidity (%) |
+| Bedroom | Breez Plus | temp (°F), humidity (%) |
+
+### Commands
+
+```bash
+# Status of all devices (JSON array)
+/usr/local/bin/node ~/repos/cielo-cli/cli.js status --json
+
+# Control a device
+/usr/local/bin/node ~/repos/cielo-cli/cli.js set --device "Bedroom" --power on --mode cool --temp 72
+```
+
+### Data Shape (per device in status JSON)
+
+- `latEnv.temp` — room temperature (°F)
+- `latEnv.humidity` — room humidity (%)
+- `latestAction.mode` — heat/cool/auto/fan/dry
+- `latestAction.power` — on/off
+- `latestAction.temp` — setpoint (°F)
+- `deviceStatus` — 1 = online, 0 = offline
+- `deviceName` — room name
+
+### Integration with Nest Snapshot
+
+The `nest snapshot` command automatically calls `cielo-cli status --json` and appends Crosstown rooms (prefixed `19Crosstown <room>`) to the snapshot JSONL. Cielo rooms have `source: "cielo"` to distinguish from Nest-sourced rooms. If Cielo API fails, the snapshot still records Nest data (tolerant).
+
+### Token Refresh
+
+Cielo API tokens expire every 30 min. Auto-refreshed by `com.openclaw.cielo-refresh` LaunchAgent. Config at `~/.config/cielo/config.json`.
+
+## Crosstown Network Access (SSH)
+
+The Mac Mini can SSH to the MacBook Pro at Crosstown (and vice versa) via Tailscale without 1Password approval, using a dedicated ed25519 keypair.
+
+### Setup
+
+| Machine | SSH Config Host | Key Path |
+|---|---|---|
+| Mac Mini | `dylans-macbook-pro` | `~/.ssh/id_mini_to_mbp` |
+| MacBook Pro | `dylans-mac-mini` | `~/.ssh/id_mini_to_mbp` |
+
+Both configs use `IdentityAgent none` to bypass 1Password SSH agent for automated connections.
+
+### Usage
+
+```bash
+# From Mac Mini — run commands on Crosstown network
+ssh dylans-macbook-pro 'arp -a | grep 192.168.165'
+ssh dylans-macbook-pro '~/.openclaw/workspace/scripts/presence-detect.sh crosstown'
+
+# From Mac Mini — deploy files to MBP
+scp <local-file> dylans-macbook-pro:<remote-path>
+```
+
+### When to Use
+
+- Running ARP scans or network diagnostics on the Crosstown LAN (192.168.165.x)
+- Deploying updated scripts to the MBP
+- Triggering crosstown presence scans manually
+- Any task that requires being on the Crosstown local network
+
+### Key Backup
+
+Keypair stored in 1Password: "Mini↔MBP SSH Key (ed25519)" in the OpenClaw vault.
+
+## Presence Detection
+
+Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Detects who's home at each location.
+
+### Modes
+
+| Mode | Where it runs | Method |
+|---|---|---|
+| `cabin` | Mac Mini | Starlink gRPC API (WiFi client list) |
+| `crosstown` | MacBook Pro | ARP scan (ping sweep + MAC match, IP fallback) |
+| `evaluate` | Mac Mini | Correlates both scans, writes state + history |
+
+### Tracked Devices
+
+| Person | Cabin (Starlink) | Crosstown (ARP) |
+|---|---|---|
+| Dylan | Device name match "Dylan" + "iPhone" | MAC `6c:3a:ff:5f:fc:ba`, IP `192.168.165.124` |
+| Julia | Device name match "Julia" | MAC `e6:3b:13:aa:ca:56`, IP `192.168.165.139` |
+
+### Vacancy Logic
+
+- **occupied** — any tracked person detected at that location
+- **confirmed_vacant** — all tracked people absent AND confirmed at the other location (fresh scan)
+- **possibly_vacant** — no one detected but can't confirm they're elsewhere (stale scan or unknown location)
+
+### Output Files
+
+| File | Written by | Purpose |
+|---|---|---|
+| `~/.openclaw/presence/cabin-scan.json` | `cabin` mode | Raw cabin scan result |
+| `~/.openclaw/presence/crosstown-scan.json` | `crosstown` mode (pushed via Tailscale) | Raw crosstown scan result |
+| `~/.openclaw/presence/state.json` | `evaluate` mode | Correlated state (used by dashboard) |
+| `~/.openclaw/presence/prev-evaluated.json` | `evaluate` mode | Previous state for transition detection |
+| `~/.openclaw/presence/events.json` | `evaluate` mode | Last 100 occupancy/relocation transitions |
+| `~/.openclaw/presence/history/YYYY-MM-DD.jsonl` | `evaluate` mode | Date-partitioned history (used by dashboard) |
+
+### Gotchas
+
+- iPhones in low-power mode may not respond to ARP pings — "Limit IP Address Tracking" should be disabled on tracked phones
+- iOS randomizes MAC addresses per-network — IP-based matching is used as fallback (Julia's MAC rotates, her IP `192.168.165.139` is stable via DHCP)
+- Crosstown scan runs on MacBook Pro and pushes results to Mini via `tailscale file cp`
+- Scans older than 30 min are considered stale and won't be used for cross-correlation
 
 ## Pinchtab (Browser Automation)
 
