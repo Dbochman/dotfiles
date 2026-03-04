@@ -52,7 +52,8 @@ CABIN_DEVICES='[
 # Crosstown (Boston) — matched by MAC address via ARP scan
 CROSSTOWN_DEVICES='[
   {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"},
-  {"person":"Julia","match":"mac","pattern":"e6:3b:13:aa:ca:56"}
+  {"person":"Julia","match":"mac","pattern":"e6:3b:13:aa:ca:56"},
+  {"person":"Julia","match":"ip","pattern":"192.168.165.139"}
 ]'
 
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
@@ -161,12 +162,13 @@ for (const dev of devices) {
     const ip = ipMatch[1];
     let matched = false;
     if (dev.match === 'mac') matched = mac === dev.pattern.toLowerCase();
+    else if (dev.match === 'ip') matched = ip === dev.pattern;
     else if (dev.match === 'name') {
       const nm = line.match(/^(\S+)/);
       matched = nm && nm[1].toLowerCase().includes(dev.pattern.toLowerCase());
     }
     if (matched) {
-      results[dev.person] = { present: true, ip, mac, device: dev.match === 'mac' ? 'phone (MAC match)' : line.match(/^(\S+)/)?.[1] || 'unknown' };
+      results[dev.person] = { present: true, ip, mac, device: dev.match === 'mac' ? 'phone (MAC match)' : dev.match === 'ip' ? 'phone (IP match)' : line.match(/^(\S+)/)?.[1] || 'unknown' };
       break;
     }
   }
@@ -307,6 +309,17 @@ if (transitions.length > 0) {
 
 // Write combined state
 fs.writeFileSync(stateDir + '/state.json', JSON.stringify(result, null, 2));
+
+// Append to presence history JSONL (date-partitioned, mirrors nest-history pattern)
+const histDir = stateDir + '/history';
+try { fs.mkdirSync(histDir, { recursive: true }); } catch {}
+const dayKey = now.slice(0, 10); // YYYY-MM-DD
+const histRecord = JSON.stringify({
+  timestamp: now,
+  cabin: { occupancy: cabinOccupancy, people: allTracked.filter(p => people[p]?.cabin) },
+  crosstown: { occupancy: crosstownOccupancy, people: allTracked.filter(p => people[p]?.crosstown) }
+});
+fs.appendFileSync(histDir + '/' + dayKey + '.jsonl', histRecord + '\n');
 
 console.log(JSON.stringify(result, null, 2));
 " "$cabin_state" "$crosstown_state" 2>/dev/null || echo '{"error":"evaluate_failed"}'
