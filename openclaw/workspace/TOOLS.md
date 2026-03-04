@@ -280,7 +280,27 @@ pinchtab tabs                       # List open tabs
 - Always `pkill -f pinchtab` when done — leftover Chrome processes eat memory
 - Cookie/session state persists between `nav` calls within the same server session
 
-## BlueBubbles Private API
+## BlueBubbles
+
+### Architecture
+
+OpenClaw v2026.3.2+ uses **webhook-only** for BB (no socket.io client). BB POSTs events to the gateway's HTTP endpoint at `http://localhost:18789/bluebubbles-webhook`. The gateway registers this webhook in BB on startup.
+
+### Watchdog (`com.openclaw.bb-watchdog`)
+
+Script at `~/.openclaw/workspace/scripts/bb-watchdog.sh`, runs every 60s.
+
+**What it monitors:**
+- Tracks latest message GUID from BB API — detects chat.db observer stalls
+- Checks BB's internal log for `WebhookService Dispatching` entries — detects dead webhook service
+- If no webhook dispatch in 30+ min but new messages are arriving → **full BB app restart** (skip poke)
+- If individual message lag > 90s → poke-first, then restart after 3 failed pokes
+
+**Recovery sequence:** poke Messages.app → retry → full BB restart (quit + relaunch)
+
+**Known failure mode:** BB's Cloudflare daemon crash-loops even with `lan-url` proxy, which can corrupt BB's internal event loop and silently kill webhook dispatch. Soft restart (`/api/v1/server/restart/soft`) does NOT fix this — only a full app restart works.
+
+### Private API
 
 Base URL: `http://localhost:1234/api/v1`
 Auth: `?password=${BLUEBUBBLES_PASSWORD}` (env var, no 1Password needed)

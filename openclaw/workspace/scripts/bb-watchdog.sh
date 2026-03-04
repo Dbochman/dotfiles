@@ -2,12 +2,17 @@
 # bb-watchdog.sh — Detect and fix BlueBubbles chat.db observer stalls
 #
 # BB's polling loop on chat.db can stall indefinitely on headless Macs.
+# BB's webhook dispatch service can also silently die (e.g., Cloudflare
+# daemon crash-loops corrupt BB's event loop) — messages appear in the DB
+# but BB never POSTs them to the gateway webhook.
+#
 # This script runs every 1 minute via LaunchAgent and restarts BB if stalled.
 #
-# Detection: Track the GUID of the latest message (any sender). If the GUID
-# changes (new message exists) but BB hasn't dispatched a webhook for it,
-# the chat.db observer has stalled. This avoids false positives when BB is
-# simply idle with no new messages.
+# Detection:
+#   1. Track the GUID of the latest message (any sender). If the GUID changes
+#      but BB hasn't dispatched a webhook, the observer has stalled.
+#   2. If BB hasn't dispatched ANY webhook in WEBHOOK_DEAD_THRESHOLD_MIN and
+#      fresh messages exist, the webhook service itself is dead.
 #
 # Safety:
 #   - 15-min restart cooldown prevents restart loops
@@ -136,6 +141,7 @@ try {
 // 3. If GUID changed AND no recent webhook → STALL (new message exists but BB didn't webhook it)
 // 4. If GUID unchanged → no new messages, idle (regardless of how old the last message is)
 const pokeRetryThreshold = Number(process.argv[3] || 3);
+const WEBHOOK_DEAD_THRESHOLD_MIN = 30;
 
 let action = 'ok';
 let reason = '';
@@ -143,9 +149,26 @@ let saveState = false;
 let lagAlert = false;
 const newMsgNeedsAttention = (webhookAgeMin > 1) && (msgAgeSec >= lagAlertSec);
 
+// Webhook-dead detection: if BB hasn't dispatched ANY webhook in 30+ min
+// but new messages are arriving, the webhook service is dead. This catches
+// silent failures (e.g., Cloudflare daemon crash-loop corrupting BB's event
+// loop) that the per-message lag check misses because fresh messages have
+// low msgAgeSec.
+const webhookServiceDead = webhookAgeMin >= WEBHOOK_DEAD_THRESHOLD_MIN && guidChanged;
+
 if (!latestGuid) {
   action = 'skip';
   reason = 'could not fetch latest message from BB API';
+} else if (webhookServiceDead && !inCooldown) {
+  // Webhook dispatch is completely dead — escalate directly to restart
+  // (skip poke, it won't help with a dead webhook service)
+  prev.allGuid = latestGuid;
+  prev.allSeenAt = now;
+  prev.pendingGuid = '';
+  prev.pendingChecks = 0;
+  saveState = true;
+  action = 'restart';
+  reason = 'webhook service dead (no dispatch in ' + webhookAgeMin + 'min) but new messages arriving, full restart required';
 } else if (guidChanged) {
   // New message appeared since last check.
   const timeSinceMsg = latestDate > 0 ? Math.floor((now - latestDate) / 60000) : 0;
