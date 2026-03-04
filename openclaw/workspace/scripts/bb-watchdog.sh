@@ -232,7 +232,10 @@ fi
 
 case "$ACTION" in
   ok)
-    log "OK: ${REASON}"
+    # Silent when healthy — only log non-idle OK (e.g., new message processed)
+    if [[ "$REASON" != idle* ]]; then
+      log "OK: ${REASON}"
+    fi
     ;;
   skip)
     log "SKIP: ${REASON}"
