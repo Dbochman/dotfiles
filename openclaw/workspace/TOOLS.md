@@ -25,6 +25,57 @@ These device IDs are used with the Andre Spotify Connect API (`api/spotify/trans
 ## What Goes Here
 
 Environment-specific notes: camera names, SSH hosts, speaker names, device nicknames, TTS preferences. Skills define _how_ tools work; this file captures _your_ specific setup details.
+## Pinchtab (Browser Automation)
+
+CLI at `/opt/homebrew/bin/pinchtab` (v0.7.6). Headless Chrome control for web tasks the agent can't do via API.
+
+### Lifecycle
+
+```bash
+# Start server (runs Chrome headless on port 9867)
+pinchtab &
+sleep 5
+
+# Do work...
+
+# Clean up when done
+pkill -f pinchtab 2>/dev/null || true
+```
+
+### Common Commands
+
+```bash
+pinchtab nav <url>                  # Navigate
+pinchtab snap -i -c                 # Snapshot interactive elements (compact, token-efficient)
+pinchtab click <ref>                # Click element by ref from snapshot
+pinchtab type <ref> <text>          # Type into element
+pinchtab fill <ref|selector> <text> # Fill input directly (bypasses focus issues)
+pinchtab press Enter                # Press key
+pinchtab eval "document.title"      # Run JavaScript
+pinchtab text                       # Extract readable page text
+pinchtab ss -o /tmp/screenshot.png  # Screenshot
+pinchtab tabs                       # List open tabs
+```
+
+### Snapshot Flags
+
+- `-i` — interactive elements only (buttons, links, inputs)
+- `-c` — compact format (most token-efficient)
+- `-d` — diff since last snapshot (saves tokens on repeat checks)
+- `-s <selector>` — scope to CSS selector
+- `--max-tokens N` — truncate output
+
+### Used By
+
+- **OpenTable bookings** — `~/.openclaw/workspace/scripts/opentable-book.sh`
+- **Cielo token refresh** — `~/.openclaw/workspace/scripts/cielo-refresh.sh` (browser-based login fallback)
+
+### Gotchas
+
+- React SPAs: `element.click()` via `eval` may not trigger React handlers — use `pinchtab click <ref>` instead (dispatches proper pointer events)
+- Always `pkill -f pinchtab` when done — leftover Chrome processes eat memory
+- Cookie/session state persists between `nav` calls within the same server session
+
 ## BlueBubbles Private API
 
 Base URL: `http://localhost:1234/api/v1`
