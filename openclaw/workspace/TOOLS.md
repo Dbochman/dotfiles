@@ -17,7 +17,7 @@ These device IDs are used with the Andre Spotify Connect API (`api/spotify/trans
 
 | Device Name | Device ID | Type | Notes |
 |---|---|---|---|
-| Kitchen speaker | `b8581271559fd61aa994726df743285c` | CastAudio | Google Nest Audio (currently active) |
+| Kitchen speaker | `b8581271559fd61aa994726df743285c` | CastAudio | Google Nest Audio, Cabin (currently active) |
 | Dylan's Mac mini | `0eb8b896cf741cd28d15b1ce52904ae7940e4aae` | Computer | Cabin server |
 | Dylan's MacBook Pro | `173fd1e1d533e5a1c59fc25979c3baccc3af5d07` | Computer | |
 | Dylan's Mac | `13bc12a88f007bf49d13997fc64c0a6640f49440` | Computer | |
@@ -49,7 +49,7 @@ CLI at `~/.local/bin/catt` (v0.13.1). Not on default PATH.
 - Wake speakers before Spotify Connect — Google Home speakers only appear to Spotify when actively casting
 - `catt -d <IP> cast_site https://example.com` to wake a speaker
 
-### Speakers
+### Speakers (Cabin)
 
 | Name | IP |
 |---|---|
