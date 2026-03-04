@@ -298,7 +298,20 @@ Script at `~/.openclaw/workspace/scripts/bb-watchdog.sh`, runs every 60s.
 
 **Recovery sequence:** poke Messages.app → retry → full BB restart (quit + relaunch)
 
-**Known failure mode:** BB's Cloudflare daemon crash-loops even with `lan-url` proxy, which can corrupt BB's internal event loop and silently kill webhook dispatch. Soft restart (`/api/v1/server/restart/soft`) does NOT fix this — only a full app restart works.
+### Gotchas
+
+- **Cloudflare daemon crash-loop**: BB still runs a Cloudflare tunnel daemon even with `lan-url` proxy. It crash-loops with "context canceled" errors, which can corrupt BB's internal event loop and silently kill webhook dispatch.
+- **Soft restart doesn't fix dead webhooks**: `GET /api/v1/server/restart/soft` does NOT restore webhook dispatch. Only a full app restart (`osascript -e 'tell application "BlueBubbles" to quit'` + `open -a BlueBubbles`) works.
+- **Gateway restarts can kill BB webhooks**: Any OpenClaw gateway restart (config change, upgrade, manual) can cause BB's webhook dispatch to silently die. If OpenClaw stops responding after a gateway restart, restart BB too.
+- **TODO**: Consider having the watchdog detect gateway PID changes and preemptively restart BB.
+
+### Logs
+
+| Log | Path | Contents |
+|-----|------|----------|
+| BB server log | `~/Library/Logs/bluebubbles-server/main.log` | Webhook dispatch, API requests, auth errors, Cloudflare daemon, Private API events |
+| BB watchdog log | `/tmp/bb-watchdog.log` | Stall detection, restarts, lag alerts (rotated daily, 7-day retention) |
+| BB ingest lag metrics | `/tmp/bb-ingest-lag.log` | CSV of lag events: `timestamp,lag_sec,threshold,guid` |
 
 ### Private API
 
