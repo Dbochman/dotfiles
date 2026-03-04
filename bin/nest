@@ -185,6 +185,13 @@ _get_all_weather() {
   echo "{$joined}"
 }
 
+_get_cielo_status() {
+  # Returns JSON array of Cielo device statuses; [] on failure
+  local out
+  out=$(/usr/local/bin/node ~/repos/cielo-cli/cli.js status --json 2>/dev/null) || true
+  if [[ -z "$out" ]]; then echo '[]'; else echo "$out"; fi
+}
+
 _c_to_f() {
   python3 -c "print(round($1 * 9/5 + 32, 1))"
 }
@@ -393,11 +400,13 @@ cmd_snapshot() {
   fi
 
   weather=$(_get_all_weather)
+  local cielo
+  cielo=$(_get_cielo_status)
   ts=$(date -u +%FT%TZ)
   today=$(date +%Y-%m-%d)
 
   _build_structure_map
-  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" python3 -c "
+  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" CIELO_JSON="$cielo" python3 -c "
 import json, sys, os
 data = json.load(sys.stdin)
 ts = os.environ['SNAP_TS']
@@ -442,6 +451,38 @@ for d in data.get('devices', []):
         'setpoint_c': round(set_c, 2),
         'setpoint_f': round(set_c * 9/5 + 32, 1),
         'connectivity': conn,
+        'source': 'nest',
+    })
+# Inject Cielo devices (all at Crosstown)
+cielo_raw = os.environ.get('CIELO_JSON', '[]')
+try:
+    cielo_devices = json.loads(cielo_raw) if cielo_raw else []
+except Exception:
+    cielo_devices = []
+for cd in cielo_devices:
+    env = cd.get('latEnv', {})
+    action = cd.get('latestAction', {})
+    c_temp_f = env.get('temp', 0)
+    c_humidity = env.get('humidity', 0)
+    c_mode = action.get('mode', '?')
+    c_power = action.get('power', 'off')
+    hvac_map = {'heat': 'HEATING', 'cool': 'COOLING', 'auto': 'AUTO', 'fan': 'FAN', 'dry': 'DRY'}
+    c_hvac = hvac_map.get(c_mode, 'ON') if c_power == 'on' else 'OFF'
+    c_set_f = float(action.get('temp', 0))
+    c_name = cd.get('deviceName', 'Unknown')
+    c_status = cd.get('deviceStatus', 0)
+    snapshot['rooms'].append({
+        'room': '19Crosstown ' + c_name,
+        'temp_f': round(c_temp_f, 1),
+        'temp_c': round((c_temp_f - 32) * 5 / 9, 2),
+        'humidity': c_humidity,
+        'mode': c_mode,
+        'hvac': c_hvac,
+        'eco': 'OFF',
+        'setpoint_f': round(c_set_f, 1),
+        'setpoint_c': round((c_set_f - 32) * 5 / 9, 2),
+        'connectivity': 'ONLINE' if c_status == 1 else 'OFFLINE',
+        'source': 'cielo',
     })
 print(json.dumps(snapshot))
 " <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"
