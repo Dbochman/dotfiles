@@ -354,6 +354,7 @@ Script at `~/.openclaw/workspace/scripts/bb-watchdog.sh`, runs every 60s.
 - **Cloudflare daemon crash-loop**: BB still runs a Cloudflare tunnel daemon even with `lan-url` proxy. It crash-loops with "context canceled" errors, which can corrupt BB's internal event loop and silently kill webhook dispatch.
 - **Soft restart doesn't fix dead webhooks**: `GET /api/v1/server/restart/soft` does NOT restore webhook dispatch. Only a full app restart (`osascript -e 'tell application "BlueBubbles" to quit'` + `open -a BlueBubbles`) works.
 - **Gateway restarts can kill BB webhooks**: Any OpenClaw gateway restart (config change, upgrade, manual) can cause BB's webhook dispatch to silently die. If OpenClaw stops responding after a gateway restart, restart BB too.
+- **NOTE**: The gateway health monitor is the wrong tool here — its naive "no events in 30 min = stale" check was causing unnecessary BB restarts, which killed webhook registrations. Watchdog's lag-based detection (new message in chat.db but no webhook dispatch) is the correct signal. Keep health monitor disabled.
 - **TODO**: Consider having the watchdog detect gateway PID changes and preemptively restart BB.
 
 ### Logs
