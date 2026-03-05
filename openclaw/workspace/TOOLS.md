@@ -30,9 +30,35 @@ These device IDs are used with the Andre Spotify Connect API (`api/spotify/trans
 ## What Goes Here
 
 Environment-specific notes: camera names, SSH hosts, speaker names, device nicknames, TTS preferences. Skills define _how_ tools work; this file captures _your_ specific setup details.
-## GOG (Google Workspace CLI)
+## GWS (Google Workspace CLI) — Primary
 
-CLI at `/opt/homebrew/bin/gog` (v0.11.0). Gmail, Calendar, Drive, Contacts.
+CLI at `/opt/homebrew/bin/gws` (v0.4.4, Rust binary via npm `@googleworkspace/cli`). Gmail, Calendar, Drive, Tasks.
+
+- Command pattern: `gws <service> <resource> <method> [--params '<JSON>'] [--json '<JSON>'] [--account <email>]`
+- Credentials: AES-256-GCM encrypted at `~/.config/gws/` (per-account `credentials.<base64>.enc` + `.encryption_key`)
+- Auth requires browser (OAuth) — auth locally, then `scp` credentials + `.encryption_key` + `accounts.json` to Mini/MBP
+- **DANGER: `gws auth logout` without `--account <email>` NUKES ALL accounts** — always use per-account flag
+- Installed on: MacBook Pro (local), Mac Mini, MacBook Pro (Crosstown)
+
+### GWS Accounts
+
+| Account | Owner | Flag |
+|---|---|---|
+| `dylanbochman@gmail.com` | Dylan | Default (no flag needed) |
+| `julia.joy.jennings@gmail.com` | Julia | `--account julia.joy.jennings@gmail.com` |
+| `bochmanspam@gmail.com` | Dylan (spam) | `--account bochmanspam@gmail.com` |
+| `clawdbotbochman@gmail.com` | OpenClaw | `--account clawdbotbochman@gmail.com` |
+
+### Skills
+
+| Skill | File |
+|---|---|
+| `gws-calendar` | `openclaw/skills/gws-calendar/SKILL.md` |
+| `gws-gmail` | `openclaw/skills/gws-gmail/SKILL.md` |
+
+## GOG (Google Workspace CLI) — Legacy
+
+CLI at `/opt/homebrew/bin/gog` (v0.11.0). Gmail, Calendar, Drive, Contacts. **Being replaced by GWS above.** Still used by existing cron jobs until migration.
 
 - Always use `--account=<email>` flag — multiple Google accounts are configured
 - Always use `--json` for parseable output
@@ -40,7 +66,7 @@ CLI at `/opt/homebrew/bin/gog` (v0.11.0). Gmail, Calendar, Drive, Contacts.
 - `invalid_grant` error = refresh token revoked, must re-auth on Mini screen: `gog auth add <email>`
 - Auth health check: `gog gmail search "is:unread" --account=<email> --json --max=1`
 
-### Accounts
+### GOG Accounts
 
 | Account | Used for |
 |---|---|
