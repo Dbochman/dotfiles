@@ -40,12 +40,36 @@ New GWS-based cron jobs running alongside legacy GOG jobs for validation.
 3. Disable legacy GOG jobs: set `"enabled": false` on `d7184542` and `3060d4f2`
 4. Deploy updated `cron/jobs.json` to Mini
 
-## Phase 3: Deploy GWS Skills to OpenClaw
+## Phase 3: Deploy GWS Skills to OpenClaw (DONE)
 
-Once cron jobs are validated, deploy the new skills so the agent uses `gws` for ad-hoc requests too.
+All GWS skills deployed to Mini's OpenClaw skills directory (`~/.openclaw/skills/`).
 
-- [ ] Copy `gws-gmail/SKILL.md` to Mini's OpenClaw skills directory
-- [ ] Copy `gws-calendar/SKILL.md` to Mini's OpenClaw skills directory
+### Custom Skills (3)
+
+- [x] `gws-gmail/SKILL.md` — full Gmail API (search, send, draft, label, threads)
+- [x] `gws-calendar/SKILL.md` — full Calendar API (events, free/busy, RRULE, Meet)
+- [x] `gws-drive/SKILL.md` — full Drive API (search, upload, download, share, permissions)
+
+### Upstream Helper Skills (7, from `gws generate-skills`)
+
+- [x] `gws-shared/SKILL.md` — auth, global flags, output formatting (customized with our accounts)
+- [x] `gws-calendar-agenda/SKILL.md` — `gws calendar +agenda --today/--week`
+- [x] `gws-calendar-insert/SKILL.md` — `gws calendar +insert --summary ... --start ... --end ...`
+- [x] `gws-gmail-triage/SKILL.md` — `gws gmail +triage` (read-only inbox summary)
+- [x] `gws-gmail-send/SKILL.md` — `gws gmail +send --to ... --subject ... --body ...`
+- [x] `gws-drive-upload/SKILL.md` — `gws drive +upload file.pdf --parent FOLDER_ID`
+- [x] `gws-tasks/SKILL.md` — full Google Tasks API (tasklists + tasks)
+
+### Upstream Recipe Skills (5)
+
+- [x] `recipe-find-free-time/SKILL.md` — free/busy query across calendars
+- [x] `recipe-create-vacation-responder/SKILL.md` — Gmail auto-reply setup/teardown
+- [x] `recipe-save-email-attachments/SKILL.md` — Gmail attachments → Drive folder
+- [x] `recipe-label-and-archive-emails/SKILL.md` — batch label + archive workflow
+- [x] `recipe-create-gmail-filter/SKILL.md` — automated inbox filter creation
+
+### Remaining
+
 - [ ] Verify agent picks up new skills (test with "check my email" or "what's on my calendar")
 - [ ] Remove old `gmail/SKILL.md` and `calendar/SKILL.md` from Mini's skills directory
 
