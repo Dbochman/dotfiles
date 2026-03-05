@@ -295,6 +295,8 @@ h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
 .controls button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
 .chart-container { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
 .chart-container h2 { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
+.chart-wrap { position: relative; width: 100%; min-height: 300px; }
+.chart-wrap.short { min-height: 220px; }
 canvas { width: 100% !important; }
 .loading { text-align: center; color: var(--text-muted); padding: 2rem; }
 .presence-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
@@ -331,9 +333,9 @@ canvas { width: 100% !important; }
   <span><span class="swatch" style="background:rgba(34,197,94,0.15)"></span> Occupied</span>
   <span><span class="swatch" style="background:rgba(107,114,128,0.12)"></span> Vacant</span>
 </div>
-<div class="chart-container"><h2>Temperature</h2><canvas id="tempChart" height="80"></canvas></div>
-<div class="chart-container"><h2>Humidity</h2><canvas id="humidChart" height="80"></canvas></div>
-<div class="chart-container"><h2>HVAC Duty Cycle</h2><canvas id="hvacChart" height="60"></canvas></div>
+<div class="chart-container"><h2>Temperature</h2><div class="chart-wrap"><canvas id="tempChart"></canvas></div></div>
+<div class="chart-container"><h2>Humidity</h2><div class="chart-wrap"><canvas id="humidChart"></canvas></div></div>
+<div class="chart-container"><h2>HVAC Duty Cycle</h2><div class="chart-wrap short"><canvas id="hvacChart"></canvas></div></div>
 
 <script>
 const COLORS = {
@@ -356,11 +358,49 @@ let currentPresence = []; // presence history for overlay
 
 // Consistent color cache so random colors don't change on re-render
 const colorCache = {};
+// For disambiguated names like "Bedroom (XTown)", derive a variant of the base color
+const STRUCTURE_COLOR_SHIFT = { 'Cabin': 0, 'XTown': 40 };
 function roomColor(name) {
   if (colorCache[name]) return colorCache[name];
+  // Check for disambiguated name "ShortName (Location)"
+  const m = name.match(/^(.+?) \((Cabin|XTown)\)$/);
+  if (m) {
+    const base = COLORS[m[1]];
+    if (base) {
+      // Shift hue slightly for the second structure's variant
+      const shift = STRUCTURE_COLOR_SHIFT[m[2]] || 0;
+      const c = shift ? shiftHue(base, shift) : base;
+      colorCache[name] = c;
+      return c;
+    }
+  }
   const c = COLORS[name] || '#' + (Math.random().toString(16) + '000000').slice(2, 8);
   colorCache[name] = c;
   return c;
+}
+
+function shiftHue(hex, degrees) {
+  // Parse hex to RGB, convert to HSL, shift hue, convert back
+  const r = parseInt(hex.slice(1,3), 16) / 255;
+  const g = parseInt(hex.slice(3,5), 16) / 255;
+  const b = parseInt(hex.slice(5,7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+  }
+  h = ((h * 360 + degrees) % 360) / 360;
+  // HSL to RGB
+  function hue2rgb(p, q, t) { if (t < 0) t += 1; if (t > 1) t -= 1; if (t < 1/6) return p + (q - p) * 6 * t; if (t < 1/2) return q; if (t < 2/3) return p + (q - p) * (2/3 - t) * 6; return p; }
+  let rr, gg, bb;
+  if (s === 0) { rr = gg = bb = l; }
+  else { const q = l < 0.5 ? l * (1 + s) : l + s - l * s; const p = 2 * l - q; rr = hue2rgb(p, q, h + 1/3); gg = hue2rgb(p, q, h); bb = hue2rgb(p, q, h - 1/3); }
+  return '#' + [rr, gg, bb].map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
 }
 
 function stripPrefix(roomName) {
@@ -393,6 +433,38 @@ function filterRooms(rooms) {
 
 function displayName(roomName) {
   return stripPrefix(roomName);
+}
+
+// Pre-compute which short names collide across structures so displayName
+// can disambiguate only when needed (called once per refresh cycle).
+function computeDisplayCollisions(snapshots) {
+  const byStructure = {};
+  for (const s of snapshots) {
+    for (const r of (s.rooms || [])) {
+      const struct = roomStructure(r.room);
+      const short = stripPrefix(r.room);
+      if (!byStructure[short]) byStructure[short] = new Set();
+      byStructure[short].add(struct);
+    }
+  }
+  // A short name collides if it appears in more than one structure
+  const collisions = new Set();
+  for (const [short, structs] of Object.entries(byStructure)) {
+    if (structs.size > 1) collisions.add(short);
+  }
+  displayName._collisions = collisions;
+}
+
+const LOCATION_SHORT = { 'Philly': 'Cabin', '19Crosstown': 'XTown' };
+
+function displayNameFull(roomName) {
+  const short = stripPrefix(roomName);
+  if (currentStructure !== 'all') return short;
+  if (displayName._collisions && displayName._collisions.has(short)) {
+    const struct = roomStructure(roomName);
+    return short + ' (' + (LOCATION_SHORT[struct] || struct) + ')';
+  }
+  return short;
 }
 
 async function fetchData(hours) {
@@ -469,10 +541,10 @@ function renderCards(snapshot) {
 }
 
 function buildTimeSeries(snapshots) {
-  // Collect room names (filtered + display names)
+  // Collect room names (filtered + disambiguated display names)
   const roomNames = new Set();
   for (const s of snapshots) {
-    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayName(r.room));
+    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayNameFull(r.room));
   }
 
   // Collect weather series names from all snapshots
@@ -492,7 +564,7 @@ function buildTimeSeries(snapshots) {
   for (const s of snapshots) {
     const ts = s.timestamp;
     for (const r of filterRooms(s.rooms || [])) {
-      const name = displayName(r.room);
+      const name = displayNameFull(r.room);
       if (!series[name]) continue;
       series[name].temps.push({ x: ts, y: r.temp_f });
       series[name].humids.push({ x: ts, y: r.humidity });
@@ -513,7 +585,7 @@ function computeHvacDuty(snapshots) {
   // Active states: HEATING, COOLING, AUTO, FAN, DRY (anything not OFF/?)
   const roomNames = new Set();
   for (const s of snapshots) {
-    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayName(r.room));
+    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayNameFull(r.room));
   }
 
   const buckets = {}; // room -> hourKey -> {active: n, total: n}
@@ -523,7 +595,7 @@ function computeHvacDuty(snapshots) {
     const d = new Date(s.timestamp);
     const hourKey = d.toISOString().slice(0, 13) + ':00:00Z'; // YYYY-MM-DDTHH:00:00Z
     for (const r of filterRooms(s.rooms || [])) {
-      const name = displayName(r.room);
+      const name = displayNameFull(r.room);
       if (!buckets[name]) continue;
       if (!buckets[name][hourKey]) buckets[name][hourKey] = { active: 0, total: 0 };
       buckets[name][hourKey].total++;
@@ -604,7 +676,7 @@ const presenceOverlayPlugin = {
 
 const chartDefaults = {
   responsive: true,
-  maintainAspectRatio: true,
+  maintainAspectRatio: false,
   animation: { duration: 300 },
   plugins: { legend: { labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e4e4e7', boxWidth: 12, padding: 10, font: { size: 11 } } } },
   scales: {
@@ -655,6 +727,9 @@ async function refresh() {
   const data = await fetchData(currentHours);
   const snaps = data.snapshots || [];
   currentPresence = data.presence || [];
+
+  // Pre-compute which room short names collide across structures
+  computeDisplayCollisions(snaps);
 
   // Presence cards: fetch current state
   try {

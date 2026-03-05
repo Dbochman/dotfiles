@@ -50,18 +50,16 @@ The Mac Mini maintains a correlated view of both locations at `~/.openclaw/prese
 |-------|---------|
 | `occupied` | At least one tracked person is present |
 | `confirmed_vacant` | ALL tracked people absent AND confirmed present at the other location |
-| `possibly_vacant` | Nobody detected, but can't confirm they're elsewhere (phones may be sleeping) |
+| `possibly_vacant` | Nobody detected, but can't confirm they're elsewhere (no previous location on record) |
 
-**Vacancy is only `confirmed_vacant` when everyone has left AND arrived at the other location.** This prevents false vacants from sleeping phones or network glitches.
+**Arrival-based (sticky) model:** Once a person is detected at a location, they stay there until positively detected at the other location. Phones going to sleep or missing a scan cycle do NOT cause people to "disappear". Vacancy is only `confirmed_vacant` when everyone has been detected at the other location.
 
 ### Per-location tracking
 
 | Location | Tracked people | Vacancy requires |
 |----------|---------------|------------------|
-| Cabin | Dylan, Julia | Both absent at cabin AND both at Crosstown |
-| Crosstown | Dylan (Julia TBD) | Dylan absent at Crosstown AND at cabin |
-
-When Julia's Crosstown MAC is identified, add to `CROSSTOWN_TRACKED` and `CROSSTOWN_DEVICES` in the script.
+| Cabin | Dylan, Julia | Both detected at Crosstown |
+| Crosstown | Dylan, Julia | Both detected at Cabin |
 
 ### Transitions
 
@@ -137,12 +135,13 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 
 - **Method**: ARP scan of `192.168.165.0/24` with targeted ping for known IPs
 - **Dylan**: MAC `6c:3a:ff:5f:fc:ba` (private WiFi address off at Crosstown)
-- **Julia**: Not yet identified (TBD — needs MAC from Crosstown WiFi)
-- **Note**: Sleeping iPhones get a targeted `ping -c3 -W2` for reliability
+- **Julia**: Hostname `julias-iphone`, MAC `38:e1:3d:c0:40:63`, IP `192.168.165.248`
+- **Note**: Hostname matching (`julias-iphone.lan` from mDNS) is the most durable — survives MAC/IP rotation. MAC and IP are fallbacks.
 
 ## Important Notes
 
 - **No automated actions** — this system only detects and reports. Routines (away mode, welcome home, etc.) must be explicitly requested by the user.
-- iPhones in sleep mode may not respond to the first ping — the script uses targeted pings with longer timeouts for known devices.
-- Scan staleness: if either location's scan is >30 min old, the evaluator won't use it for cross-location vacancy confirmation (stays `possibly_vacant` instead of `confirmed_vacant`).
-- Crosstown scan must run ON the MacBook Pro (Mac Mini can't SSH to it — 1Password agent needs GUI approval).
+- **Sticky/arrival-based model** — once detected at a location, a person stays there until detected at the other location. Phone sleep, MAC rotation, or missed ARP scans don't cause flicker.
+- Scan staleness: if either location's scan is >30 min old, it's still trusted for the sticky model (previous location is preserved). Staleness only matters for initial detection of a person with no previous location.
+- Mac Mini can SSH to MacBook Pro via Tailscale (`ssh dylans-macbook-pro`) using dedicated key at `~/.ssh/id_mini_to_mbp`.
+- iOS randomizes MAC addresses per-network — hostname matching is preferred over MAC matching for resilience.

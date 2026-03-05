@@ -52,8 +52,9 @@ CABIN_DEVICES='[
 # Crosstown (Boston) — matched by MAC address via ARP scan
 CROSSTOWN_DEVICES='[
   {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"},
-  {"person":"Julia","match":"mac","pattern":"e6:3b:13:aa:ca:56"},
-  {"person":"Julia","match":"ip","pattern":"192.168.165.139"}
+  {"person":"Julia","match":"mac","pattern":"38:e1:3d:c0:40:63"},
+  {"person":"Julia","match":"ip","pattern":"192.168.165.248"},
+  {"person":"Julia","match":"hostname","pattern":"julias-iphone"}
 ]'
 
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
@@ -133,7 +134,7 @@ console.log(JSON.stringify({
 
 scan_crosstown() {
   # Targeted ping for known devices (iPhones sleep, need longer timeout)
-  local known_ips="192.168.165.124 192.168.165.139"
+  local known_ips="192.168.165.124 192.168.165.248"
   for ip in $known_ips; do
     ping -c3 -W2 "$ip" >/dev/null 2>&1 &
   done
@@ -163,7 +164,7 @@ for (const dev of devices) {
     let matched = false;
     if (dev.match === 'mac') matched = mac === dev.pattern.toLowerCase();
     else if (dev.match === 'ip') matched = ip === dev.pattern;
-    else if (dev.match === 'name') {
+    else if (dev.match === 'name' || dev.match === 'hostname') {
       const nm = line.match(/^(\S+)/);
       matched = nm && nm[1].toLowerCase().includes(dev.pattern.toLowerCase());
     }
@@ -223,15 +224,31 @@ const crosstownAge = crosstown.timestamp ? (Date.now() - new Date(crosstown.time
 const cabinFresh = cabinAge < 30;
 const crosstownFresh = crosstownAge < 30;
 
-// Per-person location (union of all tracked people)
+// Per-person location — sticky: once detected at a location, stay there
+// until positively detected at the OTHER location (arrival-based model).
 const people = {};
 for (const person of allTracked) {
-  const atCabin = cabinPresence[person]?.present === true;
-  const atCrosstown = crosstownPresence[person]?.present === true;
+  const seenAtCabin = cabinPresence[person]?.present === true;
+  const seenAtCrosstown = crosstownPresence[person]?.present === true;
+  const prevLoc = prev.people?.[person]?.location || 'unknown';
+
+  let location;
+  if (seenAtCabin && seenAtCrosstown) {
+    // Seen at both — unusual, pick based on scan freshness
+    location = cabinAge <= crosstownAge ? 'cabin' : 'crosstown';
+  } else if (seenAtCabin) {
+    location = 'cabin';
+  } else if (seenAtCrosstown) {
+    location = 'crosstown';
+  } else {
+    // Not detected anywhere this scan — keep previous location (sticky)
+    location = prevLoc;
+  }
+
   people[person] = {
-    cabin: atCabin,
-    crosstown: atCrosstown,
-    location: atCabin ? 'cabin' : atCrosstown ? 'crosstown' : 'unknown'
+    cabin: location === 'cabin',
+    crosstown: location === 'crosstown',
+    location
   };
 }
 
@@ -269,11 +286,13 @@ if (prevCrosstown && prevCrosstown !== crosstownOccupancy) {
   transitions.push({ location: 'crosstown', from: prevCrosstown, to: crosstownOccupancy, timestamp: now });
 }
 
-// Per-person transitions
+// Per-person transitions — only fire when positively detected at a NEW location
+// (not when sticky-held at previous location)
 for (const person of allTracked) {
   const prevLoc = prev.people?.[person]?.location;
   const currLoc = people[person].location;
-  if (prevLoc && prevLoc !== currLoc && currLoc !== 'unknown') {
+  const actuallyDetected = (cabinPresence[person]?.present === true) || (crosstownPresence[person]?.present === true);
+  if (prevLoc && prevLoc !== currLoc && currLoc !== 'unknown' && actuallyDetected) {
     transitions.push({ person, event: 'relocated', from: prevLoc, to: currLoc, timestamp: now });
   }
 }

@@ -203,13 +203,17 @@ Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Detects who's home
 | Person | Cabin (Starlink) | Crosstown (ARP) |
 |---|---|---|
 | Dylan | Device name match "Dylan" + "iPhone" | MAC `6c:3a:ff:5f:fc:ba`, IP `192.168.165.124` |
-| Julia | Device name match "Julia" | MAC `e6:3b:13:aa:ca:56`, IP `192.168.165.139` |
+| Julia | Device name match "Julia" | Hostname `julias-iphone`, MAC `38:e1:3d:c0:40:63`, IP `192.168.165.248` |
 
-### Vacancy Logic
+Crosstown matching priority: MAC → IP → hostname (mDNS `.lan` name from ARP table). Hostname is the most durable — survives iOS MAC/IP rotation.
 
-- **occupied** — any tracked person detected at that location
-- **confirmed_vacant** — all tracked people absent AND confirmed at the other location (fresh scan)
-- **possibly_vacant** — no one detected but can't confirm they're elsewhere (stale scan or unknown location)
+### Vacancy Logic (Arrival-Based / Sticky)
+
+- **occupied** — any tracked person detected at that location (or sticky from last detection)
+- **confirmed_vacant** — all tracked people confirmed at the other location
+- **possibly_vacant** — no one detected and no previous location on record
+
+Once a person is detected at a location, they **stay there** until positively detected at the other location. Phone sleep, MAC rotation, or missed scans don't cause flicker.
 
 ### Output Files
 
@@ -225,9 +229,11 @@ Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Detects who's home
 ### Gotchas
 
 - iPhones in low-power mode may not respond to ARP pings — "Limit IP Address Tracking" should be disabled on tracked phones
-- iOS randomizes MAC addresses per-network — IP-based matching is used as fallback (Julia's MAC rotates, her IP `192.168.165.139` is stable via DHCP)
+- iOS randomizes MAC addresses per-network — hostname matching (`julias-iphone.lan`) is preferred; MAC and IP are fallbacks that may need updating after rotation
 - Crosstown scan runs on MacBook Pro and pushes results to Mini via `tailscale file cp`
-- Scans older than 30 min are considered stale and won't be used for cross-correlation
+- Mac Mini can SSH to MacBook Pro via `ssh dylans-macbook-pro` (Tailscale, key: `~/.ssh/id_mini_to_mbp`)
+- Presence script must be deployed to **both** machines — Mini runs cabin scan + evaluate, MacBook Pro runs crosstown scan
+- After updating device fingerprints, deploy to both: `scp` to Mini, then Mini `scp` to MacBook Pro
 
 ## Pinchtab (Browser Automation)
 
