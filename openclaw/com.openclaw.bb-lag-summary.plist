@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.openclaw.bb-watchdog</string>
+    <string>com.openclaw.bb-lag-summary</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/dbochman/.openclaw/workspace/scripts/bb-watchdog.sh</string>
+        <string>/Users/dbochman/.openclaw/workspace/scripts/bb-lag-summary.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -16,13 +16,16 @@
         <key>HOME</key>
         <string>/Users/dbochman</string>
     </dict>
-    <key>StartInterval</key>
-    <integer>60</integer>
-    <key>RunAtLoad</key>
-    <true/>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/bb-watchdog.log</string>
+    <string>/tmp/bb-lag-summary.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/bb-watchdog.log</string>
+    <string>/tmp/bb-lag-summary.log</string>
 </dict>
 </plist>

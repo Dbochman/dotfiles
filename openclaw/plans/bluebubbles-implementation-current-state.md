@@ -24,7 +24,9 @@ Important keys:
 - `channels.bluebubbles.webhookPath: "/bluebubbles-webhook"`
 - `channels.bluebubbles.password: "${BLUEBUBBLES_PASSWORD}"`
 
-Current mitigation keys (set live on Mac Mini; should be preserved operationally):
+**Config drift note:** Dotfiles now tracks the mitigated state (Private API disabled). When Private API is enabled, flip `sendReadReceipts` to `true`, `session.typingMode` to `"auto"`, and all `actions.*` back to `true` (except `sendAttachment` which stays `true` regardless).
+
+Current mitigation keys:
 - `session.typingMode: "never"` (suppresses typing calls while Private API is disabled)
 - `channels.bluebubbles.sendReadReceipts: false`
 - `channels.bluebubbles.actions` for Private-API features set to `false`:
@@ -44,12 +46,20 @@ Behavior:
 Files:
 - `openclaw/com.openclaw.bb-watchdog.plist`
 - `openclaw/workspace/scripts/bb-watchdog.sh`
+- `openclaw/com.openclaw.poke-messages.plist`
+- `openclaw/workspace/scripts/poke-messages.scpt`
+- `openclaw/com.openclaw.bb-lag-summary.plist`
+- `openclaw/workspace/scripts/bb-lag-summary.sh`
 
 Behavior:
-- Runs every 5 minutes
+- Runs every 1 minute
 - Detects probable observer stalls
-- Restarts BlueBubbles when stalled
+- Logs ingest lag alerts to `/tmp/bb-ingest-lag.log` (default threshold: 90s)
+- Uses poke-first recovery (`Messages` chat-count query) before restart
+- Runs proactive `poke-messages` every 60 seconds
+- Restarts BlueBubbles only after repeated unresolved lag checks
 - Uses cooldown logic to prevent restart loops
+- Emits daily lag summaries to `/tmp/bb-lag-summary.log` (08:05 local time)
 
 ## 3. Host/runtime state validated on March 2, 2026
 
@@ -65,7 +75,7 @@ This means base messaging works, but Private-API-only features are not available
 
 ## 4. Known constraints and failure modes
 
-## A) Private API disabled
+### A) Private API disabled
 
 Observed errors:
 - `typing start failed (500)`
@@ -83,7 +93,7 @@ Mitigation currently in place:
 Long-term fix:
 - Enable BlueBubbles Private API (requires SIP-related physical Mac workflow documented in `openclaw/plans/bluebubbles-private-api.md`)
 
-## B) Phone-handle send failure (`+17813544611`)
+### B) Phone-handle send failure (`+17813544611`)
 
 Reproduced directly via BlueBubbles API:
 - `chatGuid: any;-;+17813544611` fails
@@ -137,10 +147,81 @@ Quick health checks:
    - `curl "http://localhost:1234/api/v1/server/info?password=$BLUEBUBBLES_PASSWORD"`
 4. Watchdog:
    - `tail -n 100 /tmp/bb-watchdog.log`
-5. OpenClaw errors:
+5. Ingest lag metrics:
+   - `tail -n 100 /tmp/bb-ingest-lag.log`
+6. Daily lag summary:
+   - `tail -n 30 /tmp/bb-lag-summary.log`
+7. OpenClaw errors:
    - `tail -n 200 ~/.openclaw/logs/gateway.err.log`
 
-## 8. Remaining gaps
+## 8. Health snapshot procedure
+
+Use this to capture a point-in-time status check and compare against prior snapshots.
+
+### A) Run the snapshot
+
+On your laptop:
+```bash
+ssh dbochman@100.93.66.71 '
+echo "=== timestamp ==="; date;
+echo "=== gateway status ==="; launchctl print gui/$(id -u)/ai.openclaw.gateway | egrep "state =|pid =";
+echo "=== bluebubbles server info ===";
+if [[ -f ~/.openclaw/.secrets-cache ]]; then set -a; source ~/.openclaw/.secrets-cache; set +a; fi;
+curl -sS --max-time 8 "http://localhost:1234/api/v1/server/info?password=${BLUEBUBBLES_PASSWORD:-}" | python3 -m json.tool;
+echo "=== latest gateway error ==="; tail -n 1 ~/.openclaw/logs/gateway.err.log;
+echo "=== latest watchdog line ==="; tail -n 1 /tmp/bb-watchdog.log;
+echo "=== delivery queue ==="; ls -la ~/.openclaw/delivery-queue ~/.openclaw/delivery-queue/archived 2>/dev/null || true;
+'
+```
+
+### B) Interpret results
+
+Healthy snapshot indicators:
+1. Gateway `state = running`
+2. BlueBubbles API responds successfully
+3. `private_api` / `helper_connected` are expected values for current mode
+4. Watchdog latest line is `OK:` (idle or recent webhook)
+5. Active `~/.openclaw/delivery-queue/` has no `.json` files pending
+
+Warning indicators:
+1. New `BlueBubbles send failed (500)` lines after prior known timestamp
+2. Repeated watchdog `STALL DETECTED` entries in short intervals
+3. New `typing start failed` / `mark read failed` entries if typing/read mitigations are enabled
+4. Growing active delivery queue
+
+### C) Minimal delta check (fast)
+
+For quick follow-ups:
+```bash
+ssh dbochman@100.93.66.71 '
+echo "last gateway.err line:"; tail -n 1 ~/.openclaw/logs/gateway.err.log;
+echo "last send-fail line:"; grep "BlueBubbles send failed (500)" ~/.openclaw/logs/gateway.err.log | tail -n 1;
+echo "last watchdog line:"; tail -n 1 /tmp/bb-watchdog.log;
+echo "last lag metric:"; tail -n 1 /tmp/bb-ingest-lag.log 2>/dev/null || echo "none";
+echo "last lag summary:"; tail -n 1 /tmp/bb-lag-summary.log 2>/dev/null || echo "none";
+'
+```
+
+### D) Recent snapshot example (March 2, 2026, 11:39 AM EST)
+
+Observed during live check:
+1. BlueBubbles showed inbound ingest delay, then recovered:
+   - `11:38:43 EST`: `New Message from dy**********@gmail.com, "Just checking i..."; Date: 3/2/2026, 11:34:02 AM`
+   - `11:38:43 EST`: webhook dispatched to OpenClaw (`/bluebubbles-webhook`)
+2. OpenClaw processed immediately after webhook arrival:
+   - `16:38:44Z` (`11:38:44 EST`): lane enqueue/dequeue and embedded run start
+   - `16:39:06Z` (`11:39:06 EST`): embedded run completed and response sent
+3. End-to-end conclusion:
+   - Primary delay was upstream of OpenClaw response generation (message reached BlueBubbles late).
+   - Once webhook fired, OpenClaw turnaround was normal (~22s run time including one transient LLM retry).
+
+Use this as a reference pattern for future incidents:
+1. Confirm BlueBubbles `New Message` timestamp vs message `Date:` inside the same line
+2. Confirm webhook dispatch timestamp
+3. Confirm OpenClaw enqueue/start/end timestamps in `/tmp/openclaw/openclaw-YYYY-MM-DD.log`
+4. Attribute delay to ingress (BB-side) vs processing (OpenClaw-side)
+
+## 9. Remaining gaps
 
 Current telemetry is usable but not comprehensive:
 1. No automatic alert on send-failure spikes by recipient handle

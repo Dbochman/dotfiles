@@ -83,14 +83,20 @@ Rooms: Philly Solarium, Philly Living Room, Philly Bedroom, 19Crosstown Living R
 - **Auto-refresh:** Every 5 minutes via `setInterval`
 - **Dark mode** by default, respects `prefers-color-scheme`
 
+**Room name disambiguation:** When viewing "Both" structures, rooms that exist in both locations get a suffix — e.g., "Bedroom (Cabin)" and "Bedroom (XTown)". Rooms unique to one structure (Solarium, Basement, Dylan's Office) keep their short name. When viewing a single structure, all names are short. This is automatic based on collision detection across structures.
+
 **Room colors:**
 | Room | Color |
 |------|-------|
 | Solarium | `#FF8C00` (orange) |
 | Living Room | `#4A90D9` (blue) |
 | Bedroom | `#8B5CF6` (purple) |
-| Outside (Philly) | `#6B7280` (gray) |
-| Outside (19Crosstown) | `#9CA3AF` (light gray) |
+| Basement | `#14B8A6` (teal) |
+| Dylan's Office | `#F59E0B` (amber) |
+| Outside (Cabin) | `#6B7280` (gray) |
+| Outside (Crosstown) | `#9CA3AF` (light gray) |
+
+Disambiguated rooms (e.g., "Bedroom (XTown)") get a hue-shifted variant of the base color so both are visually distinct in charts.
 
 **CDN dependencies** (loaded in `<script>` tags):
 - Chart.js 4.x
