@@ -292,6 +292,16 @@ case "$ACTION" in
     open -a BlueBubbles
     log "ACTION: BlueBubbles restarted"
 
+    # Wait for BB to initialize, then restart gateway to re-register webhook.
+    # BB restart invalidates the gateway's webhook registration — without this,
+    # the gateway holds a stale webhook and never receives new messages.
+    sleep 15
+    if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
+      log "ACTION: Gateway restarted (webhook re-registration after BB restart)"
+    else
+      log "WARN: Gateway restart failed — webhook may be stale"
+    fi
+
     # Record restart in state
     $NODE -e "
 const fs = require('fs');
