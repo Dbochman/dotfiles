@@ -7,6 +7,8 @@ Host dylans-mac-mini
 Host dylans-macbook-pro
   HostName 100.107.209.85
   User dbochman
+  IdentityFile ~/.ssh/id_mini_to_mbp
+  IdentityAgent none
 
 # 1Password SSH Agent
 Host *

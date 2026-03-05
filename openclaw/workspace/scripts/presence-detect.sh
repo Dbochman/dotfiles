@@ -38,9 +38,8 @@ log() {
 
 # Tracked people per location — vacancy requires all tracked people for THAT
 # location to be absent AND confirmed at the other location.
-# Julia is not yet trackable at Crosstown (MAC unknown).
 CABIN_TRACKED='["Dylan","Julia"]'
-CROSSTOWN_TRACKED='["Dylan"]'
+CROSSTOWN_TRACKED='["Dylan","Julia"]'
 
 # Cabin (Philly) — matched by device name from Starlink gRPC API
 CABIN_DEVICES='[
@@ -52,7 +51,8 @@ CABIN_DEVICES='[
 
 # Crosstown (Boston) — matched by MAC address via ARP scan
 CROSSTOWN_DEVICES='[
-  {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"}
+  {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"},
+  {"person":"Julia","match":"mac","pattern":"e6:3b:13:aa:ca:56"}
 ]'
 
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
@@ -132,7 +132,7 @@ console.log(JSON.stringify({
 
 scan_crosstown() {
   # Targeted ping for known devices (iPhones sleep, need longer timeout)
-  local known_ips="192.168.165.124"
+  local known_ips="192.168.165.124 192.168.165.139"
   for ip in $known_ips; do
     ping -c3 -W2 "$ip" >/dev/null 2>&1 &
   done
@@ -199,7 +199,6 @@ const cabin = JSON.parse(process.argv[1]);
 const crosstown = JSON.parse(process.argv[2]);
 // Per-location tracked people — vacancy requires all tracked people for THAT
 // location to be absent AND confirmed at the other location.
-// Julia is not yet trackable at Crosstown (MAC unknown).
 const cabinTracked = $CABIN_TRACKED;
 const crosstownTracked = $CROSSTOWN_TRACKED;
 const allTracked = [...new Set([...cabinTracked, ...crosstownTracked])];
