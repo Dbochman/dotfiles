@@ -301,11 +301,14 @@ Julia's inbox has an automated daily briefing via cron:
 | `OpenClaw/Newsletters` | Subscriptions, digests, promotions |
 | `OpenClaw/Social` | Social media notifications, invites |
 
+## CRITICAL: Sending Emails
+
+**NEVER send an email unless the user has explicitly asked you to send it.** Drafting an email is not permission to send it. Approving a draft is not permission to send it. The user must clearly and unambiguously instruct you to send before you call the send endpoint. When in doubt, ask. This applies to all accounts and all recipients — no exceptions.
+
 ## Notes
 
 - Default account: dylanbochman@gmail.com
 - Always check inbox/unread first before reporting on emails
-- **When sending emails, confirm the recipient and content with the user first**
 - `gws` outputs JSON by default — parse directly or pipe through `jq`
 - Thread endpoints group messages into conversations; message endpoints return individual messages
 - The `raw` field for send/drafts uses base64url encoding — always use Python `base64.urlsafe_b64encode` (shell `printf | base64 | tr` corrupts `!` and other special chars)
