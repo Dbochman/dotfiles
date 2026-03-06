@@ -1,10 +1,10 @@
 # OpenClaw iMessage Setup Notes
 
 ## Current Setup (Updated 2026-03-06)
-- OpenClaw installed at `/opt/homebrew/bin/openclaw` (v2026.3.2-beta.1)
+- OpenClaw installed at `/opt/homebrew/bin/openclaw` (v2026.3.2)
 - iMessage channel via **BlueBubbles** (webhook-only, Private API enabled)
 - Gateway runs as LaunchAgent `ai.openclaw.gateway` via .app wrapper
-- Model: `anthropic/claude-sonnet-4-6`
+- Model: `anthropic/claude-opus-4-6` (fallback: `anthropic/claude-sonnet-4-6`)
 
 ## BlueBubbles Architecture
 - BB POSTs webhook events to `http://localhost:18789/bluebubbles-webhook`

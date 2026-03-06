@@ -18,7 +18,7 @@
 - Workspace repo: `~/.openclaw/workspace` (github.com/Dbochman/openclaw-workspace)
 
 ## Config Highlights
-- Model: `anthropic/claude-sonnet-4-6`
+- Model: `anthropic/claude-opus-4-6` (fallback: `anthropic/claude-sonnet-4-6`)
 - Auth: OAuth tokens (`sk-ant-oat01-*`) from Dylan's Claude Max subscription
 - TTS: inbound mode via ElevenLabs
 - Session: per-channel-peer isolation, daily reset at 4am

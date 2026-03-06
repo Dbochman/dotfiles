@@ -10,8 +10,8 @@ OpenClaw is an AI agent ("Claude Bochman") running on a Mac Mini at the cabin in
 
 | Component | Value |
 |---|---|
-| Version | v2026.3.2-beta.1 |
-| Model | `anthropic/claude-sonnet-4-6` |
+| Version | v2026.3.2 |
+| Model | `anthropic/claude-opus-4-6` (fallback: `anthropic/claude-sonnet-4-6`) |
 | Hardware | Mac Mini (macOS 26.2.0) |
 | Network | Starlink, Tailscale (`dylans-mac-mini`) |
 | Gateway | `ws://127.0.0.1:18789` (local), `wss://dylans-mac-mini.tail3e55f9.ts.net` (Tailscale) |

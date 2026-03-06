@@ -18,10 +18,11 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-sonnet-4-6",
-        "fallbacks": []
+        "primary": "anthropic/claude-opus-4-6",
+        "fallbacks": ["anthropic/claude-sonnet-4-6"]
       },
       "models": {
+        "anthropic/claude-opus-4-6": {},
         "anthropic/claude-sonnet-4-6": {}
       },
       "workspace": "/Users/dbochman/.openclaw/workspace",
