@@ -1,14 +1,14 @@
 # Dylan's Preferences
 
-Working style preferences for Claude Code sessions. Updated January 12, 2026.
+Working style preferences for Claude Code sessions.
 
 ---
 
 ## Context
 
-**Who:** Professional SRE / Incident Manager
-**Quality bar:** Production-grade. Not "good enough" - the real thing.
-**Purpose:** This repo is portfolio + learning + actual tools, but **prioritize for external reception** when there's tension between them.
+**Who:** Software engineer — SRE background, currently building home automation (OpenClaw) and personal projects
+**Quality bar:** Production-grade. Not "good enough" — the real thing.
+**Primary work:** OpenClaw agent infrastructure, dotfiles, home automation, personal website
 
 ---
 
@@ -46,9 +46,9 @@ These apply to any repo, not just this one:
 
 | Aspect | Preference |
 |--------|------------|
-| **Session start** | Read session-notes + git log, provide "here's where we left off" |
-| **Session end** | Full handoff - status, next steps, update session notes, suggest commit |
+| **Session start** | Read memory + git log, provide "here's where we left off" |
+| **Session end** | Full handoff - status, next steps, suggest commit |
 
 ---
 
-**Last Updated:** January 12, 2026
+**Last Updated:** March 6, 2026
