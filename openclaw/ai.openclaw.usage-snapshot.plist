@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.usage-snapshot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/dbochman/.openclaw/bin/usage-snapshot.sh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/dbochman</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/dbochman/.openclaw/logs/usage-snapshot.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dbochman/.openclaw/logs/usage-snapshot.err.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/dbochman</string>
+</dict>
+</plist>
