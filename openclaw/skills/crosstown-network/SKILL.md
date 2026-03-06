@@ -62,12 +62,14 @@ ssh dylans-macbook-pro "ping -c3 -W2 192.168.165.124; arp -a | grep 192.168.165.
 
 ## Presence Detection
 
-Track phone presence by pinging known MAC addresses:
+Track phone presence by pinging known MAC addresses and hostnames:
 
-| Person | MAC (Crosstown WiFi) | Notes |
-|---|---|---|
-| Dylan | `6c:3a:ff:5f:fc:ba` | Real Apple MAC (private WiFi address off) |
-| Julia | TBD | Needs identification |
+| Person | Hostname | MAC (Crosstown WiFi) | IP |
+|---|---|---|---|
+| Dylan | `dylans-iphone` | `6c:3a:ff:5f:fc:ba` | `192.168.165.124` |
+| Julia | `julias-iphone` | `38:e1:3d:c0:40:63` | `192.168.165.248` |
+
+Matching priority: MAC → IP → hostname (mDNS `.lan` name from ARP table). Hostname is most durable — survives iOS MAC/IP rotation.
 
 iPhones in sleep mode may not respond to the first ping — use `ping -c3` for reliability.
 
