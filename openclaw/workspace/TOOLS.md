@@ -73,23 +73,6 @@ CLI at `/opt/homebrew/bin/gws` (v0.4.4, Rust binary via npm `@googleworkspace/cl
 | `gws-gmail` | `openclaw/skills/gws-gmail/SKILL.md` |
 | `gws-drive` | `openclaw/skills/gws-drive/SKILL.md` |
 
-## GOG (Google Workspace CLI) — Legacy
-
-CLI at `/opt/homebrew/bin/gog` (v0.11.0). Gmail, Calendar, Drive, Contacts. **Being replaced by GWS above.** Still used by existing cron jobs until migration.
-
-- Always use `--account=<email>` flag — multiple Google accounts are configured
-- Always use `--json` for parseable output
-- Headless/launchd: requires `GOG_KEYRING_PASSWORD` env var (in `.secrets-cache`)
-- `invalid_grant` error = refresh token revoked, must re-auth on Mini screen: `gog auth add <email>`
-- Auth health check: `gog gmail search "is:unread" --account=<email> --json --max=1`
-
-### GOG Accounts
-
-| Account | Used for |
-|---|---|
-| `julia.joy.jennings@gmail.com` | Julia's Gmail (morning triage, evening digest cron jobs) |
-| `dylanbochman@gmail.com` | Dylan's Gmail and Calendar |
-
 ## Catt (Chromecast CLI)
 
 CLI at `~/.local/bin/catt` (v0.13.1). Not on default PATH.

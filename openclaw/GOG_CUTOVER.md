@@ -60,7 +60,7 @@ All GWS skills deployed to Mini's OpenClaw skills directory (`~/.openclaw/skills
 ### Remaining
 
 - [ ] Verify agent picks up new skills (test with "check my email" or "what's on my calendar")
-- [ ] Remove old `gmail/SKILL.md` and `calendar/SKILL.md` from Mini's skills directory
+- [x] Remove old `gmail/SKILL.md` and `calendar/SKILL.md` from Mini's skills directory
 
 Note: Date night / double date cron jobs say "create a Google Calendar event" without referencing a specific CLI tool — the agent will naturally use whichever calendar skill is active. No cron job rewrite needed for these.
 
@@ -70,11 +70,11 @@ After GWS is confirmed working for all use cases.
 
 - [x] Remove legacy cron jobs (`d7184542`, `3060d4f2`) from `cron/jobs.json`
 - [x] Remove GWS validation jobs (`gws-julia-morning-triage-0001`, `gws-julia-evening-cleanup-0001`)
-- [ ] Delete old skills: `openclaw/skills/gmail/SKILL.md`, `openclaw/skills/calendar/SKILL.md`
-- [ ] Remove GOG section from `openclaw/workspace/TOOLS.md`
-- [ ] Remove `GOG_KEYRING_PASSWORD` from `~/.openclaw/.secrets-cache` (no longer needed)
-- [ ] Retire Claude Code skill: `.claude/skills/gog-keyring-headless/SKILL.md`
-- [ ] Update `.claude/skills/openclaw-stale-session-and-identity-mismatch/SKILL.md` (remove gog references)
+- [x] Delete old skills: `openclaw/skills/gmail/SKILL.md`, `openclaw/skills/calendar/SKILL.md`
+- [x] Remove GOG section from `openclaw/workspace/TOOLS.md`
+- [x] Remove `GOG_KEYRING_PASSWORD` from `~/.openclaw/.secrets-cache`
+- [x] Retire Claude Code skill: `.claude/skills/gog-keyring-headless/SKILL.md`
+- [x] Update `.claude/skills/openclaw-stale-session-and-identity-mismatch/SKILL.md` (rewritten for GWS)
 - [ ] Reconcile `openclaw/cron-jobs.json` with `openclaw/cron/jobs.json` (deduplicate or pick one canonical source)
 - [ ] Consider uninstalling `gog` binary from Mini (`npm uninstall -g gogcli`)
 - [ ] Delete this file

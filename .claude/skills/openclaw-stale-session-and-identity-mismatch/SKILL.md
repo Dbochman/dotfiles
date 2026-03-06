@@ -2,70 +2,68 @@
 name: openclaw-stale-session-and-identity-mismatch
 description: |
   Fix OpenClaw agent repeatedly claiming a Google account "isn't authenticated" or failing
-  with "No auth for calendar" even though GOG tokens are valid. Use when: (1) GOG CLI works
-  manually (`gog calendar events --account=X`) but OpenClaw agent says auth is missing,
-  (2) Agent uses wrong email format (e.g., missing dots in Gmail address), (3) Error log
-  shows "No auth for calendar juliajoyjennings@gmail.com" with a dotless email, (4) Agent
+  with auth errors even though GWS tokens are valid. Use when: (1) GWS CLI works
+  manually (`gws gmail users messages list --account X`) but OpenClaw agent says auth is missing,
+  (2) Agent uses wrong email format (e.g., missing dots in Gmail address), (3) Agent
   keeps repeating stale beliefs about auth status despite fixes. Covers identity mismatch
-  across USER.md/cron/memory files and stale session cache clearing.
+  across config files and stale session cache clearing.
 author: Claude Code
-version: 1.0.0
-date: 2026-02-09
+version: 2.0.0
+date: 2026-03-05
 ---
 
 # OpenClaw Stale Session & Identity Mismatch
 
 ## Problem
-OpenClaw agent fails to use Google Calendar (or other GOG services) for a specific account,
-claiming authentication is missing. The actual GOG CLI works fine when tested manually with
-the correct `--account=` flag. The root cause is typically a **wrong email format** in
+OpenClaw agent fails to use Google services (Gmail, Calendar, Drive) for a specific account,
+claiming authentication is missing. The actual GWS CLI works fine when tested manually with
+the correct `--account` flag. The root cause is typically a **wrong email format** in
 OpenClaw's identity/config files combined with **stale session history** that preserves
 the agent's incorrect belief.
 
 ## Context / Trigger Conditions
 
-- Agent replies "I need to authenticate X's calendar first" but tokens exist in GOG keyring
-- OpenClaw error log shows: `No auth for calendar juliajoyjennings@gmail.com` (dotless email)
-- GOG CLI error: `missing --account` (agent omits the flag entirely)
-- Manual test works: `gog calendar events --today --account=julia.joy.jennings@gmail.com`
-- Problem persists even after verifying GOG tokens are valid and refreshed
+- Agent replies "I need to authenticate X first" but GWS credentials exist
+- Agent uses wrong email (e.g., `juliajoyjennings@gmail.com` instead of `julia.joy.jennings@gmail.com`)
+- Manual test works: `gws gmail users messages list --params '{"userId":"me","q":"is:unread","maxResults":1}' --account julia.joy.jennings@gmail.com`
+- Problem persists even after verifying GWS credentials are valid
 
 ## Root Causes
 
 ### 1. Email Format Mismatch (Primary)
-GOG CLI does **strict email matching** against its encrypted keyring tokens. Gmail treats
+GWS does **strict email matching** against its encrypted credentials. Gmail treats
 `juliajoyjennings@gmail.com` and `julia.joy.jennings@gmail.com` as the same mailbox, but
-GOG stores the token under the **exact email returned by Google OAuth** (with dots). If any
-OpenClaw config file has the dotless version, the agent will pass the wrong email to `--account=`.
+GWS stores credentials under the **exact email used during OAuth**. If any OpenClaw config
+file has the wrong version, the agent will pass the wrong email to `--account`.
 
 ### 2. Multiple Sources of Wrong Email
-The wrong email can propagate across multiple files that the agent reads:
+The wrong email can propagate across multiple files:
 
 | File | What it affects |
 |------|-----------------|
 | `~/.openclaw/workspace/USER.md` | Agent's identity context for contacts |
 | `~/.openclaw/workspace/memory/*.md` | Accumulated knowledge from past sessions |
 | `~/.openclaw/cron/jobs.json` | Scheduled tasks that use the email |
-| `~/.openclaw/skills/calendar/SKILL.md` | Skill file with account examples |
+| `~/.openclaw/skills/gws-gmail/SKILL.md` | Skill file with account examples |
+| `~/.openclaw/skills/gws-calendar/SKILL.md` | Skill file with account examples |
 
 ### 3. Stale Session History
 OpenClaw sessions are persistent JSONL files. Once the agent encounters an auth error, that
 failure becomes part of the conversation history. Even after fixing the email, the agent's
-compacted session context retains the "not authenticated" belief and may continue to claim
-auth is missing.
+compacted session context retains the "not authenticated" belief.
 
 ## Solution
 
-### Step 1: Verify GOG tokens are valid
+### Step 1: Verify GWS credentials are valid
 ```bash
-ssh dylans-mac-mini 'export GOG_KEYRING_PASSWORD=$(cat ~/.cache/openclaw-gateway/gog_keyring_password) && /opt/homebrew/bin/gog calendar events --today --account=julia.joy.jennings@gmail.com'
+ssh dylans-mac-mini 'gws gmail users messages list --params "{\"userId\":\"me\",\"q\":\"is:unread\",\"maxResults\":1}" --account julia.joy.jennings@gmail.com'
 ```
 
-### Step 2: Check error logs for wrong email format
+### Step 2: Check which accounts GWS knows about
 ```bash
-ssh dylans-mac-mini 'grep -E "No auth for|missing --account" /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log'
+ssh dylans-mac-mini 'gws auth list'
 ```
-Look for dotless email or missing `--account` flag.
+If this shows empty, test with an actual API call — the JS wrapper may use a stale cached binary.
 
 ### Step 3: Fix email in all config files
 ```bash
@@ -73,7 +71,7 @@ Look for dotless email or missing `--account` flag.
 ssh dylans-mac-mini 'grep -rl "juliajoyjennings" ~/.openclaw/ 2>/dev/null | grep -v ".jsonl" | grep -v ".log"'
 
 # Fix each file
-ssh dylans-mac-mini 'sed -i "" "s/juliajoyjennings@gmail.com/julia.joy.jennings@gmail.com/g" ~/.openclaw/workspace/USER.md ~/.openclaw/workspace/memory/*.md ~/.openclaw/cron/jobs.json ~/.openclaw/cron/jobs.json.bak'
+ssh dylans-mac-mini 'sed -i "" "s/juliajoyjennings@gmail.com/julia.joy.jennings@gmail.com/g" <files>'
 ```
 
 ### Step 4: Clear the stale session
@@ -113,22 +111,22 @@ if key in data:
 
 ### Step 5: Verify the fix
 Have the contact send a new message. The agent will create a fresh session and read the
-corrected email from USER.md and the skill file.
+corrected email from the skill files.
 
 ## Verification
 
 1. Check logs for the new session — should see `exec` tool calls with correct email
-2. No more `No auth for calendar` errors
-3. Agent successfully creates/reads calendar events
+2. No more auth errors
+3. Agent successfully reads/sends Gmail, creates calendar events
 
 ## Notes
 
-- Gmail ignores dots in the local part, but GOG does NOT. Always use the exact email
-  that Google OAuth returns (check the keyring file names in
-  `~/Library/Application Support/gogcli/keyring/`).
-- The agent may still omit `--account` on its first try in a new session (Haiku model
-  behavior), but self-corrects on retry after reading the error message.
+- Gmail ignores dots in the local part, but GWS does NOT. Always use the exact email
+  that was used during `gws auth login`.
+- GWS credentials are AES-256-GCM encrypted at `~/.config/gws/` — per-account files
+  named `credentials.<base64>.enc`. The `.encryption_key` file must also be present.
+- If GWS auth is broken, re-auth locally (requires browser) then scp credentials +
+  `.encryption_key` + `accounts.json` to Mini.
+- **DANGER: `gws auth logout` without `--account <email>` nukes ALL accounts.**
 - Session files can be very large (4MB+) after many compactions. Clearing them is safe
   — the agent just loses conversation history for that contact.
-- Always do a final sweep: `grep -rl "juliajoyjennings" ~/.openclaw/ | grep -v .jsonl | grep -v .log`
-  to catch all instances.
