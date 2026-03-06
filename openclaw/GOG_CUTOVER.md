@@ -2,9 +2,9 @@
 
 Migration from `gog` (gogcli) to `gws` (@googleworkspace/cli) for all Google Workspace operations.
 
-## Status: In Progress
+## Status: Phase 4 (Retire GOG)
 
-GWS skills written and deployed. Parallel cron jobs running for validation.
+Phases 1-3 complete. GWS skills deployed, cron jobs consolidated. Remaining: clean up legacy GOG artifacts.
 
 ## Phase 1: GWS Setup (DONE)
 
@@ -75,7 +75,7 @@ After GWS is confirmed working for all use cases.
 - [ ] Remove `GOG_KEYRING_PASSWORD` from `~/.openclaw/.secrets-cache` (no longer needed)
 - [ ] Retire Claude Code skill: `.claude/skills/gog-keyring-headless/SKILL.md`
 - [ ] Update `.claude/skills/openclaw-stale-session-and-identity-mismatch/SKILL.md` (remove gog references)
-- [ ] Delete stale `openclaw/cron-jobs.json` (old copy of jobs file)
+- [ ] Reconcile `openclaw/cron-jobs.json` with `openclaw/cron/jobs.json` (deduplicate or pick one canonical source)
 - [ ] Consider uninstalling `gog` binary from Mini (`npm uninstall -g gogcli`)
 - [ ] Delete this file
 
@@ -91,7 +91,7 @@ After GWS is confirmed working for all use cases.
 
 ## Rollback
 
-If GWS jobs fail or auth breaks:
-- Legacy GOG jobs are still running at original times — Julia's triage continues uninterrupted
+If GWS morning briefing fails or auth breaks:
+- Re-create legacy GOG jobs from git history (commit `caf51c7` has the last version with GOG jobs)
 - GOG credentials are independent of GWS — no cross-contamination
-- Re-enable GOG jobs if they were disabled: set `"enabled": true` and redeploy
+- GOG binary is still installed on Mini until Phase 4 cleanup
