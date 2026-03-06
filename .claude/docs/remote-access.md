@@ -4,14 +4,15 @@ Quick reference for accessing machines remotely via tmux + Tailscale.
 
 ## Tailnet Devices
 
-| Device | Tailscale IP | Hostname | User | OS |
-|--------|-------------|----------|------|----|
-| Mac (primary) | `100.94.69.122` | `dylans-mac` | `dylanbochman` | macOS |
-| Mac Mini | `100.93.66.71` | `dylans-mac-mini` | `dbochman` | macOS |
-| Andre droplet | `100.92.192.62` | `andre` | `deploy` | Linux |
-| iPhone | `100.93.90.122` | `iphone171` | — | iOS |
+| Device | Tailscale IP | Hostname | User | OS | Role |
+|--------|-------------|----------|------|----|------|
+| Mac (primary) | `100.94.69.122` | `dylans-mac` | `dylanbochman` | macOS | Development machine |
+| Mac Mini | `100.93.66.71` | `dylans-mac-mini` | `dbochman` | macOS | OpenClaw gateway, cabin server |
+| MacBook Pro | `100.107.209.85` | `dylans-macbook-pro` | `dbochman` | macOS | Crosstown presence scanner |
+| Andre droplet | `100.92.192.62` | `andre` | `deploy` | Linux | Personal website hosting |
+| iPhone | `100.93.90.122` | `iphone171` | — | iOS | Mobile access |
 
-SSH from any tailnet device: `ssh dylans-mac` or `ssh dylans-mac-mini`
+SSH from any tailnet device: `ssh dylans-mac`, `ssh dylans-mac-mini`, or `ssh dylans-macbook-pro`
 
 ## tmux Quick Reference
 
