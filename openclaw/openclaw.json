@@ -1,7 +1,7 @@
 {
   "meta": {
-    "lastTouchedVersion": "2026.2.3-1",
-    "lastTouchedAt": "2026-02-07T00:37:06.179Z"
+    "lastTouchedVersion": "2026.3.2-beta.1",
+    "lastTouchedAt": "2026-03-04T23:04:56.610Z"
   },
   "auth": {
     "profiles": {
@@ -37,7 +37,7 @@
         "ttl": "5m"
       },
       "heartbeat": {
-        "every": "6h"
+        "every": "12h"
       },
       "maxConcurrent": 4,
       "subagents": {
@@ -54,7 +54,9 @@
   },
   "commands": {
     "native": "auto",
-    "nativeSkills": "auto"
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
   },
   "session": {
     "typingMode": "thinking",
@@ -122,7 +124,8 @@
     "tailscale": {
       "mode": "serve",
       "resetOnExit": false
-    }
+    },
+    "channelHealthCheckMinutes": 0
   },
   "plugins": {
     "entries": {

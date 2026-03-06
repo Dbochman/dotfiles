@@ -1,6 +1,6 @@
 {
   "meta": {
-    "lastTouchedVersion": "2026.2.3-1"
+    "lastTouchedVersion": "2026.3.2-beta.1"
   },
   "auth": {
     "profiles": {
@@ -26,7 +26,7 @@
     "nativeSkills": "auto"
   },
   "wizard": {
-    "lastRunVersion": "2026.2.3-1",
+    "lastRunVersion": "2026.3.2-beta.1",
     "lastRunMode": "remote"
   }
 }
