@@ -83,13 +83,14 @@ tail -20 ~/.openclaw/logs/gateway.log
 ```bash
 set -a && source ~/.openclaw/.secrets-cache && set +a
 PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH \
-  openclaw agent --to "+15084234853" --channel imessage --deliver --message "Test delivery"
+  openclaw cron run weekly-upgrade-verify-0001 --timeout 300000 --expect-final
 ```
+Use any cron job that delivers to Dylan for testing. Returns `{"ok":true,"ran":true}` on success.
 
 ## Verification
 - Gateway log shows successful startup with no pairing errors
 - `launchctl list | grep openclaw.gateway` shows a PID
-- Manual `openclaw agent --deliver` sends iMessage successfully
+- Manual `openclaw cron run` completes delivery successfully
 - Next scheduled cron run completes delivery without `cron announce delivery failed`
 
 ## Key Files

@@ -1,110 +1,74 @@
 ---
 name: openclaw-imessage-ack-reaction
 description: |
-  Fix OpenClaw ackReaction not working for iMessage channel. Use when:
-  (1) messages.ackReaction is configured in openclaw.json but no tapback/reaction
-  appears on iMessage messages, (2) ackReaction works for Slack/Discord/Telegram
-  but not iMessage, (3) want the OpenClaw agent to acknowledge iMessage receipt
-  with an emoji. The ackReaction feature is only wired to Slack, Discord, and
-  Telegram in the gateway code — iMessage is not supported as of v2026.2.14.
-  Workaround: add acknowledgment instructions to SOUL.md.
+  Configure OpenClaw iMessage reactions/tapbacks. Use when: (1) want OpenClaw agent
+  to react to iMessage messages with a tapback (love, like, laugh, etc.),
+  (2) ackReaction config in openclaw.json doesn't produce iMessage tapbacks,
+  (3) need to understand which reaction types iMessage supports. As of v2026.3.2,
+  the agent can send native iMessage tapbacks via the `message` tool with
+  `action: "react"`. The `ackReactionScope` config remains a no-op for iMessage
+  (only wired for Slack/Discord/Telegram in the gateway).
 author: Claude Code
-version: 1.0.0
-date: 2026-02-19
+version: 2.0.0
+date: 2026-03-06
 ---
 
-# OpenClaw iMessage Ack Reaction Not Supported
+# OpenClaw iMessage Reactions / Tapbacks
 
-## Problem
+## Current Status (v2026.3.2+)
 
-Setting `messages.ackReaction` and `messages.ackReactionScope` in `openclaw.json`
-has no effect on the iMessage channel. The gateway accepts the config and even
-hot-reloads it, but never attempts to send a tapback reaction via the `imsg react`
-CLI command.
+Native iMessage reactions **work** as of v2026.3.2-beta.1. The agent can send tapbacks
+via the `message` tool with `action: "react"` and a `message_id` from inbound metadata.
 
-## Context / Trigger Conditions
+## What Works
 
-- `openclaw.json` has `messages.ackReaction` set (e.g., `"👀"`)
-- Gateway logs show `config change applied (dynamic reads: messages.ackReaction...)`
-- But no reaction/tapback ever appears on inbound iMessage messages
-- The `imsg react` CLI command exists and works manually
-- Works fine for Slack, Discord, and Telegram channels
+- **Agent-initiated reactions**: The agent can react to any inbound message using the
+  `message` tool with `action: "react"`. This sends a native iMessage tapback (not a
+  text bubble).
+- **Supported tapback types**: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
+  (Apple limitation: no custom emoji reactions on iMessage)
+- **Requires `message_id`**: The inbound message metadata must include a `message_id`
+  for the agent to target. This is provided automatically by the BlueBubbles provider.
 
-## Root Cause
+## What Does NOT Work
 
-In the gateway source (`pi-embedded-8DITBEle.js`), the `ackReactionPromise` logic
-is only implemented for three channels:
+- **`ackReactionScope` config**: The `messages.ackReactionScope` setting in `openclaw.json`
+  is a no-op for iMessage. It is only wired for Slack, Discord, and Telegram in the
+  gateway code. Setting it has no effect on iMessage channels.
+- **`ackReaction` config**: Similarly, `messages.ackReaction` does not trigger automatic
+  tapbacks on iMessage. The gateway's ack flow only handles Slack/Discord/Telegram.
 
-- **Discord**: `shouldAckReaction$3()` → `reactMessageDiscord()`
-- **Slack**: `shouldAckReaction$2()` → `reactSlackMessage()`
-- **Telegram**: `shouldAckReaction$1()` → Telegram reaction API
+## How to Use Reactions
 
-The iMessage monitor (`monitorIMessageProvider` / `deliverReplies$3`) has no
-`ackReactionPromise` handling whatsoever. The `imsg react` CLI exists but is not
-wired into the gateway's ack flow.
+### Option 1: Agent-Driven (via SOUL.md instructions)
 
-## Solution (Workaround)
+Instruct the agent in SOUL.md to react to messages:
 
-Since native ackReaction isn't supported for iMessage, instruct the agent to send
-a text-based acknowledgment via SOUL.md:
+```markdown
+## Acknowledgment
 
-1. Remove the useless config entries from `openclaw.json`:
-   ```python
-   config['messages'].pop('ackReaction', None)
-   config['messages'].pop('ackReactionScope', None)
-   ```
+When you receive an iMessage, react to it with a tapback before responding.
+Use the message tool with action "react" and the inbound message_id.
+```
 
-2. Add an acknowledgment section to `~/.openclaw/workspace/SOUL.md`:
-   ```markdown
-   ## Acknowledgment
+The agent will use the `message` tool with `action: "react"` to send a native tapback.
 
-   When you receive a message, your FIRST action — before thinking, processing,
-   or drafting anything — must be to send a message containing only "👀"
-   (nothing else, no other text). This is a read receipt so the sender knows
-   you saw it.
+### Option 2: Programmatic (via cron job or skill)
 
-   Then, AFTER that message is sent, begin working on your actual response and
-   send it as a second, separate message.
-
-   Critical: "👀" must be its own standalone message. Never combine it with your
-   actual reply. Never append text after it. Two separate messages every time.
-   ```
-
-   **Important**: The initial simpler instruction ("send 👀 first, then follow up")
-   resulted in the agent combining the 👀 with its reply in a single message.
-   The stronger, more explicit instruction above is needed to force two separate
-   messages.
-
-3. Changes to SOUL.md take effect immediately — no session reset needed. SOUL.md
-   is loaded fresh as a context file on each inbound message.
-
-## Trade-offs
-
-- **Text vs tapback**: The 👀 shows as a message bubble, not a native iMessage
-  tapback/reaction on the original message
-- **Extra message**: Creates an additional message in the conversation
-- **LLM-dependent**: The agent may occasionally skip it depending on context
+Cron jobs and skills can instruct the agent to react as part of their workflow.
 
 ## Verification
 
-1. Send a message to the OpenClaw agent via iMessage
-2. Confirm you receive a "👀" text reply before the actual response
-3. Check gateway logs for the delivery: `imessage: delivered reply to chat_id:XXX`
-
-## Key Files (Mac Mini)
-
-- Config: `/Users/dbochman/.openclaw/openclaw.json`
-- Soul: `/Users/dbochman/.openclaw/workspace/SOUL.md`
-- Gateway logs: `/tmp/openclaw/openclaw-YYYY-MM-DD.log`
-- imsg CLI: `/opt/homebrew/bin/imsg`
-- Gateway source: `/opt/homebrew/lib/node_modules/openclaw/dist/pi-embedded-8DITBEle.js`
+1. Send a message to OpenClaw via iMessage
+2. Confirm a native tapback appears on the message (not a text bubble)
+3. Check gateway logs: look for react-related delivery entries
 
 ## Notes
 
-- The `imsg react` command uses UI automation (System Events/accessibility) and can
-  only react to the most recent incoming message — this may be why OpenClaw hasn't
-  wired it up natively (fragile compared to Slack/Discord/Telegram APIs)
+- Tapbacks are native Apple reactions — they appear as the small icon on the message
+  bubble, not as a separate text message
+- The `imsg react` CLI still exists but is NOT used by the gateway; reactions go through
+  the BlueBubbles Private API (`POST /api/v1/message/react`)
+- Prior to v2026.3.2, reactions were broken (v2026.2.26) or unsupported (v2026.2.14).
+  The old workaround of sending a "eyes" text message is no longer needed.
 - Mac Mini SSH user is `dbochman`, not `dylanbochman`
-- Gateway process runs as `openclaw-gateway` launched from
-  `/Users/dbochman/Applications/OpenClawGateway.app`
-- OpenClaw version as of this writing: `2026.2.14`

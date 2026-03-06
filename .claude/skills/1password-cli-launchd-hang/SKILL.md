@@ -227,7 +227,7 @@ if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   exit 1
 fi
 
-exec /path/to/node /path/to/openclaw/dist/index.js gateway --port 18789
+exec /path/to/node /path/to/openclaw/dist/entry.js gateway --port 18789
 ```
 
 **Cache file format** (`~/.openclaw/.secrets-cache`, chmod 600):
@@ -235,7 +235,7 @@ exec /path/to/node /path/to/openclaw/dist/index.js gateway --port 18789
 OPENAI_API_KEY=sk-proj-...
 ELEVENLABS_API_KEY=...
 OPENCLAW_GATEWAY_TOKEN=...
-GOG_KEYRING_PASSWORD=...
+BLUEBUBBLES_PASSWORD=...
 ```
 
 **Refresh helper** (`~/bin/openclaw-refresh-secrets`):
@@ -249,7 +249,6 @@ TMP=$(mktemp)
   echo "OPENAI_API_KEY=$(op read 'op://OpenClaw/OpenAI API Key/password')"
   echo "ELEVENLABS_API_KEY=$(op read 'op://OpenClaw/ElevenLabs API Key/password')"
   echo "OPENCLAW_GATEWAY_TOKEN=$(op read 'op://OpenClaw/OpenClaw Gateway Token/password')"
-  echo "GOG_KEYRING_PASSWORD=$(op read 'op://OpenClaw/GOG CLI/password')"
 } > "$TMP"
 mv "$TMP" "$CACHE"
 chmod 600 "$CACHE"
