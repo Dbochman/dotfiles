@@ -143,5 +143,5 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 - **No automated actions** — this system only detects and reports. Routines (away mode, welcome home, etc.) must be explicitly requested by the user.
 - **Sticky/arrival-based model** — once detected at a location, a person stays there until detected at the other location. Phone sleep, MAC rotation, or missed ARP scans don't cause flicker.
 - Scan staleness: if either location's scan is >30 min old, it's still trusted for the sticky model (previous location is preserved). Staleness only matters for initial detection of a person with no previous location.
-- Mac Mini can SSH to MacBook Pro via Tailscale (`ssh dylans-macbook-pro`) using dedicated key at `~/.ssh/id_mini_to_mbp`.
+- Mac Mini can SSH to MacBook Pro via Tailscale (`ssh dylans-macbook-pro`) using 1Password SSH agent.
 - iOS randomizes MAC addresses per-network — hostname matching is preferred over MAC matching for resilience.

@@ -32,7 +32,7 @@ op read "op://OpenClaw/Item Name/field"
 | OpenAI API Key | password | `op read "op://OpenClaw/OpenAI API Key/password"` |
 | ElevenLabs API Key | password | `op read "op://OpenClaw/ElevenLabs API Key/password"` |
 | Gateway Token | password | `op read "op://OpenClaw/OpenClaw Gateway Token/password"` |
-| GOG CLI | password | `op read "op://OpenClaw/GOG CLI/password"` |
+| BlueBubbles | password | `op read "op://OpenClaw/BlueBubbles/password"` |
 | Digital Ocean API | credential | `op read "op://OpenClaw/Digital Ocean API Credential/credential"` |
 | Tavily | password | `op read "op://OpenClaw/Tavily/password"` |
 | Google Places API | password | `op read "op://OpenClaw/Google Places API/password"` |
