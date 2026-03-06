@@ -15,30 +15,19 @@ GWS skills written and deployed. Parallel cron jobs running for validation.
 - [x] Write `gws-gmail` skill (`openclaw/skills/gws-gmail/SKILL.md`)
 - [x] Document GWS in TOOLS.md, mark GOG as legacy
 
-## Phase 2: Parallel Cron Jobs (IN PROGRESS)
+## Phase 2: Cron Job Cutover (DONE)
 
-New GWS-based cron jobs running alongside legacy GOG jobs for validation.
+Legacy GOG jobs and GWS validation jobs replaced with a single consolidated morning briefing.
 
-| Job | Legacy (GOG) | New (GWS) | Status |
-|-----|-------------|-----------|--------|
-| Julia Morning Triage | `d7184542` @ 7:00 AM ET | `gws-julia-morning-triage-0001` @ 7:10 AM ET | Validating (delivers to Dylan) |
-| Julia Evening Cleanup | `3060d4f2` @ 8:00 PM ET | `gws-julia-evening-cleanup-0001` @ 8:10 PM ET | Validating (delivers to Dylan) |
+| Old Jobs (removed) | New Job | Status |
+|-----|---------|--------|
+| `d7184542` Morning Triage (GOG) | `gws-julia-morning-briefing-0001` @ 7:00 AM ET | Live, delivers to Julia |
+| `3060d4f2` Evening Cleanup (GOG) | _(merged into morning briefing)_ | Removed |
+| `gws-julia-morning-triage-0001` (validation) | _(replaced)_ | Removed |
+| `gws-julia-evening-cleanup-0001` (validation) | _(replaced)_ | Removed |
 
-### Validation Checklist
-
-- [ ] GWS morning triage runs successfully (check Dylan's iMessage)
-- [ ] GWS evening cleanup runs successfully (check Dylan's iMessage)
-- [ ] Labels created/applied correctly on Julia's account
-- [ ] Draft replies created correctly (check Julia's Gmail drafts)
-- [ ] No auth errors over 3+ consecutive runs
-- [ ] Output quality matches or exceeds legacy job output
-
-### After Validation
-
-1. Update GWS jobs: change delivery target from `dylanbochman@gmail.com` → `+15084234853` (Julia)
-2. Update GWS jobs: change schedule from +10 min offset back to on-the-hour (`0 7` / `0 20`)
-3. Disable legacy GOG jobs: set `"enabled": false` on `d7184542` and `3060d4f2`
-4. Deploy updated `cron/jobs.json` to Mini
+The new morning briefing combines: calendar preview + inbox triage + cleanup + spam removal.
+Delivers to Julia (`+15084234853`) via BlueBubbles at 7:00 AM ET daily.
 
 ## Phase 3: Deploy GWS Skills to OpenClaw (DONE)
 
@@ -79,7 +68,8 @@ Note: Date night / double date cron jobs say "create a Google Calendar event" wi
 
 After GWS is confirmed working for all use cases.
 
-- [ ] Remove legacy cron jobs (`d7184542`, `3060d4f2`) from `cron/jobs.json`
+- [x] Remove legacy cron jobs (`d7184542`, `3060d4f2`) from `cron/jobs.json`
+- [x] Remove GWS validation jobs (`gws-julia-morning-triage-0001`, `gws-julia-evening-cleanup-0001`)
 - [ ] Delete old skills: `openclaw/skills/gmail/SKILL.md`, `openclaw/skills/calendar/SKILL.md`
 - [ ] Remove GOG section from `openclaw/workspace/TOOLS.md`
 - [ ] Remove `GOG_KEYRING_PASSWORD` from `~/.openclaw/.secrets-cache` (no longer needed)

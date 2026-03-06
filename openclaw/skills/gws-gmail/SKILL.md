@@ -272,10 +272,9 @@ gws schema gmail.users.threads.get
 
 ## Automated Inbox Management (Julia)
 
-Julia's inbox has automated daily triage via cron jobs:
+Julia's inbox has an automated daily briefing via cron:
 
-- **Morning Triage** (7 AM ET): Searches unread inbox, categorizes with labels, creates draft replies, sends summary via iMessage
-- **Evening Cleanup** (8 PM ET): Archives old read emails, identifies unsubscribe candidates, cleans spam, sends digest
+- **Morning Briefing** (7 AM ET): Calendar preview + inbox triage (categorize, label, draft replies) + cleanup (archive old read, trash spam) — delivered to Julia via iMessage
 
 ### OpenClaw Labels (Julia's account)
 
