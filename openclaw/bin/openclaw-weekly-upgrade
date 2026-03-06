@@ -1,0 +1,77 @@
+#\!/bin/bash
+# Weekly OpenClaw upgrade: npm update + gateway restart + scope verification
+# Runs via LaunchAgent ai.openclaw.weekly-upgrade (Sundays 4am ET)
+set -euo pipefail
+
+export HOME="/Users/dbochman"
+export PATH="/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
+
+LOG="$HOME/.openclaw/logs/weekly-upgrade.log"
+PAIRED="$HOME/.openclaw/devices/paired.json"
+PENDING="$HOME/.openclaw/devices/pending.json"
+PLIST="$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+UID_NUM=$(id -u)
+
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >> "$LOG"; }
+
+log "=== Weekly upgrade started ==="
+
+# 1. Record current version
+OLD_VER=$(npm list -g openclaw 2>/dev/null | grep openclaw@ | sed "s/.*openclaw@//")
+log "Current version: $OLD_VER"
+
+# 2. Check latest available
+LATEST=$(npm view openclaw version 2>/dev/null)
+log "Latest available: $LATEST"
+
+if [ "$OLD_VER" = "$LATEST" ]; then
+  log "Already up to date ($OLD_VER). Skipping."
+  echo "SKIP:$OLD_VER" >> "$LOG"
+  exit 0
+fi
+
+# 3. Backup device files
+cp "$PAIRED" "${PAIRED}.pre-upgrade"
+cp "$PENDING" "${PENDING}.pre-upgrade"
+log "Device files backed up"
+
+# 4. Backup plist (npm install may overwrite it with inline env vars, missing secrets)
+cp "$PLIST" "${PLIST}.pre-upgrade"
+log "Plist backed up"
+
+# 5. Upgrade
+npm install -g openclaw@latest >> "$LOG" 2>&1
+NEW_VER=$(npm list -g openclaw 2>/dev/null | grep openclaw@ | sed "s/.*openclaw@//")
+log "Upgraded to: $NEW_VER"
+
+# 6. Restore plist (openclaw install --service overwrites it, breaking secrets-cache pattern)
+cp "${PLIST}.pre-upgrade" "$PLIST"
+log "Plist restored from backup"
+
+# 7. Restart gateway
+launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
+sleep 3
+launchctl bootstrap "gui/$UID_NUM" "$PLIST"
+sleep 5
+
+# 8. Check if gateway is running
+GW_PID=$(launchctl list | grep openclaw.gateway | awk "{print \$1}")
+if [ "$GW_PID" = "-" ] || [ -z "$GW_PID" ]; then
+  log "ERROR: Gateway failed to start after upgrade"
+  echo "FAIL:$OLD_VER:$NEW_VER:gateway-down" >> "$LOG"
+  exit 1
+fi
+log "Gateway running as PID $GW_PID"
+
+# 9. Check for new pending scope repairs
+PENDING_CONTENT=$(cat "$PENDING")
+if [ "$PENDING_CONTENT" \!= "{}" ]; then
+  log "WARNING: New pending scope repair detected after upgrade"
+  log "Pending content: $PENDING_CONTENT"
+  echo "WARN:$OLD_VER:$NEW_VER:scope-repair-needed" >> "$LOG"
+  exit 0
+fi
+
+log "No new scope issues detected"
+echo "OK:$OLD_VER:$NEW_VER" >> "$LOG"
+log "=== Weekly upgrade completed ==="
