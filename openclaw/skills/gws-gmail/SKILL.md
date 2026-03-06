@@ -114,22 +114,33 @@ gws gmail users threads get --params '{
 
 ## Send a Message
 
-Messages must be base64url-encoded RFC 2822 format. Helper pattern:
+Messages must be base64url-encoded RFC 2822 format.
+
+**IMPORTANT:** Use Python `base64.urlsafe_b64encode` to encode the raw email. Do NOT use shell `printf | base64 | tr` — it corrupts `!` to `\!` and mangles special characters.
 
 ```bash
-# Simple send
-gws gmail users messages send --params '{"userId": "me"}' --json '{
-  "raw": "'$(printf 'To: recipient@example.com\r\nSubject: Hello\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nMessage body here' | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')'"
-}'
+# Step 1: Build base64url payload with Python (safe for all characters)
+RAW_B64=$(python3 -c "
+import base64
+msg = 'From: sender@gmail.com\r\nTo: recipient@example.com\r\nSubject: Hello\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nMessage body here!'
+print(base64.urlsafe_b64encode(msg.encode()).decode().rstrip('='))
+")
 
-# Reply to a thread
-gws gmail users messages send --params '{"userId": "me"}' --json '{
-  "threadId": "<threadId>",
-  "raw": "'$(printf 'To: recipient@example.com\r\nSubject: Re: Original Subject\r\nIn-Reply-To: <original-message-id>\r\nReferences: <original-message-id>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nReply body here' | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')'"
-}'
+# Step 2: Send via gws
+gws gmail users messages send --params '{"userId": "me"}' \
+  --json "{\"raw\":\"${RAW_B64}\"}"
+
+# Reply to a thread (add threadId, In-Reply-To, References headers)
+RAW_B64=$(python3 -c "
+import base64
+msg = 'From: sender@gmail.com\r\nTo: recipient@example.com\r\nSubject: Re: Original Subject\r\nIn-Reply-To: <original-message-id>\r\nReferences: <original-message-id>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nReply body here'
+print(base64.urlsafe_b64encode(msg.encode()).decode().rstrip('='))
+")
+gws gmail users messages send --params '{"userId": "me"}' \
+  --json "{\"threadId\":\"<threadId>\",\"raw\":\"${RAW_B64}\"}"
 ```
 
-**Note:** The `raw` field must be base64url-encoded. The inline bash `$(...)` pattern handles this. For HTML emails, use `Content-Type: text/html; charset=utf-8`.
+For HTML emails, use `Content-Type: text/html; charset=utf-8` in the headers.
 
 ## Drafts
 
@@ -137,12 +148,14 @@ gws gmail users messages send --params '{"userId": "me"}' --json '{
 # List drafts
 gws gmail users drafts list --params '{"userId": "me"}'
 
-# Create a draft
-gws gmail users drafts create --params '{"userId": "me"}' --json '{
-  "message": {
-    "raw": "'$(printf 'To: recipient@example.com\r\nSubject: Draft\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nDraft body' | base64 | tr -d '\n' | tr '+/' '-_' | tr -d '=')'"
-  }
-}'
+# Create a draft (use Python base64 pattern from Send section)
+RAW_B64=$(python3 -c "
+import base64
+msg = 'To: recipient@example.com\r\nSubject: Draft\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nDraft body'
+print(base64.urlsafe_b64encode(msg.encode()).decode().rstrip('='))
+")
+gws gmail users drafts create --params '{"userId": "me"}' \
+  --json "{\"message\":{\"raw\":\"${RAW_B64}\"}}"
 
 # Send a draft
 gws gmail users drafts send --params '{"userId": "me"}' --json '{
@@ -295,5 +308,5 @@ Julia's inbox has an automated daily briefing via cron:
 - **When sending emails, confirm the recipient and content with the user first**
 - `gws` outputs JSON by default — parse directly or pipe through `jq`
 - Thread endpoints group messages into conversations; message endpoints return individual messages
-- The `raw` field for send/drafts uses base64url encoding (not standard base64) — use `tr '+/' '-_' | tr -d '='`
+- The `raw` field for send/drafts uses base64url encoding — always use Python `base64.urlsafe_b64encode` (shell `printf | base64 | tr` corrupts `!` and other special chars)
 - Use `format: "metadata"` with `metadataHeaders` to fetch only headers (faster for triage)
