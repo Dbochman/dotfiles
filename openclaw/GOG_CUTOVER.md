@@ -2,9 +2,9 @@
 
 Migration from `gog` (gogcli) to `gws` (@googleworkspace/cli) for all Google Workspace operations.
 
-## Status: Phase 4 (Retire GOG)
+## Status: COMPLETE
 
-Phases 1-3 complete. GWS skills deployed, cron jobs consolidated. Remaining: clean up legacy GOG artifacts.
+All phases done. GOG fully retired. GWS is the sole Google Workspace CLI.
 
 ## Phase 1: GWS Setup (DONE)
 
@@ -75,9 +75,8 @@ After GWS is confirmed working for all use cases.
 - [x] Remove `GOG_KEYRING_PASSWORD` from `~/.openclaw/.secrets-cache`
 - [x] Retire Claude Code skill: `.claude/skills/gog-keyring-headless/SKILL.md`
 - [x] Update `.claude/skills/openclaw-stale-session-and-identity-mismatch/SKILL.md` (rewritten for GWS)
-- [ ] Reconcile `openclaw/cron-jobs.json` with `openclaw/cron/jobs.json` (deduplicate or pick one canonical source)
-- [ ] Consider uninstalling `gog` binary from Mini (`npm uninstall -g gogcli`)
-- [ ] Delete this file
+- [x] Reconcile cron job files — merged into `openclaw/cron/jobs.json` (single source), deleted `openclaw/cron-jobs.json`
+- [x] Uninstall `gog` binary from Mini (`brew uninstall gogcli`)
 
 ## Key Differences: GOG vs GWS
 
