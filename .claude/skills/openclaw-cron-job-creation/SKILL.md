@@ -8,8 +8,8 @@ description: |
   (4) need to manually run/test a cron job. Covers the correct jobs.json schema,
   schedule field naming (expr NOT cron), env var requirements, and gateway restart.
 author: Claude Code
-version: 1.0.0
-date: 2026-02-15
+version: 2.0.0
+date: 2026-03-06
 ---
 
 # OpenClaw Cron Job Creation
@@ -97,18 +97,37 @@ gateway may read the old file from OS disk cache before the write flushes. Stop,
 
 ### Running Jobs Manually
 
-The `openclaw cron run <jobId>` CLI requires ALL env vars from the gateway wrapper:
+Use `openclaw cron run` with secrets sourced and a long timeout:
 ```bash
-OPENCLAW_GATEWAY_TOKEN=$(cat ~/.cache/openclaw-gateway/gateway_token) \
-OPENAI_API_KEY=$(cat ~/.cache/openclaw-gateway/openai_api_key) \
-ELEVENLABS_API_KEY=$(cat ~/.cache/openclaw-gateway/elevenlabs_api_key) \
-GOG_KEYRING_PASSWORD=$(cat ~/.cache/openclaw-gateway/gog_keyring_password) \
-PATH=/opt/homebrew/bin:/opt/homebrew/Cellar/node@22/22.22.0/bin:$PATH \
-/opt/homebrew/bin/openclaw cron run <jobId>
+set -a && source ~/.openclaw/.secrets-cache && set +a && \
+PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH \
+openclaw cron run <jobId> --timeout 300000 --expect-final
 ```
 
-Note: The CLI may show a 30s gateway timeout, but the gateway continues running the job
-to completion. Check the run result in `~/.openclaw/cron/runs/<jobId>.jsonl`.
+Key flags:
+- `--timeout 300000` — 5 minutes (default 30s is too short for most jobs)
+- `--expect-final` — waits for the job to complete and returns `{"ok":true,"ran":true}`
+
+This is the **correct** way to manually trigger a job. It:
+- Runs through the gateway's cron scheduler (single execution, no duplicates)
+- Uses the exact prompt, delivery channel, and target from `jobs.json`
+- Returns synchronous feedback on success/failure
+
+**Do NOT use `openclaw agent --deliver`** for manual cron testing — it spawns independent
+async agents with no dedup. Each invocation creates a separate session that runs all side
+effects (labeling, archiving, sending) independently, causing duplicate deliveries if
+retried.
+
+### Removing Jobs
+
+When removing a job from `jobs.json`, **also delete its run state file**:
+```bash
+trash ~/.openclaw/cron/runs/<jobId>.jsonl
+```
+
+The cron subsystem persists `nextRunAtMs` in these JSONL files. If a run file exists with
+a future `nextRunAtMs`, the job will keep executing even after its definition is removed
+from `jobs.json`. See the `openclaw-cron-ghost-jobs` skill for diagnosis and cleanup.
 
 ### Fields NOT to Include
 
@@ -175,12 +194,11 @@ with open("/Users/dbochman/.openclaw/cron/jobs.json", "w") as f:
   and writes its copy back to disk on every state update. Edits made while the gateway is
   running WILL be overwritten. Always stop → edit → start. Error `"Unsupported channel: X"`
   after a channel migration is a telltale sign the gateway wrote back stale config.
-- **Channel migration**: After migrating channels (e.g., imessage → bluebubbles), ALL cron
-  jobs must have their `delivery.channel` updated. Also update the dotfiles source copy
-  (`~/repos/dotfiles/openclaw/cron-jobs.json`) to prevent `sync-cron-jobs.sh deploy` from
-  reverting the fix. The agent's cron-jobs.json path is `~/.openclaw/cron/jobs.json`, NOT
-  `~/.openclaw/agents/main/cron-jobs.json`.
-- The gateway wrapper (`~/Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway`) exports all required env vars from 1Password with fallback to `~/.cache/openclaw-gateway/` cache files
+- **Channel name**: Delivery channel is `bluebubbles` (NOT `imessage`). All cron jobs use
+  `"delivery": {"channel": "bluebubbles", ...}`. The dotfiles source copy is at
+  `~/repos/dotfiles/openclaw/cron/jobs.json` — keep it in sync with Mini's
+  `~/.openclaw/cron/jobs.json`.
+- The gateway wrapper (`~/Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway`) sources secrets from `~/.openclaw/.secrets-cache` (KEY=VALUE format, chmod 600)
 - Python f-strings with `j["name"]` inside SSH-piped python one-liners cause `NameError` due to shell escaping — use script files (`scp` + run) for complex JSON manipulation
 - The `delivery.to` field accepts both E.164 phone numbers and OpenClaw contact UUIDs
 - Gateway auto-adds `deleteAfterRun: true` for `"at"` schedule jobs during normalization
