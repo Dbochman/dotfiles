@@ -179,16 +179,14 @@ Cielo API tokens expire every 30 min. Auto-refreshed by `com.openclaw.cielo-refr
 
 ## Crosstown Network Access (SSH)
 
-The Mac Mini can SSH to the MacBook Pro at Crosstown (and vice versa) via Tailscale without 1Password approval, using a dedicated ed25519 keypair.
+The Mac Mini can SSH to the MacBook Pro at Crosstown (and vice versa) via Tailscale, using the 1Password SSH agent.
 
 ### Setup
 
-| Machine | SSH Config Host | Key Path |
+| Machine | SSH Config Host | Auth |
 |---|---|---|
-| Mac Mini | `dylans-macbook-pro` | `~/.ssh/id_mini_to_mbp` |
-| MacBook Pro | `dylans-mac-mini` | `~/.ssh/id_mini_to_mbp` |
-
-Both configs use `IdentityAgent none` to bypass 1Password SSH agent for automated connections.
+| Mac Mini | `dylans-macbook-pro` | 1Password SSH agent |
+| MacBook Pro | `dylans-mac-mini` | 1Password SSH agent |
 
 ### Usage
 
@@ -207,10 +205,6 @@ scp <local-file> dylans-macbook-pro:<remote-path>
 - Deploying updated scripts to the MBP
 - Triggering crosstown presence scans manually
 - Any task that requires being on the Crosstown local network
-
-### Key Backup
-
-Keypair stored in 1Password: "Mini↔MBP SSH Key (ed25519)" in the OpenClaw vault.
 
 ## Presence Detection
 

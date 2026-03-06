@@ -118,7 +118,7 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 **Heartbeat** fires every 12h. Follow `HEARTBEAT.md` strictly — it's intentionally minimal to save tokens. If nothing needs attention, stay silent.
 
-**Cron jobs** handle scheduled tasks (email digests, health checks, bookings). They run in isolated sessions with precise timing. See `~/.openclaw/cron-jobs.json` for the full list.
+**Cron jobs** handle scheduled tasks (email digests, health checks, bookings). They run in isolated sessions with precise timing. See `~/.openclaw/cron/jobs.json` for the full list.
 
 **Rule of thumb:** Heartbeat = lightweight "am I alive" check. Cron = real work on a schedule. Don't duplicate cron work during heartbeats.
 
