@@ -290,6 +290,9 @@ h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
 .card[data-room="Outside"] .card-value { color: var(--outside); }
 .card[data-room="Basement"] .card-value { color: #14B8A6; }
 .card[data-room="Dylan's Office"] .card-value { color: #F59E0B; }
+.card[data-room="Cat Room"] .card-value { color: #EC4899; }
+.card[data-room="Basement door"] .card-value { color: #06B6D4; }
+.card[data-room="Movie room"] .card-value { color: #84CC16; }
 .controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .controls button { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
 .controls button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
@@ -347,6 +350,9 @@ const COLORS = {
   'Outside (19Crosstown)': '#9CA3AF',
   'Basement': '#14B8A6',
   "Dylan's Office": '#F59E0B',
+  'Cat Room': '#EC4899',
+  'Basement door': '#06B6D4',
+  'Movie room': '#84CC16',
 };
 
 const STRUCTURES = ['Philly', '19Crosstown'];
@@ -515,9 +521,11 @@ function renderCards(snapshot) {
     const label = displayName(r.room);
     const colorKey = stripPrefix(r.room);
     const locTag = roomLocationLabel(r.room);
-    const hvacLabel = r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
+    let hvacLabel = r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
+    if (r.source === 'mysa' && r.duty_pct != null) hvacLabel = r.duty_pct > 0 ? `${r.duty_pct}% duty` : 'OFF';
+    const sourceTag = r.source && r.source !== 'nest' ? `<span class="card-tag">${r.source}</span>` : '';
     html += `<div class="card" data-room="${colorKey}">
-      <div class="card-label">${label}<span class="card-tag">${locTag}</span></div>
+      <div class="card-label">${label}<span class="card-tag">${locTag}</span>${sourceTag}</div>
       <div class="card-value">${(r.temp_f ?? 0).toFixed(1)}°F</div>
       <div class="card-sub">Set: ${(r.setpoint_f ?? 0).toFixed(0)}°F · ${hvacLabel} · ${r.humidity ?? 0}% RH</div>
     </div>`;
@@ -588,7 +596,7 @@ function computeHvacDuty(snapshots) {
     for (const r of filterRooms(s.rooms || [])) roomNames.add(displayNameFull(r.room));
   }
 
-  const buckets = {}; // room -> hourKey -> {active: n, total: n}
+  const buckets = {}; // room -> hourKey -> {dutySum: n, total: n}
   for (const name of roomNames) buckets[name] = {};
 
   for (const s of snapshots) {
@@ -597,9 +605,14 @@ function computeHvacDuty(snapshots) {
     for (const r of filterRooms(s.rooms || [])) {
       const name = displayNameFull(r.room);
       if (!buckets[name]) continue;
-      if (!buckets[name][hourKey]) buckets[name][hourKey] = { active: 0, total: 0 };
+      if (!buckets[name][hourKey]) buckets[name][hourKey] = { dutySum: 0, total: 0 };
       buckets[name][hourKey].total++;
-      if (r.hvac && r.hvac !== 'OFF' && r.hvac !== '?') buckets[name][hourKey].active++;
+      // Use real duty_pct if available (Mysa), otherwise binary 100/0 from HVAC status
+      if (r.duty_pct != null) {
+        buckets[name][hourKey].dutySum += r.duty_pct;
+      } else if (r.hvac && r.hvac !== 'OFF' && r.hvac !== '?') {
+        buckets[name][hourKey].dutySum += 100;
+      }
     }
   }
 
@@ -607,7 +620,7 @@ function computeHvacDuty(snapshots) {
   for (const name of roomNames) {
     result[name] = [];
     for (const [hourKey, b] of Object.entries(buckets[name]).sort()) {
-      result[name].push({ x: hourKey, y: Math.round(100 * b.active / b.total) });
+      result[name].push({ x: hourKey, y: Math.round(b.dutySum / b.total) });
     }
   }
   return result;
