@@ -8,6 +8,7 @@ set -euo pipefail
 exec python3 - "$@" <<'PYTHON_SCRIPT'
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -162,22 +163,31 @@ def parse_runtime_log(last_offset):
         except json.JSONDecodeError:
             continue
 
-        msg = rec.get("msg", "").lower()
-        level = rec.get("level", "")
+        # OpenClaw uses tslog format: messages in "0"/"1"/"2", level in _meta
+        meta = rec.get("_meta", {})
+        level = meta.get("logLevelName", "").upper()
+        # Combine all positional message fields
+        msg_parts = []
+        for k in ("0", "1", "2"):
+            v = rec.get(k)
+            if v is not None:
+                msg_parts.append(str(v) if not isinstance(v, str) else v)
+        msg = " ".join(msg_parts).lower()
 
-        if "agent run" in msg or "agent started" in msg:
+        if "agent" in msg and ("started" in msg or "run" in msg):
             result["agent_runs"] += 1
-        if "message sent" in msg or "delivered" in msg:
+        if "res ✓ send" in msg or "delivered" in msg:
             result["messages_sent"] += 1
-        if level in ("error", "fatal") or "error" in msg:
+        if level in ("ERROR", "FATAL"):
             result["errors"] += 1
-        if "gateway restart" in msg or "restarting gateway" in msg:
+        if "sigterm" in msg or "shutting down" in msg:
             result["gateway_restarts"] += 1
 
-        rt = rec.get("response_time_ms") or rec.get("duration_ms") or rec.get("responseTime")
-        if rt is not None:
+        # Extract response times from gateway/ws lines like "res ✓ send 743ms"
+        rt_match = re.search(r"res [✓✗]\s+\S+\s+(\d+)ms", msg)
+        if rt_match:
             try:
-                result["response_times_ms"].append(int(rt))
+                result["response_times_ms"].append(int(rt_match.group(1)))
             except (ValueError, TypeError):
                 pass
 
@@ -235,9 +245,11 @@ def parse_cron_runs(last_offsets):
                 continue
 
             result["cron_runs"] += 1
-            it = rec.get("inputTokens", rec.get("input_tokens", 0)) or 0
-            ot = rec.get("outputTokens", rec.get("output_tokens", 0)) or 0
-            tt = rec.get("totalTokens", rec.get("total_tokens", 0)) or 0
+            # Token counts live under "usage" dict in newer OpenClaw versions
+            usage = rec.get("usage", {})
+            it = usage.get("input_tokens", 0) or rec.get("inputTokens", rec.get("input_tokens", 0)) or 0
+            ot = usage.get("output_tokens", 0) or rec.get("outputTokens", rec.get("output_tokens", 0)) or 0
+            tt = usage.get("total_tokens", 0) or rec.get("totalTokens", rec.get("total_tokens", 0)) or 0
             result["input_tokens"] += it
             result["output_tokens"] += ot
             result["total_tokens"] += tt
@@ -249,6 +261,8 @@ def parse_cron_runs(last_offsets):
                 "output_tokens": ot,
                 "total_tokens": tt,
                 "model": rec.get("model", ""),
+                "run_at": rec.get("runAtMs", rec.get("ts", 0)) or 0,
+                "delivered": rec.get("delivered", False),
             })
 
     return result
@@ -290,7 +304,6 @@ state["cron_offsets"] = cron_data["new_offsets"]
 save_state(state)
 
 # Prune old files (>90 days)
-import glob
 from datetime import timedelta
 
 cutoff = now - timedelta(days=90)

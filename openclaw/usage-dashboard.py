@@ -185,79 +185,134 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
-<noscript><p style="color:#f87171;text-align:center;margin:2rem">JavaScript is required for charts.</p></noscript>
+<noscript><p style="color:#f87171;text-align:center;margin:2rem">JavaScript required.</p></noscript>
 <style>
-:root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --border: #2a2d3a;
-  --text: #e4e4e7;
-  --text-muted: #9ca3af;
-  --green: #22c55e;
-  --amber: #f59e0b;
-  --red: #ef4444;
-  --blue: #3b82f6;
-  --purple: #8b5cf6;
-  --cyan: #06b6d4;
-  --pink: #ec4899;
-}
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f8fafc;
-    --surface: #ffffff;
-    --border: #e2e8f0;
-    --text: #1e293b;
-    --text-muted: #64748b;
-  }
-}
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 1rem; max-width: 1200px; margin: 0 auto; }
-h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
-.updated { font-size: 0.75rem; color: var(--text-muted); font-weight: 400; margin-left: 0.5rem; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
-.card-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
-.card-value { font-size: 1.75rem; font-weight: 700; }
-.card-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
-.card-bar { height: 4px; border-radius: 2px; margin-top: 0.5rem; background: var(--border); overflow: hidden; }
-.card-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
-.controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-.controls button { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
-.controls button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
-.chart-container { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
-.chart-container h2 { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
-.chart-wrap { position: relative; width: 100%; min-height: 280px; }
-.chart-wrap.short { min-height: 200px; }
-canvas { width: 100% !important; }
-.loading { text-align: center; color: var(--text-muted); padding: 2rem; }
+:root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e4e4e7;--muted:#9ca3af;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#3b82f6;--purple:#8b5cf6;--cyan:#06b6d4}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);padding:1rem;max-width:1400px;margin:0 auto}
+
+/* Header */
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem}
+.header h1{font-size:1.15rem;font-weight:600}
+.header-right{display:flex;align-items:center;gap:1rem}
+.stale-warn{font-size:0.75rem;color:var(--red);font-weight:500;display:none}
+.last-update{font-size:0.7rem;color:var(--muted)}
+
+/* Controls */
+.controls{display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap}
+.controls button{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:0.35rem 0.9rem;border-radius:6px;cursor:pointer;font-size:0.78rem;transition:all 0.15s}
+.controls button:hover{border-color:var(--blue)}
+.controls button.active{background:var(--blue);border-color:var(--blue);color:#fff}
+
+/* Gauge row */
+.gauges{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:0.75rem;margin-bottom:1rem}
+.gauge{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1rem;text-align:center}
+.gauge-ring{position:relative;width:100px;height:100px;margin:0 auto 0.5rem}
+.gauge-ring svg{transform:rotate(-90deg)}
+.gauge-ring .track{fill:none;stroke:var(--border);stroke-width:8}
+.gauge-ring .fill{fill:none;stroke-width:8;stroke-linecap:round;transition:stroke-dashoffset 0.6s ease}
+.gauge-pct{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:1.4rem;font-weight:700}
+.gauge-label{font-size:0.7rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:0.15rem}
+.gauge-sub{font-size:0.75rem;color:var(--muted)}
+.gauge-pace{font-size:0.7rem;margin-top:0.35rem;font-weight:500}
+
+/* Stat cards */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.75rem;margin-bottom:1rem}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.85rem}
+.stat-label{font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:0.2rem}
+.stat-value{font-size:1.5rem;font-weight:700}
+.stat-sub{font-size:0.75rem;color:var(--muted);margin-top:0.15rem}
+
+/* Charts */
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1rem}
+@media(max-width:800px){.charts-grid{grid-template-columns:1fr}}
+.chart-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.85rem}
+.chart-box.full{grid-column:1/-1}
+.chart-box h2{font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted)}
+.chart-wrap{position:relative;width:100%;height:220px}
+
+/* Cron table */
+.cron-section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.85rem;margin-bottom:1rem}
+.cron-section h2{font-size:0.8rem;font-weight:600;margin-bottom:0.5rem;color:var(--muted)}
+.cron-table{width:100%;border-collapse:collapse;font-size:0.78rem}
+.cron-table th{text-align:left;padding:0.4rem 0.6rem;border-bottom:1px solid var(--border);color:var(--muted);font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em}
+.cron-table td{padding:0.4rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.03)}
+.cron-table tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:0.1rem 0.45rem;border-radius:4px;font-size:0.7rem;font-weight:500}
+.badge-ok{background:rgba(34,197,94,0.15);color:var(--green)}
+.badge-err{background:rgba(239,68,68,0.15);color:var(--red)}
+
+.loading{text-align:center;color:var(--muted);padding:2rem}
+.error-banner{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:0.75rem;color:var(--red);font-size:0.8rem;margin-bottom:1rem;display:none}
 </style>
 </head>
 <body>
-<h1>OpenClaw Usage <span class="updated" id="lastUpdate"></span></h1>
-<div class="cards" id="cards"><div class="loading">Loading...</div></div>
+
+<div class="header">
+  <h1>OpenClaw Usage</h1>
+  <div class="header-right">
+    <span class="stale-warn" id="staleWarn">Data stale</span>
+    <span class="last-update" id="lastUpdate"></span>
+  </div>
+</div>
+
+<div class="error-banner" id="errorBanner"></div>
+
 <div class="controls" id="timeControls">
+  <button data-hours="6">6h</button>
   <button data-hours="24" class="active">24h</button>
   <button data-hours="168">7d</button>
   <button data-hours="720">30d</button>
 </div>
-<div class="chart-container"><h2>Utilization Over Time</h2><div class="chart-wrap"><canvas id="utilChart"></canvas></div></div>
-<div class="chart-container"><h2>Token Usage</h2><div class="chart-wrap"><canvas id="tokenChart"></canvas></div></div>
-<div class="chart-container"><h2>Activity</h2><div class="chart-wrap"><canvas id="activityChart"></canvas></div></div>
-<div class="chart-container"><h2>Response Times</h2><div class="chart-wrap"><canvas id="rtChart"></canvas></div></div>
-<div class="chart-container"><h2>Errors</h2><div class="chart-wrap short"><canvas id="errorChart"></canvas></div></div>
+
+<!-- Utilization gauges -->
+<div class="gauges" id="gauges"><div class="loading">Loading...</div></div>
+
+<!-- Stat cards -->
+<div class="stats" id="stats"></div>
+
+<!-- Charts -->
+<div class="charts-grid">
+  <div class="chart-box full"><h2>Utilization Over Time</h2><div class="chart-wrap"><canvas id="utilChart"></canvas></div></div>
+  <div class="chart-box"><h2>Tokens by Job</h2><div class="chart-wrap"><canvas id="tokenJobChart"></canvas></div></div>
+  <div class="chart-box"><h2>Token Usage Over Time</h2><div class="chart-wrap"><canvas id="tokenTimeChart"></canvas></div></div>
+  <div class="chart-box"><h2>Cron Duration Trends</h2><div class="chart-wrap"><canvas id="durationChart"></canvas></div></div>
+  <div class="chart-box"><h2>Activity</h2><div class="chart-wrap"><canvas id="activityChart"></canvas></div></div>
+</div>
+
+<!-- Cron job table -->
+<div class="cron-section">
+  <h2>Recent Cron Runs</h2>
+  <table class="cron-table" id="cronTable">
+    <thead><tr><th>Job</th><th>Status</th><th>Model</th><th>Duration</th><th>Tokens</th><th>Time</th></tr></thead>
+    <tbody id="cronBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+  </table>
+</div>
 
 <script>
-let utilChart, tokenChart, activityChart, rtChart, errorChart;
+const C = { green:'#22c55e', amber:'#f59e0b', red:'#ef4444', blue:'#3b82f6', purple:'#8b5cf6', cyan:'#06b6d4', muted:'#9ca3af', grid:'rgba(255,255,255,0.05)' };
+let charts = {};
 let currentHours = 24;
 
-function utilizationColor(pct) {
-  if (pct == null) return 'var(--text-muted)';
-  if (pct < 50) return 'var(--green)';
-  if (pct < 80) return 'var(--amber)';
-  return 'var(--red)';
+// ── Helpers ──
+
+function utilColor(pct) {
+  if (pct == null) return C.muted;
+  return pct < 50 ? C.green : pct < 80 ? C.amber : C.red;
 }
 
-function formatCountdown(resetsAt) {
+function paceLabel(pct, resetsAt) {
+  if (pct == null || !resetsAt) return '';
+  const hoursLeft = Math.max(0, (new Date(resetsAt) - Date.now()) / 3600000);
+  if (hoursLeft <= 0) return 'resetting...';
+  // Simple pace: if you'd hit 100% before reset at current rate
+  const rate = pct / Math.max(1, (5 - hoursLeft)); // rough estimate for 5h window
+  if (pct < 30) return '<span style="color:' + C.green + '">chill</span>';
+  if (pct < 70) return '<span style="color:' + C.amber + '">on track</span>';
+  return '<span style="color:' + C.red + '">hot</span>';
+}
+
+function countdown(resetsAt) {
   if (!resetsAt) return '';
   const diff = new Date(resetsAt) - Date.now();
   if (diff <= 0) return 'resetting...';
@@ -266,238 +321,172 @@ function formatCountdown(resetsAt) {
   return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
 }
 
-function formatTokens(n) {
+function fmtTokens(n) {
   if (n == null || n === 0) return '0';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
   return String(n);
+}
+
+function fmtDuration(ms) {
+  if (!ms) return '-';
+  if (ms < 1000) return ms + 'ms';
+  const s = ms / 1000;
+  if (s < 60) return s.toFixed(1) + 's';
+  return Math.floor(s/60) + 'm ' + Math.round(s%60) + 's';
+}
+
+function fmtTime(ts) {
+  if (!ts) return '-';
+  const d = typeof ts === 'number' ? new Date(ts) : new Date(ts);
+  return d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+}
+
+function shortJobId(id) {
+  if (!id) return '?';
+  // Trim UUID-style prefixes, keep readable part
+  return id.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, id.slice(0,8))
+            .replace(/-0001$/, '');
 }
 
 async function fetchData(hours) {
   try {
-    const resp = await fetch('/api/data?hours=' + hours);
-    return await resp.json();
+    const r = await fetch('/api/data?hours=' + hours);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    document.getElementById('errorBanner').style.display = 'none';
+    return d;
   } catch (e) {
-    console.error('Fetch failed:', e);
+    document.getElementById('errorBanner').textContent = 'Failed to load data: ' + e.message;
+    document.getElementById('errorBanner').style.display = 'block';
     return { snapshots: [], meta: {} };
   }
 }
 
-function renderCards(snapshot) {
-  const el = document.getElementById('cards');
-  if (!snapshot || snapshot.error) {
-    el.innerHTML = '<div class="loading">No data available</div>';
-    return;
-  }
-  const u = snapshot.utilization || {};
-  const t = snapshot.tokens || {};
-  const a = snapshot.activity || {};
+// ── SVG Gauge ──
 
-  let html = '';
-
-  // 5-hour utilization
-  const fh = u.five_hour;
-  if (fh) {
-    const pct = fh.utilization != null ? fh.utilization.toFixed(1) : '?';
-    const color = utilizationColor(fh.utilization);
-    html += `<div class="card">
-      <div class="card-label">5-Hour Utilization</div>
-      <div class="card-value" style="color:${color}">${pct}%</div>
-      <div class="card-sub">Resets in ${formatCountdown(fh.resets_at)}</div>
-      <div class="card-bar"><div class="card-bar-fill" style="width:${Math.min(fh.utilization||0,100)}%;background:${color}"></div></div>
-    </div>`;
-  }
-
-  // 7-day utilization
-  const sd = u.seven_day;
-  if (sd) {
-    const pct = sd.utilization != null ? sd.utilization.toFixed(1) : '?';
-    const color = utilizationColor(sd.utilization);
-    html += `<div class="card">
-      <div class="card-label">7-Day Utilization</div>
-      <div class="card-value" style="color:${color}">${pct}%</div>
-      <div class="card-sub">Resets in ${formatCountdown(sd.resets_at)}</div>
-      <div class="card-bar"><div class="card-bar-fill" style="width:${Math.min(sd.utilization||0,100)}%;background:${color}"></div></div>
-    </div>`;
-  }
-
-  // Per-model breakdown
-  for (const [key, label] of [['seven_day_opus', 'Opus 7d'], ['seven_day_sonnet', 'Sonnet 7d']]) {
-    const m = u[key];
-    if (m) {
-      const pct = m.utilization != null ? m.utilization.toFixed(1) : '?';
-      html += `<div class="card">
-        <div class="card-label">${label}</div>
-        <div class="card-value">${pct}%</div>
-        <div class="card-sub">Resets in ${formatCountdown(m.resets_at)}</div>
-      </div>`;
-    }
-  }
-
-  // Extra credits
-  const ex = u.extra_usage;
-  if (ex && ex.is_enabled) {
-    html += `<div class="card">
-      <div class="card-label">Extra Credits</div>
-      <div class="card-value">$${(ex.used_credits || 0).toFixed(2)}</div>
-      <div class="card-sub">of $${ex.monthly_limit || '?'} limit</div>
-    </div>`;
-  }
-
-  // Tokens today
-  html += `<div class="card">
-    <div class="card-label">Tokens (Period)</div>
-    <div class="card-value">${formatTokens(t.total)}</div>
-    <div class="card-sub">In: ${formatTokens(t.input)} / Out: ${formatTokens(t.output)}</div>
+function gaugeHTML(label, pct, resetsAt, sub) {
+  const color = utilColor(pct);
+  const circ = 2 * Math.PI * 42; // r=42
+  const offset = circ - (circ * Math.min(pct || 0, 100) / 100);
+  const pctText = pct != null ? pct.toFixed(1) + '%' : '?';
+  const pace = paceLabel(pct, resetsAt);
+  return `<div class="gauge">
+    <div class="gauge-label">${label}</div>
+    <div class="gauge-ring">
+      <svg viewBox="0 0 100 100" width="100" height="100">
+        <circle class="track" cx="50" cy="50" r="42"/>
+        <circle class="fill" cx="50" cy="50" r="42"
+          stroke="${color}" stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/>
+      </svg>
+      <div class="gauge-pct" style="color:${color}">${pctText}</div>
+    </div>
+    <div class="gauge-sub">Resets in ${countdown(resetsAt)}</div>
+    ${sub ? '<div class="gauge-sub">' + sub + '</div>' : ''}
+    ${pace ? '<div class="gauge-pace">' + pace + '</div>' : ''}
   </div>`;
-
-  // Activity
-  const totalActivity = (a.agent_runs||0) + (a.messages_sent||0) + (a.cron_runs||0);
-  html += `<div class="card">
-    <div class="card-label">Activity (Period)</div>
-    <div class="card-value">${totalActivity}</div>
-    <div class="card-sub">Agents: ${a.agent_runs||0} / Msgs: ${a.messages_sent||0} / Cron: ${a.cron_runs||0}</div>
-  </div>`;
-
-  el.innerHTML = html;
-
-  // Timestamp
-  if (snapshot.timestamp) {
-    const d = new Date(snapshot.timestamp);
-    document.getElementById('lastUpdate').textContent = 'Updated ' + d.toLocaleTimeString();
-  }
 }
 
-function aggregateForCards(snapshots) {
-  // Sum tokens and activity across all snapshots in range
-  const result = { tokens: { input: 0, output: 0, total: 0 }, activity: { agent_runs: 0, messages_sent: 0, cron_runs: 0, errors: 0, gateway_restarts: 0 } };
-  for (const s of snapshots) {
+// ── Render ──
+
+function aggregate(snaps) {
+  const r = { tokens:{input:0,output:0,total:0}, activity:{agent_runs:0,messages_sent:0,cron_runs:0,errors:0,gateway_restarts:0}, cronJobs:[] };
+  for (const s of snaps) {
     const t = s.tokens || {};
-    result.tokens.input += t.input || 0;
-    result.tokens.output += t.output || 0;
-    result.tokens.total += t.total || 0;
+    r.tokens.input += t.input || 0;
+    r.tokens.output += t.output || 0;
+    r.tokens.total += t.total || 0;
     const a = s.activity || {};
-    result.activity.agent_runs += a.agent_runs || 0;
-    result.activity.messages_sent += a.messages_sent || 0;
-    result.activity.cron_runs += a.cron_runs || 0;
-    result.activity.errors += a.errors || 0;
-    result.activity.gateway_restarts += a.gateway_restarts || 0;
+    r.activity.agent_runs += a.agent_runs || 0;
+    r.activity.messages_sent += a.messages_sent || 0;
+    r.activity.cron_runs += a.cron_runs || 0;
+    r.activity.errors += a.errors || 0;
+    r.activity.gateway_restarts += a.gateway_restarts || 0;
+    if (s.cron_jobs) r.cronJobs.push(...s.cron_jobs);
   }
-  // Use latest utilization
-  if (snapshots.length > 0) {
-    result.utilization = snapshots[snapshots.length - 1].utilization;
-    result.timestamp = snapshots[snapshots.length - 1].timestamp;
+  if (snaps.length > 0) {
+    r.utilization = snaps[snaps.length - 1].utilization;
+    r.timestamp = snaps[snaps.length - 1].timestamp;
   }
-  return result;
+  return r;
 }
 
-const chartTextColor = () => getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#9ca3af';
+function renderGauges(util) {
+  const el = document.getElementById('gauges');
+  if (!util) { el.innerHTML = '<div class="loading">No utilization data</div>'; return; }
+  let h = '';
+  const fh = util.five_hour;
+  if (fh) h += gaugeHTML('5-Hour', fh.utilization, fh.resets_at);
+  const sd = util.seven_day;
+  if (sd) h += gaugeHTML('7-Day', sd.utilization, sd.resets_at);
+  const op = util.seven_day_opus;
+  if (op) h += gaugeHTML('Opus 7d', op.utilization, op.resets_at);
+  const sn = util.seven_day_sonnet;
+  if (sn) h += gaugeHTML('Sonnet 7d', sn.utilization, sn.resets_at);
+  const ex = util.extra_usage;
+  if (ex && ex.is_enabled) {
+    const pct = ex.monthly_limit ? ((ex.used_credits||0) / ex.monthly_limit * 100) : 0;
+    h += gaugeHTML('Extra Credits', pct, null, '$' + (ex.used_credits||0).toFixed(2) + ' / $' + (ex.monthly_limit||'?'));
+  }
+  el.innerHTML = h || '<div class="loading">No utilization data</div>';
+}
 
-const chartDefaults = {
-  responsive: true,
-  maintainAspectRatio: false,
+function renderStats(agg) {
+  const el = document.getElementById('stats');
+  const t = agg.tokens, a = agg.activity;
+  el.innerHTML = `
+    <div class="stat"><div class="stat-label">Total Tokens</div><div class="stat-value">${fmtTokens(t.total)}</div><div class="stat-sub">In: ${fmtTokens(t.input)} / Out: ${fmtTokens(t.output)}</div></div>
+    <div class="stat"><div class="stat-label">Cron Runs</div><div class="stat-value">${a.cron_runs}</div><div class="stat-sub">${agg.cronJobs.filter(j=>j.status==='error').length} failed</div></div>
+    <div class="stat"><div class="stat-label">Messages Sent</div><div class="stat-value">${a.messages_sent}</div></div>
+    <div class="stat"><div class="stat-label">Errors</div><div class="stat-value" style="color:${a.errors > 0 ? C.red : C.green}">${a.errors}</div></div>
+    <div class="stat"><div class="stat-label">Gateway Restarts</div><div class="stat-value">${a.gateway_restarts}</div></div>
+  `;
+}
+
+function renderCronTable(jobs) {
+  const el = document.getElementById('cronBody');
+  if (!jobs.length) { el.innerHTML = '<tr><td colspan="6" style="color:' + C.muted + ';text-align:center;padding:1rem">No cron runs in period</td></tr>'; return; }
+  // Most recent first
+  const sorted = [...jobs].reverse().slice(0, 50);
+  el.innerHTML = sorted.map(j => `<tr>
+    <td style="font-weight:500">${shortJobId(j.job_id)}</td>
+    <td><span class="badge ${j.status === 'ok' ? 'badge-ok' : 'badge-err'}">${j.status}</span></td>
+    <td style="color:${C.muted}">${j.model || '-'}</td>
+    <td>${fmtDuration(j.duration_ms)}</td>
+    <td>${fmtTokens(j.total_tokens)}</td>
+    <td style="color:${C.muted}">${j.run_at ? fmtTime(j.run_at) : '-'}</td>
+  </tr>`).join('');
+}
+
+function renderStaleness(ts) {
+  const el = document.getElementById('lastUpdate');
+  const warn = document.getElementById('staleWarn');
+  if (!ts) { el.textContent = ''; warn.style.display = 'none'; return; }
+  const d = new Date(ts);
+  const ago = (Date.now() - d.getTime()) / 60000;
+  el.textContent = 'Updated ' + d.toLocaleTimeString();
+  if (ago > 30) {
+    warn.textContent = Math.round(ago) + 'm stale';
+    warn.style.display = 'inline';
+  } else {
+    warn.style.display = 'none';
+  }
+}
+
+// ── Charts (all use resolved hex colors, not CSS vars) ──
+
+const baseOpts = {
+  responsive: true, maintainAspectRatio: false,
   animation: { duration: 300 },
-  plugins: { legend: { labels: { color: chartTextColor(), boxWidth: 12, padding: 10, font: { size: 11 } } } },
+  plugins: { legend: { labels: { color: C.muted, boxWidth: 10, padding: 8, font: { size: 10 } } } },
   scales: {
-    x: {
-      type: 'time',
-      grid: { color: 'rgba(255,255,255,0.05)' },
-      ticks: { color: chartTextColor(), font: { size: 10 } },
-    },
-    y: {
-      grid: { color: 'rgba(255,255,255,0.05)' },
-      ticks: { color: chartTextColor(), font: { size: 10 } },
-    },
+    x: { type:'time', grid:{ color: C.grid }, ticks:{ color: C.muted, font:{ size: 9 }, maxRotation: 0, autoSkipPadding: 20 } },
+    y: { grid:{ color: C.grid }, ticks:{ color: C.muted, font:{ size: 9 } } },
   },
 };
 
-// ── Chart: Utilization Over Time ──
-function buildUtilChart(snapshots) {
-  const fiveH = [], sevenD = [];
-  for (const s of snapshots) {
-    const u = s.utilization;
-    if (!u) continue;
-    const ts = s.timestamp;
-    if (u.five_hour) fiveH.push({ x: ts, y: u.five_hour.utilization });
-    if (u.seven_day) sevenD.push({ x: ts, y: u.seven_day.utilization });
-  }
-  return [
-    { label: '5-Hour %', data: fiveH, borderColor: 'var(--blue)', backgroundColor: 'rgba(59,130,246,0.1)', fill: false },
-    { label: '7-Day %', data: sevenD, borderColor: 'var(--purple)', backgroundColor: 'rgba(139,92,246,0.1)', fill: false },
-  ];
-}
-
-// ── Chart: Token Usage (stacked bar by hour/day) ──
-function buildTokenChart(snapshots) {
-  // Bucket tokens by hour
-  const inputBuckets = {}, outputBuckets = {};
-  for (const s of snapshots) {
-    const ts = new Date(s.timestamp);
-    const key = ts.toISOString().slice(0, 13) + ':00:00Z';
-    const t = s.tokens || {};
-    inputBuckets[key] = (inputBuckets[key] || 0) + (t.input || 0);
-    outputBuckets[key] = (outputBuckets[key] || 0) + (t.output || 0);
-  }
-  const keys = Object.keys(inputBuckets).sort();
-  return [
-    { label: 'Input', data: keys.map(k => ({ x: k, y: inputBuckets[k] })), backgroundColor: 'rgba(59,130,246,0.7)', borderColor: '#3b82f6', borderWidth: 1 },
-    { label: 'Output', data: keys.map(k => ({ x: k, y: outputBuckets[k] || 0 })), backgroundColor: 'rgba(139,92,246,0.7)', borderColor: '#8b5cf6', borderWidth: 1 },
-  ];
-}
-
-// ── Chart: Activity ──
-function buildActivityChart(snapshots) {
-  const agents = [], msgs = [], crons = [];
-  for (const s of snapshots) {
-    const a = s.activity || {};
-    const ts = s.timestamp;
-    agents.push({ x: ts, y: a.agent_runs || 0 });
-    msgs.push({ x: ts, y: a.messages_sent || 0 });
-    crons.push({ x: ts, y: a.cron_runs || 0 });
-  }
-  return [
-    { label: 'Agent Runs', data: agents, borderColor: '#06b6d4', fill: false },
-    { label: 'Messages', data: msgs, borderColor: '#22c55e', fill: false },
-    { label: 'Cron Jobs', data: crons, borderColor: '#f59e0b', fill: false },
-  ];
-}
-
-// ── Chart: Response Times (p50/p95/max) ──
-function buildRTChart(snapshots) {
-  const p50 = [], p95 = [], maxRT = [];
-  for (const s of snapshots) {
-    const rts = (s.response_times_ms || []).sort((a, b) => a - b);
-    if (rts.length === 0) continue;
-    const ts = s.timestamp;
-    p50.push({ x: ts, y: rts[Math.floor(rts.length * 0.5)] });
-    p95.push({ x: ts, y: rts[Math.floor(rts.length * 0.95)] });
-    maxRT.push({ x: ts, y: rts[rts.length - 1] });
-  }
-  return [
-    { label: 'p50', data: p50, borderColor: '#22c55e', fill: false },
-    { label: 'p95', data: p95, borderColor: '#f59e0b', fill: false },
-    { label: 'max', data: maxRT, borderColor: '#ef4444', fill: false },
-  ];
-}
-
-// ── Chart: Errors ──
-function buildErrorChart(snapshots) {
-  const buckets = {};
-  for (const s of snapshots) {
-    const ts = new Date(s.timestamp);
-    const key = ts.toISOString().slice(0, 13) + ':00:00Z';
-    const a = s.activity || {};
-    buckets[key] = (buckets[key] || 0) + (a.errors || 0);
-  }
-  const keys = Object.keys(buckets).sort();
-  return [
-    { label: 'Errors', data: keys.map(k => ({ x: k, y: buckets[k] })), backgroundColor: 'rgba(239,68,68,0.7)', borderColor: '#ef4444', borderWidth: 1 },
-  ];
-}
-
-// 100% threshold line plugin
 const thresholdPlugin = {
-  id: 'threshold',
+  id: 'threshold100',
   afterDraw(chart) {
     if (chart.canvas.id !== 'utilChart') return;
     const yScale = chart.scales.y;
@@ -505,96 +494,148 @@ const thresholdPlugin = {
     const y = yScale.getPixelForValue(100);
     if (y < chart.chartArea.top || y > chart.chartArea.bottom) return;
     const ctx = chart.ctx;
-    ctx.save();
-    ctx.beginPath();
-    ctx.setLineDash([6, 4]);
-    ctx.strokeStyle = 'rgba(239,68,68,0.5)';
-    ctx.lineWidth = 1;
-    ctx.moveTo(chart.chartArea.left, y);
-    ctx.lineTo(chart.chartArea.right, y);
-    ctx.stroke();
-    ctx.restore();
+    ctx.save(); ctx.beginPath(); ctx.setLineDash([6,4]);
+    ctx.strokeStyle = 'rgba(239,68,68,0.4)'; ctx.lineWidth = 1;
+    ctx.moveTo(chart.chartArea.left, y); ctx.lineTo(chart.chartArea.right, y);
+    ctx.stroke(); ctx.restore();
   }
 };
 
-function createLineChart(ctx, datasets, yLabel) {
-  return new Chart(ctx, {
-    type: 'line',
-    data: { datasets },
-    options: {
-      ...chartDefaults,
-      scales: {
-        ...chartDefaults.scales,
-        y: { ...chartDefaults.scales.y, title: { display: true, text: yLabel, color: chartTextColor() } },
-      },
-      elements: { point: { radius: 0, hitRadius: 6 }, line: { tension: 0.3, borderWidth: 2 } },
-    },
-    plugins: [thresholdPlugin],
-  });
+function updateOrCreate(id, type, datasets, yTitle, extra) {
+  const ctx = document.getElementById(id);
+  if (charts[id]) {
+    charts[id].data.datasets = datasets;
+    charts[id].update('none');
+    return;
+  }
+  const opts = JSON.parse(JSON.stringify(baseOpts));
+  if (yTitle) opts.scales.y.title = { display:true, text:yTitle, color:C.muted, font:{size:10} };
+  if (extra) Object.assign(opts, extra);
+  if (type === 'bar') { opts.scales.x.stacked = true; opts.scales.y.stacked = true; }
+  const plugins = id === 'utilChart' ? [thresholdPlugin] : [];
+  charts[id] = new Chart(ctx, { type, data:{ datasets }, options: opts, plugins });
 }
 
-function createStackedBarChart(ctx, datasets, yLabel) {
-  return new Chart(ctx, {
-    type: 'bar',
-    data: { datasets },
-    options: {
-      ...chartDefaults,
-      scales: {
-        ...chartDefaults.scales,
-        x: { ...chartDefaults.scales.x, stacked: true },
-        y: { ...chartDefaults.scales.y, stacked: true, title: { display: true, text: yLabel, color: chartTextColor() } },
+function buildCharts(snaps, agg) {
+  // Utilization over time
+  const fiveH = [], sevenD = [];
+  for (const s of snaps) {
+    const u = s.utilization; if (!u) continue;
+    if (u.five_hour) fiveH.push({ x: s.timestamp, y: u.five_hour.utilization });
+    if (u.seven_day) sevenD.push({ x: s.timestamp, y: u.seven_day.utilization });
+  }
+  updateOrCreate('utilChart', 'line', [
+    { label:'5-Hour', data:fiveH, borderColor:C.blue, backgroundColor:'rgba(59,130,246,0.08)', fill:true, tension:0.3, borderWidth:2, pointRadius:0, pointHitRadius:6 },
+    { label:'7-Day', data:sevenD, borderColor:C.purple, backgroundColor:'rgba(139,92,246,0.08)', fill:true, tension:0.3, borderWidth:2, pointRadius:0, pointHitRadius:6 },
+  ], 'Utilization %');
+
+  // Tokens by job (doughnut)
+  const jobTokens = {};
+  for (const j of agg.cronJobs) {
+    const name = shortJobId(j.job_id);
+    jobTokens[name] = (jobTokens[name] || 0) + (j.total_tokens || 0);
+  }
+  const jobNames = Object.keys(jobTokens).sort((a,b) => jobTokens[b] - jobTokens[a]);
+  const jobColors = [C.blue, C.purple, C.cyan, C.amber, C.green, C.red, '#ec4899', '#f97316'];
+  if (charts['tokenJobChart']) { charts['tokenJobChart'].destroy(); delete charts['tokenJobChart']; }
+  if (jobNames.length > 0 && Object.values(jobTokens).some(v => v > 0)) {
+    charts['tokenJobChart'] = new Chart(document.getElementById('tokenJobChart'), {
+      type: 'doughnut',
+      data: {
+        labels: jobNames,
+        datasets: [{ data: jobNames.map(n => jobTokens[n]), backgroundColor: jobNames.map((_,i) => jobColors[i % jobColors.length]), borderWidth: 0 }],
       },
-    },
-  });
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position:'right', labels:{ color:C.muted, boxWidth:10, padding:6, font:{size:10} } } },
+        cutout: '60%',
+      },
+    });
+  } else {
+    // Empty state
+    const ctx = document.getElementById('tokenJobChart').getContext('2d');
+    ctx.fillStyle = C.muted; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('No token data', ctx.canvas.width/2, ctx.canvas.height/2);
+  }
+
+  // Token usage over time (stacked bar)
+  const inputBk = {}, outputBk = {};
+  for (const s of snaps) {
+    const ts = new Date(s.timestamp);
+    const key = ts.toISOString().slice(0,13) + ':00:00Z';
+    const t = s.tokens || {};
+    inputBk[key] = (inputBk[key]||0) + (t.input||0);
+    outputBk[key] = (outputBk[key]||0) + (t.output||0);
+  }
+  const tkeys = Object.keys(inputBk).sort();
+  updateOrCreate('tokenTimeChart', 'bar', [
+    { label:'Input', data:tkeys.map(k=>({x:k,y:inputBk[k]})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
+    { label:'Output', data:tkeys.map(k=>({x:k,y:outputBk[k]||0})), backgroundColor:'rgba(139,92,246,0.7)', borderColor:C.purple, borderWidth:1 },
+  ], 'Tokens');
+
+  // Cron duration trends
+  const durByJob = {};
+  for (const j of agg.cronJobs) {
+    const name = shortJobId(j.job_id);
+    if (!durByJob[name]) durByJob[name] = [];
+    durByJob[name].push({ x: j.run_at || j.ts, y: (j.duration_ms || 0) / 1000 });
+  }
+  const durDatasets = Object.entries(durByJob).map(([name, pts], i) => ({
+    label: name, data: pts, borderColor: jobColors[i % jobColors.length],
+    borderWidth: 1.5, pointRadius: 2, pointHitRadius: 6, tension: 0.2, fill: false,
+  }));
+  updateOrCreate('durationChart', 'line', durDatasets, 'Seconds');
+
+  // Activity
+  const agents = [], msgs = [], crons = [];
+  for (const s of snaps) {
+    const a = s.activity || {};
+    agents.push({ x:s.timestamp, y:a.agent_runs||0 });
+    msgs.push({ x:s.timestamp, y:a.messages_sent||0 });
+    crons.push({ x:s.timestamp, y:a.cron_runs||0 });
+  }
+  updateOrCreate('activityChart', 'line', [
+    { label:'Agents', data:agents, borderColor:C.cyan, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
+    { label:'Messages', data:msgs, borderColor:C.green, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
+    { label:'Cron', data:crons, borderColor:C.amber, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
+  ], 'Count');
 }
 
-function createBarChart(ctx, datasets, yLabel) {
-  return new Chart(ctx, {
-    type: 'bar',
-    data: { datasets },
-    options: {
-      ...chartDefaults,
-      scales: {
-        ...chartDefaults.scales,
-        y: { ...chartDefaults.scales.y, title: { display: true, text: yLabel, color: chartTextColor() }, min: 0 },
-      },
-    },
-  });
-}
+// ── Refresh ──
 
 async function refresh() {
   const data = await fetchData(currentHours);
   const snaps = data.snapshots || [];
 
-  // Cards: aggregate across all snapshots
-  if (snaps.length > 0) {
-    renderCards(aggregateForCards(snaps));
-  } else {
-    document.getElementById('cards').innerHTML = '<div class="loading">No data available</div>';
+  if (snaps.length === 0) {
+    document.getElementById('gauges').innerHTML = '<div class="loading">No data available</div>';
+    document.getElementById('stats').innerHTML = '';
+    document.getElementById('cronBody').innerHTML = '<tr><td colspan="6" class="loading">No data</td></tr>';
+    return;
   }
 
-  if (typeof Chart === 'undefined') return;
+  const agg = aggregate(snaps);
+  renderGauges(agg.utilization);
+  renderStats(agg);
+  renderCronTable(agg.cronJobs);
+  renderStaleness(agg.timestamp);
 
-  // Destroy existing charts
-  [utilChart, tokenChart, activityChart, rtChart, errorChart].forEach(c => { if (c) c.destroy(); });
-
-  utilChart = createLineChart(document.getElementById('utilChart'), buildUtilChart(snaps), 'Utilization %');
-  tokenChart = createStackedBarChart(document.getElementById('tokenChart'), buildTokenChart(snaps), 'Tokens');
-  activityChart = createLineChart(document.getElementById('activityChart'), buildActivityChart(snaps), 'Count');
-  rtChart = createLineChart(document.getElementById('rtChart'), buildRTChart(snaps), 'ms');
-  errorChart = createBarChart(document.getElementById('errorChart'), buildErrorChart(snaps), 'Errors');
+  if (typeof Chart !== 'undefined') buildCharts(snaps, agg);
 }
 
-// Time range buttons
+// ── Events ──
+
 document.getElementById('timeControls').addEventListener('click', e => {
   if (e.target.tagName !== 'BUTTON') return;
   document.querySelectorAll('#timeControls button').forEach(b => b.classList.remove('active'));
   e.target.classList.add('active');
   currentHours = parseInt(e.target.dataset.hours);
+  // Destroy all charts on time range change to rebuild cleanly
+  Object.values(charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+  charts = {};
   refresh();
 });
 
-// Initial load + auto-refresh every 5 minutes
 refresh();
 setInterval(refresh, 5 * 60 * 1000);
 </script>
