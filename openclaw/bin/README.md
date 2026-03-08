@@ -64,6 +64,29 @@ scp openclaw/bin/openclaw-refresh-secrets dylans-mac-mini:~/bin/openclaw-refresh
 |--------|-------------|
 | `dotfiles-pull.command` | Daily git pull of the dotfiles repo on Mini. Stashes local changes, pulls `--ff-only`, pops stash. Runs cron job sync after pull. Auto-closes Terminal window. Runs as a LaunchAgent via Terminal.app for git credential access. |
 
+### Markdown Search (qmd)
+
+| Script | Description |
+|--------|-------------|
+| `qmd-setup.sh` | One-time setup for `qmd` (Quick Markdown Search) on Mini. Indexes all OpenClaw markdown (workspace, skills, dotfiles) with BM25 + vector embeddings for hybrid search. |
+
+**Package**: `@tobilu/qmd` (npm), installed at `/opt/homebrew/bin/qmd`
+
+**Collections**:
+| Name | Path | Contents |
+|------|------|----------|
+| `workspace` | `~/.openclaw/workspace/` | SOUL.md, TOOLS.md, HEARTBEAT.md |
+| `skills` | `~/.openclaw/skills/` | All SKILL.md files |
+| `dotfiles-openclaw` | `~/dotfiles/openclaw/` | Bin scripts, plans, workspace copies |
+
+**Usage**:
+```bash
+qmd query "how does the BB watchdog work"    # hybrid search (recommended)
+qmd search "cart URL"                         # BM25 keyword search
+qmd update --pull                             # re-index after dotfiles pull
+qmd mcp                                       # start MCP server for AI agents
+```
+
 ### Device Monitoring
 
 | Script | Description |
