@@ -268,6 +268,61 @@ def parse_cron_runs(last_offsets):
     return result
 
 
+# ── 4. Query BlueBubbles message counts ───────────────────────────────
+
+SECRETS_CACHE = Path.home() / ".openclaw" / ".secrets-cache"
+BB_BASE = "http://localhost:1234/api/v1"
+
+
+def get_bb_password():
+    if not SECRETS_CACHE.exists():
+        return None
+    try:
+        for line in SECRETS_CACHE.read_text().splitlines():
+            if line.startswith("BLUEBUBBLES_PASSWORD="):
+                return line.split("=", 1)[1].strip().strip("'\"")
+    except OSError:
+        pass
+    return None
+
+
+def fetch_bb_messages(last_ts):
+    """Count sent/received iMessages since last snapshot via BlueBubbles API."""
+    result = {"messages_sent": 0, "messages_received": 0}
+    pw = get_bb_password()
+    if not pw:
+        return result
+
+    # Convert last_ts ISO string to epoch ms for BB 'after' param
+    after_ms = 0
+    if last_ts:
+        try:
+            dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+            after_ms = int(dt.timestamp() * 1000)
+        except (ValueError, AttributeError):
+            pass
+
+    try:
+        url = f"{BB_BASE}/message/query?password={pw}"
+        body = json.dumps({
+            "limit": 500,
+            "sort": "DESC",
+            "after": after_ms,
+        }).encode()
+        req = Request(url, data=body, headers={"Content-Type": "application/json"})
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        for m in data.get("data", []):
+            if m.get("isFromMe"):
+                result["messages_sent"] += 1
+            else:
+                result["messages_received"] += 1
+    except (URLError, json.JSONDecodeError, OSError):
+        pass
+
+    return result
+
+
 # ── Build and write snapshot ────────────────────────────────────────────
 
 state = load_state()
@@ -275,6 +330,7 @@ state = load_state()
 utilization = fetch_utilization()
 log_data = parse_runtime_log(state["log_offset"])
 cron_data = parse_cron_runs(state["cron_offsets"])
+bb_data = fetch_bb_messages(state["last_ts"])
 
 snapshot = {
     "timestamp": now_iso,
@@ -286,7 +342,8 @@ snapshot = {
     },
     "activity": {
         "agent_runs": log_data["agent_runs"],
-        "messages_sent": log_data["messages_sent"],
+        "messages_sent": bb_data["messages_sent"],
+        "messages_received": bb_data["messages_received"],
         "cron_runs": cron_data["cron_runs"],
         "errors": log_data["errors"],
         "gateway_restarts": log_data["gateway_restarts"],

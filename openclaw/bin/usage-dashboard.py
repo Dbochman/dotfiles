@@ -284,8 +284,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 <div class="cron-section">
   <h2>Recent Cron Runs</h2>
   <table class="cron-table" id="cronTable">
-    <thead><tr><th>Job</th><th>Status</th><th>Model</th><th>Duration</th><th>Tokens</th><th>Time</th></tr></thead>
-    <tbody id="cronBody"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
+    <thead><tr><th>Job</th><th>Status</th><th>Delivered</th><th>Model</th><th>Duration</th><th>Tokens</th><th>Time</th></tr></thead>
+    <tbody id="cronBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
   </table>
 </div>
 
@@ -390,7 +390,7 @@ function gaugeHTML(label, pct, resetsAt, sub) {
 // ── Render ──
 
 function aggregate(snaps) {
-  const r = { tokens:{input:0,output:0,total:0}, activity:{agent_runs:0,messages_sent:0,cron_runs:0,errors:0,gateway_restarts:0}, cronJobs:[] };
+  const r = { tokens:{input:0,output:0,total:0}, activity:{agent_runs:0,messages_sent:0,messages_received:0,cron_runs:0,errors:0,gateway_restarts:0}, cronJobs:[] };
   for (const s of snaps) {
     const t = s.tokens || {};
     r.tokens.input += t.input || 0;
@@ -399,6 +399,7 @@ function aggregate(snaps) {
     const a = s.activity || {};
     r.activity.agent_runs += a.agent_runs || 0;
     r.activity.messages_sent += a.messages_sent || 0;
+    r.activity.messages_received += a.messages_received || 0;
     r.activity.cron_runs += a.cron_runs || 0;
     r.activity.errors += a.errors || 0;
     r.activity.gateway_restarts += a.gateway_restarts || 0;
@@ -437,7 +438,7 @@ function renderStats(agg) {
   el.innerHTML = `
     <div class="stat"><div class="stat-label">Total Tokens</div><div class="stat-value">${fmtTokens(t.total)}</div><div class="stat-sub">In: ${fmtTokens(t.input)} / Out: ${fmtTokens(t.output)}</div></div>
     <div class="stat"><div class="stat-label">Cron Runs</div><div class="stat-value">${a.cron_runs}</div><div class="stat-sub">${agg.cronJobs.filter(j=>j.status==='error').length} failed</div></div>
-    <div class="stat"><div class="stat-label">Messages Sent</div><div class="stat-value">${a.messages_sent}</div></div>
+    <div class="stat"><div class="stat-label">Messages</div><div class="stat-value">${a.messages_sent + a.messages_received}</div><div class="stat-sub">Sent: ${a.messages_sent} / Recv: ${a.messages_received}</div></div>
     <div class="stat"><div class="stat-label">Errors</div><div class="stat-value" style="color:${a.errors > 0 ? C.red : C.green}">${a.errors}</div></div>
     <div class="stat"><div class="stat-label">Gateway Restarts</div><div class="stat-value">${a.gateway_restarts}</div></div>
   `;
@@ -445,17 +446,22 @@ function renderStats(agg) {
 
 function renderCronTable(jobs) {
   const el = document.getElementById('cronBody');
-  if (!jobs.length) { el.innerHTML = '<tr><td colspan="6" style="color:' + C.muted + ';text-align:center;padding:1rem">No cron runs in period</td></tr>'; return; }
+  if (!jobs.length) { el.innerHTML = '<tr><td colspan="7" style="color:' + C.muted + ';text-align:center;padding:1rem">No cron runs in period</td></tr>'; return; }
   // Most recent first
   const sorted = [...jobs].reverse().slice(0, 50);
-  el.innerHTML = sorted.map(j => `<tr>
+  el.innerHTML = sorted.map(j => {
+    const delIcon = j.delivered === true ? '✓' : j.delivered === false ? '✗' : '-';
+    const delColor = j.delivered === true ? C.green : j.delivered === false ? C.red : C.muted;
+    return `<tr>
     <td style="font-weight:500">${shortJobId(j.job_id)}</td>
     <td><span class="badge ${j.status === 'ok' ? 'badge-ok' : 'badge-err'}">${j.status}</span></td>
+    <td style="color:${delColor};text-align:center">${delIcon}</td>
     <td style="color:${C.muted}">${j.model || '-'}</td>
     <td>${fmtDuration(j.duration_ms)}</td>
     <td>${fmtTokens(j.total_tokens)}</td>
     <td style="color:${C.muted}">${j.run_at ? fmtTime(j.run_at) : '-'}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 
 function renderStaleness(ts) {
@@ -587,16 +593,16 @@ function buildCharts(snaps, agg) {
   updateOrCreate('durationChart', 'line', durDatasets, 'Seconds');
 
   // Activity
-  const agents = [], msgs = [], crons = [];
+  const sent = [], recv = [], crons = [];
   for (const s of snaps) {
     const a = s.activity || {};
-    agents.push({ x:s.timestamp, y:a.agent_runs||0 });
-    msgs.push({ x:s.timestamp, y:a.messages_sent||0 });
+    sent.push({ x:s.timestamp, y:a.messages_sent||0 });
+    recv.push({ x:s.timestamp, y:a.messages_received||0 });
     crons.push({ x:s.timestamp, y:a.cron_runs||0 });
   }
   updateOrCreate('activityChart', 'line', [
-    { label:'Agents', data:agents, borderColor:C.cyan, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
-    { label:'Messages', data:msgs, borderColor:C.green, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
+    { label:'Sent', data:sent, borderColor:C.blue, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
+    { label:'Received', data:recv, borderColor:C.green, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
     { label:'Cron', data:crons, borderColor:C.amber, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
   ], 'Count');
 }
@@ -610,7 +616,7 @@ async function refresh() {
   if (snaps.length === 0) {
     document.getElementById('gauges').innerHTML = '<div class="loading">No data available</div>';
     document.getElementById('stats').innerHTML = '';
-    document.getElementById('cronBody').innerHTML = '<tr><td colspan="6" class="loading">No data</td></tr>';
+    document.getElementById('cronBody').innerHTML = '<tr><td colspan="7" class="loading">No data</td></tr>';
     return;
   }
 
