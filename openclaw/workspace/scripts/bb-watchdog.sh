@@ -64,11 +64,22 @@ if [[ -z "$BB_PW" ]]; then
   exit 1
 fi
 
-# Check if BB is running
+# Check if BB is running (API port)
 if ! curl -s --max-time 5 "${BB_URL}/api/v1/ping?password=${BB_PW}" > /dev/null 2>&1; then
   log "WARN: BB not reachable, attempting to start"
   open -a BlueBubbles
   exit 0
+fi
+
+# Verify the gateway's BB plugin is loaded by checking if the gateway process
+# is listening and the BB webhook endpoint responds. BB dispatches webhooks to
+# the gateway at http://localhost:18789/bluebubbles-webhook — if the gateway's
+# BB plugin failed to load (e.g., broken module import after npm upgrade), BB
+# will dispatch webhooks into the void and no messages reach OpenClaw.
+GW_URL="http://localhost:18789"
+GW_BB_HEALTHY=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "${GW_URL}/__openclaw__/canvas/" 2>/dev/null || echo "000")
+if [[ "$GW_BB_HEALTHY" == "000" ]]; then
+  log "WARN: Gateway not reachable — BB webhooks may not be received"
 fi
 
 # Query latest message (any sender) — this is what we track for stall detection
@@ -135,6 +146,39 @@ try {
   }
 } catch {}
 
+// Cross-check: verify gateway is actually receiving BB webhooks.
+// BB can dispatch webhooks successfully (webhookAgeMin is low) but the gateway
+// may not have its BB plugin loaded (e.g., broken import after npm upgrade).
+// Check gateway runtime log for recent bluebubbles inbound activity.
+let gatewayBbAliveMin = 999;
+try {
+  const today = new Date().toISOString().slice(0, 10);
+  const gwLogPath = '/tmp/openclaw/openclaw-' + today + '.log';
+  if (fs.existsSync(gwLogPath)) {
+    const gwContent = fs.readFileSync(gwLogPath, 'utf8');
+    const gwLines = gwContent.split('\n');
+    for (let i = gwLines.length - 1; i >= 0; i--) {
+      // Look for BB plugin startup or inbound message activity
+      if (gwLines[i].includes('bluebubbles') && (gwLines[i].includes('webhook listening') || gwLines[i].includes('inbound') || gwLines[i].includes('new-message'))) {
+        try {
+          const entry = JSON.parse(gwLines[i]);
+          const ts = entry._meta?.date;
+          if (ts) {
+            gatewayBbAliveMin = Math.floor((now - new Date(ts).getTime()) / 60000);
+          }
+        } catch {
+          // Try plain text timestamp
+          const m = gwLines[i].match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+          if (m) gatewayBbAliveMin = Math.floor((now - new Date(m[1]).getTime()) / 60000);
+        }
+        break;
+      }
+    }
+  }
+} catch {}
+// If gateway BB plugin hasn't shown any activity in 60+ minutes, flag it
+const gatewayBbDead = gatewayBbAliveMin >= 60;
+
 // Decision logic:
 // 1. If we can't reach BB API → skip
 // 2. If GUID changed AND webhook was dispatched recently → new message processed, all good
@@ -156,7 +200,20 @@ const newMsgNeedsAttention = (webhookAgeMin > 1) && (msgAgeSec >= lagAlertSec);
 // low msgAgeSec.
 const webhookServiceDead = webhookAgeMin >= WEBHOOK_DEAD_THRESHOLD_MIN && guidChanged;
 
-if (!latestGuid) {
+// Gateway-BB-dead detection: BB dispatches webhooks (webhookAgeMin is low)
+// but gateway's BB plugin isn't loaded or isn't processing them. This catches
+// broken BB plugin imports after npm upgrades. Action: restart gateway only.
+const gatewayNeedsRestart = gatewayBbDead && webhookAgeMin < 10 && guidChanged;
+
+if (gatewayNeedsRestart && !inCooldown) {
+  prev.allGuid = latestGuid;
+  prev.allSeenAt = now;
+  prev.pendingGuid = '';
+  prev.pendingChecks = 0;
+  saveState = true;
+  action = 'restart-gateway';
+  reason = 'BB dispatching webhooks (last ' + webhookAgeMin + 'min ago) but gateway BB plugin inactive (' + gatewayBbAliveMin + 'min since last activity) — restarting gateway only';
+} else if (!latestGuid) {
   action = 'skip';
   reason = 'could not fetch latest message from BB API';
 } else if (webhookServiceDead && !inCooldown) {
@@ -302,6 +359,24 @@ case "$ACTION" in
       log "WARN: Gateway restart failed — webhook may be stale"
     fi
 
+    # Record restart in state
+    $NODE -e "
+const fs = require('fs');
+const stateFile = '$STATE_FILE';
+let prev = {};
+try { prev = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
+prev.lastRestart = Date.now();
+fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
+" 2>/dev/null
+    ;;
+  restart-gateway)
+    log "GATEWAY BB PLUGIN DEAD: ${REASON}"
+    log "ACTION: Restarting gateway only (BB is healthy)..."
+    if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
+      log "ACTION: Gateway restarted (BB plugin reload)"
+    else
+      log "WARN: Gateway restart failed"
+    fi
     # Record restart in state
     $NODE -e "
 const fs = require('fs');
