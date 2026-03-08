@@ -567,11 +567,10 @@ function buildCharts(snaps, agg) {
     ctx.fillText('No token data', ctx.canvas.width/2, ctx.canvas.height/2);
   }
 
-  // Token usage over time (stacked bar)
+  // Token usage over time (stacked bar, same adaptive buckets as activity)
   const inputBk = {}, outputBk = {};
   for (const s of chartSnaps) {
-    const ts = new Date(s.timestamp);
-    const key = ts.toISOString().slice(0,13) + ':00:00Z';
+    const key = activityBucketKey(s.timestamp);
     const t = s.tokens || {};
     inputBk[key] = (inputBk[key]||0) + (t.input||0);
     outputBk[key] = (outputBk[key]||0) + (t.output||0);
@@ -595,11 +594,21 @@ function buildCharts(snaps, agg) {
   }));
   updateOrCreate('durationChart', 'line', durDatasets, 'Seconds');
 
-  // Activity (hourly buckets — aggregates sparse snapshots into readable bars)
+  // Activity (adaptive buckets: hourly for ≤24h, 12h for 7d, daily for 30d+)
+  function activityBucketKey(ts) {
+    const d = new Date(ts);
+    if (currentHours <= 24) {
+      return d.toISOString().slice(0,13) + ':00:00Z'; // hourly
+    } else if (currentHours <= 168) {
+      const h = d.getUTCHours() < 12 ? '00' : '12';
+      return d.toISOString().slice(0,10) + 'T' + h + ':00:00Z'; // 12h
+    } else {
+      return d.toISOString().slice(0,10) + 'T12:00:00Z'; // daily (noon for centering)
+    }
+  }
   const sentBk = {}, recvBk = {}, cronBk = {};
   for (const s of chartSnaps) {
-    const ts = new Date(s.timestamp);
-    const key = ts.toISOString().slice(0,13) + ':00:00Z';
+    const key = activityBucketKey(s.timestamp);
     const a = s.activity || {};
     sentBk[key] = (sentBk[key]||0) + (a.messages_sent||0);
     recvBk[key] = (recvBk[key]||0) + (a.messages_received||0);
