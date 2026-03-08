@@ -48,6 +48,23 @@ log "Upgraded to: $NEW_VER"
 cp "${PLIST}.pre-upgrade" "$PLIST"
 log "Plist restored from backup"
 
+# 6.5 Re-apply BB plugin patch (v2026.3.7+ has broken import path in monitor-normalize.ts)
+BB_MONITOR="/opt/homebrew/lib/node_modules/openclaw/extensions/bluebubbles/src/monitor-normalize.ts"
+if [ -f "$BB_MONITOR" ]; then
+  if grep -q "parse-finite-number" "$BB_MONITOR"; then
+    log "Patching BB plugin: replacing broken parse-finite-number import with inline function"
+    sed -i "" "s|import { parseFiniteNumber } from \".*parse-finite-number.*\";|function parseFiniteNumber(v: unknown): number \| undefined { const n = typeof v === \"number\" ? v : typeof v === \"string\" ? Number(v) : NaN; return Number.isFinite(n) ? n : undefined; }|" "$BB_MONITOR"
+    if grep -q "parse-finite-number" "$BB_MONITOR"; then
+      log "WARNING: BB plugin patch may have failed — broken import still present"
+      echo "WARN:bb-patch-failed" >> "$LOG"
+    else
+      log "BB plugin patched successfully"
+    fi
+  else
+    log "BB plugin does not need patching (no broken import found)"
+  fi
+fi
+
 # 7. Restart gateway
 launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
 sleep 3
