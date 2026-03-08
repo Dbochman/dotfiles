@@ -26,12 +26,12 @@ import argparse
 # ============================================================
 PT_BASE = "http://127.0.0.1:9867"
 GWS = "/opt/homebrew/bin/gws"
-JULIA_EMAIL = "julia.joy.jennings@gmail.com"
-SM_USER = os.environ.get("STARMARKET_USERNAME", "juliajoyjennings@gmail.com")
+JULIA_EMAIL = os.environ.get("STARMARKET_GMAIL", "")
+SM_USER = os.environ.get("STARMARKET_USERNAME", "")
 SM_PASS = os.environ.get("STARMARKET_PASSWORD", "")
 SUB_KEY = "9e38e3f1d32a4279a49a264e0831ea46"
-USER_HASH = "29fb95f3f8a30a41fb17ac7e74543649e5a69d54e423d2ba66a91d67a28918bb"
-DEVICE_TOKEN = "0bbf660dcdd2bed236a204f4eaa54bb6"
+USER_HASH = os.environ.get("STARMARKET_USER_HASH", "")
+DEVICE_TOKEN = os.environ.get("STARMARKET_DEVICE_TOKEN", "")
 SM_BASE = "https://www.starmarket.com"
 
 # ============================================================
@@ -385,8 +385,13 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Login and show orders without reordering")
     args = parser.parse_args()
 
-    if not SM_PASS:
-        fail("STARMARKET_PASSWORD not set in environment")
+    missing = [k for k, v in [
+        ("STARMARKET_PASSWORD", SM_PASS), ("STARMARKET_USERNAME", SM_USER),
+        ("STARMARKET_GMAIL", JULIA_EMAIL), ("STARMARKET_USER_HASH", USER_HASH),
+        ("STARMARKET_DEVICE_TOKEN", DEVICE_TOKEN),
+    ] if not v]
+    if missing:
+        fail(f"Missing env vars: {', '.join(missing)}. Source ~/.openclaw/.secrets-cache first.")
 
     # Step 1: Login
     if not login():
