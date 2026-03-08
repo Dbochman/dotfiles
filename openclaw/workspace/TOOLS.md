@@ -2,6 +2,8 @@
 
 Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
 
+> **Deep reference**: For detailed docs on any tool below (API endpoints, curl examples, device IDs, troubleshooting), use `qmd query "<topic>"` to search indexed docs. Only essentials are kept here to save context.
+
 ## Smart Home Devices
 
 ### Cabin (Philly)
@@ -14,22 +16,8 @@ Skills define _how_ tools work. This file is for _your_ specifics — the stuff 
 ### Crosstown (Boston)
 - Philips Hue lights
 - Cielo Breez Plus smart AC controllers (Basement, Living Room, Dylan's Office, Bedroom)
+- Mysa baseboard heaters (Cat Room, Basement door, Movie room)
 - Google smart speakers
-
-## Spotify Connect Devices
-
-These device IDs are used with the Andre Spotify Connect API (`api/spotify/transfer`).
-
-| Device Name | Device ID | Type | Notes |
-|---|---|---|---|
-| Kitchen speaker | `b8581271559fd61aa994726df743285c` | CastAudio | Google Nest Audio, Cabin (currently active) |
-| Dylan's Mac mini | `0eb8b896cf741cd28d15b1ce52904ae7940e4aae` | Computer | Cabin server |
-| Dylan's MacBook Pro | `173fd1e1d533e5a1c59fc25979c3baccc3af5d07` | Computer | |
-| Dylan's Mac | `13bc12a88f007bf49d13997fc64c0a6640f49440` | Computer | |
-
-## What Goes Here
-
-Environment-specific notes: camera names, SSH hosts, speaker names, device nicknames, TTS preferences. Skills define _how_ tools work; this file captures _your_ specific setup details.
 
 ## Image Tool — Path Policy
 
@@ -39,24 +27,17 @@ The `image` tool is restricted to workspace paths (`tools.fs.workspaceOnly: true
 # Good
 cp /tmp/screenshot.png ~/.openclaw/workspace/tmp/screenshot.png
 # Then use: image(path="~/.openclaw/workspace/tmp/screenshot.png")
-
-# Bad — will fail
-# image(path="/tmp/screenshot.png")
-# image(path="~/Downloads/photo.jpg")
 ```
 
-The `tmp/` dir is gitignored-by-convention (ephemeral files). Clean it up periodically.
-## GWS (Google Workspace CLI) — Primary
+## GWS (Google Workspace CLI)
 
-CLI at `/opt/homebrew/bin/gws` (v0.4.4, Rust binary via npm `@googleworkspace/cli`). Gmail, Calendar, Drive, Tasks.
+CLI at `/opt/homebrew/bin/gws` (v0.4.4, Rust binary). Gmail, Calendar, Drive, Tasks.
 
 - Command pattern: `gws <service> <resource> <method> [--params '<JSON>'] [--json '<JSON>'] [--account <email>]`
-- Credentials: AES-256-GCM encrypted at `~/.config/gws/` (per-account `credentials.<base64>.enc` + `.encryption_key`)
-- Auth requires browser (OAuth) — auth locally, then `scp` credentials + `.encryption_key` + `accounts.json` to Mini/MBP
-- **DANGER: `gws auth logout` without `--account <email>` NUKES ALL accounts** — always use per-account flag
-- Installed on: MacBook Pro (local), Mac Mini, MacBook Pro (Crosstown)
+- Credentials: AES-256-GCM encrypted at `~/.config/gws/`
+- **DANGER: `gws auth logout` without `--account <email>` NUKES ALL accounts**
 
-### GWS Accounts
+### Accounts
 
 | Account | Owner | Flag |
 |---|---|---|
@@ -67,242 +48,42 @@ CLI at `/opt/homebrew/bin/gws` (v0.4.4, Rust binary via npm `@googleworkspace/cl
 
 ### Skills
 
-| Skill | File |
+| Skill | Details |
 |---|---|
-| `gws-calendar` | `openclaw/skills/gws-calendar/SKILL.md` |
-| `gws-gmail` | `openclaw/skills/gws-gmail/SKILL.md` |
-| `gws-drive` | `openclaw/skills/gws-drive/SKILL.md` |
-
-## Catt (Chromecast CLI)
-
-CLI at `~/.local/bin/catt` (v0.13.1). Not on default PATH.
-
-- Wake speakers before Spotify Connect — Google Home speakers only appear to Spotify when actively casting
-- `catt -d <IP> cast_site https://example.com` to wake a speaker
-
-### Speakers (Cabin)
-
-| Name | IP |
-|---|---|
-| Kitchen | 192.168.1.66 |
-| Bedroom | 192.168.1.163 |
-
-## Roomba
-
-CLI at `~/.openclaw/skills/roomba/roomba` (Python venv at `~/.openclaw/roomba/venv`).
-
-- Controls Floomba + Philly (Roomba 105 Combo) at the cabin via Google Assistant text API
-- Auth: Google Assistant OAuth at `~/.openclaw/roomba/credentials.json`
-- `invalid_grant` = refresh token revoked, must re-auth via `roomba setup` **on Mini screen** (requires browser, can't do over SSH)
-- Venv uses Python 3.13 (Homebrew)
-
-## Nest Climate Dashboard
-
-Single-file Python server at `~/.openclaw/bin/nest-dashboard.py`, port 8550. LaunchAgent: `ai.openclaw.nest-dashboard`.
-
-### Data Sources
-
-| Source | Path | Interval | Format |
-|---|---|---|---|
-| Nest + Cielo snapshots | `~/.openclaw/nest-history/YYYY-MM-DD.jsonl` | 30 min (`ai.openclaw.nest-snapshot`) | temp, humidity, setpoint, HVAC state per room (Nest rooms have `source: "nest"`, Cielo rooms have `source: "cielo"`) |
-| Presence history | `~/.openclaw/presence/history/YYYY-MM-DD.jsonl` | 15 min (presence-detect cron) | occupancy + people list per location |
-| Current presence | `~/.openclaw/presence/state.json` | Written by `presence-detect.sh evaluate` | Full evaluated state |
-
-### API Endpoints
-
-| Endpoint | Returns |
-|---|---|
-| `GET /` | Dashboard HTML (embedded Chart.js UI) |
-| `GET /api/data?hours=N` | `{ snapshots, presence, meta }` — climate + presence history |
-| `GET /api/current` | Latest nest snapshot |
-| `GET /api/presence` | Current presence state from `state.json` |
-
-### Dashboard UI Features
-
-- **Presence cards** — occupancy badges (Occupied / Vacant / Possibly Vacant) per location with who's there
-- **Climate cards** — current temp, setpoint, HVAC status, humidity per room
-- **Weather cards** — outside conditions per structure
-- **Temperature chart** — actual + setpoint (dotted) lines per room
-- **Humidity chart** — per room + outside
-- **HVAC duty cycle chart** — active % per hour per room (heating, cooling, fan, etc.)
-- **Occupancy overlay bands** — colored background on charts (green=occupied, gray=vacant) when a single structure is selected
-- **Location tags** — each card shows a Cabin or Crosstown badge
-- **Structure filter** — Both / Cabin / Crosstown
-- **Time range** — 24h / 7d / 30d / 1Y (downsampled to ~1/hour beyond 7d)
-
-### Restart
-
-```bash
-launchctl kickstart -k gui/$(id -u)/ai.openclaw.nest-dashboard
-```
-
-## Cielo AC (Crosstown)
-
-CLI at `~/repos/cielo-cli/cli.js` (Node.js). Controls Mr Cool minisplits via Cielo Breez Plus sensors at Crosstown.
-
-### Devices
-
-| Room | Device Type | Sensor Data |
-|---|---|---|
-| Basement | Breez Plus | temp (°F), humidity (%) |
-| Living Room | Breez Plus | temp (°F), humidity (%) |
-| Dylan's Office | Breez Plus | temp (°F), humidity (%) |
-| Bedroom | Breez Plus | temp (°F), humidity (%) |
-
-### Commands
-
-```bash
-# Status of all devices (JSON array)
-/usr/local/bin/node ~/repos/cielo-cli/cli.js status --json
-
-# Control a device
-/usr/local/bin/node ~/repos/cielo-cli/cli.js set --device "Bedroom" --power on --mode cool --temp 72
-```
-
-### Data Shape (per device in status JSON)
-
-- `latEnv.temp` — room temperature (°F)
-- `latEnv.humidity` — room humidity (%)
-- `latestAction.mode` — heat/cool/auto/fan/dry
-- `latestAction.power` — on/off
-- `latestAction.temp` — setpoint (°F)
-- `deviceStatus` — 1 = online, 0 = offline
-- `deviceName` — room name
-
-### Integration with Nest Snapshot
-
-The `nest snapshot` command automatically calls `cielo-cli status --json` and appends Crosstown rooms (prefixed `19Crosstown <room>`) to the snapshot JSONL. Cielo rooms have `source: "cielo"` to distinguish from Nest-sourced rooms. If Cielo API fails, the snapshot still records Nest data (tolerant).
-
-### Token Refresh
-
-Cielo API tokens expire every 30 min. Auto-refreshed by `com.openclaw.cielo-refresh` LaunchAgent. Config at `~/.config/cielo/config.json`.
-
-## Crosstown Network Access (SSH)
-
-The Mac Mini can SSH to the MacBook Pro at Crosstown (and vice versa) via Tailscale, using the 1Password SSH agent.
-
-### Setup
-
-| Machine | SSH Config Host | Auth |
-|---|---|---|
-| Mac Mini | `dylans-macbook-pro` | 1Password SSH agent |
-| MacBook Pro | `dylans-mac-mini` | 1Password SSH agent |
-
-### Usage
-
-```bash
-# From Mac Mini — run commands on Crosstown network
-ssh dylans-macbook-pro 'arp -a | grep 192.168.165'
-ssh dylans-macbook-pro '~/.openclaw/workspace/scripts/presence-detect.sh crosstown'
-
-# From Mac Mini — deploy files to MBP
-scp <local-file> dylans-macbook-pro:<remote-path>
-```
-
-### When to Use
-
-- Running ARP scans or network diagnostics on the Crosstown LAN (192.168.165.x)
-- Deploying updated scripts to the MBP
-- Triggering crosstown presence scans manually
-- Any task that requires being on the Crosstown local network
-
-## Presence Detection
-
-Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Detects who's home at each location.
-
-### Modes
-
-| Mode | Where it runs | Method |
-|---|---|---|
-| `cabin` | Mac Mini | Starlink gRPC API (WiFi client list) |
-| `crosstown` | MacBook Pro | ARP scan (ping sweep + MAC match, IP fallback) |
-| `evaluate` | Mac Mini | Correlates both scans, writes state + history |
-
-### Tracked Devices
-
-| Person | Cabin (Starlink) | Crosstown (ARP) |
-|---|---|---|
-| Dylan | Device name match "Dylan" + "iPhone" | MAC `6c:3a:ff:5f:fc:ba`, IP `192.168.165.124` |
-| Julia | Device name match "Julia" | Hostname `julias-iphone`, MAC `38:e1:3d:c0:40:63`, IP `192.168.165.248` |
-
-Crosstown matching priority: MAC → IP → hostname (mDNS `.lan` name from ARP table). Hostname is the most durable — survives iOS MAC/IP rotation.
-
-### Vacancy Logic (Arrival-Based / Sticky)
-
-- **occupied** — any tracked person detected at that location (or sticky from last detection)
-- **confirmed_vacant** — all tracked people confirmed at the other location
-- **possibly_vacant** — no one detected and no previous location on record
-
-Once a person is detected at a location, they **stay there** until positively detected at the other location. Phone sleep, MAC rotation, or missed scans don't cause flicker.
-
-### Output Files
-
-| File | Written by | Purpose |
-|---|---|---|
-| `~/.openclaw/presence/cabin-scan.json` | `cabin` mode | Raw cabin scan result |
-| `~/.openclaw/presence/crosstown-scan.json` | `crosstown` mode (pushed via Tailscale) | Raw crosstown scan result |
-| `~/.openclaw/presence/state.json` | `evaluate` mode | Correlated state (used by dashboard) |
-| `~/.openclaw/presence/prev-evaluated.json` | `evaluate` mode | Previous state for transition detection |
-| `~/.openclaw/presence/events.json` | `evaluate` mode | Last 100 occupancy/relocation transitions |
-| `~/.openclaw/presence/history/YYYY-MM-DD.jsonl` | `evaluate` mode | Date-partitioned history (used by dashboard) |
-
-### Gotchas
-
-- iPhones in low-power mode may not respond to ARP pings — "Limit IP Address Tracking" should be disabled on tracked phones
-- iOS randomizes MAC addresses per-network — hostname matching (`julias-iphone.lan` from mDNS) is preferred; MAC and IP are fallbacks that may need updating after rotation
-- Crosstown scan runs on MacBook Pro and pushes results to Mini via `tailscale file cp`
-- Mac Mini can SSH to MacBook Pro via `ssh dylans-macbook-pro` (Tailscale, key: `~/.ssh/id_mini_to_mbp`)
-- Presence script must be deployed to **both** machines — Mini runs cabin scan + evaluate, MacBook Pro runs crosstown scan
-- After updating device fingerprints, deploy to both: `scp` to Mini, then Mini `scp` to MacBook Pro
+| `gws-calendar` | Calendar read/write, event creation, availability |
+| `gws-gmail` | Email search, read, send, label, archive |
+| `gws-drive` | File search, read, create, share |
 
 ## Pinchtab (Browser Automation)
 
-CLI at `/opt/homebrew/bin/pinchtab` (v0.7.6). Headless Chrome control for web tasks the agent can't do via API.
+CLI at `/opt/homebrew/bin/pinchtab` (v0.7.6). Headless Chrome control for web tasks.
 
 ### Lifecycle
 
 ```bash
-# Start server (runs Chrome headless on port 9867)
-pinchtab &
+pinchtab &       # Start server (Chrome headless, port 9867)
 sleep 5
-
-# Do work...
-
-# Clean up when done
-pkill -f pinchtab 2>/dev/null || true
+# ... do work ...
+pkill -f pinchtab 2>/dev/null || true   # Always clean up
 ```
 
 ### Common Commands
 
 ```bash
 pinchtab nav <url>                  # Navigate
-pinchtab snap -i -c                 # Snapshot interactive elements (compact, token-efficient)
+pinchtab snap -i -c                 # Snapshot interactive elements (compact)
 pinchtab click <ref>                # Click element by ref from snapshot
 pinchtab type <ref> <text>          # Type into element
-pinchtab fill <ref|selector> <text> # Fill input directly (bypasses focus issues)
+pinchtab fill <ref|selector> <text> # Fill input directly
 pinchtab press Enter                # Press key
 pinchtab eval "document.title"      # Run JavaScript
 pinchtab text                       # Extract readable page text
 pinchtab ss -o /tmp/screenshot.png  # Screenshot
-pinchtab tabs                       # List open tabs
 ```
-
-### Snapshot Flags
-
-- `-i` — interactive elements only (buttons, links, inputs)
-- `-c` — compact format (most token-efficient)
-- `-d` — diff since last snapshot (saves tokens on repeat checks)
-- `-s <selector>` — scope to CSS selector
-- `--max-tokens N` — truncate output
-
-### Used By
-
-- **OpenTable bookings** — `~/.openclaw/workspace/scripts/opentable-book.sh`
-- **Cielo token refresh** — `~/.openclaw/workspace/scripts/cielo-refresh.sh` (browser-based login fallback)
 
 ### Gotchas
 
-- React SPAs: `element.click()` via `eval` may not trigger React handlers — use `pinchtab click <ref>` instead (dispatches proper pointer events)
+- React SPAs: `element.click()` via `eval` may not trigger React handlers — use `pinchtab click <ref>` instead
 - Always `pkill -f pinchtab` when done — leftover Chrome processes eat memory
 - Cookie/session state persists between `nav` calls within the same server session
 
@@ -310,74 +91,53 @@ pinchtab tabs                       # List open tabs
 
 ### Architecture
 
-OpenClaw v2026.3.7+ uses **webhook-only** for BB (no socket.io client). BB POSTs events to the gateway's HTTP endpoint at `http://localhost:18789/bluebubbles-webhook`. The gateway registers this webhook in BB on startup.
+OpenClaw v2026.3.7+ uses **webhook-only** for BB (no socket.io client). BB POSTs events to `http://localhost:18789/bluebubbles-webhook`. The gateway registers this webhook on startup.
 
-**Gateway health monitor is DISABLED** (`gateway.channelHealthCheckMinutes: 0` in openclaw.json). The default health monitor restarts the BB provider every 30 min during idle periods (no inbound messages), which kills the webhook registration and causes missed messages. Our BB watchdog (below) handles stale connection detection more intelligently — it only triggers when new messages exist but aren't being delivered.
+**Gateway health monitor is DISABLED** (`gateway.channelHealthCheckMinutes: 0`). The BB watchdog handles stale detection instead — it only triggers when new messages exist but aren't being delivered.
 
 ### Watchdog (`com.openclaw.bb-watchdog`)
 
 Script at `~/.openclaw/workspace/scripts/bb-watchdog.sh`, runs every 60s.
 
-**What it monitors:**
 - Tracks latest message GUID from BB API — detects chat.db observer stalls
-- Checks BB's internal log for `WebhookService Dispatching` entries — detects dead webhook service
-- If no webhook dispatch in 30+ min but new messages are arriving → **full BB app restart** (skip poke)
-- If individual message lag > 90s → poke-first, then restart after 3 failed pokes
+- Checks BB log for webhook dispatch entries — detects dead webhook service
+- Cross-checks gateway runtime log for BB plugin activity — detects silent plugin failures
+- No dispatch in 30+ min but new messages → **full BB restart**
+- Individual message lag > 90s → poke-first, then restart after 3 failed pokes
+- BB dispatching but gateway BB plugin inactive → **gateway-only restart**
 
-**Recovery sequence:** poke Messages.app → retry → full BB restart (quit + relaunch)
+### Key Gotchas
 
-### Gotchas
+- **Soft restart doesn't fix dead webhooks** — only full app restart works
+- **BB + gateway restarts must be coordinated** — watchdog handles sequencing
+- **Cloudflare daemon crash-loop** — BB runs it even with `lan-url` proxy; can corrupt event loop
+- **v2026.3.7 BB plugin import bug** — `monitor-normalize.ts` has broken import; weekly upgrade script auto-patches
 
-- **Cloudflare daemon crash-loop**: BB still runs a Cloudflare tunnel daemon even with `lan-url` proxy. It crash-loops with "context canceled" errors, which can corrupt BB's internal event loop and silently kill webhook dispatch.
-- **Soft restart doesn't fix dead webhooks**: `GET /api/v1/server/restart/soft` does NOT restore webhook dispatch. Only a full app restart (`osascript -e 'tell application "BlueBubbles" to quit'` + `open -a BlueBubbles`) works.
-- **BB and gateway restarts must be coordinated**: BB restart invalidates the gateway's webhook registration; gateway restart can kill BB's webhook dispatch. The watchdog now handles this — after restarting BB, it waits 15s for BB to initialize, then kicks the gateway to re-register its webhook.
-- **Gateway health monitor is disabled** (`channelHealthCheckMinutes: 0`): Its naive "no events in 30 min = stale" check was causing unnecessary provider restarts, which killed webhook registrations. The watchdog's lag-based detection (new message in chat.db but no webhook dispatch) is the correct signal.
+### Quick Reference
 
-### Logs
+- Base URL: `http://localhost:1234/api/v1`
+- Auth: `?password=${BLUEBUBBLES_PASSWORD}`
+- DM GUIDs: `any;-;` prefix; Group GUIDs: `iMessage;+;` prefix
+- Reaction types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
+- For Private API curl examples: `qmd query "bluebubbles private API"`
 
-| Log | Path | Contents |
-|-----|------|----------|
-| BB server log | `~/Library/Logs/bluebubbles-server/main.log` | Webhook dispatch, API requests, auth errors, Cloudflare daemon, Private API events |
-| BB watchdog log | `/tmp/bb-watchdog.log` | Stall detection, restarts, lag alerts (rotated daily, 7-day retention) |
-| BB ingest lag metrics | `/tmp/bb-ingest-lag.log` | CSV of lag events: `timestamp,lag_sec,threshold,guid` |
+## Presence Detection
 
-### Private API
+Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Sticky/arrival-based model: once detected at a location, person stays until detected at the other.
 
-Base URL: `http://localhost:1234/api/v1`
-Auth: `?password=${BLUEBUBBLES_PASSWORD}` (env var, no 1Password needed)
+- `cabin` mode runs on Mini (Starlink gRPC), `crosstown` on MacBook Pro (ARP scan), `evaluate` correlates both
+- States: **occupied** / **confirmed_vacant** / **possibly_vacant**
+- For device fingerprints, output files, and gotchas: `qmd query "presence detection"`
 
-### Typing Indicator
+## Crosstown Network
 
-```bash
-curl -s -X POST "http://localhost:1234/api/v1/chat/${CHAT_GUID}/typing?password=${BLUEBUBBLES_PASSWORD}"
-```
+Mac Mini ↔ MacBook Pro SSH via Tailscale (`dylans-macbook-pro` / `dylans-mac-mini`), 1Password SSH agent.
 
-Stops automatically when you send a message.
+## Dashboards
 
-### Send Reaction / Tapback
+| Dashboard | Port | Data |
+|---|---|---|
+| Nest Climate | 8550 | Thermostat + weather + presence |
+| Usage | 8551 | Token consumption + agent activity |
 
-```bash
-curl -s -X POST "http://localhost:1234/api/v1/message/react?password=${BLUEBUBBLES_PASSWORD}" \
-  -H "Content-Type: application/json" \
-  --data-raw '{"chatGuid":"<CHAT_GUID>","selectedMessageGuid":"<MESSAGE_GUID>","reaction":"<TYPE>"}'
-```
-
-Reaction types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
-
-### Send Message (Private API method)
-
-> **Note:** Prefer the OpenClaw message tool for sending messages — it handles
-> routing, logging, and delivery queue. Use these Private API curl commands
-> only for things OpenClaw doesn't expose yet (typing indicators, reactions).
-
-```bash
-curl -s -X POST "http://localhost:1234/api/v1/message/text?password=${BLUEBUBBLES_PASSWORD}" \
-  -H "Content-Type: application/json" \
-  --data-raw '{"chatGuid":"<CHAT_GUID>","message":"<TEXT>","tempGuid":"temp-<UNIQUE>","method":"private-api"}'
-```
-
-### Chat GUIDs
-
-- DMs use `any;-;` prefix (e.g., `any;-;dylanbochman@gmail.com`)
-- Group chats use `iMessage;+;` prefix
-- Always read the GUID from inbound message metadata, don't hardcode
+For API endpoints and UI features: `qmd query "nest dashboard API"` or `qmd query "usage dashboard"`
