@@ -87,6 +87,37 @@ def _ts_minute(rec):
         return 60
 
 
+def load_ccusage():
+    """Load and merge Claude Code usage from all ccusage-*.json files (one per machine)."""
+    import glob
+    merged = {}  # date -> {totalTokens, inputTokens, outputTokens, ...}
+    for path in glob.glob(os.path.join(HISTORY_DIR, "ccusage-*.json")):
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            for day in data.get("daily", []):
+                date = day.get("date", "")
+                if not date:
+                    continue
+                if date not in merged:
+                    merged[date] = {"date": date, "totalTokens": 0, "inputTokens": 0,
+                                    "outputTokens": 0, "cacheCreationTokens": 0,
+                                    "cacheReadTokens": 0, "totalCost": 0, "machines": []}
+                m = merged[date]
+                m["totalTokens"] += day.get("totalTokens", 0)
+                m["inputTokens"] += day.get("inputTokens", 0)
+                m["outputTokens"] += day.get("outputTokens", 0)
+                m["cacheCreationTokens"] += day.get("cacheCreationTokens", 0)
+                m["cacheReadTokens"] += day.get("cacheReadTokens", 0)
+                m["totalCost"] += day.get("totalCost", 0)
+                machine = os.path.basename(path).replace("ccusage-", "").replace(".json", "")
+                if machine not in m["machines"]:
+                    m["machines"].append(machine)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return sorted(merged.values(), key=lambda d: d["date"])
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"{self.address_string()} {args[0]}\n")
@@ -121,6 +152,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _serve_data(self, hours):
         records, clamped_hours = load_snapshots(hours)
+        ccusage = load_ccusage()
         self._respond(200, {
             "meta": {
                 "hours": clamped_hours,
@@ -128,6 +160,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "downsampled": clamped_hours > DOWNSAMPLE_THRESHOLD_HOURS,
             },
             "snapshots": records,
+            "ccusage": ccusage,
         })
 
     def _serve_current(self):
@@ -387,6 +420,23 @@ function gaugeHTML(label, pct, resetsAt, sub) {
   </div>`;
 }
 
+function usageGaugeHTML(label, pct, tokenCount, color) {
+  const circ = 2 * Math.PI * 42;
+  const offset = circ - (circ * Math.min(pct, 100) / 100);
+  return `<div class="gauge">
+    <div class="gauge-label">${label}</div>
+    <div class="gauge-ring">
+      <svg viewBox="0 0 100 100" width="100" height="100">
+        <circle class="track" cx="50" cy="50" r="42"/>
+        <circle class="fill" cx="50" cy="50" r="42"
+          stroke="${color}" stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/>
+      </svg>
+      <div class="gauge-pct" style="color:${color}">${pct.toFixed(0)}%</div>
+    </div>
+    <div class="gauge-sub">${tokenCount} tokens</div>
+  </div>`;
+}
+
 // ── Render ──
 
 function aggregate(snaps) {
@@ -414,7 +464,7 @@ function aggregate(snaps) {
   return r;
 }
 
-function renderGauges(util) {
+function renderGauges(util, agg, ccusage) {
   const el = document.getElementById('gauges');
   if (!util) { el.innerHTML = '<div class="loading">No utilization data</div>'; return; }
   let h = '';
@@ -428,10 +478,18 @@ function renderGauges(util) {
   else if (sd) { h += gaugeHTML('7-Day', sd.utilization, sd.resets_at); }
   // Only show Sonnet gauge if there's meaningful Sonnet-specific usage
   if (sn && sn.utilization > 0 && op) h += gaugeHTML('Sonnet 7d', sn.utilization, sn.resets_at);
-  const ex = util.extra_usage;
-  if (ex && ex.is_enabled) {
-    const pct = ex.monthly_limit ? ((ex.used_credits||0) / ex.monthly_limit * 100) : 0;
-    h += gaugeHTML('Extra Credits', pct, null, '$' + (ex.used_credits||0).toFixed(2) + ' / $' + (ex.monthly_limit||'?'));
+  // OpenClaw + Claude Code usage gauges (share of combined total)
+  if (agg && ccusage && ccusage.length > 0) {
+    const cutoff = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
+    const ccTotal = ccusage.filter(d => d.date >= cutoff).reduce((s, d) => s + (d.totalTokens || 0), 0);
+    const ocTotal = agg.tokens.total || 0;
+    const combined = ocTotal + ccTotal;
+    if (combined > 0) {
+      const ocPct = ocTotal / combined * 100;
+      const ccPct = ccTotal / combined * 100;
+      h += usageGaugeHTML('OpenClaw', ocPct, fmtTokens(ocTotal), '#F97316');
+      h += usageGaugeHTML('Claude Code', ccPct, fmtTokens(ccTotal), '#3B82F6');
+    }
   }
   el.innerHTML = h || '<div class="loading">No utilization data</div>';
 }
@@ -526,7 +584,7 @@ function updateOrCreate(id, type, datasets, yTitle, extra) {
   charts[id] = new Chart(ctx, { type, data:{ datasets }, options: opts, plugins });
 }
 
-function buildCharts(snaps, agg) {
+function buildCharts(snaps, agg, ccusage) {
   // Filter out backfill entries for short time ranges (they compress a full day into one point)
   const chartSnaps = currentHours <= 24 ? snaps.filter(s => !s._backfill) : snaps;
 
@@ -571,22 +629,24 @@ function buildCharts(snaps, agg) {
     ctx.fillText('No token data', ctx.canvas.width/2, ctx.canvas.height/2);
   }
 
-  // Token usage over time (stacked bar, same adaptive buckets as activity)
-  // OpenClaw's input_tokens is misleadingly small (counts turns, not tokens).
-  // Derive input as total - output when input < output (the common case).
-  const inputBk = {}, outputBk = {};
+  // Token usage over time: OpenClaw vs Claude Code (stacked bar, daily buckets)
+  const ocBk = {}, ccBk = {};
   for (const s of chartSnaps) {
-    const key = activityBucketKey(s.timestamp);
+    const day = s.timestamp.slice(0, 10);
     const t = s.tokens || {};
-    const out = t.output || 0;
-    const inp = (t.input && t.input >= out) ? t.input : Math.max(0, (t.total||0) - out);
-    inputBk[key] = (inputBk[key]||0) + inp;
-    outputBk[key] = (outputBk[key]||0) + out;
+    ocBk[day] = (ocBk[day]||0) + (t.total || 0);
   }
-  const tkeys = Object.keys(inputBk).sort();
+  // Overlay Claude Code daily totals from ccusage
+  const cutoffDate = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
+  if (ccusage) {
+    for (const d of ccusage) {
+      if (d.date >= cutoffDate) ccBk[d.date] = (d.totalTokens || 0);
+    }
+  }
+  const allDays = [...new Set([...Object.keys(ocBk), ...Object.keys(ccBk)])].sort();
   updateOrCreate('tokenTimeChart', 'bar', [
-    { label:'Input', data:tkeys.map(k=>({x:k,y:inputBk[k]})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
-    { label:'Output', data:tkeys.map(k=>({x:k,y:outputBk[k]||0})), backgroundColor:'rgba(139,92,246,0.7)', borderColor:C.purple, borderWidth:1 },
+    { label:'OpenClaw', data:allDays.map(k=>({x:k,y:ocBk[k]||0})), backgroundColor:'rgba(249,115,22,0.7)', borderColor:'#F97316', borderWidth:1 },
+    { label:'Claude Code', data:allDays.map(k=>({x:k,y:ccBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
   ], 'Tokens');
 
   // Cron duration trends — skip instant failures (<2s), deduplicate to last run per day per job
@@ -650,6 +710,7 @@ function buildCharts(snaps, agg) {
 async function refresh() {
   const data = await fetchData(currentHours);
   const snaps = data.snapshots || [];
+  const ccusage = data.ccusage || [];
 
   if (snaps.length === 0) {
     document.getElementById('gauges').innerHTML = '<div class="loading">No data available</div>';
@@ -659,12 +720,12 @@ async function refresh() {
   }
 
   const agg = aggregate(snaps);
-  renderGauges(agg.utilization);
+  renderGauges(agg.utilization, agg, ccusage);
   renderStats(agg);
   renderCronTable(agg.cronJobs);
   renderStaleness(agg.timestamp);
 
-  if (typeof Chart !== 'undefined') buildCharts(snaps, agg);
+  if (typeof Chart !== 'undefined') buildCharts(snaps, agg, ccusage);
 }
 
 // ── Events ──
