@@ -1,10 +1,27 @@
 # OpenClaw Usage Dashboard: Issues & Redesign Plan
 
-## Current State
+## Status: v2 Deployed (2026-03-07)
 
-Only **1 of 5 charts works** (Utilization Over Time, barely visible). Token Usage, Activity,
-Response Times, and Errors are all effectively dead. Cards show 0 tokens and 0 agent/message
-activity. The dashboard provides almost no value beyond what the raw Anthropic usage API shows.
+Commit `94b5628` — rebuilt dashboard with gauges, fixed snapshot parser, deployed to Mini.
+
+**What's working now:**
+- SVG utilization gauges with pacing indicators (chill/on-track/hot)
+- Utilization over time chart with resolved hex colors (visible now)
+- Cron job table with status badges, duration, model
+- Tokens-by-job doughnut chart + token usage over time bar chart
+- Cron duration trends chart
+- Activity chart (agents/messages/cron)
+- Staleness detection (warns if data >30 min old)
+- Error banner on fetch failure
+
+**Token counts will populate going forward** — the parser fix reads `usage.input_tokens`
+from cron JSONL correctly now, but old snapshots were collected with the broken parser.
+
+## Original State (pre-v2)
+
+Only **1 of 5 charts worked** (Utilization Over Time, barely visible). Token Usage, Activity,
+Response Times, and Errors were all effectively dead. Cards showed 0 tokens and 0 agent/message
+activity. The dashboard provided almost no value beyond what the raw Anthropic usage API shows.
 
 ---
 
@@ -170,9 +187,17 @@ Based on user priorities: **Rate Limits > Agent/Cron Activity > Token Attributio
 
 ## Implementation Order
 
-1. **Fix snapshot parser** — Match actual cron JSONL token field paths (`usage.input_tokens`)
-2. **Fix runtime log parser** — Match tslog format (`_meta.logLevelName`, `"0"`/`"1"` keys)
-3. **Fix Chart.js CSS vars** — Use resolved hex colors
-4. **Redesign dashboard layout** — Utilization gauges + cron table + token chart
-5. **Add pacing/burn-rate** — Derived from utilization history slope
-6. **Add staleness detection** — Compare last snapshot time vs now
+1. ~~**Fix snapshot parser** — Match actual cron JSONL token field paths (`usage.input_tokens`)~~ DONE
+2. ~~**Fix runtime log parser** — Match tslog format (`_meta.logLevelName`, `"0"`/`"1"` keys)~~ DONE
+3. ~~**Fix Chart.js CSS vars** — Use resolved hex colors~~ DONE
+4. ~~**Redesign dashboard layout** — Utilization gauges + cron table + token chart~~ DONE
+5. ~~**Add pacing/burn-rate** — Derived from utilization percentage thresholds~~ DONE
+6. ~~**Add staleness detection** — Compare last snapshot time vs now~~ DONE
+
+## Remaining / Future Work
+
+- **Midnight log gap** — Log entries between last snapshot of day and midnight are lost (issue #4)
+- **OAuth token staleness** — No fallback when token expires, utilization goes null (issue #5)
+- **Cron dedup** — If state file is reset, historical records are re-counted (issue #6)
+- **More granular pacing** — Current pacing is threshold-based; could use slope of utilization history
+- **Per-model token attribution** — Show Opus vs Sonnet token split (data is in cron JSONL `model` field)
