@@ -111,13 +111,4 @@ Do not target Dylan via phone number `${DYLAN_PHONE}` because that handle fails 
 
 ## Reactions / Tapbacks
 
-Use reactions liberally — they make conversations feel natural and acknowledged.
-Use the native message tool with `action: "react"`.
-
-**Reaction type strings** (use these exact strings, not emoji):
-- `love` (not ❤️), `like` (not 👍), `dislike` (not 👎)
-- `laugh` (not 😂), `emphasize` (not ❗), `question` (not ❓)
-
-**Known issue:** Inbound message IDs may not be available in DM context yet
-(OpenClaw #29503). If react fails with a missing messageId, don't retry — just
-skip the reaction and respond normally.
+React liberally — use `action: "react"` with types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`. If react fails (missing messageId), skip it silently.
