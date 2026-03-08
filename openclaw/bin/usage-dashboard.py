@@ -523,9 +523,12 @@ function updateOrCreate(id, type, datasets, yTitle, extra) {
 }
 
 function buildCharts(snaps, agg) {
+  // Filter out backfill entries for short time ranges (they compress a full day into one point)
+  const chartSnaps = currentHours <= 24 ? snaps.filter(s => !s._backfill) : snaps;
+
   // Utilization over time
   const fiveH = [], sevenD = [];
-  for (const s of snaps) {
+  for (const s of chartSnaps) {
     const u = s.utilization; if (!u) continue;
     if (u.five_hour) fiveH.push({ x: s.timestamp, y: u.five_hour.utilization });
     if (u.seven_day) sevenD.push({ x: s.timestamp, y: u.seven_day.utilization });
@@ -566,7 +569,7 @@ function buildCharts(snaps, agg) {
 
   // Token usage over time (stacked bar)
   const inputBk = {}, outputBk = {};
-  for (const s of snaps) {
+  for (const s of chartSnaps) {
     const ts = new Date(s.timestamp);
     const key = ts.toISOString().slice(0,13) + ':00:00Z';
     const t = s.tokens || {};
@@ -592,18 +595,21 @@ function buildCharts(snaps, agg) {
   }));
   updateOrCreate('durationChart', 'line', durDatasets, 'Seconds');
 
-  // Activity
-  const sent = [], recv = [], crons = [];
-  for (const s of snaps) {
+  // Activity (hourly buckets — aggregates sparse snapshots into readable bars)
+  const sentBk = {}, recvBk = {}, cronBk = {};
+  for (const s of chartSnaps) {
+    const ts = new Date(s.timestamp);
+    const key = ts.toISOString().slice(0,13) + ':00:00Z';
     const a = s.activity || {};
-    sent.push({ x:s.timestamp, y:a.messages_sent||0 });
-    recv.push({ x:s.timestamp, y:a.messages_received||0 });
-    crons.push({ x:s.timestamp, y:a.cron_runs||0 });
+    sentBk[key] = (sentBk[key]||0) + (a.messages_sent||0);
+    recvBk[key] = (recvBk[key]||0) + (a.messages_received||0);
+    cronBk[key] = (cronBk[key]||0) + (a.cron_runs||0);
   }
-  updateOrCreate('activityChart', 'line', [
-    { label:'Sent', data:sent, borderColor:C.blue, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
-    { label:'Received', data:recv, borderColor:C.green, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
-    { label:'Cron', data:crons, borderColor:C.amber, borderWidth:1.5, pointRadius:0, pointHitRadius:6, tension:0.3, fill:false },
+  const akeys = [...new Set([...Object.keys(sentBk), ...Object.keys(recvBk), ...Object.keys(cronBk)])].sort();
+  updateOrCreate('activityChart', 'bar', [
+    { label:'Sent', data:akeys.map(k=>({x:k,y:sentBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
+    { label:'Received', data:akeys.map(k=>({x:k,y:recvBk[k]||0})), backgroundColor:'rgba(34,197,94,0.7)', borderColor:C.green, borderWidth:1 },
+    { label:'Cron', data:akeys.map(k=>({x:k,y:cronBk[k]||0})), backgroundColor:'rgba(245,158,11,0.7)', borderColor:C.amber, borderWidth:1 },
   ], 'Count');
 }
 
