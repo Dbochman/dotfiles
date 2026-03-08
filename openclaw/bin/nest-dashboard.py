@@ -307,6 +307,7 @@ canvas { width: 100% !important; }
 .presence-card .card-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
 .presence-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
 .presence-badge.occupied { background: #22c55e22; color: #22c55e; }
+.presence-badge.partial { background: #3b82f622; color: #3b82f6; }
 .presence-badge.vacant { background: #6b728022; color: #6b7280; }
 .presence-badge.possibly { background: #f59e0b22; color: #f59e0b; }
 .presence-people { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem; }
@@ -334,6 +335,7 @@ canvas { width: 100% !important; }
 </div>
 <div class="presence-legend" id="presenceLegend">
   <span><span class="swatch" style="background:rgba(34,197,94,0.15)"></span> Occupied</span>
+  <span><span class="swatch" style="background:rgba(59,130,246,0.15)"></span> Partial</span>
   <span><span class="swatch" style="background:rgba(107,114,128,0.12)"></span> Vacant</span>
 </div>
 <div class="chart-container"><h2>Temperature</h2><div class="chart-wrap"><canvas id="tempChart"></canvas></div></div>
@@ -668,11 +670,13 @@ function renderPresenceCards(presenceState) {
     const info = presenceState[loc];
     if (!info) continue;
     const occ = info.occupancy || 'unknown';
-    const badgeClass = occ === 'occupied' ? 'occupied' : occ === 'confirmed_vacant' ? 'vacant' : 'possibly';
-    const badgeText = occ === 'occupied' ? 'Occupied' : occ === 'confirmed_vacant' ? 'Vacant' : 'Possibly Vacant';
     const people = presenceState.people
       ? Object.entries(presenceState.people).filter(([,v]) => v[loc]).map(([k]) => k)
       : [];
+    const totalTracked = presenceState.people ? Object.keys(presenceState.people).length : 0;
+    const isPartial = occ === 'occupied' && people.length > 0 && people.length < totalTracked;
+    const badgeClass = isPartial ? 'partial' : occ === 'occupied' ? 'occupied' : occ === 'confirmed_vacant' ? 'vacant' : 'possibly';
+    const badgeText = isPartial ? 'Partially Occupied' : occ === 'occupied' ? 'Occupied' : occ === 'confirmed_vacant' ? 'Vacant' : 'Possibly Vacant';
     const fresh = info.fresh !== false ? '' : ' (stale)';
     html += '<div class="presence-card"><div class="card-label">' + LOCATION_LABELS[loc] + ' Presence</div>'
       + '<span class="presence-badge ' + badgeClass + '">' + badgeText + '</span>'
@@ -697,7 +701,10 @@ const presenceOverlayPlugin = {
     ctx.save();
     for (let i = 0; i < sorted.length; i++) {
       const rec = sorted[i];
-      const occ = rec[loc].occupancy;
+      const locData = rec[loc];
+      const occ = locData.occupancy;
+      const peopleCt = (locData.people || []).length;
+      const isPartial = occ === 'occupied' && peopleCt === 1;
       const x1 = xScale.getPixelForValue(new Date(rec.timestamp).getTime());
       const nextTs = sorted[i + 1] ? new Date(sorted[i + 1].timestamp).getTime() : Date.now();
       const x2 = xScale.getPixelForValue(nextTs);
@@ -705,7 +712,7 @@ const presenceOverlayPlugin = {
       const clampX2 = Math.min(x2, right);
       if (clampX2 <= clampX1) continue;
 
-      ctx.fillStyle = occ === 'occupied' ? 'rgba(34,197,94,0.07)' : occ === 'confirmed_vacant' ? 'rgba(107,114,128,0.06)' : 'rgba(245,158,11,0.05)';
+      ctx.fillStyle = isPartial ? 'rgba(59,130,246,0.07)' : occ === 'occupied' ? 'rgba(34,197,94,0.07)' : occ === 'confirmed_vacant' ? 'rgba(107,114,128,0.06)' : 'rgba(245,158,11,0.05)';
       ctx.fillRect(clampX1, top, clampX2 - clampX1, bottom - top);
     }
     ctx.restore();
