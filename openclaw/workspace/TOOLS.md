@@ -310,7 +310,7 @@ pinchtab tabs                       # List open tabs
 
 ### Architecture
 
-OpenClaw v2026.3.2+ uses **webhook-only** for BB (no socket.io client). BB POSTs events to the gateway's HTTP endpoint at `http://localhost:18789/bluebubbles-webhook`. The gateway registers this webhook in BB on startup.
+OpenClaw v2026.3.7+ uses **webhook-only** for BB (no socket.io client). BB POSTs events to the gateway's HTTP endpoint at `http://localhost:18789/bluebubbles-webhook`. The gateway registers this webhook in BB on startup.
 
 **Gateway health monitor is DISABLED** (`gateway.channelHealthCheckMinutes: 0` in openclaw.json). The default health monitor restarts the BB provider every 30 min during idle periods (no inbound messages), which kills the webhook registration and causes missed messages. Our BB watchdog (below) handles stale connection detection more intelligently — it only triggers when new messages exist but aren't being delivered.
 

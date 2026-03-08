@@ -24,7 +24,15 @@ python3 ~/.openclaw/workspace/scripts/grocery-reorder.py --dry-run
 
 ## Environment
 
-Requires `STARMARKET_PASSWORD` in the environment. On the Mini this is loaded from `~/.openclaw/.secrets-cache`.
+Requires all Star Market env vars loaded from `~/.openclaw/.secrets-cache`:
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `STARMARKET_PASSWORD` | 1Password | Account password |
+| `STARMARKET_USERNAME` | 1Password | Login email |
+| `STARMARKET_GMAIL` | secrets-cache | Gmail for MFA code retrieval |
+| `STARMARKET_USER_HASH` | secrets-cache | Account-specific API hash |
+| `STARMARKET_DEVICE_TOKEN` | secrets-cache | Remembered device token (skips MFA) |
 
 ```bash
 set -a && source ~/.openclaw/.secrets-cache && set +a
@@ -68,8 +76,8 @@ Weekly reorder runs on Sunday mornings. The cron job:
 ## Safety
 
 - **NEVER checks out** — only adds items to cart
-- Requires `STARMARKET_PASSWORD` environment variable
-- MFA codes read from Julia's Gmail (requires `gws` auth for `julia.joy.jennings@gmail.com`)
+- Requires all `STARMARKET_*` env vars (see Environment section above)
+- MFA codes read from Julia's Gmail via `gws` (requires auth for the account in `STARMARKET_GMAIL`)
 - Pinchtab must be running with a Chrome profile that has Star Market cookies
 
 ## Troubleshooting
