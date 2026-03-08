@@ -2,7 +2,17 @@
 
 Skills define _how_ tools work. This file is for _your_ specifics — the stuff that's unique to your setup.
 
-> **Deep reference**: For detailed docs on any tool below (API endpoints, curl examples, device IDs, troubleshooting), use `qmd query "<topic>"` to search indexed docs. Only essentials are kept here to save context.
+## QMD (Markdown Search)
+
+CLI at `/opt/homebrew/bin/qmd`. Local hybrid search (BM25 + vector) over all OpenClaw docs. **Use this when you need details not in this file** — device IDs, API endpoints, curl examples, troubleshooting steps, etc.
+
+```bash
+qmd query "how does the BB watchdog work"    # hybrid search (recommended)
+qmd search "cart URL"                         # keyword-only search
+qmd get qmd://skills/grocery-reorder/skill.md # read a specific doc
+```
+
+Three collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKILL.md files), `dotfiles-openclaw` (bin scripts, plans, plists).
 
 ## Smart Home Devices
 
