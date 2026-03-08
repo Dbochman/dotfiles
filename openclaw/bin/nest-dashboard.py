@@ -259,10 +259,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   --border: #2a2d3a;
   --text: #e4e4e7;
   --text-muted: #9ca3af;
-  --solarium: #FF8C00;
-  --living: #4A90D9;
-  --bedroom: #8B5CF6;
-  --outside: #6B7280;
+  --solarium: #3B82F6;
+  --living: #8B5CF6;
+  --bedroom: #06B6D4;
+  --outside: #C9E2FE;
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -288,11 +288,11 @@ h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
 .card[data-room="Living Room"] .card-value { color: var(--living); }
 .card[data-room="Bedroom"] .card-value { color: var(--bedroom); }
 .card[data-room="Outside"] .card-value { color: var(--outside); }
-.card[data-room="Basement"] .card-value { color: #14B8A6; }
+.card[data-room="Basement"] .card-value { color: #EF4444; }
 .card[data-room="Dylan's Office"] .card-value { color: #F59E0B; }
 .card[data-room="Cat Room"] .card-value { color: #EC4899; }
-.card[data-room="Basement door"] .card-value { color: #06B6D4; }
-.card[data-room="Movie room"] .card-value { color: #84CC16; }
+.card[data-room="Basement door"] .card-value { color: #F97316; }
+.card[data-room="Movie room"] .card-value { color: #FB923C; }
 .controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .controls button { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
 .controls button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
@@ -341,18 +341,33 @@ canvas { width: 100% !important; }
 <div class="chart-container"><h2>HVAC Duty Cycle</h2><div class="chart-wrap short"><canvas id="hvacChart"></canvas></div></div>
 
 <script>
+// Cabin = cool palette, Crosstown = warm palette
+// Disambiguated names (XTown/Cabin suffix) used in "Both" view
 const COLORS = {
-  'Solarium': '#FF8C00',
-  'Living Room': '#4A90D9',
-  'Bedroom': '#8B5CF6',
-  'Outside': '#6B7280',
-  'Outside (Philly)': '#6B7280',
-  'Outside (19Crosstown)': '#9CA3AF',
-  'Basement': '#14B8A6',
+  // Cabin (cool)
+  'Solarium': '#3B82F6',
+  'Living Room': '#8B5CF6',
+  'Living Room (Cabin)': '#8B5CF6',
+  'Bedroom': '#06B6D4',
+  'Bedroom (Cabin)': '#06B6D4',
+  'Outside': '#C9E2FE',
+  'Outside (Cabin)': '#C9E2FE',
+  // Crosstown (warm)
+  'Living Room (XTown)': '#F97316',
+  'Bedroom (XTown)': '#FB7185',
+  "Dylan\u2019s Office": '#F59E0B',
+  "Dylan\u2019s Office (XTown)": '#F59E0B',
   "Dylan's Office": '#F59E0B',
+  "Dylan's Office (XTown)": '#F59E0B',
+  'Basement': '#EF4444',
+  'Basement (XTown)': '#EF4444',
   'Cat Room': '#EC4899',
-  'Basement door': '#06B6D4',
-  'Movie room': '#84CC16',
+  'Cat Room (XTown)': '#EC4899',
+  'Basement door': '#F97316',
+  'Basement door (XTown)': '#F97316',
+  'Movie room': '#FB923C',
+  'Movie room (XTown)': '#FB923C',
+  'Outside (Crosstown)': '#FEDDBA',
 };
 
 const STRUCTURES = ['Philly', '19Crosstown'];
@@ -367,22 +382,30 @@ const colorCache = {};
 // For disambiguated names like "Bedroom (XTown)", derive a variant of the base color
 const STRUCTURE_COLOR_SHIFT = { 'Cabin': 0, 'XTown': 40 };
 function roomColor(name) {
-  if (colorCache[name]) return colorCache[name];
-  // Check for disambiguated name "ShortName (Location)"
-  const m = name.match(/^(.+?) \((Cabin|XTown)\)$/);
-  if (m) {
-    const base = COLORS[m[1]];
-    if (base) {
-      // Shift hue slightly for the second structure's variant
-      const shift = STRUCTURE_COLOR_SHIFT[m[2]] || 0;
-      const c = shift ? shiftHue(base, shift) : base;
-      colorCache[name] = c;
-      return c;
-    }
+  // In filtered view, bare names like "Living Room" need structure-aware lookup
+  const cacheKey = currentStructure + ':' + name;
+  if (colorCache[cacheKey]) return colorCache[cacheKey];
+  let c;
+  // Check structure-specific color first (for colliding names like Living Room, Bedroom)
+  if (currentStructure === '19Crosstown') {
+    c = COLORS[name + ' (XTown)'] || COLORS[name];
+  } else if (currentStructure === 'Philly') {
+    c = COLORS[name + ' (Cabin)'] || COLORS[name];
+  } else {
+    c = COLORS[name];
   }
-  const c = COLORS[name] || '#' + (Math.random().toString(16) + '000000').slice(2, 8);
-  colorCache[name] = c;
+  c = c || '#' + (Math.random().toString(16) + '000000').slice(2, 8);
+  colorCache[cacheKey] = c;
   return c;
+}
+
+// Structure-aware color: for filtered views where "Living Room" could be either structure
+function roomColorForCard(rawRoomName) {
+  const struct = roomStructure(rawRoomName);
+  const short = stripPrefix(rawRoomName);
+  // Try disambiguated name first, then bare name
+  const locSuffix = struct === '19Crosstown' ? 'XTown' : 'Cabin';
+  return COLORS[short + ' (' + locSuffix + ')'] || COLORS[short] || roomColor(short);
 }
 
 function shiftHue(hex, degrees) {
@@ -502,7 +525,8 @@ function getWeatherEntries(snapshot) {
     }
   } else {
     const wd = w[currentStructure];
-    if (wd && wd.temp_f != null) entries.push({label: 'Outside', data: wd});
+    const wl = WEATHER_LABELS[currentStructure] || currentStructure;
+    if (wd && wd.temp_f != null) entries.push({label: 'Outside (' + wl + ')', data: wd});
   }
   return entries;
 }
@@ -519,22 +543,23 @@ function renderCards(snapshot) {
   // Room cards
   for (const r of rooms) {
     const label = displayName(r.room);
-    const colorKey = stripPrefix(r.room);
     const locTag = roomLocationLabel(r.room);
+    const cardColor = roomColorForCard(r.room);
     let hvacLabel = r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
     if (r.source === 'mysa' && r.duty_pct != null) hvacLabel = r.duty_pct > 0 ? `${r.duty_pct}% duty` : 'OFF';
     const sourceTag = r.source && r.source !== 'nest' ? `<span class="card-tag">${r.source}</span>` : '';
-    html += `<div class="card" data-room="${colorKey}">
+    html += `<div class="card">
       <div class="card-label">${label}<span class="card-tag">${locTag}</span>${sourceTag}</div>
-      <div class="card-value">${(r.temp_f ?? 0).toFixed(1)}°F</div>
+      <div class="card-value" style="color:${cardColor}">${(r.temp_f ?? 0).toFixed(1)}°F</div>
       <div class="card-sub">Set: ${(r.setpoint_f ?? 0).toFixed(0)}°F · ${hvacLabel} · ${r.humidity ?? 0}% RH</div>
     </div>`;
   }
   // Weather card(s)
   for (const {label, data: w} of getWeatherEntries(snapshot)) {
-    html += `<div class="card" data-room="Outside">
+    const outsideColor = label.includes('Crosstown') ? '#FEDDBA' : '#C9E2FE';
+    html += `<div class="card">
       <div class="card-label">${label}</div>
-      <div class="card-value">${w.temp_f.toFixed(1)}°F</div>
+      <div class="card-value" style="color:${outsideColor}">${w.temp_f.toFixed(1)}°F</div>
       <div class="card-sub">${w.description || '—'} · ${w.humidity ?? 0}% RH · ${(w.wind_mph ?? 0).toFixed(0)} mph</div>
     </div>`;
   }

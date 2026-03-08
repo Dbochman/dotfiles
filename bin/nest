@@ -192,6 +192,13 @@ _get_cielo_status() {
   if [[ -z "$out" ]]; then echo '[]'; else echo "$out"; fi
 }
 
+_get_mysa_status() {
+  # Returns JSON from mysa-status.py; {} on failure
+  local out
+  out=$(~/.openclaw/mysa/venv/bin/python3 ~/.openclaw/bin/mysa-status.py 2>/dev/null) || true
+  if [[ -z "$out" ]]; then echo '{}'; else echo "$out"; fi
+}
+
 _c_to_f() {
   python3 -c "print(round($1 * 9/5 + 32, 1))"
 }
@@ -400,13 +407,14 @@ cmd_snapshot() {
   fi
 
   weather=$(_get_all_weather)
-  local cielo
+  local cielo mysa
   cielo=$(_get_cielo_status)
+  mysa=$(_get_mysa_status)
   ts=$(date -u +%FT%TZ)
   today=$(date +%Y-%m-%d)
 
   _build_structure_map
-  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" CIELO_JSON="$cielo" python3 -c "
+  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" CIELO_JSON="$cielo" MYSA_JSON="$mysa" python3 -c "
 import json, sys, os
 data = json.load(sys.stdin)
 ts = os.environ['SNAP_TS']
@@ -483,6 +491,33 @@ for cd in cielo_devices:
         'setpoint_c': round((c_set_f - 32) * 5 / 9, 2),
         'connectivity': 'ONLINE' if c_status == 1 else 'OFFLINE',
         'source': 'cielo',
+    })
+# Inject Mysa baseboard heaters (all at Crosstown)
+mysa_raw = os.environ.get('MYSA_JSON', '{}')
+try:
+    mysa_data = json.loads(mysa_raw) if mysa_raw else {}
+except Exception:
+    mysa_data = {}
+for md in mysa_data.get('devices', []):
+    m_name = md.get('name', 'Unknown')
+    m_temp_f = md.get('temp_f') or md.get('sensor_temp_f') or 0
+    m_humidity = md.get('humidity', 0)
+    m_set_f = md.get('setpoint_f', 0)
+    m_duty = md.get('duty_pct', 0)
+    m_hvac = 'HEATING' if m_duty > 0 else 'OFF'
+    snapshot['rooms'].append({
+        'room': '19Crosstown ' + m_name,
+        'temp_f': round(m_temp_f, 1),
+        'temp_c': round((m_temp_f - 32) * 5 / 9, 2),
+        'humidity': m_humidity,
+        'mode': 'heat' if m_duty > 0 else 'off',
+        'hvac': m_hvac,
+        'eco': 'OFF',
+        'setpoint_f': round(m_set_f, 1),
+        'setpoint_c': round((m_set_f - 32) * 5 / 9, 2),
+        'connectivity': 'ONLINE',
+        'duty_pct': m_duty,
+        'source': 'mysa',
     })
 print(json.dumps(snapshot))
 " <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"
