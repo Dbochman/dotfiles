@@ -43,8 +43,9 @@ if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$LOCAL_TMP" 2>/
   exit 0
 fi
 
-# Push to Mini
-scp -q "$LOCAL_TMP" "$MINI:$REMOTE_DIR/ccusage-${MACHINE}.json" 2>/dev/null || {
+# Push to Mini (unset SSH_AUTH_SOCK to avoid 1Password agent prompts;
+# Tailscale SSH handles auth to the Mini without keys)
+SSH_AUTH_SOCK="" scp -q "$LOCAL_TMP" "$MINI:$REMOTE_DIR/ccusage-${MACHINE}.json" 2>/dev/null || {
   echo "scp to Mini failed" >&2
   exit 0
 }
