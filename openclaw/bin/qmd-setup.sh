@@ -12,17 +12,25 @@ if ! command -v qmd &>/dev/null; then
 fi
 
 echo "=== Adding collections ==="
+# Four collections — workspace and skills from runtime paths, plans and bin-scripts
+# from dotfiles. We intentionally avoid indexing ~/dotfiles/openclaw/**/*.md as a
+# single collection because it duplicates skills/ and workspace/ content, wasting
+# result slots on identical docs.
 qmd collection add ~/.openclaw/workspace --name workspace 2>&1
 qmd collection add ~/.openclaw/skills --name skills 2>&1
-qmd collection add ~/dotfiles/openclaw --name dotfiles-openclaw 2>&1
+qmd collection add ~/dotfiles/openclaw/plans --name plans 2>&1
+qmd collection add ~/dotfiles/openclaw/bin --name bin-scripts 2>&1
 
 echo "=== Adding context descriptions ==="
 qmd context add qmd://workspace/ "OpenClaw runtime workspace: SOUL.md (agent personality/rules), TOOLS.md (device integrations, BB, Nest, Hue, Cielo, presence), HEARTBEAT.md (periodic health checks)"
 qmd context add qmd://skills/ "OpenClaw skill definitions (SKILL.md files) with full API details, CLI commands, env vars, and troubleshooting for: grocery-reorder (Star Market), gws-gmail/calendar/drive (Google Workspace), cielo-ac (smart AC), mysa-thermostat (baseboard heaters), hue-lights, nest-thermostat (+ DASHBOARD.md), roomba, spotify-speakers, presence detection, opentable/resy booking, sag (TTS), peekaboo (cameras), samsung-tv, 1password, bluetooth, shortcuts, applescript, web-search, summarize, google-speakers, echonest, amazon-shopping, places, cabin/crosstown routines"
-qmd context add qmd://dotfiles-openclaw/ "Dotfiles repo openclaw/ directory containing: plans/ with BlueBubbles implementation deep-dive (bluebubbles-implementation-current-state.md — watchdog, webhook architecture, Private API, restart sequencing, Cloudflare issues), BlueBubbles Private API reference (bluebubbles-private-api.md — curl examples, typing, reactions, effects), OpenClaw workspace state overview (openclaw-workspace-state.md). Also: bin/ scripts (README.md, WEEKLY-UPGRADE.md — upgrade steps, BB plugin patch, plist backup), Mysa plan, GOG cutover history, usage dashboard issues, and copies of all skill SKILL.md files and workspace markdown"
+qmd context add qmd://plans/ "OpenClaw architecture and implementation docs: BlueBubbles implementation deep-dive (bluebubbles-implementation-current-state.md — watchdog, webhook architecture, Private API, restart sequencing, Cloudflare issues), BlueBubbles Private API reference (bluebubbles-private-api.md — curl examples, typing, reactions, effects), OpenClaw workspace state overview (openclaw-workspace-state.md — infrastructure, cron jobs, LaunchAgents, skills list)"
+qmd context add qmd://bin-scripts/ "OpenClaw helper scripts documentation: README.md (all bin scripts — gateway, dashboards, nest, usage, bluetooth, iMessage sync, dotfiles pull, qmd setup), WEEKLY-UPGRADE.md (weekly npm upgrade steps, BB plugin patch, plist backup/restore, scope verification)"
 
-echo "=== Setting update command for dotfiles ==="
-qmd collection update-cmd dotfiles-openclaw 'cd ~/dotfiles && git stash; git pull --rebase --ff-only; git stash pop 2>/dev/null; true'
+echo "=== Setting update commands ==="
+DOTFILES_PULL='cd ~/dotfiles && git stash; git pull --rebase --ff-only; git stash pop 2>/dev/null; true'
+qmd collection update-cmd plans "$DOTFILES_PULL"
+qmd collection update-cmd bin-scripts "$DOTFILES_PULL"
 
 echo "=== Generating embeddings (downloads models on first run) ==="
 qmd embed

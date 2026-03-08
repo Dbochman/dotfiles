@@ -72,12 +72,13 @@ scp openclaw/bin/openclaw-refresh-secrets dylans-mac-mini:~/bin/openclaw-refresh
 
 **Package**: `@tobilu/qmd` (npm), installed at `/opt/homebrew/bin/qmd`
 
-**Collections**:
+**Collections** (4 — deduplicated to avoid duplicate result slots):
 | Name | Path | Contents |
 |------|------|----------|
 | `workspace` | `~/.openclaw/workspace/` | SOUL.md, TOOLS.md, HEARTBEAT.md |
 | `skills` | `~/.openclaw/skills/` | All SKILL.md files |
-| `dotfiles-openclaw` | `~/dotfiles/openclaw/` | Bin scripts, plans, workspace copies |
+| `plans` | `~/dotfiles/openclaw/plans/` | BB implementation, Private API ref, workspace state |
+| `bin-scripts` | `~/dotfiles/openclaw/bin/` | README.md, WEEKLY-UPGRADE.md |
 
 **Usage**:
 ```bash

@@ -12,7 +12,7 @@ qmd search "cart URL"                         # keyword-only search
 qmd get qmd://skills/grocery-reorder/skill.md # read a specific doc
 ```
 
-Three collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKILL.md files), `dotfiles-openclaw` (bin scripts, plans, plists).
+Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKILL.md files), `plans` (BB implementation, Private API, workspace state), `bin-scripts` (README, weekly upgrade doc).
 
 ## Smart Home Devices
 
