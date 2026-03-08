@@ -1,6 +1,6 @@
 # OpenClaw Usage Dashboard
 
-## Status: v3 (2026-03-08)
+## Status: v4 (2026-03-08)
 
 Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Mac Mini, Tailscale-only access.
 
@@ -25,15 +25,15 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Ma
 
 ### Dashboard Features
 
-**Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day, Opus 7d, Sonnet 7d, Extra Credits. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns.
+**Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day, Extra Credits. Sonnet 7d gauge only appears when there's active Sonnet usage. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns.
 
 **Stat cards** — Total tokens (in/out), cron runs (with failure count), messages (sent/recv), errors, gateway restarts.
 
 **Charts:**
 - Utilization Over Time — line chart with 100% threshold line
 - Tokens by Job — doughnut chart
-- Token Usage Over Time — stacked bar chart (input/output), adaptive bucket sizes
-- Cron Duration Trends — per-job line chart
+- Token Usage Over Time — stacked bar chart (input/output), adaptive bucket sizes. Input derived as `total - output` since OpenClaw's `input_tokens` field undercounts.
+- Cron Duration Trends — per-job line chart, deduped to last run per day, filtered by time range, sorted chronologically
 - Activity — stacked bar chart (sent/received/cron), adaptive bucket sizes
 
 **Cron table** — Recent runs with job ID, status badge, delivered column (✓/✗), model, duration, tokens, time.
@@ -68,6 +68,12 @@ Historical data backfilled from BB for Feb 1 – Mar 7, 2026 (daily granularity)
 
 ## Changelog
 
+### v4 (2026-03-08)
+- **Input token derivation** — `input_tokens` from OpenClaw is misleadingly small (counts turns); now derived as `total - output` in both snapshot script and dashboard render
+- **Gauge cleanup** — 7-Day gauge uses `seven_day_opus` when available, falls back to `seven_day`; Sonnet gauge hidden unless it has active usage
+- **Duration chart fixes** — timestamps converted from epoch ms to ISO for Chart.js; deduped to last run per job per day; filtered by selected time range; series sorted chronologically to prevent line doubling
+- **Human-readable cron IDs** — all UUID-based job IDs renamed (e.g., `743db947...` → `datenight-apr-italian`); run state files and history JSONL updated to match
+
 ### v3 (2026-03-08)
 - **BB message counts** — snapshot queries BlueBubbles API for sent/received iMessage counts
 - **Delivered column** — cron table shows ✓/✗ for delivery status
@@ -93,6 +99,6 @@ Historical data backfilled from BB for Feb 1 – Mar 7, 2026 (daily granularity)
 - **Midnight log gap** — Log entries between last snapshot of day and midnight are lost
 - **OAuth token staleness** — No fallback when token expires, utilization goes null
 - **Cron dedup** — If state file is reset, historical records are re-counted
-- **Per-model token attribution** — Opus vs Sonnet token split (data available in cron JSONL `model` field)
+- **Per-model token attribution** — Anthropic Usage API doesn't always return `seven_day_opus` separately
 - **Agent run counting** — Gateway doesn't log agent session start/stop events; count stays 0
 - **Response latencies** — No structured timing data available from gateway
