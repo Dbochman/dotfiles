@@ -4,7 +4,12 @@
 
 set -euo pipefail
 
-export OP_BIOMETRIC_UNLOCK_ENABLED=true
+# Use service account token on Mini (biometric not available over SSH/launchd)
+if [[ -f "${HOME}/.openclaw/.env-token" ]]; then
+  export OP_SERVICE_ACCOUNT_TOKEN=$(cat "${HOME}/.openclaw/.env-token")
+else
+  export OP_BIOMETRIC_UNLOCK_ENABLED=true
+fi
 
 # 1Password paths
 OP_ITEM="Google Nest"

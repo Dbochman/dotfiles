@@ -18,6 +18,9 @@
 # Convention: SKILL.md is checked in, *.local.md is machine-local only
 openclaw/skills/**/*.local.md
 
+# Python bytecode
+**/__pycache__/
+
 # OS files
 .DS_Store
 Thumbs.db
