@@ -657,6 +657,19 @@ function computeHvacDuty(snapshots) {
 const LOCATION_MAP = { 'Philly': 'cabin', '19Crosstown': 'crosstown' };
 const LOCATION_LABELS = { cabin: 'Cabin', crosstown: 'Crosstown' };
 
+function humanDuration(isoTimestamp) {
+  if (!isoTimestamp) return '';
+  const ms = Date.now() - new Date(isoTimestamp).getTime();
+  if (ms < 0) return 'just now';
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'min';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'min';
+  const days = Math.floor(hrs / 24);
+  return days + 'd ' + (hrs % 24) + 'h';
+}
+
 function renderPresenceCards(presenceState) {
   const el = document.getElementById('presenceCards');
   if (!presenceState || presenceState.error) { el.innerHTML = ''; return; }
@@ -678,10 +691,12 @@ function renderPresenceCards(presenceState) {
     const badgeClass = isPartial ? 'partial' : occ === 'occupied' ? 'occupied' : occ === 'confirmed_vacant' ? 'vacant' : 'possibly';
     const badgeText = isPartial ? 'Partially Occupied' : occ === 'occupied' ? 'Occupied' : occ === 'confirmed_vacant' ? 'Vacant' : 'Possibly Vacant';
     const fresh = info.fresh !== false ? '' : ' (stale)';
+    const sinceChange = info.stateChangedAt ? humanDuration(info.stateChangedAt) : (info.scanAge || '');
+    const sinceLabel = info.stateChangedAt ? 'for ' + sinceChange : sinceChange;
     html += '<div class="presence-card"><div class="card-label">' + LOCATION_LABELS[loc] + ' Presence</div>'
       + '<span class="presence-badge ' + badgeClass + '">' + badgeText + '</span>'
       + (people.length ? '<div class="presence-people">' + people.join(', ') + '</div>' : '')
-      + '<div class="presence-fresh">' + (info.scanAge || '') + fresh + '</div></div>';
+      + '<div class="presence-fresh">' + sinceLabel + fresh + '</div></div>';
   }
   el.innerHTML = html;
 }

@@ -1,6 +1,6 @@
 # Nest Climate Dashboard — Implementation Spec
 
-## Status: v1 (2026-03-08)
+## Status: v2 (2026-03-08)
 
 Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats and weather across two locations via three heating/cooling systems. Serves at port 8550 on Mac Mini, Tailscale-only access.
 
@@ -194,7 +194,7 @@ For time ranges > 7 days (168 hours), snapshots are downsampled to ~1 per hour. 
 
 ### Layout
 
-1. **Presence Cards** — Per-location occupancy (Occupied/Vacant/Possibly Vacant), people names, scan freshness
+1. **Presence Cards** — Per-location occupancy (Occupied/Partially Occupied/Vacant/Possibly Vacant), people names, duration since last state change
 2. **Status Cards** — Current temperature, setpoint, HVAC status, humidity, source tag per room
 3. **Structure Filter** — Both | Cabin | Crosstown
 4. **Time Range** — 24h | 7d | 30d | 1Y
@@ -211,7 +211,7 @@ Cabin rooms use a **cool** palette; Crosstown rooms use a **warm** palette. Outs
 | Solarium | `#3B82F6` | Cool (blue) |
 | Living Room (Cabin) | `#8B5CF6` | Cool (purple) |
 | Bedroom (Cabin) | `#06B6D4` | Cool (cyan) |
-| Outside (Cabin) | `#93C5FD` | Cool (light blue) |
+| Outside (Cabin) | `#C9E2FE` | Cool (light blue) |
 | Living Room (XTown) | `#F97316` | Warm (orange) |
 | Bedroom (XTown) | `#FB7185` | Warm (pink) |
 | Dylan's Office | `#F59E0B` | Warm (amber) |
@@ -219,7 +219,7 @@ Cabin rooms use a **cool** palette; Crosstown rooms use a **warm** palette. Outs
 | Cat Room | `#EC4899` | Warm (pink) |
 | Basement door | `#F97316` | Warm (orange) |
 | Movie room | `#FB923C` | Warm (light orange) |
-| Outside (Crosstown) | `#FDBA74` | Warm (peach) |
+| Outside (Crosstown) | `#FEDDBA` | Warm (peach) |
 
 **Structure-aware color resolution:** When viewing a single structure, `roomColor()` checks `COLORS[name + ' (XTown)']` or `COLORS[name + ' (Cabin)']` before the bare name — prevents colliding rooms (Living Room, Bedroom) from inheriting the wrong palette.
 
@@ -242,6 +242,7 @@ For each room, snapshots are bucketed by hour. Duty cycle per bucket:
 
 When a single structure is selected, temperature/humidity/duty charts render background bands:
 - Green (7% opacity) — Occupied
+- Blue (7% opacity) — Partially Occupied (one person present, others elsewhere)
 - Gray (6% opacity) — Confirmed Vacant
 - Amber (5% opacity) — Possibly Vacant
 
@@ -346,6 +347,8 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
   - Crosstown: ARP scan (`192.168.165.0/24`) + hostname matching
 - **Model:** Sticky/arrival-based — once detected, person stays at location until detected at the other
 - **Occupancy states:** `occupied`, `confirmed_vacant`, `possibly_vacant` (scans stale > 30 min)
+- **Partial occupancy:** When only some tracked people are at a location, it shows "Partially Occupied" (blue badge)
+- **State duration:** Each location tracks `stateChangedAt` (ISO timestamp) — carried forward from previous evaluation, reset when occupancy changes. Dashboard displays human-friendly duration ("for 3h 15min", "for 2d 5h")
 
 ---
 

@@ -297,17 +297,25 @@ for (const person of allTracked) {
   }
 }
 
+// Track when each location's occupancy state last changed
+const cabinChangedAt = (prevCabin && prevCabin !== cabinOccupancy)
+  ? now : (prev.cabin?.stateChangedAt || now);
+const crosstownChangedAt = (prevCrosstown && prevCrosstown !== crosstownOccupancy)
+  ? now : (prev.crosstown?.stateChangedAt || now);
+
 // Build result
 const result = {
   timestamp: now,
   people,
   cabin: {
     occupancy: cabinOccupancy,
+    stateChangedAt: cabinChangedAt,
     scanAge: Math.round(cabinAge) + 'min',
     fresh: cabinFresh
   },
   crosstown: {
     occupancy: crosstownOccupancy,
+    stateChangedAt: crosstownChangedAt,
     scanAge: Math.round(crosstownAge) + 'min',
     fresh: crosstownFresh
   },
