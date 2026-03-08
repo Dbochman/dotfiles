@@ -247,9 +247,11 @@ def parse_cron_runs(last_offsets):
             result["cron_runs"] += 1
             # Token counts live under "usage" dict in newer OpenClaw versions
             usage = rec.get("usage", {})
-            it = usage.get("input_tokens", 0) or rec.get("inputTokens", rec.get("input_tokens", 0)) or 0
             ot = usage.get("output_tokens", 0) or rec.get("outputTokens", rec.get("output_tokens", 0)) or 0
             tt = usage.get("total_tokens", 0) or rec.get("totalTokens", rec.get("total_tokens", 0)) or 0
+            # input_tokens from OpenClaw is misleadingly small (counts turns, not tokens).
+            # Derive actual input consumption as total - output.
+            it = max(0, tt - ot)
             result["input_tokens"] += it
             result["output_tokens"] += ot
             result["total_tokens"] += tt

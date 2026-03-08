@@ -393,8 +393,10 @@ function aggregate(snaps) {
   const r = { tokens:{input:0,output:0,total:0}, activity:{agent_runs:0,messages_sent:0,messages_received:0,cron_runs:0,errors:0,gateway_restarts:0}, cronJobs:[] };
   for (const s of snaps) {
     const t = s.tokens || {};
-    r.tokens.input += t.input || 0;
-    r.tokens.output += t.output || 0;
+    const out = t.output || 0;
+    const inp = (t.input && t.input >= out) ? t.input : Math.max(0, (t.total||0) - out);
+    r.tokens.input += inp;
+    r.tokens.output += out;
     r.tokens.total += t.total || 0;
     const a = s.activity || {};
     r.activity.agent_runs += a.agent_runs || 0;
@@ -403,7 +405,7 @@ function aggregate(snaps) {
     r.activity.cron_runs += a.cron_runs || 0;
     r.activity.errors += a.errors || 0;
     r.activity.gateway_restarts += a.gateway_restarts || 0;
-    if (s.cron_jobs) r.cronJobs.push(...s.cron_jobs);
+    if (s.cron_jobs) r.cronJobs.push(...s.cron_jobs.map(j => ({...j, _snap_ts: s.timestamp})));
   }
   if (snaps.length > 0) {
     r.utilization = snaps[snaps.length - 1].utilization;
@@ -419,11 +421,13 @@ function renderGauges(util) {
   const fh = util.five_hour;
   if (fh) h += gaugeHTML('5-Hour', fh.utilization, fh.resets_at);
   const sd = util.seven_day;
-  if (sd) h += gaugeHTML('7-Day', sd.utilization, sd.resets_at);
   const op = util.seven_day_opus;
-  if (op) h += gaugeHTML('Opus 7d', op.utilization, op.resets_at);
   const sn = util.seven_day_sonnet;
-  if (sn) h += gaugeHTML('Sonnet 7d', sn.utilization, sn.resets_at);
+  // Show 7-day gauge: prefer seven_day_opus if available, otherwise use seven_day
+  if (op) { h += gaugeHTML('7-Day', op.utilization, op.resets_at); }
+  else if (sd) { h += gaugeHTML('7-Day', sd.utilization, sd.resets_at); }
+  // Only show Sonnet gauge if there's meaningful Sonnet-specific usage
+  if (sn && sn.utilization > 0 && op) h += gaugeHTML('Sonnet 7d', sn.utilization, sn.resets_at);
   const ex = util.extra_usage;
   if (ex && ex.is_enabled) {
     const pct = ex.monthly_limit ? ((ex.used_credits||0) / ex.monthly_limit * 100) : 0;
@@ -568,12 +572,16 @@ function buildCharts(snaps, agg) {
   }
 
   // Token usage over time (stacked bar, same adaptive buckets as activity)
+  // OpenClaw's input_tokens is misleadingly small (counts turns, not tokens).
+  // Derive input as total - output when input < output (the common case).
   const inputBk = {}, outputBk = {};
   for (const s of chartSnaps) {
     const key = activityBucketKey(s.timestamp);
     const t = s.tokens || {};
-    inputBk[key] = (inputBk[key]||0) + (t.input||0);
-    outputBk[key] = (outputBk[key]||0) + (t.output||0);
+    const out = t.output || 0;
+    const inp = (t.input && t.input >= out) ? t.input : Math.max(0, (t.total||0) - out);
+    inputBk[key] = (inputBk[key]||0) + inp;
+    outputBk[key] = (outputBk[key]||0) + out;
   }
   const tkeys = Object.keys(inputBk).sort();
   updateOrCreate('tokenTimeChart', 'bar', [
@@ -581,13 +589,28 @@ function buildCharts(snaps, agg) {
     { label:'Output', data:tkeys.map(k=>({x:k,y:outputBk[k]||0})), backgroundColor:'rgba(139,92,246,0.7)', borderColor:C.purple, borderWidth:1 },
   ], 'Tokens');
 
-  // Cron duration trends
-  const durByJob = {};
-  for (const j of agg.cronJobs) {
+  // Cron duration trends — skip instant failures (<2s), deduplicate to last run per day per job
+  // Only include jobs whose run_at falls within the selected time range
+  const durCutoff = new Date(Date.now() - currentHours * 3600000).toISOString();
+  const durRaw = {};
+  for (const j of chartSnaps.flatMap(s => (s.cron_jobs || []).map(cj => ({...cj, _snap_ts: s.timestamp})))) {
+    if ((j.duration_ms || 0) < 2000) continue;
+    const ts = j.run_at || j.ts;
+    const xVal = (ts && ts > 1000) ? new Date(ts).toISOString() : (j._snap_ts || null);
+    if (!xVal || xVal < durCutoff) continue;
     const name = shortJobId(j.job_id);
-    if (!durByJob[name]) durByJob[name] = [];
-    durByJob[name].push({ x: j.run_at || j.ts, y: (j.duration_ms || 0) / 1000 });
+    const dayKey = name + '|' + xVal.slice(0, 10);
+    if (!durRaw[dayKey] || xVal > durRaw[dayKey].x) {
+      durRaw[dayKey] = { name, x: xVal, y: (j.duration_ms || 0) / 1000 };
+    }
   }
+  const durByJob = {};
+  for (const entry of Object.values(durRaw)) {
+    if (!durByJob[entry.name]) durByJob[entry.name] = [];
+    durByJob[entry.name].push({ x: entry.x, y: entry.y });
+  }
+  // Sort each series by time so lines don't double back
+  for (const pts of Object.values(durByJob)) pts.sort((a, b) => a.x.localeCompare(b.x));
   const durDatasets = Object.entries(durByJob).map(([name, pts], i) => ({
     label: name, data: pts, borderColor: jobColors[i % jobColors.length],
     borderWidth: 1.5, pointRadius: 2, pointHitRadius: 6, tension: 0.2, fill: false,
