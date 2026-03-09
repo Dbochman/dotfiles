@@ -92,5 +92,9 @@ if [ "$PENDING_CONTENT" \!= "{}" ]; then
 fi
 
 log "No new scope issues detected"
+
+# 10. Pull latest dotfiles so symlinked workspace files (TOOLS.md) stay current
+cd "$HOME/dotfiles" && git pull --ff-only >> "$LOG" 2>&1 && log "Dotfiles pulled" || log "WARNING: dotfiles pull failed"
+
 echo "OK:$OLD_VER:$NEW_VER" >> "$LOG"
 log "=== Weekly upgrade completed ==="
