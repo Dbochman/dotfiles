@@ -11,6 +11,7 @@ Intended for Tailscale-only access (Mac Mini firewall blocks external).
 import json
 import os
 import signal
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -118,6 +119,107 @@ def load_ccusage():
     return sorted(merged.values(), key=lambda d: d["date"])
 
 
+LAUNCHAGENT_DIR = os.path.expanduser("~/Library/LaunchAgents")
+
+
+def _plist_log_path(label):
+    """Read the StandardOutPath or StandardErrorPath from a plist."""
+    plist_path = os.path.join(LAUNCHAGENT_DIR, label + ".plist")
+    try:
+        result = subprocess.run(
+            ["plutil", "-convert", "json", "-o", "-", plist_path],
+            capture_output=True, text=True, timeout=3
+        )
+        if result.returncode == 0:
+            d = json.loads(result.stdout)
+            return d.get("StandardOutPath") or d.get("StandardErrorPath") or ""
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
+        pass
+    return ""
+
+
+def get_launchagent_status():
+    """Query launchctl for OpenClaw service status."""
+    services = []
+    try:
+        result = subprocess.run(
+            ["launchctl", "list"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) != 3:
+                continue
+            label = parts[2]
+            if "openclaw" not in label.lower():
+                continue
+            pid_str, exit_str = parts[0], parts[1]
+            if pid_str != "-":
+                status = "running"
+            else:
+                status = "idle"
+            try:
+                last_exit = int(exit_str)
+            except ValueError:
+                last_exit = None
+
+            # Get last activity time from log file mtime
+            last_run_iso = None
+            log_path = _plist_log_path(label)
+            if log_path:
+                try:
+                    mtime = os.path.getmtime(log_path)
+                    last_run_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                except OSError:
+                    pass
+
+            services.append({
+                "label": label,
+                "status": status,
+                "last_exit": last_exit,
+                "last_run": last_run_iso,
+            })
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    services.sort(key=lambda s: s["label"])
+    return services
+
+
+CRON_JOBS_PATH = os.path.expanduser("~/.openclaw/cron/jobs.json")
+
+
+def get_upcoming_cron_jobs():
+    """Read cron jobs.json and return upcoming scheduled runs."""
+    try:
+        with open(CRON_JOBS_PATH) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    jobs = []
+    for j in data.get("jobs", []):
+        if not j.get("enabled", True):
+            continue
+        state = j.get("state", {})
+        next_ms = state.get("nextRunAtMs")
+        sched = j.get("schedule", {})
+        jobs.append({
+            "id": j.get("id", ""),
+            "name": j.get("name", ""),
+            "schedule_kind": sched.get("kind", ""),
+            "schedule_expr": sched.get("expr", sched.get("at", "")),
+            "next_run_ms": next_ms,
+            "last_status": state.get("lastStatus"),
+            "consecutive_errors": state.get("consecutiveErrors", 0),
+            "delete_after_run": j.get("deleteAfterRun", False),
+        })
+
+    # Sort by next run time (soonest first), nulls last
+    jobs.sort(key=lambda j: j["next_run_ms"] if j["next_run_ms"] else float("inf"))
+    return jobs
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"{self.address_string()} {args[0]}\n")
@@ -138,6 +240,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_data(hours)
         elif path == "/api/current":
             self._serve_current()
+        elif path == "/api/services":
+            self._respond(200, {"services": get_launchagent_status()})
+        elif path == "/api/cron":
+            self._respond(200, {"jobs": get_upcoming_cron_jobs()})
         else:
             self._respond(404, {"error": "not found"})
 
@@ -293,9 +399,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
 <div class="controls" id="timeControls">
   <button data-hours="6">6h</button>
-  <button data-hours="24" class="active">24h</button>
+  <button data-hours="24">24h</button>
   <button data-hours="168">7d</button>
-  <button data-hours="720">30d</button>
+  <button data-hours="720" class="active">30d</button>
 </div>
 
 <!-- Utilization gauges -->
@@ -309,23 +415,40 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <div class="chart-box full"><h2>Utilization Over Time</h2><div class="chart-wrap"><canvas id="utilChart"></canvas></div></div>
   <div class="chart-box"><h2>Tokens by Job</h2><div class="chart-wrap"><canvas id="tokenJobChart"></canvas></div></div>
   <div class="chart-box"><h2>Token Usage Over Time</h2><div class="chart-wrap"><canvas id="tokenTimeChart"></canvas></div></div>
-  <div class="chart-box"><h2>Cron Duration Trends</h2><div class="chart-wrap"><canvas id="durationChart"></canvas></div></div>
-  <div class="chart-box"><h2>Activity</h2><div class="chart-wrap"><canvas id="activityChart"></canvas></div></div>
+  <div class="chart-box full"><h2>Activity</h2><div class="chart-wrap"><canvas id="activityChart"></canvas></div></div>
+</div>
+
+<!-- LaunchAgent services -->
+<div class="cron-section">
+  <h2>LaunchAgent Services</h2>
+  <table class="cron-table" id="servicesTable">
+    <thead><tr><th>Service</th><th>Status</th><th>Last Run</th><th>Exit</th></tr></thead>
+    <tbody id="servicesBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
+  </table>
 </div>
 
 <!-- Cron job table -->
 <div class="cron-section">
   <h2>Recent Cron Runs</h2>
   <table class="cron-table" id="cronTable">
-    <thead><tr><th>Job</th><th>Status</th><th>Delivered</th><th>Model</th><th>Duration</th><th>Tokens</th><th>Time</th></tr></thead>
-    <tbody id="cronBody"><tr><td colspan="7" class="loading">Loading...</td></tr></tbody>
+    <thead><tr><th>Job</th><th>Status</th><th>Delivered</th><th>Model</th><th>Duration</th><th>Trend</th><th>Tokens</th><th>Time</th></tr></thead>
+    <tbody id="cronBody"><tr><td colspan="8" class="loading">Loading...</td></tr></tbody>
+  </table>
+</div>
+
+<!-- Upcoming cron jobs -->
+<div class="cron-section">
+  <h2>Upcoming Cron Jobs</h2>
+  <table class="cron-table" id="upcomingTable">
+    <thead><tr><th>Job</th><th>Next Run</th><th>Last</th><th>Type</th></tr></thead>
+    <tbody id="upcomingBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
   </table>
 </div>
 
 <script>
 const C = { green:'#22c55e', amber:'#f59e0b', red:'#ef4444', blue:'#3b82f6', purple:'#8b5cf6', cyan:'#06b6d4', muted:'#9ca3af', grid:'rgba(255,255,255,0.05)' };
 let charts = {};
-let currentHours = 24;
+let currentHours = 720;
 
 // ── Helpers ──
 
@@ -506,20 +629,37 @@ function renderStats(agg) {
   `;
 }
 
+function durationTrend(job, allJobs) {
+  // Compare this run's duration to the average of previous runs of the same job
+  const id = job.job_id;
+  const dur = job.duration_ms;
+  if (!dur || dur < 2000) return { text: '-', color: C.muted };
+  const prev = allJobs.filter(j => j.job_id === id && j.duration_ms > 2000 && j !== job);
+  if (prev.length < 1) return { text: '-', color: C.muted };
+  const avg = prev.reduce((s, j) => s + j.duration_ms, 0) / prev.length;
+  if (avg === 0) return { text: '-', color: C.muted };
+  const pct = Math.round(((dur - avg) / avg) * 100);
+  if (Math.abs(pct) < 5) return { text: '~', color: C.muted };
+  if (pct > 0) return { text: '+' + pct + '%', color: pct > 30 ? C.red : C.amber };
+  return { text: pct + '%', color: C.green };
+}
+
 function renderCronTable(jobs) {
   const el = document.getElementById('cronBody');
-  if (!jobs.length) { el.innerHTML = '<tr><td colspan="7" style="color:' + C.muted + ';text-align:center;padding:1rem">No cron runs in period</td></tr>'; return; }
+  if (!jobs.length) { el.innerHTML = '<tr><td colspan="8" style="color:' + C.muted + ';text-align:center;padding:1rem">No cron runs in period</td></tr>'; return; }
   // Most recent first
   const sorted = [...jobs].reverse().slice(0, 50);
   el.innerHTML = sorted.map(j => {
     const delIcon = j.delivered === true ? '✓' : j.delivered === false ? '✗' : '-';
     const delColor = j.delivered === true ? C.green : j.delivered === false ? C.red : C.muted;
+    const trend = durationTrend(j, jobs);
     return `<tr>
     <td style="font-weight:500">${shortJobId(j.job_id)}</td>
     <td><span class="badge ${j.status === 'ok' ? 'badge-ok' : 'badge-err'}">${j.status}</span></td>
     <td style="color:${delColor};text-align:center">${delIcon}</td>
     <td style="color:${C.muted}">${j.model || '-'}</td>
     <td>${fmtDuration(j.duration_ms)}</td>
+    <td style="color:${trend.color};text-align:center;font-weight:500">${trend.text}</td>
     <td>${fmtTokens(j.total_tokens)}</td>
     <td style="color:${C.muted}">${j.run_at ? fmtTime(j.run_at) : '-'}</td>
   </tr>`;
@@ -649,34 +789,6 @@ function buildCharts(snaps, agg, ccusage) {
     { label:'Claude Code', data:allDays.map(k=>({x:k,y:ccBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
   ], 'Tokens');
 
-  // Cron duration trends — skip instant failures (<2s), deduplicate to last run per day per job
-  // Only include jobs whose run_at falls within the selected time range
-  const durCutoff = new Date(Date.now() - currentHours * 3600000).toISOString();
-  const durRaw = {};
-  for (const j of chartSnaps.flatMap(s => (s.cron_jobs || []).map(cj => ({...cj, _snap_ts: s.timestamp})))) {
-    if ((j.duration_ms || 0) < 2000) continue;
-    const ts = j.run_at || j.ts;
-    const xVal = (ts && ts > 1000) ? new Date(ts).toISOString() : (j._snap_ts || null);
-    if (!xVal || xVal < durCutoff) continue;
-    const name = shortJobId(j.job_id);
-    const dayKey = name + '|' + xVal.slice(0, 10);
-    if (!durRaw[dayKey] || xVal > durRaw[dayKey].x) {
-      durRaw[dayKey] = { name, x: xVal, y: (j.duration_ms || 0) / 1000 };
-    }
-  }
-  const durByJob = {};
-  for (const entry of Object.values(durRaw)) {
-    if (!durByJob[entry.name]) durByJob[entry.name] = [];
-    durByJob[entry.name].push({ x: entry.x, y: entry.y });
-  }
-  // Sort each series by time so lines don't double back
-  for (const pts of Object.values(durByJob)) pts.sort((a, b) => a.x.localeCompare(b.x));
-  const durDatasets = Object.entries(durByJob).map(([name, pts], i) => ({
-    label: name, data: pts, borderColor: jobColors[i % jobColors.length],
-    borderWidth: 1.5, pointRadius: 2, pointHitRadius: 6, tension: 0.2, fill: false,
-  }));
-  updateOrCreate('durationChart', 'line', durDatasets, 'Seconds');
-
   // Activity (adaptive buckets: hourly for ≤24h, 12h for 7d, daily for 30d+)
   function activityBucketKey(ts) {
     const d = new Date(ts);
@@ -703,6 +815,104 @@ function buildCharts(snaps, agg, ccusage) {
     { label:'Received', data:akeys.map(k=>({x:k,y:recvBk[k]||0})), backgroundColor:'rgba(34,197,94,0.7)', borderColor:C.green, borderWidth:1 },
     { label:'Cron', data:akeys.map(k=>({x:k,y:cronBk[k]||0})), backgroundColor:'rgba(245,158,11,0.7)', borderColor:C.amber, borderWidth:1 },
   ], 'Count');
+}
+
+// ── Services panel ──
+
+function fmtAgo(isoTs) {
+  if (!isoTs) return '-';
+  const ms = Date.now() - new Date(isoTs).getTime();
+  if (ms < 0) return 'just now';
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'm ago';
+  const days = Math.floor(hrs / 24);
+  return days + 'd ' + (hrs % 24) + 'h ago';
+}
+
+async function refreshServices() {
+  try {
+    const r = await fetch('/api/services');
+    if (!r.ok) return;
+    const d = await r.json();
+    const svcs = d.services || [];
+    const el = document.getElementById('servicesBody');
+    if (!svcs.length) {
+      el.innerHTML = '<tr><td colspan="4" style="color:' + C.muted + ';text-align:center;padding:1rem">No services found</td></tr>';
+      return;
+    }
+    el.innerHTML = svcs.map(s => {
+      const isRunning = s.status === 'running';
+      const dot = isRunning ? '●' : '○';
+      const dotColor = isRunning ? C.green : C.muted;
+      const label = s.label.replace(/^(ai|com)\.openclaw\./, '');
+      const exitCode = s.last_exit;
+      const exitBadge = exitCode == null ? '<span style="color:' + C.muted + '">-</span>' :
+        exitCode === 0 ? '<span class="badge badge-ok">ok</span>' :
+        '<span class="badge badge-err">error (' + exitCode + ')</span>';
+      return `<tr>
+        <td><span style="color:${dotColor};margin-right:0.4rem">${dot}</span>${label}</td>
+        <td><span class="badge ${isRunning ? 'badge-ok' : ''}" style="${isRunning ? '' : 'color:' + C.muted}">${isRunning ? 'running' : 'idle'}</span></td>
+        <td style="color:${C.muted}">${fmtAgo(s.last_run)}</td>
+        <td>${exitBadge}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ── Upcoming cron jobs ──
+
+function fmtRelativeTime(ms) {
+  if (!ms) return '-';
+  const diff = ms - Date.now();
+  if (diff < 0) return 'overdue';
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return mins + 'm';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'm';
+  const days = Math.floor(hrs / 24);
+  return days + 'd ' + (hrs % 24) + 'h';
+}
+
+function fmtDate(ms) {
+  if (!ms) return '-';
+  const d = new Date(ms);
+  const now = new Date();
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
+  const dayStr = d.toDateString() === now.toDateString() ? 'Today' :
+                 d.toDateString() === tomorrow.toDateString() ? 'Tomorrow' :
+                 d.toLocaleDateString([], { month:'short', day:'numeric' });
+  return dayStr + ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+}
+
+async function refreshUpcoming() {
+  try {
+    const r = await fetch('/api/cron');
+    if (!r.ok) return;
+    const d = await r.json();
+    const jobs = d.jobs || [];
+    const el = document.getElementById('upcomingBody');
+    if (!jobs.length) {
+      el.innerHTML = '<tr><td colspan="4" style="color:' + C.muted + ';text-align:center;padding:1rem">No cron jobs</td></tr>';
+      return;
+    }
+    el.innerHTML = jobs.map(j => {
+      const lastBadge = !j.last_status ? '<span style="color:' + C.muted + '">-</span>' :
+        j.last_status === 'ok' ? '<span class="badge badge-ok">ok</span>' :
+        '<span class="badge badge-err">' + j.last_status + (j.consecutive_errors > 1 ? ' (' + j.consecutive_errors + 'x)' : '') + '</span>';
+      const typeLabel = j.delete_after_run ? '<span style="color:' + C.amber + '">one-shot</span>' : '<span style="color:' + C.muted + '">recurring</span>';
+      const countdown = j.next_run_ms ? 'in ' + fmtRelativeTime(j.next_run_ms) : '-';
+      const isOverdue = j.next_run_ms && j.next_run_ms < Date.now();
+      return `<tr>
+        <td style="font-weight:500">${shortJobId(j.id)}</td>
+        <td style="color:${isOverdue ? C.red : C.muted}">${countdown}<br><span style="font-size:0.7rem">${fmtDate(j.next_run_ms)}</span></td>
+        <td>${lastBadge}</td>
+        <td>${typeLabel}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
 }
 
 // ── Refresh ──
@@ -742,7 +952,11 @@ document.getElementById('timeControls').addEventListener('click', e => {
 });
 
 refresh();
+refreshServices();
+refreshUpcoming();
 setInterval(refresh, 5 * 60 * 1000);
+setInterval(refreshServices, 60 * 1000);
+setInterval(refreshUpcoming, 5 * 60 * 1000);
 </script>
 </body>
 </html>
