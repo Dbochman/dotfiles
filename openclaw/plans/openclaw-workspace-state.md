@@ -133,7 +133,7 @@ All date nights: party of 2, ~7 PM Friday, book on Resy, create Calendar event, 
 
 All group dinners: party of 4, ~6:30 PM Friday, book on Resy, create Calendar event on Julia's cal.
 
-## LaunchAgents (15 active)
+## LaunchAgents (14 active)
 
 | Agent | Purpose | Type |
 |---|---|---|
@@ -144,7 +144,6 @@ All group dinners: party of 4, ~6:30 PM Friday, book on Resy, create Calendar ev
 | `ai.openclaw.usage-snapshot` | Anthropic API usage capture | Every 15 min |
 | `ai.openclaw.weekly-upgrade` | Auto-upgrade OpenClaw | Sun 9 AM |
 | `ai.openclaw.dotfiles-pull` | Sync dotfiles from GitHub | Periodic |
-| `ai.openclaw.imessage-group-sync` | Sync iMessage group metadata | Periodic |
 | `com.openclaw.bb-watchdog` | BlueBubbles health watchdog | Periodic |
 | `com.openclaw.bb-lag-summary` | BB message lag reporting | Periodic |
 | `com.openclaw.cielo-refresh` | Cielo AC token refresh | Every 30 min |
