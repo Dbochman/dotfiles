@@ -263,9 +263,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   --text: #e4e4e7;
   --text-muted: #9ca3af;
   --solarium: #3B82F6;
-  --living: #8B5CF6;
-  --bedroom: #06B6D4;
-  --outside: #C9E2FE;
+  --living: #0EA5E9;
+  --bedroom: #14B8A6;
+  --outside: #86EFAC;
 }
 @media (prefers-color-scheme: light) {
   :root {
@@ -280,7 +280,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 1rem; max-width: 1200px; margin: 0 auto; }
 h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
 .updated { font-size: 0.75rem; color: var(--text-muted); font-weight: 400; margin-left: 0.5rem; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.5rem; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
 .card-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
 .card-value { font-size: 1.75rem; font-weight: 700; }
@@ -291,12 +291,13 @@ h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
 .card[data-room="Living Room"] .card-value { color: var(--living); }
 .card[data-room="Bedroom"] .card-value { color: var(--bedroom); }
 .card[data-room="Outside"] .card-value { color: var(--outside); }
-.card[data-room="Basement"] .card-value { color: #EF4444; }
-.card[data-room="Dylan's Office"] .card-value { color: #F59E0B; }
-.card[data-room="Cat Room"] .card-value { color: #EC4899; }
-.card[data-room="Basement door"] .card-value { color: #F97316; }
-.card[data-room="Movie room"] .card-value { color: #FB923C; }
-.controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.card[data-room="Dylan's Office"] .card-value { color: #7C3AED; }
+.card[data-room="Cat Room"] .card-value { color: #F97316; }
+.card[data-room="Movie room"] .card-value { color: #FACC15; }
+.card[data-room="Basement door"] .card-value { color: #A16207; }
+.card[data-room="Basement"] .card-value { color: #92400E; }
+.controls-row { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+.controls { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .controls button { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
 .controls button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
 .chart-container { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
@@ -305,8 +306,6 @@ h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
 .chart-wrap.short { min-height: 220px; }
 canvas { width: 100% !important; }
 .loading { text-align: center; color: var(--text-muted); padding: 2rem; }
-.presence-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
-.presence-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
 .presence-card .card-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
 .presence-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
 .presence-badge.occupied { background: #22c55e22; color: #22c55e; }
@@ -319,60 +318,80 @@ canvas { width: 100% !important; }
 .presence-legend.visible { display: flex; }
 .presence-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
 .presence-legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; font-size: 0.75rem; padding: 0.5rem 0.25rem 0; align-items: center; }
+.legend-group { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: center; }
+.legend-group-label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); font-weight: 600; margin-right: 0.25rem; padding: 0.1rem 0.4rem; background: rgba(255,255,255,0.05); border-radius: 3px; }
+@media (prefers-color-scheme: light) { .legend-group-label { background: rgba(0,0,0,0.05); } }
+.legend-item { display: inline-flex; align-items: center; gap: 0.3rem; cursor: pointer; color: var(--text); user-select: none; padding: 0.1rem 0; }
+.legend-item.hidden { opacity: 0.35; text-decoration: line-through; }
+.legend-swatch { display: inline-block; width: 14px; height: 3px; border-radius: 1px; flex-shrink: 0; }
+.location-groups { display: grid; grid-template-columns: 1fr 2fr; gap: 1rem; margin-bottom: 1.25rem; }
+.location-groups.single { grid-template-columns: 1fr; }
+.location-group { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem 1rem 1rem; }
+.location-group-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+.location-group-title { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.location-group .presence-card { background: none; border: none; padding: 0; margin-bottom: 0.75rem; }
+.location-group .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin: 0; }
+.location-group.crosstown .cards { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.location-group .card { border: 1px solid var(--border); }
 </style>
 </head>
 <body>
 <h1>Nest Climate Dashboard <span class="updated" id="lastUpdate"></span></h1>
-<div class="presence-cards" id="presenceCards"></div>
-<div class="cards" id="cards"><div class="loading">Loading...</div></div>
-<div class="controls" id="structureControls">
-  <button data-structure="all" class="active">Both</button>
-  <button data-structure="Philly">Cabin</button>
-  <button data-structure="19Crosstown">Crosstown</button>
-</div>
-<div class="controls" id="timeControls">
-  <button data-hours="24" class="active">24h</button>
-  <button data-hours="168">7d</button>
-  <button data-hours="720">30d</button>
-  <button data-hours="8760">1Y</button>
+<div id="locationGroups"><div class="loading">Loading...</div></div>
+<div class="controls-row">
+  <div class="controls" id="structureControls">
+    <button data-structure="all" class="active">Both</button>
+    <button data-structure="Philly">Cabin</button>
+    <button data-structure="19Crosstown">Crosstown</button>
+  </div>
+  <div class="controls" id="timeControls">
+    <button data-hours="24" class="active">24h</button>
+    <button data-hours="168">7d</button>
+    <button data-hours="720">30d</button>
+    <button data-hours="8760">1Y</button>
+  </div>
+  <div class="controls" id="toggleControls">
+    <button id="setpointToggle">Setpoints</button>
+  </div>
 </div>
 <div class="presence-legend" id="presenceLegend">
   <span><span class="swatch" style="background:rgba(34,197,94,0.15)"></span> Occupied</span>
   <span><span class="swatch" style="background:rgba(59,130,246,0.15)"></span> Partial</span>
   <span><span class="swatch" style="background:rgba(107,114,128,0.12)"></span> Vacant</span>
 </div>
-<div class="chart-container"><h2>Temperature</h2><div class="chart-wrap"><canvas id="tempChart"></canvas></div></div>
-<div class="chart-container"><h2>Humidity</h2><div class="chart-wrap"><canvas id="humidChart"></canvas></div></div>
-<div class="chart-container"><h2>HVAC Duty Cycle</h2><div class="chart-wrap short"><canvas id="hvacChart"></canvas></div></div>
+<div class="chart-container"><h2>Temperature</h2><div class="chart-wrap"><canvas id="tempChart"></canvas></div><div class="chart-legend" id="tempLegend"></div></div>
+<div class="chart-container"><h2>Humidity</h2><div class="chart-wrap"><canvas id="humidChart"></canvas></div><div class="chart-legend" id="humidLegend"></div></div>
+<div class="chart-container"><h2>HVAC Duty Cycle</h2><div class="chart-wrap short"><canvas id="hvacChart"></canvas></div><div class="chart-legend" id="hvacLegend"></div></div>
 
 <script>
-// Cabin = cool palette, Crosstown = warm palette
+// Cabin = blues & greens, Crosstown = purples & warm
 // Disambiguated names (XTown/Cabin suffix) used in "Both" view
 const COLORS = {
-  // Cabin (cool)
+  // Cabin (blue → teal → green)
   'Solarium': '#3B82F6',
-  'Living Room': '#8B5CF6',
-  'Living Room (Cabin)': '#8B5CF6',
-  'Bedroom': '#06B6D4',
-  'Bedroom (Cabin)': '#06B6D4',
-  'Outside': '#C9E2FE',
-  'Outside (Cabin)': '#C9E2FE',
-  // Crosstown (warm)
-  'Living Room (XTown)': '#F97316',
-  'Bedroom (XTown)': '#FB7185',
-  "Dylan\u2019s Office": '#F59E0B',
-  "Dylan\u2019s Office (XTown)": '#F59E0B',
-  "Dylan's Office": '#F59E0B',
-  "Dylan's Office (XTown)": '#F59E0B',
-  'Basement': '#EF4444',
-  'Basement (XTown)': '#EF4444',
-  'Cat Room': '#EC4899',
-  'Cat Room (XTown)': '#EC4899',
-  'Basement door': '#F97316',
-  'Basement door (XTown)': '#F97316',
-  'Movie room': '#FB923C',
-  'Movie room (XTown)': '#FB923C',
-  'Outside (Crosstown)': '#FEDDBA',
+  'Living Room': '#0EA5E9',
+  'Living Room (Cabin)': '#0EA5E9',
+  'Bedroom': '#14B8A6',
+  'Bedroom (Cabin)': '#14B8A6',
+  'Outside': '#86EFAC',
+  'Outside (Cabin)': '#86EFAC',
+  // Crosstown (violet → rose → vermilion → tangerine → gold → sand → linen → white)
+  "Dylan\u2019s Office": '#7C3AED',
+  "Dylan\u2019s Office (XTown)": '#7C3AED',
+  "Dylan's Office": '#7C3AED',
+  "Dylan's Office (XTown)": '#7C3AED',
+  'Bedroom (XTown)': '#E11D48',
+  'Living Room (XTown)': '#EF4444',
+  'Cat Room': '#F97316',
+  'Cat Room (XTown)': '#F97316',
+  'Movie room': '#FACC15',
+  'Movie room (XTown)': '#FACC15',
+  'Basement door': '#A16207',
+  'Basement door (XTown)': '#A16207',
+  'Basement': '#92400E',
+  'Basement (XTown)': '#92400E',
+  'Outside (Crosstown)': '#FECACA',
 };
 
 const STRUCTURES = ['Philly', '19Crosstown'];
@@ -381,6 +400,7 @@ let tempChart, humidChart, hvacChart;
 let currentHours = 24;
 let currentStructure = 'all';
 let currentPresence = []; // presence history for overlay
+let showSetpoints = false;
 
 // Consistent color cache so random colors don't change on re-render
 const colorCache = {};
@@ -536,38 +556,103 @@ function getWeatherEntries(snapshot) {
   return entries;
 }
 
-function renderCards(snapshot) {
-  const el = document.getElementById('cards');
+function renderLocationGroups(snapshot, presenceState) {
+  const el = document.getElementById('locationGroups');
   if (!snapshot || !snapshot.rooms) {
     el.innerHTML = '<div class="loading">No data available</div>';
     return;
   }
 
-  const rooms = filterRooms(snapshot.rooms);
-  let html = '';
-  // Room cards
-  for (const r of rooms) {
-    const label = displayName(r.room);
-    const locTag = roomLocationLabel(r.room);
-    const cardColor = roomColorForCard(r.room);
-    let hvacLabel = r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
-    if (r.source === 'mysa' && r.duty_pct != null) hvacLabel = r.duty_pct > 0 ? `${r.duty_pct}% duty` : 'OFF';
-    const sourceTag = r.source && r.source !== 'nest' ? `<span class="card-tag">${r.source}</span>` : '';
-    html += `<div class="card">
-      <div class="card-label">${label}<span class="card-tag">${locTag}</span>${sourceTag}</div>
-      <div class="card-value" style="color:${cardColor}">${(r.temp_f ?? 0).toFixed(1)}°F</div>
-      <div class="card-sub">Set: ${(r.setpoint_f ?? 0).toFixed(0)}°F · ${hvacLabel} · ${r.humidity ?? 0}% RH</div>
-    </div>`;
+  const structures = currentStructure === 'all'
+    ? [{ key: 'Philly', label: 'Cabin', loc: 'cabin' }, { key: '19Crosstown', label: 'Crosstown', loc: 'crosstown' }]
+    : currentStructure === 'Philly'
+      ? [{ key: 'Philly', label: 'Cabin', loc: 'cabin' }]
+      : [{ key: '19Crosstown', label: 'Crosstown', loc: 'crosstown' }];
+
+  // Weather entries keyed by structure
+  const weatherByStruct = {};
+  const w = snapshot.weather;
+  if (w) {
+    if (w.temp_f != null) {
+      // Old single-location format
+      weatherByStruct['Philly'] = [{ label: 'Outside', data: w }];
+    } else {
+      for (const [name, wd] of Object.entries(w)) {
+        if (wd && wd.temp_f != null) {
+          if (!weatherByStruct[name]) weatherByStruct[name] = [];
+          weatherByStruct[name].push({ label: 'Outside', data: wd });
+        }
+      }
+    }
   }
-  // Weather card(s)
-  for (const {label, data: w} of getWeatherEntries(snapshot)) {
-    const outsideColor = label.includes('Crosstown') ? '#FEDDBA' : '#C9E2FE';
-    html += `<div class="card">
-      <div class="card-label">${label}</div>
-      <div class="card-value" style="color:${outsideColor}">${w.temp_f.toFixed(1)}°F</div>
-      <div class="card-sub">${w.description || '—'} · ${w.humidity ?? 0}% RH · ${(w.wind_mph ?? 0).toFixed(0)} mph</div>
-    </div>`;
+
+  // Crosstown card sort order
+  const CROSSTOWN_ORDER = ["Dylan\u2019s Office", "Dylan's Office", "Bedroom", "Living Room", "Cat Room", "Movie room", "Basement door", "Basement"];
+
+  const singleClass = structures.length === 1 ? ' single' : '';
+  let html = '<div class="location-groups' + singleClass + '">';
+  for (const struct of structures) {
+    const groupClass = struct.key === '19Crosstown' ? ' crosstown' : '';
+    html += '<div class="location-group' + groupClass + '">';
+    html += '<div class="location-group-header"><span class="location-group-title">' + struct.label + '</span>';
+
+    // Presence badge inline in header
+    if (presenceState && !presenceState.error) {
+      const info = presenceState[struct.loc];
+      if (info) {
+        const occ = info.occupancy || 'unknown';
+        const people = presenceState.people
+          ? Object.entries(presenceState.people).filter(([,v]) => v[struct.loc]).map(([k]) => k)
+          : [];
+        const totalTracked = presenceState.people ? Object.keys(presenceState.people).length : 0;
+        const isPartial = occ === 'occupied' && people.length > 0 && people.length < totalTracked;
+        const badgeClass = isPartial ? 'partial' : occ === 'occupied' ? 'occupied' : occ === 'confirmed_vacant' ? 'vacant' : 'possibly';
+        const badgeText = isPartial ? 'Partial' : occ === 'occupied' ? 'Occupied' : occ === 'confirmed_vacant' ? 'Vacant' : 'Possibly Vacant';
+        const fresh = info.fresh !== false ? '' : ' (stale)';
+        const sinceChange = info.stateChangedAt ? humanDuration(info.stateChangedAt) : (info.scanAge || '');
+        const sinceLabel = info.stateChangedAt ? sinceChange : sinceChange;
+        html += '<span class="presence-badge ' + badgeClass + '">' + badgeText + '</span>';
+        if (people.length) html += '<span class="presence-people" style="margin:0;font-size:0.7rem">' + people.join(', ') + '</span>';
+        if (sinceLabel) html += '<span class="presence-fresh" style="margin:0">' + sinceLabel + fresh + '</span>';
+      }
+    }
+    html += '</div>';
+
+    // Device cards — sorted for Crosstown
+    let rooms = (snapshot.rooms || []).filter(r => roomStructure(r.room) === struct.key);
+    if (struct.key === '19Crosstown') {
+      rooms = rooms.slice().sort((a, b) => {
+        const an = displayName(a.room), bn = displayName(b.room);
+        const ai = CROSSTOWN_ORDER.indexOf(an), bi = CROSSTOWN_ORDER.indexOf(bn);
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      });
+    }
+    html += '<div class="cards">';
+    for (const r of rooms) {
+      const label = displayName(r.room);
+      const cardColor = roomColorForCard(r.room);
+      let hvacLabel = r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
+      if (r.source === 'mysa' && r.duty_pct != null) hvacLabel = r.duty_pct > 0 ? `${r.duty_pct}% duty` : 'OFF';
+      const sourceTag = r.source && r.source !== 'nest' ? ` · <span class="card-tag">${r.source}</span>` : '';
+      html += `<div class="card">
+        <div class="card-label">${label}</div>
+        <div class="card-value" style="color:${cardColor}">${(r.temp_f ?? 0).toFixed(1)}°F</div>
+        <div class="card-sub">Set: ${(r.setpoint_f ?? 0).toFixed(0)}°F · ${hvacLabel} · ${r.humidity ?? 0}% RH${sourceTag}</div>
+      </div>`;
+    }
+    // Weather card for this structure
+    const weatherEntries = weatherByStruct[struct.key] || [];
+    for (const { label, data: wd } of weatherEntries) {
+      const outsideColor = struct.key === '19Crosstown' ? '#FEDDBA' : '#C9E2FE';
+      html += `<div class="card">
+        <div class="card-label">${label}</div>
+        <div class="card-value" style="color:${outsideColor}">${wd.temp_f.toFixed(1)}°F</div>
+        <div class="card-sub">${wd.description || '—'} · ${wd.humidity ?? 0}% RH · ${(wd.wind_mph ?? 0).toFixed(0)} mph</div>
+      </div>`;
+    }
+    html += '</div></div>';
   }
+  html += '</div>';
   el.innerHTML = html;
 
   // Update timestamp
@@ -578,17 +663,28 @@ function renderCards(snapshot) {
   }
 }
 
+// Maps display name → structure key for unambiguous rooms (used by seriesGroup)
+let _seriesStructureMap = {};
+
 function buildTimeSeries(snapshots) {
   // Collect room names (filtered + disambiguated display names)
   const roomNames = new Set();
+  _seriesStructureMap = {};
   for (const s of snapshots) {
-    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayNameFull(r.room));
+    for (const r of filterRooms(s.rooms || [])) {
+      const dname = displayNameFull(r.room);
+      roomNames.add(dname);
+      _seriesStructureMap[dname] = roomStructure(r.room);
+    }
   }
 
   // Collect weather series names from all snapshots
   const weatherNames = new Set();
   for (const s of snapshots) {
-    for (const {label} of getWeatherEntries(s)) weatherNames.add(label);
+    for (const {label} of getWeatherEntries(s)) {
+      weatherNames.add(label);
+      _seriesStructureMap[label] = label.includes('Crosstown') ? '19Crosstown' : 'Philly';
+    }
   }
 
   const series = {};
@@ -673,36 +769,7 @@ function humanDuration(isoTimestamp) {
   return days + 'd ' + (hrs % 24) + 'h';
 }
 
-function renderPresenceCards(presenceState) {
-  const el = document.getElementById('presenceCards');
-  if (!presenceState || presenceState.error) { el.innerHTML = ''; return; }
-
-  const locations = currentStructure === 'all'
-    ? ['cabin', 'crosstown']
-    : [LOCATION_MAP[currentStructure]].filter(Boolean);
-
-  let html = '';
-  for (const loc of locations) {
-    const info = presenceState[loc];
-    if (!info) continue;
-    const occ = info.occupancy || 'unknown';
-    const people = presenceState.people
-      ? Object.entries(presenceState.people).filter(([,v]) => v[loc]).map(([k]) => k)
-      : [];
-    const totalTracked = presenceState.people ? Object.keys(presenceState.people).length : 0;
-    const isPartial = occ === 'occupied' && people.length > 0 && people.length < totalTracked;
-    const badgeClass = isPartial ? 'partial' : occ === 'occupied' ? 'occupied' : occ === 'confirmed_vacant' ? 'vacant' : 'possibly';
-    const badgeText = isPartial ? 'Partially Occupied' : occ === 'occupied' ? 'Occupied' : occ === 'confirmed_vacant' ? 'Vacant' : 'Possibly Vacant';
-    const fresh = info.fresh !== false ? '' : ' (stale)';
-    const sinceChange = info.stateChangedAt ? humanDuration(info.stateChangedAt) : (info.scanAge || '');
-    const sinceLabel = info.stateChangedAt ? 'for ' + sinceChange : sinceChange;
-    html += '<div class="presence-card"><div class="card-label">' + LOCATION_LABELS[loc] + ' Presence</div>'
-      + '<span class="presence-badge ' + badgeClass + '">' + badgeText + '</span>'
-      + (people.length ? '<div class="presence-people">' + people.join(', ') + '</div>' : '')
-      + '<div class="presence-fresh">' + sinceLabel + fresh + '</div></div>';
-  }
-  el.innerHTML = html;
-}
+// Presence rendering is now integrated into renderLocationGroups
 
 // Chart.js plugin: occupancy background bands
 const presenceOverlayPlugin = {
@@ -741,7 +808,11 @@ const chartDefaults = {
   responsive: true,
   maintainAspectRatio: false,
   animation: { duration: 300 },
-  plugins: { legend: { labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e4e4e7', boxWidth: 12, padding: 10, font: { size: 11 } } } },
+  plugins: {
+    legend: {
+      display: false, // We use custom HTML legends
+    },
+  },
   scales: {
     x: {
       type: 'time',
@@ -754,6 +825,52 @@ const chartDefaults = {
     },
   },
 };
+
+// Render grouped HTML legend for a chart
+function renderGroupedLegend(chart, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const datasets = chart.data.datasets;
+  const showGroups = currentStructure === 'all' && datasets.some(d => d._group);
+
+  let html = '';
+  let lastGroup = null;
+  for (let i = 0; i < datasets.length; i++) {
+    const ds = datasets[i];
+    const meta = chart.getDatasetMeta(i);
+    const hidden = meta.hidden || ds.hidden;
+    const group = ds._group || '';
+
+    // Group header
+    if (showGroups && group !== lastGroup) {
+      if (lastGroup !== null) html += '</div>';
+      html += '<div class="legend-group"><span class="legend-group-label">' + group + '</span>';
+      lastGroup = group;
+    }
+
+    const color = ds.borderColor || ds.backgroundColor;
+    const isDashed = !!ds.borderDash;
+    const swatchStyle = isDashed
+      ? 'background:none;border-top:2px dashed ' + color
+      : 'background:' + color;
+    html += '<span class="legend-item' + (hidden ? ' hidden' : '') + '" data-index="' + i + '">'
+      + '<span class="legend-swatch" style="' + swatchStyle + '"></span>'
+      + ds.label + '</span>';
+  }
+  if (showGroups && lastGroup !== null) html += '</div>';
+  el.innerHTML = html;
+
+  // Click to toggle dataset visibility
+  el.querySelectorAll('.legend-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const idx = parseInt(item.dataset.index);
+      const meta = chart.getDatasetMeta(idx);
+      meta.hidden = !meta.hidden;
+      item.classList.toggle('hidden', meta.hidden);
+      chart.update();
+    });
+  });
+}
 
 function createLineChart(ctx, datasets, yLabel) {
   return new Chart(ctx, {
@@ -794,28 +911,49 @@ async function refresh() {
   // Pre-compute which room short names collide across structures
   computeDisplayCollisions(snaps);
 
-  // Presence cards: fetch current state
+  // Fetch presence state and render combined location groups
+  let presState = null;
   try {
     const presResp = await fetch('/api/presence');
-    const presState = await presResp.json();
-    renderPresenceCards(presState);
-  } catch { renderPresenceCards(null); }
+    presState = await presResp.json();
+  } catch {}
 
   // Presence legend: show when a specific structure is selected and we have presence data
   const legend = document.getElementById('presenceLegend');
   legend.classList.toggle('visible', currentStructure !== 'all' && currentPresence.length > 0);
 
-  // Cards: latest snapshot
-  if (snaps.length > 0) renderCards(snaps[snaps.length - 1]);
+  // Render location groups (presence + device cards)
+  if (snaps.length > 0) renderLocationGroups(snaps[snaps.length - 1], presState);
 
   if (typeof Chart === 'undefined') return; // CDN unreachable
 
   const series = buildTimeSeries(snaps);
   const hvacDuty = computeHvacDuty(snaps);
 
+  // Helper: determine structure group for a series name
+  function seriesGroup(name) {
+    if (name.includes('(XTown)') || name.includes('(Crosstown)')) return 'Crosstown';
+    if (name.includes('(Cabin)')) return 'Cabin';
+    // In filtered view, check structure filter
+    if (currentStructure === '19Crosstown') return 'Crosstown';
+    if (currentStructure === 'Philly') return 'Cabin';
+    // Unambiguous names in "Both" — look up from snapshot data
+    const struct = _seriesStructureMap[name];
+    return struct === '19Crosstown' ? 'Crosstown' : 'Cabin';
+  }
+
+  // Sort datasets: Cabin first, then Crosstown, alphabetical within group
+  function sortByGroup(entries) {
+    return entries.sort((a, b) => {
+      const ga = seriesGroup(a[0]), gb = seriesGroup(b[0]);
+      if (ga !== gb) return ga === 'Cabin' ? -1 : 1;
+      return a[0].localeCompare(b[0]);
+    });
+  }
+
   // Temperature datasets
   const tempDS = [];
-  for (const [name, s] of Object.entries(series)) {
+  for (const [name, s] of sortByGroup(Object.entries(series))) {
     if (s.temps.length === 0) continue;
     const color = roomColor(name);
     tempDS.push({
@@ -824,6 +962,7 @@ async function refresh() {
       borderColor: color,
       backgroundColor: color + '22',
       fill: false,
+      _group: seriesGroup(name),
     });
     // Setpoint lines (dotted) for rooms (not outside)
     if (!name.startsWith('Outside') && s.setpoints && s.setpoints.length > 0) {
@@ -835,13 +974,15 @@ async function refresh() {
         borderWidth: 1,
         fill: false,
         pointRadius: 0,
+        hidden: !showSetpoints,
+        _group: seriesGroup(name),
       });
     }
   }
 
   // Humidity datasets
   const humidDS = [];
-  for (const [name, s] of Object.entries(series)) {
+  for (const [name, s] of sortByGroup(Object.entries(series))) {
     if (s.humids.length === 0) continue;
     const color = roomColor(name);
     humidDS.push({
@@ -850,12 +991,13 @@ async function refresh() {
       borderColor: color,
       backgroundColor: color + '22',
       fill: false,
+      _group: seriesGroup(name),
     });
   }
 
   // HVAC duty datasets
   const hvacDS = [];
-  for (const [name, buckets] of Object.entries(hvacDuty)) {
+  for (const [name, buckets] of sortByGroup(Object.entries(hvacDuty))) {
     if (buckets.length === 0) continue;
     const color = roomColor(name);
     hvacDS.push({
@@ -864,6 +1006,7 @@ async function refresh() {
       backgroundColor: color + '99',
       borderColor: color,
       borderWidth: 1,
+      _group: seriesGroup(name),
     });
   }
 
@@ -873,8 +1016,11 @@ async function refresh() {
   if (hvacChart) hvacChart.destroy();
 
   tempChart = createLineChart(document.getElementById('tempChart'), tempDS, '°F');
+  renderGroupedLegend(tempChart, 'tempLegend');
   humidChart = createLineChart(document.getElementById('humidChart'), humidDS, '% RH');
+  renderGroupedLegend(humidChart, 'humidLegend');
   hvacChart = createBarChart(document.getElementById('hvacChart'), hvacDS);
+  renderGroupedLegend(hvacChart, 'hvacLegend');
 }
 
 // Structure filter buttons
@@ -892,6 +1038,13 @@ document.getElementById('timeControls').addEventListener('click', e => {
   document.querySelectorAll('#timeControls button').forEach(b => b.classList.remove('active'));
   e.target.classList.add('active');
   currentHours = parseInt(e.target.dataset.hours);
+  refresh();
+});
+
+// Setpoint toggle
+document.getElementById('setpointToggle').addEventListener('click', e => {
+  showSetpoints = !showSetpoints;
+  e.target.classList.toggle('active', showSetpoints);
   refresh();
 });
 
