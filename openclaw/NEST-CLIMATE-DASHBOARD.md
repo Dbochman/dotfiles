@@ -1,6 +1,6 @@
 # Nest Climate Dashboard — Implementation Spec
 
-## Status: v2 (2026-03-08)
+## Status: v2.1 (2026-03-09)
 
 Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats and weather across two locations via three heating/cooling systems. Serves at port 8550 on Mac Mini, Tailscale-only access.
 
@@ -206,30 +206,37 @@ For time ranges > 7 days (168 hours), snapshots are downsampled to ~1 per hour. 
 
 Cabin rooms use a **cool** palette; Crosstown rooms use a **warm** palette. Outside temps use light variants.
 
-| Room | Hex | Palette |
-|------|-----|---------|
-| Solarium | `#3B82F6` | Cool (blue) |
-| Living Room (Cabin) | `#8B5CF6` | Cool (purple) |
-| Bedroom (Cabin) | `#06B6D4` | Cool (cyan) |
-| Outside (Cabin) | `#C9E2FE` | Cool (light blue) |
-| Living Room (XTown) | `#F97316` | Warm (orange) |
-| Bedroom (XTown) | `#FB7185` | Warm (pink) |
-| Dylan's Office | `#F59E0B` | Warm (amber) |
-| Basement | `#EF4444` | Warm (red) |
-| Cat Room | `#EC4899` | Warm (pink) |
-| Basement door | `#F97316` | Warm (orange) |
-| Movie room | `#FB923C` | Warm (light orange) |
-| Outside (Crosstown) | `#FEDDBA` | Warm (peach) |
+| Room (internal color key) | Legend Label | Hex | Palette |
+|---------------------------|-------------|-----|---------|
+| Solarium | Solarium | `#3B82F6` | Cool (blue) |
+| Living Room (Cabin) | Living Room | `#8B5CF6` | Cool (purple) |
+| Bedroom (Cabin) | Bedroom | `#06B6D4` | Cool (cyan) |
+| Outside (Cabin) | Outside | `#C9E2FE` | Cool (light blue) |
+| Living Room (XTown) | Living Room | `#F97316` | Warm (orange) |
+| Bedroom (XTown) | Bedroom | `#FB7185` | Warm (pink) |
+| Dylan's Office | Dylan's Office | `#F59E0B` | Warm (amber) |
+| Basement | Basement | `#EF4444` | Warm (red) |
+| Cat Room | Cat Room | `#EC4899` | Warm (pink) |
+| Basement door | Basement door | `#F97316` | Warm (orange) |
+| Movie room | Movie room | `#FB923C` | Warm (light orange) |
+| Outside (Crosstown) | Outside | `#FEDDBA` | Warm (peach) |
 
 **Structure-aware color resolution:** When viewing a single structure, `roomColor()` checks `COLORS[name + ' (XTown)']` or `COLORS[name + ' (Cabin)']` before the bare name — prevents colliding rooms (Living Room, Bedroom) from inheriting the wrong palette.
 
 ### Room Name Disambiguation
 
-When viewing "Both" structures, rooms that appear in both locations get a suffix:
+Internally, rooms that collide across structures get a suffix for color/grouping resolution:
 - `Living Room (Cabin)` / `Living Room (XTown)`
 - `Bedroom (Cabin)` / `Bedroom (XTown)`
 
-Unique rooms (Solarium, Cat Room, Dylan's Office) keep short names in all views.
+**Chart legends** always show short names without location identifiers (e.g., `Bedroom`, `Living Room`, `Outside`). The grouped legend headers (Cabin / Crosstown) provide the location context.
+
+**Chart tooltips** (on hover) show the full name with location (e.g., `Bedroom (Cabin)`, `Dylan's Office (Crosstown)`). In single-structure views, the location is appended to all rooms for clarity.
+
+Unique rooms (Solarium, Cat Room, Dylan's Office) keep short names in all views. Helper functions:
+- `displayNameFull()` — internal key with `(Cabin)`/`(XTown)` suffix for colliding names
+- `displayNameLegend()` — strips location suffix for chart legend labels
+- `displayNameTooltip()` — adds location context for chart hover tooltips
 
 ### HVAC Duty Cycle Computation
 

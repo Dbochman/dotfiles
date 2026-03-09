@@ -521,6 +521,28 @@ function displayNameFull(roomName) {
   return short;
 }
 
+// Short legend name: strip location identifier, used for chart legends
+function displayNameLegend(fullName) {
+  return fullName.replace(/ \(Cabin\)$/, '').replace(/ \(XTown\)$/, '').replace(/ \(Crosstown\)$/, '');
+}
+
+// Tooltip name: add location identifier for disambiguation
+function displayNameTooltip(fullName) {
+  if (currentStructure !== 'all') {
+    const loc = currentStructure === '19Crosstown' ? 'Crosstown' : 'Cabin';
+    return fullName + ' (' + loc + ')';
+  }
+  // In "Both" view, non-colliding names need location added too
+  if (!fullName.includes('(Cabin)') && !fullName.includes('(XTown)') && !fullName.startsWith('Outside')) {
+    const struct = _seriesStructureMap[fullName];
+    if (struct) {
+      const loc = struct === '19Crosstown' ? 'Crosstown' : 'Cabin';
+      return fullName + ' (' + loc + ')';
+    }
+  }
+  return fullName;
+}
+
 async function fetchData(hours) {
   try {
     const resp = await fetch('/api/data?hours=' + hours);
@@ -812,6 +834,16 @@ const chartDefaults = {
     legend: {
       display: false, // We use custom HTML legends
     },
+    tooltip: {
+      callbacks: {
+        label: function(context) {
+          const ds = context.dataset;
+          const name = ds._fullName || ds.label;
+          const tooltipName = displayNameTooltip(name);
+          return tooltipName + ': ' + context.formattedValue;
+        },
+      },
+    },
   },
   scales: {
     x: {
@@ -957,17 +989,18 @@ async function refresh() {
     if (s.temps.length === 0) continue;
     const color = roomColor(name);
     tempDS.push({
-      label: name,
+      label: displayNameLegend(name),
       data: s.temps,
       borderColor: color,
       backgroundColor: color + '22',
       fill: false,
       _group: seriesGroup(name),
+      _fullName: name,
     });
     // Setpoint lines (dotted) for rooms (not outside)
     if (!name.startsWith('Outside') && s.setpoints && s.setpoints.length > 0) {
       tempDS.push({
-        label: name + ' setpoint',
+        label: displayNameLegend(name) + ' setpoint',
         data: s.setpoints,
         borderColor: color,
         borderDash: [4, 4],
@@ -976,6 +1009,7 @@ async function refresh() {
         pointRadius: 0,
         hidden: !showSetpoints,
         _group: seriesGroup(name),
+        _fullName: name + ' setpoint',
       });
     }
   }
@@ -986,12 +1020,13 @@ async function refresh() {
     if (s.humids.length === 0) continue;
     const color = roomColor(name);
     humidDS.push({
-      label: name,
+      label: displayNameLegend(name),
       data: s.humids,
       borderColor: color,
       backgroundColor: color + '22',
       fill: false,
       _group: seriesGroup(name),
+      _fullName: name,
     });
   }
 
@@ -1001,12 +1036,13 @@ async function refresh() {
     if (buckets.length === 0) continue;
     const color = roomColor(name);
     hvacDS.push({
-      label: name,
+      label: displayNameLegend(name),
       data: buckets,
       backgroundColor: color + '99',
       borderColor: color,
       borderWidth: 1,
       _group: seriesGroup(name),
+      _fullName: name,
     });
   }
 
