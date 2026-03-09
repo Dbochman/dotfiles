@@ -11,6 +11,7 @@ import json
 import os
 import signal
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -223,8 +224,9 @@ def run():
     print(f"  Access via Tailscale IP or localhost", flush=True)
 
     def shutdown(signum, frame):
-        print(f"\nShutting down (signal {signum})...")
-        server.shutdown()
+        print(f"\nShutting down (signal {signum})...", flush=True)
+        # Run shutdown in a thread to avoid deadlock with serve_forever's lock
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
@@ -235,7 +237,8 @@ def run():
         pass
     finally:
         server.server_close()
-        print("Server stopped.")
+        print("Server stopped.", flush=True)
+        sys.exit(0)
 
 
 # ---------------------------------------------------------------------------
