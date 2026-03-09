@@ -39,7 +39,9 @@ log "Device files backed up"
 cp "$PLIST" "${PLIST}.pre-upgrade"
 log "Plist backed up"
 
-# 5. Upgrade
+# 5. Stop gateway before upgrade so launchd doesn't restart it mid-install
+launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
+sleep 2
 npm install -g openclaw@latest >> "$LOG" 2>&1
 NEW_VER=$(npm list -g openclaw 2>/dev/null | grep openclaw@ | sed "s/.*openclaw@//")
 log "Upgraded to: $NEW_VER"
