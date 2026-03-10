@@ -1,6 +1,6 @@
 # OpenClaw Usage Dashboard
 
-## Status: v7 (2026-03-09)
+## Status: v7.1 (2026-03-10)
 
 Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Mac Mini, Tailscale-only access.
 
@@ -30,7 +30,7 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Ma
 
 ### Dashboard Features
 
-**Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day. Sonnet 7d gauge only appears when there's active Sonnet usage. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns. Two additional gauges show OpenClaw (orange) and Claude Code (blue) token share of combined usage.
+**Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day. Sonnet 7d gauge only appears when there's active Sonnet usage. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns. Two additional gauges show OpenClaw (orange) and Claude Code (blue) token share of combined usage. Entire section auto-hides when utilization data is unavailable (e.g., stale OAuth token).
 
 **Stat cards** — All cards auto-hide when their value is zero for the selected time range. Available: Total Cost ($), Total Tokens (in/out with cache), Cron Runs (with failure count), Messages (sent/recv), Sessions (with tool calls), Errors, Gateway Restarts. Cost/sessions require gateway RPC data; falls back to "No Activity" when nothing to show.
 
@@ -85,6 +85,10 @@ Since ccusage data is daily granularity and the push runs on a laptop (not alway
 ---
 
 ## Changelog
+
+### v7.1 (2026-03-10)
+- **Downsampling data loss fix** — `_downsample_hourly` (used for 30d view) was dropping activity deltas and cron job entries from non-kept snapshots, causing 30d to show fewer cron runs/messages than 7d. Now merges activity counts and `cron_jobs` from dropped snapshots into the kept one per hourly bucket.
+- **Utilization gauges auto-hide** — replaced "No utilization data" banner with silent auto-hide when utilization is null (e.g., expired OAuth token), consistent with all other dashboard sections.
 
 ### v7 (2026-03-09)
 - **Gateway sessions.usage RPC integration** — new `/api/gateway-usage` endpoint calls `openclaw gateway call sessions.usage --json` with 5-minute cache. Provides per-session tokens, costs, tool usage, and model split.
@@ -226,5 +230,5 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
 ## Known Issues / Future Work
 
 - **Midnight log gap** — Log entries between last snapshot of day and midnight are lost
-- **OAuth token staleness** — No fallback when token expires, utilization goes null
+- **OAuth token staleness** — No fallback when token expires; gauges auto-hide (no longer shows error banner). Token refreshes when MacBook pushes via `usage-token-push` LaunchAgent
 - **Cron dedup** — If state file is reset, historical records are re-counted

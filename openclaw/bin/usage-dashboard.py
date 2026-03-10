@@ -67,8 +67,9 @@ def load_snapshots(hours):
 
 
 def _downsample_hourly(records):
-    """Keep approximately one snapshot per hour."""
+    """Keep one snapshot per hour, merging activity/cron deltas so counts aren't lost."""
     buckets = {}
+    extras = {}  # key -> list of activity dicts + cron_jobs from dropped snapshots
     for rec in records:
         ts_str = rec.get("timestamp", "")
         try:
@@ -76,8 +77,29 @@ def _downsample_hourly(records):
         except (ValueError, AttributeError):
             continue
         key = ts.strftime("%Y-%m-%d-%H")
-        if key not in buckets or ts.minute < _ts_minute(buckets[key]):
+        if key not in buckets:
             buckets[key] = rec
+            extras[key] = []
+        elif ts.minute < _ts_minute(buckets[key]):
+            # New winner — demote old winner to extras
+            extras[key].append(buckets[key])
+            buckets[key] = rec
+        else:
+            extras[key].append(rec)
+
+    # Merge activity deltas and cron_jobs from dropped snapshots into the kept one
+    for key, kept in buckets.items():
+        for dropped in extras.get(key, []):
+            da = dropped.get("activity", {})
+            if da:
+                ka = kept.setdefault("activity", {})
+                for field in ("agent_runs", "messages_sent", "messages_received",
+                              "cron_runs", "errors", "gateway_restarts"):
+                    ka[field] = ka.get(field, 0) + da.get(field, 0)
+            dc = dropped.get("cron_jobs", [])
+            if dc:
+                kept.setdefault("cron_jobs", []).extend(dc)
+
     return [buckets[k] for k in sorted(buckets.keys())]
 
 
@@ -649,7 +671,8 @@ function aggregate(snaps) {
 
 function renderGauges(util, agg, ccusage) {
   const el = document.getElementById('gauges');
-  if (!util) { el.innerHTML = '<div class="loading">No utilization data</div>'; return; }
+  if (!util) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = '';
   let h = '';
   const fh = util.five_hour;
   if (fh) h += gaugeHTML('5-Hour', fh.utilization, fh.resets_at);
@@ -674,7 +697,8 @@ function renderGauges(util, agg, ccusage) {
       h += usageGaugeHTML('Claude Code', ccPct, fmtTokens(ccTotal), '#3B82F6');
     }
   }
-  el.innerHTML = h || '<div class="loading">No utilization data</div>';
+  if (!h) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.innerHTML = h;
 }
 
 function renderStats(agg, gwData) {
