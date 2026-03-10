@@ -186,6 +186,54 @@ def get_launchagent_status():
     return services
 
 
+SECRETS_CACHE = os.path.expanduser("~/.openclaw/.secrets-cache")
+OPENCLAW_BIN = "/opt/homebrew/opt/node@22/bin/openclaw"
+
+# Gateway usage RPC cache (5-minute TTL)
+_gw_usage_cache = {"data": None, "ts": 0}
+_gw_usage_lock = threading.Lock()
+GW_CACHE_TTL = 300  # seconds
+
+
+def fetch_gateway_usage():
+    """Call `openclaw gateway call sessions.usage --json` with 5-min caching."""
+    now = datetime.now(timezone.utc).timestamp()
+    with _gw_usage_lock:
+        if _gw_usage_cache["data"] and (now - _gw_usage_cache["ts"]) < GW_CACHE_TTL:
+            return _gw_usage_cache["data"]
+
+    # Build env with secrets
+    env = os.environ.copy()
+    env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:" + env.get("PATH", "")
+    if os.path.exists(SECRETS_CACHE):
+        try:
+            for line in open(SECRETS_CACHE):
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    env[k] = v
+        except OSError:
+            pass
+
+    try:
+        result = subprocess.run(
+            ["openclaw", "gateway", "call", "sessions.usage", "--json", "--timeout", "30000"],
+            capture_output=True, text=True, timeout=35, env=env,
+        )
+        if result.returncode != 0:
+            print(f"gateway usage RPC failed: {result.stderr[:200]}", file=sys.stderr, flush=True)
+            return None
+        data = json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+        print(f"gateway usage RPC error: {e}", file=sys.stderr, flush=True)
+        return None
+
+    with _gw_usage_lock:
+        _gw_usage_cache["data"] = data
+        _gw_usage_cache["ts"] = now
+    return data
+
+
 CRON_JOBS_PATH = os.path.expanduser("~/.openclaw/cron/jobs.json")
 
 
@@ -245,6 +293,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._respond(200, {"services": get_launchagent_status()})
         elif path == "/api/cron":
             self._respond(200, {"jobs": get_upcoming_cron_jobs()})
+        elif path == "/api/gateway-usage":
+            data = fetch_gateway_usage()
+            if data:
+                self._respond(200, data)
+            else:
+                self._respond(503, {"error": "gateway usage unavailable"})
         else:
             self._respond(404, {"error": "not found"})
 
@@ -415,10 +469,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
 <!-- Charts -->
 <div class="charts-grid">
-  <div class="chart-box full"><h2>Utilization Over Time</h2><div class="chart-wrap"><canvas id="utilChart"></canvas></div></div>
-  <div class="chart-box"><h2>Tokens by Job</h2><div class="chart-wrap"><canvas id="tokenJobChart"></canvas></div></div>
-  <div class="chart-box"><h2>Token Usage Over Time</h2><div class="chart-wrap"><canvas id="tokenTimeChart"></canvas></div></div>
-  <div class="chart-box full"><h2>Activity</h2><div class="chart-wrap"><canvas id="activityChart"></canvas></div></div>
+  <div class="chart-box full" id="utilBox"><h2>Utilization Over Time</h2><div class="chart-wrap"><canvas id="utilChart"></canvas></div></div>
+  <div class="chart-box" id="tokenJobBox"><h2>Tokens by Job</h2><div class="chart-wrap"><canvas id="tokenJobChart"></canvas></div></div>
+  <div class="chart-box" id="tokenTimeBox"><h2>Token Usage Over Time</h2><div class="chart-wrap"><canvas id="tokenTimeChart"></canvas></div></div>
+  <div class="chart-box full" id="activityBox"><h2>Activity</h2><div class="chart-wrap"><canvas id="activityChart"></canvas></div></div>
+  <div class="chart-box" id="costBox" style="display:none"><h2>Cost Over Time</h2><div class="chart-wrap"><canvas id="costChart"></canvas></div></div>
+  <div class="chart-box" id="modelBox" style="display:none"><h2>Model Split</h2><div class="chart-wrap"><canvas id="modelChart"></canvas></div></div>
+  <div class="chart-box" id="toolBox" style="display:none"><h2>Tool Usage</h2><div class="chart-wrap"><canvas id="toolChart"></canvas></div></div>
 </div>
 
 <!-- LaunchAgent services -->
@@ -449,7 +506,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 </div>
 
 <script>
-const C = { green:'#22c55e', amber:'#f59e0b', red:'#ef4444', blue:'#3b82f6', purple:'#8b5cf6', cyan:'#06b6d4', muted:'#9ca3af', grid:'rgba(255,255,255,0.05)' };
+const C = { green:'#22c55e', amber:'#f59e0b', red:'#ef4444', blue:'#3b82f6', purple:'#8b5cf6', cyan:'#06b6d4', orange:'#f97316', pink:'#ec4899', muted:'#9ca3af', grid:'rgba(255,255,255,0.05)' };
 let charts = {};
 let currentHours = 720;
 
@@ -620,16 +677,57 @@ function renderGauges(util, agg, ccusage) {
   el.innerHTML = h || '<div class="loading">No utilization data</div>';
 }
 
-function renderStats(agg) {
+function renderStats(agg, gwData) {
   const el = document.getElementById('stats');
-  const t = agg.tokens, a = agg.activity;
-  el.innerHTML = `
-    <div class="stat"><div class="stat-label">Total Tokens</div><div class="stat-value">${fmtTokens(t.total)}</div><div class="stat-sub">In: ${fmtTokens(t.input)} / Out: ${fmtTokens(t.output)}</div></div>
-    <div class="stat"><div class="stat-label">Cron Runs</div><div class="stat-value">${a.cron_runs}</div><div class="stat-sub">${agg.cronJobs.filter(j=>j.status==='error').length} failed</div></div>
-    <div class="stat"><div class="stat-label">Messages</div><div class="stat-value">${a.messages_sent + a.messages_received}</div><div class="stat-sub">Sent: ${a.messages_sent} / Recv: ${a.messages_received}</div></div>
-    <div class="stat"><div class="stat-label">Errors</div><div class="stat-value" style="color:${a.errors > 0 ? C.red : C.green}">${a.errors}</div></div>
-    <div class="stat"><div class="stat-label">Gateway Restarts</div><div class="stat-value">${a.gateway_restarts}</div></div>
-  `;
+  const a = agg.activity;
+  // Filter gateway data by current time range
+  const cutoff = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
+  const gwDaily = gwData ? (gwData.aggregates || {}).daily || [] : [];
+  const filteredDaily = gwDaily.filter(d => d.date >= cutoff);
+  // Sum filtered daily for totals
+  const gw = filteredDaily.length > 0 ? filteredDaily.reduce((acc, d) => {
+    acc.input += d.input || 0; acc.output += d.output || 0;
+    acc.cacheRead += d.cacheRead || 0; acc.cacheWrite += d.cacheWrite || 0;
+    acc.totalTokens += d.totalTokens || 0; acc.totalCost += d.totalCost || 0;
+    return acc;
+  }, { input:0, output:0, cacheRead:0, cacheWrite:0, totalTokens:0, totalCost:0 }) : null;
+  const totalTok = gw ? gw.totalTokens : agg.tokens.total;
+  const inTok = gw ? (gw.input + gw.cacheRead) : agg.tokens.input;
+  const outTok = gw ? (gw.output + gw.cacheWrite) : agg.tokens.output;
+  // Filter sessions and compute latency/tools for the time range
+  const filteredSessions = gwData ? (gwData.sessions || []).filter(s => {
+    const dates = s.usage && s.usage.activityDates;
+    if (dates && dates.length > 0) return dates.some(d => d >= cutoff);
+    return false;
+  }) : [];
+  const filteredDailyLat = gwData ? ((gwData.aggregates || {}).dailyLatency || []).filter(d => d.date >= cutoff) : [];
+  let errCount = a.errors;
+  let totalToolCalls = 0;
+  for (const s of filteredSessions) {
+    if (s.usage && s.usage.messageCounts) errCount = Math.max(errCount, 0); // keep snapshot errors as floor
+    totalToolCalls += ((s.usage || {}).toolUsage || {}).totalCalls || 0;
+  }
+  const sessions = filteredSessions.length;
+  const cost = gw ? gw.totalCost : null;
+  // Compute weighted average latency from filtered daily entries
+  let lat = null;
+  if (filteredDailyLat.length > 0) {
+    const totalCount = filteredDailyLat.reduce((s, d) => s + d.count, 0);
+    const weightedAvg = totalCount > 0 ? filteredDailyLat.reduce((s, d) => s + d.avgMs * d.count, 0) / totalCount : 0;
+    const maxP95 = Math.max(...filteredDailyLat.map(d => d.p95Ms));
+    lat = { avgMs: weightedAvg, p95Ms: maxP95 };
+  }
+
+  let h = '';
+  if (cost != null && cost > 0) h += `<div class="stat"><div class="stat-label">Total Cost</div><div class="stat-value">$${cost.toFixed(2)}</div><div class="stat-sub">${gw ? fmtTokens(gw.cacheRead) + ' cache hits' : ''}</div></div>`;
+  if (totalTok > 0) h += `<div class="stat"><div class="stat-label">Total Tokens</div><div class="stat-value">${fmtTokens(totalTok)}</div><div class="stat-sub">In: ${fmtTokens(inTok)} / Out: ${fmtTokens(outTok)}</div></div>`;
+  if (a.cron_runs > 0) h += `<div class="stat"><div class="stat-label">Cron Runs</div><div class="stat-value">${a.cron_runs}</div><div class="stat-sub">${agg.cronJobs.filter(j=>j.status==='error').length} failed</div></div>`;
+  if (a.messages_sent + a.messages_received > 0) h += `<div class="stat"><div class="stat-label">Messages</div><div class="stat-value">${a.messages_sent + a.messages_received}</div><div class="stat-sub">Sent: ${a.messages_sent} / Recv: ${a.messages_received}</div></div>`;
+  if (sessions > 0) h += `<div class="stat"><div class="stat-label">Sessions</div><div class="stat-value">${sessions}</div><div class="stat-sub">${totalToolCalls} tool calls</div></div>`;
+  if (errCount > 0) h += `<div class="stat"><div class="stat-label">Errors</div><div class="stat-value" style="color:${C.red}">${errCount}</div></div>`;
+  if (a.gateway_restarts > 0) h += `<div class="stat"><div class="stat-label">Gateway Restarts</div><div class="stat-value">${a.gateway_restarts}</div></div>`;
+  if (!h) h = '<div class="stat"><div class="stat-label">No Activity</div><div class="stat-value" style="color:' + C.muted + '">-</div></div>';
+  el.innerHTML = h;
 }
 
 function durationTrend(job, allJobs) {
@@ -738,12 +836,19 @@ function buildCharts(snaps, agg, ccusage) {
     if (u.five_hour) fiveH.push({ x: s.timestamp, y: u.five_hour.utilization });
     if (u.seven_day) sevenD.push({ x: s.timestamp, y: u.seven_day.utilization });
   }
-  updateOrCreate('utilChart', 'line', [
-    { label:'5-Hour', data:fiveH, borderColor:C.blue, backgroundColor:'rgba(59,130,246,0.08)', fill:true, tension:0.3, borderWidth:2, pointRadius:0, pointHitRadius:6 },
-    { label:'7-Day', data:sevenD, borderColor:C.purple, backgroundColor:'rgba(139,92,246,0.08)', fill:true, tension:0.3, borderWidth:2, pointRadius:0, pointHitRadius:6 },
-  ], 'Utilization %');
+  const utilBox = document.getElementById('utilBox');
+  if (fiveH.length > 0 || sevenD.length > 0) {
+    utilBox.style.display = '';
+    updateOrCreate('utilChart', 'line', [
+      { label:'5-Hour', data:fiveH, borderColor:C.blue, backgroundColor:'rgba(59,130,246,0.08)', fill:true, tension:0.3, borderWidth:2, pointRadius:0, pointHitRadius:6 },
+      { label:'7-Day', data:sevenD, borderColor:C.purple, backgroundColor:'rgba(139,92,246,0.08)', fill:true, tension:0.3, borderWidth:2, pointRadius:0, pointHitRadius:6 },
+    ], 'Utilization %');
+  } else {
+    utilBox.style.display = 'none';
+    if (charts['utilChart']) { charts['utilChart'].destroy(); delete charts['utilChart']; }
+  }
 
-  // Tokens by job (doughnut)
+  // Tokens by job (doughnut) — hide entirely when no data
   const jobTokens = {};
   for (const j of agg.cronJobs) {
     const name = shortJobId(j.job_id);
@@ -752,7 +857,11 @@ function buildCharts(snaps, agg, ccusage) {
   const jobNames = Object.keys(jobTokens).sort((a,b) => jobTokens[b] - jobTokens[a]);
   const jobColors = [C.blue, C.purple, C.cyan, C.amber, C.green, C.red, '#ec4899', '#f97316'];
   if (charts['tokenJobChart']) { charts['tokenJobChart'].destroy(); delete charts['tokenJobChart']; }
+  const tokenJobBox = document.getElementById('tokenJobBox');
+  const tokenTimeBox = document.getElementById('tokenTimeBox');
   if (jobNames.length > 0 && Object.values(jobTokens).some(v => v > 0)) {
+    tokenJobBox.style.display = '';
+    tokenTimeBox.classList.remove('full');
     charts['tokenJobChart'] = new Chart(document.getElementById('tokenJobChart'), {
       type: 'doughnut',
       data: {
@@ -766,31 +875,57 @@ function buildCharts(snaps, agg, ccusage) {
       },
     });
   } else {
-    // Empty state
-    const ctx = document.getElementById('tokenJobChart').getContext('2d');
-    ctx.fillStyle = C.muted; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('No token data', ctx.canvas.width/2, ctx.canvas.height/2);
+    tokenJobBox.style.display = 'none';
+    tokenTimeBox.classList.add('full');
   }
 
-  // Token usage over time: OpenClaw vs Claude Code (stacked bar, daily buckets)
-  const ocBk = {}, ccBk = {};
-  for (const s of chartSnaps) {
-    const day = s.timestamp.slice(0, 10);
-    const t = s.tokens || {};
-    ocBk[day] = (ocBk[day]||0) + (t.total || 0);
-  }
-  // Overlay Claude Code daily totals from ccusage
-  const cutoffDate = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
-  if (ccusage) {
-    for (const d of ccusage) {
-      if (d.date >= cutoffDate) ccBk[d.date] = (d.totalTokens || 0);
+  // Token usage over time: OpenClaw vs Claude Code (stacked bar, adaptive buckets)
+  function tokenBucketKey(ts) {
+    const d = new Date(ts);
+    if (currentHours <= 24) {
+      return d.toISOString().slice(0,13) + ':00:00Z'; // hourly
+    } else if (currentHours <= 168) {
+      const h = d.getUTCHours() < 12 ? '00' : '12';
+      return d.toISOString().slice(0,10) + 'T' + h + ':00:00Z'; // 12h
+    } else {
+      return d.toISOString().slice(0,10) + 'T12:00:00Z'; // daily
     }
   }
-  const allDays = [...new Set([...Object.keys(ocBk), ...Object.keys(ccBk)])].sort();
-  updateOrCreate('tokenTimeChart', 'bar', [
-    { label:'OpenClaw', data:allDays.map(k=>({x:k,y:ocBk[k]||0})), backgroundColor:'rgba(249,115,22,0.7)', borderColor:'#F97316', borderWidth:1 },
-    { label:'Claude Code', data:allDays.map(k=>({x:k,y:ccBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
-  ], 'Tokens');
+  const ocBk = {}, ccBk = {};
+  for (const s of chartSnaps) {
+    const key = tokenBucketKey(s.timestamp);
+    const t = s.tokens || {};
+    ocBk[key] = (ocBk[key]||0) + (t.total || 0);
+  }
+  // Overlay Claude Code daily totals from ccusage (only at ≥7d where daily buckets make sense)
+  const cutoffDate = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
+  if (ccusage && currentHours > 24) {
+    for (const d of ccusage) {
+      if (d.date < cutoffDate) continue;
+      if (currentHours <= 168) {
+        const half = Math.round((d.totalTokens || 0) / 2);
+        ccBk[d.date + 'T00:00:00Z'] = (ccBk[d.date + 'T00:00:00Z']||0) + half;
+        ccBk[d.date + 'T12:00:00Z'] = (ccBk[d.date + 'T12:00:00Z']||0) + half;
+      } else {
+        ccBk[d.date + 'T12:00:00Z'] = (ccBk[d.date + 'T12:00:00Z']||0) + (d.totalTokens || 0);
+      }
+    }
+  }
+  const allKeys = [...new Set([...Object.keys(ocBk), ...Object.keys(ccBk)])].sort();
+  const hasTokenData = allKeys.length > 0 && (Object.values(ocBk).some(v => v > 0) || Object.values(ccBk).some(v => v > 0));
+  if (hasTokenData) {
+    tokenTimeBox.style.display = '';
+    const tokenDatasets = [
+      { label:'OpenClaw', data:allKeys.map(k=>({x:k,y:ocBk[k]||0})), backgroundColor:'rgba(249,115,22,0.7)', borderColor:'#F97316', borderWidth:1 },
+    ];
+    if (currentHours > 24) {
+      tokenDatasets.push({ label:'Claude Code', data:allKeys.map(k=>({x:k,y:ccBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 });
+    }
+    updateOrCreate('tokenTimeChart', 'bar', tokenDatasets, 'Tokens');
+  } else {
+    tokenTimeBox.style.display = 'none';
+    if (charts['tokenTimeChart']) { charts['tokenTimeChart'].destroy(); delete charts['tokenTimeChart']; }
+  }
 
   // Activity (adaptive buckets: hourly for ≤24h, 12h for 7d, daily for 30d+)
   function activityBucketKey(ts) {
@@ -813,11 +948,19 @@ function buildCharts(snaps, agg, ccusage) {
     cronBk[key] = (cronBk[key]||0) + (a.cron_runs||0);
   }
   const akeys = [...new Set([...Object.keys(sentBk), ...Object.keys(recvBk), ...Object.keys(cronBk)])].sort();
-  updateOrCreate('activityChart', 'bar', [
-    { label:'Sent', data:akeys.map(k=>({x:k,y:sentBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
-    { label:'Received', data:akeys.map(k=>({x:k,y:recvBk[k]||0})), backgroundColor:'rgba(34,197,94,0.7)', borderColor:C.green, borderWidth:1 },
-    { label:'Cron', data:akeys.map(k=>({x:k,y:cronBk[k]||0})), backgroundColor:'rgba(245,158,11,0.7)', borderColor:C.amber, borderWidth:1 },
-  ], 'Count');
+  const activityBox = document.getElementById('activityBox');
+  const hasActivity = akeys.length > 0 && [...Object.values(sentBk), ...Object.values(recvBk), ...Object.values(cronBk)].some(v => v > 0);
+  if (hasActivity) {
+    activityBox.style.display = '';
+    updateOrCreate('activityChart', 'bar', [
+      { label:'Sent', data:akeys.map(k=>({x:k,y:sentBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 },
+      { label:'Received', data:akeys.map(k=>({x:k,y:recvBk[k]||0})), backgroundColor:'rgba(34,197,94,0.7)', borderColor:C.green, borderWidth:1 },
+      { label:'Cron', data:akeys.map(k=>({x:k,y:cronBk[k]||0})), backgroundColor:'rgba(245,158,11,0.7)', borderColor:C.amber, borderWidth:1 },
+    ], 'Count');
+  } else {
+    activityBox.style.display = 'none';
+    if (charts['activityChart']) { charts['activityChart'].destroy(); delete charts['activityChart']; }
+  }
 }
 
 // ── Services panel ──
@@ -918,14 +1061,143 @@ async function refreshUpcoming() {
   } catch(e) {}
 }
 
+// ── Gateway usage ──
+
+let gwUsageData = null;
+
+async function fetchGatewayUsage() {
+  try {
+    const r = await fetch('/api/gateway-usage');
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+}
+
+function fmtCost(n) {
+  if (n == null) return '-';
+  return '$' + n.toFixed(2);
+}
+
+function gwCutoffDate() {
+  return new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
+}
+
+function filterGwSessions(sessions) {
+  const cutoff = gwCutoffDate();
+  return sessions.filter(s => {
+    // Include if any activity date is >= cutoff
+    const dates = s.usage && s.usage.activityDates;
+    if (dates && dates.length > 0) return dates.some(d => d >= cutoff);
+    // Fallback: check lastActivity timestamp
+    if (s.usage && s.usage.lastActivity) return new Date(s.usage.lastActivity).toISOString().slice(0,10) >= cutoff;
+    return false;
+  });
+}
+
+function buildGatewayCharts(gwData) {
+  if (!gwData) return;
+  const agg = gwData.aggregates || {};
+  const cutoff = gwCutoffDate();
+
+  // Filter daily arrays by cutoff
+  const daily = (agg.daily || []).filter(d => d.date >= cutoff);
+
+  // Filter sessions for model split and tool usage
+  const filteredSessions = filterGwSessions(gwData.sessions || []);
+
+  // Cost Over Time
+  const costBox = document.getElementById('costBox');
+  if (daily.length > 0 && daily.some(d => d.totalCost > 0)) {
+    costBox.style.display = '';
+    const cacheWriteData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.cacheWriteCost || 0 }));
+    const cacheReadData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.cacheReadCost || 0 }));
+    const outputData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.outputCost || 0 }));
+    const inputData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.inputCost || 0 }));
+    updateOrCreate('costChart', 'bar', [
+      { label:'Cache Write', data:cacheWriteData, backgroundColor:'rgba(139,92,246,0.7)', borderColor:C.purple, borderWidth:1 },
+      { label:'Cache Read', data:cacheReadData, backgroundColor:'rgba(6,182,212,0.7)', borderColor:C.cyan, borderWidth:1 },
+      { label:'Output', data:outputData, backgroundColor:'rgba(249,115,22,0.7)', borderColor:C.orange, borderWidth:1 },
+      { label:'Input', data:inputData, backgroundColor:'rgba(34,197,94,0.7)', borderColor:C.green, borderWidth:1 },
+    ], 'USD');
+  } else {
+    costBox.style.display = 'none';
+    if (charts['costChart']) { charts['costChart'].destroy(); delete charts['costChart']; }
+  }
+
+  // Model Split (doughnut) — aggregate from filtered sessions' modelUsage
+  const modelTotals = {};
+  for (const s of filteredSessions) {
+    for (const m of (s.usage && s.usage.modelUsage) || []) {
+      const key = m.model;
+      if (!modelTotals[key]) modelTotals[key] = 0;
+      modelTotals[key] += m.totals.totalTokens || 0;
+    }
+  }
+  const modelBox = document.getElementById('modelBox');
+  if (charts['modelChart']) { charts['modelChart'].destroy(); delete charts['modelChart']; }
+  const modelNames = Object.keys(modelTotals).filter(k => modelTotals[k] > 0).sort((a,b) => modelTotals[b] - modelTotals[a]);
+  if (modelNames.length > 0) {
+    modelBox.style.display = '';
+    const modelColors = [C.purple, C.blue, C.cyan, C.orange, C.green, C.pink, C.amber, C.red];
+    charts['modelChart'] = new Chart(document.getElementById('modelChart'), {
+      type: 'doughnut',
+      data: {
+        labels: modelNames,
+        datasets: [{ data: modelNames.map(n => modelTotals[n]), backgroundColor: modelNames.map((_,i) => modelColors[i % modelColors.length]), borderWidth: 0 }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position:'right', labels:{ color:C.muted, boxWidth:10, padding:6, font:{size:10} } } },
+        cutout: '60%',
+      },
+    });
+  } else {
+    modelBox.style.display = 'none';
+  }
+
+  // Tool Usage (horizontal bar) — aggregate from filtered sessions' toolUsage
+  const toolCounts = {};
+  for (const s of filteredSessions) {
+    for (const t of ((s.usage && s.usage.toolUsage) || {}).tools || []) {
+      toolCounts[t.name] = (toolCounts[t.name] || 0) + t.count;
+    }
+  }
+  const toolBox = document.getElementById('toolBox');
+  if (charts['toolChart']) { charts['toolChart'].destroy(); delete charts['toolChart']; }
+  const toolNames = Object.keys(toolCounts).filter(k => toolCounts[k] > 0).sort((a,b) => toolCounts[b] - toolCounts[a]);
+  if (toolNames.length > 0) {
+    toolBox.style.display = '';
+    const toolColors = [C.blue, C.purple, C.cyan, C.orange, C.green, C.pink, C.amber, C.red];
+    charts['toolChart'] = new Chart(document.getElementById('toolChart'), {
+      type: 'bar',
+      data: {
+        labels: toolNames,
+        datasets: [{ data: toolNames.map(n => toolCounts[n]), backgroundColor: toolNames.map((_,i) => toolColors[i % toolColors.length] + 'b3'), borderWidth: 0 }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid:{ color: C.grid }, ticks:{ color: C.muted, font:{ size: 9 } } },
+          y: { grid:{ display: false }, ticks:{ color: C.muted, font:{ size: 10 } } },
+        },
+      },
+    });
+  } else {
+    toolBox.style.display = 'none';
+  }
+}
+
 // ── Refresh ──
 
 async function refresh() {
-  const data = await fetchData(currentHours);
+  const [data, gwData] = await Promise.all([fetchData(currentHours), fetchGatewayUsage()]);
+  gwUsageData = gwData;
   const snaps = data.snapshots || [];
   const ccusage = data.ccusage || [];
 
-  if (snaps.length === 0) {
+  if (snaps.length === 0 && !gwData) {
     document.getElementById('gauges').innerHTML = '<div class="loading">No data available</div>';
     document.getElementById('stats').innerHTML = '';
     document.getElementById('cronBody').innerHTML = '<tr><td colspan="7" class="loading">No data</td></tr>';
@@ -934,11 +1206,14 @@ async function refresh() {
 
   const agg = aggregate(snaps);
   renderGauges(agg.utilization, agg, ccusage);
-  renderStats(agg);
+  renderStats(agg, gwData);
   renderCronTable(agg.cronJobs);
   renderStaleness(agg.timestamp);
 
-  if (typeof Chart !== 'undefined') buildCharts(snaps, agg, ccusage);
+  if (typeof Chart !== 'undefined') {
+    buildCharts(snaps, agg, ccusage);
+    buildGatewayCharts(gwData);
+  }
 }
 
 // ── Events ──

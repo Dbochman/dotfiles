@@ -126,7 +126,10 @@
       "mode": "serve",
       "resetOnExit": false
     },
-    "channelHealthCheckMinutes": 0
+    "channelHealthCheckMinutes": 0,
+    "controlUi": {
+      "allowedOrigins": ["https://docs.openclaw.ai", "https://dylans-mac-mini.tail3e55f9.ts.net"]
+    }
   },
   "plugins": {
     "entries": {
