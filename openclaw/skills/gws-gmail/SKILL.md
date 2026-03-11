@@ -307,6 +307,7 @@ Julia's inbox has an automated daily briefing via cron:
 
 ## Notes
 
+- **Only use the `gws` CLI for Gmail** — do NOT use `himalaya`, `mutt`, `mail`, or any other email CLI. The `gws` CLI handles multi-account auth and is the only supported tool.
 - Default account: dylanbochman@gmail.com
 - Always check inbox/unread first before reporting on emails
 - `gws` outputs JSON by default — parse directly or pipe through `jq`
