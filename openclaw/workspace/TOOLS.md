@@ -114,7 +114,7 @@ Script at `~/.openclaw/workspace/scripts/bb-watchdog.sh`, runs every 60s. Four d
 3. **Webhook service dead** — no dispatch in 30+ min but new messages arriving. Full BB restart.
 4. **Gateway BB plugin dead** — BB dispatching but gateway not processing. Gateway-only restart.
 
-All restarts share a 15-min cooldown. Full details: `openclaw/plans/bluebubbles-implementation-current-state.md`
+All restarts share a 15-min cooldown. Gateway restarts are **deferred while cron jobs are running** — the watchdog checks `runningAtMs` markers in `jobs.json` and retries on the next 60s cycle. Full details: `openclaw/plans/bluebubbles-implementation-current-state.md`
 
 ### Key Gotchas
 

@@ -46,11 +46,35 @@ if [[ -f "$LOG_FILE" ]]; then
 fi
 NODE="/opt/homebrew/bin/node"
 BB_LOG="${HOME}/Library/Logs/bluebubbles-server/main.log"
+CRON_JOBS_FILE="${HOME}/.openclaw/cron/jobs.json"
 
 mkdir -p "$STATE_DIR"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+}
+
+# Check if any cron job is currently running (has a runningAtMs marker).
+# Gateway restart during a cron run kills the agent session, preventing the
+# "finished" record from being written to the cron run JSONL — which breaks
+# the usage dashboard's "recent cron runs" display.
+cron_job_running() {
+  if [[ ! -f "$CRON_JOBS_FILE" ]]; then
+    return 1
+  fi
+  $NODE -e "
+    const fs = require('fs');
+    try {
+      const d = JSON.parse(fs.readFileSync('$CRON_JOBS_FILE', 'utf8'));
+      const jobs = Array.isArray(d) ? d : (d.jobs || []);
+      const running = jobs.filter(j => j.runningAtMs && j.runningAtMs > 0);
+      if (running.length > 0) {
+        console.log(running.map(j => j.id).join(','));
+        process.exit(0);
+      }
+      process.exit(1);
+    } catch { process.exit(1); }
+  " 2>/dev/null
 }
 
 # Load BB password from secrets cache
@@ -121,7 +145,10 @@ if [[ "$HELPER_CONNECTED" == "false" ]]; then
     fi
 
     # Step 3: Restart gateway to re-establish clean webhook connection
-    if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
+    RUNNING_JOBS=$(cron_job_running)
+    if [[ $? -eq 0 ]]; then
+      log "DEFER: Gateway restart deferred — cron job(s) running: ${RUNNING_JOBS}"
+    elif launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
       log "ACTION: Gateway restarted after Private API helper recovery"
     else
       log "WARN: Gateway restart failed after Private API helper recovery"
@@ -428,7 +455,10 @@ case "$ACTION" in
     # BB restart invalidates the gateway's webhook registration — without this,
     # the gateway holds a stale webhook and never receives new messages.
     sleep 15
-    if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
+    RUNNING_JOBS=$(cron_job_running)
+    if [[ $? -eq 0 ]]; then
+      log "DEFER: Gateway restart deferred — cron job(s) running: ${RUNNING_JOBS}"
+    elif launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
       log "ACTION: Gateway restarted (webhook re-registration after BB restart)"
     else
       log "WARN: Gateway restart failed — webhook may be stale"
@@ -446,11 +476,16 @@ fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
     ;;
   restart-gateway)
     log "GATEWAY BB PLUGIN DEAD: ${REASON}"
-    log "ACTION: Restarting gateway only (BB is healthy)..."
-    if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
-      log "ACTION: Gateway restarted (BB plugin reload)"
+    RUNNING_JOBS=$(cron_job_running)
+    if [[ $? -eq 0 ]]; then
+      log "DEFER: Gateway restart deferred — cron job(s) running: ${RUNNING_JOBS}"
     else
-      log "WARN: Gateway restart failed"
+      log "ACTION: Restarting gateway only (BB is healthy)..."
+      if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
+        log "ACTION: Gateway restarted (BB plugin reload)"
+      else
+        log "WARN: Gateway restart failed"
+      fi
     fi
     # Record restart in state
     $NODE -e "
