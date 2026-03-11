@@ -9,9 +9,13 @@
 # This script runs every 1 minute via LaunchAgent and restarts BB if stalled.
 #
 # Detection:
-#   1. Track the GUID of the latest message (any sender). If the GUID changes
+#   1. Private API helper disconnected — BB receives messages and marks read,
+#      but can't send responses. Full restart required (not soft restart) because
+#      soft restart only reconnects the helper but doesn't restart the chat.db
+#      observer, which often co-stalls with the helper.
+#   2. Track the GUID of the latest message (any sender). If the GUID changes
 #      but BB hasn't dispatched a webhook, the observer has stalled.
-#   2. If BB hasn't dispatched ANY webhook in WEBHOOK_DEAD_THRESHOLD_MIN and
+#   3. If BB hasn't dispatched ANY webhook in WEBHOOK_DEAD_THRESHOLD_MIN and
 #      fresh messages exist, the webhook service itself is dead.
 #
 # Safety:
@@ -69,6 +73,71 @@ if ! curl -s --max-time 5 "${BB_URL}/api/v1/ping?password=${BB_PW}" > /dev/null 
   log "WARN: BB not reachable, attempting to start"
   open -a BlueBubbles
   exit 0
+fi
+
+# Check if BB Private API helper is connected. The helper is a separate process
+# that BB uses to interface with Messages.app for sending, typing indicators,
+# reactions, etc. When disconnected, BB still receives webhooks and marks messages
+# as read (standard API), but the gateway can't send responses. A soft restart
+# reconnects the helper without killing BB entirely.
+HELPER_STATUS=$(curl -s --max-time 5 "${BB_URL}/api/v1/server/info?password=${BB_PW}" 2>/dev/null || echo '{}')
+HELPER_CONNECTED=$($NODE -e "try { const d = JSON.parse(process.argv[1]); console.log(d.data?.helper_connected === true ? 'true' : 'false'); } catch { console.log('unknown'); }" "$HELPER_STATUS" 2>/dev/null || echo "unknown")
+
+if [[ "$HELPER_CONNECTED" == "false" ]]; then
+  # Check cooldown before restarting
+  LAST_RESTART=$($NODE -e "
+    const fs = require('fs');
+    try { const s = JSON.parse(fs.readFileSync('$STATE_FILE','utf8')); console.log(s.lastRestart || 0); } catch { console.log(0); }
+  " 2>/dev/null || echo "0")
+  SINCE_RESTART=$($NODE -e "console.log(Date.now() - Number(process.argv[1]))" "$LAST_RESTART" 2>/dev/null || echo "999999999")
+
+  if [[ "$SINCE_RESTART" -lt 900000 ]]; then
+    log "WARN: Private API helper disconnected but within restart cooldown"
+  else
+    log "PRIVATE API HELPER DISCONNECTED: full-restarting BlueBubbles"
+    # Full restart required — soft restart only reconnects the helper but does NOT
+    # restart the chat.db file system observer. If the observer is also stalled
+    # (common co-occurrence), soft restart leaves BB unable to detect new messages
+    # even though helper_connected returns true.
+
+    # Step 1: Full BB restart
+    osascript -e 'tell application "BlueBubbles" to quit' 2>/dev/null || true
+    sleep 5
+    if pgrep -xq "BlueBubbles"; then
+      pkill -x "BlueBubbles" 2>/dev/null || true
+      sleep 2
+    fi
+    open -a BlueBubbles
+    log "ACTION: BlueBubbles full-restarted, waiting 15s for init..."
+    sleep 15
+
+    # Step 2: Verify helper reconnected
+    CHECK=$(curl -s --max-time 5 "${BB_URL}/api/v1/server/info?password=${BB_PW}" 2>/dev/null || echo '{}')
+    IS_CONNECTED=$($NODE -e "try { const d = JSON.parse(process.argv[1]); console.log(d.data?.helper_connected === true ? 'true' : 'false'); } catch { console.log('false'); }" "$CHECK" 2>/dev/null || echo "false")
+    if [[ "$IS_CONNECTED" == "true" ]]; then
+      log "ACTION: Private API helper reconnected after full restart"
+    else
+      log "WARN: Private API helper still disconnected after full restart"
+    fi
+
+    # Step 3: Restart gateway to re-establish clean webhook connection
+    if launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
+      log "ACTION: Gateway restarted after Private API helper recovery"
+    else
+      log "WARN: Gateway restart failed after Private API helper recovery"
+    fi
+
+    # Record restart in state
+    $NODE -e "
+      const fs = require('fs');
+      const stateFile = '$STATE_FILE';
+      let prev = {};
+      try { prev = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
+      prev.lastRestart = Date.now();
+      fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
+    " 2>/dev/null
+    exit 0
+  fi
 fi
 
 # Verify the gateway's BB plugin is loaded by checking if the gateway process
@@ -152,9 +221,15 @@ try {
 // Check gateway runtime log for recent bluebubbles inbound activity.
 let gatewayBbAliveMin = 999;
 try {
-  const today = new Date().toISOString().slice(0, 10);
-  const gwLogPath = '/tmp/openclaw/openclaw-' + today + '.log';
-  if (fs.existsSync(gwLogPath)) {
+  // Gateway log is named by local date, not UTC — check today and yesterday
+  const localNow = new Date(now - new Date().getTimezoneOffset() * 60000);
+  const localToday = localNow.toISOString().slice(0, 10);
+  const localYesterday = new Date(localNow - 86400000).toISOString().slice(0, 10);
+  const candidates = [localToday, localYesterday];
+  for (const day of candidates) {
+    if (gatewayBbAliveMin < 999) break;
+    const gwLogPath = '/tmp/openclaw/openclaw-' + day + '.log';
+    if (!fs.existsSync(gwLogPath)) continue;
     const gwContent = fs.readFileSync(gwLogPath, 'utf8');
     const gwLines = gwContent.split('\n');
     for (let i = gwLines.length - 1; i >= 0; i--) {

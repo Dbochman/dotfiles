@@ -107,19 +107,19 @@ OpenClaw v2026.3.7+ uses **webhook-only** for BB (no socket.io client). BB POSTs
 
 ### Watchdog (`com.openclaw.bb-watchdog`)
 
-Script at `~/.openclaw/workspace/scripts/bb-watchdog.sh`, runs every 60s.
+Script at `~/.openclaw/workspace/scripts/bb-watchdog.sh`, runs every 60s. Four detection modes:
 
-- Tracks latest message GUID from BB API — detects chat.db observer stalls
-- Checks BB log for webhook dispatch entries — detects dead webhook service
-- Cross-checks gateway runtime log for BB plugin activity — detects silent plugin failures
-- No dispatch in 30+ min but new messages → **full BB restart**
-- Individual message lag > 90s → poke-first, then restart after 3 failed pokes
-- BB dispatching but gateway BB plugin inactive → **gateway-only restart**
+1. **Private API helper disconnected** — queries `/api/v1/server/info` for `helper_connected: false`. Full BB restart (not soft — soft restart doesn't fix chat.db observer co-stalls).
+2. **Chat.db observer stall** — GUID changes but no webhook dispatch. Poke-first, then full restart after 3 failed pokes.
+3. **Webhook service dead** — no dispatch in 30+ min but new messages arriving. Full BB restart.
+4. **Gateway BB plugin dead** — BB dispatching but gateway not processing. Gateway-only restart.
+
+All restarts share a 15-min cooldown. Full details: `openclaw/plans/bluebubbles-implementation-current-state.md`
 
 ### Key Gotchas
 
-- **Soft restart doesn't fix dead webhooks** — only full app restart works
-- **BB + gateway restarts must be coordinated** — watchdog handles sequencing
+- **NEVER use soft restart for recovery** — `/server/restart/soft` reconnects the Private API helper but does NOT restart the chat.db file system observer, leaving BB blind to new messages
+- **BB + gateway restarts must be sequenced** — watchdog waits 15s after BB relaunch before restarting gateway to re-register webhook
 - **Cloudflare daemon crash-loop** — BB runs it even with `lan-url` proxy; can corrupt event loop
 - **v2026.3.7 BB plugin import bug** — `monitor-normalize.ts` has broken import; weekly upgrade script auto-patches
 

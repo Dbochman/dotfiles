@@ -1,6 +1,6 @@
 # BlueBubbles Implementation: Current State
 
-**As of:** March 2, 2026 (EST)  
+**As of:** March 10, 2026 (EST)
 **Scope:** OpenClaw + BlueBubbles integration on `dylans-mac-mini`
 
 ## 1. High-level architecture
@@ -23,14 +23,9 @@ Important keys:
 - `channels.bluebubbles.serverUrl: "http://localhost:1234"`
 - `channels.bluebubbles.webhookPath: "/bluebubbles-webhook"`
 - `channels.bluebubbles.password: "${BLUEBUBBLES_PASSWORD}"`
-
-**Config drift note:** Dotfiles now tracks the mitigated state (Private API disabled). When Private API is enabled, flip `sendReadReceipts` to `true`, `session.typingMode` to `"auto"`, and all `actions.*` back to `true` (except `sendAttachment` which stays `true` regardless).
-
-Current mitigation keys:
-- `session.typingMode: "never"` (suppresses typing calls while Private API is disabled)
-- `channels.bluebubbles.sendReadReceipts: false`
-- `channels.bluebubbles.actions` for Private-API features set to `false`:
-  - `reactions`, `edit`, `unsend`, `reply`, `sendWithEffect`, `renameGroup`, `setGroupIcon`, `addParticipant`, `removeParticipant`, `leaveGroup`
+- `channels.bluebubbles.sendReadReceipts: true`
+- `session.typingMode: "thinking"` (sends typing indicator while processing)
+- `channels.bluebubbles.actions`: all set to `true` (reactions, edit, unsend, reply, effects, group mgmt)
 
 ### Gateway service
 Files:
@@ -41,6 +36,8 @@ Behavior:
 - Gateway loads secrets from `~/.openclaw/.secrets-cache`
 - Launches OpenClaw gateway process with port `18789`
 - Keeps service alive via LaunchAgent `ai.openclaw.gateway`
+- Gateway hot-reloads config changes without restart
+- Entry point: `dist/entry.js` (changed from `dist/index.js` as of v2026.3.2)
 
 ### BlueBubbles watchdog
 Files:
@@ -51,181 +48,143 @@ Files:
 - `openclaw/com.openclaw.bb-lag-summary.plist`
 - `openclaw/workspace/scripts/bb-lag-summary.sh`
 
-Behavior:
-- Runs every 1 minute
-- Detects probable observer stalls
-- Logs ingest lag alerts to `/tmp/bb-ingest-lag.log` (default threshold: 90s)
-- Uses poke-first recovery (`Messages` chat-count query) before restart
-- Runs proactive `poke-messages` every 60 seconds
-- Restarts BlueBubbles only after repeated unresolved lag checks
-- Uses cooldown logic to prevent restart loops
-- Emits daily lag summaries to `/tmp/bb-lag-summary.log` (08:05 local time)
+## 3. Current state (March 10, 2026)
 
-## 3. Host/runtime state validated on March 2, 2026
+- SIP: **disabled** (required for Private API, done March 2)
+- BlueBubbles server version: `1.9.9`
+- `private_api: true`
+- `helper_connected: true`
+- `proxy_service: lan-url` (Cloudflare disabled March 3)
+- Private API port: `45670` (raw IPC socket for Messages.app, NOT HTTP)
+- Gateway health monitor: **disabled** (`channelHealthCheckMinutes: 0`)
+- All Private API features operational: typing, read receipts, reactions, edit, unsend, effects, group management
 
-Validated directly on Mac Mini:
-- OpenClaw gateway running under launchd
-- BlueBubbles API reachable (`/api/v1/ping`)
-- BlueBubbles server version `1.9.9`
-- BlueBubbles status:
-  - `private_api: false`
-  - `helper_connected: false`
+## 4. Watchdog detection modes
 
-This means base messaging works, but Private-API-only features are not available.
+The watchdog (`bb-watchdog.sh`) runs every 60 seconds and detects four distinct failure modes:
 
-## 4. Known constraints and failure modes
+### A) Private API helper disconnected
 
-### A) Private API disabled
+**Symptom:** Messages marked as read (standard API), but OpenClaw can't send responses.
 
-Observed errors:
-- `typing start failed (500)`
-- `mark read failed (500)`
-- Error message: `iMessage Private API is not enabled`
+**Detection:** `helper_connected: false` from `/api/v1/server/info`
 
-Impact:
-- Typing indicators / read-receipt operations fail
-- Reactions, edits, unsend, and related advanced controls unavailable
+**Recovery:** Full BB restart (quit + relaunch + 15s init), then gateway restart. A full restart is required — soft restart (`/server/restart/soft`) only reconnects the helper but does NOT restart the chat.db file system observer, which often co-stalls with the helper. Soft restart leaves BB unable to detect new messages even though `helper_connected` returns `true`.
 
-Mitigation currently in place:
-- Typing + read receipt behavior suppressed in OpenClaw config
-- Private-API actions disabled in channel actions
+**Cooldown:** 15 minutes between restarts.
 
-Long-term fix:
-- Enable BlueBubbles Private API (requires SIP-related physical Mac workflow documented in `openclaw/plans/bluebubbles-private-api.md`)
+### B) Chat.db observer stall
 
-### B) Phone-handle send failure (`+17813544611`)
+**Symptom:** New messages exist in chat.db but BB doesn't detect or webhook them.
 
-Reproduced directly via BlueBubbles API:
-- `chatGuid: any;-;+17813544611` fails
+**Detection:** Message GUID changes in BB API but no recent webhook dispatch in BB log. Uses poke-first recovery (Messages chat-count query via AppleScript) before escalating to full restart.
+
+**Recovery:** Poke → retry (up to 3 checks) → full BB restart + gateway restart.
+
+### C) Webhook service dead
+
+**Symptom:** BB's webhook dispatch loop has stopped entirely.
+
+**Detection:** No webhook dispatch in BB log for 30+ minutes but new messages are arriving (GUID changing).
+
+**Recovery:** Full BB restart + gateway restart (skip poke — won't help with dead webhook service).
+
+### D) Gateway BB plugin dead
+
+**Symptom:** BB dispatches webhooks successfully but the gateway's BB plugin isn't loaded or processing them.
+
+**Detection:** Cross-checks gateway runtime log for recent BB activity (`bluebubbles` + `webhook listening`/`inbound`/`new-message`). If BB dispatched webhooks recently (< 10 min) but gateway has no BB activity in 60+ min, the plugin is dead.
+
+**Recovery:** Gateway-only restart (BB is healthy, just gateway needs reload).
+
+**Known issue (fixed March 10):** Gateway log is named by local date (`openclaw-YYYY-MM-DD.log`) but the watchdog was computing the date in UTC. After 8 PM ET (midnight UTC), the watchdog couldn't find the log file, causing `gatewayBbAliveMin` to always be 999 and triggering false "gateway BB plugin dead" restarts nightly. Fixed by checking both today's and yesterday's log files using local time.
+
+### Cooldown and state
+
+- All restarts share a 15-minute cooldown to prevent restart loops
+- State file: `~/.openclaw/bb-watchdog/state.json`
+- Tracks: `allGuid`, `allSeenAt`, `lastRestart`, `pendingGuid`, `pendingChecks`
+- Ingest lag alerts logged to `/tmp/bb-ingest-lag.log` (threshold: 90s)
+- Daily lag summaries at `/tmp/bb-lag-summary.log` (08:05 local time)
+
+## 5. Known failure modes and gotchas
+
+### BB soft restart vs full restart
+
+| Operation | What it restarts | What it does NOT restart |
+|-----------|-----------------|------------------------|
+| Soft restart (`/server/restart/soft`) | Network services, Private API helper, socket connections | Chat.db file system observer |
+| Full restart (quit + relaunch) | Everything | — |
+
+**Rule:** Always use full restart for reliability. Soft restart is unreliable for production recovery because the chat.db observer often co-stalls with other components.
+
+### BB plugin import bug (v2026.3.7)
+
+`extensions/bluebubbles/src/monitor-normalize.ts` imports from `../../../src/infra/parse-finite-number.js` — a dev-only source path absent in the npm package. Gateway logs `Unknown channel: bluebubbles` and silently drops all iMessage webhooks. **Patch:** replace import with inline `parseFiniteNumber` function. Weekly upgrade script (step 6.5) auto-applies this patch after each `npm install`.
+
+### Phone-handle send failure
+
+- `chatGuid: any;-;+17813544611` fails (AppleScript error)
 - `chatGuid: any;-;dylanbochman@gmail.com` succeeds
+- **Policy:** Always use email handle for Dylan DMs
 
-Error:
-- AppleScript path fails with:
-  - `set targetService to 1st account whose service type = any`
-  - `Can’t make any into type constant. (-1700)`
+### BB + gateway restart sequencing
 
-Interpretation:
-- On this host, BlueBubbles AppleScript sending to that phone-number handle is unreliable/broken
-- Email-handle routing is healthy and should be treated as canonical for Dylan direct sends on BlueBubbles
+After BB restart, the gateway holds a stale webhook registration. Must restart gateway after BB to re-register the webhook. The watchdog handles this automatically with a 15s init wait between BB relaunch and gateway restart.
 
-## 5. Incident summary: March 2, 2026 around 7:00 AM EST
+### Cloudflare daemon
 
-Timeline:
-1. ~07:01 EST: outbound message flow succeeded
-2. ~07:15 and ~07:35 EST: watchdog triggered BlueBubbles restarts
-3. ~07:22–07:24 EST (and other windows): recurring Private API 500s
+BB runs a Cloudflare daemon even with `lan-url` proxy. Crash-loops can corrupt BB's event loop, killing webhook dispatch without killing the BB process itself. Watchdog detects this via webhook-dead check (mode C).
 
-Contributing issues:
-- Older watchdog script version on host (drift from dotfiles) causing false stall decisions
-- Private API disabled (generated noisy but expected 500s)
-- Legacy failed deliveries queued to phone handle retried during recovery
-
-Fixes applied during incident:
-1. Synced newer `bb-watchdog.sh` to host (state migrated to new format)
-2. Suppressed Private-API-dependent OpenClaw behavior
-3. Forced weekly security reminder routing to Dylan email handle
-4. Cleared stale queue entries targeting failing phone handle
-
-## 6. Routing policy (important)
+## 6. Routing policy
 
 For BlueBubbles direct messages to Dylan:
 - Use: `dylanbochman@gmail.com`
 - Do not use: `+17813544611`
 
-This policy is explicitly encoded in weekly reminder job prompts in:
-- `openclaw/cron-jobs.json`
-- `openclaw/cron/jobs.json`
+DM GUIDs use `any;-;` prefix; group GUIDs use `iMessage;+;` prefix.
 
 ## 7. Operational checks
 
 Quick health checks:
 1. OpenClaw gateway:
-   - `launchctl print gui/$(id -u)/ai.openclaw.gateway`
+   - `launchctl list ai.openclaw.gateway`
 2. BlueBubbles API:
    - `curl "http://localhost:1234/api/v1/ping?password=$BLUEBUBBLES_PASSWORD"`
-3. BlueBubbles server capabilities:
+3. BlueBubbles server + Private API status:
    - `curl "http://localhost:1234/api/v1/server/info?password=$BLUEBUBBLES_PASSWORD"`
+   - Check: `private_api: true`, `helper_connected: true`
 4. Watchdog:
-   - `tail -n 100 /tmp/bb-watchdog.log`
+   - `tail -n 20 /tmp/bb-watchdog.log`
 5. Ingest lag metrics:
-   - `tail -n 100 /tmp/bb-ingest-lag.log`
+   - `tail -n 20 /tmp/bb-ingest-lag.log`
 6. Daily lag summary:
-   - `tail -n 30 /tmp/bb-lag-summary.log`
-7. OpenClaw errors:
-   - `tail -n 200 ~/.openclaw/logs/gateway.err.log`
+   - `tail -n 10 /tmp/bb-lag-summary.log`
+7. Gateway runtime log:
+   - `tail -n 50 /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log`
+8. Gateway error log:
+   - `tail -n 20 ~/.openclaw/logs/gateway.err.log`
 
-## 8. Health snapshot procedure
+## 8. React types (tapbacks)
 
-Use this to capture a point-in-time status check and compare against prior snapshots.
+Available via Private API: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
 
-### A) Run the snapshot
+No custom emoji (Apple limitation). Use native `message` tool `action: "react"` (requires `message_id` in inbound metadata).
 
-On your laptop:
-```bash
-ssh dbochman@100.93.66.71 '
-echo "=== timestamp ==="; date;
-echo "=== gateway status ==="; launchctl print gui/$(id -u)/ai.openclaw.gateway | egrep "state =|pid =";
-echo "=== bluebubbles server info ===";
-if [[ -f ~/.openclaw/.secrets-cache ]]; then set -a; source ~/.openclaw/.secrets-cache; set +a; fi;
-curl -sS --max-time 8 "http://localhost:1234/api/v1/server/info?password=${BLUEBUBBLES_PASSWORD:-}" | python3 -m json.tool;
-echo "=== latest gateway error ==="; tail -n 1 ~/.openclaw/logs/gateway.err.log;
-echo "=== latest watchdog line ==="; tail -n 1 /tmp/bb-watchdog.log;
-echo "=== delivery queue ==="; ls -la ~/.openclaw/delivery-queue ~/.openclaw/delivery-queue/archived 2>/dev/null || true;
-'
-```
+## 9. Changelog
 
-### B) Interpret results
+### March 10, 2026
+- **Watchdog: Private API helper detection** — new check queries `/api/v1/server/info` for `helper_connected: false`. Triggers full BB restart (not soft restart) because soft restart doesn't fix chat.db observer co-stalls.
+- **Watchdog: UTC date bug fix** — gateway log date lookup now uses local time and checks both today and yesterday's files, preventing false "gateway BB plugin dead" restarts after 8 PM ET.
 
-Healthy snapshot indicators:
-1. Gateway `state = running`
-2. BlueBubbles API responds successfully
-3. `private_api` / `helper_connected` are expected values for current mode
-4. Watchdog latest line is `OK:` (idle or recent webhook)
-5. Active `~/.openclaw/delivery-queue/` has no `.json` files pending
+### March 3, 2026
+- Cloudflare proxy disabled, switched to `lan-url`
+- Gateway health monitor disabled (`channelHealthCheckMinutes: 0`)
+- Heartbeat interval changed from 6h to 12h
 
-Warning indicators:
-1. New `BlueBubbles send failed (500)` lines after prior known timestamp
-2. Repeated watchdog `STALL DETECTED` entries in short intervals
-3. New `typing start failed` / `mark read failed` entries if typing/read mitigations are enabled
-4. Growing active delivery queue
-
-### C) Minimal delta check (fast)
-
-For quick follow-ups:
-```bash
-ssh dbochman@100.93.66.71 '
-echo "last gateway.err line:"; tail -n 1 ~/.openclaw/logs/gateway.err.log;
-echo "last send-fail line:"; grep "BlueBubbles send failed (500)" ~/.openclaw/logs/gateway.err.log | tail -n 1;
-echo "last watchdog line:"; tail -n 1 /tmp/bb-watchdog.log;
-echo "last lag metric:"; tail -n 1 /tmp/bb-ingest-lag.log 2>/dev/null || echo "none";
-echo "last lag summary:"; tail -n 1 /tmp/bb-lag-summary.log 2>/dev/null || echo "none";
-'
-```
-
-### D) Recent snapshot example (March 2, 2026, 11:39 AM EST)
-
-Observed during live check:
-1. BlueBubbles showed inbound ingest delay, then recovered:
-   - `11:38:43 EST`: `New Message from dy**********@gmail.com, "Just checking i..."; Date: 3/2/2026, 11:34:02 AM`
-   - `11:38:43 EST`: webhook dispatched to OpenClaw (`/bluebubbles-webhook`)
-2. OpenClaw processed immediately after webhook arrival:
-   - `16:38:44Z` (`11:38:44 EST`): lane enqueue/dequeue and embedded run start
-   - `16:39:06Z` (`11:39:06 EST`): embedded run completed and response sent
-3. End-to-end conclusion:
-   - Primary delay was upstream of OpenClaw response generation (message reached BlueBubbles late).
-   - Once webhook fired, OpenClaw turnaround was normal (~22s run time including one transient LLM retry).
-
-Use this as a reference pattern for future incidents:
-1. Confirm BlueBubbles `New Message` timestamp vs message `Date:` inside the same line
-2. Confirm webhook dispatch timestamp
-3. Confirm OpenClaw enqueue/start/end timestamps in `/tmp/openclaw/openclaw-YYYY-MM-DD.log`
-4. Attribute delay to ingress (BB-side) vs processing (OpenClaw-side)
-
-## 9. Remaining gaps
-
-Current telemetry is usable but not comprehensive:
-1. No automatic alert on send-failure spikes by recipient handle
-2. No explicit periodic canary for both email and phone handle send paths
-3. No structured weekly error taxonomy for BlueBubbles-specific failures
-
-These are candidates for future hardening if reliability work continues.
+### March 2, 2026
+- SIP disabled, Private API enabled
+- All Private API features enabled in config
+- `typingMode` set to `"thinking"`
+- Watchdog synced from dotfiles, state migrated
+- Phone-handle routing policy established
