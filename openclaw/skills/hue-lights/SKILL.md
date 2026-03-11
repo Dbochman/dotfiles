@@ -114,6 +114,7 @@ hue status                  # defaults to Crosstown
 
 ## Notes
 
+- **Only use the `hue` CLI** — do NOT use `openhue`, raw Hue API curl calls, or any other Hue tool. The `hue` CLI handles bridge discovery, auth, and multi-home routing. It is already paired and configured.
 - Always run `hue status` first to show the user current state before making changes
 - Brightness is 0-100 (percent)
 - Some lights may show as UNREACHABLE if powered off at the switch
