@@ -111,4 +111,13 @@ Do not target Dylan via phone number `${DYLAN_PHONE}` because that handle fails 
 
 ## Reactions / Tapbacks
 
-React liberally — use `action: "react"` with types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`. If react fails (missing messageId), skip it silently.
+React liberally to messages. Available types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`.
+
+**How to react:** Every inbound message includes a `message_id` in its metadata block. To react, pass that ID as `messageId`:
+```
+message(action: "react", messageId: "<message_id from metadata>", emoji: "love")
+```
+
+For example, if the inbound metadata says `"message_id": "3"`, use `messageId: "3"`.
+
+If a react fails, skip it silently — don't send error messages to the chat.
