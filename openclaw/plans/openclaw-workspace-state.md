@@ -95,7 +95,6 @@ All tracked in `dotfiles/openclaw/workspace/`. Files with PII use `${PLACEHOLDER
 | `gws-julia-morning-briefing-0001` | 7 AM daily | Julia (BB) | Gmail triage, calendar preview, inbox cleanup, draft replies |
 | `128c4ed0` (health check) | 9 AM & 9 PM daily | Dylan (BB) | BB, cron status, Nest, Cielo, Hue, Mysa (errors only) |
 | `weekly-activity-report` | Sun 10 AM | Dylan (BB) | OpenClaw usage/activity summary |
-| `weekly-upgrade-verify-0001` | Sun 9:15 AM | Dylan (BB) | Post-upgrade scope/health check, auto-fix scopes |
 | `weekly-security-reminder` | Sun 6 PM | Dylan (BB) | Reminder to run security audit from laptop |
 
 ### One-Shot — Date Nights (delete after run)
@@ -133,7 +132,7 @@ All date nights: party of 2, ~7 PM Friday, book on Resy, create Calendar event, 
 
 All group dinners: party of 4, ~6:30 PM Friday, book on Resy, create Calendar event on Julia's cal.
 
-## LaunchAgents (14 active)
+## LaunchAgents (13 active)
 
 | Agent | Purpose | Type |
 |---|---|---|
@@ -142,8 +141,7 @@ All group dinners: party of 4, ~6:30 PM Friday, book on Resy, create Calendar ev
 | `ai.openclaw.usage-dashboard` | Usage dashboard (port 8551) | Long-running |
 | `ai.openclaw.nest-snapshot` | Nest sensor data capture | Every 30 min |
 | `ai.openclaw.usage-snapshot` | Anthropic API usage capture | Every 15 min |
-| `ai.openclaw.weekly-upgrade` | Auto-upgrade OpenClaw | Sun 9 AM |
-| `ai.openclaw.dotfiles-pull` | Sync dotfiles from GitHub | Periodic |
+| `ai.openclaw.dotfiles-pull` | Sync dotfiles from GitHub and deploy skills | Daily 6 AM |
 | `com.openclaw.bb-watchdog` | BlueBubbles health watchdog | Periodic |
 | `com.openclaw.bb-lag-summary` | BB message lag reporting | Periodic |
 | `com.openclaw.cielo-refresh` | Cielo AC token refresh | Every 30 min |
@@ -208,23 +206,6 @@ All group dinners: party of 4, ~6:30 PM Friday, book on Resy, create Calendar ev
 - **Auth:** OAuth credentials at `~/.config/gws/`, requires local browser auth then scp to Mini
 - **Skills split:** Former monolithic `gmail`/`calendar` skills replaced by granular `gws-*` suite (10 skills + 5 recipes)
 
-## Weekly Upgrade Flow
-
-Automated via `ai.openclaw.weekly-upgrade` LaunchAgent (Sun 9 AM ET) running `~/bin/openclaw-weekly-upgrade`:
-
-1. Check current vs latest version (skip if already current)
-2. Backup device files (`paired.json`, `pending.json`)
-3. Backup LaunchAgent plist (npm install may overwrite it)
-4. **Stop gateway** via `launchctl bootout` (prevents launchd restart mid-install)
-5. `npm install -g openclaw@latest`
-6. Restore plist from backup
-7. Patch BB plugin if needed (broken `parse-finite-number` import in v2026.3.7+)
-8. Restart gateway
-9. Verify gateway is running, check for scope repair needs
-10. Pull latest dotfiles (`git pull --ff-only`) — dotfiles-pull deploys skills as real copies and syncs workspace files
-
-Post-upgrade verification: cron job `weekly-upgrade-verify-0001` runs at 9:15 AM, auto-fixes missing scopes, reports to Dylan via iMessage.
-
 ## Dotfiles Structure
 
 ```
@@ -251,5 +232,5 @@ openclaw/
 - **BB restart API:** `GET /api/v1/server/restart/soft?password=$BLUEBUBBLES_PASSWORD` (note: GET, not POST).
 - **Secrets:** Never use `op read` at gateway startup (hangs under launchd). Use cache-only pattern via `~/.openclaw/.secrets-cache`.
 - **1Password SSH bypass:** Use `SSH_AUTH_SOCK=""` before scp/ssh in LaunchAgents to avoid biometric prompts (Tailscale SSH handles auth).
-- **npm upgrade danger:** `npm install -g openclaw` may run `openclaw install --service` which overwrites the LaunchAgent plist. Weekly upgrade script backs up and restores plist.
+- **npm upgrade danger:** `npm install -g openclaw` may run `openclaw install --service` which overwrites the LaunchAgent plist. Back up the plist before upgrading.
 - **Ghost cron jobs:** When removing jobs from `jobs.json`, also delete run state at `~/.openclaw/cron/runs/<job-id>.jsonl`.
