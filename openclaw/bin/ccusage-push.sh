@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# Unset 1Password SSH agent early — ccusage reads git history internally,
+# which can trigger SSH key prompts via 1Password agent under launchd.
+export SSH_AUTH_SOCK=""
+
 MINI="${CCUSAGE_MINI_HOST:-dbochman@dylans-mac-mini}"
 REMOTE_DIR="${CCUSAGE_REMOTE_DIR:-~/.openclaw/usage-history}"
 # Per-machine filename using hostname (lowercase, no domain)
@@ -45,7 +49,7 @@ fi
 
 # Push to Mini (unset SSH_AUTH_SOCK to avoid 1Password agent prompts;
 # Tailscale SSH handles auth to the Mini without keys)
-SSH_AUTH_SOCK="" scp -q "$LOCAL_TMP" "$MINI:$REMOTE_DIR/ccusage-${MACHINE}.json" 2>/dev/null || {
+scp -q "$LOCAL_TMP" "$MINI:$REMOTE_DIR/ccusage-${MACHINE}.json" 2>/dev/null || {
   echo "scp to Mini failed" >&2
   exit 0
 }
