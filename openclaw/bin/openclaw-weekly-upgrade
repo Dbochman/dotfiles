@@ -67,6 +67,13 @@ if [ -f "$BB_MONITOR" ]; then
   fi
 fi
 
+# 6.7 Remove bundled openhue skill (replaced by managed hue-lights skill)
+OPENHUE_BUNDLED="/opt/homebrew/lib/node_modules/openclaw/skills/openhue"
+if [ -d "$OPENHUE_BUNDLED" ]; then
+  rm -rf "$OPENHUE_BUNDLED"
+  log "Removed bundled openhue skill (replaced by hue-lights)"
+fi
+
 # 7. Restart gateway
 launchctl bootout "gui/$UID_NUM" "$PLIST" 2>/dev/null || true
 sleep 3
