@@ -114,7 +114,7 @@ hue status                  # defaults to Crosstown
 
 ## Notes
 
-- **Only use the `hue` CLI** — do NOT use `openhue`, raw Hue API curl calls, or any other Hue tool. The `hue` CLI handles bridge discovery, auth, and multi-home routing. It is already paired and configured.
+- **CRITICAL: Only use the `hue` CLI at `/opt/homebrew/bin/hue`** — it is already paired, configured, and has credentials for both bridges. Do NOT use `openhue`, do NOT install any other Hue CLI (`brew install` anything), do NOT use raw Hue REST API curl calls, and do NOT attempt bridge pairing or setup. Everything is already working. Just run `hue` commands.
 - Always run `hue status` first to show the user current state before making changes
 - Brightness is 0-100 (percent)
 - Some lights may show as UNREACHABLE if powered off at the switch
