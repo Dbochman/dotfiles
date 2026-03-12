@@ -1,7 +1,8 @@
 #!/bin/bash
-# dotfiles-pull.command — Auto-pull dotfiles repo to keep symlinked skills in sync
+# dotfiles-pull.command — Auto-pull dotfiles repo and deploy skills
 # Runs as a LaunchAgent daily via Terminal.app (for git credential access)
-# Improved: stashes local changes instead of skipping entirely
+# Skills are real copies (not symlinks) because OpenClaw v2026.3.7+ rejects
+# symlinks whose realPath resolves outside the configured rootDir.
 
 LOG="$HOME/.openclaw/logs/dotfiles-pull.log"
 REPO="$HOME/dotfiles"
@@ -32,6 +33,35 @@ else
   PULL_OUT=$(git pull --ff-only origin main 2>&1)
   PULL_STATUS=$?
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) exit=$PULL_STATUS $PULL_OUT" >> "$LOG"
+fi
+
+# Deploy skills as real copies (OpenClaw rejects symlinks via realPath check)
+SKILLS_SRC="$REPO/openclaw/skills"
+SKILLS_DST="$HOME/.openclaw/skills"
+if [ -d "$SKILLS_SRC" ]; then
+  DEPLOYED=0
+  for skill_dir in "$SKILLS_SRC"/*/; do
+    skill_name=$(basename "$skill_dir")
+    rm -rf "$SKILLS_DST/$skill_name"
+    cp -R "$skill_dir" "$SKILLS_DST/$skill_name"
+    # Remove any nested symlinks that snuck in
+    find "$SKILLS_DST/$skill_name" -type l -delete 2>/dev/null
+    DEPLOYED=$((DEPLOYED + 1))
+  done
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skills: deployed $DEPLOYED skills to $SKILLS_DST" >> "$LOG"
+fi
+
+# Deploy workspace files (SOUL.md, TOOLS.md, etc.)
+WORKSPACE_SRC="$REPO/openclaw/workspace"
+WORKSPACE_DST="$HOME/.openclaw/workspace"
+if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
+  for f in TOOLS.md HEARTBEAT.md; do
+    if [ -f "$WORKSPACE_SRC/$f" ]; then
+      cp "$WORKSPACE_SRC/$f" "$WORKSPACE_DST/$f"
+    fi
+  done
+  # SOUL.md has real values on Mini (not placeholders) — don't overwrite
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed TOOLS.md, HEARTBEAT.md" >> "$LOG"
 fi
 
 # Deploy updated cron job definitions (preserves runtime state)
