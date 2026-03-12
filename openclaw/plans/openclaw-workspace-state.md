@@ -1,6 +1,6 @@
 # OpenClaw Workspace — Current State
 
-_Last updated: 2026-03-08_
+_Last updated: 2026-03-12_
 
 ## Overview
 
@@ -52,7 +52,7 @@ All tracked in `dotfiles/openclaw/workspace/`. Files with PII use `${PLACEHOLDER
 |---|---|---|---|
 | `SOUL.md` | Agent personality, trust model, social engineering defense | Yes | Placeholders for phone/email |
 | `AGENTS.md` | Workspace conventions, memory management, group chat rules | Yes | No PII |
-| `TOOLS.md` | Environment-specific device notes, BB Private API reference | Yes | Symlinked on Mini from dotfiles |
+| `TOOLS.md` | Environment-specific device notes, BB Private API reference | Yes | Copied to Mini by dotfiles-pull |
 | `IDENTITY.md` | Agent name/role/persona | Yes | Placeholder for address |
 | `USER.md` | Household members, pets, locations | Yes | Placeholders for phone/email/address |
 | `HEARTBEAT.md` | Minimal heartbeat checklist (BB ping only) | Yes | No PII |
@@ -221,7 +221,7 @@ Automated via `ai.openclaw.weekly-upgrade` LaunchAgent (Sun 9 AM ET) running `~/
 7. Patch BB plugin if needed (broken `parse-finite-number` import in v2026.3.7+)
 8. Restart gateway
 9. Verify gateway is running, check for scope repair needs
-10. Pull latest dotfiles (`git pull --ff-only`) so symlinked workspace files stay current
+10. Pull latest dotfiles (`git pull --ff-only`) — dotfiles-pull deploys skills as real copies and syncs workspace files
 
 Post-upgrade verification: cron job `weekly-upgrade-verify-0001` runs at 9:15 AM, auto-fixes missing scopes, reports to Dylan via iMessage.
 
@@ -233,7 +233,7 @@ openclaw/
 │   └── scripts/         # Agent utility scripts (presence-detect.sh, etc.)
 ├── plans/               # Architecture docs and plans
 ├── bin/                 # Helper scripts (sag-wrapper, nest-dashboard.py, ccusage-push.sh, etc.)
-├── skills/              # Skill definitions (tracked subset)
+├── skills/              # Skill definitions (copied to Mini as real dirs — not symlinks)
 ├── OpenClawGateway.app/ # Gateway wrapper app (for FDA/TCC)
 ├── openclaw.json        # Main config
 ├── openclaw-remote.json # Remote config
@@ -243,9 +243,10 @@ openclaw/
 
 ## Key Operational Notes
 
-- **Syncing workspace files:** `scp` from local to Mini, then run placeholder substitution. SOUL.md on Mini is a real file (not symlink).
-- **TOOLS.md on Mini:** Symlink → `~/dotfiles/openclaw/workspace/TOOLS.md`. Kept current by dotfiles-pull LaunchAgent and weekly upgrade auto-pull.
-- **Gateway hot-reloads** workspace file changes without restart.
+- **Syncing workspace files:** `scp` from local to Mini, then run placeholder substitution. SOUL.md on Mini is a real file (not symlink). TOOLS.md and HEARTBEAT.md are copied by dotfiles-pull.
+- **Skills on Mini:** Must be **real directory copies** (not symlinks) in `~/.openclaw/skills/`. OpenClaw v2026.3.7+ calls `fs.realpathSync()` and rejects skills whose resolved path falls outside the configured `rootDir`. The `dotfiles-pull.command` handles deployment — copies skills from `~/dotfiles/openclaw/skills/` after `git pull` and strips nested symlinks.
+- **Bundled skill conflicts:** Bundled `openhue` skill disabled via `skills.entries.openhue.enabled: false` in `openclaw.json` — it competed with managed `hue-lights` skill, causing agent to try installing openhue instead of using the `hue` CLI.
+- **Gateway hot-reloads** workspace file and config changes without restart.
 - **Manual cron trigger:** `openclaw cron run <job-id> --timeout 300000 --expect-final` (default 30s is too short).
 - **BB restart API:** `GET /api/v1/server/restart/soft?password=$BLUEBUBBLES_PASSWORD` (note: GET, not POST).
 - **Secrets:** Never use `op read` at gateway startup (hangs under launchd). Use cache-only pattern via `~/.openclaw/.secrets-cache`.
