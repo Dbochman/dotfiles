@@ -41,13 +41,22 @@ Annual events typically include:
 
 ## Step 2: Fetch Brew Barn Events
 
-Brew Barn is a Wix site — events load via JavaScript. **You must use the browser tool** to render the page:
+Brew Barn is a Wix site — events are rendered inside an **iframe** (Boom Calendar widget) that standard snapshots cannot read. **You must use the screenshot approach:**
 
 1. Navigate to `https://www.brewbarnma.com/events`
-2. Wait for the events widget to load (look for event titles/dates)
-3. Extract event details: name, date, time, description
+2. Wait 5+ seconds for the calendar iframe to render
+3. **Take a screenshot** — the events are visible in the rendered page as a list with date, time, and event name
+4. Read the event details from the screenshot image
 
-Brew Barn typically hosts live music nights, trivia, open mic, and seasonal events.
+The calendar shows an "Upcoming Events" agenda view with columns: date, time range, and event name + description.
+
+**IMPORTANT:** The `snapshot` tool (aria/accessibility tree) will NOT show events — they are inside a cross-origin iframe from `calendar.boomte.ch`. You MUST use `screenshot` to visually read the events.
+
+Brew Barn typically hosts live music nights (Thu-Sun), trivia, bingo, fish fry, and seasonal events. Events are usually:
+- **Thursdays** — Ryan's Trivia Night (6-8pm)
+- **Fridays** — Fish Fry + live music (3-8pm / 6-8pm)
+- **Saturdays** — Live music + Dan-O Music Bingo (12-3pm / 6-8pm)
+- **Sundays** — Live music or seasonal events (4-7pm)
 
 ## Step 3: Deduplicate
 
