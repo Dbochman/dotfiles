@@ -231,6 +231,6 @@ openclaw/
 - **Manual cron trigger:** `openclaw cron run <job-id> --timeout 300000 --expect-final` (default 30s is too short).
 - **BB restart API:** `GET /api/v1/server/restart/soft?password=$BLUEBUBBLES_PASSWORD` (note: GET, not POST).
 - **Secrets:** Never use `op read` at gateway startup (hangs under launchd). Use cache-only pattern via `~/.openclaw/.secrets-cache`.
-- **1Password SSH bypass:** Use `SSH_AUTH_SOCK=""` before scp/ssh in LaunchAgents to avoid biometric prompts (Tailscale SSH handles auth).
+- **1Password SSH bypass:** Dedicated passphrase-less key `~/.ssh/id_launchd` on local Mac, with `IdentityFile ~/.ssh/id_launchd` + `IdentityAgent none` in `~/.ssh/config` for `Host dylans-mac-mini`. This bypasses 1Password entirely for Mini SSH/scp. Note: `SSH_AUTH_SOCK=""` alone does NOT work — the `IdentityAgent` directive in ssh config overrides the env var.
 - **npm upgrade danger:** `npm install -g openclaw` may run `openclaw install --service` which overwrites the LaunchAgent plist. Back up the plist before upgrading.
 - **Ghost cron jobs:** When removing jobs from `jobs.json`, also delete run state at `~/.openclaw/cron/runs/<job-id>.jsonl`.

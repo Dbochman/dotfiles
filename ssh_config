@@ -1,7 +1,9 @@
-# Mac Mini (via Tailscale, keys in 1Password)
+# Mac Mini (via Tailscale, dedicated key for headless/launchd use)
 Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
+  IdentityFile ~/.ssh/id_launchd
+  IdentityAgent none
 
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro

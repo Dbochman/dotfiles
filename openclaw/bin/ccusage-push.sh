@@ -9,8 +9,9 @@
 
 set -euo pipefail
 
-# Unset 1Password SSH agent early — ccusage reads git history internally,
-# which can trigger SSH key prompts via 1Password agent under launchd.
+# Clear SSH_AUTH_SOCK so ccusage's internal git operations don't trigger
+# 1Password agent prompts. Mini SSH auth is handled by ~/.ssh/id_launchd
+# (configured in ~/.ssh/config with IdentityAgent none).
 export SSH_AUTH_SOCK=""
 
 MINI="${CCUSAGE_MINI_HOST:-dbochman@dylans-mac-mini}"
@@ -47,8 +48,7 @@ if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$LOCAL_TMP" 2>/
   exit 0
 fi
 
-# Push to Mini (unset SSH_AUTH_SOCK to avoid 1Password agent prompts;
-# Tailscale SSH handles auth to the Mini without keys)
+# Push to Mini (auth via ~/.ssh/id_launchd, configured in ssh config)
 scp -q "$LOCAL_TMP" "$MINI:$REMOTE_DIR/ccusage-${MACHINE}.json" 2>/dev/null || {
   echo "scp to Mini failed" >&2
   exit 0
