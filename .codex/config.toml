@@ -1,10 +1,10 @@
-model = "gpt-5.2-codex"
+model = "gpt-5.4"
 
 [model_providers.groq]
 base_url = "https://api.groq.com/openai/v1"
 env_key = "GROQ_API_KEY"
 name = "Groq"
-wire_api = "chat"
+wire_api = "responses"
 
 [profiles.groq-gpt]
 model = "openai/gpt-oss-120b"
@@ -20,12 +20,4 @@ network_access = true
 [features]
 unified_exec = true
 shell_snapshot = true
-steer = true
-
-# Note: [projects] section with trust levels should be configured locally
-# as paths are machine-specific. Add trusted projects manually:
-# [projects."/path/to/your/repo"]
-# trust_level = "trusted"
-
-[notice.model_migrations]
-gpt-5-codex = "gpt-5.2-codex"
+multi_agent = true

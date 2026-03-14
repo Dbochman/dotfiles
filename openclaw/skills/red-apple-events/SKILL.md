@@ -18,7 +18,7 @@ Fetch upcoming events from two sources near the cabin in Phillipston, MA, and sy
 
 ## Step 1: Fetch Red Apple Farm Events
 
-Red Apple Farm's events page is static HTML. Use `curl` or the `web_search` tool to read it:
+Red Apple Farm's events page is static HTML. Use `curl` to fetch it:
 
 ```bash
 curl -s https://www.redapplefarm.com/events
@@ -88,15 +88,17 @@ gws calendar events insert --params '{"calendarId": "primary"}' --json '{
 ```
 
 ### Before creating, check for existing events to avoid duplicates:
+Use the current year dynamically:
 ```bash
-gws calendar events list --params '{
-  "calendarId": "primary",
-  "q": "Red Apple",
-  "timeMin": "2026-01-01T00:00:00-05:00",
-  "timeMax": "2026-12-31T23:59:59-05:00",
-  "singleEvents": true,
-  "orderBy": "startTime"
-}' --account clawdbotbochman@gmail.com
+YEAR=$(date +%Y)
+gws calendar events list --params "{
+  \"calendarId\": \"primary\",
+  \"q\": \"Red Apple\",
+  \"timeMin\": \"${YEAR}-01-01T00:00:00-05:00\",
+  \"timeMax\": \"${YEAR}-12-31T23:59:59-05:00\",
+  \"singleEvents\": true,
+  \"orderBy\": \"startTime\"
+}" --account clawdbotbochman@gmail.com
 ```
 
 ## Emoji Prefixes

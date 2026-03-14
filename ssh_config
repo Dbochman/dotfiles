@@ -1,9 +1,12 @@
-# Mac Mini (via Tailscale, dedicated key for headless/launchd use)
+# Mac Mini (via Tailscale)
+# On the launchd host (MBP), id_launchd bypasses 1Password Touch ID prompts.
+# On other machines, falls through to the 1Password agent (Host * block).
 Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
-  IdentityFile ~/.ssh/id_launchd
-  IdentityAgent none
+  Match host dylans-mac-mini exec "test -f ~/.ssh/id_launchd"
+    IdentityFile ~/.ssh/id_launchd
+    IdentityAgent none
 
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro
