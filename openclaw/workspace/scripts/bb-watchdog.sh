@@ -242,11 +242,16 @@ try {
   }
 } catch {}
 
-// Cross-check: verify gateway is actually receiving BB webhooks.
+// Cross-check: verify gateway's BB plugin actually loaded.
 // BB can dispatch webhooks successfully (webhookAgeMin is low) but the gateway
 // may not have its BB plugin loaded (e.g., broken import after npm upgrade).
-// Check gateway runtime log for recent bluebubbles inbound activity.
+// We check for:
+//   1. 'webhook listening' — BB plugin loaded successfully (logged at startup)
+//   2. 'inbound' / 'new-message' — BB plugin processing messages
+// If the plugin loaded ('webhook listening' found) but is just idle (no
+// inbound messages), that's normal — NOT a reason to restart.
 let gatewayBbAliveMin = 999;
+let gatewayBbPluginLoaded = false;
 try {
   // Gateway log is named by local date, not UTC — check today and yesterday
   const localNow = new Date(now - new Date().getTimezoneOffset() * 60000);
@@ -254,14 +259,15 @@ try {
   const localYesterday = new Date(localNow - 86400000).toISOString().slice(0, 10);
   const candidates = [localToday, localYesterday];
   for (const day of candidates) {
-    if (gatewayBbAliveMin < 999) break;
     const gwLogPath = '/tmp/openclaw/openclaw-' + day + '.log';
     if (!fs.existsSync(gwLogPath)) continue;
     const gwContent = fs.readFileSync(gwLogPath, 'utf8');
     const gwLines = gwContent.split('\n');
+    // Scan backwards for most recent BB-related gateway activity
     for (let i = gwLines.length - 1; i >= 0; i--) {
-      // Look for BB plugin startup or inbound message activity
-      if (gwLines[i].includes('bluebubbles') && (gwLines[i].includes('webhook listening') || gwLines[i].includes('inbound') || gwLines[i].includes('new-message'))) {
+      if (!gwLines[i].includes('bluebubbles')) continue;
+      // Track when BB plugin was last seen active (any activity)
+      if (gatewayBbAliveMin >= 999 && (gwLines[i].includes('webhook listening') || gwLines[i].includes('inbound') || gwLines[i].includes('new-message'))) {
         try {
           const entry = JSON.parse(gwLines[i]);
           const ts = entry._meta?.date;
@@ -269,17 +275,25 @@ try {
             gatewayBbAliveMin = Math.floor((now - new Date(ts).getTime()) / 60000);
           }
         } catch {
-          // Try plain text timestamp
           const m = gwLines[i].match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
           if (m) gatewayBbAliveMin = Math.floor((now - new Date(m[1]).getTime()) / 60000);
         }
-        break;
       }
+      // Track whether BB plugin loaded at all (webhook listening = plugin init success)
+      if (!gatewayBbPluginLoaded && gwLines[i].includes('webhook listening')) {
+        gatewayBbPluginLoaded = true;
+      }
+      // Once we have both pieces of info, stop scanning
+      if (gatewayBbAliveMin < 999 && gatewayBbPluginLoaded) break;
     }
+    // If we found the plugin loaded in today's log, no need to check yesterday
+    if (gatewayBbPluginLoaded) break;
   }
 } catch {}
-// If gateway BB plugin hasn't shown any activity in 60+ minutes, flag it
-const gatewayBbDead = gatewayBbAliveMin >= 60;
+// Gateway BB plugin is dead ONLY if it never loaded in the current log cycle.
+// If it loaded ('webhook listening' found) but has been idle, that's fine —
+// no messages means no activity, not a broken plugin.
+const gatewayBbDead = !gatewayBbPluginLoaded;
 
 // Decision logic:
 // 1. If we can't reach BB API → skip
@@ -314,7 +328,7 @@ if (gatewayNeedsRestart && !inCooldown) {
   prev.pendingChecks = 0;
   saveState = true;
   action = 'restart-gateway';
-  reason = 'BB dispatching webhooks (last ' + webhookAgeMin + 'min ago) but gateway BB plugin inactive (' + gatewayBbAliveMin + 'min since last activity) — restarting gateway only';
+  reason = 'BB dispatching webhooks (last ' + webhookAgeMin + 'min ago) but gateway BB plugin never loaded (no webhook-listening entry in gateway log) — restarting gateway only';
 } else if (!latestGuid) {
   action = 'skip';
   reason = 'could not fetch latest message from BB API';
