@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.financial-dashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/dbochman/repos/financial-dashboard/venv/bin/python3</string>
+        <string>/Users/dbochman/repos/financial-dashboard/serve_dashboard.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/dbochman/.openclaw/logs/financial-dashboard.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dbochman/.openclaw/logs/financial-dashboard.err.log</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/dbochman/repos/financial-dashboard</string>
+</dict>
+</plist>

@@ -1,0 +1,78 @@
+#!/bin/bash
+# finance — CLI wrapper for the financial dashboard LaunchAgent
+# Modeled on bin/nest's dashboard management pattern.
+
+set -euo pipefail
+
+DASHBOARD_LABEL="ai.openclaw.financial-dashboard"
+DASHBOARD_PLIST="${HOME}/Library/LaunchAgents/${DASHBOARD_LABEL}.plist"
+DASHBOARD_PORT=8585
+
+cmd_dashboard() {
+  local subcmd="${1:-open}"
+  case "$subcmd" in
+    open)
+      open "http://localhost:${DASHBOARD_PORT}/"
+      ;;
+    start)
+      if [[ ! -f "$DASHBOARD_PLIST" ]]; then
+        echo "LaunchAgent plist not found at $DASHBOARD_PLIST" >&2
+        echo "Install it first: cp <dotfiles>/openclaw/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/" >&2
+        exit 1
+      fi
+      if launchctl list "$DASHBOARD_LABEL" &>/dev/null; then
+        echo "Dashboard already running"
+      else
+        launchctl load -w "$DASHBOARD_PLIST"
+        echo "Dashboard started on port $DASHBOARD_PORT"
+      fi
+      ;;
+    stop)
+      if launchctl list "$DASHBOARD_LABEL" &>/dev/null; then
+        launchctl unload "$DASHBOARD_PLIST"
+        echo "Dashboard stopped"
+      else
+        echo "Dashboard not running"
+      fi
+      ;;
+    restart)
+      cmd_dashboard stop
+      sleep 1
+      cmd_dashboard start
+      ;;
+    status)
+      if launchctl list "$DASHBOARD_LABEL" &>/dev/null; then
+        local pid
+        pid=$(launchctl list "$DASHBOARD_LABEL" | awk -F'"PID" = ' 'NF>1{gsub(/[^0-9]/,"",$2); print $2}')
+        echo "Dashboard running (PID: ${pid:-?}) on port $DASHBOARD_PORT"
+      else
+        echo "Dashboard not running"
+      fi
+      ;;
+    *)
+      echo "Usage: finance dashboard [open|start|stop|restart|status]" >&2
+      exit 1
+      ;;
+  esac
+}
+
+cmd_help() {
+  cat <<'HELP'
+Usage: finance <command> [args]
+
+Commands:
+  dashboard                 Open dashboard in browser
+  dashboard start|stop      Start/stop dashboard LaunchAgent
+  dashboard restart|status  Restart or check dashboard status
+  help                      Show this help
+
+Dashboard runs on http://localhost:8585
+LaunchAgent: ai.openclaw.financial-dashboard
+HELP
+}
+
+case "${1:-help}" in
+  dashboard)        cmd_dashboard "${2:-open}" ;;
+  help|--help|-h)   cmd_help ;;
+  *)                echo "Unknown command: $1. Run 'finance help'." >&2; exit 1 ;;
+esac
