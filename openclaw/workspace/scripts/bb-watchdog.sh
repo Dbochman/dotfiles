@@ -242,14 +242,15 @@ try {
   }
 } catch {}
 
-// Cross-check: verify gateway's BB plugin actually loaded.
+// Cross-check: verify gateway's BB plugin loaded in the CURRENT process.
 // BB can dispatch webhooks successfully (webhookAgeMin is low) but the gateway
 // may not have its BB plugin loaded (e.g., broken import after npm upgrade).
-// We check for:
-//   1. 'webhook listening' — BB plugin loaded successfully (logged at startup)
-//   2. 'inbound' / 'new-message' — BB plugin processing messages
-// If the plugin loaded ('webhook listening' found) but is just idle (no
-// inbound messages), that's normal — NOT a reason to restart.
+//
+// Strategy: find the last gateway startup line ('listening on ws://') in the
+// log, then check if 'webhook listening' (BB plugin init) appears AFTER it.
+// This scopes the check to the current gateway process, avoiding:
+//   - False negatives from stale startup lines in earlier process lifetimes
+//   - False positives from multi-day uptime aging out of scan window
 let gatewayBbAliveMin = 999;
 let gatewayBbPluginLoaded = false;
 try {
@@ -258,41 +259,49 @@ try {
   const localToday = localNow.toISOString().slice(0, 10);
   const localYesterday = new Date(localNow - 86400000).toISOString().slice(0, 10);
   const candidates = [localToday, localYesterday];
+
+  // Phase 1: Find the last gateway startup line across log files
+  let startupLineIdx = -1;
+  let startupLogLines = null;
   for (const day of candidates) {
     const gwLogPath = '/tmp/openclaw/openclaw-' + day + '.log';
     if (!fs.existsSync(gwLogPath)) continue;
     const gwContent = fs.readFileSync(gwLogPath, 'utf8');
     const gwLines = gwContent.split('\n');
-    // Scan backwards for most recent BB-related gateway activity
     for (let i = gwLines.length - 1; i >= 0; i--) {
-      if (!gwLines[i].includes('bluebubbles')) continue;
-      // Track when BB plugin was last seen active (any activity)
-      if (gatewayBbAliveMin >= 999 && (gwLines[i].includes('webhook listening') || gwLines[i].includes('inbound') || gwLines[i].includes('new-message'))) {
+      if (gwLines[i].includes('listening on ws://')) {
+        startupLineIdx = i;
+        startupLogLines = gwLines;
+        break;
+      }
+    }
+    if (startupLineIdx >= 0) break;
+  }
+
+  // Phase 2: From the startup line forward, check if BB plugin loaded
+  if (startupLogLines && startupLineIdx >= 0) {
+    for (let i = startupLineIdx; i < startupLogLines.length; i++) {
+      if (!startupLogLines[i].includes('bluebubbles')) continue;
+      if (startupLogLines[i].includes('webhook listening')) {
+        gatewayBbPluginLoaded = true;
+      }
+      // Also track most recent BB activity for diagnostics
+      if (startupLogLines[i].includes('webhook listening') || startupLogLines[i].includes('inbound') || startupLogLines[i].includes('new-message')) {
         try {
-          const entry = JSON.parse(gwLines[i]);
+          const entry = JSON.parse(startupLogLines[i]);
           const ts = entry._meta?.date;
           if (ts) {
             gatewayBbAliveMin = Math.floor((now - new Date(ts).getTime()) / 60000);
           }
         } catch {
-          const m = gwLines[i].match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+          const m = startupLogLines[i].match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
           if (m) gatewayBbAliveMin = Math.floor((now - new Date(m[1]).getTime()) / 60000);
         }
       }
-      // Track whether BB plugin loaded at all (webhook listening = plugin init success)
-      if (!gatewayBbPluginLoaded && gwLines[i].includes('webhook listening')) {
-        gatewayBbPluginLoaded = true;
-      }
-      // Once we have both pieces of info, stop scanning
-      if (gatewayBbAliveMin < 999 && gatewayBbPluginLoaded) break;
     }
-    // If we found the plugin loaded in today's log, no need to check yesterday
-    if (gatewayBbPluginLoaded) break;
   }
 } catch {}
-// Gateway BB plugin is dead ONLY if it never loaded in the current log cycle.
-// If it loaded ('webhook listening' found) but has been idle, that's fine —
-// no messages means no activity, not a broken plugin.
+// Gateway BB plugin is dead ONLY if it didn't load in the current process.
 const gatewayBbDead = !gatewayBbPluginLoaded;
 
 // Decision logic:
