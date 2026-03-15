@@ -161,9 +161,10 @@ Script-level month tracking prevents duplicate runs when the retry window fires 
 
 **Gas (National Grid — Next.js SPA)**
 1. **Structured page scraping** — Bill History page renders issue dates, billing periods, and amounts in a consistent list format
-2. **Budget billing awareness** — Portal shows budget plan payments, not actual charges; merge preserves PDF-parsed actual charges
+2. **Budget billing awareness** — Portal shows budget plan payments, not actual charges; merge preserves PDF-parsed actual charges for non-budget months, replaces round-number budget totals with actual charges from bill PDFs
 3. **Headless fail-fast** — Expired sessions exit immediately in headless mode with actionable error message
-4. **Optional bill detail extraction** — `--with-details` flag clicks into individual bill PDFs for therms and cost breakdowns
+4. **PDF.js iframe extraction** — `--with-details` flag navigates to each bill's PDF viewer page, accesses the PDF.js text layer inside the iframe (`page.frames[1]`), and extracts therms, supply/delivery costs, customer charge, meter readings, and supply rate via regex
+5. **OAuth B2C login handling** — Allowlist-first auth check (not deny-list), context-wide page watching for redirects, retry on `net::ERR_ABORTED` from OAuth redirect
 
 ### Import Commands Reference
 
