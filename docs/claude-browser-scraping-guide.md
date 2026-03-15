@@ -10,7 +10,7 @@ The Chrome DevTools MCP gives Claude a browser it can control directly. Open the
 
 ## Setup
 
-The MCP server is already configured on the Mac Mini (`~/.claude/mcp.json`). Start a Claude Code session:
+The MCP server is already configured on the Mac Mini (`~/.claude.json`, added via `claude mcp add`). Start a Claude Code session:
 
 ```bash
 cd ~/path/to/financial-dashboard
@@ -91,27 +91,69 @@ Sometimes the best login flow is no login flow. If you've already signed into a 
 
 ### Install
 
+**Option A — Swift CLI (recommended for Python/Playwright scrapers):**
+
+```bash
+cd /tmp && git clone --depth 1 https://github.com/steipete/SweetCookieKit.git
+cd SweetCookieKit/Examples/CookieCLI && swift build -c release
+cp .build/release/SweetCookieCLI ~/bin/sweet-cookie
+```
+
+**Option B — npm package (for Node.js/JS scrapers):**
+
 ```bash
 npm install @steipete/sweet-cookie
 ```
 
 ### How it works
 
-Sweet Cookie reads Chrome's encrypted cookie database, decrypts the cookies using the macOS Keychain, and hands them back as plain values. You pass in a URL and the cookie names you need:
+Both tools read Chrome's encrypted cookie database and decrypt the cookies using the macOS Keychain. Chrome can stay open — no need to close it.
+
+**Swift CLI (Python scrapers):**
+
+```bash
+# Extract cookies as JSON for a specific domain
+~/bin/sweet-cookie --domains eversource.com --browser chrome --format json
+```
+
+Then in Python, shell out and inject into Playwright:
+
+```python
+import subprocess, json
+
+result = subprocess.run(
+    ["sweet-cookie", "--domains", "eversource.com", "--browser", "chrome", "--format", "json"],
+    capture_output=True, text=True,
+)
+data = json.loads(result.stdout)
+cookies = []
+for store in data["stores"]:
+    for record in store["records"]:
+        cookies.append({
+            "name": record["name"],
+            "value": record["value"],
+            "domain": record["domain"],
+            "path": record.get("path", "/"),
+            "httpOnly": record.get("isHTTPOnly", False),
+            "secure": record.get("isSecure", False),
+        })
+
+browser = p.chromium.launch()
+context = browser.new_context()
+context.add_cookies(cookies)
+# Now navigate directly to the dashboard — you're already logged in
+```
+
+**npm package (JS scrapers):**
 
 ```javascript
 import { getCookies } from '@steipete/sweet-cookie';
 
-// Extract session cookies from Chrome
 const cookies = await getCookies({
   url: 'https://your-bank.com',
   names: ['session_id', 'auth_token', '_csrf']
 });
-```
 
-Then inject them into Playwright's browser context:
-
-```javascript
 const context = await browser.newContext();
 await context.addCookies(cookies.map(c => ({
   name: c.name,
@@ -138,7 +180,7 @@ Use the DevTools MCP login flow when:
 
 They work well together: use the DevTools MCP to explore the site and identify the right cookies, then use Sweet Cookie to grab them for subsequent runs.
 
-There's also [SweetCookieKit](https://github.com/steipete/SweetCookieKit) if you ever need the same thing from Swift, but the npm package is what you want for Playwright projects.
+The [SweetCookieKit](https://github.com/steipete/SweetCookieKit) CLI is already installed at `~/bin/sweet-cookie` and is the preferred approach for the financial-dashboard Python scrapers (e.g., `scrape_eversource.py --cookies`). The npm package works for JS-based projects.
 
 ## Tips
 
