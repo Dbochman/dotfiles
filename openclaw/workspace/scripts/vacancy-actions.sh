@@ -23,6 +23,7 @@ CROSSTOWN_ROOMBA="$HOME/.openclaw/skills/crosstown-roomba/crosstown-roomba"
 CABIN_ROOMBA="$HOME/.openclaw/skills/roomba/roomba"
 HUE="/opt/homebrew/bin/hue"
 NEST="$HOME/.openclaw/bin/nest"
+CIELO="/usr/local/bin/node $HOME/repos/cielo-cli/cli.js"
 
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
@@ -69,6 +70,15 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
   else
     log "  ERROR: Failed to set Crosstown eco mode"
   fi
+
+  # Cielo minisplits off
+  for unit in bedroom office "living room"; do
+    if $CIELO off -d "$unit" >> "$LOG_FILE" 2>&1; then
+      log "  Cielo $unit: OFF"
+    else
+      log "  ERROR: Failed to turn off Cielo $unit"
+    fi
+  done
 
   # Start Roombas
   if "$CROSSTOWN_ROOMBA" start all >> "$LOG_FILE" 2>&1; then
