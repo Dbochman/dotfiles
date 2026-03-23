@@ -35,8 +35,8 @@ rest980 (persistent HTTP server wrapping dorita980) was the original plan but **
 
 | Robot | SKU | IP | MAC | BLID (prefix) |
 |-------|-----|-----|-----|---------------|
-| Roomba (10 Max) | x085020 | 192.168.165.135 | 4c:b9:ea:96:bd:bc | 81039F92... |
-| scoomba (J5) | j517020 | 192.168.165.154 | 4c:b9:ea:3c:c5:cc | 195EFAE5... |
+| Roomba (10 Max) | x085020 | 192.168.165.4 | 4c:b9:ea:96:bd:bc | 81039F92... |
+| scoomba (J5) | j517020 | 192.168.165.3 | 4c:b9:ea:3c:c5:cc | 195EFAE5... |
 
 ## Status
 

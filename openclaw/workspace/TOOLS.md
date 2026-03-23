@@ -23,11 +23,16 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 - Google Nest cameras
 - Google smart speakers
 
-### Crosstown (Boston)
+### Crosstown (West Roxbury)
 - Philips Hue lights
 - Cielo Breez Plus smart AC controllers (Basement, Living Room, Dylan's Office, Bedroom)
 - Mysa baseboard heaters (Cat Room, Basement door, Movie room)
+- iRobot Roombas — Roomba Combo 10 Max + scoomba J5 (local MQTT via MacBook Pro)
+- Eight Sleep Pod 3 (cloud API, both sides: Dylan left, Julia right)
 - Google smart speakers
+
+### Vacancy Automation
+When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent automatically: turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), and starts all Roombas.
 
 ## Image Tool — Path Policy
 
