@@ -1,0 +1,139 @@
+#!/bin/bash
+# petlibro — control Petlibro smart pet devices at Crosstown + Cabin
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+API_SCRIPT="$SCRIPT_DIR/petlibro-api.py"
+PYTHON="/usr/bin/python3"
+
+run_api() { "$PYTHON" "$API_SCRIPT" "$@" 2>&1; }
+
+parse_status() {
+  python3 -c "
+import sys, json
+try:
+    devices = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if isinstance(devices, dict) and 'error' in devices:
+    print(f'Error: {devices.get(\"message\", devices.get(\"error\"))}')
+    sys.exit(1)
+for d in devices:
+    name = d.get('name', '?')
+    online = 'Online' if d.get('online') else 'Offline'
+    print(f'{name} ({d.get(\"model\", \"?\")}) — {online}')
+    if d.get('type') == 'feeder':
+        food = d.get('foodLevel', '?')
+        nxt = d.get('nextFeedTime', '?')
+        portions = d.get('nextFeedPortions', '?')
+        print(f'  Food Level:  {food}')
+        print(f'  Next Feed:   {nxt} ({portions} portions)')
+        bowl = d.get('bowlMode')
+        if bowl:
+            print(f'  Bowl Mode:   {bowl}')
+    elif d.get('type') == 'fountain':
+        pct = d.get('waterPercent', '?')
+        wt = d.get('waterWeight', '?')
+        today = d.get('todayDrinkMl', '?')
+        batt = d.get('battery', '?')
+        bstate = d.get('batteryState', '?')
+        filt = d.get('filterDaysRemaining', '?')
+        print(f'  Water Level: {pct}% ({wt}g)')
+        print(f'  Today Drunk: {today} mL')
+        print(f'  Battery:     {batt}% ({bstate})')
+        if isinstance(filt, int) and filt < 0:
+            print(f'  Filter:      OVERDUE by {abs(filt)} days')
+        else:
+            print(f'  Filter:      {filt} days remaining')
+    print()
+"
+}
+
+parse_feed() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+print(f'{d.get(\"device\", \"?\")}: Fed {d.get(\"portions\", \"?\")} portion(s)')
+"
+}
+
+parse_water() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+total = d.get('totalMl', d.get('todayTotalMl', '?'))
+count = d.get('drinkCount', d.get('todayCount', '?'))
+avg = d.get('avgMl', '?')
+print(f'Today: {total} mL across {count} drink(s)')
+if avg != '?':
+    print(f'Average: {avg} mL per drink')
+"
+}
+
+case "${1:-}" in
+  status)
+    run_api status | parse_status
+    ;;
+  feed)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: petlibro feed <feeder|name> [portions]" >&2
+      echo "  Default: 1 portion" >&2
+      exit 1
+    fi
+    run_api feed "$2" "${3:-1}" | parse_feed
+    ;;
+  water)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: petlibro water <fountain|name>" >&2
+      exit 1
+    fi
+    run_api water "$2" | parse_water
+    ;;
+  schedule)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: petlibro schedule <feeder|name>" >&2
+      exit 1
+    fi
+    run_api schedule "$2" | python3 -m json.tool
+    ;;
+  devices)
+    run_api devices | python3 -m json.tool
+    ;;
+  raw)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: petlibro raw <endpoint> [json-body]" >&2
+      exit 1
+    fi
+    run_api raw "$2" "${3:-}" | python3 -m json.tool
+    ;;
+  *)
+    echo "Usage: petlibro <command>"
+    echo ""
+    echo "Commands:"
+    echo "  status                  All devices summary"
+    echo "  feed <name> [portions]  Manual feed (default: 1 portion)"
+    echo "  water <name>            Today's water intake"
+    echo "  schedule <name>         Today's feeding schedule"
+    echo "  devices                 List all devices"
+    echo "  raw <endpoint> [json]   Raw API POST"
+    echo ""
+    echo "Device names: feeder, fountain (fuzzy matched)"
+    exit 1
+    ;;
+esac

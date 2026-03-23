@@ -1,0 +1,4 @@
+#!/bin/bash
+# petlibro — Petlibro smart pet device control
+SKILL_DIR="$HOME/.openclaw/skills/petlibro"
+exec "$SKILL_DIR/petlibro" "$@"
