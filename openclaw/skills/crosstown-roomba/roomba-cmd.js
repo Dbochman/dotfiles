@@ -45,7 +45,17 @@ robot.on("connect", async () => {
         result = await robot.getMission();
         break;
       case "state":
-        result = await robot.getRobotState();
+        // getRobotState() without args returns {} in connect-disconnect mode.
+        // Instead, wait for the robot to publish its full state via MQTT.
+        result = await new Promise((resolve, reject) => {
+          const stateTimeout = setTimeout(() => reject(new Error("state timeout")), 15000);
+          robot.on("state", (state) => {
+            if (state && Object.keys(state).length > 10) {
+              clearTimeout(stateTimeout);
+              resolve(state);
+            }
+          });
+        });
         break;
       case "start":
         result = await robot.start();
