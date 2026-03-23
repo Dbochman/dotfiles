@@ -1,6 +1,6 @@
 ---
 name: crosstown-roomba
-description: Control the iRobot Roombas at Crosstown (Boston — 19 Crosstown Ave). Two robots available. Use when asked to vacuum, mop, start/stop/dock the Roomba at Crosstown, clean the apartment, or anything about the Roombas at Crosstown. NOT for Cabin Roombas (use roomba skill for Floomba/Philly).
+description: Control the iRobot Roombas at Crosstown (Boston — 19 Crosstown Ave). Two robots available. Use when asked to vacuum, mop, start/stop/dock the Roomba at Crosstown, clean the house, or anything about the Roombas at Crosstown. NOT for Cabin Roombas (use roomba skill for Floomba/Philly).
 allowed-tools: Bash(crosstown-roomba:*) Bash(ssh:*)
 metadata: {"openclaw":{"emoji":"🤖","requires":{"bins":["crosstown-roomba"]}}}
 ---
@@ -79,7 +79,7 @@ Roomba J5     ←─MQTT:8883─→ roomba-cmd.js (MacBook Pro) ←─SSH─→ 
 ## Disambiguation
 
 - "vacuum", "roomba", "clean" at **Crosstown** → this skill
-- "crosstown roomba", "boston roomba", "apartment roomba" → this skill
+- "crosstown roomba", "boston roomba", "house roomba" → this skill
 - "cabin roomba", "floomba", "philly" → `roomba` skill (Google Assistant)
 - If location is ambiguous, ask which location
 

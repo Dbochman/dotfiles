@@ -1,0 +1,182 @@
+#!/bin/bash
+# 8sleep — control Eight Sleep Pod at Crosstown (West Roxbury)
+# Talks to Eight Sleep cloud API via 8sleep-api.py
+# Supports both sides: Dylan (left) and Julia (right)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+API_SCRIPT="$SCRIPT_DIR/8sleep-api.py"
+PYTHON="/usr/bin/python3"
+
+run_api() {
+  "$PYTHON" "$API_SCRIPT" "$@" 2>&1
+}
+
+parse_status() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+
+dev = d.get('device', {})
+print(f'Eight Sleep Pod ({dev.get(\"model\", \"?\")})')
+print(f'  Connected: {\"Yes\" if dev.get(\"connected\") else \"No\"}')
+print(f'  Water: {\"OK\" if dev.get(\"hasWater\") else \"LOW\"}')
+print()
+
+for name, key in [('Dylan (left)', 'dylan'), ('Julia (right)', 'julia')]:
+    s = d.get(key, {})
+    level = s.get('currentLevel', '?')
+    target = s.get('targetLevel', '?')
+    heating = s.get('heating', False)
+    action = 'Heating' if heating and isinstance(level, int) and level > 0 else 'Cooling' if heating else 'Idle'
+    # Approximate temp
+    temp_f = round(55 + (level + 100) * (111 - 55) / 200) if isinstance(level, int) else '?'
+    print(f'{name}:')
+    print(f'  Level:  {level} (~{temp_f}F)')
+    print(f'  Target: {target}')
+    print(f'  Status: {action}')
+    print()
+
+sched = d.get('schedule', {})
+if sched.get('type') == 'smart':
+    smart = sched.get('smart', {})
+    print(f'Dylan Smart Schedule: bedtime={smart.get(\"bedTimeLevel\",\"?\")}, initial={smart.get(\"initialSleepLevel\",\"?\")}, final={smart.get(\"finalSleepLevel\",\"?\")}')
+"
+}
+
+parse_device() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+print(f'Model:          {d.get(\"model\",\"?\")} ({d.get(\"size\",\"?\")})')
+print(f'Serial:         {d.get(\"serial\",\"?\")}')
+print(f'HW Revision:    {d.get(\"hwRevision\",\"?\")}')
+print(f'Connected:      {\"Yes\" if d.get(\"connected\") else \"No\"}')
+print(f'Last Connected: {d.get(\"lastConnected\",\"?\")}')
+print(f'Water:          {\"OK\" if d.get(\"hasWater\") else \"LOW\"}')
+print(f'Needs Priming:  {\"Yes\" if d.get(\"needsPriming\") else \"No\"}')
+print(f'LED Brightness: {d.get(\"ledBrightness\",\"?\")}')
+"
+}
+
+parse_temp_set() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+side = d.get('side', '?')
+level = d.get('level', '?')
+if isinstance(level, int):
+    temp_f = round(55 + (level + 100) * (111 - 55) / 200)
+    print(f'{side.title()} side set to level {level} (~{temp_f}F)')
+else:
+    print(f'{side.title()} side set to level {level}')
+"
+}
+
+parse_sleep() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+side = d.get('side', '?')
+days = d.get('days', [])
+if not days:
+    print(f'{side.title()}: No sleep data available')
+    sys.exit(0)
+for day in days:
+    date = day.get('day', '?')
+    score = day.get('score', '?')
+    duration_min = round(day.get('sleepDuration', 0) / 60)
+    hours = duration_min // 60
+    mins = duration_min % 60
+    rem_pct = round(day.get('remPercent', 0) * 100)
+    deep_pct = round(day.get('deepPercent', 0) * 100)
+    snore_min = round(day.get('snoreDuration', 0) / 60)
+    print(f'{side.title()} — {date}:')
+    print(f'  Sleep Score:   {score}')
+    print(f'  Duration:      {hours}h {mins}m')
+    print(f'  REM:           {rem_pct}%')
+    print(f'  Deep:          {deep_pct}%')
+    if snore_min > 0:
+        print(f'  Snoring:       {snore_min} min')
+    print()
+"
+}
+
+case "${1:-}" in
+  status)
+    run_api status | parse_status
+    ;;
+  temp)
+    if [[ -z "${2:-}" || -z "${3:-}" ]]; then
+      echo "Usage: 8sleep temp <dylan|julia> <level>" >&2
+      echo "  Level: -100 (55F/cold) to +100 (111F/hot)" >&2
+      echo "  Examples: -50 (cool), 0 (neutral), +30 (warm)" >&2
+      exit 1
+    fi
+    run_api temp "$2" "$3" | parse_temp_set
+    ;;
+  device)
+    run_api device | parse_device
+    ;;
+  sleep)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: 8sleep sleep <dylan|julia> [YYYY-MM-DD]" >&2
+      exit 1
+    fi
+    run_api sleep "$2" "${3:-}" | parse_sleep
+    ;;
+  raw)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: 8sleep raw <api-path>" >&2
+      exit 1
+    fi
+    run_api raw "$2" | python3 -m json.tool
+    ;;
+  *)
+    echo "Usage: 8sleep <command>"
+    echo ""
+    echo "Commands:"
+    echo "  status                       Pod status (both sides: temp, heating, water)"
+    echo "  temp <dylan|julia> <level>   Set side temp (-100 cold to +100 hot)"
+    echo "  device                       Device info (model, water, connectivity)"
+    echo "  sleep <dylan|julia> [date]   Sleep data (default: last night)"
+    echo "  raw <path>                   Raw API GET"
+    echo ""
+    echo "Sides: dylan (left), julia (right)"
+    echo ""
+    echo "Temperature scale:"
+    echo "  -100 = 55F (very cold)    -50 = 70F (cool)"
+    echo "     0 = 81F (neutral)      +50 = 97F (warm)"
+    echo "  +100 = 111F (very hot)"
+    exit 1
+    ;;
+esac

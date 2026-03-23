@@ -45,5 +45,6 @@ rest980 (persistent HTTP server wrapping dorita980) was the original plan but **
 - [x] Phase 3: CLI script and SKILL.md created
 - [x] Phase 4: crosstown-routines updated (Away: start all, Welcome Home: dock all)
 - [x] Phase 4: crosstown-network known devices updated
-- [ ] Deploy to Mac Mini (git push + dotfiles-pull)
-- [ ] DHCP reservations on AmpliFi router
+- [x] Deploy to Mac Mini (git push + dotfiles-pull + skill copy)
+- [x] Fix Mini→MacBook Pro SSH (added IdentityFile/IdentityAgent none for id_mini_to_mbp)
+- [x] DHCP reservations on AmpliFi router (set via AmpliFi app 2026-03-22)
