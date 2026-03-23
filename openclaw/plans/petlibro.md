@@ -151,7 +151,8 @@ Device names fuzzy-matched (same pattern as crosstown-roomba).
 
 ## Status
 
-- [ ] Phase 0: Auth proof (test login + device list)
-- [ ] Phase 1: Python API wrapper
-- [ ] Phase 2: CLI wrapper + SKILL.md
-- [ ] Phase 3: Integration
+- [x] Phase 0: Auth proof — secondary account (bochmanspam@gmail.com) works, 2 devices found
+- [x] Phase 1: Python API wrapper (petlibro-api.py)
+- [x] Phase 2: CLI wrapper + SKILL.md + PATH wrapper
+- [x] Phase 3: TOOLS.md + crosstown-network updated
+- [x] Deployed to Mac Mini

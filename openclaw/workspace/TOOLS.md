@@ -22,6 +22,7 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 - Nest thermostats (Solarium, Living Room, Bedroom)
 - Google Nest cameras
 - Google smart speakers
+- Petlibro feeder + fountain (unplugged, seasonal)
 
 ### Crosstown (West Roxbury)
 - Philips Hue lights
@@ -29,7 +30,9 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 - Mysa baseboard heaters (Cat Room, Basement door, Movie room)
 - iRobot Roombas — Roomba Combo 10 Max + scoomba J5 (local MQTT via MacBook Pro)
 - Eight Sleep Pod 3 (cloud API, both sides: Dylan left, Julia right)
+- Petlibro Granary Smart Feeder + Dockstream 2 Cordless Fountain (cloud API)
 - Google smart speakers
+- Litter Robot 4
 
 ### Vacancy Automation
 When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent automatically: turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), and starts all Roombas.

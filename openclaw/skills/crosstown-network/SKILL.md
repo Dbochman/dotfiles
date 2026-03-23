@@ -43,6 +43,8 @@ ssh dylans-macbook-pro "<command>"
 | .142, .162, .164, .178, .236 | espressif.lan | ESP32 smart home devices |
 | .4 | irobot-81039f...lan | iRobot Roomba Combo 10 Max |
 | .3 | irobot-195efa...lan | iRobot Roomba J5 (scoomba) |
+| .132 | ? | Petlibro Granary Smart Feeder (MAC: E0:09:CF:01:05:20) |
+| .225 | ? | Petlibro Dockstream 2 Fountain (MAC: E0:08:BF:00:21:62) |
 | .155 | litter-robot4.lan | Litter Robot 4 |
 | .171 | mac.lan | Dylan's Mac (desktop) |
 | .195 | 001788284a36.lan | Philips Hue Bridge |
