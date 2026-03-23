@@ -1,0 +1,3 @@
+#!/bin/bash
+# cielo — Cielo Home AC control
+exec /opt/homebrew/bin/node "$HOME/repos/cielo-cli/cli.js" "$@"

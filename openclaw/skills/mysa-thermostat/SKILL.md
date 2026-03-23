@@ -2,7 +2,7 @@
 name: mysa-thermostat
 description: Read Mysa baseboard heater thermostat status at Crosstown. Use when asked about baseboard heaters, electric heat, Mysa thermostats, or room temperature at Crosstown (for baseboard heaters specifically).
 allowed-tools: Bash(mysa:*)
-metadata: {"openclaw":{"emoji":"🔥"}}
+metadata: {"openclaw":{"emoji":"🔥","requires":{"bins":["mysa"]}}}
 ---
 
 # Mysa Thermostat - Baseboard Heater Monitoring
@@ -12,7 +12,7 @@ Read-only monitoring of Mysa BB-V1-1 baseboard heater thermostats at Crosstown v
 ## Check Status
 
 ```bash
-~/.openclaw/mysa/venv/bin/python3 ~/.openclaw/bin/mysa-status.py
+mysa
 ```
 
 Returns JSON with all devices:

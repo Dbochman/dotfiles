@@ -1,0 +1,4 @@
+#!/bin/bash
+# crosstown-roomba — Crosstown Roomba control (dorita980 MQTT)
+SKILL_DIR="$HOME/.openclaw/skills/crosstown-roomba"
+exec "$SKILL_DIR/crosstown-roomba" "$@"

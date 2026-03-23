@@ -51,6 +51,34 @@ if [ -d "$SKILLS_SRC" ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skills: deployed $DEPLOYED skills to $SKILLS_DST" >> "$LOG"
 fi
 
+# Deploy CLI wrappers to ~/.openclaw/bin/
+BIN_SRC="$REPO/openclaw/bin"
+BIN_DST="$HOME/.openclaw/bin"
+WRAPPER_DEPLOYED=0
+for wrapper in cielo roomba crosstown-roomba 8sleep mysa; do
+  if [ -f "$BIN_SRC/$wrapper" ]; then
+    cp "$BIN_SRC/$wrapper" "$BIN_DST/$wrapper"
+    chmod +x "$BIN_DST/$wrapper"
+    WRAPPER_DEPLOYED=$((WRAPPER_DEPLOYED + 1))
+  fi
+done
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BIN_DST" >> "$LOG"
+
+# Smoke test — verify CLIs resolve on PATH
+export PATH="$BIN_DST:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
+SMOKE_FAIL=0
+for cmd in cielo roomba crosstown-roomba 8sleep mysa nest hue speaker; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: $cmd not on PATH" >> "$LOG"
+    SMOKE_FAIL=$((SMOKE_FAIL + 1))
+  fi
+done
+if [ $SMOKE_FAIL -gt 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: smoke test FAILED ($SMOKE_FAIL missing)" >> "$LOG"
+else
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: smoke test PASSED" >> "$LOG"
+fi
+
 # Deploy workspace files (SOUL.md, TOOLS.md, etc.)
 WORKSPACE_SRC="$REPO/openclaw/workspace"
 WORKSPACE_DST="$HOME/.openclaw/workspace"

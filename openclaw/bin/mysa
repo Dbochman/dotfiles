@@ -1,0 +1,3 @@
+#!/bin/bash
+# mysa — Mysa thermostat status
+exec "$HOME/.openclaw/mysa/venv/bin/python3" "$HOME/.openclaw/bin/mysa-status.py" "$@"

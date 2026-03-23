@@ -25,7 +25,7 @@
     <key>HOME</key>
     <string>/Users/dbochman</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>OPENCLAW_GATEWAY_PORT</key>
     <string>18789</string>
     <key>OPENCLAW_GATEWAY_TOKEN</key>

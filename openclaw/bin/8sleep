@@ -1,0 +1,4 @@
+#!/bin/bash
+# 8sleep — Eight Sleep Pod control
+SKILL_DIR="$HOME/.openclaw/skills/8sleep"
+exec "$SKILL_DIR/8sleep" "$@"

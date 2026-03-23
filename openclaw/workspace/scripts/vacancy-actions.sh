@@ -18,12 +18,7 @@ STATE_FILE="$PRESENCE_DIR/state.json"
 MARKER_DIR="$PRESENCE_DIR/vacancy-dispatched"
 LOG_FILE="/tmp/vacancy-actions.log"
 
-# CLIs
-CROSSTOWN_ROOMBA="$HOME/.openclaw/skills/crosstown-roomba/crosstown-roomba"
-CABIN_ROOMBA="$HOME/.openclaw/skills/roomba/roomba"
-HUE="/opt/homebrew/bin/hue"
-NEST="$HOME/.openclaw/bin/nest"
-CIELO="/usr/local/bin/node $HOME/repos/cielo-cli/cli.js"
+# All CLIs resolved via PATH (~/.openclaw/bin + /opt/homebrew/bin)
 
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
@@ -58,14 +53,14 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
   log "Crosstown confirmed vacant — running vacancy actions"
 
   # Lights off
-  if "$HUE" --crosstown all-off >> "$LOG_FILE" 2>&1; then
+  if hue --crosstown all-off >> "$LOG_FILE" 2>&1; then
     log "  Crosstown lights: OFF"
   else
     log "  ERROR: Failed to turn off Crosstown lights"
   fi
 
   # Thermostat eco
-  if "$NEST" eco crosstown on >> "$LOG_FILE" 2>&1; then
+  if nest eco crosstown on >> "$LOG_FILE" 2>&1; then
     log "  Crosstown thermostat: ECO"
   else
     log "  ERROR: Failed to set Crosstown eco mode"
@@ -73,7 +68,7 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
 
   # Cielo minisplits off
   for unit in bedroom office "living room"; do
-    if $CIELO off -d "$unit" >> "$LOG_FILE" 2>&1; then
+    if cielo off -d "$unit" >> "$LOG_FILE" 2>&1; then
       log "  Cielo $unit: OFF"
     else
       log "  ERROR: Failed to turn off Cielo $unit"
@@ -81,7 +76,7 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
   done
 
   # Start Roombas
-  if "$CROSSTOWN_ROOMBA" start all >> "$LOG_FILE" 2>&1; then
+  if crosstown-roomba start all >> "$LOG_FILE" 2>&1; then
     log "  Crosstown Roombas: STARTED"
   else
     log "  ERROR: Failed to start Crosstown Roombas (may be offline)"
@@ -100,14 +95,14 @@ if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin"
   log "Cabin confirmed vacant — running vacancy actions"
 
   # Lights off
-  if "$HUE" --cabin all-off >> "$LOG_FILE" 2>&1; then
+  if hue --cabin all-off >> "$LOG_FILE" 2>&1; then
     log "  Cabin lights: OFF"
   else
     log "  ERROR: Failed to turn off Cabin lights"
   fi
 
   # Thermostat eco
-  if "$NEST" eco cabin on >> "$LOG_FILE" 2>&1; then
+  if nest eco cabin on >> "$LOG_FILE" 2>&1; then
     log "  Cabin thermostat: ECO"
   else
     log "  ERROR: Failed to set Cabin eco mode"
@@ -115,12 +110,12 @@ if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin"
 
   # Start Roombas
   started=0
-  if "$CABIN_ROOMBA" start floomba >> "$LOG_FILE" 2>&1; then
+  if roomba start floomba >> "$LOG_FILE" 2>&1; then
     ((started++))
   else
     log "  ERROR: Failed to start Floomba"
   fi
-  if "$CABIN_ROOMBA" start philly >> "$LOG_FILE" 2>&1; then
+  if roomba start philly >> "$LOG_FILE" 2>&1; then
     ((started++))
   else
     log "  ERROR: Failed to start Philly"

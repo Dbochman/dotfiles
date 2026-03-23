@@ -12,7 +12,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin</string>
+        <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin</string>
         <key>HOME</key>
         <string>/Users/dbochman</string>
     </dict>

@@ -2,7 +2,7 @@
 name: cielo-ac
 description: Control Mr Cool / Cielo Home minisplit AC units. Use when asked about AC, air conditioning, minisplit, heating, cooling, room temperature, thermostat (for minisplits specifically), turning heat on/off, setting temperature on a minisplit, fan speed, or swing position.
 allowed-tools: Bash(cielo:*)
-metadata: {"openclaw":{"emoji":"❄"}}
+metadata: {"openclaw":{"emoji":"❄","requires":{"bins":["cielo"]}}}
 ---
 
 # Cielo AC - Mr Cool Minisplit Control
@@ -24,65 +24,65 @@ Device names are fuzzy-matched — use any substring. "bedroom" matches Bedroom,
 
 ### Check status of all units
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js status
+cielo status
 ```
 Returns device name, online status, power, mode, temperature setpoint, fan speed, swing position, room temperature, and humidity for each unit.
 
 ### Check status of a specific unit
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js status -d bedroom
+cielo status -d bedroom
 ```
 
 ### List all devices
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js devices
+cielo devices
 ```
 
 ### Turn on a unit
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js on -d bedroom
+cielo on -d bedroom
 ```
 
 ### Turn off a unit
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js off -d "living room"
+cielo off -d "living room"
 ```
 
 ### Turn on and set temperature
 To reliably turn on a unit and set its temperature, use separate commands — **do NOT use `set --power on`** as it updates the API state but often fails to send the IR signal to the physical unit:
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js on -d bedroom
-/usr/local/bin/node ~/repos/cielo-cli/cli.js temp 72 -d bedroom
+cielo on -d bedroom
+cielo temp 72 -d bedroom
 ```
 
 ### Set temperature (Fahrenheit)
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js temp 72 -d bedroom
+cielo temp 72 -d bedroom
 ```
 If the unit is off, this will turn it on automatically.
 
 ### Set mode
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js mode heat -d bedroom
-/usr/local/bin/node ~/repos/cielo-cli/cli.js mode cool -d office
+cielo mode heat -d bedroom
+cielo mode cool -d office
 ```
 Valid modes: `cool`, `heat`, `auto`, `dry`, `fan`
 
 ### Set fan speed
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js fan high -d bedroom
+cielo fan high -d bedroom
 ```
 Valid speeds: `auto`, `low`, `medium`, `high`
 
 ### Set swing position
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js swing auto -d bedroom
+cielo swing auto -d bedroom
 ```
 Valid positions: `auto`, `auto/stop`, `adjust`, `pos1`, `pos2`, `pos3`, `pos4`, `pos5`, `pos6`
 
 ### Set multiple values at once
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js set -d bedroom --temp 68 --mode heat --fan low --swing auto
+cielo set -d bedroom --temp 68 --mode heat --fan low --swing auto
 ```
 All flags are optional — only include what you want to change. Available flags: `--temp`, `--mode`, `--fan`, `--swing`, `--power`
 
@@ -90,9 +90,9 @@ All flags are optional — only include what you want to change. Available flags
 
 ### JSON output (for any status command)
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js status --json
-/usr/local/bin/node ~/repos/cielo-cli/cli.js status -d bedroom --json
-/usr/local/bin/node ~/repos/cielo-cli/cli.js devices --json
+cielo status --json
+cielo status -d bedroom --json
+cielo devices --json
 ```
 
 ## Token Management
@@ -115,7 +115,7 @@ pkill -f pinchtab
 
 ### Manual token refresh (fallback)
 ```bash
-/usr/local/bin/node ~/repos/cielo-cli/cli.js setup
+cielo setup
 ```
 Then paste the accessToken and sessionId from browser DevTools.
 

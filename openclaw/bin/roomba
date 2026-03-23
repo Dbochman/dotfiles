@@ -1,0 +1,4 @@
+#!/bin/bash
+# roomba — Cabin Roomba control (Google Assistant)
+SKILL_DIR="$HOME/.openclaw/skills/roomba"
+exec "$SKILL_DIR/roomba" "$@"
