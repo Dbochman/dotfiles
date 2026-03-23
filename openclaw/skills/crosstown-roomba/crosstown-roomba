@@ -1,0 +1,248 @@
+#!/bin/bash
+# crosstown-roomba — control iRobot Roombas at Crosstown (Boston)
+# Talks to robots via SSH to MacBook Pro + dorita980 MQTT
+#
+# Robots:
+#   roomba / 10max  — Roomba Combo 10 Max
+#   scoomba / j5    — Roomba J5
+#   all             — both robots
+
+set -euo pipefail
+
+MACBOOK="dylans-macbook-pro"
+CMD_SCRIPT="\$HOME/.openclaw/rest980/roomba-cmd.js"
+ENV_10MAX="\$HOME/.openclaw/rest980/env-10max"
+ENV_J5="\$HOME/.openclaw/rest980/env-j5"
+NODE="/opt/homebrew/bin/node"
+
+# Robot name → env file mapping
+resolve_robot() {
+  local name
+  name="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  case "$name" in
+    roomba|10max|10-max|combo|max) echo "10max" ;;
+    scoomba|j5|j-5)               echo "j5" ;;
+    all|both|"")                   echo "all" ;;
+    *)
+      # Fuzzy match
+      if echo "roomba 10max" | grep -q "$name"; then
+        echo "10max"
+      elif echo "scoomba j5" | grep -q "$name"; then
+        echo "j5"
+      else
+        echo "unknown"
+      fi
+      ;;
+  esac
+}
+
+env_for_robot() {
+  case "$1" in
+    10max) echo "$ENV_10MAX" ;;
+    j5)    echo "$ENV_J5" ;;
+  esac
+}
+
+label_for_robot() {
+  case "$1" in
+    10max) echo "Roomba (10 Max)" ;;
+    j5)    echo "scoomba (J5)" ;;
+  esac
+}
+
+# Run a command on one robot
+run_one() {
+  local robot="$1"
+  local cmd="$2"
+  local env_file
+  env_file=$(env_for_robot "$robot")
+
+  ssh -o ConnectTimeout=5 "$MACBOOK" "PATH=/opt/homebrew/bin:\$PATH $NODE $CMD_SCRIPT $env_file $cmd" 2>&1
+}
+
+# Parse status JSON into human-readable output
+parse_status() {
+  local label="$1"
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('$label: Error reading response')
+    sys.exit(1)
+if 'error' in d:
+    print('$label: Error -', d.get('message', 'unknown'))
+    sys.exit(1)
+ms = d.get('cleanMissionStatus', {})
+phases = {
+    'charge': 'Charging (on dock)',
+    'new': 'Starting',
+    'run': 'Cleaning',
+    'pause': 'Paused',
+    'stop': 'Stopped',
+    'stuck': 'Stuck!',
+    'hmMidMsn': 'Returning to dock (recharging)',
+    'hmUsrDock': 'Returning to dock',
+    'hmPostMsn': 'Returning to dock (done)',
+    'evac': 'Emptying bin',
+}
+phase = ms.get('phase', '?')
+print(f'$label:')
+print(f'  Status:   {phases.get(phase, phase)}')
+print(f'  Battery:  {d.get(\"batPct\", \"?\")}%')
+bf = d.get('bin', {})
+print(f'  Bin:      {\"FULL\" if bf.get(\"full\") else \"OK\"} ({\"present\" if bf.get(\"present\") else \"MISSING\"})')
+tank = d.get('tankLvl')
+if tank is not None:
+    print(f'  Tank:     {tank}%')
+err = ms.get('error', 0)
+if err:
+    print(f'  Error:    code {err}')
+print(f'  Missions: {ms.get(\"nMssn\", \"?\")}')
+"
+}
+
+# Parse wifi JSON
+parse_wifi() {
+  local label="$1"
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('$label: Error reading response')
+    sys.exit(1)
+sig = d.get('signal', {})
+net = d.get('netinfo', {})
+ssid_hex = d.get('wlcfg', {}).get('ssid', '')
+try:
+    ssid = bytes.fromhex(ssid_hex).decode('utf-8') if ssid_hex else '?'
+except:
+    ssid = ssid_hex
+print(f'$label:')
+print(f'  SSID:   {ssid}')
+print(f'  Signal: {sig.get(\"rssi\", \"?\")} dBm (SNR {sig.get(\"snr\", \"?\")})')
+print(f'  IP:     {net.get(\"addr\", \"?\")}')
+"
+}
+
+cmd_status() {
+  local robot
+  robot=$(resolve_robot "${1:-all}")
+  if [[ "$robot" == "unknown" ]]; then
+    echo "Unknown robot: $1. Use: roomba, scoomba, or all" >&2
+    exit 1
+  fi
+  if [[ "$robot" == "all" ]]; then
+    run_one "10max" "status" | parse_status "$(label_for_robot 10max)"
+    echo ""
+    run_one "j5" "status" | parse_status "$(label_for_robot j5)"
+  else
+    run_one "$robot" "status" | parse_status "$(label_for_robot "$robot")"
+  fi
+}
+
+cmd_action() {
+  local action="$1"
+  local robot
+  robot=$(resolve_robot "${2:-all}")
+  if [[ "$robot" == "unknown" ]]; then
+    echo "Unknown robot: $2. Use: roomba, scoomba, or all" >&2
+    exit 1
+  fi
+
+  local action_labels
+  declare -A action_labels=( [start]="Cleaning started" [stop]="Cleaning stopped" [pause]="Paused" [resume]="Resumed" [dock]="Returning to dock" [find]="Playing sound" )
+  local msg="${action_labels[$action]:-$action done}"
+
+  if [[ "$robot" == "all" ]]; then
+    for r in 10max j5; do
+      local result
+      result=$(run_one "$r" "$action")
+      if echo "$result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); sys.exit(1 if 'error' in d else 0)" 2>/dev/null; then
+        echo "$(label_for_robot "$r"): $msg."
+      else
+        echo "$(label_for_robot "$r"): Error — $result" >&2
+      fi
+    done
+  else
+    local result
+    result=$(run_one "$robot" "$action")
+    if echo "$result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); sys.exit(1 if 'error' in d else 0)" 2>/dev/null; then
+      echo "$(label_for_robot "$robot"): $msg."
+    else
+      echo "$(label_for_robot "$robot"): Error — $result" >&2
+    fi
+  fi
+}
+
+cmd_wifi() {
+  local robot
+  robot=$(resolve_robot "${1:-all}")
+  if [[ "$robot" == "unknown" ]]; then
+    echo "Unknown robot: $1" >&2; exit 1
+  fi
+  if [[ "$robot" == "all" ]]; then
+    run_one "10max" "wifi" | parse_wifi "$(label_for_robot 10max)"
+    echo ""
+    run_one "j5" "wifi" | parse_wifi "$(label_for_robot j5)"
+  else
+    run_one "$robot" "wifi" | parse_wifi "$(label_for_robot "$robot")"
+  fi
+}
+
+cmd_state() {
+  local robot
+  robot=$(resolve_robot "${1:-}")
+  if [[ "$robot" == "unknown" || "$robot" == "all" ]]; then
+    echo "Usage: crosstown-roomba state <roomba|scoomba>" >&2
+    exit 1
+  fi
+  run_one "$robot" "state" | python3 -m json.tool
+}
+
+cmd_list() {
+  echo "Crosstown Roombas:"
+  echo "  roomba  (10max, combo, max)  — iRobot Roomba Combo 10 Max"
+  echo "  scoomba (j5)                 — iRobot Roomba J5"
+  echo ""
+  echo "Use 'all' to target both robots."
+}
+
+# ---- Main ----
+if [[ $# -lt 1 ]]; then
+  echo "Usage: crosstown-roomba <command> [robot]"
+  echo ""
+  echo "Commands:"
+  echo "  status  [robot]   Battery, mission status, bin (default: all)"
+  echo "  start   [robot]   Start cleaning (default: all)"
+  echo "  stop    [robot]   Stop cleaning (default: all)"
+  echo "  pause   [robot]   Pause cleaning (default: all)"
+  echo "  resume  [robot]   Resume cleaning (default: all)"
+  echo "  dock    [robot]   Return to dock (default: all)"
+  echo "  find    [robot]   Play sound to locate (default: all)"
+  echo "  wifi    [robot]   WiFi info (default: all)"
+  echo "  state   <robot>   Full robot state JSON"
+  echo "  list              Show known robots"
+  echo ""
+  echo "Robots: roomba (10 Max), scoomba (J5), all"
+  exit 1
+fi
+
+case "$1" in
+  status)   cmd_status "${2:-}" ;;
+  start)    cmd_action "start" "${2:-}" ;;
+  stop)     cmd_action "stop" "${2:-}" ;;
+  pause)    cmd_action "pause" "${2:-}" ;;
+  resume)   cmd_action "resume" "${2:-}" ;;
+  dock)     cmd_action "dock" "${2:-}" ;;
+  find)     cmd_action "find" "${2:-}" ;;
+  wifi)     cmd_wifi "${2:-}" ;;
+  state)    cmd_state "${2:-}" ;;
+  list)     cmd_list ;;
+  *)
+    echo "Unknown command: $1" >&2
+    echo "Run 'crosstown-roomba' for help." >&2
+    exit 1
+    ;;
+esac

@@ -1,8 +1,8 @@
 ---
 name: crosstown-routines
 description: Run Crosstown (Boston) routines like goodnight, away, and welcome home. Use when the user says goodnight, good night, bedtime, going to bed, leaving, heading out, we're home, or asks to run a routine AND they are at Crosstown (Boston).
-allowed-tools: Bash(hue:*) Bash(nest:*) Bash(speaker:*)
-metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest"]}}}
+allowed-tools: Bash(hue:*) Bash(nest:*) Bash(speaker:*) Bash(crosstown-roomba:*)
+metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest","crosstown-roomba"]}}}
 ---
 
 # Crosstown Routines (Boston)
@@ -31,8 +31,9 @@ Steps:
 1. Turn off all lights: `hue --crosstown all-off`
 2. Set thermostat to eco: `nest eco crosstown on`
 3. Stop speakers: `speaker stop bedroom` and `speaker stop living`
+4. Start both Roombas: `crosstown-roomba start all`
 
-Confirm: "Away mode set. All lights off, thermostat in eco, audio stopped."
+Confirm: "Away mode set. All lights off, thermostat in eco, audio stopped. Both Roombas are cleaning."
 
 ## Welcome Home
 
@@ -43,8 +44,9 @@ Steps:
 2. Set warm color: `hue --crosstown color kitchen warm` then `hue --crosstown color living warm`
 3. Disable eco: `nest eco crosstown off`
 4. Set comfortable temperature: `nest set crosstown 70`
+5. Dock both Roombas: `crosstown-roomba dock all`
 
-Confirm: "Welcome home! Entryway, kitchen, and living room lights on, thermostat set to 70F."
+Confirm: "Welcome home! Entryway, kitchen, and living room lights on, thermostat set to 70F. Roombas docking."
 
 ## Movie Night
 
@@ -81,10 +83,10 @@ Always adapt to the user's specific request. These routines are starting points,
 
 ## Quick Reference
 
-| Routine | Lights | Thermostats | Audio |
-|---------|--------|-------------|-------|
-| Goodnight | All off, bedroom dim | Eco on | Stop all |
-| Away | All off | Eco on | Stop all |
-| Welcome Home | Entryway+kitchen+living on | Eco off, 70F | -- |
-| Movie Night | Movie room dim, others off | -- | Volume low |
-| Morning | Kitchen+living+entryway on daylight | Eco off | -- |
+| Routine | Lights | Thermostats | Audio | Roombas |
+|---------|--------|-------------|-------|---------|
+| Goodnight | All off, bedroom dim | Eco on | Stop all | -- |
+| Away | All off | Eco on | Stop all | Start all |
+| Welcome Home | Entryway+kitchen+living on | Eco off, 70F | -- | Dock all |
+| Movie Night | Movie room dim, others off | -- | Volume low | -- |
+| Morning | Kitchen+living+entryway on daylight | Eco off | -- | -- |

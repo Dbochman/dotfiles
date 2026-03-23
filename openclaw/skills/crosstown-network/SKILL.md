@@ -41,6 +41,8 @@ ssh dylans-macbook-pro "<command>"
 | .124 | dylans-iphone.lan | Dylan's iPhone (MAC: `6c:3a:ff:5f:fc:ba`) |
 | .129 | huesyncbox.lan | Philips Hue Sync Box |
 | .142, .162, .164, .178, .236 | espressif.lan | ESP32 smart home devices |
+| .135 | irobot-81039f...lan | iRobot Roomba Combo 10 Max |
+| .154 | irobot-195efa...lan | iRobot Roomba J5 (scoomba) |
 | .155 | litter-robot4.lan | Litter Robot 4 |
 | .171 | mac.lan | Dylan's Mac (desktop) |
 | .195 | 001788284a36.lan | Philips Hue Bridge |
