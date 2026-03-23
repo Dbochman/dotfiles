@@ -1,0 +1,4 @@
+#!/bin/bash
+# litter-robot — Litter-Robot 4 control
+SKILL_DIR="$HOME/.openclaw/skills/litter-robot"
+exec "$SKILL_DIR/litter-robot" "$@"
