@@ -7,7 +7,7 @@ metadata: {"openclaw":{"emoji":"❄","requires":{"bins":["cielo"]}}}
 
 # Cielo AC - Mr Cool Minisplit Control
 
-Control Mr Cool minisplit AC units via the Cielo Home API. The `cielo` CLI lives at `~/repos/cielo-cli/cli.js`.
+Control Mr Cool minisplit AC units via the Cielo Home API. The `cielo` CLI is on PATH (wrapper at `~/.openclaw/bin/cielo`).
 
 ## Available Devices
 

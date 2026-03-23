@@ -30,7 +30,7 @@ Mac Mini (dylans-mac-mini)
 ├── Presence: ~/.openclaw/presence/state.json + history/
 ├── Token Cache: ~/.cache/nest-sdm/ (access_token, credentials)
 ├── Mysa Token Cache: ~/.config/mysotherm/ (AWS Cognito)
-└── Cielo CLI: ~/repos/cielo-cli/cli.js
+└── Cielo CLI: cielo (wrapper at ~/.openclaw/bin/cielo)
 ```
 
 ### LaunchAgents
@@ -54,7 +54,7 @@ Runs every 30 minutes. Queries four data sources sequentially, merges into a sin
 
 1. **Nest SDM API** — OAuth 2.0 bearer token, queries `GET /devices` for thermostat traits
 2. **Open-Meteo Weather API** — Per-structure lat/lon, current conditions
-3. **Cielo CLI** — `~/repos/cielo-cli/cli.js status --json` for minisplit AC units
+3. **Cielo CLI** — `cielo status --json` for minisplit AC units
 4. **Mysa API** — `~/.openclaw/bin/mysa-status.py` via mysotherm library
 5. **Merge** — All devices assembled into `rooms[]` array with structure prefix and `source` tag
 6. **Write** — Append JSON line to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`
@@ -321,7 +321,7 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 
 ### 3. Cielo AC (Minisplit)
 
-- **CLI:** `/usr/local/bin/node ~/repos/cielo-cli/cli.js status --json`
+- **CLI:** `cielo status --json`
 - **Returns:** JSON array of device objects
 - **Config:** `~/.config/cielo/config.json`
 - **Token refresh:** Every 30 min via `com.openclaw.cielo-refresh` LaunchAgent
@@ -330,7 +330,7 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 ### 4. Mysa Baseboard Heaters
 
 - **Wrapper:** `~/.openclaw/bin/mysa-status.py`
-- **Invocation:** `~/.openclaw/mysa/venv/bin/python3 ~/.openclaw/bin/mysa-status.py`
+- **Invocation:** `mysa`
 - **Library:** mysotherm (cloned at `~/.openclaw/mysa/mysotherm`, venv at `~/.openclaw/mysa/venv`)
 - **Auth:** AWS Cognito tokens cached at `~/.config/mysotherm` (INI format)
 - **API base:** `https://app-prod.mysa.cloud` — endpoints: `/devices`, `/devices/state`, `/devices/firmware`
