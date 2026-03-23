@@ -22,6 +22,7 @@ scp openclaw/bin/openclaw-refresh-secrets dylans-mac-mini:~/bin/openclaw-refresh
 | `openclaw-weekly-upgrade` | `~/bin/` | Weekly npm upgrade with plist backup/restore, BB plugin patch, scope check. Runs Sundays via `ai.openclaw.weekly-upgrade` LaunchAgent. See [WEEKLY-UPGRADE.md](WEEKLY-UPGRADE.md). |
 | `openclaw-refresh-secrets` | `~/bin/` | Refreshes `~/.openclaw/.secrets-cache` from 1Password. Run over SSH after key rotation. |
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
+| `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as iMessage attachment via BlueBubbles API, plus optional summary text. Used by Julia's morning briefing cron job. |
 
 ### Dashboards
 

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""send-audio-briefing — Generate TTS audio from text and send via iMessage (BlueBubbles).
+
+Usage:
+  send-audio-briefing <chatGuid> "text to speak"
+  send-audio-briefing <chatGuid> "text" --message "Short summary"
+  send-audio-briefing <chatGuid> "text" --voice Jessica --message "Summary"
+  echo "text" | send-audio-briefing <chatGuid>
+
+Requires: sag-wrapper, BLUEBUBBLES_PASSWORD in env or .secrets-cache
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import uuid
+
+SECRETS_FILE = os.path.expanduser("~/.openclaw/.secrets-cache")
+SAG_WRAPPER = "/opt/homebrew/bin/sag-wrapper"
+BB_BASE = "http://localhost:1234/api/v1"
+
+
+def load_secrets():
+    """Load secrets from .secrets-cache if not already in env."""
+    if os.environ.get("BLUEBUBBLES_PASSWORD"):
+        return
+    if not os.path.exists(SECRETS_FILE):
+        print("Error: no BLUEBUBBLES_PASSWORD and no .secrets-cache", file=sys.stderr)
+        sys.exit(1)
+    with open(SECRETS_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                os.environ[k] = v
+
+
+def generate_audio(text: str, voice: str, output_path: str) -> bool:
+    """Generate TTS audio via sag-wrapper."""
+    cmd = [SAG_WRAPPER, "-o", output_path, "--play=false", "-v", voice, text]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"TTS error: {result.stderr}", file=sys.stderr)
+        return False
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        print("TTS produced no output", file=sys.stderr)
+        return False
+    size = os.path.getsize(output_path)
+    print(f"Audio generated: {size} bytes ({voice})", file=sys.stderr)
+    return True
+
+
+def send_attachment(chat_guid: str, audio_path: str, pw: str) -> bool:
+    """Send audio file via BB attachment API."""
+    import requests
+
+    url = f"{BB_BASE}/message/attachment?password={pw}"
+    files = {"attachment": ("morning-briefing.mp3", open(audio_path, "rb"), "audio/mpeg")}
+    data = {
+        "chatGuid": chat_guid,
+        "tempGuid": str(uuid.uuid4()).upper(),
+        "name": "morning-briefing.mp3",
+        "method": "private-api",
+    }
+    r = requests.post(url, data=data, files=files, timeout=60)
+    resp = r.json()
+    if resp.get("status") != 200:
+        print(f"Attachment send failed: {resp}", file=sys.stderr)
+        return False
+    print(f"Audio sent to {chat_guid}", file=sys.stderr)
+    return True
+
+
+def send_text(chat_guid: str, message: str, pw: str) -> bool:
+    """Send summary text via BB text API."""
+    import requests
+
+    url = f"{BB_BASE}/message/text?password={pw}"
+    body = {
+        "chatGuid": chat_guid,
+        "tempGuid": str(uuid.uuid4()).upper(),
+        "message": message,
+        "method": "private-api",
+    }
+    r = requests.post(url, json=body, timeout=15)
+    resp = r.json()
+    if resp.get("status") != 200:
+        print(f"Text send failed: {resp}", file=sys.stderr)
+        return False
+    print("Summary text sent", file=sys.stderr)
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate TTS audio and send via iMessage")
+    parser.add_argument("chat_guid", help="BB chat GUID (e.g. any;-;+15084234853)")
+    parser.add_argument("text", nargs="?", default="", help="Text to speak (or pipe via stdin)")
+    parser.add_argument("-m", "--message", default="", help="Short summary text to send after audio")
+    parser.add_argument("-v", "--voice", default="Sarah", help="ElevenLabs voice (default: Sarah)")
+    args = parser.parse_args()
+
+    text = args.text
+    if not text:
+        if not sys.stdin.isatty():
+            text = sys.stdin.read().strip()
+    if not text:
+        print("Error: no text provided", file=sys.stderr)
+        sys.exit(1)
+
+    load_secrets()
+    pw = os.environ.get("BLUEBUBBLES_PASSWORD", "")
+    if not pw:
+        print("Error: BLUEBUBBLES_PASSWORD not set", file=sys.stderr)
+        sys.exit(1)
+
+    # Generate audio
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        audio_path = tmp.name
+
+    try:
+        if not generate_audio(text, args.voice, audio_path):
+            sys.exit(1)
+
+        # Send audio attachment
+        if not send_attachment(args.chat_guid, audio_path, pw):
+            sys.exit(1)
+
+        # Send summary text if provided
+        if args.message:
+            send_text(args.chat_guid, args.message, pw)
+
+        print(json.dumps({"ok": True}))
+    finally:
+        try:
+            os.unlink(audio_path)
+        except OSError:
+            pass
+
+
+if __name__ == "__main__":
+    main()
