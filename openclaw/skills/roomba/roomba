@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/Users/dbochman/.openclaw/roomba/venv/bin/python3
 """CLI to control iRobot Roombas via Google Assistant text commands.
 
 Usage:
