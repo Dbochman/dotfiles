@@ -32,7 +32,7 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 - Eight Sleep Pod 3 (cloud API, both sides: Dylan left, Julia right)
 - Petlibro Granary Smart Feeder + Dockstream 2 Cordless Fountain (cloud API)
 - Google smart speakers
-- Litter Robot 4
+- Litter-Robot 4 (cloud API via pylitterbot, tracks Sopaipilla + Burrito weights)
 
 ### Vacancy Automation
 When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent automatically: turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), and starts all Roombas.
