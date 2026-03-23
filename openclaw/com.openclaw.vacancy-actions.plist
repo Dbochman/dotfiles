@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.openclaw.vacancy-roombas</string>
+    <string>com.openclaw.vacancy-actions</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/dbochman/.openclaw/workspace/scripts/vacancy-roombas.sh</string>
+        <string>/Users/dbochman/.openclaw/workspace/scripts/vacancy-actions.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -21,8 +21,8 @@
         <string>/Users/dbochman/.openclaw/presence/state.json</string>
     </array>
     <key>StandardOutPath</key>
-    <string>/tmp/vacancy-roombas.log</string>
+    <string>/tmp/vacancy-actions.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/vacancy-roombas.log</string>
+    <string>/tmp/vacancy-actions.log</string>
 </dict>
 </plist>
