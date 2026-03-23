@@ -21,8 +21,8 @@ log() {
 
 log "Waiting for Tailscale file transfer..."
 
-# Block until a file arrives (tailscale file get blocks by default)
-tailscale file get "$RECV_DIR/" 2>/dev/null
+# Block until a file arrives (--wait required since Tailscale 1.56+)
+tailscale file get --wait "$RECV_DIR/" 2>/dev/null
 
 # The Crosstown script sends via stdin, which arrives as a file named "stdin"
 if [ -f "${RECV_DIR}/stdin" ]; then
