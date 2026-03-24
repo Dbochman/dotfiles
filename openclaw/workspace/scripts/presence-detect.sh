@@ -133,13 +133,27 @@ console.log(JSON.stringify({
 # ── Crosstown: ARP scan ─────────────────────────────────────────────────────
 
 scan_crosstown() {
-  # Targeted ping for known devices (iPhones sleep, need longer timeout)
+  # Step 1: Subnet sweep to populate ARP table
   local known_ips="192.168.165.124 192.168.165.248"
   for ip in $known_ips; do
     ping -c3 -W2 "$ip" >/dev/null 2>&1 &
   done
   for i in $(seq 1 254); do ping -c1 -W1 "192.168.165.$i" >/dev/null 2>&1 & done
   wait
+
+  # Step 2: Delete ARP entries for tracked IPs to clear stale cache,
+  # then re-ping to see if they come back. Devices on the network will
+  # re-populate the ARP entry even if sleeping (ARP is layer 2, not ICMP).
+  for ip in $known_ips; do
+    arp -d "$ip" >/dev/null 2>&1 || true
+  done
+  # Brief pause + re-ping to trigger fresh ARP resolution
+  sleep 1
+  for ip in $known_ips; do
+    ping -c2 -W3 "$ip" >/dev/null 2>&1 &
+  done
+  wait
+
   local arp_output
   arp_output=$(arp -a | grep '192.168.165' 2>/dev/null || echo "")
 
@@ -159,6 +173,8 @@ for (const dev of devices) {
     const macMatch = line.match(/at\s+([0-9a-f:]+)/i);
     const ipMatch = line.match(/\(([0-9.]+)\)/);
     if (!macMatch || !ipMatch) continue;
+    // Skip incomplete ARP entries (device not on network)
+    if (line.includes('(incomplete)')) continue;
     const mac = macMatch[1].toLowerCase();
     const ip = ipMatch[1];
     let matched = false;
@@ -179,7 +195,7 @@ for (const dev of devices) {
 console.log(JSON.stringify({
   location: 'crosstown',
   timestamp: new Date().toISOString(),
-  totalDevices: arpLines.length,
+  totalDevices: arpLines.filter(l => !l.includes('(incomplete)')).length,
   presence: results
 }, null, 2));
 " "$arp_output" 2>/dev/null || echo '{"error":"parse_failed","location":"crosstown"}'
