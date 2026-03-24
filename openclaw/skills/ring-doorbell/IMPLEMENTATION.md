@@ -199,12 +199,11 @@ on_event(RingEvent)
                 |
                 +-- person_detected == True?
                 |       |
-                |       +-- Send text: "🔔 Front Door: Person detected at door"
-                |       +-- _send_event_recording() (async, ~20-30s delay)
+                |       +-- _send_event_recording() (silent, no text notification)
                 |
                 +-- person_detected == False?
                         |
-                        +-- Log and skip (no notification)
+                        +-- Log and skip
 ```
 
 ### Recording & Multi-Frame Vision Pipeline
@@ -238,7 +237,16 @@ analyze_video() — Claude Haiku Multi-Frame Vision
         +-- Parse structured JSON response
         |
         v
-check_departure_arrival() — Roomba + FindMy automation
+        +-- If 1+ people + 1 dog: retry with 10 frames for second dog
+        |
+        v
+check_departure() — Roomba + FindMy automation (departures only)
+        |
+        +-- Time-of-day filter (8-10 AM, 11 AM-1 PM, 5-8 PM)
+        +-- Presence cross-check (skip if confirmed_vacant)
+        +-- Accumulate across 10-min sliding window
+        +-- 1+ people + 2+ dogs → auto-start Roombas + FindMy polling
+        +-- 1+ people + 1 dog → iMessage confirmation to Dylan
         |
         v
 send_imessage_image() — BB attachment + caption
@@ -278,18 +286,32 @@ Known dogs: large brown/gold dog with dark black face;
 ### Decision Logic
 
 ```python
-# Count-based: 2+ people AND 2+ dogs required
-if len(people) < 2 or len(dogs) < 2:
-    return  # no automation
+# Pre-checks
+if not _is_walk_hour():       # 8-10 AM, 11 AM-1 PM, 5-8 PM
+    return
+if not _is_location_occupied(location):  # skip if confirmed_vacant
+    return
 
-if direction == "departing":
+# Only departures — arrivals handled by FindMy polling
+if direction != "departing":
+    return
+
+# Accumulate across 10-minute sliding window
+# (people/dogs may pass doorbell in separate motion events)
+total_people = max(people_per_event)  # use max per event
+total_dogs = sum(dogs_per_event)      # sum across events
+
+if total_people >= 1 and total_dogs >= 2:
     start_roombas(location)
-    start_findmy_polling(location)  # begin tracking return home
+    start_findmy_polling(location)
 
-elif direction == "arriving":
-    dock_roombas(location)
-    stop_findmy_polling()  # cancel if active
+elif total_people >= 1 and total_dogs == 1:
+    send_confirmation_imessage(location)  # ask Dylan
 ```
+
+### Frame Retry for Second Dog
+
+When initial 5-frame analysis finds people but only 1 dog, the listener automatically retries with 10 frames for better coverage. Dogs may appear briefly or be partially occluded by people in fisheye footage.
 
 ### Doorbell → Location → Roomba Mapping
 
@@ -311,16 +333,19 @@ A 2-hour cooldown per location per action prevents re-triggering:
 
 | Scenario | Message |
 |----------|---------|
-| Departure detected | "🧹 Starting Roombas at crosstown — everyone left for a walk!" |
+| Doorbell ding | "🔔 Front Door: Doorbell rang!" + camera frame + AI description |
+| Departure (2+ dogs) | "🧹 Starting Roombas at crosstown — everyone left for a walk!" |
+| Departure (1 dog) | "🐶 Ring saw X people and 1 dog leaving. Reply 'start roombas'" |
 | FindMy tracking started | "📍 Tracking your walk — will dock Roombas when you're back on Crosstown Ave" |
 | Walk timeout (2hr) | "⏰ Walk tracking timed out after 2 hours — docking Roombas" |
-| Arrival detected (Ring) | "🏠 Welcome home! Docking Roombas at crosstown." |
+| Outside walk hours | (logged, no notification) |
+| Already vacant | (logged, no notification) |
 
 ## Component 4: FindMy Return-Home Tracking
 
 ### Overview
 
-When the listener detects a departure (2+ people + 2+ dogs leaving), it starts polling Apple FindMy every 5 minutes to detect the household's return. When the person's FindMy pin appears back on Crosstown Ave, Roombas are docked proactively — before the household reaches the front door.
+When the listener detects a departure (1+ people + 2+ dogs leaving), it starts polling Apple FindMy every 5 minutes to detect the household's return. When the person's FindMy pin appears back on Crosstown Ave, Roombas are docked proactively — before the household reaches the front door.
 
 ### How It Works
 
@@ -389,10 +414,9 @@ The person's home is on Crosstown Ave in West Roxbury/Boston.
 ### Cancellation
 
 FindMy polling is cancelled when:
-1. **Haiku confirms near_home** → dock Roombas, stop polling
-2. **Ring detects arrival** (2+ people + dogs arriving via doorbell) → dock Roombas, stop polling
-3. **2-hour timeout** → dock Roombas as safety net
-4. **Listener restart** → polling state is in-memory only
+1. **Haiku confirms near_home** → dock Roombas silently, stop polling
+2. **2-hour timeout** → dock Roombas as safety net
+3. **Listener restart** → polling state is in-memory only
 
 ## Authentication & Credentials
 

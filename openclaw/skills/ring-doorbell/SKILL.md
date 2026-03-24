@@ -65,21 +65,28 @@ Downloads the full MP4 video file. Get recording IDs from `ring videos` or `ring
 
 ## Real-Time Notifications
 
-A persistent listener (`ai.openclaw.ring-listener`) runs as a LaunchAgent on the Mini. It receives Ring events via FCM push and sends iMessage alerts to Dylan:
+A persistent listener (`ai.openclaw.ring-listener`) runs as a LaunchAgent on the Mini. It receives Ring events via FCM push:
 
-- **Doorbell dings**: instant text notification + camera frame + AI description
-- **Motion with person detected**: instant notification (trusts FCM `state=human`), followed by multi-frame video analysis (5 frames from recording sent to Claude Haiku)
+- **Doorbell dings**: instant iMessage notification + camera frame + AI description
+- **Motion with person detected**: processed silently for Roomba automation (no text notification)
 - **Generic motion** (animals, cars): silently ignored
 
 ### Dog Walk Automation
 
-When the listener detects 2+ people departing with 2+ dogs:
-1. **Starts Roombas** immediately
-2. **Begins FindMy polling** every 5 minutes via Peekaboo screenshots of the FindMy app
-3. **Docks Roombas silently** when FindMy shows the person back on Crosstown Ave
-4. **Safety fallback**: auto-docks after 2 hours if no return detected
+The listener uses multi-frame video analysis (5 frames from each recording sent to Claude Haiku) to detect departures with dogs. Sightings are accumulated across a 10-minute sliding window since people/dogs often trigger separate motion events.
 
-If Ring detects arrival (2+ people + dogs arriving) before FindMy polling triggers, Roombas dock immediately and polling stops.
+**Pre-checks:**
+- **Time-of-day filter**: only active 8-10 AM, 11 AM-1 PM, 5-8 PM
+- **Presence cross-check**: skips if location is already `confirmed_vacant` (no one home to leave)
+
+**Departure triggers:**
+- **1+ people + 2+ dogs departing** → auto-start Roombas + begin FindMy return tracking
+- **1+ people + 1 dog departing** → iMessage asking Dylan for confirmation ("Reply 'start roombas'")
+
+**Return detection (FindMy only):**
+- Polls FindMy every 5 minutes via Peekaboo screenshot + Haiku vision
+- Docks Roombas silently when person's pin is back on Crosstown Ave
+- Safety fallback: auto-docks after 2 hours if no return detected
 
 To check the listener:
 ```bash
