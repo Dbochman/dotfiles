@@ -36,27 +36,49 @@ OpenClaw agent
 | `openclaw/bin/crisismode` | CLI wrapper (deployed to Mini by dotfiles-pull) |
 | `openclaw/skills/crisismode/SKILL.md` | OpenClaw skill definition |
 | `openclaw/crisismode/crisismode.yaml` | Site config (deployed to `~/.crisismode/`) |
-| `openclaw/bin/dotfiles-pull.command` | Updated: deploys wrapper, skill, and config |
+| `openclaw/crisismode/checks/` | Custom check plugins (BB, gateway, launchd) |
+| `openclaw/cron/jobs.json` | Includes `crisismode-health-scan-0001` cron job |
+| `openclaw/bin/dotfiles-pull.command` | Updated: deploys wrapper, skill, config, and check plugins |
 
 ### dotfiles-pull Integration
 
 The `dotfiles-pull.command` script handles:
 - Copying the `crisismode` wrapper to `~/.openclaw/bin/` (with `chmod +x`)
 - Deploying `crisismode.yaml` to `~/.crisismode/`
+- Deploying custom check plugins to `~/.crisismode/checks/`
 - Deploying the skill to `~/.openclaw/skills/crisismode/`
 - Smoke testing that `crisismode` resolves on PATH
 
+## Custom Check Plugins
+
+Three custom plugins deployed to `~/.crisismode/checks/`:
+
+| Plugin | What It Checks |
+|--------|---------------|
+| check-bluebubbles | BB server health, Private API status, proxy mode (needs `BLUEBUBBLES_PASSWORD`) |
+| check-openclaw-gateway | HTTP `/health` endpoint + launchctl process status (PID, exit code) |
+| check-launchd-services | 6 critical LaunchAgents: gateway, nest-dashboard, usage-dashboard, nest-snapshot, bb-watchdog, presence-receive |
+
+## Health Scan Cron Job
+
+**Job ID:** `crisismode-health-scan-0001`
+**Schedule:** 9AM and 9PM ET daily (`0 9,21 * * *`)
+**Behavior:** Errors-only alerting — runs `crisismode scan --json`, ignores PG-001 and benign DNS split-brain, only messages Dylan when score < 70 or critical/warning findings.
+
 ## Current Health Scan
 
-Running `crisismode scan` on the Mini produces three findings:
+Running `crisismode scan` on the Mini produces 6 findings (3 built-in + 3 custom plugins):
 
 | ID | Service | Status | Notes |
 |----|---------|--------|-------|
 | PG-001 | PostgreSQL | unknown | Auto-probe on port 5432, no PG running (expected) |
 | DNS-002 | DNS | recovering/healthy | Dual-stack resolvers (IPv4 + IPv6) sometimes trigger split-brain warning — benign on home network |
 | DISK-003 | Disk | healthy | ~63% used, 684GB free |
+| PLUG-001 | check-bluebubbles | healthy | Private API active, proxy=lan-url |
+| PLUG-002 | check-launchd-services | healthy | All 6 services running |
+| PLUG-003 | check-openclaw-gateway | healthy | HTTP 200, gateway PID active |
 
-**Score: 63-77/100** (varies based on DNS dual-stack timing)
+**Score: 82/100** (PG auto-probe + DNS dual-stack are the only drags)
 
 ## MCP Server Status
 
@@ -101,143 +123,36 @@ PATH=/opt/homebrew/opt/node@22/bin:$PATH npx -y pnpm install && npx -y pnpm buil
 
 ---
 
-## Next Steps
+## Future Enhancements
 
-### 1. Custom Check Plugins for Mini Services
+### MCP Gateway Integration
 
-The bundled check plugins cover system-level health (disk, memory, DNS). The Mini runs several application-level services that need custom check plugins:
-
-#### check-bluebubbles
-
-Monitor BlueBubbles server health.
-
-```bash
-crisismode init --plugin check-bluebubbles
-```
-
-What it should check:
-- **health verb**: HTTP GET `http://localhost:1234/api/v1/server/info?password=$BLUEBUBBLES_PASSWORD` returns 200
-- **diagnose verb**: Check Private API status (`private_api: true`), proxy mode, connected devices count, last message timestamp freshness
-- **Signals**: server reachable, Private API enabled, proxy mode correct (`lan-url`), no stale socket (last message < 30min ago)
-- **Credentials**: `BLUEBUBBLES_PASSWORD` from env (sourced from `~/.openclaw/.secrets-cache`)
-
-Expected responses:
-- Healthy: BB responding, Private API active, recent message activity
-- Warning: BB responding but Private API disabled, or no messages in 30+ min
-- Critical: BB unreachable on port 1234, or returning errors
-
-#### check-openclaw-gateway
-
-Monitor OpenClaw gateway health.
-
-```bash
-crisismode init --plugin check-openclaw-gateway
-```
-
-What it should check:
-- **health verb**: HTTP GET `http://localhost:18789/health` returns 200
-- **diagnose verb**: Check gateway uptime, connected channels (BlueBubbles plugin loaded), active agent sessions
-- **Signals**: gateway reachable, BB plugin loaded, no crash loops (check `launchctl list ai.openclaw.gateway` exit status)
-
-#### check-openclaw-dashboards
-
-Monitor Nest and Usage dashboards.
-
-```bash
-crisismode init --plugin check-openclaw-dashboards
-```
-
-What it should check:
-- **health verb**: HTTP GET `http://localhost:8550` (Nest dashboard) and `http://localhost:8551` (Usage dashboard) return 200
-- **diagnose verb**: Check last data point freshness in history files (`~/.openclaw/nest-history/`, `~/.openclaw/usage-history/`)
-- **Signals**: dashboard processes running, data not stale (< 1hr old)
-
-#### check-launchd-services
-
-Monitor critical LaunchAgent services.
-
-```bash
-crisismode init --plugin check-launchd-services
-```
-
-What it should check:
-- **health verb**: `launchctl list` for each critical service returns PID > 0 or exit status 0
-- **Services to monitor**:
-  - `ai.openclaw.gateway` (must have PID)
-  - `ai.openclaw.nest-dashboard` (must have PID)
-  - `ai.openclaw.usage-dashboard` (must have PID)
-  - `com.bluebubbles.server` (runs and exits, PID `-` is normal)
-  - `ai.openclaw.nest-snapshot` (runs and exits, PID `-` is normal)
-  - `com.openclaw.bb-watchdog` (runs and exits, PID `-` is normal)
-- **Signals**: each service status, crash detection (exit code != 0 for persistent services)
-
-#### Plugin deployment
-
-Check plugins live in `~/.crisismode/checks/` on the Mini. Each plugin is a directory with:
-- `check.sh` — executable (receives JSON stdin, outputs JSON stdout)
-- `manifest.json` — metadata (name, description, targetKinds, verbs)
-
-Exit codes: 0=OK, 1=warning, 2=critical, 3=unknown.
-
-### 2. Cron Job for Periodic Health Scans
-
-Add an OpenClaw cron job that runs `crisismode scan --json`, evaluates the score, and alerts Dylan via iMessage if the score drops below a threshold.
-
-#### Job definition (for `~/.openclaw/cron/jobs.json`)
+When OpenClaw adds MCP support to the agent runtime (currently v2026.3.13 accepts but ignores `mcpServers`), wire in the CrisisMode MCP server for native tool access:
 
 ```json
 {
-  "id": "crisismode-health-scan",
-  "name": "CrisisMode Health Scan",
-  "schedule": {
-    "expr": "0 */6 * * *"
-  },
-  "prompt": "Run `crisismode scan --json` and evaluate the results. If the health score is below 70, or any finding has status 'critical' or 'unknown' (excluding PG-001 which is expected), send a concise alert to Dylan summarizing the issues. If everything is healthy (score >= 70, no critical findings), do NOT send a message — silent success. Format any alert as: 'CrisisMode health score: X/100' followed by bullet points for each issue.",
-  "delivery": {
-    "channel": "bluebubbles",
-    "target": "dylanbochman@gmail.com",
-    "onlyOnOutput": true
-  },
-  "timeout": 60000
+  "mcpServers": {
+    "crisismode": {
+      "command": "/opt/homebrew/opt/node@22/bin/node",
+      "args": ["/Users/dbochman/repos/crisismode/mcp-entry.mjs"],
+      "cwd": "/Users/dbochman/repos/crisismode"
+    }
+  }
 }
 ```
 
-**Schedule**: Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC).
+The entry point (`mcp-entry.mjs`) is already tested and deployed.
 
-**Behavior**: Errors-only alerting — only messages Dylan when something is wrong. Silent on healthy scans. Ignores PG-001 (no PostgreSQL expected on Mini).
+### Additional Check Plugins
 
-#### Alternative: Standalone LaunchAgent
+- **check-openclaw-dashboards**: HTTP probes for Nest (8550) and Usage (8551) dashboards + data freshness checks against history JSONL files
+- **check-presence-detection**: Verify presence scan is running on MacBook Pro, state file is fresh
+- **check-cielo-token**: Verify Cielo AC token refresh LaunchAgent is working (token age < 30min)
 
-If preferred over an OpenClaw cron job, a lightweight LaunchAgent that runs the scan directly:
+### Recovery Playbooks
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>ai.openclaw.crisismode-scan</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>-c</string>
-    <string>
-      export PATH="$HOME/.openclaw/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:$PATH"
-      RESULT=$(crisismode scan --json 2>/dev/null | tail -1)
-      SCORE=$(echo "$RESULT" | /opt/homebrew/bin/jq -r '.score // 0')
-      if [ "$SCORE" -lt 70 ]; then
-        echo "$RESULT" >> "$HOME/.openclaw/logs/crisismode-alerts.log"
-      fi
-    </string>
-  </array>
-  <key>StartInterval</key>
-  <integer>21600</integer>
-  <key>StandardOutPath</key>
-  <string>/tmp/crisismode-scan.log</string>
-  <key>StandardErrorPath</key>
-  <string>/tmp/crisismode-scan.err</string>
-</dict>
-</plist>
-```
-
-The OpenClaw cron job approach is recommended since it can send iMessage alerts natively via the BB channel.
+Write CrisisMode markdown playbooks for common Mini recovery scenarios:
+- BB restart (soft restart via API, then hard restart via launchctl)
+- Gateway restart with secrets reload
+- Stale secrets refresh (`openclaw-refresh-secrets`)
+- Full service restart sequence after reboot
