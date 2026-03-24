@@ -530,11 +530,18 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     else:
         # Only 1 dog seen — ask for confirmation
         log(f"PARTIAL DEPARTURE at {location}: {total_people} people + 1 dog — asking for confirmation")
-        send_imessage(
-            f"\U0001f436 Spotted {total_people} {'person' if total_people == 1 else 'people'} "
-            f"and 1 dog leaving at {location}. "
-            f"Should I start the Roombas? (Tell OpenClaw yes/no)"
-        )
+        if location == "crosstown":
+            send_imessage(
+                f"\U0001f436 Ring saw {total_people} {'person' if total_people == 1 else 'people'} "
+                f"and 1 dog leaving. Want me to start the Roombas? "
+                f"Reply \"start roombas\" and I'll run crosstown-roomba start all"
+            )
+        elif location == "cabin":
+            send_imessage(
+                f"\U0001f436 Ring saw {total_people} {'person' if total_people == 1 else 'people'} "
+                f"and 1 dog leaving at cabin. Want me to start the Roombas? "
+                f"Reply \"start roombas\" and I'll start floomba and philly"
+            )
 
 
 def send_imessage_image(image_path: str, caption: str = "") -> bool:
