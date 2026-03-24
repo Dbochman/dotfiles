@@ -190,6 +190,52 @@ def _update_state_dog_walk(location: str, event: str, people: int = 0, dogs: int
     log(f"STATE: dog_walk event={event} location={location}")
 
 
+def _update_state_vision(vision_data: dict, event_id: int = 0) -> None:
+    """Record the latest vision analysis result in state."""
+    state = _read_state()
+    state["last_vision"] = {
+        "event_id": event_id,
+        "description": vision_data.get("description", ""),
+        "people": len(vision_data.get("people", [])),
+        "dogs": len(vision_data.get("dogs", [])),
+        "people_list": vision_data.get("people", []),
+        "dogs_list": vision_data.get("dogs", []),
+        "analyzed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    _write_state(state)
+
+
+def _update_state_findmy(location: str, event: str, result: dict | None = None) -> None:
+    """Update FindMy polling state."""
+    state = _read_state()
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    polling = state.get("findmy_polling") or {}
+
+    if event == "start":
+        polling = {
+            "active": True,
+            "location": location,
+            "started_at": now,
+            "polls": 0,
+            "last_poll_at": None,
+            "last_result": None,
+        }
+    elif event == "poll":
+        polling["polls"] = polling.get("polls", 0) + 1
+        polling["last_poll_at"] = now
+        if result:
+            polling["last_result"] = {
+                "street": result.get("street", "unknown"),
+                "near_home": result.get("near_home", False),
+                "description": result.get("description", ""),
+            }
+    elif event == "stop":
+        polling["active"] = False
+
+    state["findmy_polling"] = polling
+    _write_state(state)
+
+
 def load_ring_token() -> dict | None:
     if TOKEN_FILE.exists():
         try:
@@ -491,6 +537,8 @@ async def _findmy_poll_loop(location: str) -> None:
             result = analyze_findmy(capture_path, location=location)
             Path(capture_path).unlink(missing_ok=True)
 
+            _update_state_findmy(location, "poll", result=result)
+
             if result:
                 street = result.get("street", "unknown")
                 near_home = result.get("near_home", False)
@@ -502,6 +550,7 @@ async def _findmy_poll_loop(location: str) -> None:
                     log(f"FINDMY POLL: Return detected after {elapsed}min — docking Roombas at {location}")
                     run_roomba_command(location, "dock")
                     _update_state_dog_walk(location, "dock")
+                    _update_state_findmy(location, "stop")
                     return
             else:
                 log("FINDMY POLL: Could not parse location result")
@@ -518,6 +567,7 @@ async def _findmy_poll_loop(location: str) -> None:
     send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
     run_roomba_command(location, "dock")
     _update_state_dog_walk(location, "dock_timeout")
+    _update_state_findmy(location, "stop")
 
 
 def start_findmy_polling(location: str) -> None:
@@ -526,6 +576,7 @@ def start_findmy_polling(location: str) -> None:
     # Cancel any existing poll
     if _findmy_poll_task and not _findmy_poll_task.done():
         _findmy_poll_task.cancel()
+    _update_state_findmy(location, "start")
     _findmy_poll_task = asyncio.get_event_loop().create_task(_findmy_poll_loop(location))
 
 
@@ -535,6 +586,7 @@ def stop_findmy_polling() -> None:
     if _findmy_poll_task and not _findmy_poll_task.done():
         _findmy_poll_task.cancel()
         _findmy_poll_task = None
+    _update_state_findmy("", "stop")
 
 
 # Dog walk hours (local time) — automation only active during these windows
@@ -895,7 +947,8 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
                             vision_data = retry_data
                             description = retry_data.get("description", description)
 
-                # Check for departure/arrival automation
+                # Record vision result and check for departure automation
+                _update_state_vision(vision_data, event_id=event_id)
                 check_departure(vision_data, doorbot_id)
             else:
                 # Fallback: use raw text as description
