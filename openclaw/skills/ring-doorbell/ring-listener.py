@@ -172,9 +172,12 @@ def extract_multi_frames(video_path: str, count: int = 5) -> list[str]:
     except Exception:
         duration = 18.0  # fallback estimate
 
-    # Sample frames evenly across the clip, skipping first/last second
-    start = min(1.0, duration * 0.1)
-    end = max(duration - 1.0, duration * 0.9)
+    # Center frames in the middle of the clip where the action is.
+    # For an 18s clip: start ~3s, end ~15s → frames at 3, 6, 9, 12, 15.
+    # Scale proportionally for other durations, with 2s minimum margin.
+    margin = max(2.0, duration / 6.0)
+    start = min(margin, duration * 0.4)  # don't overshoot on very short clips
+    end = max(duration - margin, duration * 0.6)
     interval = (end - start) / max(count - 1, 1)
 
     for i in range(count):
