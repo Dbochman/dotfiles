@@ -1,0 +1,256 @@
+#!/bin/bash
+# ring — check Ring doorbell status at Crosstown
+# Talks to Ring cloud API via ring-api.py (python-ring-doorbell library)
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+API_SCRIPT="$SCRIPT_DIR/ring-api.py"
+PYTHON="$HOME/.openclaw/ring/venv/bin/python3"
+
+run_api() { "$PYTHON" "$API_SCRIPT" "$@" 2>/dev/null; }
+
+parse_status() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+
+for db in d.get('doorbells', []):
+    name = db.get('name', '?')
+    model = db.get('model', '?')
+    family = db.get('family', '')
+    shared = ' [shared]' if family == 'authorized_doorbots' else ''
+    batt = db.get('battery')
+    batt_str = f'{batt}%' if batt is not None else 'Wired'
+    wifi = db.get('wifiCategory', '?')
+    rssi = db.get('wifiSignal', '?')
+    dev_id = db.get('id', '?')
+    print(f'{name} ({model}, id={dev_id}){shared}')
+    print(f'  Battery:   {batt_str}')
+    print(f'  WiFi:      {db.get(\"wifiName\", \"?\")} ({wifi}, {rssi} dBm)')
+    print(f'  Firmware:  {db.get(\"firmware\", \"?\")}')
+    print(f'  Address:   {db.get(\"address\", \"?\")}')
+    last = db.get('lastEvent')
+    if last:
+        kind = last.get('kind', '?')
+        ts = last.get('timestamp', '?')
+        answered = last.get('answered')
+        person = last.get('personDetected')
+        ans_str = ' (answered)' if answered else ''
+        person_str = ' [person]' if person else ''
+        print(f'  Last Event: {kind}{person_str}{ans_str} at {ts}')
+    print()
+"
+}
+
+parse_events() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+
+events = d.get('events', [])
+if not events:
+    print('No recent events.')
+    sys.exit(0)
+
+for e in events:
+    device = e.get('device', '?')
+    kind = e.get('kind', '?')
+    ts = e.get('timestamp', '?')
+    answered = e.get('answered')
+    person = e.get('personDetected')
+    detection = e.get('detectionType', '')
+    ans_str = ' (answered)' if answered else ''
+    dur = e.get('duration')
+    dur_str = f' [{int(dur)}s]' if dur else ''
+    det_str = f' [{detection}]' if detection and detection != kind else ''
+    person_str = ' [person]' if person else ''
+    print(f'  {ts}  {kind}{person_str}{det_str}{ans_str}{dur_str}  ({device})')
+"
+}
+
+parse_health() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+
+for dev in d.get('devices', []):
+    name = dev.get('name', '?')
+    model = dev.get('model', '?')
+    batt = dev.get('battery')
+    batt_str = f'{batt}%' if batt is not None else 'Wired'
+    wifi = dev.get('wifiCategory', '?')
+    rssi = dev.get('wifiSignal', '?')
+    print(f'{name} ({model})')
+    print(f'  Battery:    {batt_str}')
+    print(f'  WiFi:       {dev.get(\"wifiName\", \"?\")} ({wifi})')
+    print(f'  Signal:     {rssi} dBm')
+    print(f'  Firmware:   {dev.get(\"firmware\", \"?\")}')
+    conn = dev.get('connectionStatus')
+    if conn:
+        print(f'  Connection: {conn}')
+    print()
+"
+}
+
+parse_video() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+print(f'Device:       {d.get(\"device\", \"?\")}')
+print(f'Recording ID: {d.get(\"recordingId\", \"?\")}')
+print(f'URL:          {d.get(\"url\", \"?\")}')
+"
+}
+
+parse_videos() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+recs = d.get('recordings', [])
+if not recs:
+    print('No recordings found.')
+    sys.exit(0)
+for r in recs:
+    if r.get('error'):
+        print(f'{r.get(\"device\", \"?\")}: {r[\"error\"]}')
+        continue
+    ts = r.get('timestamp', '?')
+    kind = r.get('kind', '?')
+    dur = r.get('duration')
+    dur_str = f' [{int(dur)}s]' if dur else ''
+    person = ' [person]' if r.get('personDetected') else ''
+    status = r.get('status', '?')
+    rec_id = r.get('recordingId', '?')
+    url = r.get('url', '')
+    url_str = url[:80] + '...' if url and len(url) > 80 else (url or 'n/a')
+    print(f'{ts}  {kind}{person}{dur_str}  ({r.get(\"device\", \"?\")})  [{status}]')
+    print(f'  ID:  {rec_id}')
+    print(f'  URL: {url_str}')
+    print()
+"
+}
+
+parse_snapshot() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+print(f'Device:   {d.get(\"device\", \"?\")}')
+print(f'Saved to: {d.get(\"file\", \"?\")}')
+size = d.get('size', 0)
+if size > 1024:
+    print(f'Size:     {size // 1024} KB')
+else:
+    print(f'Size:     {size} bytes')
+"
+}
+
+parse_download() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+print(f'Device:       {d.get(\"device\", \"?\")}')
+print(f'Recording ID: {d.get(\"recordingId\", \"?\")}')
+print(f'Saved to:     {d.get(\"file\", \"?\")}')
+size = d.get('size', 0)
+if size > 1048576:
+    print(f'Size:         {size // 1048576} MB')
+elif size > 1024:
+    print(f'Size:         {size // 1024} KB')
+else:
+    print(f'Size:         {size} bytes')
+"
+}
+
+case "${1:-}" in
+  status)
+    run_api status | parse_status
+    ;;
+  events)
+    run_api events "${2:-10}" | parse_events
+    ;;
+  health)
+    run_api health | parse_health
+    ;;
+  video)
+    run_api video ${2:+"$2"} | parse_video
+    ;;
+  videos)
+    run_api videos "${2:-5}" | parse_videos
+    ;;
+  snapshot)
+    run_api snapshot ${2:+"$2"} | parse_snapshot
+    ;;
+  download)
+    if [[ -z "${2:-}" || -z "${3:-}" ]]; then
+      echo "Usage: ring download <recording-id> <filename>" >&2
+      echo "  Get recording IDs from 'ring videos'" >&2
+      exit 1
+    fi
+    run_api download "$2" "$3" | parse_download
+    ;;
+  *)
+    echo "Usage: ring <command>"
+    echo ""
+    echo "Commands:"
+    echo "  status              Doorbell status (battery, wifi, firmware, last event)"
+    echo "  events [N]          Recent ding/motion events (default: 10)"
+    echo "  health              WiFi signal strength and connectivity"
+    echo "  video [ID]          Get video URL (default: latest recording)"
+    echo "  videos [N]          List recent recordings with URLs (default: 5)"
+    echo "  snapshot [FILE]     Capture snapshot (default: /tmp/ring-snapshot-*.jpg)"
+    echo "  download ID FILE    Download recording MP4 to file"
+    echo ""
+    echo "Note: video/videos/download require Ring Protect subscription."
+    exit 1
+    ;;
+esac

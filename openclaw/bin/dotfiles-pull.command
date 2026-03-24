@@ -55,7 +55,7 @@ fi
 BIN_SRC="$REPO/openclaw/bin"
 BIN_DST="$HOME/.openclaw/bin"
 WRAPPER_DEPLOYED=0
-for wrapper in cielo roomba crosstown-roomba 8sleep mysa petlibro litter-robot crisismode; do
+for wrapper in cielo roomba crosstown-roomba 8sleep mysa petlibro litter-robot crisismode ring; do
   if [ -f "$BIN_SRC/$wrapper" ]; then
     cp "$BIN_SRC/$wrapper" "$BIN_DST/$wrapper"
     chmod +x "$BIN_DST/$wrapper"
@@ -67,7 +67,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BI
 # Smoke test — verify CLIs resolve on PATH
 export PATH="$BIN_DST:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
 SMOKE_FAIL=0
-for cmd in cielo roomba crosstown-roomba 8sleep mysa petlibro litter-robot crisismode nest hue speaker; do
+for cmd in cielo roomba crosstown-roomba 8sleep mysa petlibro litter-robot crisismode ring nest hue speaker; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: $cmd not on PATH" >> "$LOG"
     SMOKE_FAIL=$((SMOKE_FAIL + 1))

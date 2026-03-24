@@ -1,0 +1,4 @@
+#!/bin/bash
+# ring — Ring doorbell control
+SKILL_DIR="$HOME/.openclaw/skills/ring-doorbell"
+exec "$SKILL_DIR/ring" "$@"
