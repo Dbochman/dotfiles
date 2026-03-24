@@ -61,27 +61,59 @@ def load_config():
     return config
 
 
-def authenticate(email, password):
-    """Get access token from Eight Sleep API."""
-    data = json.dumps({
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "grant_type": "password",
-        "username": email,
-        "password": password,
-    }).encode()
+def _auth_request(payload):
+    """Send an auth request and cache the result."""
+    data = json.dumps(payload).encode()
     req = urllib.request.Request(
         AUTH_URL, data=data,
         headers={"Content-Type": "application/json", "user-agent": USER_AGENT}
     )
+    resp = urllib.request.urlopen(req, timeout=15)
+    result = json.loads(resp.read().decode())
+    result["cached_at"] = time.time()
+    TOKEN_FILE.write_text(json.dumps(result))
+    TOKEN_FILE.chmod(0o600)
+    return result
+
+
+def refresh_token(token_data):
+    """Refresh access token using a refresh token.
+
+    The refresh grant doesn't return userId, so we preserve it from the
+    previous cached token to avoid breaking downstream code.
+    """
+    rt = token_data.get("refresh_token") or token_data.get("refreshToken")
+    if not rt:
+        return None
     try:
-        resp = urllib.request.urlopen(req, timeout=15)
-        result = json.loads(resp.read().decode())
-        # Cache token with timestamp
-        result["cached_at"] = time.time()
-        TOKEN_FILE.write_text(json.dumps(result))
-        TOKEN_FILE.chmod(0o600)
+        result = _auth_request({
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type": "refresh_token",
+            "refresh_token": rt,
+        })
+        # Preserve fields the refresh response doesn't include
+        for key in ("userId",):
+            if key not in result and key in token_data:
+                result[key] = token_data[key]
+                TOKEN_FILE.write_text(json.dumps(result))
+                TOKEN_FILE.chmod(0o600)
         return result
+    except urllib.error.HTTPError:
+        # Refresh failed (expired/revoked) — fall through to password auth
+        return None
+
+
+def authenticate(email, password):
+    """Get access token from Eight Sleep API via password grant."""
+    try:
+        return _auth_request({
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET,
+            "grant_type": "password",
+            "username": email,
+            "password": password,
+        })
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         if e.code == 429:
@@ -96,9 +128,9 @@ def authenticate(email, password):
 
 
 def get_token():
-    """Get a valid token, using cache if available."""
+    """Get a valid token: cached → refresh → password auth."""
     config = load_config()
-    # Check cache
+    cached = None
     if TOKEN_FILE.exists():
         try:
             cached = json.loads(TOKEN_FILE.read_text())
@@ -107,7 +139,13 @@ def get_token():
             if expires_in and time.time() - cached_at < (expires_in - TOKEN_EXPIRY_BUFFER):
                 return cached
         except (json.JSONDecodeError, KeyError):
-            pass
+            cached = None
+    # Token expired — try refresh first (avoids rate limits on password grant)
+    if cached:
+        refreshed = refresh_token(cached)
+        if refreshed:
+            return refreshed
+    # No cached token or refresh failed — full password auth
     return authenticate(config["email"], config["password"])
 
 
