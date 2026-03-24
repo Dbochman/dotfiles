@@ -462,13 +462,16 @@ def stop_findmy_polling() -> None:
         _findmy_poll_task = None
 
 
-def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
+def check_departure(vision_data: dict, doorbot_id: int) -> None:
     """Accumulate departing people/dogs across recent events and trigger Roombas.
 
     People and dogs often pass the doorbell in separate motion events during a
-    single departure/arrival. This function accumulates sightings within a
-    10-minute sliding window and triggers automation when cumulative counts
-    reach 2+ people AND 2+ dogs in the same direction.
+    single departure. This function accumulates sightings within a 10-minute
+    sliding window. Arrival detection is handled by FindMy polling, not Ring.
+
+    Trigger conditions:
+    - 2+ people AND 2+ dogs departing → auto-start Roombas + begin FindMy polling
+    - 2+ people AND 1 dog departing → ask Dylan via iMessage for confirmation
     """
     location = DOORBELL_LOCATIONS.get(doorbot_id)
     if not location:
@@ -478,7 +481,8 @@ def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
     dogs = vision_data.get("dogs", [])
     direction = vision_data.get("direction", "unclear").lower()
 
-    if direction not in ("departing", "arriving"):
+    # Only track departures — arrivals handled by FindMy polling
+    if direction != "departing":
         return
 
     now = time.time()
@@ -496,41 +500,43 @@ def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
     cutoff = now - _DEPARTURE_WINDOW
     _departure_sightings[:] = [s for s in _departure_sightings if s["time"] >= cutoff]
 
-    # Accumulate counts for this direction + location within the window
+    # Accumulate counts for departures at this location within the window
     total_people = 0
     total_dogs = 0
     for s in _departure_sightings:
-        if s["direction"] == direction and s["location"] == location:
-            total_people = max(total_people, s["people"])  # use max per event, not sum
+        if s["direction"] == "departing" and s["location"] == location:
+            total_people = max(total_people, s["people"])  # use max per event
             total_dogs += s["dogs"]  # dogs may appear in different events
 
-    # Also count unique dog sightings — cap dogs from a single event at what was seen
-    # Use max people (2 people in one event is enough) but sum dogs across events
     log(f"ACCUMULATOR: direction={direction} location={location} "
         f"people_max={total_people} dogs_total={total_dogs} "
         f"window_events={sum(1 for s in _departure_sightings if s['direction'] == direction and s['location'] == location)}")
 
-    if total_people < 2 or total_dogs < 2:
+    if total_people < 2:
         return
 
-    # Clear sightings for this direction+location to prevent re-triggering
-    _departure_sightings[:] = [
-        s for s in _departure_sightings
-        if not (s["direction"] == direction and s["location"] == location)
-    ]
-
-    if direction == "departing":
+    if total_dogs >= 2:
+        # Full household departure — auto-trigger
+        _departure_sightings[:] = [
+            s for s in _departure_sightings
+            if not (s["direction"] == "departing" and s["location"] == location)
+        ]
         log(f"DEPARTURE DETECTED at {location}: 2+ people + 2+ dogs leaving (accumulated)!")
         send_imessage(f"\U0001f9f9 Starting Roombas at {location} — everyone left for a walk!")
         run_roomba_command(location, "start")
-        # Begin polling FindMy for return home
         start_findmy_polling(location)
 
-    elif direction == "arriving":
-        log(f"ARRIVAL DETECTED at {location}: 2+ people + 2+ dogs returning (accumulated)!")
-        run_roomba_command(location, "dock")
-        # Stop FindMy polling if active (Ring already detected arrival)
-        stop_findmy_polling()
+    elif total_dogs == 1:
+        # Only 1 dog seen — ask for confirmation
+        _departure_sightings[:] = [
+            s for s in _departure_sightings
+            if not (s["direction"] == "departing" and s["location"] == location)
+        ]
+        log(f"PARTIAL DEPARTURE at {location}: 2+ people + 1 dog — asking for confirmation")
+        send_imessage(
+            f"\U0001f436 Spotted 2 people and 1 dog leaving at {location}. "
+            f"Should I start the Roombas? (Tell OpenClaw yes/no)"
+        )
 
 
 def send_imessage_image(image_path: str, caption: str = "") -> bool:
@@ -777,7 +783,7 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
                             description = retry_data.get("description", description)
 
                 # Check for departure/arrival automation
-                check_departure_arrival(vision_data, doorbot_id)
+                check_departure(vision_data, doorbot_id)
             else:
                 # Fallback: use raw text as description
                 description = raw_analysis
