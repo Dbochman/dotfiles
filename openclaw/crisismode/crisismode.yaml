@@ -1,0 +1,21 @@
+apiVersion: crisismode/v1
+kind: SiteConfig
+metadata:
+  name: dylans-mac-mini
+  environment: production
+
+# No hub — standalone spoke mode
+# No webhook — health checks via CLI and MCP only
+
+execution:
+  mode: dry-run
+
+targets:
+  # No targets needed — scan uses zero-config auto-detection for:
+  #   - Service probing: PostgreSQL (5432), Redis (6379), etcd (2379), Kafka (9092)
+  #   - Bundled check plugins: disk, memory, DNS, HTTP, TLS
+  #
+  # Custom check plugins for Mini-specific services (BlueBubbles, gateway,
+  # Nest/Usage dashboards) can be added to ~/.crisismode/checks/ later.
+  # See: crisismode init --plugin <name>
+  []

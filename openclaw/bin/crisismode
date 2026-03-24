@@ -1,0 +1,4 @@
+#!/bin/bash
+# crisismode — Infrastructure health scan and recovery CLI
+CRISISMODE_DIR="$HOME/repos/crisismode"
+exec /opt/homebrew/opt/node@22/bin/node "$CRISISMODE_DIR/dist/cli/index.js" "$@"
