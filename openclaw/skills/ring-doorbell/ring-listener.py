@@ -78,6 +78,22 @@ ROOMBA_COMMANDS = {
 }
 
 OPENCLAW_BIN = str(Path.home() / ".openclaw/bin")
+PEEKABOO = "/opt/homebrew/bin/peekaboo"
+FINDMY_CAPTURE_DIR = Path.home() / ".openclaw/ring-listener/findmy"
+
+# Home coordinates for reference (Crosstown Ave, West Roxbury)
+HOME_STREET = "Crosstown"
+
+FINDMY_PROMPT = (
+    "Look at this FindMy app screenshot. There is a pin on the map showing a person's location. "
+    "Respond with ONLY valid JSON (no markdown, no ```), using this exact schema:\n"
+    '{"street":"<street name the pin is on or nearest to, or unknown>",'
+    '"near_home":true/false,'
+    '"description":"<1 sentence describing where the pin is on the map>"}\n\n'
+    "The person's home is on Crosstown Ave in West Roxbury/Boston. "
+    "'near_home' should be true if the pin appears to be ON Crosstown Ave or within ~1 block of it. "
+    "Look at the street labels on the map to determine the pin's location."
+)
 
 # Dedup: track recent event IDs to avoid double-notify
 _recent_events: dict[int, float] = {}
@@ -86,6 +102,9 @@ _DEDUP_WINDOW = 300  # 5 minutes
 # Roomba cooldown: prevent re-triggering within 2 hours per location
 _roomba_last_action: dict[str, float] = {}
 _ROOMBA_COOLDOWN = 7200  # 2 hours
+
+# FindMy polling state
+_findmy_poll_task: asyncio.Task | None = None
 
 
 def log(msg: str) -> None:
@@ -311,6 +330,135 @@ def run_roomba_command(location: str, action: str) -> None:
     _roomba_last_action[cooldown_key] = now
 
 
+def capture_findmy() -> str | None:
+    """Capture FindMy app window via Peekaboo. Returns path to PNG or None."""
+    FINDMY_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+    capture_path = str(FINDMY_CAPTURE_DIR / "findmy-poll.png")
+    try:
+        result = subprocess.run(
+            [PEEKABOO, "image", "--app", "Find My", "--path", capture_path],
+            capture_output=True, timeout=15,
+        )
+        if result.returncode == 0 and Path(capture_path).exists() and Path(capture_path).stat().st_size > 1000:
+            return capture_path
+        log(f"FindMy capture failed: exit={result.returncode} stderr={result.stderr.decode()[:200]}")
+        return None
+    except Exception as e:
+        log(f"FindMy capture error: {e}")
+        return None
+
+
+def analyze_findmy(image_path: str) -> dict | None:
+    """Analyze FindMy screenshot with Claude vision to determine location."""
+    try:
+        if not OAUTH_CACHE.exists():
+            return None
+        oauth = json.loads(OAUTH_CACHE.read_text()).get("claudeAiOauth", {})
+        token = oauth.get("accessToken")
+        if not token:
+            return None
+
+        import base64
+        with open(image_path, "rb") as f:
+            img_b64 = base64.standard_b64encode(f.read()).decode()
+
+        payload = json.dumps({
+            "model": VISION_MODEL,
+            "max_tokens": 150,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}},
+                {"type": "text", "text": FINDMY_PROMPT},
+            ]}],
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "anthropic-version": "2023-06-01",
+                "anthropic-beta": "oauth-2025-04-20",
+            },
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read().decode())
+        text = result["content"][0]["text"].strip()
+        return parse_vision_result(text)
+    except Exception as e:
+        log(f"FindMy analysis error: {e}")
+        return None
+
+
+async def _findmy_poll_loop(location: str) -> None:
+    """Poll FindMy every 5 minutes to detect return home. Dock Roombas when near home."""
+    POLL_INTERVAL = 300  # 5 minutes
+    MAX_DURATION = 7200  # 2 hours
+    start_time = time.time()
+
+    log(f"FINDMY POLL: Starting return-home monitoring for {location}")
+    send_imessage(f"\U0001f4cd Tracking your walk — will dock Roombas when you're back on Crosstown Ave")
+
+    # Wait 5 minutes before first poll (you just left)
+    await asyncio.sleep(POLL_INTERVAL)
+
+    while time.time() - start_time < MAX_DURATION:
+        try:
+            capture_path = capture_findmy()
+            if not capture_path:
+                log("FINDMY POLL: Capture failed, retrying next interval")
+                await asyncio.sleep(POLL_INTERVAL)
+                continue
+
+            result = analyze_findmy(capture_path)
+            Path(capture_path).unlink(missing_ok=True)
+
+            if result:
+                street = result.get("street", "unknown")
+                near_home = result.get("near_home", False)
+                desc = result.get("description", "")
+                log(f"FINDMY POLL: street={street} near_home={near_home} desc={desc}")
+
+                if near_home:
+                    elapsed = int((time.time() - start_time) / 60)
+                    log(f"FINDMY POLL: Return detected after {elapsed}min — docking Roombas at {location}")
+                    send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location}.")
+                    run_roomba_command(location, "dock")
+                    return
+            else:
+                log("FINDMY POLL: Could not parse location result")
+
+        except asyncio.CancelledError:
+            log("FINDMY POLL: Cancelled")
+            return
+        except Exception as e:
+            log(f"FINDMY POLL: Error: {e}")
+
+        await asyncio.sleep(POLL_INTERVAL)
+
+    log(f"FINDMY POLL: Timeout after {MAX_DURATION // 60}min — docking Roombas as safety fallback")
+    send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
+    run_roomba_command(location, "dock")
+
+
+def start_findmy_polling(location: str) -> None:
+    """Start FindMy polling in the background to detect return home."""
+    global _findmy_poll_task
+    # Cancel any existing poll
+    if _findmy_poll_task and not _findmy_poll_task.done():
+        _findmy_poll_task.cancel()
+    _findmy_poll_task = asyncio.get_event_loop().create_task(_findmy_poll_loop(location))
+
+
+def stop_findmy_polling() -> None:
+    """Stop FindMy polling if active."""
+    global _findmy_poll_task
+    if _findmy_poll_task and not _findmy_poll_task.done():
+        _findmy_poll_task.cancel()
+        _findmy_poll_task = None
+
+
 def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
     """Check vision analysis for full household departure or arrival and trigger Roombas."""
     location = DOORBELL_LOCATIONS.get(doorbot_id)
@@ -328,11 +476,15 @@ def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
         log(f"DEPARTURE DETECTED at {location}: Dylan + Julia + both dogs leaving!")
         send_imessage(f"\U0001f9f9 Starting Roombas at {location} — everyone left for a walk!")
         run_roomba_command(location, "start")
+        # Begin polling FindMy for return home
+        start_findmy_polling(location)
 
     elif direction == "arriving":
         log(f"ARRIVAL DETECTED at {location}: Dylan + Julia + both dogs returning!")
         send_imessage(f"\U0001f3e0 Welcome home! Docking Roombas at {location}.")
         run_roomba_command(location, "dock")
+        # Stop FindMy polling if active (Ring already detected arrival)
+        stop_findmy_polling()
 
 
 def send_imessage_image(image_path: str, caption: str = "") -> bool:
