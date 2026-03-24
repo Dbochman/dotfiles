@@ -81,19 +81,26 @@ OPENCLAW_BIN = str(Path.home() / ".openclaw/bin")
 PEEKABOO = "/opt/homebrew/bin/peekaboo"
 FINDMY_CAPTURE_DIR = Path.home() / ".openclaw/ring-listener/findmy"
 
-# Home coordinates for reference (Crosstown Ave, West Roxbury)
-HOME_STREET = "Crosstown"
+# Home address per location — used for FindMy return detection
+HOME_ADDRESSES = {
+    "crosstown": {"street": "Crosstown Ave", "area": "West Roxbury, Boston", "radius": "1 block"},
+    "cabin": {"street": "95 School House Rd", "area": "Phillipston, MA", "radius": "0.2 miles"},
+}
 
-FINDMY_PROMPT = (
-    "Look at this FindMy app screenshot. There is a pin on the map showing a person's location. "
-    "Respond with ONLY valid JSON (no markdown, no ```), using this exact schema:\n"
-    '{"street":"<street name the pin is on or nearest to, or unknown>",'
-    '"near_home":true/false,'
-    '"description":"<1 sentence describing where the pin is on the map>"}\n\n'
-    "The person's home is on Crosstown Ave in West Roxbury/Boston. "
-    "'near_home' should be true if the pin appears to be ON Crosstown Ave or within ~1 block of it. "
-    "Look at the street labels on the map to determine the pin's location."
-)
+
+def _findmy_prompt(location: str) -> str:
+    """Build a FindMy vision prompt for the given location's home address."""
+    addr = HOME_ADDRESSES.get(location, HOME_ADDRESSES["crosstown"])
+    return (
+        "Look at this FindMy app screenshot. There is a pin on the map showing a person's location. "
+        "Respond with ONLY valid JSON (no markdown, no ```), using this exact schema:\n"
+        '{"street":"<street name the pin is on or nearest to, or unknown>",'
+        '"near_home":true/false,'
+        '"description":"<1 sentence describing where the pin is on the map>"}\n\n'
+        f"The person's home is at {addr['street']} in {addr['area']}. "
+        f"'near_home' should be true if the pin appears to be within {addr['radius']} of {addr['street']}. "
+        "Look at the street labels and landmarks on the map to determine the pin's location."
+    )
 
 # Dedup: track recent event IDs to avoid double-notify
 _recent_events: dict[int, float] = {}
@@ -352,7 +359,7 @@ def capture_findmy() -> str | None:
         return None
 
 
-def analyze_findmy(image_path: str) -> dict | None:
+def analyze_findmy(image_path: str, location: str = "crosstown") -> dict | None:
     """Analyze FindMy screenshot with Claude vision to determine location."""
     try:
         if not OAUTH_CACHE.exists():
@@ -371,7 +378,7 @@ def analyze_findmy(image_path: str) -> dict | None:
             "max_tokens": 150,
             "messages": [{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}},
-                {"type": "text", "text": FINDMY_PROMPT},
+                {"type": "text", "text": _findmy_prompt(location)},
             ]}],
         }).encode()
 
@@ -401,8 +408,9 @@ async def _findmy_poll_loop(location: str) -> None:
     MAX_DURATION = 7200  # 2 hours
     start_time = time.time()
 
-    log(f"FINDMY POLL: Starting return-home monitoring for {location}")
-    send_imessage(f"\U0001f4cd Tracking your walk — will dock Roombas when you're back on Crosstown Ave")
+    addr = HOME_ADDRESSES.get(location, HOME_ADDRESSES["crosstown"])
+    log(f"FINDMY POLL: Starting return-home monitoring for {location} ({addr['street']})")
+    send_imessage(f"\U0001f4cd Tracking your walk — will dock Roombas when you're back near {addr['street']}")
 
     # Wait 5 minutes before first poll (you just left)
     await asyncio.sleep(POLL_INTERVAL)
@@ -415,7 +423,7 @@ async def _findmy_poll_loop(location: str) -> None:
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
-            result = analyze_findmy(capture_path)
+            result = analyze_findmy(capture_path, location=location)
             Path(capture_path).unlink(missing_ok=True)
 
             if result:
