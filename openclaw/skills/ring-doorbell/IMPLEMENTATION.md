@@ -271,19 +271,19 @@ Two layers prevent duplicate notifications:
 The listener sends 5 frames from each recording to Claude Haiku with a structured JSON prompt:
 
 ```
-These are 5 frames sampled evenly from a doorbell video clip.
-Analyze this front door camera image. Respond with ONLY valid JSON:
+Analyze this front door camera footage. Respond with ONLY valid JSON:
 {
-  "description": "<1 sentence describing the scene>",
+  "description": "<1 sentence>",
   "people": ["<name or unknown>"],
-  "dogs": ["<name or unknown>"],
-  "direction": "<arriving|departing|unclear>"
+  "dogs": ["<breed or name>"]
 }
 
-Known residents: Dylan (man), Julia (woman with long brown hair).
-Known dogs: large brown/gold dog with dark black face;
-            Coconut (white and pink pitbull).
+Count every person and every dog visible across all frames, even if only briefly.
+Known dogs: Potato (large brown/gold dog with a dark black face);
+            Coconut (medium white and pink pitbull).
 ```
+
+All blocking vision calls use `asyncio.to_thread()` to avoid stalling the FCM event loop.
 
 ### Decision Logic
 
@@ -294,22 +294,24 @@ if not _is_walk_hour():       # 8-10 AM, 11 AM-1 PM, 5-8 PM
 if not _is_location_occupied(location):  # skip if confirmed_vacant
     return
 
-# Only departures — arrivals handled by FindMy polling
-if direction != "departing":
-    return
+# No direction filter — Haiku struggles with fisheye distortion.
+# Time-of-day, presence, and cooldown prevent false positives.
 
 # Accumulate across 10-minute sliding window
 # (people/dogs may pass doorbell in separate motion events)
-total_people = max(people_per_event)  # use max per event
-total_dogs = sum(dogs_per_event)      # sum across events
+# Use max() for BOTH to avoid double-counting the same person/dog
+max_people = max(people_per_event)
+max_dogs = max(dogs_per_event)
 
-if total_people >= 1 and total_dogs >= 2:
+if max_people >= 1 and max_dogs >= 2:
     start_roombas(location)
     start_findmy_polling(location)
 
-elif total_people >= 1 and total_dogs == 1:
+elif max_people >= 1 and max_dogs == 1:
     send_confirmation_imessage(location)  # ask Dylan
 ```
+
+**Note on Cabin:** The Cabin doorbell has no Ring Protect, so no video/vision analysis is available. Cabin events reach `check_departure()` with person-only data (`dogs=[]`), so dog walk automation cannot auto-trigger there. Cabin Roombas must be started manually via OpenClaw.
 
 ### Frame Retry for Second Dog
 
@@ -541,26 +543,30 @@ launchctl load ~/Library/LaunchAgents/ai.openclaw.ring-listener.plist
 ### Log Format
 ```
 [2026-03-24 14:45:08] Event listener started — waiting for Ring events...
-[2026-03-24 14:50:12] Event: kind=motion device=Front Door doorbot_id=684794187 state=ringing
-[2026-03-24 14:50:17] NOTIFY: 🔔 Front Door: Person detected at door
-[2026-03-24 14:50:25] Vision raw: {"description":"...","people":["Dylan","Julia"],"dogs":["unknown","Coconut"],"direction":"departing"}
-[2026-03-24 14:50:25] DEPARTURE DETECTED at crosstown: Dylan + Julia + both dogs leaving!
+[2026-03-24 14:50:12] Event: kind=motion device=Front Door doorbot_id=684794187 state=human
+[2026-03-24 14:50:12] Person detected on Front Door — processing recording
+[2026-03-24 14:50:25] Vision raw: {"description":"...","people":["unknown","unknown"],"dogs":["Potato","Coconut"]}
+[2026-03-24 14:50:25] ACCUMULATOR: location=crosstown people_max=2 dogs_max=2 window_events=1
+[2026-03-24 14:50:25] DEPARTURE DETECTED at crosstown: 2 people + 2 dogs leaving!
 [2026-03-24 14:50:25] ROOMBA: crosstown-roomba start all
+[2026-03-24 14:50:25] FINDMY POLL: Starting return-home monitoring for crosstown (Crosstown Ave)
 ```
 
 ### Known Limitations
 
 1. **Battery doorbells sleep** — `ring snapshot` returns empty when doorbell is asleep between events. Frame extraction uses recordings instead (available after events).
-2. **Cabin doorbell has no Ring Protect** — no video/frame for Cabin events. Text notifications still work, but no image or vision analysis.
+2. **Cabin doorbell has no Ring Protect** — no video/frame/vision for Cabin events. Dog walk automation cannot auto-trigger at Cabin (requires dog counts from vision). Cabin Roombas must be started manually via OpenClaw.
 3. **WiFi health data unavailable** — `ring health` shows `None` for WiFi name/signal on these doorbell models. Connection status ("online") is available.
-4. **Vision accuracy** — Claude Haiku does scene description, not face recognition. It uses contextual clues (hair color, build, dog breed) to identify residents. People are typically identified as "unknown" rather than by name. The count-based automation (2+ people, 2+ dogs) works around this.
-5. **Direction detection** — "arriving" vs "departing" depends on body orientation across multiple frames. May report "unclear" in ambiguous cases, which does NOT trigger automation.
+4. **Vision accuracy** — Claude Haiku does scene description, not face recognition. People are typically identified as "unknown" rather than by name. Dogs are identified by breed/name. The count-based automation (max people, max dogs across events) works around this.
+5. **Direction removed** — Direction detection was removed from the vision prompt. Haiku frequently misclassified arrivals as departures due to fisheye distortion. Time-of-day filter, presence cross-check, and 2-hour cooldown prevent false positives instead.
 6. **Recording availability** — Ring may take 10-30 seconds to process and upload a recording after an event. The listener retries up to 3 times with increasing delays (0s, 10s, 15s) to handle this.
 7. **OAuth token expiry** — If the Claude Max OAuth cache expires and isn't refreshed, vision analysis silently degrades. Notifications and event detection continue working.
 8. **FCM reliability** — Firebase push connections can drop. The `KeepAlive` LaunchAgent restarts the listener if it crashes, and FCM credentials are persisted across restarts.
-9. **FindMy requires open app** — The Find My app must be open on the Mini for Peekaboo screenshots to capture location data. If the app is closed or the window is minimized, FindMy polling will fail silently and fall back to the 2-hour timeout dock.
+9. **FindMy requires open app** — The Find My app must be open on the Mini for Peekaboo screenshots to capture location data. If the app is closed or the window is minimized, FindMy polling will fail silently and fall back to the 2-hour timeout dock. A physical display (EPSON projector) must be connected.
 10. **FindMy TCC restriction** — Peekaboo only works from LaunchAgent/Terminal context, not SSH. The Ring listener runs as a LaunchAgent so this works, but manual testing via SSH will fail.
 11. **FindMy polling is in-memory** — Polling state does not survive listener restarts. If the listener crashes mid-walk, FindMy polling stops and Roombas won't auto-dock (the 2-hour cooldown on the start action prevents re-starting them).
+12. **State file atomicity** — State files use atomic writes (temp + fsync + os.replace) to prevent corruption from mid-write crashes. Read failures are logged rather than silently ignored.
+13. **Async threading** — Blocking calls (vision analysis, FindMy capture, iMessage send) use `asyncio.to_thread()` to avoid stalling the FCM event loop. Under burst events, multiple analyses may run concurrently.
 
 ### Deployment
 
