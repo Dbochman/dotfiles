@@ -44,17 +44,14 @@ OAUTH_CACHE = Path.home() / ".openclaw/.anthropic-oauth-cache"
 VISION_MODEL = "claude-haiku-4-5-20251001"
 
 VISION_PROMPT = (
-    "Analyze this front door camera image. Respond with ONLY valid JSON (no markdown, no ```), "
+    "Analyze this front door camera footage. Respond with ONLY valid JSON (no markdown, no ```), "
     "using this exact schema:\n"
-    '{"description":"<1 sentence describing the scene>",'
-    '"people":["<name or unknown>"],'
-    '"dogs":["<name or unknown>"],'
-    '"direction":"<arriving|departing|unclear>"}\n\n'
-    "Known residents: Dylan (man), Julia (woman with long brown hair). "
-    "Known dogs: large brown/gold dog with dark black face; Coconut (white and pink pitbull). "
-    "Use names when you recognize them. 'direction' means whether people are walking "
-    "TOWARD the door (arriving) or AWAY from the door toward the street (departing). "
-    "If no people visible, use empty lists."
+    '{"description":"<1 sentence>","people":["<name or unknown>"],"dogs":["<breed or name>"]}\n\n'
+    "Count every person and every dog visible across all frames, even if only briefly. "
+    "Known dogs: Potato (large brown/gold dog with a dark black face); "
+    "Coconut (medium white and pink pitbull). "
+    "If you see a person, add an entry. If you see a dog, add an entry. "
+    "Empty lists if none visible."
 )
 
 # Doorbell ID → location mapping
@@ -117,7 +114,7 @@ _findmy_poll_task: asyncio.Task | None = None
 
 # Departure accumulator: track people/dogs across recent events within a window
 _DEPARTURE_WINDOW = 600  # 10 minutes
-_departure_sightings: list[dict] = []  # [{"time": float, "people": int, "dogs": int, "direction": str, "location": str}]
+_departure_sightings: list[dict] = []  # [{"time": float, "people": int, "dogs": int, "location": str}]
 
 
 def log(msg: str) -> None:
@@ -326,7 +323,7 @@ def analyze_video(video_path: str, frame_count: int = 5) -> str | None:
 
         payload = json.dumps({
             "model": VISION_MODEL,
-            "max_tokens": 200,
+            "max_tokens": 1024,
             "messages": [{"role": "user", "content": content}],
         }).encode()
 
