@@ -80,6 +80,8 @@ ROOMBA_COMMANDS = {
 OPENCLAW_BIN = str(Path.home() / ".openclaw/bin")
 PEEKABOO = "/opt/homebrew/bin/peekaboo"
 FINDMY_CAPTURE_DIR = Path.home() / ".openclaw/ring-listener/findmy"
+STATE_FILE = Path.home() / ".openclaw/ring-listener/state.json"
+HISTORY_DIR = Path.home() / ".openclaw/ring-listener/history"
 
 # Home address per location — used for FindMy return detection
 HOME_ADDRESSES = {
@@ -123,6 +125,72 @@ def log(msg: str) -> None:
     line = f"[{ts}] {msg}\n"
     sys.stdout.write(line)
     sys.stdout.flush()
+
+
+def _read_state() -> dict:
+    """Read current state file, or return empty state."""
+    try:
+        if STATE_FILE.exists():
+            return json.loads(STATE_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def _write_state(state: dict) -> None:
+    """Write state to JSON file and append to daily history JSONL."""
+    state["timestamp"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+    # Append to daily history
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    history_file = HISTORY_DIR / f"{datetime.utcnow().strftime('%Y-%m-%d')}.jsonl"
+    with open(history_file, "a") as f:
+        f.write(json.dumps(state) + "\n")
+
+
+def _update_state_dog_walk(location: str, event: str, people: int = 0, dogs: int = 0) -> None:
+    """Update state file with dog walk event."""
+    state = _read_state()
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    walk = state.get("dog_walk") or {}
+    roombas = state.get("roombas") or {}
+    loc_roombas = roombas.get(location) or {}
+
+    if event == "departure":
+        walk = {
+            "active": True,
+            "location": location,
+            "departed_at": now,
+            "returned_at": None,
+            "people": people,
+            "dogs": dogs,
+        }
+        loc_roombas = {
+            "status": "running",
+            "started_at": now,
+            "docked_at": None,
+            "trigger": "dog_walk_departure",
+        }
+    elif event == "dock":
+        walk["active"] = False
+        walk["returned_at"] = now
+        loc_roombas["status"] = "docked"
+        loc_roombas["docked_at"] = now
+    elif event == "dock_timeout":
+        walk["active"] = False
+        walk["returned_at"] = now
+        loc_roombas["status"] = "docked"
+        loc_roombas["docked_at"] = now
+        loc_roombas["trigger"] = "timeout_fallback"
+
+    roombas[location] = loc_roombas
+    state["dog_walk"] = walk
+    state["roombas"] = roombas
+    _write_state(state)
+    log(f"STATE: dog_walk event={event} location={location}")
 
 
 def load_ring_token() -> dict | None:
@@ -436,6 +504,7 @@ async def _findmy_poll_loop(location: str) -> None:
                     elapsed = int((time.time() - start_time) / 60)
                     log(f"FINDMY POLL: Return detected after {elapsed}min — docking Roombas at {location}")
                     run_roomba_command(location, "dock")
+                    _update_state_dog_walk(location, "dock")
                     return
             else:
                 log("FINDMY POLL: Could not parse location result")
@@ -451,6 +520,7 @@ async def _findmy_poll_loop(location: str) -> None:
     log(f"FINDMY POLL: Timeout after {MAX_DURATION // 60}min — docking Roombas as safety fallback")
     send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
     run_roomba_command(location, "dock")
+    _update_state_dog_walk(location, "dock_timeout")
 
 
 def start_findmy_polling(location: str) -> None:
@@ -575,6 +645,7 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
         log(f"DEPARTURE DETECTED at {location}: {total_people} people + {total_dogs} dogs leaving!")
         send_imessage(f"\U0001f9f9 Starting Roombas at {location} — everyone left for a walk!")
         run_roomba_command(location, "start")
+        _update_state_dog_walk(location, "departure", people=total_people, dogs=total_dogs)
         start_findmy_polling(location)
     else:
         # Only 1 dog seen — ask for confirmation
