@@ -155,8 +155,45 @@ def send_imessage(text: str) -> bool:
         return False
 
 
-def analyze_frame(image_path: str) -> str | None:
-    """Use Claude vision (via OAuth) to describe who/what is at the door."""
+def extract_multi_frames(video_path: str, count: int = 5) -> list[str]:
+    """Extract evenly-spaced frames from a video for multi-image analysis."""
+    frames = []
+    frame_dir = Path(video_path).parent
+    stem = Path(video_path).stem
+
+    # Get video duration with ffprobe
+    try:
+        probe = subprocess.run(
+            [FFMPEG.replace("ffmpeg", "ffprobe"), "-v", "error", "-show_entries",
+             "format=duration", "-of", "csv=p=0", video_path],
+            capture_output=True, timeout=10,
+        )
+        duration = float(probe.stdout.decode().strip())
+    except Exception:
+        duration = 18.0  # fallback estimate
+
+    # Sample frames evenly across the clip, skipping first/last second
+    start = min(1.0, duration * 0.1)
+    end = max(duration - 1.0, duration * 0.9)
+    interval = (end - start) / max(count - 1, 1)
+
+    for i in range(count):
+        ts = start + i * interval
+        frame_path = str(frame_dir / f"{stem}-f{i}.jpg")
+        result = subprocess.run(
+            [FFMPEG, "-ss", f"{ts:.1f}", "-i", video_path, "-vframes", "1",
+             "-q:v", "2", "-update", "1", frame_path, "-y"],
+            capture_output=True, timeout=10,
+        )
+        if result.returncode == 0 and Path(frame_path).exists() and Path(frame_path).stat().st_size > 0:
+            frames.append(frame_path)
+
+    log(f"Extracted {len(frames)} frames from {duration:.0f}s video")
+    return frames
+
+
+def analyze_video(video_path: str) -> str | None:
+    """Analyze a doorbell video by sending multiple frames to Claude vision."""
     try:
         if not OAUTH_CACHE.exists():
             log("No OAuth cache — skipping vision analysis")
@@ -167,20 +204,29 @@ def analyze_frame(image_path: str) -> str | None:
             log("No OAuth access token — skipping vision analysis")
             return None
 
+        frames = extract_multi_frames(video_path, count=5)
+        if not frames:
+            log("No frames extracted for vision analysis")
+            return None
+
         import base64
-        with open(image_path, "rb") as f:
-            img_b64 = base64.standard_b64encode(f.read()).decode()
+        content = []
+        for i, fp in enumerate(frames):
+            with open(fp, "rb") as f:
+                img_b64 = base64.standard_b64encode(f.read()).decode()
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}})
+            # Clean up frame after encoding
+            Path(fp).unlink(missing_ok=True)
+
+        content.append({"type": "text", "text": (
+            f"These are {len(frames)} frames sampled evenly from an {len(frames)}-frame doorbell video clip. "
+            + VISION_PROMPT
+        )})
 
         payload = json.dumps({
             "model": VISION_MODEL,
-            "max_tokens": 150,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
-                    {"type": "text", "text": VISION_PROMPT},
-                ],
-            }],
+            "max_tokens": 200,
+            "messages": [{"role": "user", "content": content}],
         }).encode()
 
         req = urllib.request.Request(
@@ -194,7 +240,7 @@ def analyze_frame(image_path: str) -> str | None:
             },
             method="POST",
         )
-        resp = urllib.request.urlopen(req, timeout=30)
+        resp = urllib.request.urlopen(req, timeout=60)
         result = json.loads(resp.read().decode())
         text = result["content"][0]["text"].strip()
         # Strip markdown headers if Haiku adds them
@@ -268,16 +314,11 @@ def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
     if not location:
         return
 
-    people = [p.lower() for p in vision_data.get("people", [])]
-    dogs = [d.lower() for d in vision_data.get("dogs", [])]
+    people = vision_data.get("people", [])
+    dogs = vision_data.get("dogs", [])
     direction = vision_data.get("direction", "unclear").lower()
 
-    has_dylan = any("dylan" in p for p in people)
-    has_julia = any("julia" in p for p in people)
-    both_people = has_dylan and has_julia
-    both_dogs = len(dogs) >= 2
-
-    if not both_people or not both_dogs:
+    if len(people) < 2 or len(dogs) < 2:
         return
 
     if direction == "departing":
@@ -326,50 +367,65 @@ def send_imessage_image(image_path: str, caption: str = "") -> bool:
         return False
 
 
-async def download_and_extract_frame(db, event_id: int) -> str | None:
-    """Download the recording for an event and extract the first frame."""
+async def download_recording(db, event_id: int) -> tuple[str | None, str | None]:
+    """Download the recording for an event and extract a preview frame.
+
+    Returns (mp4_path, frame_path). Either may be None.
+    Retries up to 3 times with increasing delays since Ring needs time
+    to process and upload the recording after an event.
+    """
     FRAME_DIR.mkdir(parents=True, exist_ok=True)
 
-    try:
-        # Get the video URL
-        url = await db.async_recording_url(event_id)
-        if not url:
-            log(f"No video URL for event {event_id}")
-            return None
+    mp4_path = str(FRAME_DIR / f"event-{event_id}.mp4")
+    frame_path = str(FRAME_DIR / f"event-{event_id}.jpg")
 
-        # Download the MP4
-        mp4_path = str(FRAME_DIR / f"event-{event_id}.mp4")
-        frame_path = str(FRAME_DIR / f"event-{event_id}.jpg")
+    delays = [0, 10, 15]  # seconds between retries
+    for attempt, delay in enumerate(delays):
+        if delay > 0:
+            log(f"Recording not ready, retrying in {delay}s (attempt {attempt + 1}/{len(delays)})")
+            await asyncio.sleep(delay)
+        try:
+            url = await db.async_recording_url(event_id)
+            if not url:
+                log(f"No video URL for event {event_id} (attempt {attempt + 1})")
+                continue
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    log(f"Video download failed: HTTP {resp.status}")
-                    return None
-                async with aiofiles.open(mp4_path, "wb") as f:
-                    async for chunk in resp.content.iter_chunked(8192):
-                        await f.write(chunk)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 404:
+                        # Recording not yet available — retry
+                        continue
+                    if resp.status != 200:
+                        log(f"Video download failed: HTTP {resp.status}")
+                        return None, None
+                    async with aiofiles.open(mp4_path, "wb") as f:
+                        async for chunk in resp.content.iter_chunked(8192):
+                            await f.write(chunk)
 
-        # Extract first frame with ffmpeg
-        result = subprocess.run(
-            [FFMPEG, "-i", mp4_path, "-vframes", "1", "-q:v", "2",
-             "-update", "1", frame_path, "-y"],
-            capture_output=True, timeout=10,
-        )
-        if result.returncode != 0:
-            log(f"ffmpeg failed: {result.stderr.decode()[:200]}")
-            return None
+            # Extract a preview frame ~3 seconds in (skip pre-roll buffer)
+            result = subprocess.run(
+                [FFMPEG, "-ss", "3", "-i", mp4_path, "-vframes", "1", "-q:v", "2",
+                 "-update", "1", frame_path, "-y"],
+                capture_output=True, timeout=10,
+            )
+            if result.returncode != 0:
+                log(f"ffmpeg frame extraction failed: {result.stderr.decode()[:200]}")
+                frame_path = None
 
-        # Clean up MP4
-        Path(mp4_path).unlink(missing_ok=True)
+            if frame_path and (not Path(frame_path).exists() or Path(frame_path).stat().st_size == 0):
+                frame_path = None
 
-        if Path(frame_path).exists() and Path(frame_path).stat().st_size > 0:
-            return frame_path
-        return None
+            return mp4_path, frame_path
 
-    except Exception as e:
-        log(f"ERROR extracting frame: {e}")
-        return None
+        except Exception as e:
+            if attempt < len(delays) - 1:
+                log(f"Download attempt {attempt + 1} failed: {e}")
+                continue
+            log(f"ERROR downloading recording: {e}")
+            return None, None
+
+    log(f"Recording not available after {len(delays)} attempts for event {event_id}")
+    return None, None
 
 
 def on_event(event: RingEvent) -> None:
@@ -400,7 +456,7 @@ def on_event(event: RingEvent) -> None:
 
     elif kind == "motion":
         loop = asyncio.get_event_loop()
-        loop.create_task(_handle_motion(device, doorbot_id, event.id))
+        loop.create_task(_handle_motion(device, doorbot_id, event.id, state=event.state or ""))
 
     # Skip on_demand and other event types
 
@@ -413,14 +469,14 @@ async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
     send_imessage(msg)
 
     # Try to grab a frame (recording may take a few seconds)
-    await _send_event_frame(device, doorbot_id, event_id)
+    await _send_event_recording(device, doorbot_id, event_id)
 
 
-async def _handle_motion(device: str, doorbot_id: int, event_id: int) -> None:
+async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str = "") -> None:
     """Handle motion — check for person detection, then notify with image."""
     try:
-        # Wait for Ring to process CV data
-        await asyncio.sleep(5)
+        # FCM event state "human" already means person detected — trust it
+        person_detected = state.lower() == "human"
 
         global _ring
         if _ring is None:
@@ -436,21 +492,21 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int) -> None:
 
         if db is None:
             log(f"WARNING: doorbot_id={doorbot_id} not found")
-            msg = f"\U0001f514 {device}: Motion detected"
-            log(f"NOTIFY (unverified): {msg}")
-            send_imessage(msg)
+            if person_detected:
+                msg = f"\U0001f514 {device}: Person detected at door"
+                log(f"NOTIFY (unverified): {msg}")
+                send_imessage(msg)
             return
 
-        # Check history for person detection
-        history = await db.async_history(limit=3)
-        person_detected = False
-        recording_id = None
-        for h in history:
-            if h.get("id") == event_id:
-                cv = h.get("cv_properties") or {}
-                person_detected = cv.get("person_detected", False)
-                recording_id = h.get("id")
-                break
+        # If FCM didn't flag person, fall back to history API check
+        if not person_detected:
+            await asyncio.sleep(5)
+            history = await db.async_history(limit=5)
+            for h in history:
+                if h.get("id") == event_id:
+                    cv = h.get("cv_properties") or {}
+                    person_detected = cv.get("person_detected", False)
+                    break
 
         if person_detected:
             msg = f"\U0001f514 {device}: Person detected at door"
@@ -458,8 +514,7 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int) -> None:
             send_imessage(msg)
 
             # Grab and send frame
-            if recording_id:
-                await _send_event_frame(device, doorbot_id, recording_id, db=db)
+            await _send_event_recording(device, doorbot_id, event_id, db=db)
         else:
             log(f"Motion on {device} — no person detected, skipping")
 
@@ -467,8 +522,8 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int) -> None:
         log(f"ERROR handling motion: {e}")
 
 
-async def _send_event_frame(device: str, doorbot_id: int, event_id: int, db=None) -> None:
-    """Download recording and send frame as iMessage attachment."""
+async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=None) -> None:
+    """Download recording, analyze video with Claude vision, send frame + description."""
     try:
         # Wait for recording to be ready
         await asyncio.sleep(8)
@@ -483,39 +538,46 @@ async def _send_event_frame(device: str, doorbot_id: int, event_id: int, db=None
                     break
 
         if db is None:
-            log(f"Cannot find doorbell {doorbot_id} for frame extraction")
+            log(f"Cannot find doorbell {doorbot_id} for recording")
             return
 
         if not db.has_subscription:
-            log(f"{device} has no Ring Protect — skipping frame")
+            log(f"{device} has no Ring Protect — skipping recording")
             return
 
-        frame_path = await download_and_extract_frame(db, event_id)
-        if frame_path:
-            # Analyze the frame with Claude vision
-            raw_analysis = analyze_frame(frame_path)
-            description = ""
-            if raw_analysis:
-                log(f"Vision raw: {raw_analysis}")
-                vision_data = parse_vision_result(raw_analysis)
-                if vision_data:
-                    description = vision_data.get("description", "")
-                    # Check for departure/arrival automation
-                    check_departure_arrival(vision_data, doorbot_id)
-                else:
-                    # Fallback: use raw text as description
-                    description = raw_analysis
+        mp4_path, frame_path = await download_recording(db, event_id)
+        if not mp4_path:
+            log(f"Could not download recording for event {event_id}")
+            return
 
-            # Send image then description
+        # Analyze the full video clip with Claude vision
+        description = ""
+        raw_analysis = analyze_video(mp4_path)
+        if raw_analysis:
+            log(f"Vision raw: {raw_analysis}")
+            vision_data = parse_vision_result(raw_analysis)
+            if vision_data:
+                description = vision_data.get("description", "")
+                # Check for departure/arrival automation
+                check_departure_arrival(vision_data, doorbot_id)
+            else:
+                # Fallback: use raw text as description
+                description = raw_analysis
+
+        # Send preview frame as iMessage image, then description as caption
+        if frame_path:
             log(f"Sending frame: {frame_path}")
             send_imessage_image(frame_path, caption=description)
-            # Clean up frame after sending
             Path(frame_path).unlink(missing_ok=True)
-        else:
-            log(f"Could not extract frame for event {event_id}")
+        elif description:
+            # No frame but have description — send as text
+            send_imessage(description)
+
+        # Clean up MP4
+        Path(mp4_path).unlink(missing_ok=True)
 
     except Exception as e:
-        log(f"ERROR sending frame: {e}")
+        log(f"ERROR processing recording: {e}")
 
 
 # Global ring instance for async lookups
