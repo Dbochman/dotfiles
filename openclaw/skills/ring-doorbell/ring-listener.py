@@ -470,8 +470,8 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     sliding window. Arrival detection is handled by FindMy polling, not Ring.
 
     Trigger conditions:
-    - 2+ people AND 2+ dogs departing → auto-start Roombas + begin FindMy polling
-    - 2+ people AND 1 dog departing → ask Dylan via iMessage for confirmation
+    - 1+ people AND 2+ dogs departing → auto-start Roombas + begin FindMy polling
+    - 1+ people AND 1 dog departing → ask Dylan via iMessage for confirmation
     """
     location = DOORBELL_LOCATIONS.get(doorbot_id)
     if not location:
@@ -512,29 +512,27 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
         f"people_max={total_people} dogs_total={total_dogs} "
         f"window_events={sum(1 for s in _departure_sightings if s['direction'] == direction and s['location'] == location)}")
 
-    if total_people < 2:
+    if total_people < 1 or total_dogs < 1:
         return
+
+    # Clear sightings to prevent re-triggering
+    _departure_sightings[:] = [
+        s for s in _departure_sightings
+        if not (s["direction"] == "departing" and s["location"] == location)
+    ]
 
     if total_dogs >= 2:
         # Full household departure — auto-trigger
-        _departure_sightings[:] = [
-            s for s in _departure_sightings
-            if not (s["direction"] == "departing" and s["location"] == location)
-        ]
-        log(f"DEPARTURE DETECTED at {location}: 2+ people + 2+ dogs leaving (accumulated)!")
+        log(f"DEPARTURE DETECTED at {location}: {total_people} people + {total_dogs} dogs leaving!")
         send_imessage(f"\U0001f9f9 Starting Roombas at {location} — everyone left for a walk!")
         run_roomba_command(location, "start")
         start_findmy_polling(location)
-
-    elif total_dogs == 1:
+    else:
         # Only 1 dog seen — ask for confirmation
-        _departure_sightings[:] = [
-            s for s in _departure_sightings
-            if not (s["direction"] == "departing" and s["location"] == location)
-        ]
-        log(f"PARTIAL DEPARTURE at {location}: 2+ people + 1 dog — asking for confirmation")
+        log(f"PARTIAL DEPARTURE at {location}: {total_people} people + 1 dog — asking for confirmation")
         send_imessage(
-            f"\U0001f436 Spotted 2 people and 1 dog leaving at {location}. "
+            f"\U0001f436 Spotted {total_people} {'person' if total_people == 1 else 'people'} "
+            f"and 1 dog leaving at {location}. "
             f"Should I start the Roombas? (Tell OpenClaw yes/no)"
         )
 
