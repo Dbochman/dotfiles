@@ -745,10 +745,6 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str
 
         if db is None:
             log(f"WARNING: doorbot_id={doorbot_id} not found")
-            if person_detected:
-                msg = f"\U0001f514 {device}: Person detected at door"
-                log(f"NOTIFY (unverified): {msg}")
-                send_imessage(msg)
             return
 
         # If FCM didn't flag person, fall back to history API check
@@ -762,9 +758,7 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str
                     break
 
         if person_detected:
-            msg = f"\U0001f514 {device}: Person detected at door"
-            log(f"NOTIFY: {msg}")
-            send_imessage(msg)
+            log(f"Person detected on {device} — processing recording")
 
             # Grab and send frame
             await _send_event_recording(device, doorbot_id, event_id, db=db)
