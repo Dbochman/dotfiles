@@ -462,6 +462,32 @@ def stop_findmy_polling() -> None:
         _findmy_poll_task = None
 
 
+# Dog walk hours (local time) — automation only active during these windows
+_WALK_HOURS = [(8, 10), (11, 13), (17, 20)]  # 8-10 AM, 11 AM-1 PM, 5-8 PM
+
+# Presence state file
+_PRESENCE_STATE = Path.home() / ".openclaw/presence/state.json"
+
+
+def _is_walk_hour() -> bool:
+    """Check if current local time is within typical dog walk hours."""
+    hour = datetime.now().hour
+    return any(start <= hour < end for start, end in _WALK_HOURS)
+
+
+def _is_location_occupied(location: str) -> bool:
+    """Check presence state — returns True if location is occupied or state unknown."""
+    try:
+        if not _PRESENCE_STATE.exists():
+            return True  # assume occupied if no state file
+        state = json.loads(_PRESENCE_STATE.read_text())
+        loc_state = state.get(location, {})
+        occupancy = loc_state.get("occupancy", "occupied")
+        return occupancy != "confirmed_vacant"
+    except Exception:
+        return True  # assume occupied on error
+
+
 def check_departure(vision_data: dict, doorbot_id: int) -> None:
     """Accumulate departing people/dogs across recent events and trigger Roombas.
 
@@ -469,12 +495,27 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     single departure. This function accumulates sightings within a 10-minute
     sliding window. Arrival detection is handled by FindMy polling, not Ring.
 
+    Pre-checks:
+    - Time-of-day filter: only active 6-9 AM and 3-9 PM
+    - Presence cross-check: skip if location already confirmed_vacant
+
     Trigger conditions:
     - 1+ people AND 2+ dogs departing → auto-start Roombas + begin FindMy polling
     - 1+ people AND 1 dog departing → ask Dylan via iMessage for confirmation
     """
     location = DOORBELL_LOCATIONS.get(doorbot_id)
     if not location:
+        return
+
+    # Time-of-day filter
+    if not _is_walk_hour():
+        hour = datetime.now().hour
+        log(f"DEPARTURE SKIP: outside walk hours (hour={hour})")
+        return
+
+    # Presence cross-check — if already vacant, no one is home to leave
+    if not _is_location_occupied(location):
+        log(f"DEPARTURE SKIP: {location} already confirmed_vacant")
         return
 
     people = vision_data.get("people", [])
