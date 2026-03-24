@@ -598,11 +598,10 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
 
     people = vision_data.get("people", [])
     dogs = vision_data.get("dogs", [])
-    direction = vision_data.get("direction", "unclear").lower()
 
-    # Only track departures — arrivals handled by FindMy polling
-    if direction != "departing":
-        return
+    # Direction filter removed — Haiku struggles with fisheye distortion
+    # (arrivals frequently misclassified as departures). Time-of-day filter,
+    # presence cross-check, and cooldown prevent false positives instead.
 
     now = time.time()
 
@@ -611,7 +610,6 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
         "time": now,
         "people": len(people),
         "dogs": len(dogs),
-        "direction": direction,
         "location": location,
     })
 
@@ -619,17 +617,17 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     cutoff = now - _DEPARTURE_WINDOW
     _departure_sightings[:] = [s for s in _departure_sightings if s["time"] >= cutoff]
 
-    # Accumulate counts for departures at this location within the window
+    # Accumulate counts at this location within the window
     total_people = 0
     total_dogs = 0
     for s in _departure_sightings:
-        if s["direction"] == "departing" and s["location"] == location:
+        if s["location"] == location:
             total_people = max(total_people, s["people"])  # use max per event
             total_dogs += s["dogs"]  # dogs may appear in different events
 
-    log(f"ACCUMULATOR: direction={direction} location={location} "
+    log(f"ACCUMULATOR: location={location} "
         f"people_max={total_people} dogs_total={total_dogs} "
-        f"window_events={sum(1 for s in _departure_sightings if s['direction'] == direction and s['location'] == location)}")
+        f"window_events={sum(1 for s in _departure_sightings if s['location'] == location)}")
 
     if total_people < 1 or total_dogs < 1:
         return
@@ -637,7 +635,7 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     # Clear sightings to prevent re-triggering
     _departure_sightings[:] = [
         s for s in _departure_sightings
-        if not (s["direction"] == "departing" and s["location"] == location)
+        if not (s["location"] == location)
     ]
 
     if total_dogs >= 2:
@@ -889,8 +887,7 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
                 # to catch the second dog that may appear briefly
                 people = vision_data.get("people", [])
                 dogs = vision_data.get("dogs", [])
-                direction = vision_data.get("direction", "unclear").lower()
-                if len(people) >= 1 and len(dogs) == 1 and direction in ("departing", "arriving"):
+                if len(people) >= 1 and len(dogs) == 1:
                     log(f"Only 1 dog in 5 frames — retrying with 10 frames for better coverage")
                     retry_analysis = analyze_video(mp4_path, frame_count=10)
                     if retry_analysis:
