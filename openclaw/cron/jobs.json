@@ -597,6 +597,31 @@
         "lastDeliveryStatus": "delivered",
         "consecutiveErrors": 0
       }
+    },
+    {
+      "id": "crisismode-health-scan-0001",
+      "agentId": "main",
+      "name": "CrisisMode Infrastructure Health Scan",
+      "enabled": true,
+      "createdAtMs": 1774850400000,
+      "updatedAtMs": 1774850400000,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9,21 * * *",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Run an infrastructure health scan using the crisismode skill.\n\n## Step 1 — Run Scan\n\nRun `crisismode scan --json` and parse the JSON output (take the last line — the scan result, not the detection line).\n\n## Step 2 — Evaluate Results\n\nCheck the health score and findings:\n- **Ignore PG-001** (PostgreSQL auto-probe, no PG runs on this machine)\n- **Ignore DNS split-brain warnings** if both resolvers are reachable and resolution success rate is 100% (benign dual-stack behavior)\n- Focus on: disk critical/warning, any check plugin (PLUG-*) showing critical or warning, any service down\n\n## Step 3 — Alert or Stay Silent\n\n**If score >= 70 AND no critical/warning findings (after ignoring PG-001 and benign DNS):**\nDo NOT send any message. Silent success — no news is good news.\n\n**If score < 70 OR any critical/warning finding (excluding PG-001 and benign DNS):**\nCompose a concise alert message:\n\n🏥 **CrisisMode Health: [SCORE]/100**\n- [Finding ID]: [status] — [summary]\n- [Finding ID]: [status] — [summary]\n\nRecommended: `crisismode diagnose [ID]`\n\nKeep it brief — just the issues, not the healthy items."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "dylanbochman@gmail.com"
+      },
+      "state": {}
     }
   ]
 }

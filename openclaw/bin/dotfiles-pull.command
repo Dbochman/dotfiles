@@ -79,13 +79,27 @@ else
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: smoke test PASSED" >> "$LOG"
 fi
 
-# Deploy CrisisMode config
+# Deploy CrisisMode config and check plugins
 CRISISMODE_SRC="$REPO/openclaw/crisismode"
 CRISISMODE_DST="$HOME/.crisismode"
 if [ -d "$CRISISMODE_SRC" ]; then
   mkdir -p "$CRISISMODE_DST"
   cp "$CRISISMODE_SRC/crisismode.yaml" "$CRISISMODE_DST/crisismode.yaml"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) crisismode: deployed config to $CRISISMODE_DST" >> "$LOG"
+  # Deploy custom check plugins
+  if [ -d "$CRISISMODE_SRC/checks" ]; then
+    mkdir -p "$CRISISMODE_DST/checks"
+    CHECKS_DEPLOYED=0
+    for check_dir in "$CRISISMODE_SRC/checks"/*/; do
+      check_name=$(basename "$check_dir")
+      rm -rf "$CRISISMODE_DST/checks/$check_name"
+      cp -R "$check_dir" "$CRISISMODE_DST/checks/$check_name"
+      chmod +x "$CRISISMODE_DST/checks/$check_name/check.sh" 2>/dev/null
+      CHECKS_DEPLOYED=$((CHECKS_DEPLOYED + 1))
+    done
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) crisismode: deployed config + $CHECKS_DEPLOYED check plugins" >> "$LOG"
+  else
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) crisismode: deployed config to $CRISISMODE_DST" >> "$LOG"
+  fi
 fi
 
 # Deploy workspace files (SOUL.md, TOOLS.md, etc.)

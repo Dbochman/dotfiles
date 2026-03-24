@@ -1,0 +1,8 @@
+{
+  "name": "check-bluebubbles",
+  "description": "Checks BlueBubbles iMessage server health, Private API status, and message freshness",
+  "version": "1.0.0",
+  "targetKinds": ["application", "generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh"
+}

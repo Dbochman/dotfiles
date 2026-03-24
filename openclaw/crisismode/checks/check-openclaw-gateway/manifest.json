@@ -1,0 +1,8 @@
+{
+  "name": "check-openclaw-gateway",
+  "description": "Checks OpenClaw gateway health endpoint and LaunchAgent process status",
+  "version": "1.0.0",
+  "targetKinds": ["application", "generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh"
+}

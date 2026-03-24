@@ -1,0 +1,8 @@
+{
+  "name": "check-launchd-services",
+  "description": "Checks critical macOS LaunchAgent services are loaded and not crash-looping",
+  "version": "1.0.0",
+  "targetKinds": ["generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh"
+}
