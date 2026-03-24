@@ -106,6 +106,10 @@ _ROOMBA_COOLDOWN = 7200  # 2 hours
 # FindMy polling state
 _findmy_poll_task: asyncio.Task | None = None
 
+# Departure accumulator: track people/dogs across recent events within a window
+_DEPARTURE_WINDOW = 600  # 10 minutes
+_departure_sightings: list[dict] = []  # [{"time": float, "people": int, "dogs": int, "direction": str, "location": str}]
+
 
 def log(msg: str) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -214,7 +218,7 @@ def extract_multi_frames(video_path: str, count: int = 5) -> list[str]:
     return frames
 
 
-def analyze_video(video_path: str) -> str | None:
+def analyze_video(video_path: str, frame_count: int = 5) -> str | None:
     """Analyze a doorbell video by sending multiple frames to Claude vision."""
     try:
         if not OAUTH_CACHE.exists():
@@ -226,7 +230,7 @@ def analyze_video(video_path: str) -> str | None:
             log("No OAuth access token — skipping vision analysis")
             return None
 
-        frames = extract_multi_frames(video_path, count=5)
+        frames = extract_multi_frames(video_path, count=frame_count)
         if not frames:
             log("No frames extracted for vision analysis")
             return None
@@ -459,7 +463,13 @@ def stop_findmy_polling() -> None:
 
 
 def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
-    """Check vision analysis for full household departure or arrival and trigger Roombas."""
+    """Accumulate departing people/dogs across recent events and trigger Roombas.
+
+    People and dogs often pass the doorbell in separate motion events during a
+    single departure/arrival. This function accumulates sightings within a
+    10-minute sliding window and triggers automation when cumulative counts
+    reach 2+ people AND 2+ dogs in the same direction.
+    """
     location = DOORBELL_LOCATIONS.get(doorbot_id)
     if not location:
         return
@@ -468,19 +478,56 @@ def check_departure_arrival(vision_data: dict, doorbot_id: int) -> None:
     dogs = vision_data.get("dogs", [])
     direction = vision_data.get("direction", "unclear").lower()
 
-    if len(people) < 2 or len(dogs) < 2:
+    if direction not in ("departing", "arriving"):
         return
 
+    now = time.time()
+
+    # Record this sighting
+    _departure_sightings.append({
+        "time": now,
+        "people": len(people),
+        "dogs": len(dogs),
+        "direction": direction,
+        "location": location,
+    })
+
+    # Prune old sightings outside the window
+    cutoff = now - _DEPARTURE_WINDOW
+    _departure_sightings[:] = [s for s in _departure_sightings if s["time"] >= cutoff]
+
+    # Accumulate counts for this direction + location within the window
+    total_people = 0
+    total_dogs = 0
+    for s in _departure_sightings:
+        if s["direction"] == direction and s["location"] == location:
+            total_people = max(total_people, s["people"])  # use max per event, not sum
+            total_dogs += s["dogs"]  # dogs may appear in different events
+
+    # Also count unique dog sightings — cap dogs from a single event at what was seen
+    # Use max people (2 people in one event is enough) but sum dogs across events
+    log(f"ACCUMULATOR: direction={direction} location={location} "
+        f"people_max={total_people} dogs_total={total_dogs} "
+        f"window_events={sum(1 for s in _departure_sightings if s['direction'] == direction and s['location'] == location)}")
+
+    if total_people < 2 or total_dogs < 2:
+        return
+
+    # Clear sightings for this direction+location to prevent re-triggering
+    _departure_sightings[:] = [
+        s for s in _departure_sightings
+        if not (s["direction"] == direction and s["location"] == location)
+    ]
+
     if direction == "departing":
-        log(f"DEPARTURE DETECTED at {location}: Dylan + Julia + both dogs leaving!")
+        log(f"DEPARTURE DETECTED at {location}: 2+ people + 2+ dogs leaving (accumulated)!")
         send_imessage(f"\U0001f9f9 Starting Roombas at {location} — everyone left for a walk!")
         run_roomba_command(location, "start")
         # Begin polling FindMy for return home
         start_findmy_polling(location)
 
     elif direction == "arriving":
-        log(f"ARRIVAL DETECTED at {location}: Dylan + Julia + both dogs returning!")
-        send_imessage(f"\U0001f3e0 Welcome home! Docking Roombas at {location}.")
+        log(f"ARRIVAL DETECTED at {location}: 2+ people + 2+ dogs returning (accumulated)!")
         run_roomba_command(location, "dock")
         # Stop FindMy polling if active (Ring already detected arrival)
         stop_findmy_polling()
@@ -712,6 +759,23 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
             vision_data = parse_vision_result(raw_analysis)
             if vision_data:
                 description = vision_data.get("description", "")
+
+                # If we see people but only 1 dog, retry with more frames
+                # to catch the second dog that may appear briefly
+                people = vision_data.get("people", [])
+                dogs = vision_data.get("dogs", [])
+                direction = vision_data.get("direction", "unclear").lower()
+                if len(people) >= 1 and len(dogs) == 1 and direction in ("departing", "arriving"):
+                    log(f"Only 1 dog in 5 frames — retrying with 10 frames for better coverage")
+                    retry_analysis = analyze_video(mp4_path, frame_count=10)
+                    if retry_analysis:
+                        log(f"Vision retry raw: {retry_analysis}")
+                        retry_data = parse_vision_result(retry_analysis)
+                        if retry_data and len(retry_data.get("dogs", [])) > len(dogs):
+                            log(f"Retry found more dogs: {len(retry_data.get('dogs', []))} vs {len(dogs)}")
+                            vision_data = retry_data
+                            description = retry_data.get("description", description)
+
                 # Check for departure/arrival automation
                 check_departure_arrival(vision_data, doorbot_id)
             else:
