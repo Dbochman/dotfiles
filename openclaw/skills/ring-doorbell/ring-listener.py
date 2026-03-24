@@ -423,7 +423,6 @@ async def _findmy_poll_loop(location: str) -> None:
                 if near_home:
                     elapsed = int((time.time() - start_time) / 60)
                     log(f"FINDMY POLL: Return detected after {elapsed}min — docking Roombas at {location}")
-                    send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location}.")
                     run_roomba_command(location, "dock")
                     return
             else:
