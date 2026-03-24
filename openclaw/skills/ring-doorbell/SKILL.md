@@ -67,9 +67,19 @@ Downloads the full MP4 video file. Get recording IDs from `ring videos` or `ring
 
 A persistent listener (`ai.openclaw.ring-listener`) runs as a LaunchAgent on the Mini. It receives Ring events via FCM push and sends iMessage alerts to Dylan:
 
-- **Doorbell dings**: instant notification
-- **Motion with person detected**: notifies after CV confirmation (~3s delay)
+- **Doorbell dings**: instant text notification + camera frame + AI description
+- **Motion with person detected**: instant notification (trusts FCM `state=human`), followed by multi-frame video analysis (5 frames from recording sent to Claude Haiku)
 - **Generic motion** (animals, cars): silently ignored
+
+### Dog Walk Automation
+
+When the listener detects 2+ people departing with 2+ dogs:
+1. **Starts Roombas** immediately
+2. **Begins FindMy polling** every 5 minutes via Peekaboo screenshots of the FindMy app
+3. **Docks Roombas silently** when FindMy shows the person back on Crosstown Ave
+4. **Safety fallback**: auto-docks after 2 hours if no return detected
+
+If Ring detects arrival (2+ people + dogs arriving) before FindMy polling triggers, Roombas dock immediately and polling stops.
 
 To check the listener:
 ```bash

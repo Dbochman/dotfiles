@@ -2,11 +2,12 @@
 
 ## Overview
 
-The Ring doorbell integration provides three capabilities for OpenClaw:
+The Ring doorbell integration provides four capabilities for OpenClaw:
 
 1. **CLI skill** — query doorbell status, events, video, and health on demand
-2. **Real-time event listener** — persistent FCM push listener that sends iMessage notifications with camera frames and AI-powered scene descriptions
-3. **Vision-triggered home automation** — when Claude Haiku detects the full household departing or arriving with both dogs, Roombas are automatically started or docked
+2. **Real-time event listener** — persistent FCM push listener that sends iMessage notifications with multi-frame video analysis and AI-powered scene descriptions
+3. **Vision-triggered home automation** — when Claude Haiku detects 2+ people departing or arriving with 2+ dogs, Roombas are automatically started or docked
+4. **FindMy return-home tracking** — after departure, polls Apple FindMy via Peekaboo every 5 minutes to detect return to Crosstown Ave and proactively dock Roombas
 
 ## Architecture
 
@@ -14,7 +15,7 @@ The Ring doorbell integration provides three capabilities for OpenClaw:
 Ring Doorbell Hardware
         |
         v (cloud)
-Ring Cloud API (auth-api.8slp.net / client-api.8slp.net)
+Ring Cloud API (oauth.ring.com)
         |
         +---> python-ring-doorbell library (venv)
         |         |
@@ -26,7 +27,7 @@ Ring Cloud API (auth-api.8slp.net / client-api.8slp.net)
         |         |
         |         +---> ring-listener.py (persistent FCM listener)
         |                   |
-        |                   +---> Claude Haiku Vision API (scene analysis)
+        |                   +---> Claude Haiku Vision API (multi-frame video analysis)
         |                   |         |
         |                   |         +---> Structured JSON: people, dogs, direction
         |                   |
@@ -35,14 +36,20 @@ Ring Cloud API (auth-api.8slp.net / client-api.8slp.net)
         |                   |         +---> Text alerts + camera frame attachments
         |                   |
         |                   +---> Roomba CLIs (departure/arrival automation)
+        |                   |         |
+        |                   |         +---> crosstown-roomba start/dock all
+        |                   |         +---> roomba start/dock floomba/philly
+        |                   |
+        |                   +---> FindMy polling (return-home detection)
         |                             |
-        |                             +---> crosstown-roomba start/dock all
-        |                             +---> roomba start/dock floomba/philly
+        |                             +---> Peekaboo (screenshot FindMy app)
+        |                             +---> Claude Haiku (is pin on Crosstown Ave?)
+        |                             +---> Dock Roombas when near home
         |
         +---> Ring Protect (subscription, Crosstown only)
                   |
                   +---> Video recording URLs (pre-signed S3)
-                  +---> Frame extraction via ffmpeg
+                  +---> Multi-frame extraction via ffmpeg
 ```
 
 ## Devices
@@ -82,8 +89,10 @@ Both are battery-powered doorbells. The Cabin doorbell is a shared device (autho
 | `~/.config/ring/token-cache.json` | Cached Ring OAuth tokens (auto-refreshed) |
 | `~/.openclaw/ring/venv/` | Python venv with `ring_doorbell[listen]`, `requests`, `aiohttp`, `aiofiles` |
 | `~/.openclaw/ring-listener/fcm-credentials.json` | FCM push registration credentials |
-| `~/.openclaw/ring-listener/frames/` | Temporary directory for video frames (cleaned after send) |
+| `~/.openclaw/ring-listener/frames/` | Temporary directory for video frames and MP4s (cleaned after send) |
+| `~/.openclaw/ring-listener/findmy/` | Temporary directory for FindMy screenshots (cleaned after analysis) |
 | `~/Library/LaunchAgents/ai.openclaw.ring-listener.plist` | Deployed LaunchAgent |
+| `~/Applications/Peekaboo.app` | TCC wrapper for Peekaboo CLI (Screen Recording + Accessibility grants) |
 
 ## Component 1: CLI Skill (`ring`)
 
@@ -178,56 +187,63 @@ on_event(RingEvent)
         |   _handle_ding()
         |       |
         |       +-- Send immediate text: "🔔 Front Door: Doorbell rang!"
-        |       +-- _send_event_frame() (async, ~10s delay)
+        |       +-- _send_event_recording() (async, ~20-30s delay)
         |
         +-- kind == "motion"
                 |
                 v
-            _handle_motion()
+            _handle_motion(state=event.state)
                 |
-                +-- Wait 5s for Ring CV processing
-                +-- Query history API for cv_properties.person_detected
+                +-- state == "human"? → person_detected = True (trust FCM)
+                +-- else: wait 5s, query history API for cv_properties.person_detected
                 |
                 +-- person_detected == True?
                 |       |
                 |       +-- Send text: "🔔 Front Door: Person detected at door"
-                |       +-- _send_event_frame() (async, ~10s delay)
+                |       +-- _send_event_recording() (async, ~20-30s delay)
                 |
                 +-- person_detected == False?
                         |
                         +-- Log and skip (no notification)
 ```
 
-### Frame Extraction Pipeline
+### Recording & Multi-Frame Vision Pipeline
 
 ```
-_send_event_frame()
+_send_event_recording()
         |
         +-- Wait 8s for Ring to transcode recording
-        +-- Get signed video URL via async_recording_url()
-        +-- Download MP4 via aiohttp (30s timeout)
-        +-- Extract first frame: ffmpeg -i event.mp4 -vframes 1 -q:v 2 event.jpg
-        +-- Delete MP4, keep frame
+        +-- download_recording() with retry (3 attempts, 0/10/15s backoff)
+        |       +-- Get signed video URL via async_recording_url()
+        |       +-- Download MP4 via aiohttp (30s timeout)
+        |       +-- 404 = not ready yet, retry
+        |       +-- Extract preview frame at 3s mark via ffmpeg
+        |       +-- Return (mp4_path, frame_path)
         |
         v
-analyze_frame() — Claude Haiku Vision
+analyze_video() — Claude Haiku Multi-Frame Vision
+        |
+        +-- extract_multi_frames(mp4, count=5)
+        |       +-- ffprobe to get video duration
+        |       +-- Sample 5 frames centered in clip (skip edges)
+        |       +-- 18s clip → frames at 3, 6, 9, 12, 15s
+        |       +-- Scales proportionally: margin = max(2s, duration/6)
         |
         +-- Load OAuth token from ~/.openclaw/.anthropic-oauth-cache
-        +-- Encode frame as base64
+        +-- Encode all 5 frames as base64 images
         +-- POST to https://api.anthropic.com/v1/messages
-        |       Headers: Authorization: Bearer <oauth-token>
-        |                anthropic-beta: oauth-2025-04-20
+        |       5 image content blocks + text prompt
         |       Model: claude-haiku-4-5-20251001
         |
         +-- Parse structured JSON response
         |
         v
-check_departure_arrival() — Roomba automation
+check_departure_arrival() — Roomba + FindMy automation
         |
         v
 send_imessage_image() — BB attachment + caption
         |
-        +-- POST multipart to /api/v1/message/attachment (image)
+        +-- POST multipart to /api/v1/message/attachment (preview frame)
         +-- POST JSON to /api/v1/message/text (description caption)
 ```
 
@@ -242,9 +258,10 @@ Two layers prevent duplicate notifications:
 
 ### Vision Analysis Prompt
 
-The listener sends each camera frame to Claude Haiku with a structured JSON prompt:
+The listener sends 5 frames from each recording to Claude Haiku with a structured JSON prompt:
 
 ```
+These are 5 frames sampled evenly from a doorbell video clip.
 Analyze this front door camera image. Respond with ONLY valid JSON:
 {
   "description": "<1 sentence describing the scene>",
@@ -261,20 +278,17 @@ Known dogs: large brown/gold dog with dark black face;
 ### Decision Logic
 
 ```python
-has_dylan = "dylan" in people
-has_julia = "julia" in people
-both_people = has_dylan and has_julia
-both_dogs = len(dogs) >= 2
-
-# ALL FOUR must be present for automation to trigger
-if not both_people or not both_dogs:
+# Count-based: 2+ people AND 2+ dogs required
+if len(people) < 2 or len(dogs) < 2:
     return  # no automation
 
 if direction == "departing":
     start_roombas(location)
+    start_findmy_polling(location)  # begin tracking return home
 
 elif direction == "arriving":
     dock_roombas(location)
+    stop_findmy_polling()  # cancel if active
 ```
 
 ### Doorbell → Location → Roomba Mapping
@@ -298,7 +312,87 @@ A 2-hour cooldown per location per action prevents re-triggering:
 | Scenario | Message |
 |----------|---------|
 | Departure detected | "🧹 Starting Roombas at crosstown — everyone left for a walk!" |
-| Arrival detected | "🏠 Welcome home! Docking Roombas at crosstown." |
+| FindMy tracking started | "📍 Tracking your walk — will dock Roombas when you're back on Crosstown Ave" |
+| Walk timeout (2hr) | "⏰ Walk tracking timed out after 2 hours — docking Roombas" |
+| Arrival detected (Ring) | "🏠 Welcome home! Docking Roombas at crosstown." |
+
+## Component 4: FindMy Return-Home Tracking
+
+### Overview
+
+When the listener detects a departure (2+ people + 2+ dogs leaving), it starts polling Apple FindMy every 5 minutes to detect the household's return. When the person's FindMy pin appears back on Crosstown Ave, Roombas are docked proactively — before the household reaches the front door.
+
+### How It Works
+
+```
+Departure detected
+        |
+        v
+start_findmy_polling(location)
+        |
+        +-- Wait 5 minutes (just left, no point checking)
+        |
+        v (every 5 minutes)
+capture_findmy()
+        |
+        +-- Peekaboo screenshot of FindMy app window
+        |       peekaboo image --app "Find My" --path <capture.png>
+        |
+        v
+analyze_findmy(capture.png)
+        |
+        +-- Send screenshot to Claude Haiku
+        +-- Prompt: "Is the pin on or near Crosstown Ave?"
+        +-- Response: {"street":"<name>", "near_home": true/false, "description":"..."}
+        |
+        +-- near_home == true?
+        |       +-- Dock Roombas silently
+        |       +-- Stop polling
+        |
+        +-- near_home == false?
+                +-- Log location, continue polling
+                +-- After 2 hours: dock Roombas as safety fallback
+```
+
+### Peekaboo Requirements
+
+- **Peekaboo** (`/opt/homebrew/bin/peekaboo` v3.0.0-beta3) installed via Homebrew
+- **Screen Recording** + **Accessibility** permissions granted to Peekaboo
+- Works from LaunchAgent context (verified) but NOT from SSH sessions (TCC restriction)
+- **Find My app must be open** on the Mini with the People tab showing the shared location
+- Location sharing: Dylan shares location with `clawdbotbochman@gmail.com` (the Mini's iCloud account)
+
+### FindMy Vision Prompt
+
+```
+Look at this FindMy app screenshot. There is a pin on the map showing a person's location.
+Respond with ONLY valid JSON:
+{
+  "street": "<street name the pin is on or nearest to>",
+  "near_home": true/false,
+  "description": "<1 sentence describing where the pin is>"
+}
+
+The person's home is on Crosstown Ave in West Roxbury/Boston.
+'near_home' should be true if the pin appears to be ON Crosstown Ave or within ~1 block of it.
+```
+
+### Timing & Limits
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Poll interval | 5 minutes | Balance between responsiveness and API cost |
+| First poll delay | 5 minutes | Skip initial poll (just departed) |
+| Maximum duration | 2 hours | Safety fallback — dock Roombas if no return detected |
+| Haiku timeout | 30 seconds | Per vision API call |
+
+### Cancellation
+
+FindMy polling is cancelled when:
+1. **Haiku confirms near_home** → dock Roombas, stop polling
+2. **Ring detects arrival** (2+ people + dogs arriving via doorbell) → dock Roombas, stop polling
+3. **2-hour timeout** → dock Roombas as safety net
+4. **Listener restart** → polling state is in-memory only
 
 ## Authentication & Credentials
 
@@ -336,15 +430,16 @@ A 2-hour cooldown per location per action prevents re-triggering:
 | Step | Latency | Notes |
 |------|---------|-------|
 | Ring event → FCM push | ~1s | Ring cloud to Firebase to listener |
-| Person detection check | +5s | Wait for Ring CV processing + history API call |
+| Person detection (FCM state=human) | instant | Trusted directly from FCM, no API delay |
+| Person detection (history fallback) | +5s | Only when FCM state is not "human" |
 | Text notification sent | +0.5s | BB API call |
-| Recording available | +8s | Ring cloud transcoding |
-| Video download | +2-5s | Depends on recording size (~3MB typical) |
-| Frame extraction | +0.1s | ffmpeg single frame |
-| Vision analysis | +2-3s | Claude Haiku API call |
+| Recording available | +8-33s | Initial 8s wait + up to 2 retries (10s, 15s) on 404 |
+| Video download | +2-5s | Depends on recording size (~3-4MB typical) |
+| Multi-frame extraction | +1-2s | 5 ffmpeg calls (ffprobe + 5 frame seeks) |
+| Vision analysis (5 frames) | +3-5s | Claude Haiku API call with 5 images |
 | Image + caption sent | +1s | BB attachment + text API calls |
-| **Total: ding → full notification** | **~12-15s** | Text arrives instantly, image + AI follows |
-| **Total: motion → full notification** | **~18-20s** | Includes CV wait + vision analysis |
+| **Total: ding → full notification** | **~15-20s** | Text arrives instantly, image + AI follows |
+| **Total: motion → full notification** | **~20-30s** | Text instant, multi-frame analysis follows |
 
 ## Operational Notes
 
@@ -375,10 +470,14 @@ launchctl load ~/Library/LaunchAgents/ai.openclaw.ring-listener.plist
 1. **Battery doorbells sleep** — `ring snapshot` returns empty when doorbell is asleep between events. Frame extraction uses recordings instead (available after events).
 2. **Cabin doorbell has no Ring Protect** — no video/frame for Cabin events. Text notifications still work, but no image or vision analysis.
 3. **WiFi health data unavailable** — `ring health` shows `None` for WiFi name/signal on these doorbell models. Connection status ("online") is available.
-4. **Vision accuracy** — Claude Haiku does scene description, not face recognition. It uses contextual clues (hair color, build, dog breed) to identify residents. May occasionally misidentify or miss people in poor lighting.
-5. **Direction detection** — "arriving" vs "departing" depends on body orientation in the fisheye frame. May report "unclear" in ambiguous cases, which does NOT trigger automation.
-6. **OAuth token expiry** — If the Claude Max OAuth cache expires and isn't refreshed, vision analysis silently degrades. Notifications and event detection continue working.
-7. **FCM reliability** — Firebase push connections can drop. The `KeepAlive` LaunchAgent restarts the listener if it crashes, and FCM credentials are persisted across restarts.
+4. **Vision accuracy** — Claude Haiku does scene description, not face recognition. It uses contextual clues (hair color, build, dog breed) to identify residents. People are typically identified as "unknown" rather than by name. The count-based automation (2+ people, 2+ dogs) works around this.
+5. **Direction detection** — "arriving" vs "departing" depends on body orientation across multiple frames. May report "unclear" in ambiguous cases, which does NOT trigger automation.
+6. **Recording availability** — Ring may take 10-30 seconds to process and upload a recording after an event. The listener retries up to 3 times with increasing delays (0s, 10s, 15s) to handle this.
+7. **OAuth token expiry** — If the Claude Max OAuth cache expires and isn't refreshed, vision analysis silently degrades. Notifications and event detection continue working.
+8. **FCM reliability** — Firebase push connections can drop. The `KeepAlive` LaunchAgent restarts the listener if it crashes, and FCM credentials are persisted across restarts.
+9. **FindMy requires open app** — The Find My app must be open on the Mini for Peekaboo screenshots to capture location data. If the app is closed or the window is minimized, FindMy polling will fail silently and fall back to the 2-hour timeout dock.
+10. **FindMy TCC restriction** — Peekaboo only works from LaunchAgent/Terminal context, not SSH. The Ring listener runs as a LaunchAgent so this works, but manual testing via SSH will fail.
+11. **FindMy polling is in-memory** — Polling state does not survive listener restarts. If the listener crashes mid-walk, FindMy polling stops and Roombas won't auto-dock (the 2-hour cooldown on the start action prevents re-starting them).
 
 ### Deployment
 
