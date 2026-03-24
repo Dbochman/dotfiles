@@ -91,6 +91,8 @@ Both are battery-powered doorbells. The Cabin doorbell is a shared device (autho
 | `~/.openclaw/ring-listener/fcm-credentials.json` | FCM push registration credentials |
 | `~/.openclaw/ring-listener/frames/` | Temporary directory for video frames and MP4s (cleaned after send) |
 | `~/.openclaw/ring-listener/findmy/` | Temporary directory for FindMy screenshots (cleaned after analysis) |
+| `~/.openclaw/ring-listener/state.json` | Current dog walk + Roomba state (updated on departure/dock events) |
+| `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl` | Daily event history (one JSON line per state change) |
 | `~/Library/LaunchAgents/ai.openclaw.ring-listener.plist` | Deployed LaunchAgent |
 | `~/Applications/Peekaboo.app` | TCC wrapper for Peekaboo CLI (Screen Recording + Accessibility grants) |
 
@@ -417,6 +419,63 @@ FindMy polling is cancelled when:
 1. **Haiku confirms near_home** → dock Roombas silently, stop polling
 2. **2-hour timeout** → dock Roombas as safety net
 3. **Listener restart** → polling state is in-memory only
+
+## Component 5: State File & Event History
+
+### State File
+
+**Path:** `~/.openclaw/ring-listener/state.json`
+
+Updated on every dog walk departure, dock, and timeout event. Represents current state.
+
+```json
+{
+  "timestamp": "2026-03-24T20:45:54Z",
+  "dog_walk": {
+    "active": true,
+    "location": "crosstown",
+    "departed_at": "2026-03-24T20:45:54Z",
+    "returned_at": null,
+    "people": 2,
+    "dogs": 2
+  },
+  "roombas": {
+    "crosstown": {
+      "status": "running",
+      "started_at": "2026-03-24T20:45:55Z",
+      "docked_at": null,
+      "trigger": "dog_walk_departure"
+    }
+  }
+}
+```
+
+### State Fields
+
+| Field | Values | Description |
+|-------|--------|-------------|
+| `dog_walk.active` | `true`/`false` | Whether a dog walk is currently in progress |
+| `dog_walk.location` | `crosstown`/`cabin` | Which doorbell triggered the departure |
+| `dog_walk.departed_at` | ISO 8601 UTC | When the departure was detected |
+| `dog_walk.returned_at` | ISO 8601 UTC / `null` | When return was detected (null if still out) |
+| `dog_walk.people` | int | Number of people detected departing |
+| `dog_walk.dogs` | int | Number of dogs detected departing |
+| `roombas.<location>.status` | `running`/`docked` | Current Roomba state |
+| `roombas.<location>.trigger` | `dog_walk_departure`/`timeout_fallback` | What started/stopped the Roombas |
+
+### Event Types
+
+| Event | Written When | State Changes |
+|-------|-------------|---------------|
+| `departure` | 1+ people + 2+ dogs departing detected | `active=true`, `status=running` |
+| `dock` | FindMy confirms return to home street | `active=false`, `status=docked`, `returned_at` set |
+| `dock_timeout` | 2-hour FindMy polling timeout | Same as dock, `trigger=timeout_fallback` |
+
+### Daily History
+
+**Path:** `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`
+
+Each state change is appended as a single JSON line (same schema as `state.json`). One file per day. Enables time-series analysis and future dashboard integration.
 
 ## Authentication & Credentials
 
