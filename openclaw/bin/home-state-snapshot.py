@@ -166,14 +166,20 @@ def main():
         for d in batteries:
             print(f"  {d['name']} ({d['location']}): {d.get('battery_pct')}%")
 
-    # Write current state
+    # Write current state atomically (temp + rename)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    CURRENT_FILE.write_text(json.dumps(snapshot, indent=2))
+    tmp_path = CURRENT_FILE.with_suffix(".tmp")
+    with open(tmp_path, "w") as f:
+        f.write(json.dumps(snapshot, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(str(tmp_path), str(CURRENT_FILE))
 
     # Append to daily history
     history_file = HISTORY_DIR / f"{now.strftime('%Y-%m-%d')}.jsonl"
     with open(history_file, "a") as f:
         f.write(json.dumps(snapshot) + "\n")
+        f.flush()
 
     print(f"\nSnapshot written to {CURRENT_FILE}")
     print(f"History appended to {history_file}")

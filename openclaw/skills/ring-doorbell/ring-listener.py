@@ -129,22 +129,31 @@ def _read_state() -> dict:
     try:
         if STATE_FILE.exists():
             return json.loads(STATE_FILE.read_text())
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"WARNING: Failed to read state file: {e}")
     return {}
 
 
 def _write_state(state: dict) -> None:
-    """Write state to JSON file and append to daily history JSONL."""
+    """Write state atomically (temp + rename) and append to daily history JSONL."""
     state["timestamp"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
 
-    # Append to daily history
+    # Atomic write: write to temp file, fsync, then rename
+    tmp_path = STATE_FILE.with_suffix(".tmp")
+    data = json.dumps(state, indent=2)
+    with open(tmp_path, "w") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(str(tmp_path), str(STATE_FILE))
+
+    # Append to daily history with flush
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     history_file = HISTORY_DIR / f"{datetime.utcnow().strftime('%Y-%m-%d')}.jsonl"
     with open(history_file, "a") as f:
         f.write(json.dumps(state) + "\n")
+        f.flush()
 
 
 def _update_state_dog_walk(location: str, event: str, people: int = 0, dogs: int = 0) -> None:
@@ -528,13 +537,13 @@ async def _findmy_poll_loop(location: str) -> None:
 
     while time.time() - start_time < MAX_DURATION:
         try:
-            capture_path = capture_findmy()
+            capture_path = await asyncio.to_thread(capture_findmy)
             if not capture_path:
                 log("FINDMY POLL: Capture failed, retrying next interval")
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
-            result = analyze_findmy(capture_path, location=location)
+            result = await asyncio.to_thread(analyze_findmy, capture_path, location)
             Path(capture_path).unlink(missing_ok=True)
 
             _update_state_findmy(location, "poll", result=result)
@@ -666,19 +675,21 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     cutoff = now - _DEPARTURE_WINDOW
     _departure_sightings[:] = [s for s in _departure_sightings if s["time"] >= cutoff]
 
-    # Accumulate counts at this location within the window
-    total_people = 0
-    total_dogs = 0
+    # Accumulate counts at this location within the window.
+    # Use max() for both people and dogs — the same dog seen across
+    # multiple motion events should not be double-counted.
+    max_people = 0
+    max_dogs = 0
     for s in _departure_sightings:
         if s["location"] == location:
-            total_people = max(total_people, s["people"])  # use max per event
-            total_dogs += s["dogs"]  # dogs may appear in different events
+            max_people = max(max_people, s["people"])
+            max_dogs = max(max_dogs, s["dogs"])
 
     log(f"ACCUMULATOR: location={location} "
-        f"people_max={total_people} dogs_total={total_dogs} "
+        f"people_max={max_people} dogs_max={max_dogs} "
         f"window_events={sum(1 for s in _departure_sightings if s['location'] == location)}")
 
-    if total_people < 1 or total_dogs < 1:
+    if max_people < 1 or max_dogs < 1:
         return
 
     # Clear sightings to prevent re-triggering
@@ -686,6 +697,9 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
         s for s in _departure_sightings
         if not (s["location"] == location)
     ]
+
+    total_people = max_people
+    total_dogs = max_dogs
 
     if total_dogs >= 2:
         # Full household departure — auto-trigger
@@ -915,7 +929,10 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
             return
 
         if not db.has_subscription:
-            log(f"{device} has no Ring Protect — skipping recording")
+            log(f"{device} has no Ring Protect — skipping recording, running departure check only")
+            # No video analysis possible, but still check for departure
+            # using FCM person detection (we know a person was detected to get here)
+            check_departure({"people": ["unknown"], "dogs": []}, doorbot_id)
             return
 
         mp4_path, frame_path = await download_recording(db, event_id)
@@ -923,9 +940,9 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
             log(f"Could not download recording for event {event_id}")
             return
 
-        # Analyze the full video clip with Claude vision
+        # Analyze the full video clip with Claude vision (run in thread to avoid blocking event loop)
         description = ""
-        raw_analysis = analyze_video(mp4_path)
+        raw_analysis = await asyncio.to_thread(analyze_video, mp4_path)
         if raw_analysis:
             log(f"Vision raw: {raw_analysis}")
             vision_data = parse_vision_result(raw_analysis)
@@ -938,7 +955,7 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
                 dogs = vision_data.get("dogs", [])
                 if len(people) >= 1 and len(dogs) == 1:
                     log(f"Only 1 dog in 5 frames — retrying with 10 frames for better coverage")
-                    retry_analysis = analyze_video(mp4_path, frame_count=10)
+                    retry_analysis = await asyncio.to_thread(analyze_video, mp4_path, 10)
                     if retry_analysis:
                         log(f"Vision retry raw: {retry_analysis}")
                         retry_data = parse_vision_result(retry_analysis)
@@ -957,7 +974,7 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
         # Send preview frame as iMessage image, then description as caption
         if frame_path:
             log(f"Sending frame: {frame_path}")
-            send_imessage_image(frame_path, caption=description)
+            await asyncio.to_thread(send_imessage_image, frame_path, description)
             Path(frame_path).unlink(missing_ok=True)
         elif description:
             # No frame but have description — send as text

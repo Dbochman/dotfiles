@@ -100,7 +100,7 @@ The listener uses multi-frame video analysis (5 frames from each recording sent 
 - Current state: `~/.openclaw/ring-listener/state.json` (dog_walk active/inactive, Roomba status, timestamps)
 - Daily history: `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`
 
-**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis is available for Cabin events. Cabin departure detection relies solely on Ring's built-in person detection (`cv_properties`), not Haiku vision. Roomba automation still works if the detection thresholds are met.
+**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog detection is available for Cabin events. Cabin motion events are processed for person detection only — dog walk automation (which requires dog counts from vision) will not auto-trigger at Cabin. To start Cabin Roombas, tell OpenClaw directly: "start floomba and philly".
 
 To check the listener:
 ```bash
