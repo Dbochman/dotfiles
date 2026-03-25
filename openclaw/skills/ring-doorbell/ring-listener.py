@@ -109,8 +109,10 @@ _DEDUP_WINDOW = 300  # 5 minutes
 _roomba_last_action: dict[str, float] = {}
 _ROOMBA_COOLDOWN = 7200  # 2 hours
 
-# FindMy polling state
+# Return monitoring state
 _findmy_poll_task: asyncio.Task | None = None
+_return_monitor_active: bool = False  # True while monitoring for return
+_ring_motion_during_walk: bool = False  # Set when Ring detects motion while monitoring
 
 # Departure accumulator: track people/dogs across recent events within a window
 _DEPARTURE_WINDOW = 600  # 10 minutes
@@ -539,76 +541,215 @@ def analyze_findmy(image_path: str, location: str = "crosstown") -> dict | None:
         return None
 
 
+def _navigate_findmy_to(person: str) -> None:
+    """Navigate FindMy sidebar to a specific person using keyboard arrows.
+
+    People order: Me (0) → Julia Jennings (1) → Dylan Bochman (2)
+    Strategy: press Up 3x to reach top, then Down to target position.
+    """
+    positions = {"me": 0, "julia": 1, "dylan": 2}
+    pos = positions.get(person.lower(), 0)
+
+    # Go to top of list
+    for _ in range(3):
+        subprocess.run([PEEKABOO, "press", "up", "--app", "Find My"],
+                       capture_output=True, timeout=5)
+        time.sleep(0.3)
+
+    # Navigate down to target
+    for _ in range(pos):
+        subprocess.run([PEEKABOO, "press", "down", "--app", "Find My"],
+                       capture_output=True, timeout=5)
+        time.sleep(0.5)
+
+    # Wait for map animation
+    time.sleep(3)
+
+
+def _check_person_near_home(person: str, location: str) -> dict | None:
+    """Navigate to a person in FindMy, capture, and check if near home."""
+    _navigate_findmy_to(person)
+    capture_path = capture_findmy()
+    if not capture_path:
+        return None
+    result = analyze_findmy(capture_path, location=location)
+    Path(capture_path).unlink(missing_ok=True)
+    return result
+
+
+def _check_network_presence(location: str) -> bool:
+    """Check if either tracked person is on the local network via presence scan.
+
+    Crosstown: ARP scan via MacBook Pro (SSH)
+    Cabin: Starlink gRPC scan (local on Mini)
+    """
+    try:
+        if location == "crosstown":
+            result = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=5", "dylans-macbook-pro",
+                 "~/.openclaw/workspace/scripts/presence-detect.sh", "crosstown"],
+                capture_output=True, timeout=90, text=True,
+            )
+        elif location == "cabin":
+            script = str(Path.home() / ".openclaw/workspace/scripts/presence-detect.sh")
+            result = subprocess.run(
+                [script, "cabin"],
+                capture_output=True, timeout=60, text=True,
+            )
+        else:
+            return False
+
+        if result.returncode != 0:
+            log(f"NETWORK CHECK: {location} scan failed: {result.stderr[:200]}")
+            return False
+        scan = json.loads(result.stdout)
+        presence = scan.get("presence", {})
+        for person, info in presence.items():
+            if info.get("present"):
+                log(f"NETWORK CHECK: {person} detected on {location} network")
+                return True
+        log(f"NETWORK CHECK: no one on {location} network")
+        return False
+    except Exception as e:
+        log(f"NETWORK CHECK: error: {e}")
+        return False
+
+
+def _detect_who_left(location: str) -> list[str]:
+    """Determine who left by running a network scan and checking who's absent.
+
+    Returns list of people not detected on the network (likely on the walk).
+    """
+    try:
+        if location == "crosstown":
+            result = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=5", "dylans-macbook-pro",
+                 "~/.openclaw/workspace/scripts/presence-detect.sh", "crosstown"],
+                capture_output=True, timeout=90, text=True,
+            )
+        elif location == "cabin":
+            script = str(Path.home() / ".openclaw/workspace/scripts/presence-detect.sh")
+            result = subprocess.run([script, "cabin"], capture_output=True, timeout=60, text=True)
+        else:
+            return ["dylan", "julia"]  # default: monitor both
+
+        if result.returncode != 0:
+            return ["dylan", "julia"]
+
+        scan = json.loads(result.stdout)
+        presence = scan.get("presence", {})
+        absent = []
+        for person_key, info in presence.items():
+            if not info.get("present"):
+                absent.append(person_key.lower())
+        return absent if absent else ["dylan", "julia"]
+    except Exception as e:
+        log(f"WHO LEFT: error detecting: {e}")
+        return ["dylan", "julia"]
+
+
 async def _findmy_poll_loop(location: str) -> None:
-    """Poll FindMy every 5 minutes to detect return home. Dock Roombas when near home."""
-    POLL_INTERVAL = 300  # 5 minutes
-    MAX_DURATION = 7200  # 2 hours
+    """Poll network presence + FindMy to detect return home.
+
+    Phase 1 (0-20 min): detect who left, check network every 60 seconds
+    Phase 2 (20+ min):  also check FindMy for walkers every 5 minutes
+    Ring motion during monitoring triggers immediate dock.
+    """
+    NETWORK_INTERVAL = 60    # 1 minute for network checks
+    FINDMY_INTERVAL = 300    # 5 minutes for FindMy checks
+    FINDMY_START = 1200      # 20 minutes before adding FindMy
+    MAX_DURATION = 7200      # 2 hours total timeout
     start_time = time.time()
 
     addr = HOME_ADDRESSES.get(location, HOME_ADDRESSES["crosstown"])
-    log(f"FINDMY POLL: Starting return-home monitoring for {location} ({addr['street']})")
+    log(f"RETURN MONITOR: Starting for {location} ({addr['street']})")
     send_imessage(f"\U0001f4cd Tracking your walk — will dock Roombas when you're back near {addr['street']}")
 
-    # Wait 5 minutes before first poll (you just left)
-    await asyncio.sleep(POLL_INTERVAL)
+    # Wait 2 minutes then detect who left the network
+    await asyncio.sleep(120)
+    walkers = await asyncio.to_thread(_detect_who_left, location)
+    log(f"RETURN MONITOR: Walkers detected: {walkers}")
+
+    last_findmy_check = 0
+    global _ring_motion_during_walk
+    _ring_motion_during_walk = False
 
     while time.time() - start_time < MAX_DURATION:
+        elapsed = time.time() - start_time
         try:
-            capture_path = await asyncio.to_thread(capture_findmy)
-            if not capture_path:
-                log("FINDMY POLL: Capture failed, retrying next interval")
-                await asyncio.sleep(POLL_INTERVAL)
-                continue
+            # Ring motion event check (set by _handle_motion when monitor is active)
+            if _ring_motion_during_walk:
+                _ring_motion_during_walk = False
+                elapsed_min = int(elapsed / 60)
+                log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
+                run_roomba_command(location, "dock")
+                _update_state_dog_walk(location, "dock")
+                _update_state_findmy(location, "stop")
+                return
 
-            result = await asyncio.to_thread(analyze_findmy, capture_path, location)
-            Path(capture_path).unlink(missing_ok=True)
+            # Network presence check (every poll cycle)
+            network_home = await asyncio.to_thread(_check_network_presence, location)
+            if network_home:
+                elapsed_min = int(elapsed / 60)
+                log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
+                run_roomba_command(location, "dock")
+                _update_state_dog_walk(location, "dock")
+                _update_state_findmy(location, "stop")
+                return
 
-            _update_state_findmy(location, "poll", result=result)
+            # FindMy check (after 20 min, every 5 min, only for walkers)
+            if elapsed >= FINDMY_START and (time.time() - last_findmy_check) >= FINDMY_INTERVAL:
+                last_findmy_check = time.time()
+                for person in walkers:
+                    result = await asyncio.to_thread(_check_person_near_home, person, location)
+                    _update_state_findmy(location, "poll", result=result)
 
-            if result:
-                street = result.get("street", "unknown")
-                near_home = result.get("near_home", False)
-                desc = result.get("description", "")
-                log(f"FINDMY POLL: street={street} near_home={near_home} desc={desc}")
+                    if result:
+                        street = result.get("street", "unknown")
+                        near_home = result.get("near_home", False)
+                        desc = result.get("description", "")
+                        log(f"FINDMY POLL: {person} street={street} near_home={near_home} desc={desc}")
 
-                if near_home:
-                    elapsed = int((time.time() - start_time) / 60)
-                    log(f"FINDMY POLL: Return detected after {elapsed}min — docking Roombas at {location}")
-                    run_roomba_command(location, "dock")
-                    _update_state_dog_walk(location, "dock")
-                    _update_state_findmy(location, "stop")
-                    return
-            else:
-                log("FINDMY POLL: Could not parse location result")
+                        if near_home:
+                            elapsed_min = int(elapsed / 60)
+                            log(f"FINDMY POLL: {person} near home after {elapsed_min}min — docking at {location}")
+                            run_roomba_command(location, "dock")
+                            _update_state_dog_walk(location, "dock")
+                            _update_state_findmy(location, "stop")
+                            return
+                    else:
+                        log(f"FINDMY POLL: Could not check {person}")
 
         except asyncio.CancelledError:
-            log("FINDMY POLL: Cancelled")
+            log("RETURN MONITOR: Cancelled")
             return
         except Exception as e:
-            log(f"FINDMY POLL: Error: {e}")
+            log(f"RETURN MONITOR: Error: {e}")
 
-        await asyncio.sleep(POLL_INTERVAL)
+        await asyncio.sleep(NETWORK_INTERVAL)
 
-    log(f"FINDMY POLL: Timeout after {MAX_DURATION // 60}min — docking Roombas as safety fallback")
+    log(f"RETURN MONITOR: Timeout after {MAX_DURATION // 60}min — docking as safety fallback")
     send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
     run_roomba_command(location, "dock")
     _update_state_dog_walk(location, "dock_timeout")
     _update_state_findmy(location, "stop")
 
 
-def start_findmy_polling(location: str) -> None:
-    """Start FindMy polling in the background to detect return home."""
-    global _findmy_poll_task
-    # Cancel any existing poll
+def start_return_monitor(location: str) -> None:
+    """Start return-home monitoring (network + FindMy + Ring motion)."""
+    global _findmy_poll_task, _return_monitor_active
     if _findmy_poll_task and not _findmy_poll_task.done():
         _findmy_poll_task.cancel()
+    _return_monitor_active = True
     _update_state_findmy(location, "start")
     _findmy_poll_task = asyncio.get_event_loop().create_task(_findmy_poll_loop(location))
 
 
-def stop_findmy_polling() -> None:
-    """Stop FindMy polling if active."""
-    global _findmy_poll_task
+def stop_return_monitor() -> None:
+    """Stop return-home monitoring."""
+    global _findmy_poll_task, _return_monitor_active, _ring_motion_during_walk
+    _return_monitor_active = False
+    _ring_motion_during_walk = False
     if _findmy_poll_task and not _findmy_poll_task.done():
         _findmy_poll_task.cancel()
         _findmy_poll_task = None
@@ -724,7 +865,7 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
         send_imessage(f"\U0001f9f9 Starting Roombas at {location} — everyone left for a walk!")
         run_roomba_command(location, "start")
         _update_state_dog_walk(location, "departure", people=total_people, dogs=total_dogs)
-        start_findmy_polling(location)
+        start_return_monitor(location)
     else:
         # Only 1 dog seen — ask for confirmation
         log(f"PARTIAL DEPARTURE at {location}: {total_people} people + 1 dog — asking for confirmation")
@@ -887,6 +1028,12 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str
     try:
         # FCM event state "human" already means person detected — trust it
         person_detected = state.lower() == "human"
+
+        # If return monitor is active and we see a person, signal return
+        if person_detected and _return_monitor_active:
+            global _ring_motion_during_walk
+            _ring_motion_during_walk = True
+            log(f"RING MOTION during walk monitoring — signaling return")
 
         global _ring
         if _ring is None:
