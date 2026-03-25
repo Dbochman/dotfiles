@@ -92,6 +92,7 @@ The listener uses multi-frame video analysis (5 frames from each recording sent 
 
 **Return detection (FindMy only):**
 - Polls FindMy every 5 minutes via Peekaboo screenshot + Haiku vision
+- Location sharing: both Dylan and Julia share location with `clawdbotbochman@gmail.com` (the Mini's iCloud account)
 - Location-aware: checks proximity to **Crosstown Ave** (within 1 block) or **School House Rd** (within 0.2 miles) depending on which doorbell triggered the departure
 - Docks Roombas silently when person's pin is back near home
 - Safety fallback: auto-docks after 2 hours if no return detected
