@@ -357,30 +357,32 @@ When the listener detects a departure (1+ people + 2+ dogs leaving), it starts p
 Departure detected
         |
         v
-start_findmy_polling(location)
+start_return_monitor(location)
         |
-        +-- Wait 5 minutes (just left, no point checking)
+        +-- Wait 2 minutes
+        +-- Network scan to detect who left (walkers)
         |
-        v (every 5 minutes)
-capture_findmy()
+        v (every 60 seconds)
+Signal 1: Network presence check
         |
-        +-- Peekaboo screenshot of FindMy app window
-        |       peekaboo see --app "Find My" --path <capture.png>
+        +-- Crosstown: SSH to MBP → ARP scan with stale-entry refresh
+        +-- Cabin: Starlink gRPC (local)
+        +-- Anyone detected? → dock Roombas, stop monitoring
         |
-        v
-analyze_findmy(capture.png)
+Signal 2: Ring motion (event-driven, checked each loop)
         |
-        +-- Send screenshot to Claude Haiku
-        +-- Prompt: "Is the pin on or near Crosstown Ave?"
-        +-- Response: {"street":"<name>", "near_home": true/false, "description":"..."}
+        +-- Person detected at doorbell during monitoring?
+        +-- → dock Roombas, stop monitoring
         |
-        +-- near_home == true?
-        |       +-- Dock Roombas silently
-        |       +-- Stop polling
+Signal 3: FindMy (every 5 min, starts 20 min after departure)
         |
-        +-- near_home == false?
-                +-- Log location, continue polling
-                +-- After 2 hours: dock Roombas as safety fallback
+        +-- For each walker:
+        |       +-- Navigate to person via keyboard (Up 3x → Down to position)
+        |       +-- peekaboo see --app "Find My" --path <capture.png>
+        |       +-- Haiku: check map landmarks for proximity to home
+        |       +-- near_home? → dock Roombas, stop monitoring
+        |
+        +-- After 2 hours: dock as safety fallback
 ```
 
 ### Peekaboo Requirements
@@ -388,40 +390,42 @@ analyze_findmy(capture.png)
 - **Peekaboo** (`/opt/homebrew/bin/peekaboo` v3.0.0-beta3) installed via Homebrew
 - **Screen Recording** + **Accessibility** permissions granted to Peekaboo (via `~/Applications/Peekaboo.app` wrapper for TCC picker)
 - Must use `peekaboo see` (not `peekaboo image`) — FindMy sets `kCGWindowSharingNone` on its windows
+- Keyboard navigation works (`peekaboo press up/down`) — mouse clicks blocked by FindMy
 - Works from LaunchAgent context (verified) but NOT from SSH sessions (TCC restriction)
-- **Find My app must be open** on the Mini with the People tab showing the shared location
-- Location sharing: Dylan shares location with `clawdbotbochman@gmail.com` (the Mini's iCloud account)
+- **Find My app must be open** on the Mini with the People tab visible
+- Location sharing: both Dylan and Julia share location with `clawdbotbochman@gmail.com`
+- FindMy People sidebar order: Me → Julia Jennings → Dylan Bochman
 
 ### FindMy Vision Prompt
 
-```
-Look at this FindMy app screenshot. There is a pin on the map showing a person's location.
-Respond with ONLY valid JSON:
-{
-  "street": "<street name the pin is on or nearest to>",
-  "near_home": true/false,
-  "description": "<1 sentence describing where the pin is>"
-}
+Uses landmark-based proximity instead of street name matching (street labels not always visible at all zoom levels). Validated 4/4 against known ground truth.
 
-The person's home is on Crosstown Ave in West Roxbury/Boston.
-'near_home' should be true if the pin appears to be ON Crosstown Ave or within ~1 block of it.
+```
+Check the map labels and landmarks.
+{"street":"<from map labels>", "near_home": true/false, "description":"..."}
+
+Crosstown: "one block south of Stimson St" + Mishkan Tefila Memorial Park, What The Trucks, Best Name Tape
+Cabin: "north side of School House Rd / Willis Rd intersection" + Cobb Hill Rd
 ```
 
 ### Timing & Limits
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Poll interval | 5 minutes | Balance between responsiveness and API cost |
-| First poll delay | 5 minutes | Skip initial poll (just departed) |
+| Network check interval | 60 seconds | Lightweight ARP/gRPC scan |
+| FindMy check interval | 5 minutes | Heavier (Peekaboo + Haiku API call) |
+| FindMy start delay | 20 minutes | No point checking FindMy right after departure |
+| Walker detection | 2 minutes | Network scan to identify who left |
 | Maximum duration | 2 hours | Safety fallback — dock Roombas if no return detected |
-| Haiku timeout | 30 seconds | Per vision API call |
 
 ### Cancellation
 
-FindMy polling is cancelled when:
-1. **Haiku confirms near_home** → dock Roombas silently, stop polling
-2. **2-hour timeout** → dock Roombas as safety net
-3. **Listener restart** → polling state is in-memory only
+Return monitoring stops when:
+1. **Network detects return** → person's phone back on WiFi
+2. **Ring motion** → person detected at doorbell during monitoring
+3. **FindMy near_home** → walker's pin near home landmarks
+4. **2-hour timeout** → dock Roombas as safety net
+5. **Listener restart** → monitoring state is in-memory only
 
 ## Component 5: State File & Event History
 

@@ -90,19 +90,26 @@ The listener uses multi-frame video analysis (5 frames from each recording sent 
 | Crosstown (19 Crosstown Ave, West Roxbury) | 684794187 | `crosstown-roomba start all` | `crosstown-roomba dock all` |
 | Cabin (95 School House Rd, Phillipston) | 697442349 | `roomba start floomba` + `roomba start philly` | `roomba dock floomba` + `roomba dock philly` |
 
-**Return detection (FindMy only):**
-- Polls FindMy every 5 minutes via `peekaboo see` screenshot + Haiku vision
-- Location sharing: both Dylan and Julia share location with `clawdbotbochman@gmail.com` (the Mini's iCloud account)
+**Return detection (multi-signal):**
+
+After departure, the return monitor uses three signals — any one triggers Roomba docking:
+
+| Signal | Interval | How it works |
+|--------|----------|-------------|
+| **Network presence** | Every 60s from start | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
+| **Ring motion** | Event-driven | Any person detected at the doorbell during monitoring. |
+| **FindMy** | Every 5min after 20min | Navigate to each walker in FindMy sidebar (keyboard arrows), `peekaboo see` screenshot, Haiku checks if pin is near home using landmark-based proximity. |
+
+- 2 minutes after departure, a network scan identifies **who left** — only walkers' FindMy is monitored
+- Location sharing: both Dylan and Julia share location with `clawdbotbochman@gmail.com`
 - Find My app must be open on the Mini with the People tab visible
-- Location-aware: checks proximity to **Crosstown Ave** (within 1 block) or **School House Rd** (within 0.2 miles) depending on which doorbell triggered the departure
-- Docks Roombas silently when person's pin is back near home
 - Safety fallback: auto-docks after 2 hours if no return detected
 
 **State tracking:**
-- Current state: `~/.openclaw/ring-listener/state.json` (dog_walk active/inactive, Roomba status, timestamps)
+- Current state: `~/.openclaw/ring-listener/state.json` (dog_walk, roombas, findmy_polling, last_vision)
 - Daily history: `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`
 
-**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog detection is available for Cabin events. Cabin motion events are processed for person detection only — dog walk automation (which requires dog counts from vision) will not auto-trigger at Cabin. To start Cabin Roombas, tell OpenClaw directly: "start floomba and philly".
+**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog detection is available for Cabin events. Cabin dog walk automation will not auto-trigger — tell OpenClaw directly: "start floomba and philly".
 
 To check the listener:
 ```bash
