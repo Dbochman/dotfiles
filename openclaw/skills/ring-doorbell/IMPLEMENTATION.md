@@ -365,7 +365,7 @@ start_findmy_polling(location)
 capture_findmy()
         |
         +-- Peekaboo screenshot of FindMy app window
-        |       peekaboo image --app "Find My" --path <capture.png>
+        |       peekaboo see --app "Find My" --path <capture.png>
         |
         v
 analyze_findmy(capture.png)
@@ -386,7 +386,8 @@ analyze_findmy(capture.png)
 ### Peekaboo Requirements
 
 - **Peekaboo** (`/opt/homebrew/bin/peekaboo` v3.0.0-beta3) installed via Homebrew
-- **Screen Recording** + **Accessibility** permissions granted to Peekaboo
+- **Screen Recording** + **Accessibility** permissions granted to Peekaboo (via `~/Applications/Peekaboo.app` wrapper for TCC picker)
+- Must use `peekaboo see` (not `peekaboo image`) — FindMy sets `kCGWindowSharingNone` on its windows
 - Works from LaunchAgent context (verified) but NOT from SSH sessions (TCC restriction)
 - **Find My app must be open** on the Mini with the People tab showing the shared location
 - Location sharing: Dylan shares location with `clawdbotbochman@gmail.com` (the Mini's iCloud account)
@@ -562,8 +563,9 @@ launchctl load ~/Library/LaunchAgents/ai.openclaw.ring-listener.plist
 6. **Recording availability** — Ring may take 10-30 seconds to process and upload a recording after an event. The listener retries up to 3 times with increasing delays (0s, 10s, 15s) to handle this.
 7. **OAuth token expiry** — If the Claude Max OAuth cache expires and isn't refreshed, vision analysis silently degrades. Notifications and event detection continue working.
 8. **FCM reliability** — Firebase push connections can drop. The `KeepAlive` LaunchAgent restarts the listener if it crashes, and FCM credentials are persisted across restarts.
-9. **FindMy requires open app** — The Find My app must be open on the Mini for Peekaboo screenshots to capture location data. If the app is closed or the window is minimized, FindMy polling will fail silently and fall back to the 2-hour timeout dock. A physical display (EPSON projector) must be connected.
+9. **FindMy requires open app** — The Find My app must be open on the Mini for Peekaboo screenshots to capture location data. If the app is closed or the window is minimized, FindMy polling will fail silently and fall back to the 2-hour timeout dock.
 10. **FindMy TCC restriction** — Peekaboo only works from LaunchAgent/Terminal context, not SSH. The Ring listener runs as a LaunchAgent so this works, but manual testing via SSH will fail.
+11. **FindMy window sharing** — FindMy sets `kCGWindowSharingNone` on all its windows, blocking `peekaboo image` and `CGWindowListCreateImage` per-window capture. Use `peekaboo see` which bypasses this via its UI automation capture path.
 11. **FindMy polling is in-memory** — Polling state does not survive listener restarts. If the listener crashes mid-walk, FindMy polling stops and Roombas won't auto-dock (the 2-hour cooldown on the start action prevents re-starting them).
 12. **State file atomicity** — State files use atomic writes (temp + fsync + os.replace) to prevent corruption from mid-write crashes. Read failures are logged rather than silently ignored.
 13. **Async threading** — Blocking calls (vision analysis, FindMy capture, iMessage send) use `asyncio.to_thread()` to avoid stalling the FCM event loop. Under burst events, multiple analyses may run concurrently.
