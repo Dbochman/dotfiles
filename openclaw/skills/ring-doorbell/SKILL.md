@@ -98,12 +98,22 @@ After departure, the return monitor uses three signals — any one triggers Room
 |--------|----------|-------------|
 | **Network presence** | Every 60s from start | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
 | **Ring motion** | Event-driven | Any person detected at the doorbell during monitoring. |
-| **FindMy** | Every 5min after 20min | Navigate to each walker in FindMy sidebar (keyboard arrows), `peekaboo see` screenshot, Haiku checks if pin is near home using landmark-based proximity. |
+| **FindMy** | Every 5min after 20min | Keyboard arrow navigation to select walker in sidebar, screenshot via `peekaboo see`, Haiku checks if pin is near home. |
 
 - 2 minutes after departure, a network scan identifies **who left** — only walkers' FindMy is monitored
 - Location sharing: both Dylan and Julia share location with `clawdbotbochman@gmail.com`
 - Find My app must be open on the Mini with the People tab visible
 - Safety fallback: auto-docks after 2 hours if no return detected
+
+**FindMy sidebar navigation — MUST use keyboard arrows, NOT mouse clicks:**
+
+FindMy blocks programmatic mouse clicks but accepts keyboard input via Peekaboo. The script `findmy-locate.sh` handles this:
+1. `open -a FindMy` to activate the app
+2. `peekaboo press up` x3 to reset to top of People sidebar
+3. `peekaboo press down` to target position (Julia=1, Dylan=2)
+4. Wait 3s for map animation, then `peekaboo see --app "Find My"` to capture
+
+Sidebar order: Me (0) → Julia Jennings (1) → Dylan Bochman (2). Do NOT attempt `peekaboo click` on sidebar elements — it will click the wrong app due to focus-stealing.
 
 **State tracking:**
 - Current state: `~/.openclaw/ring-listener/state.json` (dog_walk, roombas, findmy_polling, last_vision)
