@@ -1076,8 +1076,8 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str
         if person_detected:
             log(f"Person detected on {device} — processing recording")
 
-            # Grab and send frame
-            await _send_event_recording(device, doorbot_id, event_id, db=db)
+            # Process recording for departure automation (no iMessage notification)
+            await _send_event_recording(device, doorbot_id, event_id, db=db, notify=False)
         else:
             log(f"Motion on {device} — no person detected, skipping")
 
@@ -1085,8 +1085,8 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str
         log(f"ERROR handling motion: {e}")
 
 
-async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=None) -> None:
-    """Download recording, analyze video with Claude vision, send frame + description."""
+async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=None, notify: bool = True) -> None:
+    """Download recording, analyze video with Claude vision, optionally send frame + description."""
     try:
         # Wait for recording to be ready
         await asyncio.sleep(8)
@@ -1148,13 +1148,16 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
                 description = raw_analysis
 
         # Send preview frame as iMessage image, then description as caption
+        if notify:
+            if frame_path:
+                log(f"Sending frame: {frame_path}")
+                await asyncio.to_thread(send_imessage_image, frame_path, description)
+            elif description:
+                # No frame but have description — send as text
+                send_imessage(description)
+
         if frame_path:
-            log(f"Sending frame: {frame_path}")
-            await asyncio.to_thread(send_imessage_image, frame_path, description)
             Path(frame_path).unlink(missing_ok=True)
-        elif description:
-            # No frame but have description — send as text
-            send_imessage(description)
 
         # Clean up MP4
         Path(mp4_path).unlink(missing_ok=True)
