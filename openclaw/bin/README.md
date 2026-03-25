@@ -4,13 +4,10 @@ Helper scripts deployed to `~/.openclaw/bin/` (and `~/bin/`) on the Mac Mini. Th
 
 ## Deployment
 
-Scripts in this directory are tracked in the dotfiles repo and deployed to Mini via `scp`:
+Scripts in this directory are tracked in the dotfiles repo and deployed to Mini via `dotfiles-pull.command` (daily LaunchAgent) or manually via `scp`:
 
 ```bash
 scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
-# For ~/bin/ scripts:
-scp openclaw/bin/openclaw-weekly-upgrade dylans-mac-mini:~/bin/openclaw-weekly-upgrade
-scp openclaw/bin/openclaw-refresh-secrets dylans-mac-mini:~/bin/openclaw-refresh-secrets
 ```
 
 ## Scripts
@@ -19,7 +16,6 @@ scp openclaw/bin/openclaw-refresh-secrets dylans-mac-mini:~/bin/openclaw-refresh
 
 | Script | Location on Mini | Description |
 |--------|-----------------|-------------|
-| `openclaw-weekly-upgrade` | `~/bin/` | Weekly npm upgrade with plist backup/restore, BB plugin patch, scope check. Runs Sundays via `ai.openclaw.weekly-upgrade` LaunchAgent. See [WEEKLY-UPGRADE.md](WEEKLY-UPGRADE.md). |
 | `openclaw-refresh-secrets` | `~/bin/` | Refreshes `~/.openclaw/.secrets-cache` from 1Password. Run over SSH after key rotation. |
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
 | `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as iMessage attachment via BlueBubbles API, plus optional summary text. Used by Julia's morning briefing cron job. |
@@ -79,7 +75,7 @@ scp openclaw/bin/openclaw-refresh-secrets dylans-mac-mini:~/bin/openclaw-refresh
 | `workspace` | `~/.openclaw/workspace/` | SOUL.md, TOOLS.md, HEARTBEAT.md |
 | `skills` | `~/.openclaw/skills/` | All SKILL.md files |
 | `plans` | `~/dotfiles/openclaw/plans/` | BB implementation, Private API ref, workspace state |
-| `bin-scripts` | `~/dotfiles/openclaw/bin/` | README.md, WEEKLY-UPGRADE.md |
+| `bin-scripts` | `~/dotfiles/openclaw/bin/` | README.md |
 
 **Usage**:
 ```bash

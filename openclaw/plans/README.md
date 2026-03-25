@@ -27,3 +27,4 @@ Completed or historical plans in [`archive/`](archive/).
 | [openclaw-workspace-state](archive/openclaw-workspace-state.md) | Workspace state snapshot (Mar 2026) | Reference |
 | [petlibro](archive/petlibro.md) | Petlibro feeder/fountain skill implementation | Complete |
 | [skills-symlink-fix](archive/skills-symlink-fix.md) | Why symlinks broke skills deployment | Post-mortem |
+| [weekly-upgrade](archive/weekly-upgrade.md) | Automated weekly OpenClaw npm upgrade script | Removed (Mar 12) |
