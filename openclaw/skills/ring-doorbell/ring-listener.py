@@ -92,7 +92,7 @@ HOME_ADDRESSES = {
         "street": "95 School House Rd",
         "area": "Phillipston, MA",
         "radius": "0.2 miles",
-        "landmarks": "School House Rd, Cobb Hill Rd, Willis Rd",
+        "landmarks": "95 School House Rd is on the north side of the intersection where School House Rd meets Willis Rd. Look for where these two roads cross — home is just north of that junction. Also near: Cobb Hill Rd",
     },
 }
 
