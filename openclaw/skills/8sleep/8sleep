@@ -154,6 +154,63 @@ case "${1:-}" in
     fi
     run_api sleep "$2" "${3:-}" | parse_sleep
     ;;
+  off)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: 8sleep off <dylan|julia>" >&2
+      echo "  Turns off thermal unit for a side (stops heating/cooling)" >&2
+      exit 1
+    fi
+    run_api off "$2" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response'); sys.exit(1)
+if 'error' in d and not d.get('success'):
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}'); sys.exit(1)
+print(f'{d.get(\"side\",\"?\").title()} side turned OFF')
+"
+    ;;
+  on)
+    if [[ -z "${2:-}" ]]; then
+      echo "Usage: 8sleep on <dylan|julia>" >&2
+      echo "  Turns on thermal unit for a side (resumes smart schedule)" >&2
+      exit 1
+    fi
+    run_api on "$2" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response'); sys.exit(1)
+if 'error' in d and not d.get('success'):
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}'); sys.exit(1)
+print(f'{d.get(\"side\",\"?\").title()} side turned ON (smart schedule resumed)')
+"
+    ;;
+  away)
+    if [[ -z "${2:-}" || -z "${3:-}" ]]; then
+      echo "Usage: 8sleep away <dylan|julia> <start|end>" >&2
+      echo "  start = enable away mode (extended absence)" >&2
+      echo "  end   = disable away mode (return home)" >&2
+      exit 1
+    fi
+    run_api away "$2" "$3" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response'); sys.exit(1)
+if 'error' in d and not d.get('success'):
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}'); sys.exit(1)
+action = d.get('away', '?')
+side = d.get('side', '?').title()
+if action == 'start':
+    print(f'{side} away mode ENABLED')
+else:
+    print(f'{side} away mode DISABLED')
+"
+    ;;
   raw)
     if [[ -z "${2:-}" ]]; then
       echo "Usage: 8sleep raw <api-path>" >&2
@@ -165,11 +222,14 @@ case "${1:-}" in
     echo "Usage: 8sleep <command>"
     echo ""
     echo "Commands:"
-    echo "  status                       Pod status (both sides: temp, heating, water)"
-    echo "  temp <dylan|julia> <level>   Set side temp (-100 cold to +100 hot)"
-    echo "  device                       Device info (model, water, connectivity)"
-    echo "  sleep <dylan|julia> [date]   Sleep data (default: last night)"
-    echo "  raw <path>                   Raw API GET"
+    echo "  status                          Pod status (both sides: temp, heating, water)"
+    echo "  temp <dylan|julia> <level>      Set side temp (-100 cold to +100 hot)"
+    echo "  off <dylan|julia>               Turn off side (stop thermal unit)"
+    echo "  on <dylan|julia>                Turn on side (resume smart schedule)"
+    echo "  away <dylan|julia> start|end    Start/end away mode (extended absence)"
+    echo "  device                          Device info (model, water, connectivity)"
+    echo "  sleep <dylan|julia> [date]      Sleep data (default: last night)"
+    echo "  raw <path>                      Raw API GET"
     echo ""
     echo "Sides: dylan (left), julia (right)"
     echo ""

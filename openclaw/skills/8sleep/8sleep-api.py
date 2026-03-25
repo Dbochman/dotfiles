@@ -4,6 +4,9 @@
 Usage:
     8sleep-api.py status                  Current temperature, power for both sides
     8sleep-api.py temp <side> <level>     Set temperature (-100 to +100) for dylan|julia
+    8sleep-api.py off <side>              Turn off side (stop thermal unit)
+    8sleep-api.py on <side>               Turn on side (resume smart schedule)
+    8sleep-api.py away <side> start|end   Start/end away mode for a side
     8sleep-api.py device                  Device info (model, firmware, water, connectivity)
     8sleep-api.py sleep <side> [date]     Sleep data for dylan|julia (default: last night)
     8sleep-api.py raw <path>              Raw API GET (e.g., "users/me")
@@ -23,6 +26,7 @@ TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 
 AUTH_URL = "https://auth-api.8slp.net/v1/tokens"
 API_URL = "https://client-api.8slp.net/v1"
+APP_API_URL = "https://app-api.8slp.net/v1"  # write operations (pyEight convention)
 CLIENT_ID = "0894c7f33bb94800a03f1f4df13a4f38"
 CLIENT_SECRET = "f0954a3ed5763ba3d06834c73731a32f15f168f47d4f164751275def86db0c76"
 USER_AGENT = "okhttp/4.9.3"
@@ -167,13 +171,14 @@ def api_get(path, token_data=None):
         return {"error": e.code, "message": e.read().decode()[:300]}
 
 
-def api_put(path, body, token_data=None):
+def api_put(path, body, token_data=None, use_app_api=False):
     """PUT to the Eight Sleep API."""
     if token_data is None:
         token_data = get_token()
+    base = APP_API_URL if use_app_api else API_URL
     data = json.dumps(body).encode()
     req = urllib.request.Request(
-        f"{API_URL}/{path}",
+        f"{base}/{path}",
         data=data, method="PUT",
         headers={
             "Authorization": f"Bearer {token_data['access_token']}",
@@ -304,6 +309,75 @@ def cmd_sleep(side_name, date=None):
     print(json.dumps(result, indent=2, default=str))
 
 
+def cmd_off(side_name):
+    """Turn off a side (stop thermal unit)."""
+    user = resolve_side(side_name)
+    if not user:
+        print(json.dumps({"error": "invalid_side",
+                          "message": f"Unknown side: {side_name}. Use 'dylan' or 'julia'"}))
+        sys.exit(1)
+
+    token_data = get_token()
+    # Try app-api first (pyEight convention), fall back to client-api
+    result = api_put(f"users/{user['id']}/temperature",
+                     {"currentState": {"type": "off"}},
+                     token_data, use_app_api=True)
+    if isinstance(result, dict) and result.get("error"):
+        result = api_put(f"users/{user['id']}/temperature",
+                         {"currentState": {"type": "off"}},
+                         token_data, use_app_api=False)
+    print(json.dumps({"success": True, "side": side_name, "state": "off", "response": result}))
+
+
+def cmd_on(side_name):
+    """Turn on a side (resume smart schedule)."""
+    user = resolve_side(side_name)
+    if not user:
+        print(json.dumps({"error": "invalid_side",
+                          "message": f"Unknown side: {side_name}. Use 'dylan' or 'julia'"}))
+        sys.exit(1)
+
+    token_data = get_token()
+    result = api_put(f"users/{user['id']}/temperature",
+                     {"currentState": {"type": "smart"}},
+                     token_data, use_app_api=True)
+    if isinstance(result, dict) and result.get("error"):
+        result = api_put(f"users/{user['id']}/temperature",
+                         {"currentState": {"type": "smart"}},
+                         token_data, use_app_api=False)
+    print(json.dumps({"success": True, "side": side_name, "state": "on", "response": result}))
+
+
+def cmd_away(side_name, action):
+    """Start or end away mode for a side."""
+    user = resolve_side(side_name)
+    if not user:
+        print(json.dumps({"error": "invalid_side",
+                          "message": f"Unknown side: {side_name}. Use 'dylan' or 'julia'"}))
+        sys.exit(1)
+
+    from datetime import datetime, timezone, timedelta
+
+    token_data = get_token()
+
+    if action == "start":
+        # Set start time to 24h ago (triggers immediate activation per pyEight convention)
+        ts = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        body = {"awayPeriod": {"start": ts}}
+    elif action == "end":
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        body = {"awayPeriod": {"end": ts}}
+    else:
+        print(json.dumps({"error": "invalid_action",
+                          "message": f"Unknown action: {action}. Use 'start' or 'end'"}))
+        sys.exit(1)
+
+    result = api_put(f"users/{user['id']}/away-mode", body, token_data, use_app_api=True)
+    if isinstance(result, dict) and result.get("error"):
+        result = api_put(f"users/{user['id']}/away-mode", body, token_data, use_app_api=False)
+    print(json.dumps({"success": True, "side": side_name, "away": action, "response": result}))
+
+
 def cmd_raw(path):
     """Raw API GET."""
     result = api_get(path)
@@ -324,6 +398,24 @@ def main():
                               "message": "Usage: 8sleep-api.py temp <dylan|julia> <level>"}))
             sys.exit(1)
         cmd_temp(sys.argv[2], sys.argv[3])
+    elif cmd == "off":
+        if len(sys.argv) < 3:
+            print(json.dumps({"error": "missing_arg",
+                              "message": "Usage: 8sleep-api.py off <dylan|julia>"}))
+            sys.exit(1)
+        cmd_off(sys.argv[2])
+    elif cmd == "on":
+        if len(sys.argv) < 3:
+            print(json.dumps({"error": "missing_arg",
+                              "message": "Usage: 8sleep-api.py on <dylan|julia>"}))
+            sys.exit(1)
+        cmd_on(sys.argv[2])
+    elif cmd == "away":
+        if len(sys.argv) < 4:
+            print(json.dumps({"error": "missing_arg",
+                              "message": "Usage: 8sleep-api.py away <dylan|julia> start|end"}))
+            sys.exit(1)
+        cmd_away(sys.argv[2], sys.argv[3])
     elif cmd == "device":
         cmd_device()
     elif cmd == "sleep":

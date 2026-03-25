@@ -33,6 +33,24 @@ Shows current temperature level, heating/cooling state, and water status for bot
 8sleep temp dylan 0       # neutral (~81F)
 ```
 
+### Turn off/on a side
+```bash
+8sleep off dylan          # turn off Dylan's side (stop thermal unit)
+8sleep off julia          # turn off Julia's side
+8sleep on dylan           # turn on Dylan's side (resume smart schedule)
+8sleep on julia           # turn on Julia's side
+```
+`off` stops all heating/cooling immediately. `on` resumes the smart schedule.
+
+### Away mode (extended absence)
+```bash
+8sleep away dylan start   # enable away mode for Dylan
+8sleep away julia start   # enable away mode for Julia
+8sleep away dylan end     # disable away mode for Dylan (returning home)
+8sleep away julia end     # disable away mode for Julia
+```
+Away mode marks the user as absent — the pod stops all thermal activity for that side and adjusts sleep tracking accordingly. Use this for vacations or extended travel. For short absences (leaving the house for the day), prefer `off`/`on` instead.
+
 ### Temperature scale
 | Level | Temp | Feeling |
 |-------|------|---------|
