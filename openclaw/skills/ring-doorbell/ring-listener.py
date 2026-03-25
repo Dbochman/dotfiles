@@ -466,13 +466,30 @@ def capture_findmy() -> str | None:
     FINDMY_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     capture_path = str(FINDMY_CAPTURE_DIR / "findmy-poll.png")
     try:
+        # Use 'see' not 'image' — FindMy sets kCGWindowSharingNone which blocks
+        # screen capture via 'image', but 'see' uses a different capture path
+        # that bypasses this restriction.
         result = subprocess.run(
-            [PEEKABOO, "image", "--app", "Find My", "--path", capture_path],
-            capture_output=True, timeout=15,
+            [PEEKABOO, "see", "--app", "Find My", "--path", capture_path],
+            capture_output=True, timeout=20,
         )
-        if result.returncode == 0 and Path(capture_path).exists() and Path(capture_path).stat().st_size > 1000:
-            return capture_path
-        log(f"FindMy capture failed: exit={result.returncode} stderr={result.stderr.decode()[:200]}")
+        if result.returncode == 0 and Path(capture_path).exists():
+            size = Path(capture_path).stat().st_size
+            if size > 50000:
+                return capture_path
+            log(f"FindMy capture too small ({size} bytes)")
+            Path(capture_path).unlink(missing_ok=True)
+            return None
+        # peekaboo see may save to Desktop instead of --path; check for it
+        import glob
+        desktop_files = sorted(glob.glob(str(Path.home() / "Desktop/peekaboo_see_*.png")), reverse=True)
+        if desktop_files:
+            latest = desktop_files[0]
+            if Path(latest).stat().st_size > 50000:
+                import shutil
+                shutil.move(latest, capture_path)
+                return capture_path
+        log(f"FindMy capture failed: exit={result.returncode}")
         return None
     except Exception as e:
         log(f"FindMy capture error: {e}")
