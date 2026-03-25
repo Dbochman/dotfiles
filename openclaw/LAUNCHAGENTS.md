@@ -36,8 +36,7 @@ Reference for all LaunchAgents on the Mac Mini (`~/Library/LaunchAgents/`).
 
 | Label | Watches | Program | Description |
 |-------|---------|---------|-------------|
-| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, thermostat eco, Cielos off |
-| `com.openclaw.vacancy-roombas` | `~/.openclaw/presence/state.json` | `vacancy-roombas.sh` | On vacancy: start Crosstown Roombas |
+| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, thermostat eco, Cielos off, Eight Sleep off, Roombas start. On return: Eight Sleep restored. See [VACANCY-AUTOMATION.md](VACANCY-AUTOMATION.md) |
 
 ## Run-Once (RunAtLoad only)
 
