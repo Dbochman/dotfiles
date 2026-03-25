@@ -617,12 +617,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Run an infrastructure health scan using the crisismode skill.\n\n## Step 1 \u2014 Run Scan\n\nRun `crisismode scan --json` and parse the JSON output (take the last line \u2014 the scan result, not the detection line).\n\n## Step 2 \u2014 Evaluate Results\n\nCheck the health score and findings:\n- **Ignore PG-001** (PostgreSQL auto-probe, no PG runs on this machine)\n- **Ignore DNS split-brain warnings** if both resolvers are reachable and resolution success rate is 100% (benign dual-stack behavior)\n- Focus on: disk critical/warning, any check plugin (PLUG-*) showing critical or warning, any service down\n\n## Step 3 \u2014 Alert or Stay Silent\n\n**If score >= 70 AND no critical/warning findings (after ignoring PG-001 and benign DNS):**\nDo NOT send any message. Silent success \u2014 no news is good news.\n\n**If score < 70 OR any critical/warning finding (excluding PG-001 and benign DNS):**\nCompose a concise alert message:\n\n\ud83c\udfe5 **CrisisMode Health: [SCORE]/100**\n- [Finding ID]: [status] \u2014 [summary]\n- [Finding ID]: [status] \u2014 [summary]\n\nRecommended: `crisismode diagnose [ID]`\n\nKeep it brief \u2014 just the issues, not the healthy items."
+        "message": "Run an infrastructure health scan using the crisismode skill.\n\n## Step 1 \u2014 Run Scan\n\nRun `crisismode scan --json` and parse the JSON output (take the last line \u2014 the scan result, not the detection line).\n\n## Step 2 \u2014 Evaluate Results\n\nCheck the health score and findings:\n- **Ignore PG-001** (PostgreSQL auto-probe, no PG runs on this machine)\n- **Ignore DNS split-brain warnings** if both resolvers are reachable and resolution success rate is 100% (benign dual-stack behavior)\n- Focus on: disk critical/warning, any check plugin (PLUG-*) showing critical or warning, any service down\n\n## Step 3 \u2014 Alert or Stay Silent\n\n**If score >= 70 AND no critical/warning findings (after ignoring PG-001 and benign DNS):**\nEverything is healthy. Do NOT send any message to Dylan. Do NOT use the message tool. Produce no output. Just stop.\n\n**If score < 70 OR any critical/warning finding (excluding PG-001 and benign DNS):**\nSend Dylan a concise alert via iMessage (dylanbochman@gmail.com):\n\n\ud83c\udfe5 **CrisisMode Health: [SCORE]/100**\n- [Finding ID]: [status] \u2014 [summary]\n- [Finding ID]: [status] \u2014 [summary]\n\nRecommended: `crisismode diagnose [ID]`\n\nKeep it brief \u2014 just the issues, not the healthy items."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "dylanbochman@gmail.com"
+        "mode": "silent"
       },
       "state": {}
     }
