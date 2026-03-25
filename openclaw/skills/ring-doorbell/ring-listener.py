@@ -82,8 +82,18 @@ HISTORY_DIR = Path.home() / ".openclaw/ring-listener/history"
 
 # Home address per location — used for FindMy return detection
 HOME_ADDRESSES = {
-    "crosstown": {"street": "Crosstown Ave", "area": "West Roxbury, Boston", "radius": "1 block"},
-    "cabin": {"street": "95 School House Rd", "area": "Phillipston, MA", "radius": "0.2 miles"},
+    "crosstown": {
+        "street": "Crosstown Ave",
+        "area": "West Roxbury, Boston",
+        "radius": "1 block",
+        "landmarks": "Crosstown Ave runs parallel to and one block south of Stimson St. Look for Stimson St on the map — home is one block below it. Also near: Mishkan Tefila Memorial Park, What The Trucks, Best Name Tape",
+    },
+    "cabin": {
+        "street": "95 School House Rd",
+        "area": "Phillipston, MA",
+        "radius": "0.2 miles",
+        "landmarks": "School House Rd, Cobb Hill Rd, Willis Rd",
+    },
 }
 
 
@@ -91,14 +101,16 @@ def _findmy_prompt(location: str) -> str:
     """Build a FindMy vision prompt for the given location's home address."""
     addr = HOME_ADDRESSES.get(location, HOME_ADDRESSES["crosstown"])
     return (
-        "Look at this FindMy app screenshot. There is a pin on the map showing a person's location. "
+        "Look at this FindMy app screenshot. Check the map labels and landmarks. "
         "Respond with ONLY valid JSON (no markdown, no ```), using this exact schema:\n"
-        '{"street":"<street name the pin is on or nearest to, or unknown>",'
+        '{"street":"<street from map labels or unknown>",'
         '"near_home":true/false,'
-        '"description":"<1 sentence describing where the pin is on the map>"}\n\n'
+        '"description":"<1 sentence about the person\'s location>"}\n\n'
         f"The person's home is at {addr['street']} in {addr['area']}. "
-        f"'near_home' should be true if the pin appears to be within {addr['radius']} of {addr['street']}. "
-        "Look at the street labels and landmarks on the map to determine the pin's location."
+        f"'near_home' should be true if ANY of these are true:\n"
+        f"- The map pin is within {addr['radius']} of {addr['street']}\n"
+        f"- The map shows nearby landmarks: {addr['landmarks']}\n"
+        "If the map shows a completely different area, near_home is false."
     )
 
 # Dedup: track recent event IDs to avoid double-notify
