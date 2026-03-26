@@ -569,7 +569,7 @@ cmd_dashboard() {
     start)
       if [[ ! -f "$DASHBOARD_PLIST" ]]; then
         echo "LaunchAgent plist not found at $DASHBOARD_PLIST" >&2
-        echo "Install it first: cp <dotfiles>/openclaw/ai.openclaw.nest-dashboard.plist ~/Library/LaunchAgents/" >&2
+        echo "Install it first: cp <dotfiles>/openclaw/launchagents/ai.openclaw.nest-dashboard.plist ~/Library/LaunchAgents/" >&2
         exit 1
       fi
       if launchctl list "$DASHBOARD_LABEL" &>/dev/null; then

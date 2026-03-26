@@ -84,8 +84,8 @@ mkdir -p ~/.openclaw/logs
 
 ```bash
 cd ~/dotfiles && git pull
-plutil -lint ~/dotfiles/openclaw/ai.openclaw.financial-dashboard.plist
-cp ~/dotfiles/openclaw/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
+plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
 ln -sf ~/dotfiles/bin/finance /opt/homebrew/bin/finance
 ```
 
@@ -121,7 +121,7 @@ finance dashboard restart
 **Plist or CLI changes:**
 ```bash
 cd ~/dotfiles && git pull
-cp ~/dotfiles/openclaw/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
 finance dashboard restart
 ```
 
@@ -134,7 +134,7 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 | File | Location | Purpose |
 |------|----------|---------|
 | `bin/finance` | Dotfiles repo + `/opt/homebrew/bin/finance` (symlink) | CLI (dashboard management) |
-| `openclaw/ai.openclaw.financial-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
+| `openclaw/launchagents/ai.openclaw.financial-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
 | `~/repos/financial-dashboard/` | Cloned repo on Mini | Dashboard server + all source files |
 
 ---

@@ -79,7 +79,7 @@ Both are battery-powered doorbells. The Cabin doorbell is a shared device (autho
 | File | Purpose |
 |------|---------|
 | `openclaw/bin/ring` | PATH wrapper → delegates to skill dir |
-| `openclaw/ai.openclaw.ring-listener.plist` | LaunchAgent for persistent listener |
+| `openclaw/launchagents/ai.openclaw.ring-listener.plist` | LaunchAgent for persistent listener |
 
 ### Files on Mini (not in repo)
 

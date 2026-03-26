@@ -395,8 +395,8 @@ nest camera snap [room] [output_path]
 | `openclaw/bin/nest-dashboard.py` | `~/.openclaw/bin/` on Mini | HTTP server + embedded HTML/JS dashboard |
 | `openclaw/bin/mysa-status.py` | `~/.openclaw/bin/` on Mini | Mysa API wrapper (JSON output) |
 | `openclaw/bin/nest-camera-snap.py` | `~/.openclaw/bin/` on Mini | WebRTC camera snapshot capture |
-| `openclaw/ai.openclaw.nest-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
-| `openclaw/ai.openclaw.nest-snapshot.plist` | `~/Library/LaunchAgents/` on Mini | 30-min snapshot cron |
+| `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
+| `openclaw/launchagents/ai.openclaw.nest-snapshot.plist` | `~/Library/LaunchAgents/` on Mini | 30-min snapshot cron |
 
 ---
 

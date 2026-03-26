@@ -148,7 +148,7 @@ All source files live in `/Users/dylanbochman/repos/dotfiles/`:
 | File | Purpose |
 |------|---------|
 | `openclaw/nest-dashboard.py` | Server + embedded dashboard |
-| `openclaw/ai.openclaw.nest-dashboard.plist` | LaunchAgent plist |
+| `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` | LaunchAgent plist |
 | `openclaw/nest-dashboard.md` | This file |
 | `bin/nest` | CLI wrapper (dashboard subcommand added) |
 
@@ -159,7 +159,7 @@ All source files live in `/Users/dylanbochman/repos/dotfiles/`:
 scp dotfiles/openclaw/nest-dashboard.py dylans-mac-mini:~/.openclaw/bin/nest-dashboard.py
 
 # 2. Copy LaunchAgent plist
-scp dotfiles/openclaw/ai.openclaw.nest-dashboard.plist \
+scp dotfiles/openclaw/launchagents/ai.openclaw.nest-dashboard.plist \
     dylans-mac-mini:~/Library/LaunchAgents/ai.openclaw.nest-dashboard.plist
 
 # 3. Copy updated nest CLI
