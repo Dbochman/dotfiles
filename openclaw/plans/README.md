@@ -9,6 +9,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [fi-collar-presence](fi-collar-presence.md) | Add Potato's Fi collar to Cabin presence detection |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
+| [logs-consolidation](logs-consolidation.md) | Move service logs from /tmp/ to ~/.openclaw/logs/ |
 
 ## Archive
 
