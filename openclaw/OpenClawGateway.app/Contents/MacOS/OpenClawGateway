@@ -17,6 +17,14 @@ else
   exit 1
 fi
 
+# Truncate logs if over 5MB (keep last 1000 lines)
+LOGS_DIR="$HOME/.openclaw/logs"
+for f in "$LOGS_DIR/gateway.log" "$LOGS_DIR/gateway.err.log"; do
+  if [[ -f "$f" ]] && [[ "$(stat -f%z "$f" 2>/dev/null || echo 0)" -gt 5242880 ]]; then
+    tail -1000 "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  fi
+done
+
 # Verify critical secrets loaded
 if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   echo "FATAL: OPENCLAW_GATEWAY_TOKEN not found in cache" >&2

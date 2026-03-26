@@ -42,9 +42,14 @@ Each service uses one of two patterns:
 
 ## Log Rotation
 
-- `bb-watchdog.log` — script rotates daily, keeps 7 days (rotated files: `bb-watchdog.log.YYYY-MM-DD`)
-- `nest-cron.log` — truncated by the snapshot plist when over 100KB
-- Other logs — no automatic rotation. Monitor size periodically.
+| Log | Strategy | Trigger |
+|-----|----------|---------|
+| `gateway.log` / `gateway.err.log` | Truncate to last 1000 lines when >5MB | Gateway wrapper on startup/restart |
+| `bb-watchdog.log` | Daily rotation, keep 7 days (`bb-watchdog.log.YYYY-MM-DD`) | Script checks on each run |
+| `nest-cron.log` | Truncate to last 50 lines when >100KB | Nest snapshot plist inline bash |
+| All others | No automatic rotation | Monitor size periodically |
+
+To check log sizes: `ls -lhS ~/.openclaw/logs/*.log`
 
 ## Debugging Commands
 
