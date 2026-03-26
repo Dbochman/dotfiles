@@ -22,8 +22,8 @@
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/presence-detect.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/presence-detect.log</string>
+    <string>/dev/null</string>
 </dict>
 </plist>

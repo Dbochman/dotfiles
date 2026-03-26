@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-LOG_FILE="/tmp/presence-detect.log"
+LOG_FILE="$HOME/.openclaw/logs/presence-detect.log"
 STATE_DIR="${HOME}/.openclaw/presence"
 RECV_DIR="${STATE_DIR}/incoming"
 NODE="/opt/homebrew/bin/node"

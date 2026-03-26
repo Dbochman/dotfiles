@@ -124,7 +124,7 @@ Sidebar order: Me (0) → Julia Jennings (1) → Dylan Bochman (2). Do NOT attem
 To check the listener:
 ```bash
 launchctl list | grep ring-listener    # should show PID
-tail -f /tmp/ring-listener.log         # live logs
+tail -f ~/.openclaw/logs/ring-listener.log  # live logs
 ```
 
 To restart:

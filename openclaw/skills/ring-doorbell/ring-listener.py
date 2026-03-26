@@ -34,7 +34,6 @@ CONFIG_DIR = Path.home() / ".config" / "ring"
 TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 FCM_CREDS_FILE = Path.home() / ".openclaw/ring-listener/fcm-credentials.json"
 FRAME_DIR = Path.home() / ".openclaw/ring-listener/frames"
-LOG_FILE = "/tmp/ring-listener.log"
 
 BB_URL = "http://localhost:1234"
 DYLAN_CHAT = "any;-;dylanbochman@gmail.com"

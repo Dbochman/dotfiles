@@ -28,8 +28,8 @@ set -euo pipefail
 
 STATE_DIR="${HOME}/.openclaw/bb-watchdog"
 STATE_FILE="${STATE_DIR}/state.json"
-LOG_FILE="/tmp/bb-watchdog.log"
-LAG_METRICS_FILE="/tmp/bb-ingest-lag.log"
+LOG_FILE="$HOME/.openclaw/logs/bb-watchdog.log"
+LAG_METRICS_FILE="$HOME/.openclaw/logs/bb-ingest-lag.log"
 LAG_ALERT_SEC="${BB_INGEST_LAG_ALERT_SEC:-90}"
 POKE_SCRIPT="${HOME}/.openclaw/workspace/scripts/poke-messages.scpt"
 POKE_RETRY_THRESHOLD="${BB_POKE_RETRY_THRESHOLD:-3}"
@@ -41,7 +41,7 @@ if [[ -f "$LOG_FILE" ]]; then
   if [[ -n "$log_date" && "$log_date" != "$today" ]]; then
     mv "$LOG_FILE" "${LOG_FILE}.${log_date}"
     # Remove logs older than 7 days
-    find /tmp -maxdepth 1 -name 'bb-watchdog.log.*' -mtime +7 -delete 2>/dev/null || true
+    find "$HOME/.openclaw/logs" -maxdepth 1 -name 'bb-watchdog.log.*' -mtime +7 -delete 2>/dev/null || true
   fi
 fi
 NODE="/opt/homebrew/bin/node"

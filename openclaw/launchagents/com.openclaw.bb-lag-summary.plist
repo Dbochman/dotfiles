@@ -24,8 +24,8 @@
         <integer>5</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/bb-lag-summary.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/bb-lag-summary.log</string>
+    <string>/dev/null</string>
 </dict>
 </plist>

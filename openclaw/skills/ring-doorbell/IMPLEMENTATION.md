@@ -166,8 +166,8 @@ The listener runs as a persistent `KeepAlive` LaunchAgent (`ai.openclaw.ring-lis
 <key>Label</key>        ai.openclaw.ring-listener
 <key>KeepAlive</key>    true
 <key>ProgramArguments</key>  /bin/bash ring-listener-wrapper.sh
-<key>StandardOutPath</key>   /tmp/ring-listener.log
-<key>StandardErrorPath</key> /tmp/ring-listener.log
+<key>StandardOutPath</key>   ~/.openclaw/logs/ring-listener.log
+<key>StandardErrorPath</key> ~/.openclaw/logs/ring-listener.log
 ```
 
 The wrapper script (`ring-listener-wrapper.sh`) sources `~/.openclaw/.secrets-cache` for `BLUEBUBBLES_PASSWORD` before exec'ing the Python listener. This follows the cache-only secrets pattern (no `op read` at startup — would hang under launchd).
@@ -536,7 +536,7 @@ Each state change is appended as a single JSON line (same schema as `state.json`
 ### Checking Listener Status
 ```bash
 launchctl list | grep ring-listener    # PID and exit code
-tail -f /tmp/ring-listener.log         # live logs
+tail -f ~/.openclaw/logs/ring-listener.log         # live logs
 ```
 
 ### Restarting Listener

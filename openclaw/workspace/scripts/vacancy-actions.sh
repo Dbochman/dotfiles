@@ -19,7 +19,7 @@ set -euo pipefail
 PRESENCE_DIR="$HOME/.openclaw/presence"
 STATE_FILE="$PRESENCE_DIR/state.json"
 MARKER_DIR="$PRESENCE_DIR/vacancy-dispatched"
-LOG_FILE="/tmp/vacancy-actions.log"
+LOG_FILE="$HOME/.openclaw/logs/vacancy-actions.log"
 
 # All CLIs resolved via PATH (~/.openclaw/bin + /opt/homebrew/bin)
 

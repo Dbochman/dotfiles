@@ -21,8 +21,8 @@
         <string>/Users/dbochman/.openclaw/presence/state.json</string>
     </array>
     <key>StandardOutPath</key>
-    <string>/tmp/vacancy-actions.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/vacancy-actions.log</string>
+    <string>/dev/null</string>
 </dict>
 </plist>

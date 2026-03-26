@@ -21,8 +21,8 @@
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/cielo-refresh.log</string>
+    <string>/Users/dbochman/.openclaw/logs/cielo-refresh.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/cielo-refresh.log</string>
+    <string>/Users/dbochman/.openclaw/logs/cielo-refresh.log</string>
 </dict>
 </plist>

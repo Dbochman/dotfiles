@@ -100,7 +100,7 @@ cielo devices --json
 Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes to automatically refresh tokens via CDP browser capture. This should keep tokens fresh indefinitely as long as the Cielo session cookies haven't expired.
 
 ### Automated refresh (default)
-The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` starts pinchtab, auto-logs in via persisted cookies in `~/.pinchtab/chrome-profile/`, captures a fresh token via Chrome DevTools Protocol, and verifies it works. Logs at `/tmp/cielo-refresh.log`.
+The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` starts pinchtab, auto-logs in via persisted cookies in `~/.pinchtab/chrome-profile/`, captures a fresh token via Chrome DevTools Protocol, and verifies it works. Logs at `~/.openclaw/logs/cielo-refresh.log`.
 
 ### If automated refresh fails (session expired)
 Cookies persist for weeks/months. If they expire, a one-time manual re-login is needed:

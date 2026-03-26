@@ -118,8 +118,8 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 
 ### Logs
 
-- `/tmp/presence-detect.log` (on both machines)
-- `/tmp/presence-receive.log` (on Mac Mini)
+- `~/.openclaw/logs/presence-detect.log` (on both machines)
+- `~/.openclaw/logs/presence-receive.log` (on Mac Mini)
 
 ## Detection Methods
 

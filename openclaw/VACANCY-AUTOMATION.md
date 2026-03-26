@@ -79,7 +79,7 @@ Actions only fire when `confirmed_vacant` AND no marker exists. Markers are dele
 | `~/.openclaw/workspace/scripts/vacancy-actions.sh` | Main script |
 | `~/.openclaw/presence/state.json` | Input: occupancy state (from presence detection) |
 | `~/.openclaw/presence/vacancy-dispatched/` | Marker files for dedup |
-| `/tmp/vacancy-actions.log` | Execution log |
+| `~/.openclaw/logs/vacancy-actions.log` | Execution log |
 
 ## LaunchAgent
 
@@ -91,7 +91,7 @@ Actions only fire when `confirmed_vacant` AND no marker exists. Markers are dele
 
 Check the log:
 ```bash
-tail -50 /tmp/vacancy-actions.log
+tail -50 ~/.openclaw/logs/vacancy-actions.log
 ```
 
 Check current occupancy:

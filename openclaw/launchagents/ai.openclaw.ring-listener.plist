@@ -19,8 +19,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/ring-listener.log</string>
+    <string>/Users/dbochman/.openclaw/logs/ring-listener.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/ring-listener.log</string>
+    <string>/Users/dbochman/.openclaw/logs/ring-listener.log</string>
 </dict>
 </plist>

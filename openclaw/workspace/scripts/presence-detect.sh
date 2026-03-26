@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-LOG_FILE="/tmp/presence-detect.log"
+LOG_FILE="$HOME/.openclaw/logs/presence-detect.log"
 NODE="/opt/homebrew/bin/node"
 GRPCURL="/opt/homebrew/bin/grpcurl"
 TAILSCALE="/usr/local/bin/tailscale"

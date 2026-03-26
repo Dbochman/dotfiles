@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-LAG_FILE="/tmp/bb-ingest-lag.log"
-SUMMARY_LOG="/tmp/bb-lag-summary.log"
+LAG_FILE="$HOME/.openclaw/logs/bb-ingest-lag.log"
+SUMMARY_LOG="$HOME/.openclaw/logs/bb-lag-summary.log"
 STATE_DIR="${HOME}/.openclaw/bb-watchdog"
 STATE_FILE="${STATE_DIR}/lag-summary-state"
 
@@ -43,5 +43,5 @@ fi
 
 line="[$(date '+%Y-%m-%d %H:%M:%S')] DAILY LAG SUMMARY (${target_date}): count=${count} avg_s=${avg_sec} max_s=${max_sec}"
 echo "$line" >> "$SUMMARY_LOG"
-echo "$line" >> "/tmp/bb-watchdog.log"
+echo "$line" >> "$HOME/.openclaw/logs/bb-watchdog.log"
 echo "$target_date" > "$STATE_FILE"

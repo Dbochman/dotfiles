@@ -19,8 +19,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/presence-receive.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/presence-receive.log</string>
+    <string>/dev/null</string>
 </dict>
 </plist>
