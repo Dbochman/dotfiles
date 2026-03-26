@@ -4,65 +4,105 @@
 Move all service logs from `/tmp/` to `~/.openclaw/logs/` so they survive reboots.
 
 ## Current State
-7 active log files in `/tmp/` written by LaunchAgents. These are lost on macOS reboot. Meanwhile, `~/.openclaw/logs/` already has 28 files from other services (gateway, nest, usage, financial dashboards).
+7+ active log files in `/tmp/` written by LaunchAgents. These are lost on macOS reboot. Meanwhile, `~/.openclaw/logs/` already has 28 files from other services (gateway, nest, usage, financial dashboards).
 
-## Files to Move
+## Critical: Double-Write Pattern
 
-| Current `/tmp/` path | Plist | Script `LOG_FILE` | New path |
-|----------------------|-------|-------------------|----------|
-| `bb-watchdog.log` | `com.openclaw.bb-watchdog` | `bb-watchdog.sh:31` | `~/.openclaw/logs/bb-watchdog.log` |
-| `bb-lag-summary.log` | `com.openclaw.bb-lag-summary` | `bb-lag-summary.sh:7` | `~/.openclaw/logs/bb-lag-summary.log` |
-| `presence-detect.log` | `com.openclaw.presence-cabin` + `presence-crosstown` | `presence-detect.sh:24`, `presence-receive.sh:11` | `~/.openclaw/logs/presence-detect.log` |
-| `presence-receive.log` | `com.openclaw.presence-receive` | — (plist only) | `~/.openclaw/logs/presence-receive.log` |
-| `ring-listener.log` | `ai.openclaw.ring-listener` | `ring-listener.py:37` | `~/.openclaw/logs/ring-listener.log` |
-| `vacancy-actions.log` | `com.openclaw.vacancy-actions` | `vacancy-actions.sh:22` | `~/.openclaw/logs/vacancy-actions.log` |
-| `cielo-refresh.log` | `com.openclaw.cielo-refresh` | — (plist only) | `~/.openclaw/logs/cielo-refresh.log` |
+Several services write to the same log file via **two independent mechanisms**:
+1. **Plist `StandardOutPath`** — launchd redirects stdout/stderr to the log file
+2. **Script `log()` function** — script appends to the same file via `>> $LOG_FILE`
 
-## Changes Required
+When both point to the same path, this works but is redundant and fragile. When migrating, **both must be updated together**.
 
-### Plists (StandardOutPath/StandardErrorPath)
-7 plists in `openclaw/launchagents/`:
-1. `com.openclaw.bb-watchdog.plist` — lines 24, 26
-2. `com.openclaw.bb-lag-summary.plist` — lines 27, 29
-3. `com.openclaw.presence-cabin.plist` — lines 25, 27
-4. `com.openclaw.presence-crosstown.plist` — lines 25, 27
-5. `com.openclaw.presence-receive.plist` — lines 22, 24
-6. `ai.openclaw.ring-listener.plist` — lines 22, 24
-7. `com.openclaw.vacancy-actions.plist` — lines 24, 26
-8. `com.openclaw.cielo-refresh.plist` — lines 24, 26
+### Per-Service Logging Analysis
 
-### Scripts (hardcoded LOG_FILE)
-1. `openclaw/workspace/scripts/bb-watchdog.sh:31` — `LOG_FILE="/tmp/bb-watchdog.log"`
-2. `openclaw/workspace/scripts/bb-lag-summary.sh:7` — `SUMMARY_LOG="/tmp/bb-lag-summary.log"`
-3. `openclaw/workspace/scripts/bb-lag-summary.sh:46` — writes to `/tmp/bb-watchdog.log`
-4. `openclaw/workspace/scripts/presence-detect.sh:24` — `LOG_FILE="/tmp/presence-detect.log"`
-5. `openclaw/workspace/scripts/presence-receive.sh:11` — `LOG_FILE="/tmp/presence-detect.log"`
-6. `openclaw/workspace/scripts/vacancy-actions.sh:22` — `LOG_FILE="/tmp/vacancy-actions.log"`
-7. `openclaw/skills/ring-doorbell/ring-listener.py:37` — `LOG_FILE = "/tmp/ring-listener.log"`
+| Service | Plist stdout → file | Script log() → file | Owner to use |
+|---------|--------------------|--------------------|-------------|
+| `bb-watchdog` | Yes (plist:24,26) | Yes (`bb-watchdog.sh:54`) | **Script** — script does rotation + structured logging. Set plist stdout to `/dev/null` |
+| `bb-lag-summary` | Yes (plist:27,29) | Yes (`bb-lag-summary.sh:46` writes to bb-watchdog.log) | **Script** — writes to its own `SUMMARY_LOG`. Set plist stdout to `/dev/null` |
+| `presence-detect` | Yes (plist:25,27) | Yes (`presence-detect.sh:34`) | **Script** — script has structured `log()`. Set plist stdout to `/dev/null` |
+| `presence-receive` | Yes (plist:22,24) | Yes (`presence-receive.sh:33` writes to presence-detect.log) | **Script** — shares log with presence-detect. Set plist stdout to `/dev/null` |
+| `vacancy-actions` | Yes (plist:24,26) | Yes (`vacancy-actions.sh:27`) | **Script** — script has structured `log()`. Set plist stdout to `/dev/null` |
+| `cielo-refresh` | Yes (plist:24,26) | No (plist only) | **Plist** — keep plist stdout redirect |
+| `ring-listener` | Yes (plist:22,24) | **Stdout only** (`ring-listener.py:137` writes to `sys.stdout`) | **Plist** — script logs via stdout, plist captures it. `LOG_FILE` at line 37 is a dead variable (unused) |
 
-### Documentation
-1. `openclaw/VACANCY-AUTOMATION.md:82,94` — log path and tail command
-2. `openclaw/skills/ring-doorbell/SKILL.md:127` — tail command
-3. `openclaw/skills/ring-doorbell/IMPLEMENTATION.md:169,170,539` — plist example + tail
-4. `openclaw/skills/presence/SKILL.md:121,122` — log paths
-5. `openclaw/skills/cielo-ac/SKILL.md:103` — log path
+**Decision**: For services with script `log()` functions, the script owns logging and plist stdout goes to `/dev/null`. For services that log via stdout (ring-listener) or have no script logging (cielo-refresh), the plist owns logging.
 
-### Memory (external, not in repo)
-- `.claude/projects/-Users-dbochman/memory/openclaw-imessage.md:31` — bb-watchdog log path
+## Files to Update
+
+### Plists — change StandardOutPath/StandardErrorPath
+
+**To `~/.openclaw/logs/` (plist-owned logging):**
+| Plist | Lines | New path |
+|-------|-------|----------|
+| `ai.openclaw.ring-listener` | 22, 24 | `~/.openclaw/logs/ring-listener.log` |
+| `com.openclaw.cielo-refresh` | 24, 26 | `~/.openclaw/logs/cielo-refresh.log` |
+
+**To `/dev/null` (script-owned logging):**
+| Plist | Lines |
+|-------|-------|
+| `com.openclaw.bb-watchdog` | 24, 26 |
+| `com.openclaw.bb-lag-summary` | 27, 29 |
+| `com.openclaw.presence-cabin` | 25, 27 |
+| `com.openclaw.presence-receive` | 22, 24 |
+| `com.openclaw.vacancy-actions` | 24, 26 |
+
+### Scripts — update LOG_FILE paths
+| Script | Line | Old | New |
+|--------|------|-----|-----|
+| `bb-watchdog.sh` | 31 | `/tmp/bb-watchdog.log` | `$HOME/.openclaw/logs/bb-watchdog.log` |
+| `bb-watchdog.sh` | 32 | `/tmp/bb-ingest-lag.log` | `$HOME/.openclaw/logs/bb-ingest-lag.log` |
+| `bb-watchdog.sh` | 44 | `find /tmp -name 'bb-watchdog.log.*'` | `find $HOME/.openclaw/logs -name 'bb-watchdog.log.*'` |
+| `bb-lag-summary.sh` | 6 | `/tmp/bb-ingest-lag.log` | `$HOME/.openclaw/logs/bb-ingest-lag.log` |
+| `bb-lag-summary.sh` | 7 | `/tmp/bb-lag-summary.log` | `$HOME/.openclaw/logs/bb-lag-summary.log` |
+| `bb-lag-summary.sh` | 46 | `/tmp/bb-watchdog.log` | `$HOME/.openclaw/logs/bb-watchdog.log` |
+| `presence-detect.sh` | 24 | `/tmp/presence-detect.log` | `$HOME/.openclaw/logs/presence-detect.log` |
+| `presence-receive.sh` | 11 | `/tmp/presence-detect.log` | `$HOME/.openclaw/logs/presence-detect.log` |
+| `vacancy-actions.sh` | 22 | `/tmp/vacancy-actions.log` | `$HOME/.openclaw/logs/vacancy-actions.log` |
+| `ring-listener.py` | 37 | Remove dead `LOG_FILE` variable (unused, logging goes to stdout) |
+
+### Documentation updates
+| File | Lines | Change |
+|------|-------|--------|
+| `openclaw/VACANCY-AUTOMATION.md` | 82, 94 | Update log path + tail command |
+| `openclaw/skills/ring-doorbell/SKILL.md` | 127 | Update tail command |
+| `openclaw/skills/ring-doorbell/IMPLEMENTATION.md` | 169, 170, 539 | Update plist example + tail |
+| `openclaw/skills/presence/SKILL.md` | 121, 122 | Update log paths |
+| `openclaw/skills/cielo-ac/SKILL.md` | 103 | Update log path |
+
+## Scope Exclusions
+
+### `presence-crosstown` (MacBook Pro)
+The `com.openclaw.presence-crosstown` plist runs on the **MacBook Pro**, not the Mini. It writes to `/tmp/presence-detect.log` on that machine. **Excluded from this plan** — handle separately when on MacBook Pro. The script change to `presence-detect.sh` will use `$HOME/.openclaw/logs/` which will work on both machines if the directory exists.
+
+### `ring-listener.py:37` (dead variable)
+`LOG_FILE = "/tmp/ring-listener.log"` is never used — the script logs via `sys.stdout.write()` at line 137, which launchd captures via `StandardOutPath`. Remove the dead variable rather than updating it.
 
 ## Steps
-1. Update all 8 plists: replace `/tmp/` with `/Users/dbochman/.openclaw/logs/`
-2. Update all 7 script LOG_FILE paths: replace `/tmp/` with `$HOME/.openclaw/logs/`
-3. Update all 5 documentation files
-4. Verify with: `rg '/tmp/(bb-|presence|ring-|vacancy|cielo-)' --glob '!openclaw/plans/**'`
-5. Commit and push
-6. Deploy updated plists + scripts to Mini via scp
-7. On Mini: move existing logs from /tmp/ to ~/.openclaw/logs/
-8. Restart all 7 affected services: `launchctl kickstart -k gui/$(id -u)/<label>`
-9. Verify logs appear in new location: `ls -la ~/.openclaw/logs/{bb-watchdog,ring-listener,presence-detect,vacancy-actions,cielo-refresh}*`
-
-## Note on presence-crosstown
-The `com.openclaw.presence-crosstown` plist runs on the **MacBook Pro**, not the Mini. Its log path should use the MacBook Pro's home dir. The plist already uses `/tmp/` — consider whether MacBook Pro has a `~/.openclaw/logs/` dir or if `/tmp/` is acceptable there (MacBook Pro reboots less frequently and presence data is ephemeral).
+1. Update 7 plists (2 to new log path, 5 to `/dev/null`)
+2. Update 6 scripts (LOG_FILE paths + rotation path)
+3. Clean dead `LOG_FILE` variable from `ring-listener.py`
+4. Update 5 documentation files
+5. Verify: `rg '/tmp/(bb-|presence|ring-|vacancy|cielo-)' --glob '!openclaw/plans/**'`
+6. Also verify: `rg '/tmp/bb-ingest' --glob '!openclaw/plans/**'`
+7. Commit and push
+8. Deploy updated plists to Mini: `scp openclaw/launchagents/*.plist dylans-mac-mini:~/Library/LaunchAgents/`
+9. Deploy updated scripts to Mini
+10. On Mini, move existing logs: `mv /tmp/{bb-watchdog,bb-lag-summary,bb-ingest-lag,presence-detect,presence-receive,vacancy-actions,cielo-refresh,ring-listener}.log ~/.openclaw/logs/ 2>/dev/null`
+11. **Reload services** (not just kickstart — plist metadata changed):
+    ```bash
+    for label in com.openclaw.bb-watchdog com.openclaw.bb-lag-summary \
+      com.openclaw.presence-cabin com.openclaw.presence-receive \
+      com.openclaw.vacancy-actions com.openclaw.cielo-refresh \
+      ai.openclaw.ring-listener; do
+      launchctl bootout gui/$(id -u)/$label 2>/dev/null
+      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/$label.plist
+    done
+    ```
+12. Verify logs appear in new location:
+    ```bash
+    ls -la ~/.openclaw/logs/{bb-watchdog,ring-listener,presence-detect,vacancy-actions,cielo-refresh,bb-lag-summary,bb-ingest-lag}.log
+    ```
 
 ## Risk
-Low — log path changes don't affect service behavior. Services will create new log files at the new path on restart. Old `/tmp/` logs can be moved or left to be cleaned by macOS.
+Low — log path changes don't affect service behavior. The `bootout`/`bootstrap` cycle will briefly stop and restart each service (~1s gap). Gateway is NOT affected by this plan.
