@@ -1,0 +1,5 @@
+# Track directory structure but ignore actual log files
+*.log
+*.log.*
+*.jsonl
+!.gitignore
