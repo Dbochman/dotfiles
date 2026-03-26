@@ -92,13 +92,15 @@ ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro \
 2. Update 6 scripts (LOG_FILE paths + rotation path)
 3. Clean dead `LOG_FILE` variable from `ring-listener.py`
 4. Update 5 documentation files
-5. Verify: `rg '/tmp/(bb-|presence|ring-|vacancy|cielo-)' --glob '!openclaw/plans/**'`
-6. Also verify: `rg '/tmp/bb-ingest' --glob '!openclaw/plans/**'`
+5. Verify no remaining /tmp/ references for in-scope logs:
+   ```bash
+   rg '/tmp/(bb-watchdog|bb-lag-summary|bb-ingest-lag|presence-detect|presence-receive|ring-listener|vacancy-actions|cielo-refresh)' --glob '!openclaw/plans/**'
+   ```
+   Expected: no matches. If any remain, fix before proceeding.
 7. Commit and push
 8. Deploy updated plists to Mini: `scp openclaw/launchagents/*.plist dylans-mac-mini:~/Library/LaunchAgents/`
 9. Deploy updated scripts to Mini
-10. On Mini, move existing logs: `mv /tmp/{bb-watchdog,bb-lag-summary,bb-ingest-lag,presence-detect,presence-receive,vacancy-actions,cielo-refresh,ring-listener}.log ~/.openclaw/logs/ 2>/dev/null`
-11. **Reload services** (not just kickstart — plist metadata changed):
+10. **Reload services FIRST** (before moving logs — avoids race where running scripts recreate `/tmp/` logs):
     ```bash
     for label in com.openclaw.bb-watchdog com.openclaw.bb-lag-summary \
       com.openclaw.presence-cabin com.openclaw.presence-receive \
@@ -108,23 +110,27 @@ ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro \
       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/$label.plist
     done
     ```
+11. Move old logs from /tmp/ to new location (services are already writing to new paths):
+    ```bash
+    for f in bb-watchdog bb-lag-summary bb-ingest-lag presence-detect presence-receive vacancy-actions cielo-refresh ring-listener; do
+      mv /tmp/${f}.log ~/.openclaw/logs/${f}.log.old 2>/dev/null
+    done
+    ```
 12. Verify logs appear in new location:
     ```bash
     ls -la ~/.openclaw/logs/{bb-watchdog,ring-listener,presence-detect,vacancy-actions,cielo-refresh,bb-lag-summary,bb-ingest-lag}.log
     ```
-13. **Deploy to MacBook Pro** (presence-crosstown plist + script):
+13. **Deploy to MacBook Pro** (presence-crosstown plist + script). SSH key `~/.ssh/id_mini_to_mbp` exists on Mini (confirmed 2026-03-25). Each step validates before proceeding:
     ```bash
-    ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro \
-      'cd ~/dotfiles && git pull && \
-       cp ~/dotfiles/openclaw/launchagents/com.openclaw.presence-crosstown.plist ~/Library/LaunchAgents/ && \
-       cp ~/dotfiles/openclaw/workspace/scripts/presence-detect.sh ~/.openclaw/workspace/scripts/ && \
-       launchctl bootout gui/$(id -u)/com.openclaw.presence-crosstown 2>/dev/null; \
-       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openclaw.presence-crosstown.plist'
+    MBP_SSH="ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro"
+    $MBP_SSH 'cd ~/dotfiles && git pull --ff-only' && \
+    $MBP_SSH 'cp ~/dotfiles/openclaw/launchagents/com.openclaw.presence-crosstown.plist ~/Library/LaunchAgents/' && \
+    $MBP_SSH 'cp ~/dotfiles/openclaw/workspace/scripts/presence-detect.sh ~/.openclaw/workspace/scripts/' && \
+    $MBP_SSH 'launchctl bootout gui/$(id -u)/com.openclaw.presence-crosstown 2>/dev/null; launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openclaw.presence-crosstown.plist'
     ```
 14. Verify MacBook Pro log:
     ```bash
-    ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro \
-      'ls -la ~/.openclaw/logs/presence-detect.log'
+    $MBP_SSH 'ls -la ~/.openclaw/logs/presence-detect.log'
     ```
 
 ## Risk
