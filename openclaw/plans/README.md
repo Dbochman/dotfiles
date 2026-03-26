@@ -9,7 +9,6 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [fi-collar-presence](fi-collar-presence.md) | Add Potato's Fi collar to Cabin presence detection |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
-| [plist-consolidation](plist-consolidation.md) | Move 19 plists from openclaw/ root to launchagents/ |
 
 ## Archive
 
@@ -29,3 +28,4 @@ Completed or historical plans in [`archive/`](archive/).
 | [petlibro](archive/petlibro.md) | Petlibro feeder/fountain skill implementation | Complete |
 | [skills-symlink-fix](archive/skills-symlink-fix.md) | Why symlinks broke skills deployment | Post-mortem |
 | [weekly-upgrade](archive/weekly-upgrade.md) | Automated weekly OpenClaw npm upgrade script | Removed (Mar 12) |
+| [plist-consolidation](archive/plist-consolidation.md) | Move 22 plists from openclaw/ root to launchagents/ | Complete |
