@@ -44,6 +44,7 @@ When both point to the same path, this works but is redundant and fragile. When 
 | `com.openclaw.bb-watchdog` | 24, 26 |
 | `com.openclaw.bb-lag-summary` | 27, 29 |
 | `com.openclaw.presence-cabin` | 25, 27 |
+| `com.openclaw.presence-crosstown` | 25, 27 |
 | `com.openclaw.presence-receive` | 22, 24 |
 | `com.openclaw.vacancy-actions` | 24, 26 |
 
@@ -73,13 +74,21 @@ When both point to the same path, this works but is redundant and fragile. When 
 ## Scope Exclusions
 
 ### `presence-crosstown` (MacBook Pro)
-The `com.openclaw.presence-crosstown` plist runs on the **MacBook Pro**, not the Mini. It writes to `/tmp/presence-detect.log` on that machine. **Excluded from this plan** — handle separately when on MacBook Pro. The script change to `presence-detect.sh` will use `$HOME/.openclaw/logs/` which will work on both machines if the directory exists.
+The `com.openclaw.presence-crosstown` plist runs on the **MacBook Pro**, not the Mini. It writes to `/tmp/presence-detect.log` on that machine. The `~/.openclaw/logs/` directory has been created on the MacBook Pro (2026-03-25). The script change to `presence-detect.sh` will use `$HOME/.openclaw/logs/` which will work on both machines. The crosstown plist also needs its `StandardOutPath`/`StandardErrorPath` updated to `/dev/null` (script-owned logging) and deployed to the MacBook Pro.
+
+**MacBook Pro deployment (step 13):**
+```bash
+ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro \
+  'cp ~/dotfiles/openclaw/launchagents/com.openclaw.presence-crosstown.plist ~/Library/LaunchAgents/ && \
+   launchctl bootout gui/$(id -u)/com.openclaw.presence-crosstown 2>/dev/null; \
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openclaw.presence-crosstown.plist'
+```
 
 ### `ring-listener.py:37` (dead variable)
 `LOG_FILE = "/tmp/ring-listener.log"` is never used — the script logs via `sys.stdout.write()` at line 137, which launchd captures via `StandardOutPath`. Remove the dead variable rather than updating it.
 
 ## Steps
-1. Update 7 plists (2 to new log path, 5 to `/dev/null`)
+1. Update 8 plists (2 to new log path, 6 to `/dev/null`)
 2. Update 6 scripts (LOG_FILE paths + rotation path)
 3. Clean dead `LOG_FILE` variable from `ring-listener.py`
 4. Update 5 documentation files
@@ -102,6 +111,20 @@ The `com.openclaw.presence-crosstown` plist runs on the **MacBook Pro**, not the
 12. Verify logs appear in new location:
     ```bash
     ls -la ~/.openclaw/logs/{bb-watchdog,ring-listener,presence-detect,vacancy-actions,cielo-refresh,bb-lag-summary,bb-ingest-lag}.log
+    ```
+13. **Deploy to MacBook Pro** (presence-crosstown plist + script):
+    ```bash
+    ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro \
+      'cd ~/dotfiles && git pull && \
+       cp ~/dotfiles/openclaw/launchagents/com.openclaw.presence-crosstown.plist ~/Library/LaunchAgents/ && \
+       cp ~/dotfiles/openclaw/workspace/scripts/presence-detect.sh ~/.openclaw/workspace/scripts/ && \
+       launchctl bootout gui/$(id -u)/com.openclaw.presence-crosstown 2>/dev/null; \
+       launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openclaw.presence-crosstown.plist'
+    ```
+14. Verify MacBook Pro log:
+    ```bash
+    ssh -i ~/.ssh/id_mini_to_mbp -o IdentityAgent=none dylans-macbook-pro \
+      'ls -la ~/.openclaw/logs/presence-detect.log'
     ```
 
 ## Risk
