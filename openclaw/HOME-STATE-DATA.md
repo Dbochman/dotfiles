@@ -181,8 +181,8 @@ Collected by `ring-listener.py`, written on each dog walk event.
   <key>Hour</key>    9
   <key>Minute</key>  0
 <key>ProgramArguments</key>  /bin/bash home-state-wrapper.sh
-<key>StandardOutPath</key>   /tmp/home-state-snapshot.log
-<key>StandardErrorPath</key> /tmp/home-state-snapshot.log
+<key>StandardOutPath</key>   ~/.openclaw/logs/home-state-snapshot.log
+<key>StandardErrorPath</key> ~/.openclaw/logs/home-state-snapshot.log
 ```
 
 The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials before running the Python snapshot script.

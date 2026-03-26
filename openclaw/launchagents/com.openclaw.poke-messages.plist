@@ -14,8 +14,8 @@
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/poke-messages.log</string>
+    <string>/Users/dbochman/.openclaw/logs/poke-messages.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/poke-messages.log</string>
+    <string>/Users/dbochman/.openclaw/logs/poke-messages.log</string>
 </dict>
 </plist>

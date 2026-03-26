@@ -37,6 +37,8 @@ Each service uses one of two patterns:
 | `usage-snapshot.log` / `.err.log` | `ai.openclaw.usage-snapshot` | Usage metrics snapshot |
 | `financial-dashboard.log` / `.err.log` | `ai.openclaw.financial-dashboard` | Financial dashboard HTTP server |
 | `dotfiles-pull.log` | `ai.openclaw.dotfiles-pull` | Daily dotfiles sync |
+| `home-state-snapshot.log` | `ai.openclaw.home-state-snapshot` | Daily home state snapshot (cat weights, sleep, doorbell) |
+| `poke-messages.log` | `com.openclaw.poke-messages` | AppleScript Messages.app keepalive |
 
 ## Log Rotation
 

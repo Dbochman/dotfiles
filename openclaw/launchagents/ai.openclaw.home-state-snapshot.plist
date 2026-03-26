@@ -17,8 +17,8 @@
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/home-state-snapshot.log</string>
+    <string>/Users/dbochman/.openclaw/logs/home-state-snapshot.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/home-state-snapshot.log</string>
+    <string>/Users/dbochman/.openclaw/logs/home-state-snapshot.log</string>
 </dict>
 </plist>
