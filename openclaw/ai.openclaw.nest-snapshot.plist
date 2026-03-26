@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.nest-snapshot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>
+# Truncate logs if over 100KB
+for f in ~/.openclaw/logs/nest-cron.log ~/.openclaw/logs/nest-cron.err.log; do
+  [ -f "$f" ] &amp;&amp; [ "$(stat -f%z "$f" 2>/dev/null || echo 0)" -gt 102400 ] &amp;&amp; tail -50 "$f" > "$f.tmp" &amp;&amp; mv "$f.tmp" "$f"
+done
+/opt/homebrew/bin/nest snapshot
+        </string>
+    </array>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/dbochman/.openclaw/logs/nest-cron.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dbochman/.openclaw/logs/nest-cron.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/dbochman</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
