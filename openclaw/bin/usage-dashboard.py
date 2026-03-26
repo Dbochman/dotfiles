@@ -773,7 +773,7 @@ function renderCronTable(jobs) {
   const el = document.getElementById('cronBody');
   if (!jobs.length) { el.innerHTML = '<tr><td colspan="8" style="color:' + C.muted + ';text-align:center;padding:1rem">No cron runs in period</td></tr>'; return; }
   // Most recent first
-  const sorted = [...jobs].reverse().slice(0, 50);
+  const sorted = [...jobs].reverse().slice(0, 10);
   el.innerHTML = sorted.map(j => {
     const delIcon = j.delivered === true ? '✓' : j.delivered === false ? '✗' : '-';
     const delColor = j.delivered === true ? C.green : j.delivered === false ? C.red : C.muted;
