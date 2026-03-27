@@ -1104,10 +1104,10 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
             return
 
         if not db.has_subscription:
-            log(f"{device} has no Ring Protect — skipping recording, running departure check only")
-            # No video analysis possible, but still check for departure
-            # using FCM person detection (we know a person was detected to get here)
-            check_departure({"people": ["unknown"], "dogs": []}, doorbot_id)
+            log(f"{device} has no Ring Protect — skipping recording, running departure check with assumed dog")
+            # No video analysis possible — we know a person was detected (FCM told us).
+            # Assume at least 1 dog to trigger the confirmation prompt at cabin.
+            check_departure({"people": ["unknown"], "dogs": ["unknown"]}, doorbot_id)
             return
 
         mp4_path, frame_path = await download_recording(db, event_id)
