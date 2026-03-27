@@ -69,7 +69,7 @@ A persistent listener (`ai.openclaw.ring-listener`) runs as a LaunchAgent on the
 
 - **Doorbell dings**: instant iMessage notification + camera frame + AI description
 - **Motion with person detected**: processed silently for Roomba automation (no text notification)
-- **Generic motion** (animals, cars): silently ignored
+- **Generic motion** (animals, cars): silently ignored at Crosstown; treated as potential person at Cabin (no Ring Protect)
 
 ### Dog Walk Automation
 
@@ -119,7 +119,7 @@ Sidebar order: Me (0) → Julia Jennings (1) → Dylan Bochman (2). Do NOT attem
 - Current state: `~/.openclaw/ring-listener/state.json` (dog_walk, roombas, findmy_polling, last_vision)
 - Daily history: `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`
 
-**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog detection is available for Cabin events. Cabin dog walk automation will not auto-trigger — tell OpenClaw directly: "start floomba and philly".
+**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog counting is available. Instead, the listener treats all Cabin motion as a potential person and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'") during walk hours. Auto-trigger (2+ dogs) is not possible at the Cabin. May produce occasional false positives from animals or cars.
 
 To check the listener:
 ```bash

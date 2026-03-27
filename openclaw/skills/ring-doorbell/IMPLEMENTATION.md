@@ -197,6 +197,7 @@ on_event(RingEvent)
             _handle_motion(state=event.state)
                 |
                 +-- state == "human"? → person_detected = True (trust FCM)
+                +-- No subscription? → person_detected = True (assume person)
                 +-- else: wait 5s, query history API for cv_properties.person_detected
                 |
                 +-- person_detected == True?
@@ -311,7 +312,7 @@ elif max_people >= 1 and max_dogs == 1:
     send_confirmation_imessage(location)  # ask Dylan
 ```
 
-**Note on Cabin:** The Cabin doorbell has no Ring Protect, so no video/vision analysis is available. Cabin events reach `check_departure()` with person-only data (`dogs=[]`), so dog walk automation cannot auto-trigger there. Cabin Roombas must be started manually via OpenClaw.
+**Note on Cabin:** The Cabin doorbell has no Ring Protect subscription, so no video recording, person detection (Smart Alerts), or multi-frame vision analysis is available. Without Ring Protect, FCM only sends generic `state=motion` events (never `state=human`), and `cv_properties.person_detected` is always false. To work around this, the listener treats **all motion at the Cabin as a potential person** and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'"). This may produce false positives from animals, cars, or wind — but during walk hours with presence confirmed, it's a reasonable tradeoff. Auto-trigger (2+ dogs) is not possible at the Cabin without vision analysis.
 
 ### Frame Retry for Second Dog
 
@@ -560,7 +561,7 @@ launchctl load ~/Library/LaunchAgents/ai.openclaw.ring-listener.plist
 ### Known Limitations
 
 1. **Battery doorbells sleep** — `ring snapshot` returns empty when doorbell is asleep between events. Frame extraction uses recordings instead (available after events).
-2. **Cabin doorbell has no Ring Protect** — no video/frame/vision for Cabin events. Dog walk automation cannot auto-trigger at Cabin (requires dog counts from vision). Cabin Roombas must be started manually via OpenClaw.
+2. **Cabin doorbell has no Ring Protect** — no video/frame/vision for Cabin events. Without Ring Protect, FCM never sends `state=human` and person detection is unavailable. The listener treats all Cabin motion as a potential person and assumes 1 dog, triggering the iMessage confirmation prompt during walk hours. Auto-trigger (2+ dogs) is not possible without vision analysis. May produce false positives from animals or cars.
 3. **WiFi health data unavailable** — `ring health` shows `None` for WiFi name/signal on these doorbell models. Connection status ("online") is available.
 4. **Vision accuracy** — Claude Haiku does scene description, not face recognition. People are typically identified as "unknown" rather than by name. Dogs are identified by breed/name. The count-based automation (max people, max dogs across events) works around this.
 5. **Direction removed** — Direction detection was removed from the vision prompt. Haiku frequently misclassified arrivals as departures due to fisheye distortion. Time-of-day filter, presence cross-check, and 2-hour cooldown prevent false positives instead.
