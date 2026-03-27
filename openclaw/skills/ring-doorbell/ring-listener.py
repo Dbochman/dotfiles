@@ -1062,6 +1062,12 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str
             log(f"WARNING: doorbot_id={doorbot_id} not found")
             return
 
+        # No-subscription doorbells can't distinguish person vs generic motion —
+        # treat all motion as potential person for departure detection
+        if not db.has_subscription and not person_detected:
+            log(f"{device} has no Ring Protect — treating motion as person for departure check")
+            person_detected = True
+
         # If FCM didn't flag person, fall back to history API check
         if not person_detected:
             await asyncio.sleep(5)
