@@ -248,12 +248,13 @@ check_departure() — Roomba + FindMy automation (departures only)
         |
         +-- Time-of-day filter (8-10 AM, 11 AM-1 PM, 5-8 PM)
         +-- Presence cross-check (skip if confirmed_vacant)
-        +-- Accumulate across 10-min sliding window
+        +-- Accumulate across 3-min sliding window
+        +-- WiFi check at decision time (skip if any phone on network)
         +-- 1+ people + 2+ dogs → auto-start Roombas + FindMy polling
         +-- 1+ people + 1 dog → iMessage confirmation to Dylan
         |       (cabin: per-window cooldown, one prompt per walk window)
-        |       (reply "start roombas" → agent runs `dog-walk-start cabin`
-        |        → starts Roombas + writes inbox signal → return monitoring)
+        |       (arms BB reply poller → polls for "start roombas" reply
+        |        → starts Roombas + return monitoring directly)
         |
         v
 send_imessage_image() — BB attachment + caption
@@ -298,15 +299,20 @@ if not _is_walk_hour():       # 8-10 AM, 11 AM-1 PM, 5-8 PM
     return
 if not _is_location_occupied(location):  # skip if confirmed_vacant
     return
-
 # No direction filter — Haiku struggles with fisheye distortion.
-# Time-of-day, presence, and cooldown prevent false positives.
+# Time-of-day, presence, WiFi check, and cooldown prevent false positives.
 
-# Accumulate across 10-minute sliding window
+# Accumulate across 3-minute sliding window
 # (people/dogs may pass doorbell in separate motion events)
 # Use max() for BOTH to avoid double-counting the same person/dog
 max_people = max(people_per_event)
 max_dogs = max(dogs_per_event)
+
+# WiFi check at decision time — accumulation window gives phones
+# ~30-60s to drop off WiFi during a real departure. If ANY phone
+# is still on WiFi, someone is home or returning — suppress.
+if _check_network_presence(location):
+    return  # phone on WiFi → home or returning
 
 if max_people >= 1 and max_dogs >= 2:
     start_roombas(location)
@@ -316,7 +322,7 @@ elif max_people >= 1 and max_dogs == 1:
     send_confirmation_imessage(location)  # ask Dylan
 ```
 
-**Note on Cabin:** The Cabin doorbell has no Ring Protect subscription, so no video recording, person detection (Smart Alerts), or multi-frame vision analysis is available. Without Ring Protect, FCM only sends generic `state=motion` events (never `state=human`), and `cv_properties.person_detected` is always false. To work around this, the listener treats **all motion at the Cabin as a potential person** and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'"). This may produce false positives from animals, cars, or wind — but during walk hours with presence confirmed, it's a reasonable tradeoff. Auto-trigger (2+ dogs) is not possible at the Cabin without vision analysis.
+**Note on Cabin:** The Cabin doorbell has no Ring Protect subscription, so no video recording, person detection (Smart Alerts), or multi-frame vision analysis is available. Without Ring Protect, FCM only sends generic `state=motion` events (never `state=human`), and `cv_properties.person_detected` is always false. To work around this, the listener treats **all motion at the Cabin as a potential person** and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'"). This may produce false positives from animals, cars, or wind — but during walk hours with presence confirmed, it's a reasonable tradeoff. Auto-trigger (2+ dogs) is not possible at the Cabin without vision analysis. The WiFi check at decision time is especially important at the Cabin: since all motion is treated as a departure, returning from a walk would trigger a false prompt without it. The check runs after the 3-minute accumulation window, giving phones ~30-60 seconds to drop off WiFi during a real departure. If any phone is still on the Starlink network when the decision fires, the departure is suppressed.
 
 ### Frame Retry for Second Dog
 
@@ -344,13 +350,16 @@ A 2-hour cooldown per location per action prevents re-triggering:
 |----------|---------|
 | Doorbell ding | "🔔 Front Door: Doorbell rang!" + camera frame + AI description |
 | Departure (2+ dogs) | "🧹 Starting Roombas at crosstown — everyone left for a walk!" |
-| Departure (1 dog, Crosstown) | "🐶 Ring saw X people and 1 dog leaving. Reply 'start roombas'" |
-| Departure (cabin) | "🐶 Ring saw X people and 1 dog leaving at cabin. Reply 'start roombas' ... + auto-dock when you're back" |
+| Departure (1 dog, Crosstown) | "🐶 Ring saw X people and 1 dog leaving. Reply 'start roombas' and I'll start them + auto-dock when you're back" |
+| Departure (1 dog, Cabin) | "🐶 Ring saw X people and 1 dog leaving at cabin. Reply 'start roombas' and I'll start them + auto-dock when you're back" |
+| Confirmation reply detected | "🧹 Both running at {location} — I'll dock them when you're back" |
 | Cabin prompt suppressed | (logged, no notification — already prompted in this walk window) |
+| Confirmation timeout (30min) | (logged, no notification — pending confirmation cleared) |
 | FindMy tracking started | "📍 Tracking your walk — will dock Roombas when you're back on Crosstown Ave" |
 | Walk timeout (2hr) | "⏰ Walk tracking timed out after 2 hours — docking Roombas" |
 | Outside walk hours | (logged, no notification) |
 | Already vacant | (logged, no notification) |
+| WiFi check (phone on network) | (logged, no notification — phone on WiFi at decision time means home or returning) |
 
 ## Component 4: FindMy Return-Home Tracking
 
@@ -434,19 +443,88 @@ Return monitoring stops when:
 4. **2-hour timeout** → dock Roombas as safety net
 5. **Listener restart** → monitoring state is in-memory only
 
-## Component 5: Inbox IPC (External Return-Monitor Trigger)
+## Component 5: Confirmation Reply Polling
 
 ### Overview
 
-External processes (e.g., the OpenClaw agent responding to "start roombas") can trigger return monitoring by writing a JSON file to the ring-listener's inbox directory. This bridges the gap between the manual confirmation path (cabin) and the automatic return monitoring that only runs on the auto-trigger path (2+ dogs at Crosstown).
+After the listener sends a PARTIAL DEPARTURE confirmation prompt ("Reply 'start roombas'"), it polls the BlueBubbles message API for Dylan's reply. When the reply is detected, the listener starts Roombas and return monitoring directly — without relying on the OpenClaw agent to call `dog-walk-start`.
+
+This is the **primary confirmation path**. The inbox IPC mechanism (Component 5b) remains as a fallback for external processes.
 
 ### How It Works
 
 ```
-Dylan replies "start roombas"
+Ring motion at cabin during walk hours
         |
         v
-OpenClaw agent runs `dog-walk-start cabin`
+check_departure() — 1 person + 1 dog (assumed)
+        |
+        +-- send_imessage("Reply 'start roombas' ...")
+        +-- Arm _pending_confirmation = {location, sent_at_ms}
+        |
+        v (every 5 seconds)
+_confirmation_poll_loop()
+        |
+        +-- POST /api/v1/message/query?password=<pw>
+        |       body: {"limit": 10, "sort": "DESC", "after": <sent_at_ms>}
+        |
+        +-- Filter: isFromMe=false, chatGuid=DYLAN_CHAT
+        +-- Match: text.strip().casefold() == "start roombas" (exact match only)
+        |
+        +-- On match:
+        |       +-- Clear _pending_confirmation
+        |       +-- run_roomba_command(location, "start")
+        |       +-- _update_state_dog_walk(location, "departure", ...)
+        |       +-- start_return_monitor(location)
+        |       +-- send_imessage("🧹 Both running — I'll dock them when you're back")
+        |
+        +-- On timeout (30 min):
+                +-- Clear _pending_confirmation, stop polling
+```
+
+### Pending Confirmation State
+
+```python
+_pending_confirmation = {
+    "location": "cabin",       # which location triggered the prompt
+    "sent_at_ms": 1711612826000  # epoch ms when prompt was sent (BB query filter)
+}
+```
+
+Cleared on:
+- **Reply received** — "start roombas" detected
+- **Timeout** — 30 minutes with no reply
+- **2-dog auto-start** — full departure detected on any path
+- **Inbox IPC** — external process triggered return monitoring
+- **Monitor already active** — return monitor started via another path
+
+### Race Condition: Listener vs OpenClaw
+
+Both the listener and OpenClaw's agent may see Dylan's "start roombas" reply. The listener polls BB directly; OpenClaw receives the message via the gateway webhook. Possible outcomes:
+
+| Who acts first | Result |
+|----------------|--------|
+| Listener first | Starts Roombas + return monitor. OpenClaw may also start Roombas (duplicate but harmless — Roombas are idempotent to multiple start commands). |
+| OpenClaw first | If OpenClaw calls `dog-walk-start`, inbox IPC clears pending and starts return monitor. If OpenClaw calls `roomba start` directly, listener still picks up the reply and starts return monitor. |
+| Both race | `_return_monitor_active` flag prevents duplicate monitoring. Roomba cooldown is per-process but robots handle duplicate starts gracefully. |
+
+### BB API Details
+
+- **Endpoint**: `POST /api/v1/message/query?password=<pw>`
+- **Body**: `{"limit": 10, "sort": "DESC", "after": <epoch_ms>}`
+- **Response**: `{"data": [{"text": "...", "isFromMe": bool, "dateCreated": epoch_ms, "chats": [{"guid": "..."}], ...}]}`
+- **Transport**: `aiohttp` (async, non-blocking) with 10s timeout
+
+## Component 5b: Inbox IPC (External Return-Monitor Trigger)
+
+### Overview
+
+External processes (e.g., the OpenClaw agent calling `dog-walk-start`) can trigger return monitoring by writing a JSON file to the ring-listener's inbox directory. This is a **fallback mechanism** — the primary path is the BB reply poller (Component 5). Inbox IPC remains useful for programmatic triggers that don't go through iMessage.
+
+### How It Works
+
+```
+External process calls `dog-walk-start cabin`
         |
         +-- Starts Roombas (roomba start floomba + philly)
         +-- Writes signal file to ~/.openclaw/ring-listener/inbox/<timestamp>.json
@@ -458,6 +536,7 @@ ring-listener _inbox_poll_loop()
         +-- Reads and deletes signal file
         +-- Ignores if >2 hours old
         +-- Ignores if return monitor already active
+        +-- Clears _pending_confirmation (if armed)
         +-- Calls start_return_monitor("cabin")
                 |
                 +-- Network scan (Starlink gRPC, every 60s)

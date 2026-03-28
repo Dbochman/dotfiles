@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -112,6 +113,11 @@ def _findmy_prompt(location: str) -> str:
         "If the map shows a completely different area, near_home is false."
     )
 
+# State file serialization lock — protects read-modify-write transactions
+_state_lock = threading.Lock()
+# Transient keys only valid on departure_skip events — stripped on all other writes
+_SKIP_KEYS = {"skip_reason", "skip_location", "skip_details"}
+
 # Dedup: track recent event IDs to avoid double-notify
 _recent_events: dict[int, float] = {}
 _DEDUP_WINDOW = 300  # 5 minutes
@@ -126,12 +132,19 @@ _return_monitor_active: bool = False  # True while monitoring for return
 _ring_motion_during_walk: bool = False  # Set when Ring detects motion while monitoring
 
 # Departure accumulator: track people/dogs across recent events within a window
-_DEPARTURE_WINDOW = 600  # 10 minutes
+_DEPARTURE_WINDOW = 180  # 3 minutes
 _departure_sightings: list[dict] = []  # [{"time": float, "people": int, "dogs": int, "location": str}]
 
 # Cabin confirmation prompt cooldown: once prompted in a walk window, suppress
 # until the next window. Keyed by (location, window_start_hour).
 _cabin_prompt_sent: dict[tuple[str, int], bool] = {}
+
+# Pending confirmation: after sending a PARTIAL DEPARTURE prompt, poll BB for
+# Dylan's reply ("start roombas") so the listener can start Roombas + return
+# monitoring directly instead of relying on OpenClaw's agent to call dog-walk-start.
+_pending_confirmation: dict | None = None  # {"location": str, "sent_at_ms": int}
+_CONFIRMATION_POLL_INTERVAL = 5  # seconds
+_CONFIRMATION_TIMEOUT = 1800  # 30 minutes — stop polling if no reply
 
 # Inbox directory for external processes to request return monitoring.
 # Write a JSON file with {"location": "cabin", "requested_at": "<ISO>"}.
@@ -157,8 +170,16 @@ def _read_state() -> dict:
     return {}
 
 
-def _write_state(state: dict) -> None:
-    """Write state atomically (temp + rename) and append to daily history JSONL."""
+def _write_state(state: dict, event_type: str = "state_update") -> None:
+    """Write state atomically (temp + rename) and append to daily history JSONL.
+
+    Called inside _state_lock by _update_state_* functions — do NOT acquire lock here.
+    """
+    # Strip stale skip metadata from previous writes — preserve on departure_skip
+    if event_type != "departure_skip":
+        for key in _SKIP_KEYS:
+            state.pop(key, None)
+    state["event_type"] = event_type
     state["timestamp"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -179,93 +200,137 @@ def _write_state(state: dict) -> None:
         f.flush()
 
 
-def _update_state_dog_walk(location: str, event: str, people: int = 0, dogs: int = 0) -> None:
+def _update_state_dog_walk(
+    location: str,
+    event: str,
+    people: int = 0,
+    dogs: int = 0,
+    return_signal: str | None = None,
+    roomba_result: dict | None = None,
+    walkers: list[str] | None = None,
+    skip_reason: str | None = None,
+    skip_details: dict | None = None,
+) -> None:
     """Update state file with dog walk event."""
-    state = _read_state()
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    with _state_lock:
+        state = _read_state()
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    walk = state.get("dog_walk") or {}
-    roombas = state.get("roombas") or {}
-    loc_roombas = roombas.get(location) or {}
+        walk = state.get("dog_walk") or {}
+        roombas = state.get("roombas") or {}
+        loc_roombas = roombas.get(location) or {}
 
-    if event == "departure":
-        walk = {
-            "active": True,
-            "location": location,
-            "departed_at": now,
-            "returned_at": None,
-            "people": people,
-            "dogs": dogs,
-        }
-        loc_roombas = {
-            "status": "running",
-            "started_at": now,
-            "docked_at": None,
-            "trigger": "dog_walk_departure",
-        }
-    elif event == "dock":
-        walk["active"] = False
-        walk["returned_at"] = now
-        loc_roombas["status"] = "docked"
-        loc_roombas["docked_at"] = now
-    elif event == "dock_timeout":
-        walk["active"] = False
-        walk["returned_at"] = now
-        loc_roombas["status"] = "docked"
-        loc_roombas["docked_at"] = now
-        loc_roombas["trigger"] = "timeout_fallback"
+        if event == "departure":
+            walk = {
+                "active": True,
+                "location": location,
+                "departed_at": now,
+                "returned_at": None,
+                "people": people,
+                "dogs": dogs,
+                "walkers": None,
+                "return_signal": None,
+                "walk_duration_minutes": None,
+            }
+            loc_roombas = {
+                "status": "running",
+                "started_at": now,
+                "docked_at": None,
+                "trigger": "dog_walk_departure",
+            }
+        elif event in ("dock", "dock_timeout"):
+            walk["active"] = False
+            walk["returned_at"] = now
+            walk["return_signal"] = return_signal
+            # Compute walk duration
+            departed_at = walk.get("departed_at")
+            if departed_at:
+                try:
+                    departed = datetime.strptime(departed_at, "%Y-%m-%dT%H:%M:%SZ")
+                    returned = datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ")
+                    walk["walk_duration_minutes"] = round(
+                        (returned - departed).total_seconds() / 60, 1
+                    )
+                except ValueError:
+                    pass
+            loc_roombas["status"] = "docked"
+            loc_roombas["docked_at"] = now
+            if event == "dock_timeout":
+                loc_roombas["trigger"] = "timeout_fallback"
+        elif event == "walkers_detected":
+            walk["walkers"] = walkers
+        elif event == "departure_skip":
+            state["skip_reason"] = skip_reason
+            state["skip_location"] = location
+            if skip_details:
+                state["skip_details"] = skip_details
 
-    roombas[location] = loc_roombas
-    state["dog_walk"] = walk
-    state["roombas"] = roombas
-    _write_state(state)
+        if roomba_result is not None:
+            loc_roombas["last_command_result"] = roomba_result
+
+        roombas[location] = loc_roombas
+        state["dog_walk"] = walk
+        state["roombas"] = roombas
+        _write_state(state, event_type=event)
     log(f"STATE: dog_walk event={event} location={location}")
 
 
 def _update_state_vision(vision_data: dict, event_id: int = 0) -> None:
     """Record the latest vision analysis result in state."""
-    state = _read_state()
-    state["last_vision"] = {
-        "event_id": event_id,
-        "description": vision_data.get("description", ""),
-        "people": len(vision_data.get("people", [])),
-        "dogs": len(vision_data.get("dogs", [])),
-        "people_list": vision_data.get("people", []),
-        "dogs_list": vision_data.get("dogs", []),
-        "analyzed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    _write_state(state)
-
-
-def _update_state_findmy(location: str, event: str, result: dict | None = None) -> None:
-    """Update FindMy polling state."""
-    state = _read_state()
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    polling = state.get("findmy_polling") or {}
-
-    if event == "start":
-        polling = {
-            "active": True,
-            "location": location,
-            "started_at": now,
-            "polls": 0,
-            "last_poll_at": None,
-            "last_result": None,
+    with _state_lock:
+        state = _read_state()
+        state["last_vision"] = {
+            "event_id": event_id,
+            "description": vision_data.get("description", ""),
+            "people": len(vision_data.get("people", [])),
+            "dogs": len(vision_data.get("dogs", [])),
+            "people_list": vision_data.get("people", []),
+            "dogs_list": vision_data.get("dogs", []),
+            "analyzed_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
-    elif event == "poll":
-        polling["polls"] = polling.get("polls", 0) + 1
-        polling["last_poll_at"] = now
-        if result:
-            polling["last_result"] = {
-                "street": result.get("street", "unknown"),
-                "near_home": result.get("near_home", False),
-                "description": result.get("description", ""),
-            }
-    elif event == "stop":
-        polling["active"] = False
+        _write_state(state, event_type="vision")
 
-    state["findmy_polling"] = polling
-    _write_state(state)
+
+def _update_state_findmy(
+    location: str, event: str, result: dict | None = None, network_detail: dict | None = None
+) -> None:
+    """Update FindMy polling state."""
+    with _state_lock:
+        state = _read_state()
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        polling = state.get("findmy_polling") or {}
+
+        if event == "start":
+            polling = {
+                "active": True,
+                "location": location,
+                "started_at": now,
+                "polls": 0,
+                "last_poll_at": None,
+                "last_result": None,
+                "last_network_check": None,
+            }
+        elif event == "poll":
+            polling["polls"] = polling.get("polls", 0) + 1
+            polling["last_poll_at"] = now
+            if result:
+                polling["last_result"] = {
+                    "street": result.get("street", "unknown"),
+                    "near_home": result.get("near_home", False),
+                    "description": result.get("description", ""),
+                }
+            if network_detail:
+                polling["last_network_check"] = network_detail
+        elif event == "stop":
+            polling["active"] = False
+
+        state["findmy_polling"] = polling
+        _write_state(state, event_type=f"findmy_{event}")
+
+
+def _emit_skip_event(location: str, reason: str, details: dict | None = None) -> None:
+    """Convenience wrapper to emit a departure_skip via _update_state_dog_walk."""
+    _update_state_dog_walk(location, "departure_skip", skip_reason=reason, skip_details=details)
 
 
 def load_ring_token() -> dict | None:
@@ -444,44 +509,67 @@ def parse_vision_result(text: str) -> dict | None:
         return None
 
 
-def run_roomba_command(location: str, action: str) -> None:
-    """Start or dock Roombas for a location."""
+def run_roomba_command(location: str, action: str) -> dict:
+    """Start or dock Roombas for a location. Returns result dict."""
     now = time.time()
     cooldown_key = f"{location}_{action}"
     last = _roomba_last_action.get(cooldown_key, 0)
     if now - last < _ROOMBA_COOLDOWN:
         remaining = int((_ROOMBA_COOLDOWN - (now - last)) / 60)
         log(f"Roomba {action} for {location} on cooldown ({remaining}min remaining)")
-        return
+        return {"success": False, "results": [], "skipped": "cooldown", "remaining_min": remaining}
 
     cmds = ROOMBA_COMMANDS.get(location, {})
     env = os.environ.copy()
     env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
+    results = []
 
     if location == "crosstown":
         cmd = cmds.get(action)
         if cmd:
             log(f"ROOMBA: {' '.join(cmd)}")
             try:
-                result = subprocess.run(cmd, capture_output=True, timeout=30, env=env)
-                log(f"ROOMBA result: {result.stdout.decode()[:200]}")
-                if result.returncode != 0:
-                    log(f"ROOMBA error: {result.stderr.decode()[:200]}")
+                r = subprocess.run(cmd, capture_output=True, timeout=30, env=env)
+                output = r.stdout.decode()[:200]
+                error = r.stderr.decode()[:200] if r.returncode != 0 else None
+                log(f"ROOMBA result: {output}")
+                if error:
+                    log(f"ROOMBA error: {error}")
+                results.append({"name": "crosstown-roomba", "command": f"{action} all",
+                                "returncode": r.returncode, "output": output, "error": error})
             except Exception as e:
                 log(f"ROOMBA error: {e}")
+                results.append({"name": "crosstown-roomba", "command": f"{action} all",
+                                "returncode": -1, "output": "", "error": str(e)})
+        else:
+            return {"success": False, "results": [], "skipped": "no_command"}
     elif location == "cabin":
-        # Cabin has two separate Roombas
+        roomba_names = {"start_1": "floomba", "start_2": "philly",
+                        "dock_1": "floomba", "dock_2": "philly"}
         for key in (f"{action}_1", f"{action}_2"):
             cmd = cmds.get(key)
+            name = roomba_names.get(key, key)
             if cmd:
                 log(f"ROOMBA: {' '.join(cmd)}")
                 try:
-                    result = subprocess.run(cmd, capture_output=True, timeout=30, env=env)
-                    log(f"ROOMBA result: {result.stdout.decode()[:200]}")
+                    r = subprocess.run(cmd, capture_output=True, timeout=30, env=env)
+                    output = r.stdout.decode()[:200]
+                    error = r.stderr.decode()[:200] if r.returncode != 0 else None
+                    log(f"ROOMBA result: {output}")
+                    if error:
+                        log(f"ROOMBA error: {error}")
+                    results.append({"name": name, "command": action,
+                                    "returncode": r.returncode, "output": output, "error": error})
                 except Exception as e:
                     log(f"ROOMBA error: {e}")
+                    results.append({"name": name, "command": action,
+                                    "returncode": -1, "output": "", "error": str(e)})
+    else:
+        return {"success": False, "results": [], "skipped": "no_command"}
 
     _roomba_last_action[cooldown_key] = now
+    success = all(r["returncode"] == 0 for r in results) if results else False
+    return {"success": success, "results": results}
 
 
 def capture_findmy() -> str | None:
@@ -598,11 +686,10 @@ def _check_person_near_home(person: str, location: str) -> dict | None:
     return result
 
 
-def _check_network_presence(location: str) -> bool:
-    """Check if either tracked person is on the local network via presence scan.
+def _check_network_presence_detailed(location: str) -> dict:
+    """Check network presence and return per-person details.
 
-    Crosstown: ARP scan via MacBook Pro (SSH)
-    Cabin: Starlink gRPC scan (local on Mini)
+    Returns: {"any_present": bool, "people": {"dylan": {"present": bool}, ...}}
     """
     try:
         if location == "crosstown":
@@ -618,22 +705,32 @@ def _check_network_presence(location: str) -> bool:
                 capture_output=True, timeout=60, text=True,
             )
         else:
-            return False
+            return {"any_present": False, "people": {}}
 
         if result.returncode != 0:
             log(f"NETWORK CHECK: {location} scan failed: {result.stderr[:200]}")
-            return False
+            return {"any_present": False, "people": {}}
         scan = json.loads(result.stdout)
         presence = scan.get("presence", {})
+        people_detail = {}
+        any_present = False
         for person, info in presence.items():
-            if info.get("present"):
+            present = info.get("present", False)
+            people_detail[person] = {"present": present}
+            if present:
+                any_present = True
                 log(f"NETWORK CHECK: {person} detected on {location} network")
-                return True
-        log(f"NETWORK CHECK: no one on {location} network")
-        return False
+        if not any_present:
+            log(f"NETWORK CHECK: no one on {location} network")
+        return {"any_present": any_present, "people": people_detail}
     except Exception as e:
         log(f"NETWORK CHECK: error: {e}")
-        return False
+        return {"any_present": False, "people": {}}
+
+
+def _check_network_presence(location: str) -> bool:
+    """Boolean wrapper for backward compatibility."""
+    return _check_network_presence_detailed(location)["any_present"]
 
 
 def _detect_who_left(location: str) -> list[str]:
@@ -690,6 +787,7 @@ async def _findmy_poll_loop(location: str) -> None:
     await asyncio.sleep(120)
     walkers = await asyncio.to_thread(_detect_who_left, location)
     log(f"RETURN MONITOR: Walkers detected: {walkers}")
+    _update_state_dog_walk(location, "walkers_detected", walkers=walkers)
 
     last_findmy_check = 0
     global _ring_motion_during_walk
@@ -703,18 +801,19 @@ async def _findmy_poll_loop(location: str) -> None:
                 _ring_motion_during_walk = False
                 elapsed_min = int(elapsed / 60)
                 log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
-                run_roomba_command(location, "dock")
-                _update_state_dog_walk(location, "dock")
+                roomba_result = run_roomba_command(location, "dock")
+                _update_state_dog_walk(location, "dock", return_signal="ring_motion", roomba_result=roomba_result)
                 _update_state_findmy(location, "stop")
                 return
 
             # Network presence check (every poll cycle)
-            network_home = await asyncio.to_thread(_check_network_presence, location)
-            if network_home:
+            wifi_detail = await asyncio.to_thread(_check_network_presence_detailed, location)
+            _update_state_findmy(location, "poll", network_detail=wifi_detail)
+            if wifi_detail["any_present"]:
                 elapsed_min = int(elapsed / 60)
                 log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
-                run_roomba_command(location, "dock")
-                _update_state_dog_walk(location, "dock")
+                roomba_result = run_roomba_command(location, "dock")
+                _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
                 _update_state_findmy(location, "stop")
                 return
 
@@ -734,8 +833,8 @@ async def _findmy_poll_loop(location: str) -> None:
                         if near_home:
                             elapsed_min = int(elapsed / 60)
                             log(f"FINDMY POLL: {person} near home after {elapsed_min}min — docking at {location}")
-                            run_roomba_command(location, "dock")
-                            _update_state_dog_walk(location, "dock")
+                            roomba_result = run_roomba_command(location, "dock")
+                            _update_state_dog_walk(location, "dock", return_signal="findmy", roomba_result=roomba_result)
                             _update_state_findmy(location, "stop")
                             return
                     else:
@@ -751,8 +850,8 @@ async def _findmy_poll_loop(location: str) -> None:
 
     log(f"RETURN MONITOR: Timeout after {MAX_DURATION // 60}min — docking as safety fallback")
     send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
-    run_roomba_command(location, "dock")
-    _update_state_dog_walk(location, "dock_timeout")
+    roomba_result = run_roomba_command(location, "dock")
+    _update_state_dog_walk(location, "dock_timeout", return_signal="timeout", roomba_result=roomba_result)
     _update_state_findmy(location, "stop")
 
 
@@ -793,11 +892,108 @@ async def _inbox_poll_loop() -> None:
                     continue
 
                 log(f"INBOX: starting return monitor for {location}")
+                # Synthesize departure event so walk lifecycle is trackable in JSONL
+                _update_state_dog_walk(
+                    location, "departure",
+                    people=0, dogs=0,  # unknown — manual trigger via dog-walk-start
+                    roomba_result={"success": True, "results": [], "source": "dog-walk-start"},
+                )
+                _clear_pending_confirmation("inbox IPC")
                 start_return_monitor(location)
         except Exception as e:
             log(f"INBOX: error: {e}")
 
         await asyncio.sleep(_INBOX_POLL_INTERVAL)
+
+
+def _clear_pending_confirmation(reason: str) -> None:
+    """Clear any pending confirmation state (called from all start paths)."""
+    global _pending_confirmation
+    if _pending_confirmation:
+        log(f"CONFIRM: cleared pending ({reason})")
+        _pending_confirmation = None
+
+
+async def _confirmation_poll_loop() -> None:
+    """Poll BB for Dylan's 'start roombas' reply after a PARTIAL DEPARTURE prompt.
+
+    Uses POST /api/v1/message/query with an 'after' timestamp to find replies
+    sent after the confirmation prompt. On match, starts Roombas + return monitor
+    directly, bypassing the OpenClaw agent.
+    """
+    while True:
+        try:
+            if _pending_confirmation is None:
+                await asyncio.sleep(_CONFIRMATION_POLL_INTERVAL)
+                continue
+
+            location = _pending_confirmation["location"]
+            sent_at_ms = _pending_confirmation["sent_at_ms"]
+
+            # Timeout check
+            age_s = (time.time() * 1000 - sent_at_ms) / 1000
+            if age_s > _CONFIRMATION_TIMEOUT:
+                log(f"CONFIRM: timed out after {int(age_s)}s for {location}")
+                _clear_pending_confirmation("timeout")
+                await asyncio.sleep(_CONFIRMATION_POLL_INTERVAL)
+                continue
+
+            # Already started via another path (inbox IPC, 2-dog auto, etc.)
+            if _return_monitor_active:
+                _clear_pending_confirmation("monitor already active")
+                await asyncio.sleep(_CONFIRMATION_POLL_INTERVAL)
+                continue
+
+            pw = bb_password()
+            if not pw:
+                await asyncio.sleep(_CONFIRMATION_POLL_INTERVAL)
+                continue
+
+            # Query BB for recent messages after our prompt
+            url = f"{BB_URL}/api/v1/message/query?password={pw}"
+            body = json.dumps({
+                "limit": 10,
+                "sort": "DESC",
+                "after": sent_at_ms,
+            }).encode()
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        url,
+                        data=body,
+                        headers={"Content-Type": "application/json"},
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        result = await resp.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                log(f"CONFIRM: BB query failed: {e}")
+                await asyncio.sleep(_CONFIRMATION_POLL_INTERVAL)
+                continue
+
+            for msg in result.get("data", []):
+                # Skip our own outbound messages
+                if msg.get("isFromMe"):
+                    continue
+                # Only messages in Dylan's chat
+                chat_guids = [c.get("guid", "") for c in msg.get("chats", [])]
+                if DYLAN_CHAT not in chat_guids:
+                    continue
+                text = (msg.get("text") or "").strip().casefold()
+                if text == "start roombas":
+                    log(f"CONFIRM: Dylan replied 'start roombas' for {location} — starting")
+                    _clear_pending_confirmation("reply received")
+                    roomba_result = run_roomba_command(location, "start")
+                    _update_state_dog_walk(location, "departure", people=1, dogs=1, roomba_result=roomba_result)
+                    start_return_monitor(location)
+                    send_imessage(
+                        f"\U0001f9f9 Both running at {location} — I'll dock them when you're back"
+                    )
+                    break
+
+        except Exception as e:
+            log(f"CONFIRM: error: {e}")
+
+        await asyncio.sleep(_CONFIRMATION_POLL_INTERVAL)
 
 
 def start_return_monitor(location: str) -> None:
@@ -856,7 +1052,7 @@ def _is_location_occupied(location: str) -> bool:
         return True  # assume occupied on error
 
 
-def check_departure(vision_data: dict, doorbot_id: int) -> None:
+async def check_departure(vision_data: dict, doorbot_id: int) -> None:
     """Accumulate departing people/dogs across recent events and trigger Roombas.
 
     People and dogs often pass the doorbell in separate motion events during a
@@ -879,11 +1075,13 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     if not _is_walk_hour():
         hour = datetime.now().hour
         log(f"DEPARTURE SKIP: outside walk hours (hour={hour})")
+        _emit_skip_event(location, "outside_walk_hours", {"hour": hour})
         return
 
     # Presence cross-check — if already vacant, no one is home to leave
     if not _is_location_occupied(location):
         log(f"DEPARTURE SKIP: {location} already confirmed_vacant")
+        _emit_skip_event(location, "confirmed_vacant")
         return
 
     people = vision_data.get("people", [])
@@ -891,7 +1089,7 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
 
     # Direction filter removed — Haiku struggles with fisheye distortion
     # (arrivals frequently misclassified as departures). Time-of-day filter,
-    # presence cross-check, and cooldown prevent false positives instead.
+    # presence cross-check, WiFi check, and cooldown prevent false positives.
 
     now = time.time()
 
@@ -924,6 +1122,17 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     if max_people < 1 or max_dogs < 1:
         return
 
+    # WiFi check at decision time — by now the accumulation window has elapsed,
+    # giving phones time to drop off WiFi during a real departure (~30-60s).
+    # If ANY phone is still on WiFi, someone is home (or returning) — suppress.
+    # This runs after accumulation so a real departure has time to clear WiFi,
+    # and prevents false prompts when returning from a walk triggers motion.
+    wifi_detail = await asyncio.to_thread(_check_network_presence_detailed, location)
+    if wifi_detail["any_present"]:
+        log(f"DEPARTURE SKIP: phone still on {location} WiFi at decision time — likely home or returning")
+        _emit_skip_event(location, "wifi_present", {"wifi": wifi_detail["people"]})
+        return
+
     # Clear sightings to prevent re-triggering
     _departure_sightings[:] = [
         s for s in _departure_sightings
@@ -936,9 +1145,10 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     if total_dogs >= 2:
         # Full household departure — auto-trigger
         log(f"DEPARTURE DETECTED at {location}: {total_people} people + {total_dogs} dogs leaving!")
+        _clear_pending_confirmation("2-dog auto-start")
         send_imessage(f"\U0001f9f9 Starting Roombas at {location} — everyone left for a walk!")
-        run_roomba_command(location, "start")
-        _update_state_dog_walk(location, "departure", people=total_people, dogs=total_dogs)
+        roomba_result = run_roomba_command(location, "start")
+        _update_state_dog_walk(location, "departure", people=total_people, dogs=total_dogs, roomba_result=roomba_result)
         start_return_monitor(location)
     else:
         # Only 1 dog seen — ask for confirmation
@@ -951,21 +1161,32 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
             prompt_key = (location, window)
             if _cabin_prompt_sent.get(prompt_key):
                 log(f"CABIN PROMPT SUPPRESSED: already prompted in window {window}-{window+2 if window else '?'}")
+                _emit_skip_event(location, "cabin_prompt_suppressed", {"window": window})
                 return
             _cabin_prompt_sent[prompt_key] = True
 
         if location == "crosstown":
-            send_imessage(
+            sent = send_imessage(
                 f"\U0001f436 Ring saw {total_people} {'person' if total_people == 1 else 'people'} "
                 f"and 1 dog leaving. Want me to start the Roombas? "
-                f"Reply \"start roombas\" and I'll run crosstown-roomba start all"
+                f"Reply \"start roombas\" and I'll start them + auto-dock when you're back"
             )
         elif location == "cabin":
-            send_imessage(
+            sent = send_imessage(
                 f"\U0001f436 Ring saw {total_people} {'person' if total_people == 1 else 'people'} "
                 f"and 1 dog leaving at cabin. Want me to start the Roombas? "
-                f"Reply \"start roombas\" and I'll start floomba and philly + auto-dock when you're back"
+                f"Reply \"start roombas\" and I'll start them + auto-dock when you're back"
             )
+        else:
+            sent = False
+
+        if sent:
+            global _pending_confirmation
+            _pending_confirmation = {
+                "location": location,
+                "sent_at_ms": int(time.time() * 1000),
+            }
+            log(f"CONFIRM: armed pending confirmation for {location}")
 
 
 def send_imessage_image(image_path: str, caption: str = "") -> bool:
@@ -1187,7 +1408,7 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
             log(f"{device} has no Ring Protect — skipping recording, running departure check with assumed dog")
             # No video analysis possible — we know a person was detected (FCM told us).
             # Assume at least 1 dog to trigger the confirmation prompt at cabin.
-            check_departure({"people": ["unknown"], "dogs": ["unknown"]}, doorbot_id)
+            await check_departure({"people": ["unknown"], "dogs": ["unknown"]}, doorbot_id)
             return
 
         mp4_path, frame_path = await download_recording(db, event_id)
@@ -1221,7 +1442,7 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
 
                 # Record vision result and check for departure automation
                 _update_state_vision(vision_data, event_id=event_id)
-                check_departure(vision_data, doorbot_id)
+                await check_departure(vision_data, doorbot_id)
             else:
                 # Fallback: use raw text as description
                 description = raw_analysis
@@ -1293,6 +1514,9 @@ async def main() -> None:
 
     # Start inbox polling for external return-monitor requests
     asyncio.get_event_loop().create_task(_inbox_poll_loop())
+
+    # Start BB reply polling for dog walk confirmation
+    asyncio.get_event_loop().create_task(_confirmation_poll_loop())
 
     # Keep running forever
     try:
