@@ -1,0 +1,42 @@
+#!/bin/bash
+# dog-walk-start — Start Roombas at a location and signal the ring-listener
+# to begin return monitoring (network + FindMy + Ring motion).
+#
+# Usage: dog-walk-start <location>
+#   location: "cabin" or "crosstown"
+#
+# This script:
+# 1. Starts the Roombas at the given location
+# 2. Writes a signal file to the ring-listener inbox so it starts
+#    return-home monitoring (auto-dock when you return)
+
+set -euo pipefail
+
+LOCATION="${1:-}"
+if [[ -z "$LOCATION" ]]; then
+    echo "Usage: dog-walk-start <location>" >&2
+    echo "  location: cabin or crosstown" >&2
+    exit 1
+fi
+
+INBOX_DIR="$HOME/.openclaw/ring-listener/inbox"
+mkdir -p "$INBOX_DIR"
+
+# Start Roombas
+if [[ "$LOCATION" == "cabin" ]]; then
+    roomba start floomba
+    roomba start philly
+elif [[ "$LOCATION" == "crosstown" ]]; then
+    crosstown-roomba start all
+else
+    echo "Unknown location: $LOCATION (expected cabin or crosstown)" >&2
+    exit 1
+fi
+
+# Write signal file (atomic: write tmp then rename)
+SIGNAL_FILE="$INBOX_DIR/$(date +%s)-$$.json"
+TMP_FILE="${SIGNAL_FILE}.tmp"
+printf '{"location":"%s","requested_at":"%s"}' "$LOCATION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$TMP_FILE"
+mv "$TMP_FILE" "$SIGNAL_FILE"
+
+echo "Roombas started at $LOCATION — return monitoring will begin shortly"

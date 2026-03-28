@@ -133,6 +133,12 @@ _departure_sightings: list[dict] = []  # [{"time": float, "people": int, "dogs":
 # until the next window. Keyed by (location, window_start_hour).
 _cabin_prompt_sent: dict[tuple[str, int], bool] = {}
 
+# Inbox directory for external processes to request return monitoring.
+# Write a JSON file with {"location": "cabin", "requested_at": "<ISO>"}.
+_INBOX_DIR = Path.home() / ".openclaw/ring-listener/inbox"
+_INBOX_POLL_INTERVAL = 5  # seconds
+_INBOX_MAX_AGE = 7200  # 2 hours — ignore stale requests
+
 
 def log(msg: str) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -750,6 +756,50 @@ async def _findmy_poll_loop(location: str) -> None:
     _update_state_findmy(location, "stop")
 
 
+async def _inbox_poll_loop() -> None:
+    """Watch inbox directory for return-monitor requests from external processes."""
+    _INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            for fpath in _INBOX_DIR.iterdir():
+                if not fpath.name.endswith(".json"):
+                    continue
+                try:
+                    data = json.loads(fpath.read_text())
+                    fpath.unlink()
+                except (json.JSONDecodeError, OSError) as e:
+                    log(f"INBOX: bad file {fpath.name}: {e}")
+                    fpath.unlink(missing_ok=True)
+                    continue
+
+                location = data.get("location")
+                requested_at = data.get("requested_at", "")
+                if not location:
+                    log(f"INBOX: missing location in {fpath.name}")
+                    continue
+
+                # Ignore stale requests (>2 hours old)
+                try:
+                    req_dt = datetime.fromisoformat(requested_at.replace("Z", "+00:00"))
+                    age = (datetime.now(req_dt.tzinfo) - req_dt).total_seconds()
+                    if age > _INBOX_MAX_AGE:
+                        log(f"INBOX: ignoring stale request for {location} (age={int(age)}s)")
+                        continue
+                except (ValueError, AttributeError):
+                    pass  # no timestamp or bad format — process anyway
+
+                if _return_monitor_active:
+                    log(f"INBOX: return monitor already active, ignoring request for {location}")
+                    continue
+
+                log(f"INBOX: starting return monitor for {location}")
+                start_return_monitor(location)
+        except Exception as e:
+            log(f"INBOX: error: {e}")
+
+        await asyncio.sleep(_INBOX_POLL_INTERVAL)
+
+
 def start_return_monitor(location: str) -> None:
     """Start return-home monitoring (network + FindMy + Ring motion)."""
     global _findmy_poll_task, _return_monitor_active
@@ -914,7 +964,7 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
             send_imessage(
                 f"\U0001f436 Ring saw {total_people} {'person' if total_people == 1 else 'people'} "
                 f"and 1 dog leaving at cabin. Want me to start the Roombas? "
-                f"Reply \"start roombas\" and I'll start floomba and philly"
+                f"Reply \"start roombas\" and I'll start floomba and philly + auto-dock when you're back"
             )
 
 
@@ -1240,6 +1290,9 @@ async def main() -> None:
         sys.exit(1)
 
     log("Event listener started — waiting for Ring events...")
+
+    # Start inbox polling for external return-monitor requests
+    asyncio.get_event_loop().create_task(_inbox_poll_loop())
 
     # Keep running forever
     try:

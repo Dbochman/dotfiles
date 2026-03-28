@@ -56,6 +56,16 @@ roomba list
 - If response is empty, the command likely still worked (Google Assistant sometimes doesn't return text for device commands)
 - The Roombas are vacuum+mop combos — "start" runs the default cleaning mode
 
+## Dog Walk Mode
+
+When starting Roombas in response to a dog walk departure (e.g., Dylan replies "start roombas" to a Ring doorbell prompt), use `dog-walk-start` instead of starting individually. This starts the Roombas AND signals the ring-listener to begin return monitoring (auto-dock when you're back):
+
+```bash
+dog-walk-start cabin
+```
+
+For regular non-walk starts (cleaning day, routine, etc.), use the individual commands as usual.
+
 ## Routine Integration
 
 This skill works well with cabin routines:
