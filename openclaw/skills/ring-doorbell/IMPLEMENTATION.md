@@ -92,6 +92,7 @@ Both are battery-powered doorbells. The Cabin doorbell is a shared device (autho
 | `~/.openclaw/ring-listener/frames/` | Temporary directory for video frames and MP4s (cleaned after send) |
 | `~/.openclaw/ring-listener/findmy/` | Temporary directory for FindMy screenshots (cleaned after analysis) |
 | `~/.openclaw/ring-listener/state.json` | Current dog walk + Roomba state (updated on departure/dock events) |
+| `~/.openclaw/ring-listener/inbox/` | Signal directory for external return-monitor requests (polled every 5s) |
 | `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl` | Daily event history (one JSON line per state change) |
 | `~/Library/LaunchAgents/ai.openclaw.ring-listener.plist` | Deployed LaunchAgent |
 | `~/Applications/Peekaboo.app` | TCC wrapper for Peekaboo CLI (Screen Recording + Accessibility grants) |
@@ -250,6 +251,9 @@ check_departure() — Roomba + FindMy automation (departures only)
         +-- Accumulate across 10-min sliding window
         +-- 1+ people + 2+ dogs → auto-start Roombas + FindMy polling
         +-- 1+ people + 1 dog → iMessage confirmation to Dylan
+        |       (cabin: per-window cooldown, one prompt per walk window)
+        |       (reply "start roombas" → agent runs `dog-walk-start cabin`
+        |        → starts Roombas + writes inbox signal → return monitoring)
         |
         v
 send_imessage_image() — BB attachment + caption
@@ -340,7 +344,9 @@ A 2-hour cooldown per location per action prevents re-triggering:
 |----------|---------|
 | Doorbell ding | "🔔 Front Door: Doorbell rang!" + camera frame + AI description |
 | Departure (2+ dogs) | "🧹 Starting Roombas at crosstown — everyone left for a walk!" |
-| Departure (1 dog) | "🐶 Ring saw X people and 1 dog leaving. Reply 'start roombas'" |
+| Departure (1 dog, Crosstown) | "🐶 Ring saw X people and 1 dog leaving. Reply 'start roombas'" |
+| Departure (cabin) | "🐶 Ring saw X people and 1 dog leaving at cabin. Reply 'start roombas' ... + auto-dock when you're back" |
+| Cabin prompt suppressed | (logged, no notification — already prompted in this walk window) |
 | FindMy tracking started | "📍 Tracking your walk — will dock Roombas when you're back on Crosstown Ave" |
 | Walk timeout (2hr) | "⏰ Walk tracking timed out after 2 hours — docking Roombas" |
 | Outside walk hours | (logged, no notification) |
@@ -428,7 +434,65 @@ Return monitoring stops when:
 4. **2-hour timeout** → dock Roombas as safety net
 5. **Listener restart** → monitoring state is in-memory only
 
-## Component 5: State File & Event History
+## Component 5: Inbox IPC (External Return-Monitor Trigger)
+
+### Overview
+
+External processes (e.g., the OpenClaw agent responding to "start roombas") can trigger return monitoring by writing a JSON file to the ring-listener's inbox directory. This bridges the gap between the manual confirmation path (cabin) and the automatic return monitoring that only runs on the auto-trigger path (2+ dogs at Crosstown).
+
+### How It Works
+
+```
+Dylan replies "start roombas"
+        |
+        v
+OpenClaw agent runs `dog-walk-start cabin`
+        |
+        +-- Starts Roombas (roomba start floomba + philly)
+        +-- Writes signal file to ~/.openclaw/ring-listener/inbox/<timestamp>.json
+        |       {"location": "cabin", "requested_at": "2026-03-27T17:15:00Z"}
+        |
+        v (within 5 seconds)
+ring-listener _inbox_poll_loop()
+        |
+        +-- Reads and deletes signal file
+        +-- Ignores if >2 hours old
+        +-- Ignores if return monitor already active
+        +-- Calls start_return_monitor("cabin")
+                |
+                +-- Network scan (Starlink gRPC, every 60s)
+                +-- FindMy polling (every 5min after 20min)
+                +-- Ring motion detection
+                +-- Any signal → dock Roombas
+                +-- 2-hour timeout → dock as safety fallback
+```
+
+### Signal File Schema
+
+```json
+{"location": "cabin", "requested_at": "2026-03-27T17:15:00Z"}
+```
+
+- `location` (required): "cabin" or "crosstown"
+- `requested_at` (recommended): ISO 8601 UTC timestamp — requests >2 hours old are ignored
+
+### Helper Script
+
+**`dog-walk-start`** (`~/.openclaw/bin/dog-walk-start`) — starts Roombas at a location and writes the inbox signal. Atomic write (tmp + rename).
+
+```bash
+dog-walk-start cabin       # starts floomba + philly + signals return monitoring
+dog-walk-start crosstown   # starts crosstown-roomba start all + signals return monitoring
+```
+
+### Cabin Confirmation Prompt Cooldown
+
+To prevent notification spam (cabin treats all motion as potential person), the confirmation prompt is suppressed after the first send within each walk window:
+- Prompted during 8-10 AM → suppressed until 11-1 PM window
+- Prompted during 11-1 PM → suppressed until 5-8 PM window
+- In-memory state (resets on listener restart)
+
+## Component 6: State File & Event History
 
 ### State File
 

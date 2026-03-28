@@ -76,6 +76,16 @@ Roomba J5     ←─MQTT:8883─→ roomba-cmd.js (MacBook Pro) ←─SSH─→ 
 - The CLI SSHs into the MacBook Pro for each command (connect-per-request, no persistent MQTT)
 - Each command takes ~5-10s due to SSH + MQTT connect/disconnect
 
+## Dog Walk Mode
+
+When starting Roombas in response to a dog walk departure (e.g., Dylan replies "start roombas" to a Ring doorbell prompt), use `dog-walk-start` instead of starting individually. This starts the Roombas AND signals the ring-listener to begin return monitoring (auto-dock when you're back):
+
+```bash
+dog-walk-start crosstown
+```
+
+For regular non-walk starts (cleaning day, routine, etc.), use the individual commands as usual.
+
 ## Disambiguation
 
 - "vacuum", "roomba", "clean" at **Crosstown** → this skill

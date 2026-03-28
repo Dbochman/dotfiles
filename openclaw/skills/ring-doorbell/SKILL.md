@@ -119,7 +119,9 @@ Sidebar order: Me (0) → Julia Jennings (1) → Dylan Bochman (2). Do NOT attem
 - Current state: `~/.openclaw/ring-listener/state.json` (dog_walk, roombas, findmy_polling, last_vision)
 - Daily history: `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`
 
-**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog counting is available. Instead, the listener treats all Cabin motion as a potential person and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'") during walk hours. Auto-trigger (2+ dogs) is not possible at the Cabin. May produce occasional false positives from animals or cars.
+**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog counting is available. Instead, the listener treats all Cabin motion as a potential person and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'") during walk hours. The prompt is sent once per walk window (8-10, 11-1, 5-8) to avoid spam. Auto-trigger (2+ dogs) is not possible at the Cabin. May produce occasional false positives from animals or cars.
+
+**Cabin return monitoring:** When Dylan replies "start roombas", the agent should run `dog-walk-start cabin` (not `roomba start` directly). This starts the Roombas AND signals the ring-listener to begin return monitoring — Roombas auto-dock when the walk ends.
 
 To check the listener:
 ```bash
