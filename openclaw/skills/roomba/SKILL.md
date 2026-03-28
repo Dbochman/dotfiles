@@ -76,6 +76,16 @@ roomba dock floomba
 roomba dock philly
 ```
 
+## Skill Boundaries
+
+This skill controls Roombas at the **Cabin only** (Floomba + Philly via Google Assistant).
+
+For related tasks, switch to:
+- **crosstown-roomba**: Roomba control at Crosstown (Boston) — different robots, different protocol (MQTT via MacBook Pro)
+- **cabin-routines**: Full cabin routines (away, welcome home, goodnight) that include Roomba start/dock alongside lights, thermostats, and audio
+- **ring-doorbell**: Automated dog walk detection triggers Roomba start/dock at the cabin via iMessage confirmation prompt
+- **presence**: Check if anyone is home at the cabin before starting Roombas
+
 ## Troubleshooting
 
 - If commands fail, the Google Assistant OAuth token may need refreshing — run `roomba setup` on the Mac Mini

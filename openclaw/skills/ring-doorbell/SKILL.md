@@ -156,8 +156,15 @@ Check `~/.config/ring/config.yaml` on Mac Mini. Credentials must match your Ring
 ### "rate_limited" or HTTP 429
 Too many auth attempts. Wait a few minutes. Token caching prevents this under normal use.
 
-## Disambiguation
+## Skill Boundaries
 
-- "doorbell", "front door", "who rang", "motion at door" -> this skill
+This skill handles doorbell events, dog walk detection, and Roomba automation triggered by Ring motion.
+
+For related tasks, switch to:
+- **presence**: Check who is home (presence feeds into dog walk detection as a pre-check — if `confirmed_vacant`, departure detection is skipped)
+- **roomba**: Direct Roomba control at the Cabin (dog walk detection triggers these automatically via confirmation prompt)
+- **crosstown-roomba**: Direct Roomba control at Crosstown (dog walk detection auto-triggers these when 2+ dogs detected)
+- **cabin-routines** / **crosstown-routines**: Full home routines — dog walk detection only controls Roombas, not lights/thermostats
+- Vacancy automation (`com.openclaw.vacancy-actions`) is a separate system that starts Roombas on vacancy — independent of dog walk detection
 - "lock", "alarm", "arm/disarm" -> Ring Alarm NOT supported
 - "thermostat", "temperature" -> `nest-thermostat` skill

@@ -95,3 +95,15 @@ Always adapt to the user's specific request. These routines are starting points,
 | Welcome Home | Kitchen+living+hallway on | Eco off, 70°F/68°F | — | Dock both |
 | Movie Night | Living dim, others off | — | Pause music | — |
 | Morning | Kitchen+living+hallway on daylight | Eco off | — | — |
+
+## Skill Boundaries
+
+This skill runs **multi-device routines at the Cabin only** (lights + thermostats + audio + Roombas).
+
+For related tasks, switch to:
+- **crosstown-routines**: Same routines but for Crosstown (Boston) — different devices, different commands
+- **roomba**: Direct Roomba control at the Cabin (start/stop/dock individual robots without running a full routine)
+- **hue-lights**: Direct light control at any location without running a full routine
+- **nest-thermostat**: Direct thermostat control without running a full routine
+- **presence**: Check who is home before deciding which routine to run
+- **ring-doorbell**: Automated dog walk detection can trigger Roomba start/dock independently of routines

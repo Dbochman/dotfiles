@@ -90,3 +90,16 @@ Always adapt to the user's specific request. These routines are starting points,
 | Welcome Home | Entryway+kitchen+living on | Eco off, 70F | -- | Dock all |
 | Movie Night | Movie room dim, others off | -- | Volume low | -- |
 | Morning | Kitchen+living+entryway on daylight | Eco off | -- | -- |
+
+## Skill Boundaries
+
+This skill runs **multi-device routines at Crosstown only** (lights + thermostats + audio + Roombas).
+
+For related tasks, switch to:
+- **cabin-routines**: Same routines but for the Cabin (Philly) — different devices, different commands
+- **crosstown-roomba**: Direct Roomba control at Crosstown (start/stop/dock individual robots without running a full routine)
+- **hue-lights**: Direct light control at any location without running a full routine
+- **nest-thermostat**: Direct thermostat control without running a full routine
+- **presence**: Check who is home before deciding which routine to run
+- **ring-doorbell**: Automated dog walk detection auto-starts/docks Roombas at Crosstown independently of routines
+- Vacancy automation (`com.openclaw.vacancy-actions`) triggers away-like actions automatically when Crosstown becomes `confirmed_vacant` — this runs independently and should NOT be duplicated by routines

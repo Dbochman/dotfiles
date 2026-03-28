@@ -83,6 +83,17 @@ Roomba J5     ←─MQTT:8883─→ roomba-cmd.js (MacBook Pro) ←─SSH─→ 
 - "cabin roomba", "floomba", "philly" → `roomba` skill (Google Assistant)
 - If location is ambiguous, ask which location
 
+## Skill Boundaries
+
+This skill controls Roombas at **Crosstown only** (Combo 10 Max + J5 via MQTT through MacBook Pro).
+
+For related tasks, switch to:
+- **roomba**: Roomba control at the Cabin (Floomba + Philly via Google Assistant)
+- **crosstown-routines**: Full Crosstown routines (away, welcome home, goodnight) that include Roomba start/dock alongside lights, thermostats, and audio
+- **ring-doorbell**: Automated dog walk detection auto-starts/docks Roombas at Crosstown via vision analysis
+- **presence**: Check if anyone is home at Crosstown before starting Roombas
+- Vacancy automation (`com.openclaw.vacancy-actions` LaunchAgent) also starts Roombas when Crosstown becomes `confirmed_vacant` — this is independent of the dog walk system
+
 ## Troubleshooting
 
 ### "Connection refused" or SSH timeout
