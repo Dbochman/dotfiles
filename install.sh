@@ -492,19 +492,77 @@ install_dotfiles() {
   fi
   log ""
 
-  # Hooks - per-file symlinks
-  log "${BLUE}Hooks (per-item):${NC}"
+  # Hooks - deployed as copies (not symlinks) because OpenClaw v2026.3.7+
+  # rejects symlinks resolving outside rootDir, and Claude Code hook loading
+  # may also have issues with symlinks.
+  log "${BLUE}Hooks (copies):${NC}"
   local hooks_repo="$DOTFILES_DIR/.claude/hooks"
   local hooks_target="$HOME/.claude/hooks"
 
   if [[ -d "$hooks_repo" ]]; then
-    migrate_directory_symlink "$hooks_target" "$hooks_repo" || true
+    if [[ "$DRY_RUN" != true ]]; then
+      mkdir -p "$hooks_target"
+    fi
 
     for hook_path in "$hooks_repo"/*; do
       [[ -f "$hook_path" ]] || continue
       local hook_name
       hook_name=$(basename "$hook_path")
-      link_file "$hook_path" "$hooks_target/$hook_name"
+      local hook_dst="$hooks_target/$hook_name"
+
+      # Skip if already an identical copy
+      if [[ -f "$hook_dst" ]] && ! [[ -L "$hook_dst" ]] && diff -q "$hook_path" "$hook_dst" &>/dev/null; then
+        log_verbose "  Already synced: $hook_dst"
+        continue
+      fi
+
+      # If it's a symlink pointing to our repo file, replace with a copy
+      # (migration from old symlink-based deployment)
+      if [[ -L "$hook_dst" ]]; then
+        local hook_link_target
+        hook_link_target=$(get_symlink_target "$hook_dst")
+        [[ "$hook_link_target" != /* ]] && hook_link_target="$(dirname "$hook_dst")/$hook_link_target"
+        hook_link_target=$(resolve_path "$hook_link_target")
+        local hook_expected
+        hook_expected=$(resolve_path "$hook_path")
+        if [[ "$hook_link_target" = "$hook_expected" ]]; then
+          log "  Migrating symlink to copy: $hook_dst"
+          if [[ "$DRY_RUN" != true ]]; then
+            rm "$hook_dst"
+            cp "$hook_path" "$hook_dst"
+            chmod +x "$hook_dst"
+          fi
+          ((ITEMS_LINKED++))
+          continue
+        fi
+      fi
+
+      # Back up existing if present
+      if [[ -e "$hook_dst" || -L "$hook_dst" ]]; then
+        if [[ "$FORCE" = true ]]; then
+          backup_item "$hook_dst"
+          if [[ "$DRY_RUN" != true ]]; then
+            rm -f "$hook_dst"
+          fi
+        else
+          if ! prompt_conflict "$hook_dst" "$(get_file_type "$hook_dst")"; then
+            continue
+          fi
+          backup_item "$hook_dst"
+          if [[ "$DRY_RUN" != true ]]; then
+            rm -f "$hook_dst"
+          fi
+        fi
+      fi
+
+      if [[ "$DRY_RUN" = true ]]; then
+        log "  [dry-run] Would copy: $hook_path -> $hook_dst"
+      else
+        cp "$hook_path" "$hook_dst"
+        chmod +x "$hook_dst"
+        log "  Copied: $hook_dst"
+      fi
+      ((ITEMS_LINKED++))
     done
   fi
   log ""
