@@ -129,6 +129,10 @@ _ring_motion_during_walk: bool = False  # Set when Ring detects motion while mon
 _DEPARTURE_WINDOW = 600  # 10 minutes
 _departure_sightings: list[dict] = []  # [{"time": float, "people": int, "dogs": int, "location": str}]
 
+# Cabin confirmation prompt cooldown: once prompted in a walk window, suppress
+# until the next window. Keyed by (location, window_start_hour).
+_cabin_prompt_sent: dict[tuple[str, int], bool] = {}
+
 
 def log(msg: str) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -780,6 +784,15 @@ def _is_walk_hour() -> bool:
     return any(start <= hour < end for start, end in _WALK_HOURS)
 
 
+def _current_walk_window() -> int | None:
+    """Return the start hour of the current walk window, or None if outside walk hours."""
+    hour = datetime.now().hour
+    for start, end in _WALK_HOURS:
+        if start <= hour < end:
+            return start
+    return None
+
+
 def _is_location_occupied(location: str) -> bool:
     """Check presence state — returns True if location is occupied or state unknown."""
     try:
@@ -880,6 +893,17 @@ def check_departure(vision_data: dict, doorbot_id: int) -> None:
     else:
         # Only 1 dog seen — ask for confirmation
         log(f"PARTIAL DEPARTURE at {location}: {total_people} people + 1 dog — asking for confirmation")
+
+        # Cabin-specific: suppress repeat prompts within the same walk window.
+        # Once prompted in e.g. 8-10 AM, don't ask again until the 11-1 PM window.
+        if location == "cabin":
+            window = _current_walk_window()
+            prompt_key = (location, window)
+            if _cabin_prompt_sent.get(prompt_key):
+                log(f"CABIN PROMPT SUPPRESSED: already prompted in window {window}-{window+2 if window else '?'}")
+                return
+            _cabin_prompt_sent[prompt_key] = True
+
         if location == "crosstown":
             send_imessage(
                 f"\U0001f436 Ring saw {total_people} {'person' if total_people == 1 else 'people'} "
