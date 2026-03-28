@@ -279,7 +279,14 @@ get_item_status() {
       echo "external"
     fi
   else
-    echo "local"
+    # Not a symlink — check if it's a copy of the repo file (content match)
+    if [[ -f "$target_path" && -f "$repo_path" ]] && diff -q "$target_path" "$repo_path" &>/dev/null; then
+      echo "synced-copy"
+    elif [[ -d "$target_path" && -d "$repo_path" ]] && diff -rq "$target_path" "$repo_path" &>/dev/null; then
+      echo "synced-copy"
+    else
+      echo "local"
+    fi
   fi
 }
 
@@ -310,7 +317,7 @@ show_status() {
       status=$(get_item_status "$target_path" "$skill_path")
 
       case "$status" in
-        synced)
+        synced|synced-copy)
           log "  ${GREEN}✓${NC} $skill_name (synced)"
           ((synced_skills++))
           ;;
@@ -365,7 +372,7 @@ show_status() {
       status=$(get_item_status "$target_path" "$cmd_path")
 
       case "$status" in
-        synced)
+        synced|synced-copy)
           log "  ${GREEN}✓${NC} $cmd_name (synced)"
           ((synced_commands++))
           ;;
@@ -384,7 +391,8 @@ show_status() {
 
   log ""
 
-  # Hooks
+  # Hooks (deployed as copies, not symlinks — Claude Code hooks may not
+  # follow symlinks, and OpenClaw rejects symlinks outside rootDir)
   log "Hooks:"
   local hooks_dir="$DOTFILES_DIR/.claude/hooks"
   local target_hooks_dir="$CLAUDE_DIR/hooks"
@@ -399,11 +407,14 @@ show_status() {
       status=$(get_item_status "$target_path" "$hook_path")
 
       case "$status" in
-        synced)
+        synced|synced-copy)
           log "  ${GREEN}✓${NC} $hook_name (synced)"
           ((synced_hooks++))
           ;;
-        local|missing)
+        local)
+          log "  ${YELLOW}○${NC} $hook_name (modified locally)"
+          ;;
+        missing)
           log "  ${YELLOW}○${NC} $hook_name (not installed)"
           ;;
         broken)
@@ -541,7 +552,11 @@ add_item() {
 
   if [[ "$DRY_RUN" = true ]]; then
     log "  [dry-run] Would copy $source_path to $repo_path"
-    log "  [dry-run] Would create symlink $source_path -> $repo_path"
+    if [[ "$item_type" = "hook" ]]; then
+      log "  [dry-run] Would keep $source_path as a copy (hooks use copies, not symlinks)"
+    else
+      log "  [dry-run] Would create symlink $source_path -> $repo_path"
+    fi
     return
   fi
 
@@ -553,15 +568,25 @@ add_item() {
     cp "$source_path" "$repo_path"
   fi
 
-  # Replace with symlink
-  rm -rf "$source_path"
-  ln -s "$repo_path" "$source_path"
+  # Hooks are deployed as copies (not symlinks) because OpenClaw v2026.3.7+
+  # rejects symlinks whose realPath resolves outside rootDir, and Claude Code
+  # hook loading may also have issues with symlinks.
+  if [[ "$item_type" = "hook" ]]; then
+    log_success "Added $item_name to repo"
+    log "  Repo: $repo_path"
+    log "  Installed: $source_path (copy — hooks don't use symlinks)"
+  else
+    # Replace with symlink for skills and commands
+    rm -rf "$source_path"
+    ln -s "$repo_path" "$source_path"
+
+    log_success "Added $item_name to repo"
+    log "  Repo: $repo_path"
+    log "  Symlink: $source_path -> $repo_path"
+  fi
 
   prune_old_backups
 
-  log_success "Added $item_name to repo"
-  log "  Repo: $repo_path"
-  log "  Symlink: $source_path -> $repo_path"
   log ""
   log "Run './sync.sh push \"Add $item_name\"' to commit"
 }
