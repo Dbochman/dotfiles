@@ -122,7 +122,9 @@ BoA and PennyMac use sophisticated anti-bot measures (Akamai Bot Manager, device
 
 ### Manual: Paystubs
 
-Julia's employer does not email paystub PDFs — they must be downloaded manually from the employer portal. This cannot be automated. Dylan or Julia downloads the PDF and runs `parse_paystubs.py`.
+Julia's employer does not email paystub PDFs — they must be downloaded manually from the employer portal. Dylan or Julia downloads the PDF and runs `parse_paystubs.py`.
+
+**TODO:** Write a `scrape_paystubs.py` script (Playwright + headless) to automate downloading paystub PDFs from Julia's employer portal (ADP/Workday). Needs: portal URL, Julia's login credentials in 1Password, and a test session to map the navigation flow. Once built, this moves from Manual to Tier 2 (self-healing) or Tier 3 (headless with alert) depending on the portal's anti-bot posture.
 
 ---
 
