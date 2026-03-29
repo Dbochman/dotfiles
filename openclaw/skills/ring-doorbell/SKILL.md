@@ -121,7 +121,7 @@ Sidebar order: Me (0) → Julia Jennings (1) → Dylan Bochman (2). Do NOT attem
 
 **Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog counting is available. Instead, the listener treats all Cabin motion as a potential person and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'") during walk hours. The prompt is sent once per walk window (8-10, 11-1, 5-8) to avoid spam. Auto-trigger (2+ dogs) is not possible at the Cabin. May produce occasional false positives from animals or cars.
 
-**Cabin return monitoring:** When Dylan replies "start roombas", the agent should run `dog-walk-start cabin` (not `roomba start` directly). This starts the Roombas AND signals the ring-listener to begin return monitoring — Roombas auto-dock when the walk ends.
+**Cabin return monitoring:** When Dylan replies "start roombas" to a confirmation prompt, the ring-listener detects the reply directly via BB message polling and starts Roombas + return monitoring itself. The agent does NOT need to act on this reply — the listener handles it end-to-end. If the agent also starts Roombas, it's harmless (duplicate but idempotent).
 
 To check the listener:
 ```bash

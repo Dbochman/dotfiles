@@ -58,7 +58,9 @@ roomba list
 
 ## Dog Walk Mode
 
-When starting Roombas in response to a dog walk departure (e.g., Dylan replies "start roombas" to a Ring doorbell prompt), use `dog-walk-start` instead of starting individually. This starts the Roombas AND signals the ring-listener to begin return monitoring (auto-dock when you're back):
+When Dylan replies "start roombas" to a Ring doorbell dog walk prompt, the **ring-listener handles everything directly** — it detects the reply via BB message polling, starts the Roombas, and begins return monitoring (auto-dock when you're back). The agent does NOT need to act on these replies.
+
+For manual or programmatic dog walk starts (not in response to a Ring prompt), use `dog-walk-start` to start Roombas and signal return monitoring:
 
 ```bash
 dog-walk-start cabin
