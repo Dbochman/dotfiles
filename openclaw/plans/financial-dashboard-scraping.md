@@ -6,7 +6,7 @@
 
 Set up automated scraping to keep Julia's financial dashboard data fresh. Currently all data imports are manual.
 
-OpenClaw orchestrates scraping with self-healing auth for utility providers. Bank portals (BoA, PennyMac) remain headless-with-alert due to anti-bot measures. Paystub import is automated via Claude vision on Gmail attachments.
+OpenClaw orchestrates scraping with self-healing auth for utility providers. Bank portals (BoA, PennyMac) remain headless-with-alert due to anti-bot measures. Paystub import remains manual (no email-based PDF delivery from employer).
 
 ---
 
@@ -120,9 +120,9 @@ BoA and PennyMac use sophisticated anti-bot measures (Akamai Bot Manager, device
 
 **Failure handling:** On auth error, send iMessage alert with error details. Dylan re-auths interactively via screen share.
 
-### Tier 4: Vision-Automated (Paystubs)
+### Manual: Paystubs
 
-Previously manual PDF upload. Now Claude extracts data from paystub emails.
+Julia's employer does not email paystub PDFs — they must be downloaded manually from the employer portal. This cannot be automated. Dylan or Julia downloads the PDF and runs `parse_paystubs.py`.
 
 ---
 
