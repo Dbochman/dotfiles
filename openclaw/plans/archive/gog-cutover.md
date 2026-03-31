@@ -27,7 +27,7 @@ Legacy GOG jobs and GWS validation jobs replaced with a single consolidated morn
 | `gws-julia-evening-cleanup-0001` (validation) | _(replaced)_ | Removed |
 
 The new morning briefing combines: calendar preview + inbox triage + cleanup + spam removal.
-Delivers to Julia (`+15084234853`) via BlueBubbles at 7:00 AM ET daily.
+Delivers to Julia (`+1XXXXXXXXXX`) via BlueBubbles at 7:00 AM ET daily.
 
 ## Phase 3: Deploy GWS Skills to OpenClaw (DONE)
 

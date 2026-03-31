@@ -8,15 +8,16 @@
 # Runs as a LaunchAgent every 30 minutes.
 
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
-CONFIG_FILE="$HOME/.config/cielo/config.json"
-API_HOST="api.smartcielo.com"
-API_KEY="3iCWYuBqpY2g7yRq3yyTk1XCS4CMjt1n9ECCjdpd"
-GRAB_SCRIPT="$HOME/.openclaw/workspace/scripts/grab-cielo-tokens.py"
 
-# Load credentials for Method 3
+# Load credentials (must come before variable expansion)
 if [[ -f "$HOME/.openclaw/.secrets-cache" ]]; then
   set -a; source "$HOME/.openclaw/.secrets-cache"; set +a
 fi
+
+CONFIG_FILE="$HOME/.config/cielo/config.json"
+API_HOST="api.smartcielo.com"
+API_KEY="${CIELO_API_KEY:?CIELO_API_KEY not set}"
+GRAB_SCRIPT="$HOME/.openclaw/workspace/scripts/grab-cielo-tokens.py"
 
 # ── Method 1: API refresh token ─────────────────────────────────────────────
 if [[ -f "$CONFIG_FILE" ]]; then

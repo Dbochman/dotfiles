@@ -96,7 +96,7 @@ def send_text(chat_guid: str, message: str, pw: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate TTS audio and send via iMessage")
-    parser.add_argument("chat_guid", help="BB chat GUID (e.g. any;-;+15084234853)")
+    parser.add_argument("chat_guid", help="BB chat GUID (e.g. any;-;+1XXXXXXXXXX)")
     parser.add_argument("text", nargs="?", default="", help="Text to speak (or pipe via stdin)")
     parser.add_argument("-m", "--message", default="", help="Short summary text to send after audio")
     parser.add_argument("-v", "--voice", default="Sarah", help="ElevenLabs voice (default: Sarah)")

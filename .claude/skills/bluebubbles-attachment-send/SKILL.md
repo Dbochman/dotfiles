@@ -35,7 +35,7 @@ Use `POST /api/v1/message/attachment` (NOT `/message/text`).
 ### Required Fields
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `chatGuid` | string | Yes | BB chat GUID (e.g., `any;-;+15084234853`) |
+| `chatGuid` | string | Yes | BB chat GUID (e.g., `any;-;+1XXXXXXXXXX`) |
 | `name` | string | Yes | Filename (e.g., `briefing.mp3`) — API returns 400 without this |
 | `attachment` | file | Yes | The file to send (multipart upload) |
 | `method` | string | No | `private-api` (recommended) or `apple-script` |
@@ -57,7 +57,7 @@ url = f"http://localhost:1234/api/v1/message/attachment?password={pw}"
 
 files = {"attachment": ("briefing.mp3", open("/tmp/briefing.mp3", "rb"), "audio/mpeg")}
 data = {
-    "chatGuid": "any;-;+15084234853",
+    "chatGuid": "any;-;+1XXXXXXXXXX",
     "tempGuid": str(uuid.uuid4()).upper(),
     "name": "briefing.mp3",
     "method": "private-api",
@@ -72,7 +72,7 @@ print(r.json())  # {"status": 200, "message": "Attachment sent!"}
 
 ```bash
 # Generate TTS + send audio + send summary text
-send-audio-briefing "any;-;+15084234853" "Hello Julia!" -m "Short summary" -v Sarah
+send-audio-briefing "any;-;+1XXXXXXXXXX" "Hello Julia!" -m "Short summary" -v Sarah
 ```
 
 ### Key Differences Between Endpoints
@@ -100,13 +100,13 @@ subprocess.run(["sag-wrapper", "-o", "/tmp/briefing.mp3", "--play=false", "-v", 
 # 2. Send audio attachment
 pw = os.environ["BLUEBUBBLES_PASSWORD"]
 files = {"attachment": ("morning-briefing.mp3", open("/tmp/briefing.mp3", "rb"), "audio/mpeg")}
-data = {"chatGuid": "any;-;+15084234853", "name": "morning-briefing.mp3",
+data = {"chatGuid": "any;-;+1XXXXXXXXXX", "name": "morning-briefing.mp3",
         "tempGuid": str(uuid.uuid4()).upper(), "method": "private-api"}
 r = requests.post(f"http://localhost:1234/api/v1/message/attachment?password={pw}",
                    data=data, files=files, timeout=60)
 
 # 3. Send summary text
-body = {"chatGuid": "any;-;+15084234853", "message": "2 meetings today",
+body = {"chatGuid": "any;-;+1XXXXXXXXXX", "message": "2 meetings today",
         "tempGuid": str(uuid.uuid4()).upper(), "method": "private-api"}
 requests.post(f"http://localhost:1234/api/v1/message/text?password={pw}",
               json=body, timeout=15)

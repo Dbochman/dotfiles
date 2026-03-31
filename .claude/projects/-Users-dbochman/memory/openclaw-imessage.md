@@ -32,7 +32,7 @@ macOS won't grant FDA to bare binaries via System Settings UI. The fix:
 
 ## Messaging Details
 - Dylan DM target: `dylanbochman@gmail.com` (not phone number — phone handle fails on this host)
-- Julia DM target: `+15084234853`
+- Julia DM target: `+1XXXXXXXXXX`
 - Chat GUIDs: DMs use `any;-;` prefix, groups use `iMessage;+;`
 - Reactions: native via `message` tool `action: "react"` (love, like, dislike, laugh, emphasize, question)
 - Typing: native via `typingMode: "thinking"` in config

@@ -27,16 +27,16 @@ TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 AUTH_URL = "https://auth-api.8slp.net/v1/tokens"
 API_URL = "https://client-api.8slp.net/v1"
 APP_API_URL = "https://app-api.8slp.net/v1"  # write operations (pyEight convention)
-CLIENT_ID = "0894c7f33bb94800a03f1f4df13a4f38"
-CLIENT_SECRET = "f0954a3ed5763ba3d06834c73731a32f15f168f47d4f164751275def86db0c76"
+CLIENT_ID = os.environ["EIGHTSLEEP_CLIENT_ID"]
+CLIENT_SECRET = os.environ["EIGHTSLEEP_CLIENT_SECRET"]
 USER_AGENT = "okhttp/4.9.3"
 
 TOKEN_EXPIRY_BUFFER = 300  # refresh 5 min before expiry
 
 # User IDs (from device data — Dylan=left, Julia=right)
 USERS = {
-    "dylan": {"id": "9ce2e82f950545969b18164ed79feeea", "side": "left"},
-    "julia": {"id": "65012cc935d6472291c0b7324c8b12b6", "side": "right"},
+    "dylan": {"id": os.environ["EIGHTSLEEP_DYLAN_USER_ID"], "side": "left"},
+    "julia": {"id": os.environ["EIGHTSLEEP_JULIA_USER_ID"], "side": "right"},
 }
 
 

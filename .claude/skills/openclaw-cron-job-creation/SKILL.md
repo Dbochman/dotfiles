@@ -178,7 +178,7 @@ job = {
     "delivery": {
         "mode": "announce",
         "channel": "bluebubbles",
-        "to": "+15084234853"
+        "to": "+1XXXXXXXXXX"
     },
     "state": {}
 }

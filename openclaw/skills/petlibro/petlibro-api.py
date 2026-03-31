@@ -25,7 +25,7 @@ TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 
 BASE_URL = "https://api.us.petlibro.com"
 APPID = 1
-APPSN = "c35772530d1041699c87fe62348507a8"
+APPSN = os.environ["PETLIBRO_APPSN"]
 TOKEN_EXPIRY_BUFFER = 300  # refresh 5 min before assumed 1h expiry
 
 

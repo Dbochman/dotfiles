@@ -24,15 +24,15 @@ the agent's incorrect belief.
 ## Context / Trigger Conditions
 
 - Agent replies "I need to authenticate X first" but GWS credentials exist
-- Agent uses wrong email (e.g., `juliajoyjennings@gmail.com` instead of `julia.joy.jennings@gmail.com`)
-- Manual test works: `gws gmail users messages list --params '{"userId":"me","q":"is:unread","maxResults":1}' --account julia.joy.jennings@gmail.com`
+- Agent uses wrong email (e.g., `userwithoutdots@gmail.com` instead of `user@gmail.com`)
+- Manual test works: `gws gmail users messages list --params '{"userId":"me","q":"is:unread","maxResults":1}' --account user@gmail.com`
 - Problem persists even after verifying GWS credentials are valid
 
 ## Root Causes
 
 ### 1. Email Format Mismatch (Primary)
 GWS does **strict email matching** against its encrypted credentials. Gmail treats
-`juliajoyjennings@gmail.com` and `julia.joy.jennings@gmail.com` as the same mailbox, but
+`userwithoutdots@gmail.com` and `user@gmail.com` as the same mailbox, but
 GWS stores credentials under the **exact email used during OAuth**. If any OpenClaw config
 file has the wrong version, the agent will pass the wrong email to `--account`.
 
@@ -56,7 +56,7 @@ compacted session context retains the "not authenticated" belief.
 
 ### Step 1: Verify GWS credentials are valid
 ```bash
-ssh dylans-mac-mini 'gws gmail users messages list --params "{\"userId\":\"me\",\"q\":\"is:unread\",\"maxResults\":1}" --account julia.joy.jennings@gmail.com'
+ssh dylans-mac-mini 'gws gmail users messages list --params "{\"userId\":\"me\",\"q\":\"is:unread\",\"maxResults\":1}" --account user@gmail.com'
 ```
 
 ### Step 2: Check which accounts GWS knows about
@@ -71,7 +71,7 @@ If this shows empty, test with an actual API call — the JS wrapper may use a s
 ssh dylans-mac-mini 'grep -rl "juliajoyjennings" ~/.openclaw/ 2>/dev/null | grep -v ".jsonl" | grep -v ".log"'
 
 # Fix each file
-ssh dylans-mac-mini 'sed -i "" "s/juliajoyjennings@gmail.com/julia.joy.jennings@gmail.com/g" <files>'
+ssh dylans-mac-mini 'sed -i "" "s/userwithoutdots@gmail.com/user@gmail.com/g" <files>'
 ```
 
 ### Step 4: Clear the stale session
@@ -82,7 +82,7 @@ import json
 with open(\"/Users/dbochman/.openclaw/agents/main/sessions/sessions.json\") as f:
     data = json.load(f)
 for key, val in data.items():
-    if \"+15084234853\" in key:  # Replace with contact phone number
+    if \"+1XXXXXXXXXX\" in key:  # Replace with contact phone number
         print(\"Key:\", key)
         print(\"SessionId:\", val.get(\"sessionId\"))
         print(\"File:\", val.get(\"sessionFile\"))
@@ -100,7 +100,7 @@ import json
 path = \"/Users/dbochman/.openclaw/agents/main/sessions/sessions.json\"
 with open(path) as f:
     data = json.load(f)
-key = \"agent:main:imessage:dm:+15084234853\"
+key = \"agent:main:imessage:dm:+1XXXXXXXXXX\"
 if key in data:
     del data[key]
     with open(path, \"w\") as f:
