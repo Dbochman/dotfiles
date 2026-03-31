@@ -1,58 +1,57 @@
 # Fi Collar Presence Integration — Plan
 
+## Status: IMPLEMENTED (2026-03-30)
+
 ## Goal
-Add Potato's Fi Series 3+ collar to the Cabin presence detection system.
+Add Potato's Fi Series 3+ collar to the Crosstown presence detection system.
 
 ## What We Know
 
 - **Collar**: Fi Series 3+, Serial #FC35G072187, Model FC3B, MAC D4:3D:39:A7:4B:6C
-- **How it works**: Collar connects to Fi base station via BLE, base connects to WiFi. The collar itself does NOT appear as a WiFi client on Starlink.
+- **How it works**: Collar connects to Fi base station via BLE, base connects to WiFi. The collar itself does NOT appear as a WiFi client.
+- **Fi base location**: Crosstown (19 Crosstown Ave) — NOT Cabin
+- **Fi base on network**: hostname `da16200-4b6c.lan`, IP `192.168.165.187`, MAC `d4:3d:39:a7:4b:6c`
+- The `da16200` prefix is a Dialog Semiconductor DA16200 WiFi SoC used in Fi base stations
 - **Fi API**: `api.tryfi.com` — both `dylanbochman@gmail.com` and `juliajoyjennings@gmail.com` return 401 (likely Google SSO accounts, need password reset via Fi "Forgot Password" flow to enable API login)
 
-## Candidate Device on Starlink
+## Implementation (Completed)
 
-| Field | Value |
-|-------|-------|
-| Name | `1538000-45-B--GF2232900000M0` |
-| MAC prefix | `a0:cd:f3` (last 3 octets redacted by Starlink) |
-| Band | 2.4 GHz |
-| Connected | ~3.5 hours (at time of scan, aligns with arrival) |
-
-**NOT CONFIRMED** as the Fi base — needs verification. To confirm:
-1. Unplug the Fi base at Cabin, wait 2 min, re-scan Starlink clients — if `1538000-45-B--GF2232900000M0` disappears, it's the base
-2. Or check if `a0:cd:f3` is a known Fi/Kinetic OUI
-
-## Implementation Plan (once device confirmed)
-
-### Step 1: Add to Cabin presence scan
-In `presence-detect.sh`, add a device entry to `CABIN_DEVICES`:
+### Added to Crosstown devices in `presence-detect.sh`
 ```json
-{"person":"Potato","match":"name","pattern":"<confirmed-device-name>"}
+{"person":"Potato","match":"mac","pattern":"d4:3d:39:a7:4b:6c"},
+{"person":"Potato","match":"hostname","pattern":"da16200-4b6c"}
 ```
 
-### Step 2: Keep Potato OUT of tracked list
-`CABIN_TRACKED` stays `["Dylan","Julia"]` — Potato should NOT gate vacancy decisions. The dog being home alone should still trigger vacancy actions (eco mode, Roombas, etc.).
+### Potato is informational only
+`CROSSTOWN_TRACKED` stays `["Dylan","Julia"]` — Potato does NOT gate vacancy decisions. The dog being home alone still triggers vacancy actions (eco mode, Roombas, etc.).
 
-### Step 3: Potato appears in state.json as informational
-After the scan, `state.json` will include:
+### Potato appears in state.json
 ```json
 "people": {
-  "Dylan": { "cabin": true, "crosstown": false, "location": "cabin" },
-  "Julia": { "cabin": true, "crosstown": false, "location": "cabin" },
-  "Potato": { "cabin": true, "crosstown": false, "location": "cabin" }
+  "Dylan": { "cabin": false, "crosstown": true, "location": "crosstown" },
+  "Julia": { "cabin": false, "crosstown": true, "location": "crosstown" },
+  "Potato": { "cabin": false, "crosstown": true, "location": "crosstown" }
 }
 ```
-The agent can see Potato's location but it doesn't affect vacancy logic.
 
-### Step 4: Crosstown detection (optional)
-If there's a Fi base at Crosstown too, add a matching entry to `CROSSTOWN_DEVICES`. If not, Potato will only be detectable at Cabin.
+## Detection method
+The Fi base station is a persistent WiFi client — unlike phones, it doesn't rotate MACs or sleep. When the base is connected and powered on, Potato is detected as present. When Potato travels (e.g., to Cabin), the base stays at Crosstown but the collar disconnects from it. However, the base itself remains on the network, so this method only confirms "Potato's home base is at Crosstown" — not necessarily that Potato is physically there.
 
-## Alternative: Fi API (if credentials are fixed)
+For true location tracking (away from base), the Fi API would be needed.
+
+### Dog walk dashboard — no changes needed
+The ring-listener already calls `presence-detect.sh` for network checks, so Potato flows through automatically to `last_network_check` in JSONL events. Vision analysis already knows Potato by name. The Fi base stays on the network during walks (plugged in), so Potato won't appear in `walkers` — that's correct since vision detects the dog leaving via camera frames.
+
+## Cabin Base (pending)
+A second Fi base station is being ordered for the Cabin. Placeholder entry added to `CABIN_DEVICES` matching by `da16200` name prefix. Once plugged in:
+1. SSH to Mini: `ssh dylans-mac-mini`
+2. Scan Starlink clients: `grpcurl -plaintext -d '{"wifiGetClients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle`
+3. Look for a `da16200-XXXX` device name
+4. Tighten the pattern in `presence-detect.sh` if needed
+
+## Future: Fi API (if credentials are fixed)
 If either account gets a password reset via Fi's "Forgot Password":
 - Login: `POST https://api.tryfi.com/auth/login` (email + password, form-encoded)
 - GraphQL query returns: GPS location, battery, connection state (base/cellular/user), activity type
 - Could provide richer data than WiFi presence (actual GPS, walk tracking, battery alerts)
 - Script ready at `openclaw/skills/fi-collar/fi-api.py` (needs working credentials)
-
-## Starlink MAC Redaction Note
-Starlink gRPC API redacts the last 3 octets of WiFi client MACs (`XX:XX:XX`). Only wired/mesh devices show full MACs. This means we CANNOT match by full MAC for WiFi clients — must use device name matching.

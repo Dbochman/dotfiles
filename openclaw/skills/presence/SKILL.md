@@ -136,6 +136,7 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 - **Method**: ARP scan of `192.168.165.0/24` with stale-entry refresh. After initial ping sweep, tracked IPs' ARP entries are deleted and re-pinged — only devices actually on the network re-populate (ARP is layer 2, works even when iPhones are sleeping and ignoring ICMP).
 - **Dylan**: MAC `6c:3a:ff:5f:fc:ba` (private WiFi address off at Crosstown)
 - **Julia**: Hostname `julias-iphone`, MAC `38:e1:3d:c0:40:63`, IP `192.168.165.248`
+- **Potato** (dog, informational only): Fi collar base station — MAC `d4:3d:39:a7:4b:6c`, hostname `da16200-4b6c`. Does NOT affect vacancy decisions.
 - **Note**: Hostname matching (`julias-iphone.lan` from mDNS) is the most durable — survives MAC/IP rotation. MAC and IP are fallbacks.
 - **Stale ARP fix**: ARP entries persist 20+ minutes after a device leaves the network. The delete-and-re-ping cycle prevents false presence from cached entries.
 
