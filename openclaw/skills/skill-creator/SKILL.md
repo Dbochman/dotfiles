@@ -36,6 +36,12 @@ This skill runs on a **headless Mac Mini** via OpenClaw. Key constraints:
 
 - **No browser/display** — use `--static` mode for all viewers, save HTML files
   for the user to download or view via screen share
+- **`claude -p` requires keychain access** — the eval/optimization scripts
+  (`run_eval.py`, `run_loop.py`, `improve_description.py`) use `claude -p`
+  which needs macOS keychain auth. These scripts **will not work** from the
+  OpenClaw gateway LaunchAgent session. Use the core workflow (capture intent
+  → write SKILL.md → iterate via conversation) instead. The eval scripts are
+  available for manual use via Terminal or screen share.
 - **Skills deploy to `~/.openclaw/skills/`** — real directory copies, not symlinks
   (OpenClaw rejects symlinks via `fs.realpathSync()`)
 - **`claude` CLI available** at `/opt/homebrew/opt/node@22/bin/claude`
