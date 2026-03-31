@@ -508,6 +508,8 @@ Both the listener and OpenClaw's agent may see Dylan's "start roombas" reply. Th
 | OpenClaw first | If OpenClaw calls `dog-walk-start`, inbox IPC clears pending and starts return monitor. If OpenClaw calls `roomba start` directly, listener still picks up the reply and starts return monitor. |
 | Both race | `_return_monitor_active` flag prevents duplicate monitoring. Roomba cooldown is per-process but robots handle duplicate starts gracefully. |
 
+**Note**: `_return_monitor_active` is cleared in a `finally` block when `_findmy_poll_loop` exits (any path: timeout, return detected, cancel). This prevents the flag from staying stuck after a walk ends, which would cause all subsequent motion events to be misclassified as return signals.
+
 ### BB API Details
 
 - **Endpoint**: `POST /api/v1/message/query?password=<pw>`
@@ -644,7 +646,7 @@ Each state change is appended as a single JSON line (same schema as `state.json`
 - **Header**: `Authorization: Bearer <token>` + `anthropic-beta: oauth-2025-04-20`
 - **Model**: `claude-haiku-4-5-20251001` (fast, cheap, multimodal)
 - **Token refresh**: Handled externally by `ai.openclaw.usage-token-push` LaunchAgent (pushes from local Mac every 30min)
-- **Failure mode**: If token expired, vision analysis is skipped silently (notifications still work, just without AI description)
+- **Failure mode**: If token expired, vision analysis fails but departure check still runs with degraded data (FCM-known person + assumed dog) — triggers the confirmation prompt instead of silently skipping. Notifications still work, just without AI description.
 
 ### BlueBubbles API
 - **Password**: `BLUEBUBBLES_PASSWORD` from `~/.openclaw/.secrets-cache`
