@@ -772,87 +772,96 @@ async def _findmy_poll_loop(location: str) -> None:
     Phase 1 (0-20 min): detect who left, check network every 60 seconds
     Phase 2 (20+ min):  also check FindMy for walkers every 5 minutes
     Ring motion during monitoring triggers immediate dock.
+
+    IMPORTANT: This function MUST reset _return_monitor_active on ALL exit
+    paths. If the flag stays True after the loop ends, all subsequent motion
+    events are misclassified as "return signals" instead of new departures.
     """
+    global _return_monitor_active, _ring_motion_during_walk
     NETWORK_INTERVAL = 60    # 1 minute for network checks
     FINDMY_INTERVAL = 300    # 5 minutes for FindMy checks
     FINDMY_START = 1200      # 20 minutes before adding FindMy
     MAX_DURATION = 7200      # 2 hours total timeout
     start_time = time.time()
 
-    addr = HOME_ADDRESSES.get(location, HOME_ADDRESSES["crosstown"])
-    log(f"RETURN MONITOR: Starting for {location} ({addr['street']})")
-    send_imessage(f"\U0001f4cd Tracking your walk — will dock Roombas when you're back near {addr['street']}")
+    try:
+        addr = HOME_ADDRESSES.get(location, HOME_ADDRESSES["crosstown"])
+        log(f"RETURN MONITOR: Starting for {location} ({addr['street']})")
+        send_imessage(f"\U0001f4cd Tracking your walk — will dock Roombas when you're back near {addr['street']}")
 
-    # Wait 2 minutes then detect who left the network
-    await asyncio.sleep(120)
-    walkers = await asyncio.to_thread(_detect_who_left, location)
-    log(f"RETURN MONITOR: Walkers detected: {walkers}")
-    _update_state_dog_walk(location, "walkers_detected", walkers=walkers)
+        # Wait 2 minutes then detect who left the network
+        await asyncio.sleep(120)
+        walkers = await asyncio.to_thread(_detect_who_left, location)
+        log(f"RETURN MONITOR: Walkers detected: {walkers}")
+        _update_state_dog_walk(location, "walkers_detected", walkers=walkers)
 
-    last_findmy_check = 0
-    global _ring_motion_during_walk
-    _ring_motion_during_walk = False
+        last_findmy_check = 0
+        _ring_motion_during_walk = False
 
-    while time.time() - start_time < MAX_DURATION:
-        elapsed = time.time() - start_time
-        try:
-            # Ring motion event check (set by _handle_motion when monitor is active)
-            if _ring_motion_during_walk:
-                _ring_motion_during_walk = False
-                elapsed_min = int(elapsed / 60)
-                log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
-                roomba_result = run_roomba_command(location, "dock")
-                _update_state_dog_walk(location, "dock", return_signal="ring_motion", roomba_result=roomba_result)
-                _update_state_findmy(location, "stop")
+        while time.time() - start_time < MAX_DURATION:
+            elapsed = time.time() - start_time
+            try:
+                # Ring motion event check (set by _handle_motion when monitor is active)
+                if _ring_motion_during_walk:
+                    _ring_motion_during_walk = False
+                    elapsed_min = int(elapsed / 60)
+                    log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
+                    roomba_result = run_roomba_command(location, "dock")
+                    _update_state_dog_walk(location, "dock", return_signal="ring_motion", roomba_result=roomba_result)
+                    _update_state_findmy(location, "stop")
+                    return
+
+                # Network presence check (every poll cycle)
+                wifi_detail = await asyncio.to_thread(_check_network_presence_detailed, location)
+                _update_state_findmy(location, "poll", network_detail=wifi_detail)
+                if wifi_detail["any_present"]:
+                    elapsed_min = int(elapsed / 60)
+                    log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
+                    roomba_result = run_roomba_command(location, "dock")
+                    _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
+                    _update_state_findmy(location, "stop")
+                    return
+
+                # FindMy check (after 20 min, every 5 min, only for walkers)
+                if elapsed >= FINDMY_START and (time.time() - last_findmy_check) >= FINDMY_INTERVAL:
+                    last_findmy_check = time.time()
+                    for person in walkers:
+                        result = await asyncio.to_thread(_check_person_near_home, person, location)
+                        _update_state_findmy(location, "poll", result=result)
+
+                        if result:
+                            street = result.get("street", "unknown")
+                            near_home = result.get("near_home", False)
+                            desc = result.get("description", "")
+                            log(f"FINDMY POLL: {person} street={street} near_home={near_home} desc={desc}")
+
+                            if near_home:
+                                elapsed_min = int(elapsed / 60)
+                                log(f"FINDMY POLL: {person} near home after {elapsed_min}min — docking at {location}")
+                                roomba_result = run_roomba_command(location, "dock")
+                                _update_state_dog_walk(location, "dock", return_signal="findmy", roomba_result=roomba_result)
+                                _update_state_findmy(location, "stop")
+                                return
+                        else:
+                            log(f"FINDMY POLL: Could not check {person}")
+
+            except asyncio.CancelledError:
+                log("RETURN MONITOR: Cancelled")
                 return
+            except Exception as e:
+                log(f"RETURN MONITOR: Error: {e}")
 
-            # Network presence check (every poll cycle)
-            wifi_detail = await asyncio.to_thread(_check_network_presence_detailed, location)
-            _update_state_findmy(location, "poll", network_detail=wifi_detail)
-            if wifi_detail["any_present"]:
-                elapsed_min = int(elapsed / 60)
-                log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
-                roomba_result = run_roomba_command(location, "dock")
-                _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
-                _update_state_findmy(location, "stop")
-                return
+            await asyncio.sleep(NETWORK_INTERVAL)
 
-            # FindMy check (after 20 min, every 5 min, only for walkers)
-            if elapsed >= FINDMY_START and (time.time() - last_findmy_check) >= FINDMY_INTERVAL:
-                last_findmy_check = time.time()
-                for person in walkers:
-                    result = await asyncio.to_thread(_check_person_near_home, person, location)
-                    _update_state_findmy(location, "poll", result=result)
-
-                    if result:
-                        street = result.get("street", "unknown")
-                        near_home = result.get("near_home", False)
-                        desc = result.get("description", "")
-                        log(f"FINDMY POLL: {person} street={street} near_home={near_home} desc={desc}")
-
-                        if near_home:
-                            elapsed_min = int(elapsed / 60)
-                            log(f"FINDMY POLL: {person} near home after {elapsed_min}min — docking at {location}")
-                            roomba_result = run_roomba_command(location, "dock")
-                            _update_state_dog_walk(location, "dock", return_signal="findmy", roomba_result=roomba_result)
-                            _update_state_findmy(location, "stop")
-                            return
-                    else:
-                        log(f"FINDMY POLL: Could not check {person}")
-
-        except asyncio.CancelledError:
-            log("RETURN MONITOR: Cancelled")
-            return
-        except Exception as e:
-            log(f"RETURN MONITOR: Error: {e}")
-
-        await asyncio.sleep(NETWORK_INTERVAL)
-
-    log(f"RETURN MONITOR: Timeout after {MAX_DURATION // 60}min — docking as safety fallback")
-    send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
-    roomba_result = run_roomba_command(location, "dock")
-    _update_state_dog_walk(location, "dock_timeout", return_signal="timeout", roomba_result=roomba_result)
-    _update_state_findmy(location, "stop")
+        log(f"RETURN MONITOR: Timeout after {MAX_DURATION // 60}min — docking as safety fallback")
+        send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
+        roomba_result = run_roomba_command(location, "dock")
+        _update_state_dog_walk(location, "dock_timeout", return_signal="timeout", roomba_result=roomba_result)
+        _update_state_findmy(location, "stop")
+    finally:
+        _return_monitor_active = False
+        _ring_motion_during_walk = False
+        log("RETURN MONITOR: Ended — cleared _return_monitor_active flag")
 
 
 async def _inbox_poll_loop() -> None:
@@ -1446,6 +1455,12 @@ async def _send_event_recording(device: str, doorbot_id: int, event_id: int, db=
             else:
                 # Fallback: use raw text as description
                 description = raw_analysis
+        else:
+            # Vision failed (401, timeout, etc.) — still run departure check
+            # with degraded data. FCM told us a person was detected; assume 1 dog
+            # so the confirmation prompt fires instead of silently doing nothing.
+            log("Vision unavailable — running departure check with FCM-only data (person + assumed dog)")
+            await check_departure({"people": ["unknown"], "dogs": ["unknown"]}, doorbot_id)
 
         # Send preview frame as iMessage image, then description as caption
         if notify:
