@@ -46,6 +46,8 @@
     "claude-delegator@jarrodwatts-claude-delegator": true
   },
   "alwaysThinkingEnabled": false,
+  "effortLevel": "high",
+  "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
-  "effortLevel": "high"
+  "voiceEnabled": true
 }

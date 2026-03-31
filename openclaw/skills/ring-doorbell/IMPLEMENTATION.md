@@ -249,7 +249,6 @@ check_departure() — Roomba + FindMy automation (departures only)
         +-- Time-of-day filter (8-10 AM, 11 AM-1 PM, 5-8 PM)
         +-- Presence cross-check (skip if confirmed_vacant)
         +-- Accumulate across 3-min sliding window
-        +-- WiFi check at decision time (skip if any phone on network)
         +-- 1+ people + 2+ dogs → auto-start Roombas + FindMy polling
         +-- 1+ people + 1 dog → iMessage confirmation to Dylan
         |       (cabin: per-window cooldown, one prompt per walk window)
@@ -300,7 +299,10 @@ if not _is_walk_hour():       # 8-10 AM, 11 AM-1 PM, 5-8 PM
 if not _is_location_occupied(location):  # skip if confirmed_vacant
     return
 # No direction filter — Haiku struggles with fisheye distortion.
-# Time-of-day, presence, WiFi check, and cooldown prevent false positives.
+# Time-of-day, presence, and cooldown prevent false positives.
+# WiFi is NOT checked at departure — phones stay connected at the
+# front door, making WiFi unreliable for departure detection.
+# WiFi is used for return monitoring only.
 
 # Accumulate across 3-minute sliding window
 # (people/dogs may pass doorbell in separate motion events)
@@ -308,21 +310,15 @@ if not _is_location_occupied(location):  # skip if confirmed_vacant
 max_people = max(people_per_event)
 max_dogs = max(dogs_per_event)
 
-# WiFi check at decision time — accumulation window gives phones
-# ~30-60s to drop off WiFi during a real departure. If ANY phone
-# is still on WiFi, someone is home or returning — suppress.
-if _check_network_presence(location):
-    return  # phone on WiFi → home or returning
-
 if max_people >= 1 and max_dogs >= 2:
-    start_roombas(location)
+    start_roombas(location)       # auto-trigger, no confirmation needed
     start_findmy_polling(location)
 
 elif max_people >= 1 and max_dogs == 1:
     send_confirmation_imessage(location)  # ask Dylan
 ```
 
-**Note on Cabin:** The Cabin doorbell has no Ring Protect subscription, so no video recording, person detection (Smart Alerts), or multi-frame vision analysis is available. Without Ring Protect, FCM only sends generic `state=motion` events (never `state=human`), and `cv_properties.person_detected` is always false. To work around this, the listener treats **all motion at the Cabin as a potential person** and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'"). This may produce false positives from animals, cars, or wind — but during walk hours with presence confirmed, it's a reasonable tradeoff. Auto-trigger (2+ dogs) is not possible at the Cabin without vision analysis. The WiFi check at decision time is especially important at the Cabin: since all motion is treated as a departure, returning from a walk would trigger a false prompt without it. The check runs after the 3-minute accumulation window, giving phones ~30-60 seconds to drop off WiFi during a real departure. If any phone is still on the Starlink network when the decision fires, the departure is suppressed.
+**Note on Cabin:** The Cabin doorbell has no Ring Protect subscription, so no video recording, person detection (Smart Alerts), or multi-frame vision analysis is available. Without Ring Protect, FCM only sends generic `state=motion` events (never `state=human`), and `cv_properties.person_detected` is always false. To work around this, the listener treats **all motion at the Cabin as a potential person** and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'"). This may produce false positives from animals, cars, or wind — but during walk hours with presence confirmed, it's a reasonable tradeoff. Auto-trigger (2+ dogs) is not possible at the Cabin without vision analysis. The per-walk-window prompt cooldown prevents spam (one prompt per walk window).
 
 ### Frame Retry for Second Dog
 
@@ -359,7 +355,6 @@ A 2-hour cooldown per location per action prevents re-triggering:
 | Walk timeout (2hr) | "⏰ Walk tracking timed out after 2 hours — docking Roombas" |
 | Outside walk hours | (logged, no notification) |
 | Already vacant | (logged, no notification) |
-| WiFi check (phone on network) | (logged, no notification — phone on WiFi at decision time means home or returning) |
 
 ## Component 4: FindMy Return-Home Tracking
 

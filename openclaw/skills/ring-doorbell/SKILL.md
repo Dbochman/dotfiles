@@ -79,7 +79,7 @@ The listener uses multi-frame video analysis (5 frames from each recording sent 
 - **Time-of-day filter**: only active 8-10 AM, 11 AM-1 PM, 5-8 PM
 - **Presence cross-check**: skips if location is already `confirmed_vacant` (no one home to leave)
 
-**Departure triggers:**
+**Departure triggers (no WiFi check — phones stay connected at the front door, so WiFi is unreliable for departure detection; WiFi is used for return monitoring only):**
 - **1+ people + 2+ dogs departing** → auto-start Roombas + begin FindMy return tracking
 - **1+ people + 1 dog departing** → iMessage asking Dylan for confirmation ("Reply 'start roombas'")
 
@@ -96,7 +96,7 @@ After departure, the return monitor uses three signals — any one triggers Room
 
 | Signal | Interval | How it works |
 |--------|----------|-------------|
-| **Network presence** | Every 60s from start | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
+| **WiFi / network presence** | Every 60s from start | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
 | **Ring motion** | Event-driven | Any person detected at the doorbell during monitoring. |
 | **FindMy** | Every 5min after 20min | Keyboard arrow navigation to select walker in sidebar, screenshot via `peekaboo see`, Haiku checks if pin is near home. |
 
