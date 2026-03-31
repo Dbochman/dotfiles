@@ -143,7 +143,7 @@ Guards: if plist doesn't exist, prints install instructions.
 
 ## Files (source repo)
 
-All source files live in `/Users/dylanbochman/repos/dotfiles/`:
+All source files live in the dotfiles repo (`~/repos/dotfiles` on MBP, `~/dotfiles` on Mini):
 
 | File | Purpose |
 |------|---------|
