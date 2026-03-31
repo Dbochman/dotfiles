@@ -14,7 +14,7 @@ Direct cloud API calls from the Mini. No local network API exists. Auth via Dyla
 
 ### Why not eightctl?
 
-`eightctl` (Go CLI) was the original plan but has a bug: it sends `client_id: "sleep-client"` instead of the proper app credentials (`0894c7f33bb94800a03f1f4df13a4f38`), causing the token auth endpoint to reject requests. It falls back to a legacy login endpoint which also has issues with Google Sign-In accounts. Built a custom Python wrapper using direct API calls instead.
+`eightctl` (Go CLI) was the original plan but has a bug: it sends `client_id: "sleep-client"` instead of the proper app credentials (from APK), causing the token auth endpoint to reject requests. It falls back to a legacy login endpoint which also has issues with Google Sign-In accounts. Built a custom Python wrapper using direct API calls instead.
 
 ### Auth discovery
 
@@ -34,8 +34,8 @@ The 8sleep account was created via **Google Sign-In** — the email+password API
 
 | Side | Position | User ID | Temp Preference |
 |------|----------|---------|-----------------|
-| Dylan | Left | `9ce2e82f950545969b18164ed79feeea` | Cool |
-| Julia | Right | `65012cc935d6472291c0b7324c8b12b6` | Warm |
+| Dylan | Left | `$EIGHTSLEEP_DYLAN_USER_ID` | Cool |
+| Julia | Right | `$EIGHTSLEEP_JULIA_USER_ID` | Warm |
 
 Both sides are controllable via Dylan's auth token (household access).
 
@@ -53,8 +53,8 @@ Both sides are controllable via Dylan's auth token (household access).
 
 ### Authentication
 - **Endpoint**: `POST https://auth-api.8slp.net/v1/tokens`
-- **Client ID**: `0894c7f33bb94800a03f1f4df13a4f38` (from 8sleep Android APK)
-- **Client Secret**: `f0954a3ed5763ba3d06834c73731a32f15f168f47d4f164751275def86db0c76`
+- **Client ID**: `$EIGHTSLEEP_CLIENT_ID` (from .secrets-cache, originally extracted from 8sleep Android APK)
+- **Client Secret**: `$EIGHTSLEEP_CLIENT_SECRET` (from .secrets-cache)
 - **User-Agent**: `okhttp/4.9.3` (required — API rejects default Python UA)
 - **Token caching**: File-based at `~/.config/eightctl/token-cache.json` (chmod 600)
 - **Rate limiting**: Aggressive HTTP 429 on repeated auth failures. 5-10 min cooldown.

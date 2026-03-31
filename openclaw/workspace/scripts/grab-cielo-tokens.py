@@ -211,7 +211,7 @@ async def grab(cdp_port, passive=False):
             config["userId"] = user_id
         if refresh_token:
             config["refreshToken"] = refresh_token
-        config["apiKey"] = "3iCWYuBqpY2g7yRq3yyTk1XCS4CMjt1n9ECCjdpd"
+        config["apiKey"] = os.environ.get("CIELO_API_KEY", "")
         config["lastRefresh"] = int(time.time() * 1000)
 
         os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)

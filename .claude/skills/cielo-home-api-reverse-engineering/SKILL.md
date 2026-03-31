@@ -34,8 +34,8 @@ community integration.
   reCAPTCHA token. Neither the HA integration nor node-smartcielo perform programmatic login.
 - **Token-based auth**: All API calls use a JWT access token in the `authorization` header
   and an API key in `x-api-key`.
-- **API Key**: `3iCWYuBqpY2g7yRq3yyTk1XCS4CMjt1n9ECCjdpd` (extracted from live browser,
-  differs from the obfuscated JS value `XiZ0PkwbNlQmu3Zrt7XV3EHBj1b1bHU9k02MSJW2`).
+- **API Key**: Stored in `$CIELO_API_KEY` env var (extracted from live browser,
+  differs from the obfuscated JS value in the web app).
 - **Token refresh**: `POST /web/token/refresh` with body `{"local":"en","refreshToken":"..."}`.
   Requires `authorization` header with current access token.
 - **Token expiry**: Tokens expire quickly (~1 hour). The browser's auto-refresh can

@@ -26,7 +26,7 @@ Cloud-only — runs directly on Mac Mini. Same pattern as 8sleep.
 - **Base URL**: `https://api.us.petlibro.com`
 - **Auth**: POST `/member/auth/login` with email + MD5-hashed password
 - **Password hashing**: `md5(password.encode("UTF-8")).hexdigest()`
-- **App constants**: `appId: 1`, `appSn: "c35772530d1041699c87fe62348507a8"`
+- **App constants**: `appId: 1`, `appSn: $PETLIBRO_APPSN` (from .secrets-cache)
 - **Headers**: `source: ANDROID`, `language: EN`, `version: 1.3.45`, `token: <session_token>`
 - **Token refresh**: Re-login on error code `1009` (NOT_YET_LOGIN)
 - **Single session limit**: Only one session per account. Phone app can invalidate. Recommended: create second account, share devices.
