@@ -16,6 +16,7 @@ ssh dylans-macbook-pro "<command>"
 ```
 
 - **Host**: `dylans-macbook-pro` (Tailscale, resolves to `100.107.209.85`)
+- **Auth**: Dedicated key `~/.ssh/id_mini_to_mbp` (auto-selected via `Match originalhost` — bypasses 1Password agent which hangs under launchd)
 - **User**: `dbochman`
 - **OS**: macOS 26.3 (arm64)
 - **Python**: `/usr/bin/python3` (system)

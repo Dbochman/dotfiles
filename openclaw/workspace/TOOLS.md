@@ -149,7 +149,7 @@ Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Sticky/arrival-bas
 
 ## Crosstown Network
 
-Mac Mini ↔ MacBook Pro SSH via Tailscale (`dylans-macbook-pro` / `dylans-mac-mini`), 1Password SSH agent.
+Mac Mini → MacBook Pro SSH via Tailscale (`ssh dylans-macbook-pro`), dedicated key `~/.ssh/id_mini_to_mbp` (bypasses 1Password agent — hangs under launchd). Configured via `Match originalhost` in `~/.ssh/config`.
 
 ## Dashboards
 
