@@ -1,19 +1,24 @@
 # Mac Mini (via Tailscale)
-# On the launchd host (MBP), id_launchd bypasses 1Password Touch ID prompts.
-# On other machines, falls through to the 1Password agent (Host * block).
 Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
-  Match host dylans-mac-mini exec "test -f ~/.ssh/id_launchd"
-    IdentityFile ~/.ssh/id_launchd
-    IdentityAgent none
 
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro
   HostName 100.107.209.85
   User dbochman
 
-# 1Password SSH Agent
+# On the local MBP, id_launchd bypasses 1Password Touch ID prompts for Mini SSH.
+Match originalhost dylans-mac-mini exec "test -f ~/.ssh/id_launchd"
+  IdentityFile ~/.ssh/id_launchd
+  IdentityAgent none
+
+# On the Mini, id_mini_to_mbp bypasses 1Password agent (hangs under launchd).
+Match originalhost dylans-macbook-pro exec "test -f ~/.ssh/id_mini_to_mbp"
+  IdentityFile ~/.ssh/id_mini_to_mbp
+  IdentityAgent none
+
+# 1Password SSH Agent (default for all other hosts)
 Host *
   IdentityAgent "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"
 
