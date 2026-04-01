@@ -80,8 +80,8 @@ The listener uses multi-frame video analysis (5 frames from each recording sent 
 - **Presence cross-check**: skips if location is already `confirmed_vacant` (no one home to leave)
 
 **Departure triggers (no WiFi check — phones stay connected at the front door, so WiFi is unreliable for departure detection; WiFi is used for return monitoring only):**
-- **1+ people + 2+ dogs departing** → auto-start Roombas + begin FindMy return tracking
-- **1+ people + 1 dog departing** → iMessage asking Dylan for confirmation ("Reply 'start roombas'")
+- **Crosstown: 1+ people + 1+ dogs** → auto-start Roombas + begin return tracking (both dogs always go on walks; vision often only detects one due to fisheye/occlusion)
+- **Cabin: 1+ people + 1+ dogs** → iMessage asking Dylan for confirmation ("Reply 'start roombas'") — no Ring Protect means all motion is treated as person + assumed dog, higher false positive risk
 
 **Per-location Roomba commands:**
 
