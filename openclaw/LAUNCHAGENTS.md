@@ -33,8 +33,6 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles repo, deploys skills/wrappers to Mini |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
 | `com.openclaw.bb-lag-summary` | Daily 8:05 AM | `bb-lag-summary.sh` | BlueBubbles message lag summary |
-| `com.openclaw.gas-scrape` | Daily | `gas-scrape-sync.sh` | Scrapes gas utility data for financial dashboard |
-| `com.openclaw.water-scrape` | Daily | `water-scrape-sync.sh` | Scrapes water utility data for financial dashboard |
 
 ## Mac Mini — Event-Driven (WatchPaths)
 
@@ -53,6 +51,13 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
 | `com.openclaw.presence-crosstown` | 15min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale |
+
+## Julia's MacBook (dormant, not currently deployed)
+
+| Label | Schedule | Program | Description |
+|-------|----------|---------|-------------|
+| `com.openclaw.gas-scrape` | Daily | `gas-scrape-sync.sh` | Scrapes gas utility data for financial dashboard |
+| `com.openclaw.water-scrape` | Daily | `water-scrape-sync.sh` | Scrapes water utility data for financial dashboard |
 
 ## Local Mac (Dylan's MacBook)
 
@@ -73,5 +78,6 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 - **Deployment**: Most plists are deployed via `scp` to `~/Library/LaunchAgents/` on the target machine. Only `ai.openclaw.gateway` is symlinked via `install.sh`.
 - **Logs**: Most services log to `~/.openclaw/logs/` or `/tmp/`. Check `StandardErrorPath`/`StandardOutPath` in plists.
 - **Gateway wrapper**: Uses cache-only secrets pattern (`~/.openclaw/.secrets-cache`), no `op read` at startup (hangs under launchd).
+- **OAuth refresh**: `oauth-refresh.sh` hides `/usr/bin` from PATH during `claude auth login` so that `security` (macOS keychain CLI) is not found. This forces Claude Code to write credentials to `~/.claude/.credentials.json` instead of the keychain, which is unreadable over SSH. The refresh token rotates on each login, so the flow is self-sustaining. If the refresh token chain breaks (e.g., manual `claude auth login` rotates it outside the script), re-seed by pushing a fresh token from a machine with keychain access: `security find-generic-password -s "Claude Code-credentials" -w | ssh dylans-mac-mini 'cat > ~/.openclaw/.anthropic-oauth-cache'`.
 - **Pre-upgrade backup**: `ai.openclaw.gateway.plist.pre-upgrade` exists as safety backup — `npm install -g openclaw` may overwrite the plist via post-install hook.
 - **Prefix convention**: Newer agents use `ai.openclaw.*`, older ones use `com.openclaw.*`. Both are functionally equivalent.
