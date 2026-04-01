@@ -24,6 +24,7 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | `ai.openclaw.8sleep-snapshot` | 15min | `8sleep-snapshot.sh` | Eight Sleep status snapshot to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
+| `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
 ## Mac Mini — Calendar-Based (StartCalendarInterval)
 
@@ -57,13 +58,14 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `ai.openclaw.usage-token-push` | 30min | Push script | Pushes Anthropic OAuth cache from macOS keychain to Mini |
+| `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects Claude Code token usage and pushes daily JSON to Mini |
 
 ## Disabled
 
 | Label | File | Reason |
 |-------|------|--------|
 | `ai.openclaw.weekly-upgrade` | `.plist.disabled` | Weekly auto-upgrade removed 2026-03-12; upgrades now manual |
+| `ai.openclaw.usage-token-push` | `usage-token-push.plist` | Replaced by `oauth-refresh` — was pushing OAuth cache from laptop keychain to Mini, fragile (required laptop open + keychain readable) |
 
 ## Notes
 
