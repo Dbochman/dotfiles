@@ -108,20 +108,78 @@ opentable snipe <restaurant_id> 2026-03-20 2 --time 20:00 --duration 3600 --conf
 
 ## CLI Auth Token Refresh
 
-If the `opentable` CLI gives auth errors, the token needs refreshing:
+Auth tokens (~14 days) are stored at `~/.cache/openclaw-gateway/opentable_auth_token`.
 
-1. Open Chrome -> navigate to opentable.com
-2. Log in (if not already)
+### Automated refresh (preferred)
+```bash
+bash ~/.openclaw/bin/opentable-refresh-token.sh
+```
+Fully automated: Pinchtab navigates to OT login, enters `bochmanspam@gmail.com`, reads the 2FA code from Gmail via GWS, enters it, extracts the `authCke` cookie, and updates the CLI token cache. No manual steps.
+
+**How it works:**
+1. Pinchtab opens `opentable.com/authenticate/start` (headless)
+2. Clicks "Use email instead", enters `bochmanspam@gmail.com`
+3. Reads verification code from Gmail (`gws gmail users messages list --account bochmanspam@gmail.com`)
+4. Enters code — auto-redirected to logged-in state
+5. Extracts `authCke` cookie `atk` value from `document.cookie`
+6. Writes token to `~/.cache/openclaw-gateway/opentable_auth_token`
+
+**Requirements:** Pinchtab, GWS with `bochmanspam@gmail.com` authenticated, secrets-cache sourced.
+
+### Manual refresh (fallback)
+1. Open Chrome on Mini -> navigate to opentable.com
+2. Log in via phone or email (bochmanspam@gmail.com)
 3. Open DevTools (Cmd+Opt+I) -> Application -> Cookies
-4. Find the cookie named "authCke"
-5. Copy the "atk" value (UUID after `atk=` and before `&rtk=`)
-6. Update 1Password: `op item edit "OpenTable" --vault "OpenClaw" "auth_token=<atk_value>"`
+4. Find "authCke" cookie, copy the `atk` UUID value
+5. Write to cache: `echo "<atk_value>" > ~/.cache/openclaw-gateway/opentable_auth_token`
 
-Auth tokens typically last ~14 days. Pinchtab does not need auth tokens (uses browser session).
+### Alternative: extract from CDP
+If Chrome is already logged in, you can extract the cookie programmatically:
+1. Kill Chrome, relaunch with `--remote-debugging-port=19222 --user-data-dir=/tmp/chrome-ot` (copy Default profile first — Chrome rejects CDP on the real data dir)
+2. Use CDP `Network.getCookies` via WebSocket to read `authCke`
+3. Note: Chrome's Cookies DB is encrypted, so direct SQLite reads don't work
+
+## Snipe Mode
+
+When target timeslots are fully booked, use snipe mode to monitor for cancellations:
+
+```bash
+# Monitor one date (reports only)
+opentable snipe <restaurant_id> 2026-04-16 4 --time 19:00
+
+# Auto-book when slot opens
+opentable snipe <restaurant_id> 2026-04-16 4 --time 19:00 --duration 86400 --confirm
+
+# Monitor multiple dates (run in background)
+for DATE in 2026-04-16 2026-04-17 2026-04-18; do
+  nohup opentable snipe <id> "$DATE" 4 --time 19:00 --duration 86400 --confirm \
+    > "/tmp/snipe-$DATE.log" 2>&1 &
+done
+```
+
+- Polls every 30 seconds
+- `--duration 86400` = monitor for 24 hours
+- `--confirm` = auto-book if a matching slot appears (without it, only reports)
+- Check status: `tail /tmp/snipe-*.log`
+- Check running: `pgrep -af "opentable snipe"`
+- Kill all: `pkill -f "opentable snipe"`
+
+### Snipe monitor with iMessage notification
+
+To get notified when a snipe succeeds or expires, run a monitor script that checks logs and sends an iMessage via BlueBubbles:
+
+```bash
+# Checks every 60s, sends iMessage on success or expiry
+nohup bash /tmp/snipe-monitor.sh > /tmp/snipe-monitor.log 2>&1 &
+```
 
 ## Notes
 
 - Pinchtab booking script: `~/.openclaw/workspace/scripts/opentable-book.sh`
+- Automated auth refresh: `~/.openclaw/bin/opentable-refresh-token.sh`
+- CLI token cache: `~/.cache/openclaw-gateway/opentable_auth_token`
 - CLI logs: `~/.openclaw/logs/opentable.log`
 - CLI uses undocumented mobile API (`mobile-api.opentable.com`) — may break without notice
 - Pinchtab uses the real OpenTable website — more resilient to API changes
+- OpenTable account: `bochmanspam@gmail.com` (2FA via email, readable by GWS)
+- Mahaniyom (Brookline Thai, Michelin Bib Gourmand): restaurant ID `1267699`
