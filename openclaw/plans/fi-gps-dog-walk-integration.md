@@ -1,6 +1,6 @@
 # Fi GPS Dog Walk Integration — Plan
 
-## Status: PHASE 1 IMPLEMENTED (2026-04-01) — Phases 2-4 pending
+## Status: PHASES 1-2 IMPLEMENTED (2026-04-01) — Phases 3-4 pending (Phase 3 gate: ≥5 Fi GPS returns, 0 false docks)
 
 ## Goal
 
