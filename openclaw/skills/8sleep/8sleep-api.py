@@ -169,6 +169,8 @@ def api_get(path, token_data=None):
         return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return {"error": e.code, "message": e.read().decode()[:300]}
+    except (urllib.error.URLError, OSError) as e:
+        return {"error": "network", "message": str(e)}
 
 
 def api_put(path, body, token_data=None, use_app_api=False):
@@ -191,6 +193,8 @@ def api_put(path, body, token_data=None, use_app_api=False):
         return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return {"error": e.code, "message": e.read().decode()[:300]}
+    except (urllib.error.URLError, OSError) as e:
+        return {"error": "network", "message": str(e)}
 
 
 def cmd_status():
