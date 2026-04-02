@@ -1,6 +1,6 @@
 #!/bin/bash
 # dog-walk-start — Start Roombas at a location and signal the ring-listener
-# to begin return monitoring (network + FindMy + Ring motion).
+# to begin return monitoring (network + Fi GPS + Ring motion).
 #
 # Usage: dog-walk-start <location>
 #   location: "cabin" or "crosstown"

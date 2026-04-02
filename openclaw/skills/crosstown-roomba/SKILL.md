@@ -78,13 +78,13 @@ Roomba J5     ←─MQTT:8883─→ roomba-cmd.js (MacBook Pro) ←─SSH─→ 
 
 ## Dog Walk Mode
 
-When starting Roombas in response to a dog walk departure (e.g., Dylan replies "start roombas" to a Ring doorbell prompt), use `dog-walk-start` instead of starting individually. This starts the Roombas AND signals the ring-listener to begin return monitoring (auto-dock when you're back):
+**IMPORTANT: During walk hours (8-10 AM, 11 AM-1 PM, 5-8 PM), ALWAYS use `dog-walk-start` instead of `crosstown-roomba start`.** This starts Roombas AND activates return monitoring (Fi GPS + WiFi + Ring motion), so they auto-dock when Dylan/Julia return. Without this, Roombas run until battery dies.
 
 ```bash
-dog-walk-start crosstown
+dog-walk-start crosstown   # Start Roombas + return monitoring
 ```
 
-For regular non-walk starts (cleaning day, routine, etc.), use the individual commands as usual.
+Use bare `crosstown-roomba start` ONLY for non-walk cleaning (cleaning day, routine, etc.) where you don't need auto-dock on return.
 
 ## Disambiguation
 
