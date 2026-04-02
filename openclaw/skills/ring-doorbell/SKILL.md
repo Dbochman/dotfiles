@@ -92,11 +92,12 @@ The listener uses multi-frame video analysis (5 frames from each recording sent 
 
 **Return detection (multi-signal):**
 
-After departure, the return monitor uses three signals — any one triggers Roomba docking:
+After departure, the return monitor uses four signals — any one triggers Roomba docking:
 
 | Signal | Interval | How it works |
 |--------|----------|-------------|
 | **WiFi / network presence** | Every 60s from start | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
+| **Fi GPS** | Every 60s from start | Polls Potato's Fi collar GPS via `fi-collar status`. Docks when Potato re-enters home geofence (150m Crosstown, 300m Cabin). Works at both locations. |
 | **Ring motion** | Event-driven | Any person detected at the doorbell during monitoring. |
 | **FindMy** | Every 5min after 20min | Keyboard arrow navigation to select walker in sidebar, screenshot via `peekaboo see`, Haiku checks if pin is near home. |
 

@@ -42,16 +42,14 @@ For true location tracking (away from base), the Fi API would be needed.
 ### Dog walk dashboard — no changes needed
 The ring-listener already calls `presence-detect.sh` for network checks, so Potato flows through automatically to `last_network_check` in JSONL events. Vision analysis already knows Potato by name. The Fi base stays on the network during walks (plugged in), so Potato won't appear in `walkers` — that's correct since vision detects the dog leaving via camera frames.
 
-## Cabin Base (pending)
-A second Fi base station is being ordered for the Cabin. Placeholder entry added to `CABIN_DEVICES` matching by `da16200` name prefix. Once plugged in:
-1. SSH to Mini: `ssh dylans-mac-mini`
-2. Scan Starlink clients: `grpcurl -plaintext -d '{"wifiGetClients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle`
-3. Look for a `da16200-XXXX` device name
-4. Tighten the pattern in `presence-detect.sh` if needed
+## Cabin Base (not needed)
+Fi collar GPS works via cellular + GNSS independent of the base station. No second base needed for location tracking at the cabin.
 
-## Future: Fi API (if credentials are fixed)
-If either account gets a password reset via Fi's "Forgot Password":
-- Login: `POST https://api.tryfi.com/auth/login` (email + password, form-encoded)
-- GraphQL query returns: GPS location, battery, connection state (base/cellular/user), activity type
-- Could provide richer data than WiFi presence (actual GPS, walk tracking, battery alerts)
-- Script ready at `openclaw/skills/fi-collar/fi-api.py` (needs working credentials)
+## Fi API — IMPLEMENTED (2026-04-01)
+Password reset completed for `dylanbochman@gmail.com`. Fi API is fully operational.
+- CLI: `fi-collar location` / `fi-collar status` (wrapper at `~/.openclaw/bin/fi-collar`)
+- API script: `openclaw/skills/fi-collar/fi-api.py`
+- Auth: `TRYFI_EMAIL` + `TRYFI_PASSWORD` in `~/.openclaw/.secrets-cache`
+- Session cached at `~/.config/fi-collar/session.json` (12hr TTL, auto-re-login on 401)
+- GPS coordinates available at both Crosstown and Cabin (collar has built-in GNSS + cellular)
+- Integrated into ring-listener return monitor as Phase 1 of [fi-gps-dog-walk-integration](archive/fi-gps-dog-walk-integration.md)
