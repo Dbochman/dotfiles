@@ -1,0 +1,4 @@
+#!/bin/bash
+# fi-collar — Potato's Fi collar GPS location and status
+SCRIPT_DIR="$HOME/.openclaw/skills/fi-collar"
+exec /usr/bin/python3 "$SCRIPT_DIR/fi-api.py" "$@"
