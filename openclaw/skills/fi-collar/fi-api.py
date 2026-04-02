@@ -15,11 +15,22 @@ CONFIG_DIR = os.path.expanduser("~/.config/fi-collar")
 TOKEN_FILE = os.path.join(CONFIG_DIR, "session.json")
 TOKEN_TTL = 3600 * 12  # 12 hours
 
-# Home locations for proximity detection
-LOCATIONS = {
-    "crosstown": {"lat": 42.26233696, "lon": -71.16434947, "radius_m": 150, "label": "Crosstown (19 Crosstown Ave)"},
-    "cabin": {"lat": 42.60211154, "lon": -72.15119056, "radius_m": 300, "label": "Cabin (95 School House Rd)"},
-}
+# Home locations for proximity detection — from env vars to avoid committing coordinates
+LOCATIONS = {}
+if os.environ.get("CROSSTOWN_LAT") and os.environ.get("CROSSTOWN_LON"):
+    LOCATIONS["crosstown"] = {
+        "lat": float(os.environ["CROSSTOWN_LAT"]),
+        "lon": float(os.environ["CROSSTOWN_LON"]),
+        "radius_m": 150,
+        "label": "Crosstown (19 Crosstown Ave)",
+    }
+if os.environ.get("CABIN_LAT") and os.environ.get("CABIN_LON"):
+    LOCATIONS["cabin"] = {
+        "lat": float(os.environ["CABIN_LAT"]),
+        "lon": float(os.environ["CABIN_LON"]),
+        "radius_m": 300,
+        "label": "Cabin (95 School House Rd)",
+    }
 
 
 def haversine(lat1, lon1, lat2, lon2):
