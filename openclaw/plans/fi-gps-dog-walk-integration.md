@@ -12,7 +12,7 @@ Integrate Potato's Fi collar GPS into the ring-listener's dog walk detection and
 1. Ring doorbell fires FCM push on motion → `on_event()` at line 1297
 2. Download video → 5-frame extraction → Claude Haiku vision analysis
 3. Count people + dogs via accumulation window (`_departure_sightings`)
-4. Crosstown: 1+ people + 1+ dogs → auto-start via `run_roomba_command(location, "start")` at line 1152
+4. Crosstown: 1+ people + 1+ dogs → auto-start via `run_roomba_command(location, "start")` at line 1152 (vision-based; previously required 2+ dogs, changed 2026-04-01 to 1+ since both dogs always walk)
 5. Cabin: any motion → confirmation prompt (no Ring Protect, assumed 1 dog)
 
 **Problems:**
@@ -92,7 +92,7 @@ Started by `start_return_monitor()` at line 1008. Runs as async task.
 - `lastReport` is > 10 minutes old → treat as stale, do not use for decisions
 - API returns error (401, 429, network timeout) → skip Fi check, rely on other signals
 - `at_location` compares to the **monitored location** specifically (not just nearest) — if monitoring Crosstown return, only check distance to Crosstown, not Cabin
-- Battery < 5% → collar may stop reporting soon, log warning but don't change behavior
+- Battery < 10% → collar may stop reporting soon, log warning but don't change behavior
 - Connection state is `UnknownConnectivity` → GPS data may be stale, check `lastReport` age
 
 ### Geofence matching for return detection
@@ -114,23 +114,55 @@ Started by `start_return_monitor()` at line 1008. Runs as async task.
 
 **Code changes in `ring-listener.py`:**
 
-1. Add Fi GPS check function:
+1. Add geofence constants (copied from `fi-api.py:17-22`, not imported — ring-listener is a standalone script):
+```python
+_FI_LOCATIONS = {
+    "crosstown": {"lat": 42.26233696, "lon": -71.16434947, "radius_m": 150},
+    "cabin": {"lat": 42.60211154, "lon": -72.15119056, "radius_m": 300},
+}
+```
+
+2. Add haversine function (copied from `fi-api.py:25-31`):
+```python
+def _haversine(lat1, lon1, lat2, lon2):
+    R = 6371000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+```
+
+3. Add Fi GPS check function:
 ```python
 def _check_fi_gps(location: str) -> dict | None:
-    """Check Potato's Fi GPS location. Returns location dict or None on error."""
+    """Check Potato's Fi GPS location via fi-collar status subprocess.
+    Returns dict with at_monitored_location, distance, battery, etc. or None on error."""
     try:
         env = os.environ.copy()
         env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
         r = subprocess.run(
-            [f"{OPENCLAW_BIN}/fi-collar", "location"],
+            [f"{OPENCLAW_BIN}/fi-collar", "status"],
             capture_output=True, timeout=15, env=env
         )
-        if r.returncode != 0:
-            log(f"FI GPS: command failed: {r.stderr.decode()[:100]}")
+        # fi-api.py prints errors to stdout as JSON, so check content not returncode
+        lines = r.stdout.decode().strip().split("\n")
+        result = None
+        for line in lines:
+            try:
+                parsed = json.loads(line)
+                if parsed.get("name") == "Potato" or "latitude" in parsed:
+                    result = parsed
+                    break
+            except json.JSONDecodeError:
+                continue
+        if not result or "latitude" not in result:
+            log(f"FI GPS: no valid location in output")
             return None
-        result = json.loads(r.stdout.decode())
+        if result.get("error"):
+            log(f"FI GPS: API error: {result.get('message', result['error'])}")
+            return None
         # Check staleness
-        last_report = result.get("lastReport")
+        last_report = result.get("connectionDate") or result.get("lastReport")
         if last_report:
             from datetime import datetime, timezone
             report_time = datetime.fromisoformat(last_report.replace("Z", "+00:00"))
@@ -139,12 +171,16 @@ def _check_fi_gps(location: str) -> dict | None:
                 log(f"FI GPS: stale data ({int(age_s)}s old), ignoring")
                 return None
             result["age_s"] = int(age_s)
-        # Check against monitored location specifically
-        loc = LOCATIONS.get(location)  # reuse the HOME_ADDRESSES or add LOCATIONS dict
+        # Check against monitored location specifically (not just nearest)
+        loc = _FI_LOCATIONS.get(location)
         if loc:
             dist = _haversine(result["latitude"], result["longitude"], loc["lat"], loc["lon"])
             result["distance_to_monitored"] = round(dist)
-            result["at_monitored_location"] = dist <= loc["radius"]
+            result["at_monitored_location"] = dist <= loc["radius_m"]
+        # Battery warning
+        battery = result.get("battery")
+        if battery is not None and battery < 10:
+            log(f"FI GPS: low battery warning ({battery}%)")
         return result
     except Exception as e:
         log(f"FI GPS: error: {e}")
@@ -166,18 +202,19 @@ if fi_result and fi_result.get("at_monitored_location"):
 
 3. Add `"fi_gps"` as a valid return signal type (no code change needed — just a new string value)
 
-**Integration approach**: Subprocess call to `fi-collar location` (not importable module). Reasons:
+**Integration approach**: Subprocess call to `fi-collar status` (not importable module). Uses `status` instead of `location` because it includes battery and connection state in addition to GPS coordinates. Reasons for subprocess:
 - `fi-api.py` uses `urllib` which conflicts with ring-listener's `aiohttp` async model
 - Subprocess isolates Fi API failures from the ring-listener process
 - 15s timeout prevents Fi API hangs from blocking the return monitor loop
 - Same pattern used for `crosstown-roomba` and `roomba` CLI calls
+- Note: `fi-api.py` prints errors to stdout (not stderr), so error detection uses JSON parsing + `"error"` key check, not returncode alone
 
 **Verification:**
 1. Start a dog walk (or use `dog-walk-start crosstown`)
 2. Check logs: `grep "FI GPS" ~/.openclaw/logs/ring-listener.log`
 3. Expected log on return: `RETURN MONITOR: Fi GPS shows Potato 45m from crosstown after 25min — docking`
 4. Expected state.json: `"return_signal": "fi_gps"` in dock event
-5. If Fi API is down: log shows `FI GPS: command failed` and WiFi/Ring/FindMy still work (no regression)
+5. If Fi API is down: temporarily replace `~/.openclaw/bin/fi-collar` with `#!/bin/bash\nexit 1` — log should show `FI GPS: no valid location in output` and WiFi/Ring/FindMy still dock (no regression). Restore the real wrapper after test.
 
 ### Phase 2: Fi GPS as supplementary departure signal
 
@@ -285,19 +322,18 @@ These coordinates are already defined in `fi-api.py` `LOCATIONS` dict (line 17).
 
 ## Required `fi-api.py` Enhancements
 
-Before Phase 1, add to `cmd_location()` output:
-- `errorRadius` — from `positions[].errorRadius` in the GraphQL `OngoingWalk` response
-- `lastReport` age validation — already present as `lastReport` timestamp, consumer calculates age
-- `nextLocationUpdateExpectedBy` — from `device.nextLocationUpdateExpectedBy` in GraphQL
+Phase 1 uses `fi-collar status` which already returns `battery`, `connection`, `connectionDate`, `latitude`, `longitude`, and `activity`. No changes needed for Phase 1.
 
-Add these fields to the GraphQL query in `cmd_location()` and include in JSON output.
+Optional future enhancements (Phase 2+):
+- Add `errorRadius` — from `positions[].errorRadius` in the GraphQL `OngoingWalk` response (useful for confidence scoring)
+- Add `nextLocationUpdateExpectedBy` — from `device.nextLocationUpdateExpectedBy` (useful for optimizing poll interval)
 
 ## Files to Modify
 
 | Phase | File | Changes |
 |-------|------|---------|
-| 1 | `ring-listener.py` | Add `_check_fi_gps()`, add Fi GPS check to `_findmy_poll_loop()` after WiFi check |
-| 1 | `fi-api.py` | Add `errorRadius` and `nextLocationUpdateExpectedBy` to output |
+| 1 | `ring-listener.py` | Add `_FI_LOCATIONS`, `_haversine()`, `_check_fi_gps()`, add Fi GPS check to `_findmy_poll_loop()` after WiFi check |
+| 1 | `fi-api.py` | No changes needed (using `status` command which already returns all required fields) |
 | 2 | `ring-listener.py` | Add Fi GPS cross-reference in `check_departure()`, Cabin auto-trigger |
 | 3 | `ring-listener.py` | Remove `_check_person_near_home()`, FindMy polling, rename functions |
 | 3 | `ring-dashboard.py` | Add `fi_gps` color/label, update state path from `findmy_polling` |
