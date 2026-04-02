@@ -1,6 +1,6 @@
 # Fi GPS Dog Walk Integration — Plan
 
-## Status: PHASES 1-2 IMPLEMENTED (2026-04-01) — Phases 3-4 pending (Phase 3 gate: ≥5 Fi GPS returns, 0 false docks)
+## Status: ALL PHASES IMPLEMENTED (2026-04-02) — FindMy removed, Fi GPS handles return + departure detection
 
 ## Goal
 

@@ -1,6 +1,6 @@
 # Dog Walk & Roomba Dashboard — Implementation Spec
 
-## Status: v1.0 (2026-03-28)
+## Status: v2.0 (2026-04-02)
 
 Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk departures, Roomba operations, return signal detection, and the departure suppression funnel. Serves at port 8552 on Mac Mini, Tailscale-only access.
 
@@ -12,8 +12,11 @@ Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk de
 |-----------|--------|------|
 | Ring Doorbell Listener | `ring-listener.py` (LaunchAgent) | Motion events, vision analysis, departure/dock lifecycle |
 | Roomba CLIs | `roomba` (cabin), `crosstown-roomba` (crosstown) | Start/dock commands and results |
+| Crosstown Roomba Status | dorita980 MQTT via SSH to MBP | Real-time battery, phase, bin, tank |
+| Cabin Roomba Status | iRobot Cloud API (`irobot-cloud.py`) | Last mission outcome, duration, area |
+| Fi GPS Collar | `fi-collar status` | Potato's GPS, battery, activity, connection |
 | Network Presence | `presence-detect.sh` | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
-| FindMy Polling | Peekaboo + Claude Haiku | Location proximity to home |
+| Fi GPS Departure | `fi-collar status` (3min poll) | Standalone departure detection via collar geofence |
 | Manual Trigger | `dog-walk-start` CLI | Inbox IPC to ring-listener |
 
 Two locations: **Cabin** (Phillipston) and **Crosstown** (West Roxbury).
@@ -33,11 +36,18 @@ Mac Mini (dylans-mac-mini)
 ├── Dashboard Server: ~/.openclaw/bin/ring-dashboard.py (port 8552)
 │   ├── GET / → embedded HTML SPA
 │   ├── GET /api/events?days=N → JSONL event history
-│   └── GET /api/current → current state.json
+│   ├── GET /api/current → current state.json
+│   ├── GET /api/fi → Fi collar GPS/battery/activity (2min cache)
+│   ├── GET /api/roombas → Crosstown Roomba status via dorita980 (5min cache)
+│   └── GET /api/cabin-roombas → Cabin Roomba last mission via iRobot Cloud (10min cache)
+│
+├── Fi Collar: ~/.openclaw/skills/fi-collar/fi-api.py
+│   └── GraphQL → api.tryfi.com (GPS, battery, connection, geofence)
 │
 ├── Roomba CLIs:
-│   ├── ~/.openclaw/bin/roomba (cabin — Google Assistant)
-│   └── ~/.openclaw/bin/crosstown-roomba (crosstown — dorita980 MQTT)
+│   ├── ~/.openclaw/bin/roomba (cabin — Google Assistant for start/stop/dock)
+│   ├── ~/.openclaw/bin/crosstown-roomba (crosstown — dorita980 MQTT via SSH to MBP)
+│   └── ~/.openclaw/skills/cabin-roomba/irobot-cloud.py (cabin — cloud mission history)
 │
 └── Presence: ~/.openclaw/workspace/scripts/presence-detect.sh
 ```
@@ -65,9 +75,9 @@ One JSON object per line. Every line is a full state snapshot with an `event_typ
 | `dock_timeout` | 2-hour safety fallback dock | Rare |
 | `departure_skip` | Departure suppressed by a filter | Per motion event during walk hours |
 | `vision` | Claude Haiku video frame analysis completed | Per motion event with Ring Protect |
-| `findmy_start` | Return monitoring started | Per walk |
-| `findmy_poll` | Network/FindMy check during monitoring | Every ~60s during walk |
-| `findmy_stop` | Return monitoring stopped | Per walk |
+| `return_start` | Return monitoring started | Per walk |
+| `return_poll` | Network/Fi GPS check during monitoring | Every ~60s during walk |
+| `return_stop` | Return monitoring stopped | Per walk |
 | `state_update` | Generic state write (default) | Miscellaneous |
 
 ### Current State (`~/.openclaw/ring-listener/state.json`)
@@ -112,7 +122,8 @@ Live snapshot of the ring-listener's state. Same schema as JSONL lines but alway
 |-------|---------|
 | `network_wifi` | Phone rejoined WiFi (most common) |
 | `ring_motion` | Person detected at doorbell during monitoring |
-| `findmy` | FindMy pin appeared near home |
+| `findmy` | FindMy pin appeared near home (legacy, no longer generated) |
+| `fi_gps` | Potato's Fi collar entered home geofence |
 | `timeout` | 2-hour safety fallback (no return detected) |
 
 ### Roomba Fields (`roombas.<location>`)
@@ -155,23 +166,25 @@ Live snapshot of the ring-listener's state. Same schema as JSONL lines but alway
 | `wifi_present` | Phone detected on WiFi at decision time (returning, not departing) |
 | `cabin_prompt_suppressed` | Already prompted in this walk window at cabin |
 
-### FindMy Polling Fields (`findmy_polling`)
+### Return Monitoring Fields (`return_monitoring`)
 
 ```json
 {
   "active": true,
   "location": "cabin",
-  "started_at": "2026-03-28T14:30:00Z",
+  "started_at": "2026-04-02T14:30:00Z",
   "polls": 13,
-  "last_poll_at": "2026-03-28T14:45:00Z",
+  "last_poll_at": "2026-04-02T14:45:00Z",
   "last_network_check": {
     "any_present": false,
     "people": {"dylan": {"present": false}, "julia": {"present": false}}
   },
-  "last_result": {
-    "street": "School House Rd",
-    "near_home": false,
-    "description": "Walking on School House Rd"
+  "last_fi_gps": {
+    "distance_m": 450,
+    "at_location": false,
+    "battery": 92,
+    "activity": "Walk",
+    "age_s": 45
   }
 }
 ```
@@ -199,6 +212,52 @@ Returns JSONL events from the last N days (default 30, max 365).
 
 Returns the latest `state.json` snapshot.
 
+### `GET /api/fi` — Potato (Fi Collar)
+
+Returns Potato's GPS location, battery, activity, and connection status. Cached for 2 minutes (Fi GPS updates ~7min at rest).
+
+```json
+{
+  "pet": {
+    "name": "Potato", "activity": "Rest", "battery": 95,
+    "connection": "User", "connectionDetail": "Dylan",
+    "latitude": 42.602, "longitude": -72.151,
+    "location": "cabin", "distance_m": 19, "at_location": true
+  },
+  "base": { "name": "Crosstown", "online": true }
+}
+```
+
+### `GET /api/roombas` — Crosstown Roombas (Real-Time)
+
+Returns live status for Crosstown Roombas via dorita980 MQTT (SSH to MBP). Cached for 5 minutes. Each robot query takes ~5-15s (SSH + MQTT handshake).
+
+```json
+{
+  "location": "crosstown",
+  "robots": {
+    "10max": { "label": "Roomba Combo 10 Max", "phase": "charge", "status": "Charging", "battery": 100, "binFull": false, "binPresent": true, "tank": 42, "error": 0, "missions": 615 },
+    "j5": { "label": "Roomba J5 (Scoomba)", "phase": "charge", "status": "Charging", "battery": 100, "binFull": false, "binPresent": true, "error": 0, "missions": 291 }
+  }
+}
+```
+
+### `GET /api/cabin-roombas` — Cabin Roombas (Last Mission)
+
+Returns last mission data for cabin Roombas via iRobot Cloud API. Cached for 10 minutes. Uses Gigya + iRobot OAuth → AWS SigV4 signed mission history endpoint.
+
+```json
+{
+  "location": "cabin",
+  "robots": {
+    "floomba": { "name": "Floomba", "lastMission": "stuck", "durationMin": 30, "sqft": 210, "startTime": 1774796428, "missions": 24 },
+    "philly": { "name": "philly", "lastMission": "ok", "durationMin": 45, "sqft": 380, "startTime": 1774803184, "missions": 27 }
+  }
+}
+```
+
+Note: Real-time cabin Roomba status (battery, phase) is not available — the cabin Roombas (Y354020 firmware ver 4) don't expose local MQTT (port 8883 closed), and the iRobot cloud temp credentials don't grant `iot:GetThingShadow`. Mission history is the best available via REST.
+
 ---
 
 ## Dashboard UI
@@ -209,8 +268,12 @@ Returns the latest `state.json` snapshot.
 |------|--------|---------|
 | **Current Walk** | `dog_walk.active` | Elapsed time (green) or "None" (gray) with last return time |
 | **Last Walk** | `dog_walk.walk_duration_minutes` | Duration + return signal badge |
-| **Roombas (per location)** | `roombas.<loc>.status` | Running (green) / Docked (gray) + last command result |
-| **Return Monitor** | `findmy_polling.active` | Poll count + last FindMy description |
+| **Return Monitor** | `return_monitoring.active` | Poll count + Potato GPS distance |
+| **Potato Battery** | `/api/fi` | Battery % (green/amber/red), connection type, last report age |
+| **Potato Location** | `/api/fi` | Activity (Rest/Walk), distance from home, geofence status |
+| **Fi Base** | `/api/fi` | Base station online/offline |
+| **Crosstown Roombas** | `/api/roombas` | Per-robot: phase, battery %, bin status, tank level |
+| **Cabin Roombas** | `/api/cabin-roombas` | Per-robot: last mission outcome, duration, area, time ago |
 
 ### Location Filter
 
@@ -272,7 +335,8 @@ Matches nest-dashboard exactly:
 |--------|-------|-----|
 | WiFi | Green | `#22c55e` |
 | Ring Motion | Blue | `#3b82f6` |
-| FindMy | Purple | `#8b5cf6` |
+| FindMy | Purple | `#8b5cf6` | (legacy — displayed for old history data only) |
+| Fi GPS | Teal | `#14b8a6` |
 | Timeout | Red | `#ef4444` |
 
 ### Skip Reason Colors
@@ -293,6 +357,8 @@ Matches nest-dashboard exactly:
 | Source (dotfiles) | Destination (Mini) |
 |-------------------|--------------------|
 | `openclaw/ring-dashboard.py` | `~/.openclaw/bin/ring-dashboard.py` |
+| `openclaw/skills/fi-collar/fi-api.py` | `~/.openclaw/skills/fi-collar/fi-api.py` |
+| `openclaw/skills/cabin-roomba/irobot-cloud.py` | `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
 | LaunchAgent plist (see below) | `~/Library/LaunchAgents/ai.openclaw.ring-dashboard.plist` |
 
 ### LaunchAgent Plist

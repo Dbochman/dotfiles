@@ -11,7 +11,10 @@ Same architecture as nest-dashboard.py. Intended for Tailscale-only access.
 import json
 import os
 import signal
+import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
@@ -19,8 +22,177 @@ from urllib.parse import urlparse, parse_qs
 
 HISTORY_DIR = os.path.expanduser("~/.openclaw/ring-listener/history")
 STATE_FILE = os.path.expanduser("~/.openclaw/ring-listener/state.json")
+FI_COLLAR_CMD = os.path.expanduser("~/.openclaw/bin/fi-collar")
+SECRETS_FILE = os.path.expanduser("~/.openclaw/.secrets-cache")
 PORT = 8552
 MAX_DAYS = 365
+FI_CACHE_TTL = 120  # seconds — Fi GPS updates ~every 7min at rest, cache for 2min
+ROOMBA_CACHE_TTL = 300  # seconds — Roomba status changes slowly, cache for 5min
+ROOMBA_SSH_TIMEOUT = 25  # seconds per robot — dorita980 has 20s internal timeout
+CABIN_ROOMBA_CACHE_TTL = 600  # seconds — cloud API, cache for 10min
+IROBOT_CLOUD_SCRIPT = os.path.expanduser("~/.openclaw/skills/cabin-roomba/irobot-cloud.py")
+MACBOOK_HOST = "dylans-macbook-pro"
+ROOMBA_CMD_SCRIPT = "$HOME/.openclaw/rest980/roomba-cmd.js"
+ROOMBA_NODE = "/opt/homebrew/bin/node"
+ROOMBA_ENVS = {
+    "10max": {"env": "$HOME/.openclaw/rest980/env-10max", "label": "Roomba Combo 10 Max"},
+    "j5": {"env": "$HOME/.openclaw/rest980/env-j5", "label": "Roomba J5 (Scoomba)"},
+}
+
+_fi_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
+_roomba_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
+_cabin_roomba_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
+
+CABIN_ROBOT_BLIDS = {
+    "3D3ACA3E5298BA11AB7E84129F29D2DD": "Floomba",
+    "1D867094BA92F76D455065BCDBC68CCA": "Philly",
+}
+
+
+def _load_secrets_env():
+    """Load secrets into env if not already set (for Fi API auth)."""
+    if os.environ.get("TRYFI_EMAIL"):
+        return
+    if not os.path.exists(SECRETS_FILE):
+        return
+    with open(SECRETS_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k, v)
+
+
+def fetch_fi_status():
+    """Fetch Fi collar status, with caching."""
+    with _fi_cache["lock"]:
+        if time.time() - _fi_cache["ts"] < FI_CACHE_TTL and _fi_cache["data"] is not None:
+            return _fi_cache["data"]
+
+    _load_secrets_env()
+    try:
+        result = subprocess.run(
+            [FI_COLLAR_CMD, "status"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            return {"error": "fi-collar failed", "stderr": result.stderr[:200]}
+
+        # Parse multi-line JSON output (pet + base station)
+        lines = [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
+        pet = None
+        base = None
+        for line in lines:
+            obj = json.loads(line)
+            if obj.get("type") == "base":
+                base = obj
+            else:
+                pet = obj
+
+        data = {"pet": pet, "base": base}
+        with _fi_cache["lock"]:
+            _fi_cache["data"] = data
+            _fi_cache["ts"] = time.time()
+        return data
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+        return {"error": str(e)}
+
+
+ROOMBA_PHASES = {
+    "charge": "Charging",
+    "new": "Starting",
+    "run": "Cleaning",
+    "pause": "Paused",
+    "stop": "Stopped",
+    "stuck": "Stuck!",
+    "hmMidMsn": "Recharging",
+    "hmUsrDock": "Returning",
+    "hmPostMsn": "Docking",
+    "evac": "Emptying bin",
+}
+
+
+def fetch_roomba_status():
+    """Fetch Crosstown Roomba statuses via SSH to MBP, with caching."""
+    with _roomba_cache["lock"]:
+        if time.time() - _roomba_cache["ts"] < ROOMBA_CACHE_TTL and _roomba_cache["data"] is not None:
+            return _roomba_cache["data"]
+
+    robots = {}
+    for name, cfg in ROOMBA_ENVS.items():
+        try:
+            cmd = f"PATH=/opt/homebrew/bin:$PATH {ROOMBA_NODE} {ROOMBA_CMD_SCRIPT} {cfg['env']} status"
+            result = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=5", MACBOOK_HOST, cmd],
+                capture_output=True, text=True, timeout=ROOMBA_SSH_TIMEOUT,
+            )
+            if result.returncode != 0:
+                robots[name] = {"label": cfg["label"], "error": result.stderr[:200]}
+                continue
+
+            raw = json.loads(result.stdout.strip())
+            if "error" in raw:
+                robots[name] = {"label": cfg["label"], "error": raw.get("message", "unknown")}
+                continue
+
+            ms = raw.get("cleanMissionStatus", {})
+            phase = ms.get("phase", "unknown")
+            entry = {
+                "label": cfg["label"],
+                "phase": phase,
+                "status": ROOMBA_PHASES.get(phase, phase),
+                "battery": raw.get("batPct"),
+                "binFull": raw.get("bin", {}).get("full", False),
+                "binPresent": raw.get("bin", {}).get("present", True),
+                "error": ms.get("error", 0),
+                "missions": ms.get("nMssn"),
+            }
+            tank = raw.get("tankLvl")
+            if tank is not None:
+                entry["tank"] = tank
+            robots[name] = entry
+        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+            robots[name] = {"label": cfg["label"], "error": str(e)}
+
+    data = {"location": "crosstown", "robots": robots}
+    with _roomba_cache["lock"]:
+        _roomba_cache["data"] = data
+        _roomba_cache["ts"] = time.time()
+    return data
+
+
+def fetch_cabin_roomba_status():
+    """Fetch cabin Roomba last mission via iRobot cloud API, with caching."""
+    with _cabin_roomba_cache["lock"]:
+        if (time.time() - _cabin_roomba_cache["ts"] < CABIN_ROOMBA_CACHE_TTL
+                and _cabin_roomba_cache["data"] is not None):
+            return _cabin_roomba_cache["data"]
+
+    _load_secrets_env()
+    try:
+        result = subprocess.run(
+            [sys.executable, IROBOT_CLOUD_SCRIPT, "status"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return {"error": "irobot-cloud failed", "stderr": result.stderr[:200]}
+
+        robots = {}
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            name = obj.get("name", "unknown").lower()
+            if obj.get("blid") in CABIN_ROBOT_BLIDS:
+                robots[name] = obj
+        data = {"location": "cabin", "robots": robots}
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+        data = {"location": "cabin", "error": str(e)}
+
+    with _cabin_roomba_cache["lock"]:
+        _cabin_roomba_cache["data"] = data
+        _cabin_roomba_cache["ts"] = time.time()
+    return data
 
 
 def load_events(days):
@@ -88,6 +260,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_events(days)
         elif path == "/api/current":
             self._serve_current()
+        elif path == "/api/fi":
+            self._serve_fi()
+        elif path == "/api/roombas":
+            self._serve_roombas()
+        elif path == "/api/cabin-roombas":
+            self._serve_cabin_roombas()
         else:
             self._respond(404, {"error": "not found"})
 
@@ -113,6 +291,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._respond(200, state)
         else:
             self._respond(200, {"error": "no state data"})
+
+    def _serve_fi(self):
+        data = fetch_fi_status()
+        self._respond(200, data)
+
+    def _serve_roombas(self):
+        data = fetch_roomba_status()
+        self._respond(200, data)
+
+    def _serve_cabin_roombas(self):
+        data = fetch_cabin_roomba_status()
+        self._respond(200, data)
 
     def _serve_html(self):
         body = DASHBOARD_HTML.encode()
@@ -227,6 +417,7 @@ canvas { width: 100% !important; }
 .badge-red { background: #ef444422; color: #ef4444; }
 .badge-blue { background: #3b82f622; color: #3b82f6; }
 .badge-purple { background: #8b5cf622; color: #8b5cf6; }
+.badge-teal { background: #14b8a622; color: #14b8a6; }
 .badge-gray { background: #6b728022; color: #6b7280; }
 </style>
 </head>
@@ -234,6 +425,9 @@ canvas { width: 100% !important; }
 <h1>Dog Walk Dashboard <span class="updated" id="lastUpdate"></span></h1>
 
 <div class="cards" id="statusCards"><div class="loading">Loading...</div></div>
+<div class="cards" id="potatoCard"></div>
+<div class="cards" id="roombaCards"></div>
+<div class="cards" id="cabinRoombaCards"></div>
 
 <div class="controls" id="locationControls">
   <button data-location="all" class="active">Both</button>
@@ -259,12 +453,14 @@ const SIGNAL_COLORS = {
   'network_wifi': '#22c55e',
   'ring_motion': '#3b82f6',
   'findmy': '#8b5cf6',
+  'fi_gps': '#14b8a6',
   'timeout': '#ef4444',
 };
 const SIGNAL_LABELS = {
   'network_wifi': 'WiFi',
   'ring_motion': 'Ring Motion',
   'findmy': 'FindMy',
+  'fi_gps': 'Fi GPS',
   'timeout': 'Timeout',
 };
 const LOCATION_COLORS = { 'cabin': '#FF8C00', 'crosstown': '#4A90D9' };
@@ -325,30 +521,174 @@ function renderStatusCards(state) {
     html += '</div>';
   }
 
-  // Roomba status per location
-  const roombas = state.roombas || {};
-  for (const [loc, rb] of Object.entries(roombas)) {
-    const status = rb.status || 'unknown';
-    const color = status === 'running' ? 'var(--green)' : 'var(--text-muted)';
-    html += '<div class="card"><div class="card-label">Roombas ' + loc + '</div>';
-    html += '<div class="card-value" style="color:' + color + '">' + status.charAt(0).toUpperCase() + status.slice(1) + '</div>';
-    if (rb.last_command_result) {
-      const ok = rb.last_command_result.success;
-      html += '<div class="card-sub">Last cmd: <span class="badge ' + (ok ? 'badge-green' : 'badge-red') + '">' + (ok ? 'OK' : 'Failed') + '</span></div>';
+  // Return monitor (Fi GPS + network)
+  const rm = state.return_monitoring || state.findmy_polling || {};
+  if (rm.active) {
+    html += '<div class="card"><div class="card-label">Return Monitor</div>';
+    html += '<div class="card-value" style="color:var(--teal)">Active</div>';
+    html += '<div class="card-sub">Polls: ' + (rm.polls || 0) + '</div>';
+    if (rm.last_fi_gps) {
+      const dist = rm.last_fi_gps.distance_m;
+      const atHome = rm.last_fi_gps.at_location;
+      html += '<div class="card-sub">Potato: ' + (atHome ? 'Home' : dist + 'm away') + '</div>';
     }
     html += '</div>';
   }
 
-  // FindMy polling
-  const fm = state.findmy_polling || {};
-  if (fm.active) {
-    html += '<div class="card"><div class="card-label">Return Monitor</div>';
-    html += '<div class="card-value" style="color:var(--purple)">Active</div>';
-    html += '<div class="card-sub">Polls: ' + (fm.polls || 0) + '</div>';
-    if (fm.last_result && fm.last_result.description) html += '<div class="card-sub">' + fm.last_result.description + '</div>';
+  el.innerHTML = html;
+}
+
+function renderPotatoCard(fi) {
+  const el = document.getElementById('potatoCard');
+  if (!fi || fi.error || !fi.pet) {
+    el.innerHTML = '<div class="card"><div class="card-label">Potato (Fi)</div><div class="card-value" style="color:var(--text-muted)">Offline</div></div>';
+    return;
+  }
+  const p = fi.pet;
+  const base = fi.base;
+
+  // Battery color
+  const bat = p.battery;
+  const batColor = bat == null ? 'var(--text-muted)' : bat > 50 ? 'var(--green)' : bat > 20 ? 'var(--amber)' : 'var(--red)';
+  const batText = bat != null ? bat + '%' : '?';
+
+  // Activity
+  const activity = p.activity || 'Unknown';
+  const actColor = activity === 'Walk' ? 'var(--green)' : 'var(--text-muted)';
+
+  // Connection
+  const conn = p.connection || 'Unknown';
+  const connIcon = conn === 'Base' ? 'Charging' : conn === 'User' ? 'Bluetooth' : conn === 'Cellular' ? 'LTE' : conn;
+  const connDetail = p.connectionDetail ? ' (' + p.connectionDetail + ')' : '';
+
+  // Location
+  const loc = p.location || '?';
+  const dist = p.distance_m != null ? p.distance_m + 'm' : '';
+  const atHome = p.at_location;
+  const locColor = atHome ? 'var(--green)' : 'var(--amber)';
+  const place = p.place || '';
+
+  // Last report age
+  let ageText = '';
+  if (p.connectionDate) {
+    const ageMin = Math.round((Date.now() - new Date(p.connectionDate).getTime()) / 60000);
+    ageText = ageMin < 1 ? 'just now' : ageMin < 60 ? ageMin + 'm ago' : Math.floor(ageMin/60) + 'h ' + (ageMin%60) + 'm ago';
+  }
+
+  let html = '';
+  // Battery card
+  html += '<div class="card"><div class="card-label">Potato Battery</div>';
+  html += '<div class="card-value" style="color:' + batColor + '">' + batText + '</div>';
+  html += '<div class="card-sub">' + connIcon + connDetail + '</div>';
+  if (ageText) html += '<div class="card-sub">' + ageText + '</div>';
+  html += '</div>';
+
+  // Location/Activity card
+  html += '<div class="card"><div class="card-label">Potato Location</div>';
+  html += '<div class="card-value" style="color:' + actColor + '">' + activity + '</div>';
+  html += '<div class="card-sub" style="color:' + locColor + '">' + (atHome ? 'Home' : dist + ' from home') + '<span class="card-tag">' + loc + '</span></div>';
+  if (place) html += '<div class="card-sub">' + place + '</div>';
+  html += '</div>';
+
+  // Base station
+  if (base) {
+    html += '<div class="card"><div class="card-label">Fi Base (' + (base.name || '?') + ')</div>';
+    html += '<div class="card-value" style="color:' + (base.online ? 'var(--green)' : 'var(--red)') + '">' + (base.online ? 'Online' : 'Offline') + '</div>';
     html += '</div>';
   }
 
+  el.innerHTML = html;
+}
+
+function renderRoombaCards(roombas) {
+  const el = document.getElementById('roombaCards');
+  if (!roombas || roombas.error || !roombas.robots) {
+    el.innerHTML = '';
+    return;
+  }
+
+  let html = '';
+  for (const [id, r] of Object.entries(roombas.robots)) {
+    if (r.error) {
+      html += '<div class="card"><div class="card-label">' + (r.label || id) + '</div>';
+      html += '<div class="card-value" style="color:var(--text-muted)">Offline</div>';
+      html += '<div class="card-sub" style="color:var(--red)">' + r.error + '</div></div>';
+      continue;
+    }
+
+    const status = r.status || 'Unknown';
+    const phase = r.phase || '';
+    const isActive = ['run', 'hmMidMsn', 'hmUsrDock', 'hmPostMsn', 'evac', 'new'].includes(phase);
+    const isError = phase === 'stuck' || r.error > 0;
+    const statusColor = isError ? 'var(--red)' : isActive ? 'var(--green)' : 'var(--text-muted)';
+
+    // Battery
+    const bat = r.battery;
+    const batColor = bat == null ? 'var(--text-muted)' : bat > 50 ? 'var(--green)' : bat > 20 ? 'var(--amber)' : 'var(--red)';
+
+    html += '<div class="card"><div class="card-label">' + (r.label || id) + '</div>';
+    html += '<div class="card-value" style="color:' + statusColor + '">' + status + '</div>';
+
+    // Battery + bin on one line
+    let sub = '';
+    if (bat != null) sub += '<span style="color:' + batColor + '">' + bat + '%</span>';
+    if (r.binFull) sub += ' <span class="badge badge-amber">Bin Full</span>';
+    if (!r.binPresent) sub += ' <span class="badge badge-red">No Bin</span>';
+    if (sub) html += '<div class="card-sub">' + sub + '</div>';
+
+    // Tank (10 Max only)
+    if (r.tank != null) html += '<div class="card-sub">Tank: ' + r.tank + '%</div>';
+
+    // Error code
+    if (r.error > 0) html += '<div class="card-sub" style="color:var(--red)">Error code ' + r.error + '</div>';
+
+    html += '</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function renderCabinRoombaCards(data) {
+  const el = document.getElementById('cabinRoombaCards');
+  if (!data || data.error || !data.robots || !Object.keys(data.robots).length) {
+    el.innerHTML = '';
+    return;
+  }
+
+  const MISSION_LABELS = {
+    'ok': 'Completed', 'stuck': 'Stuck', 'cancelled': 'Cancelled',
+  };
+  const MISSION_COLORS = {
+    'ok': 'var(--green)', 'stuck': 'var(--red)', 'cancelled': 'var(--text-muted)',
+  };
+
+  let html = '';
+  for (const [id, r] of Object.entries(data.robots)) {
+    if (r.error) {
+      html += '<div class="card"><div class="card-label">' + (r.name || id) + ' (Cabin)</div>';
+      html += '<div class="card-value" style="color:var(--text-muted)">Offline</div></div>';
+      continue;
+    }
+
+    const mission = r.lastMission || 'unknown';
+    const label = MISSION_LABELS[mission] || mission;
+    const color = MISSION_COLORS[mission] || 'var(--text-muted)';
+
+    html += '<div class="card"><div class="card-label">' + (r.name || id) + ' (Cabin)</div>';
+    html += '<div class="card-value" style="color:' + color + '">' + label + '</div>';
+
+    let sub = '';
+    if (r.durationMin != null) sub += r.durationMin + 'min';
+    if (r.sqft != null) sub += (sub ? ', ' : '') + r.sqft + ' sqft';
+    if (sub) html += '<div class="card-sub">' + sub + '</div>';
+
+    if (r.startTime) {
+      const ago = Math.round((Date.now()/1000 - r.startTime) / 3600);
+      html += '<div class="card-sub">' + (ago < 24 ? ago + 'h ago' : Math.round(ago/24) + 'd ago') + '</div>';
+    }
+    if (r.missions != null) html += '<div class="card-sub">' + r.missions + ' missions</div>';
+    html += '</div>';
+  }
   el.innerHTML = html;
 }
 
@@ -380,7 +720,8 @@ function renderWalkTable(events) {
 
   tbody.innerHTML = walks.slice(0, 50).map(w => {
     const sig = w.return_signal;
-    const sigBadge = sig ? '<span class="badge badge-' + (sig === 'timeout' ? 'red' : sig === 'findmy' ? 'purple' : sig === 'ring_motion' ? 'blue' : 'green') + '">' + (SIGNAL_LABELS[sig] || sig) + '</span>' : '—';
+    const sigBadgeColor = sig === 'timeout' ? 'red' : sig === 'findmy' ? 'purple' : sig === 'ring_motion' ? 'blue' : sig === 'fi_gps' ? 'teal' : 'green';
+    const sigBadge = sig ? '<span class="badge badge-' + sigBadgeColor + '">' + (SIGNAL_LABELS[sig] || sig) + '</span>' : '—';
     const roombaBadge = w.roomba_ok === true ? '<span class="badge badge-green">OK</span>' : w.roomba_ok === false ? '<span class="badge badge-red">Failed</span>' : '—';
     const manual = w.people === 0 ? ' <span class="card-tag">manual</span>' : '';
     return '<tr><td>' + fmtTime(w.departed_at) + '</td><td>' + (w.location || '?') + manual + '</td><td>' + fmtDuration(w.duration) + '</td><td>' + sigBadge + '</td><td>' + (w.walkers.length ? w.walkers.join(', ') : '—') + '</td><td>' + roombaBadge + '</td></tr>';
@@ -532,21 +873,37 @@ function renderCharts(events) {
 
 async function refresh() {
   try {
-    const [eventsResp, stateResp] = await Promise.all([
+    const [eventsResp, stateResp, fiResp] = await Promise.all([
       fetch('/api/events?days=' + currentDays),
       fetch('/api/current'),
+      fetch('/api/fi'),
     ]);
     const eventsData = await eventsResp.json();
     const state = await stateResp.json();
+    const fi = await fiResp.json();
     const events = eventsData.events || [];
 
     document.getElementById('lastUpdate').textContent = 'Updated ' + new Date().toLocaleTimeString();
 
     renderStatusCards(state);
+    renderPotatoCard(fi);
     renderWalkTable(filterByLocation(events));
     renderCharts(events);
   } catch (err) {
     console.error('Refresh failed:', err);
+  }
+  // Roombas fetched separately — SSH/cloud calls are slow, don't block page
+  try {
+    const [roombaResp, cabinResp] = await Promise.all([
+      fetch('/api/roombas'),
+      fetch('/api/cabin-roombas'),
+    ]);
+    const roombas = await roombaResp.json();
+    const cabinRoombas = await cabinResp.json();
+    renderRoombaCards(roombas);
+    renderCabinRoombaCards(cabinRoombas);
+  } catch (err) {
+    console.error('Roomba fetch failed:', err);
   }
 }
 

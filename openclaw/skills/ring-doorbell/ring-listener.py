@@ -17,7 +17,7 @@ import time
 import urllib.request
 import urllib.error
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Use venv packages
@@ -29,6 +29,7 @@ import aiohttp
 import aiofiles
 
 from ring_doorbell import Auth, Ring, RingEvent, RingEventListener
+from ring_doorbell.listen.listenerconfig import RingEventListenerConfig
 
 # Config
 CONFIG_DIR = Path.home() / ".config" / "ring"
@@ -75,8 +76,21 @@ ROOMBA_COMMANDS = {
 }
 
 OPENCLAW_BIN = str(Path.home() / ".openclaw/bin")
-PEEKABOO = "/opt/homebrew/bin/peekaboo"
-FINDMY_CAPTURE_DIR = Path.home() / ".openclaw/ring-listener/findmy"
+
+# Fi GPS geofence locations — coordinates loaded from env vars at startup
+_FI_LOCATIONS = {}
+if os.environ.get("CROSSTOWN_LAT") and os.environ.get("CROSSTOWN_LON"):
+    _FI_LOCATIONS["crosstown"] = {
+        "lat": float(os.environ["CROSSTOWN_LAT"]),
+        "lon": float(os.environ["CROSSTOWN_LON"]),
+        "radius_m": 150,
+    }
+if os.environ.get("CABIN_LAT") and os.environ.get("CABIN_LON"):
+    _FI_LOCATIONS["cabin"] = {
+        "lat": float(os.environ["CABIN_LAT"]),
+        "lon": float(os.environ["CABIN_LON"]),
+        "radius_m": 300,
+    }
 STATE_FILE = Path.home() / ".openclaw/ring-listener/state.json"
 HISTORY_DIR = Path.home() / ".openclaw/ring-listener/history"
 
@@ -97,22 +111,6 @@ HOME_ADDRESSES = {
 }
 
 
-def _findmy_prompt(location: str) -> str:
-    """Build a FindMy vision prompt for the given location's home address."""
-    addr = HOME_ADDRESSES.get(location, HOME_ADDRESSES["crosstown"])
-    return (
-        "Look at this FindMy app screenshot. Check the map labels and landmarks. "
-        "Respond with ONLY valid JSON (no markdown, no ```), using this exact schema:\n"
-        '{"street":"<street from map labels or unknown>",'
-        '"near_home":true/false,'
-        '"description":"<1 sentence about the person\'s location>"}\n\n'
-        f"The person's home is at {addr['street']} in {addr['area']}. "
-        f"'near_home' should be true if ANY of these are true:\n"
-        f"- The map pin is within {addr['radius']} of {addr['street']}\n"
-        f"- The map shows nearby landmarks: {addr['landmarks']}\n"
-        "If the map shows a completely different area, near_home is false."
-    )
-
 # State file serialization lock — protects read-modify-write transactions
 _state_lock = threading.Lock()
 # Transient keys only valid on departure_skip events — stripped on all other writes
@@ -127,7 +125,7 @@ _roomba_last_action: dict[str, float] = {}
 _ROOMBA_COOLDOWN = 7200  # 2 hours
 
 # Return monitoring state
-_findmy_poll_task: asyncio.Task | None = None
+_return_poll_task: asyncio.Task | None = None
 _return_monitor_active: bool = False  # True while monitoring for return
 _ring_motion_during_walk: bool = False  # Set when Ring detects motion while monitoring
 
@@ -291,41 +289,46 @@ def _update_state_vision(vision_data: dict, event_id: int = 0) -> None:
         _write_state(state, event_type="vision")
 
 
-def _update_state_findmy(
-    location: str, event: str, result: dict | None = None, network_detail: dict | None = None
+def _update_state_return_monitor(
+    location: str, event: str, fi_result: dict | None = None, network_detail: dict | None = None
 ) -> None:
-    """Update FindMy polling state."""
+    """Update return monitoring state."""
     with _state_lock:
         state = _read_state()
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        polling = state.get("findmy_polling") or {}
+        # Read from new key, fall back to old for backward compat
+        monitoring = state.get("return_monitoring") or state.get("findmy_polling") or {}
 
         if event == "start":
-            polling = {
+            monitoring = {
                 "active": True,
                 "location": location,
                 "started_at": now,
                 "polls": 0,
                 "last_poll_at": None,
-                "last_result": None,
+                "last_fi_gps": None,
                 "last_network_check": None,
             }
         elif event == "poll":
-            polling["polls"] = polling.get("polls", 0) + 1
-            polling["last_poll_at"] = now
-            if result:
-                polling["last_result"] = {
-                    "street": result.get("street", "unknown"),
-                    "near_home": result.get("near_home", False),
-                    "description": result.get("description", ""),
+            monitoring["polls"] = monitoring.get("polls", 0) + 1
+            monitoring["last_poll_at"] = now
+            if fi_result:
+                monitoring["last_fi_gps"] = {
+                    "distance_m": fi_result.get("distance_to_monitored"),
+                    "at_location": fi_result.get("at_monitored_location", False),
+                    "battery": fi_result.get("battery"),
+                    "activity": fi_result.get("activity"),
+                    "age_s": fi_result.get("age_s"),
                 }
             if network_detail:
-                polling["last_network_check"] = network_detail
+                monitoring["last_network_check"] = network_detail
         elif event == "stop":
-            polling["active"] = False
+            monitoring["active"] = False
 
-        state["findmy_polling"] = polling
-        _write_state(state, event_type=f"findmy_{event}")
+        state["return_monitoring"] = monitoring
+        # Remove old key if present
+        state.pop("findmy_polling", None)
+        _write_state(state, event_type=f"return_{event}")
 
 
 def _emit_skip_event(location: str, reason: str, details: dict | None = None) -> None:
@@ -572,120 +575,6 @@ def run_roomba_command(location: str, action: str) -> dict:
     return {"success": success, "results": results}
 
 
-def capture_findmy() -> str | None:
-    """Capture FindMy app window via Peekaboo. Returns path to PNG or None."""
-    FINDMY_CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
-    capture_path = str(FINDMY_CAPTURE_DIR / "findmy-poll.png")
-    try:
-        # Use 'see' not 'image' — FindMy sets kCGWindowSharingNone which blocks
-        # screen capture via 'image', but 'see' uses a different capture path
-        # that bypasses this restriction.
-        result = subprocess.run(
-            [PEEKABOO, "see", "--app", "Find My", "--path", capture_path],
-            capture_output=True, timeout=20,
-        )
-        if result.returncode == 0 and Path(capture_path).exists():
-            size = Path(capture_path).stat().st_size
-            if size > 50000:
-                return capture_path
-            log(f"FindMy capture too small ({size} bytes)")
-            Path(capture_path).unlink(missing_ok=True)
-            return None
-        # peekaboo see may save to Desktop instead of --path; check for it
-        import glob
-        desktop_files = sorted(glob.glob(str(Path.home() / "Desktop/peekaboo_see_*.png")), reverse=True)
-        if desktop_files:
-            latest = desktop_files[0]
-            if Path(latest).stat().st_size > 50000:
-                import shutil
-                shutil.move(latest, capture_path)
-                return capture_path
-        log(f"FindMy capture failed: exit={result.returncode}")
-        return None
-    except Exception as e:
-        log(f"FindMy capture error: {e}")
-        return None
-
-
-def analyze_findmy(image_path: str, location: str = "crosstown") -> dict | None:
-    """Analyze FindMy screenshot with Claude vision to determine location."""
-    try:
-        if not OAUTH_CACHE.exists():
-            return None
-        oauth = json.loads(OAUTH_CACHE.read_text()).get("claudeAiOauth", {})
-        token = oauth.get("accessToken")
-        if not token:
-            return None
-
-        import base64
-        with open(image_path, "rb") as f:
-            img_b64 = base64.standard_b64encode(f.read()).decode()
-
-        payload = json.dumps({
-            "model": VISION_MODEL,
-            "max_tokens": 150,
-            "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}},
-                {"type": "text", "text": _findmy_prompt(location)},
-            ]}],
-        }).encode()
-
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "anthropic-version": "2023-06-01",
-                "anthropic-beta": "oauth-2025-04-20",
-            },
-            method="POST",
-        )
-        resp = urllib.request.urlopen(req, timeout=30)
-        result = json.loads(resp.read().decode())
-        text = result["content"][0]["text"].strip()
-        return parse_vision_result(text)
-    except Exception as e:
-        log(f"FindMy analysis error: {e}")
-        return None
-
-
-def _navigate_findmy_to(person: str) -> None:
-    """Navigate FindMy sidebar to a specific person using keyboard arrows.
-
-    People order: Me (0) → Julia Jennings (1) → Dylan Bochman (2)
-    Strategy: press Up 3x to reach top, then Down to target position.
-    """
-    positions = {"me": 0, "julia": 1, "dylan": 2}
-    pos = positions.get(person.lower(), 0)
-
-    # Go to top of list
-    for _ in range(3):
-        subprocess.run([PEEKABOO, "press", "up", "--app", "Find My"],
-                       capture_output=True, timeout=5)
-        time.sleep(0.3)
-
-    # Navigate down to target
-    for _ in range(pos):
-        subprocess.run([PEEKABOO, "press", "down", "--app", "Find My"],
-                       capture_output=True, timeout=5)
-        time.sleep(0.5)
-
-    # Wait for map animation
-    time.sleep(3)
-
-
-def _check_person_near_home(person: str, location: str) -> dict | None:
-    """Navigate to a person in FindMy, capture, and check if near home."""
-    _navigate_findmy_to(person)
-    capture_path = capture_findmy()
-    if not capture_path:
-        return None
-    result = analyze_findmy(capture_path, location=location)
-    Path(capture_path).unlink(missing_ok=True)
-    return result
-
-
 def _check_network_presence_detailed(location: str) -> dict:
     """Check network presence and return per-person details.
 
@@ -766,21 +655,88 @@ def _detect_who_left(location: str) -> list[str]:
         return ["dylan", "julia"]
 
 
-async def _findmy_poll_loop(location: str) -> None:
-    """Poll network presence + FindMy to detect return home.
+def _haversine(lat1, lon1, lat2, lon2):
+    """Distance in meters between two coordinates."""
+    import math
+    R = 6371000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    Phase 1 (0-20 min): detect who left, check network every 60 seconds
-    Phase 2 (20+ min):  also check FindMy for walkers every 5 minutes
-    Ring motion during monitoring triggers immediate dock.
+
+def _check_fi_gps(location: str) -> dict | None:
+    """Check Potato's Fi GPS location via fi-collar status subprocess.
+
+    Returns dict with at_monitored_location, distance, battery, etc. or None on error.
+    """
+    try:
+        env = os.environ.copy()
+        env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
+        r = subprocess.run(
+            [f"{OPENCLAW_BIN}/fi-collar", "status"],
+            capture_output=True, timeout=15, env=env, text=True,
+        )
+        lines = r.stdout.strip().split("\n")
+        result = None
+        for line in lines:
+            try:
+                parsed = json.loads(line)
+                if parsed.get("name") == "Potato" or "latitude" in parsed:
+                    result = parsed
+                    break
+            except json.JSONDecodeError:
+                continue
+        if not result or "latitude" not in result:
+            log("FI GPS: no valid location in output")
+            return None
+        if result.get("error"):
+            log(f"FI GPS: API error: {result.get('message', result['error'])}")
+            return None
+        # Check staleness
+        last_report = result.get("connectionDate") or result.get("lastReport")
+        if last_report:
+            report_time = datetime.fromisoformat(last_report.replace("Z", "+00:00"))
+            age_s = (datetime.now(timezone.utc) - report_time).total_seconds()
+            if age_s > 600:  # > 10 minutes
+                log(f"FI GPS: stale data ({int(age_s)}s old), ignoring")
+                return None
+            result["age_s"] = int(age_s)
+        # Check against monitored location specifically
+        loc = _FI_LOCATIONS.get(location)
+        if loc:
+            dist = _haversine(result["latitude"], result["longitude"], loc["lat"], loc["lon"])
+            result["distance_to_monitored"] = round(dist)
+            result["at_monitored_location"] = dist <= loc["radius_m"]
+        else:
+            log(f"FI GPS: no geofence configured for {location}")
+            return None
+        battery = result.get("battery")
+        if battery is not None and battery < 10:
+            log(f"FI GPS: low battery warning ({battery}%)")
+        return result
+    except Exception as e:
+        log(f"FI GPS: error: {e}")
+        return None
+
+
+async def _return_poll_loop(location: str) -> None:
+    """Poll network presence + Fi GPS to detect return home.
+
+    Checks every 60 seconds:
+    1. Ring motion (event-driven flag) → immediate dock
+    2. Network WiFi presence → dock
+    3. Fi GPS geofence (Potato's collar) → dock
+
+    Safety timeout: 2 hours.
 
     IMPORTANT: This function MUST reset _return_monitor_active on ALL exit
     paths. If the flag stays True after the loop ends, all subsequent motion
     events are misclassified as "return signals" instead of new departures.
     """
     global _return_monitor_active, _ring_motion_during_walk
-    NETWORK_INTERVAL = 60    # 1 minute for network checks
-    FINDMY_INTERVAL = 300    # 5 minutes for FindMy checks
-    FINDMY_START = 1200      # 20 minutes before adding FindMy
+    POLL_INTERVAL = 60       # 1 minute between checks
     MAX_DURATION = 7200      # 2 hours total timeout
     start_time = time.time()
 
@@ -795,55 +751,47 @@ async def _findmy_poll_loop(location: str) -> None:
         log(f"RETURN MONITOR: Walkers detected: {walkers}")
         _update_state_dog_walk(location, "walkers_detected", walkers=walkers)
 
-        last_findmy_check = 0
         _ring_motion_during_walk = False
 
         while time.time() - start_time < MAX_DURATION:
             elapsed = time.time() - start_time
             try:
-                # Ring motion event check (set by _handle_motion when monitor is active)
+                # 1. Ring motion event check (set by _handle_motion when monitor is active)
                 if _ring_motion_during_walk:
                     _ring_motion_during_walk = False
                     elapsed_min = int(elapsed / 60)
                     log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
                     roomba_result = run_roomba_command(location, "dock")
                     _update_state_dog_walk(location, "dock", return_signal="ring_motion", roomba_result=roomba_result)
-                    _update_state_findmy(location, "stop")
+                    _update_state_return_monitor(location, "stop")
                     return
 
-                # Network presence check (every poll cycle)
+                # 2. Network presence check
                 wifi_detail = await asyncio.to_thread(_check_network_presence_detailed, location)
-                _update_state_findmy(location, "poll", network_detail=wifi_detail)
+                _update_state_return_monitor(location, "poll", network_detail=wifi_detail)
                 if wifi_detail["any_present"]:
                     elapsed_min = int(elapsed / 60)
                     log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
                     roomba_result = run_roomba_command(location, "dock")
                     _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
-                    _update_state_findmy(location, "stop")
+                    _update_state_return_monitor(location, "stop")
                     return
 
-                # FindMy check (after 20 min, every 5 min, only for walkers)
-                if elapsed >= FINDMY_START and (time.time() - last_findmy_check) >= FINDMY_INTERVAL:
-                    last_findmy_check = time.time()
-                    for person in walkers:
-                        result = await asyncio.to_thread(_check_person_near_home, person, location)
-                        _update_state_findmy(location, "poll", result=result)
-
-                        if result:
-                            street = result.get("street", "unknown")
-                            near_home = result.get("near_home", False)
-                            desc = result.get("description", "")
-                            log(f"FINDMY POLL: {person} street={street} near_home={near_home} desc={desc}")
-
-                            if near_home:
-                                elapsed_min = int(elapsed / 60)
-                                log(f"FINDMY POLL: {person} near home after {elapsed_min}min — docking at {location}")
-                                roomba_result = run_roomba_command(location, "dock")
-                                _update_state_dog_walk(location, "dock", return_signal="findmy", roomba_result=roomba_result)
-                                _update_state_findmy(location, "stop")
-                                return
-                        else:
-                            log(f"FINDMY POLL: Could not check {person}")
+                # 3. Fi GPS check — Potato's collar geofence
+                fi_result = await asyncio.to_thread(_check_fi_gps, location)
+                if fi_result:
+                    _update_state_return_monitor(location, "poll", fi_result=fi_result)
+                    if fi_result.get("at_monitored_location"):
+                        elapsed_min = int(elapsed / 60)
+                        dist = fi_result.get("distance_to_monitored", "?")
+                        log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
+                        roomba_result = run_roomba_command(location, "dock")
+                        _update_state_dog_walk(location, "dock", return_signal="fi_gps", roomba_result=roomba_result)
+                        _update_state_return_monitor(location, "stop")
+                        return
+                    else:
+                        dist = fi_result.get("distance_to_monitored", "?")
+                        log(f"RETURN MONITOR: Fi GPS — Potato {dist}m from {location} (outside geofence)")
 
             except asyncio.CancelledError:
                 log("RETURN MONITOR: Cancelled")
@@ -851,13 +799,13 @@ async def _findmy_poll_loop(location: str) -> None:
             except Exception as e:
                 log(f"RETURN MONITOR: Error: {e}")
 
-            await asyncio.sleep(NETWORK_INTERVAL)
+            await asyncio.sleep(POLL_INTERVAL)
 
         log(f"RETURN MONITOR: Timeout after {MAX_DURATION // 60}min — docking as safety fallback")
         send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
         roomba_result = run_roomba_command(location, "dock")
         _update_state_dog_walk(location, "dock_timeout", return_signal="timeout", roomba_result=roomba_result)
-        _update_state_findmy(location, "stop")
+        _update_state_return_monitor(location, "stop")
     finally:
         _return_monitor_active = False
         _ring_motion_during_walk = False
@@ -1006,24 +954,24 @@ async def _confirmation_poll_loop() -> None:
 
 
 def start_return_monitor(location: str) -> None:
-    """Start return-home monitoring (network + FindMy + Ring motion)."""
-    global _findmy_poll_task, _return_monitor_active
-    if _findmy_poll_task and not _findmy_poll_task.done():
-        _findmy_poll_task.cancel()
+    """Start return-home monitoring (network + Fi GPS + Ring motion)."""
+    global _return_poll_task, _return_monitor_active
+    if _return_poll_task and not _return_poll_task.done():
+        _return_poll_task.cancel()
     _return_monitor_active = True
-    _update_state_findmy(location, "start")
-    _findmy_poll_task = asyncio.get_event_loop().create_task(_findmy_poll_loop(location))
+    _update_state_return_monitor(location, "start")
+    _return_poll_task = asyncio.get_event_loop().create_task(_return_poll_loop(location))
 
 
 def stop_return_monitor() -> None:
     """Stop return-home monitoring."""
-    global _findmy_poll_task, _return_monitor_active, _ring_motion_during_walk
+    global _return_poll_task, _return_monitor_active, _ring_motion_during_walk
     _return_monitor_active = False
     _ring_motion_during_walk = False
-    if _findmy_poll_task and not _findmy_poll_task.done():
-        _findmy_poll_task.cancel()
-        _findmy_poll_task = None
-    _update_state_findmy("", "stop")
+    if _return_poll_task and not _return_poll_task.done():
+        _return_poll_task.cancel()
+        _return_poll_task = None
+    _update_state_return_monitor("", "stop")
 
 
 # Dog walk hours (local time) — automation only active during these windows
@@ -1061,12 +1009,113 @@ def _is_location_occupied(location: str) -> bool:
         return True  # assume occupied on error
 
 
+def _get_current_location() -> str | None:
+    """Determine which location (cabin/crosstown) we're at based on presence state."""
+    try:
+        if not _PRESENCE_STATE.exists():
+            return None
+        state = json.loads(_PRESENCE_STATE.read_text())
+        for loc in ("cabin", "crosstown"):
+            loc_state = state.get(loc, {})
+            if loc_state.get("occupancy") in ("occupied", "possibly_occupied"):
+                return loc
+        return None
+    except Exception:
+        return None
+
+
+async def _fi_departure_poll_loop() -> None:
+    """Poll Fi GPS every 3 minutes to detect dog walk departures independently of Ring.
+
+    Triggers a departure when Potato leaves the geofence at the current location:
+    - 2 consecutive readings outside geofence, ≥3 min apart
+    - Both readings must be < 10 min old (not stale)
+    - Only during walk hours and when location is occupied
+    - Only when no walk is already active
+    """
+    FI_POLL_INTERVAL = 180  # 3 minutes
+    last_outside_reading = None  # (timestamp, location, distance)
+
+    log("FI DEPARTURE: Polling loop started (every 3 min during walk hours)")
+
+    while True:
+        try:
+            await asyncio.sleep(FI_POLL_INTERVAL)
+
+            # Skip if not walk hours
+            if not _is_walk_hour():
+                last_outside_reading = None
+                continue
+
+            # Skip if a walk is already active
+            if _return_monitor_active:
+                last_outside_reading = None
+                continue
+
+            # Determine current location
+            location = _get_current_location()
+            if not location:
+                last_outside_reading = None
+                continue
+
+            # Skip if location is vacant
+            if not _is_location_occupied(location):
+                last_outside_reading = None
+                continue
+
+            # Check Fi GPS
+            fi_result = await asyncio.to_thread(_check_fi_gps, location)
+            if not fi_result:
+                continue  # API error or stale data — don't reset, just skip
+
+            if fi_result.get("at_monitored_location"):
+                # Potato is home — reset departure tracking
+                last_outside_reading = None
+                continue
+
+            # Potato is outside geofence
+            dist = fi_result.get("distance_to_monitored", 0)
+            now = time.time()
+
+            if last_outside_reading is None or last_outside_reading[1] != location:
+                # First outside reading at this location
+                last_outside_reading = (now, location, dist)
+                log(f"FI DEPARTURE: Potato {dist}m from {location} (first reading, need confirmation)")
+                continue
+
+            # Check if enough time has passed since first reading (≥3 min)
+            time_since_first = now - last_outside_reading[0]
+            if time_since_first < 180:
+                log(f"FI DEPARTURE: Potato {dist}m from {location} (confirming, {int(time_since_first)}s since first)")
+                continue
+
+            # Confirmed departure — 2 readings outside geofence, ≥3 min apart
+            log(f"FI DEPARTURE: Confirmed! Potato {dist}m from {location} "
+                f"(first reading {int(time_since_first)}s ago at {last_outside_reading[2]}m)")
+            last_outside_reading = None
+
+            # Start Roombas and return monitor
+            send_imessage(
+                f"\U0001f9f9 Potato left {location} (GPS: {dist}m away) — starting Roombas!"
+            )
+            roomba_result = run_roomba_command(location, "start")
+            _update_state_dog_walk(location, "departure", people=0, dogs=1, roomba_result=roomba_result)
+            start_return_monitor(location)
+
+        except asyncio.CancelledError:
+            log("FI DEPARTURE: Polling loop cancelled")
+            return
+        except Exception as e:
+            log(f"FI DEPARTURE: Error: {e}")
+            await asyncio.sleep(30)
+
+
 async def check_departure(vision_data: dict, doorbot_id: int) -> None:
     """Accumulate departing people/dogs across recent events and trigger Roombas.
 
     People and dogs often pass the doorbell in separate motion events during a
     single departure. This function accumulates sightings within a 10-minute
-    sliding window. Arrival detection is handled by FindMy polling, not Ring.
+    sliding window. Return detection is handled by Fi GPS + network presence, not Ring.
 
     Pre-checks:
     - Time-of-day filter: only active 6-9 AM and 3-9 PM
@@ -1516,8 +1565,14 @@ async def main() -> None:
     # FCM credentials
     fcm_creds = load_fcm_credentials()
 
-    # Event listener
-    listener = RingEventListener(ring, credentials=fcm_creds, credentials_updated_callback=save_fcm_credentials)
+    # Event listener — disable permanent abort on sequential errors so transient
+    # network outages don't kill the push receiver permanently
+    listener_config = RingEventListenerConfig.default_config()
+    listener_config.abort_on_sequential_error_count = None
+
+    listener = RingEventListener(ring, credentials=fcm_creds,
+                                 credentials_updated_callback=save_fcm_credentials,
+                                 config=listener_config)
     listener.add_notification_callback(on_event)
 
     started = await listener.start(timeout=30)
@@ -1533,11 +1588,30 @@ async def main() -> None:
     # Start BB reply polling for dog walk confirmation
     asyncio.get_event_loop().create_task(_confirmation_poll_loop())
 
-    # Keep running forever
+    # Start Fi GPS departure detection (works independently of Ring)
+    asyncio.get_event_loop().create_task(_fi_departure_poll_loop())
+
+    # Keep running with watchdog — restart listener if FCM push receiver dies
     try:
         while True:
-            await asyncio.sleep(3600)
-            log("Heartbeat — listener still running")
+            await asyncio.sleep(300)  # check every 5 min
+            if not listener.started:
+                log("WARNING: Event listener died — attempting restart...")
+                try:
+                    fcm_creds = load_fcm_credentials()
+                    listener = RingEventListener(ring, credentials=fcm_creds,
+                                                 credentials_updated_callback=save_fcm_credentials,
+                                                 config=listener_config)
+                    listener.add_notification_callback(on_event)
+                    restarted = await listener.start(timeout=30)
+                    if restarted:
+                        log("Event listener restarted successfully")
+                    else:
+                        log("ERROR: Event listener restart failed — will retry in 5 min")
+                except Exception as e:
+                    log(f"ERROR: Event listener restart exception: {e} — will retry in 5 min")
+            elif int(time.time()) % 3600 < 300:
+                log("Heartbeat — listener still running")
     except asyncio.CancelledError:
         pass
     finally:

@@ -92,32 +92,23 @@ The listener uses multi-frame video analysis (5 frames from each recording sent 
 
 **Return detection (multi-signal):**
 
-After departure, the return monitor uses four signals — any one triggers Roomba docking:
+After departure, the return monitor (`_return_poll_loop`) uses three signals — any one triggers Roomba docking:
 
 | Signal | Interval | How it works |
 |--------|----------|-------------|
-| **WiFi / network presence** | Every 60s from start | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
-| **Fi GPS** | Every 60s from start | Polls Potato's Fi collar GPS via `fi-collar status`. Docks when Potato re-enters home geofence (150m Crosstown, 300m Cabin). Works at both locations. |
 | **Ring motion** | Event-driven | Any person detected at the doorbell during monitoring. |
-| **FindMy** | Every 5min after 20min | Keyboard arrow navigation to select walker in sidebar, screenshot via `peekaboo see`, Haiku checks if pin is near home. |
+| **WiFi / network presence** | Every 60s | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
+| **Fi GPS** | Every 60s | Polls Potato's Fi collar GPS via `fi-collar status`. Docks when Potato re-enters home geofence (150m Crosstown, 300m Cabin). Works at both locations independently of Ring. |
 
-- 2 minutes after departure, a network scan identifies **who left** — only walkers' FindMy is monitored
-- Location sharing: both Dylan and Julia share location with `clawdbotbochman@gmail.com`
-- Find My app must be open on the Mini with the People tab visible
+- 2 minutes after departure, a network scan identifies **who left**
 - Safety fallback: auto-docks after 2 hours if no return detected
 
-**FindMy sidebar navigation — MUST use keyboard arrows, NOT mouse clicks:**
+**Standalone Fi GPS departure detection:**
 
-FindMy blocks programmatic mouse clicks but accepts keyboard input via Peekaboo. The script `findmy-locate.sh` handles this:
-1. `open -a FindMy` to activate the app
-2. `peekaboo press up` x3 to reset to top of People sidebar
-3. `peekaboo press down` to target position (Julia=1, Dylan=2)
-4. Wait 3s for map animation, then `peekaboo see --app "Find My"` to capture
-
-Sidebar order: Me (0) → Julia Jennings (1) → Dylan Bochman (2). Do NOT attempt `peekaboo click` on sidebar elements — it will click the wrong app due to focus-stealing.
+A separate polling loop (`_fi_departure_poll_loop`) runs every 3 minutes during walk hours, independently of Ring. If Potato leaves the geofence (2 consecutive readings outside, ≥3 min apart), it triggers departure + Roombas + return monitoring. This catches walks even when Ring's push receiver is down.
 
 **State tracking:**
-- Current state: `~/.openclaw/ring-listener/state.json` (dog_walk, roombas, findmy_polling, last_vision)
+- Current state: `~/.openclaw/ring-listener/state.json` (dog_walk, roombas, return_monitoring, last_vision)
 - Daily history: `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`
 
 **Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog counting is available. Instead, the listener treats all Cabin motion as a potential person and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'") during walk hours. The prompt is sent once per walk window (8-10, 11-1, 5-8) to avoid spam. Auto-trigger (2+ dogs) is not possible at the Cabin. May produce occasional false positives from animals or cars.

@@ -105,10 +105,13 @@ Visualizes dog walk departures, Roomba operations, return signal detection, and 
 
 ### What It Shows
 
-- **Status cards** — current walk (elapsed time or last walk summary), Roomba status per location, return monitor state
+- **Status cards** — current walk, last walk summary, return monitor state
+- **Potato (Fi collar) cards** — battery %, activity (Rest/Walk), GPS location, connection type, Fi base station status
+- **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status, tank level (via dorita980 MQTT)
+- **Cabin Roomba cards** — last mission outcome, duration, area cleaned (via iRobot Cloud API)
 - **Recent Walks table** — date, location, duration, return signal badge, walkers, Roomba result
 - **Walk Duration** — scatter chart by location over time
-- **Return Signal Distribution** — doughnut (WiFi / Ring Motion / FindMy / Timeout)
+- **Return Signal Distribution** — doughnut (WiFi / Ring Motion / Fi GPS / Timeout)
 - **Detection Funnel** — horizontal bar showing skip reasons vs departures vs docks
 - **Walks per Day** — daily bar chart for trend analysis
 
@@ -117,9 +120,11 @@ Visualizes dog walk departures, Roomba operations, return signal detection, and 
 | Source | Frequency | Data |
 |--------|-----------|------|
 | Ring Doorbell Listener | Event-driven | Motion events, vision analysis, departure/dock lifecycle |
-| Roomba CLIs | Per walk | Start/dock command results (success/failure per Roomba) |
+| Crosstown Roomba (dorita980) | 5 min cache | Real-time battery, phase, bin, tank via SSH to MBP |
+| Cabin Roomba (iRobot Cloud) | 10 min cache | Last mission outcome via Gigya + AWS SigV4 REST API |
+| Fi GPS Collar | 2 min cache | Potato GPS, battery, activity, connection, geofence |
 | Network presence | Per walk + 60s polling | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
-| FindMy polling | 5 min (after 20 min) | Location proximity via Peekaboo + Claude Haiku |
+| Fi GPS departure | 3 min poll | Standalone departure detection via collar geofence |
 | `dog-walk-start` CLI | Manual trigger | Inbox IPC to ring-listener |
 
 ### Locations
@@ -134,9 +139,12 @@ Visualizes dog walk departures, Roomba operations, return signal detection, and 
 | File | Path |
 |------|------|
 | Server | `openclaw/ring-dashboard.py` → `~/.openclaw/bin/ring-dashboard.py` |
+| Fi collar API | `openclaw/skills/fi-collar/fi-api.py` → `~/.openclaw/skills/fi-collar/fi-api.py` |
+| iRobot Cloud API | `openclaw/skills/cabin-roomba/irobot-cloud.py` → `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.ring-dashboard.plist` |
 | Event history | `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl` |
 | Current state | `~/.openclaw/ring-listener/state.json` |
+| iRobot session cache | `~/.config/irobot-cloud/session.json` (1hr TTL) |
 | Logs | `~/.openclaw/logs/ring-dashboard.{log,err.log}` |
 
 ---
