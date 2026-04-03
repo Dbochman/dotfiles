@@ -42,8 +42,8 @@ For true location tracking (away from base), the Fi API would be needed.
 ### Dog walk dashboard — no changes needed
 The ring-listener already calls `presence-detect.sh` for network checks, so Potato flows through automatically to `last_network_check` in JSONL events. Vision analysis already knows Potato by name. The Fi base stays on the network during walks (plugged in), so Potato won't appear in `walkers` — that's correct since vision detects the dog leaving via camera frames.
 
-## Cabin Base (not needed)
-Fi collar GPS works via cellular + GNSS independent of the base station. No second base needed for location tracking at the cabin.
+## Base Station Presence Tracking — REMOVED (2026-04-02)
+Fi GPS polling (every 3 min in ring-listener) provides real coordinates and geofence status, making base station network detection redundant. Removed Potato entries from both CABIN_DEVICES and CROSSTOWN_DEVICES in presence-detect.sh. A second base station was added at the cabin but not tracked in presence — Fi GPS covers both locations.
 
 ## Fi API — IMPLEMENTED (2026-04-01)
 Password reset completed for `dylanbochman@gmail.com`. Fi API is fully operational.

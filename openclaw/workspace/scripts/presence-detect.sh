@@ -47,7 +47,6 @@ CABIN_DEVICES='[
   {"person":"Dylan","match":"name","pattern":"Dylan","require":"phone"},
   {"person":"Julia","match":"name","pattern":"Julia"},
   {"person":"Julia","match":"name_fallback","pattern":"iPhone","excludeNames":["Dylan"]},
-  {"person":"Potato","match":"name","pattern":"da16200"}
 ]'
 
 # Crosstown (Boston) — matched by MAC address via ARP scan
@@ -55,9 +54,7 @@ CROSSTOWN_DEVICES='[
   {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"},
   {"person":"Julia","match":"mac","pattern":"38:e1:3d:c0:40:63"},
   {"person":"Julia","match":"ip","pattern":"192.168.165.248"},
-  {"person":"Julia","match":"hostname","pattern":"julias-iphone"},
-  {"person":"Potato","match":"mac","pattern":"d4:3d:39:a7:4b:6c"},
-  {"person":"Potato","match":"hostname","pattern":"da16200-4b6c"}
+  {"person":"Julia","match":"hostname","pattern":"julias-iphone"}
 ]'
 
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
