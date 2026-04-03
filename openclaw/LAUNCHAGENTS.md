@@ -9,6 +9,7 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | `ai.openclaw.gateway` | `OpenClawGateway.app` wrapper | — | OpenClaw gateway (core agent runtime, cron scheduler, BB channel) |
 | `ai.openclaw.nest-dashboard` | `nest-dashboard.py` | 8550 | Nest thermostat history dashboard |
 | `ai.openclaw.usage-dashboard` | `usage-dashboard.py` | 8551 | Anthropic usage tracking dashboard |
+| `ai.openclaw.ring-dashboard` | `ring-dashboard.py` | 8552 | Dog walk & Roomba dashboard (walk history, Fi GPS, return signals) |
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Financial dashboard |
 | `ai.openclaw.ring-listener` | `ring-listener-wrapper.sh` | — | Ring doorbell FCM push listener (motion/doorbell events) |
 | `com.openclaw.presence-receive` | `presence-receive.sh` | — | Receives Tailscale file pushes from Crosstown presence scans |
@@ -25,6 +26,7 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
+| `ai.openclaw.mahaniyom-snipe` | 30min | `mahaniyom-snipe.sh` | OpenTable snipe for Mahaniyom (ID 1267699) — polls Apr 16-18 for 7 PM dinner slots, party of 4, auto-books on match. Temporary — remove after target dates pass. |
 
 ## Mac Mini — Calendar-Based (StartCalendarInterval)
 
