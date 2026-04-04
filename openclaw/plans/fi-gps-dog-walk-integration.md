@@ -1,6 +1,6 @@
 # Fi GPS Dog Walk Integration — Plan
 
-## Status: ALL PHASES IMPLEMENTED (2026-04-02) — FindMy removed, Fi GPS handles return + departure detection
+## Status: SUPERSEDED (2026-04-04) — ring-listener replaced by dog-walk-listener; Ring vision departure removed, Fi GPS is sole departure mechanism. See `openclaw/DOG-WALK-MIGRATION.md`.
 
 ## Goal
 

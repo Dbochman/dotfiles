@@ -4,20 +4,20 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>ai.openclaw.ring-dashboard</string>
+  <string>ai.openclaw.dog-walk-dashboard</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/dbochman/.openclaw/bin/ring-dashboard.py</string>
+    <string>/Users/dbochman/.openclaw/bin/dog-walk-dashboard.py</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/dbochman/.openclaw/logs/ring-dashboard.log</string>
+  <string>/Users/dbochman/.openclaw/logs/dog-walk-dashboard.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/dbochman/.openclaw/logs/ring-dashboard.err.log</string>
+  <string>/Users/dbochman/.openclaw/logs/dog-walk-dashboard.err.log</string>
   <key>WorkingDirectory</key>
   <string>/Users/dbochman</string>
 </dict>

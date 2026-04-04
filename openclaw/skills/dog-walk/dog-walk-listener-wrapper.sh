@@ -1,6 +1,6 @@
 #!/bin/bash
-# ring-listener-wrapper.sh — Start Ring event listener with secrets loaded
-# Runs as a persistent LaunchAgent (ai.openclaw.ring-listener)
+# dog-walk-listener-wrapper.sh — Start dog walk listener with secrets loaded
+# Runs as a persistent LaunchAgent (ai.openclaw.dog-walk-listener)
 
 set -euo pipefail
 
@@ -12,6 +12,6 @@ if [[ -f "$HOME/.openclaw/.secrets-cache" ]]; then
 fi
 
 PYTHON="$HOME/.openclaw/ring/venv/bin/python3"
-LISTENER="$HOME/.openclaw/skills/ring-doorbell/ring-listener.py"
+LISTENER="$HOME/.openclaw/skills/dog-walk/dog-walk-listener.py"
 
 exec "$PYTHON" "$LISTENER"

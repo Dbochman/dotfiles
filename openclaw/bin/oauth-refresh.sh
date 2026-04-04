@@ -2,7 +2,7 @@
 # oauth-refresh.sh — Self-contained OAuth token refresh for the Mac Mini.
 # Runs `claude auth login` using CLAUDE_CODE_OAUTH_REFRESH_TOKEN to get a
 # fresh access token, then writes the credentials to the oauth-cache file
-# for the ring-listener and other services.
+# for the dog-walk listener and other services.
 #
 # Claude Code writes credentials to the macOS keychain when `security` is
 # available. To force file-based storage (~/.claude/.credentials.json),
@@ -63,7 +63,7 @@ if [[ ! -f "$CREDS" ]]; then
   exit 1
 fi
 
-# Copy to oauth-cache for ring-listener and other services
+# Copy to oauth-cache for dog-walk listener and other services
 cp "$CREDS" "$CACHE"
 chmod 600 "$CACHE"
 

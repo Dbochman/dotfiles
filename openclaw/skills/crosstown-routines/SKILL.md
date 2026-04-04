@@ -101,5 +101,5 @@ For related tasks, switch to:
 - **hue-lights**: Direct light control at any location without running a full routine
 - **nest-thermostat**: Direct thermostat control without running a full routine
 - **presence**: Check who is home before deciding which routine to run
-- **ring-doorbell**: Automated dog walk detection auto-starts/docks Roombas at Crosstown independently of routines
+- **dog-walk**: Automated dog walk detection auto-starts/docks Roombas at Crosstown independently of routines
 - Vacancy automation (`com.openclaw.vacancy-actions`) triggers away-like actions automatically when Crosstown becomes `confirmed_vacant` — this runs independently and should NOT be duplicated by routines

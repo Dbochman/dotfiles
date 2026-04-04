@@ -1,6 +1,6 @@
 # Ring Listener Dashboard Metrics — Implementation Plan
 
-## Status: PLANNED (not yet implemented)
+## Status: SUPERSEDED (2026-04-04) — ring-listener replaced by dog-walk-listener. See `openclaw/DOG-WALK-MIGRATION.md`.
 
 ## Overview
 

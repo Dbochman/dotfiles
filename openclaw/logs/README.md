@@ -27,7 +27,7 @@ Each service uses one of two patterns:
 
 | Log file | Service | Description |
 |----------|---------|-------------|
-| `ring-listener.log` | `ai.openclaw.ring-listener` | Ring doorbell events, vision analysis, departure detection |
+| `dog-walk-listener.log` | `ai.openclaw.dog-walk-listener` | Dog walk detection (Fi GPS departure, multi-signal return) |
 | `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Cielo AC token refresh via pinchtab |
 | `gateway.log` | `ai.openclaw.gateway` | OpenClaw gateway stdout |
 | `gateway.err.log` | `ai.openclaw.gateway` | OpenClaw gateway stderr |
@@ -55,7 +55,7 @@ To check log sizes: `ls -lhS ~/.openclaw/logs/*.log`
 
 ```bash
 # Live tail a service log
-tail -f ~/.openclaw/logs/ring-listener.log
+tail -f ~/.openclaw/logs/dog-walk-listener.log
 
 # Check recent vacancy actions
 tail -50 ~/.openclaw/logs/vacancy-actions.log

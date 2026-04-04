@@ -1,13 +1,13 @@
 #!/bin/bash
-# dog-walk-start — Start Roombas at a location and signal the ring-listener
-# to begin return monitoring (network + Fi GPS + Ring motion).
+# dog-walk-start — Start Roombas at a location and signal the dog-walk listener
+# to begin return monitoring (Ring motion + WiFi + Fi GPS).
 #
 # Usage: dog-walk-start <location>
 #   location: "cabin" or "crosstown"
 #
 # This script:
 # 1. Starts the Roombas at the given location
-# 2. Writes a signal file to the ring-listener inbox so it starts
+# 2. Writes a signal file to the dog-walk listener inbox so it starts
 #    return-home monitoring (auto-dock when you return)
 
 set -euo pipefail
@@ -19,7 +19,7 @@ if [[ -z "$LOCATION" ]]; then
     exit 1
 fi
 
-INBOX_DIR="$HOME/.openclaw/ring-listener/inbox"
+INBOX_DIR="$HOME/.openclaw/dog-walk/inbox"
 mkdir -p "$INBOX_DIR"
 
 # Start Roombas

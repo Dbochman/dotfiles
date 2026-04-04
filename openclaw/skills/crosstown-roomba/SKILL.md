@@ -100,7 +100,7 @@ This skill controls Roombas at **Crosstown only** (Combo 10 Max + J5 via MQTT th
 For related tasks, switch to:
 - **roomba**: Roomba control at the Cabin (Floomba + Philly via Google Assistant)
 - **crosstown-routines**: Full Crosstown routines (away, welcome home, goodnight) that include Roomba start/dock alongside lights, thermostats, and audio
-- **ring-doorbell**: Automated dog walk detection auto-starts/docks Roombas at Crosstown via vision analysis
+- **dog-walk**: Automated dog walk detection auto-starts/docks Roombas at Crosstown via Fi GPS departure
 - **presence**: Check if anyone is home at Crosstown before starting Roombas
 - Vacancy automation (`com.openclaw.vacancy-actions` LaunchAgent) also starts Roombas when Crosstown becomes `confirmed_vacant` — this is independent of the dog walk system
 

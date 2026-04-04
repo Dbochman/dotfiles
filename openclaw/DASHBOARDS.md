@@ -99,7 +99,7 @@ Tracks token consumption, costs, and agent activity for OpenClaw's Claude API us
 
 ## Dog Walk & Roomba Dashboard
 
-**Port 8552** · [Full spec](DOG-WALK-DASHBOARD.md) · [Metrics plan](plans/ring-listener-dashboard-metrics.md)
+**Port 8552** · [Full spec](DOG-WALK-DASHBOARD.md)
 
 Visualizes dog walk departures, Roomba operations, return signal detection, and the departure suppression funnel.
 
@@ -119,33 +119,32 @@ Visualizes dog walk departures, Roomba operations, return signal detection, and 
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Ring Doorbell Listener | Event-driven | Motion events, vision analysis, departure/dock lifecycle |
+| Dog Walk Listener | Event-driven | Fi GPS departure detection, return monitoring, dock lifecycle |
 | Crosstown Roomba (dorita980) | 5 min cache | Real-time battery, phase, bin, tank via SSH to MBP |
 | Cabin Roomba (iRobot Cloud) | 10 min cache | Last mission outcome via Gigya + AWS SigV4 REST API |
 | Fi GPS Collar | 2 min cache | Potato GPS, battery, activity, connection, geofence |
 | Network presence | Per walk + 60s polling | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
-| Fi GPS departure | 3 min poll | Standalone departure detection via collar geofence |
-| `dog-walk-start` CLI | Manual trigger | Inbox IPC to ring-listener |
+| `dog-walk-start` CLI | Manual trigger | Inbox IPC to dog-walk listener |
 
 ### Locations
 
-| Location | Doorbells | Roombas | Ring Protect |
-|----------|-----------|---------|-------------|
-| Cabin (Phillipston) | Front Door (697442349) | Floomba + Philly (Google Assistant) | No |
-| Crosstown (West Roxbury) | Front Door (684794187) | Roomba Combo 10 Max + J5 (dorita980 MQTT) | Yes |
+| Location | Roombas |
+|----------|---------|
+| Cabin (Phillipston) | Floomba + Philly (Google Assistant) |
+| Crosstown (West Roxbury) | Roomba Combo 10 Max + J5 (dorita980 MQTT) |
 
 ### Files
 
 | File | Path |
 |------|------|
-| Server | `openclaw/ring-dashboard.py` → `~/.openclaw/bin/ring-dashboard.py` |
+| Server | `openclaw/dog-walk-dashboard.py` → `~/.openclaw/bin/dog-walk-dashboard.py` |
 | Fi collar API | `openclaw/skills/fi-collar/fi-api.py` → `~/.openclaw/skills/fi-collar/fi-api.py` |
 | iRobot Cloud API | `openclaw/skills/cabin-roomba/irobot-cloud.py` → `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
-| LaunchAgent | `openclaw/launchagents/ai.openclaw.ring-dashboard.plist` |
-| Event history | `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl` |
-| Current state | `~/.openclaw/ring-listener/state.json` |
+| LaunchAgent | `openclaw/launchagents/ai.openclaw.dog-walk-dashboard.plist` |
+| Event history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
+| Current state | `~/.openclaw/dog-walk/state.json` |
 | iRobot session cache | `~/.config/irobot-cloud/session.json` (1hr TTL) |
-| Logs | `~/.openclaw/logs/ring-dashboard.{log,err.log}` |
+| Logs | `~/.openclaw/logs/dog-walk-dashboard.{log,err.log}` |
 
 ---
 

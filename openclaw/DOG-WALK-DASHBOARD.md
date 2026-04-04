@@ -10,14 +10,14 @@ Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk de
 
 | Component | Source | Data |
 |-----------|--------|------|
-| Ring Doorbell Listener | `ring-listener.py` (LaunchAgent) | Motion events, vision analysis, departure/dock lifecycle |
+| Dog Walk Listener | `dog-walk-listener.py` (LaunchAgent) | Fi GPS departure detection, return monitoring, dock lifecycle |
 | Roomba CLIs | `roomba` (cabin), `crosstown-roomba` (crosstown) | Start/dock commands and results |
 | Crosstown Roomba Status | dorita980 MQTT via SSH to MBP | Real-time battery, phase, bin, tank |
 | Cabin Roomba Status | iRobot Cloud API (`irobot-cloud.py`) | Last mission outcome, duration, area |
 | Fi GPS Collar | `fi-collar status` | Potato's GPS, battery, activity, connection |
 | Network Presence | `presence-detect.sh` | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
 | Fi GPS Departure | `fi-collar status` (3min poll) | Standalone departure detection via collar geofence |
-| Manual Trigger | `dog-walk-start` CLI | Inbox IPC to ring-listener |
+| Manual Trigger | `dog-walk-start` CLI | Inbox IPC to dog-walk |
 
 Two locations: **Cabin** (Phillipston) and **Crosstown** (West Roxbury).
 
@@ -27,13 +27,13 @@ Two locations: **Cabin** (Phillipston) and **Crosstown** (West Roxbury).
 
 ```
 Mac Mini (dylans-mac-mini)
-├── Ring Listener: ~/.openclaw/skills/ring-doorbell/ring-listener.py
-│   ├── State: ~/.openclaw/ring-listener/state.json
-│   ├── History: ~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl
-│   ├── Inbox: ~/.openclaw/ring-listener/inbox/ (dog-walk-start IPC)
-│   └── Frames: ~/.openclaw/ring-listener/frames/ (temp, cleaned after send)
+├── Dog Walk Listener: ~/.openclaw/skills/dog-walk/dog-walk-listener.py
+│   ├── State: ~/.openclaw/dog-walk/state.json
+│   ├── History: ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
+│   ├── Inbox: ~/.openclaw/dog-walk/inbox/ (dog-walk-start IPC)
+│   └── FCM credentials: ~/.openclaw/dog-walk/fcm-credentials.json
 │
-├── Dashboard Server: ~/.openclaw/bin/ring-dashboard.py (port 8552)
+├── Dashboard Server: ~/.openclaw/bin/dog-walk-dashboard.py (port 8552)
 │   ├── GET / → embedded HTML SPA
 │   ├── GET /api/events?days=N → JSONL event history
 │   ├── GET /api/current → current state.json
@@ -56,14 +56,14 @@ Mac Mini (dylans-mac-mini)
 
 | Label | Type | Command | Port/Logs |
 |-------|------|---------|-----------|
-| `ai.openclaw.ring-listener` | KeepAlive | `ring-listener-wrapper.sh` | `~/.openclaw/logs/ring-listener.log` |
-| `ai.openclaw.ring-dashboard` | KeepAlive | `python3 ~/.openclaw/bin/ring-dashboard.py` | `~/.openclaw/logs/ring-dashboard.{log,err.log}` |
+| `ai.openclaw.dog-walk-listener` | KeepAlive | `dog-walk-listener-wrapper.sh` | `~/.openclaw/logs/dog-walk-listener.log` |
+| `ai.openclaw.dog-walk-dashboard` | KeepAlive | `python3 ~/.openclaw/bin/dog-walk-dashboard.py` | `~/.openclaw/logs/dog-walk-dashboard.{log,err.log}` |
 
 ---
 
 ## Data Sources
 
-### JSONL Event History (`~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`)
+### JSONL Event History (`~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl`)
 
 One JSON object per line. Every line is a full state snapshot with an `event_type` field identifying what triggered the write. Event types:
 
@@ -74,15 +74,15 @@ One JSON object per line. Every line is a full state snapshot with an `event_typ
 | `dock` | Walk ended, Roombas docked (return detected) | Per walk |
 | `dock_timeout` | 2-hour safety fallback dock | Rare |
 | `departure_skip` | Departure suppressed by a filter | Per motion event during walk hours |
-| `vision` | Claude Haiku video frame analysis completed | Per motion event with Ring Protect |
+| `vision` | (legacy, no longer generated) | — |
 | `return_start` | Return monitoring started | Per walk |
 | `return_poll` | Network/Fi GPS check during monitoring | Every ~60s during walk |
 | `return_stop` | Return monitoring stopped | Per walk |
 | `state_update` | Generic state write (default) | Miscellaneous |
 
-### Current State (`~/.openclaw/ring-listener/state.json`)
+### Current State (`~/.openclaw/dog-walk/state.json`)
 
-Live snapshot of the ring-listener's state. Same schema as JSONL lines but always reflects the latest write.
+Live snapshot of the dog-walk's state. Same schema as JSONL lines but always reflects the latest write.
 
 ---
 
@@ -122,7 +122,7 @@ Live snapshot of the ring-listener's state. Same schema as JSONL lines but alway
 |-------|---------|
 | `network_wifi` | Phone rejoined WiFi (most common) |
 | `ring_motion` | Person detected at doorbell during monitoring |
-| `findmy` | FindMy pin appeared near home (legacy, no longer generated) |
+| `findmy` | FindMy pin appeared near home (legacy — may appear in pre-2026-04-04 history) |
 | `fi_gps` | Potato's Fi collar entered home geofence |
 | `timeout` | 2-hour safety fallback (no return detected) |
 
@@ -164,7 +164,7 @@ Live snapshot of the ring-listener's state. Same schema as JSONL lines but alway
 | `outside_walk_hours` | Motion outside 8-10 AM / 11 AM-1 PM / 5-8 PM windows |
 | `confirmed_vacant` | Location already confirmed vacant (no one home to leave) |
 | `wifi_present` | Phone detected on WiFi at decision time (returning, not departing) |
-| `cabin_prompt_suppressed` | Already prompted in this walk window at cabin |
+| `cabin_prompt_suppressed` | Already prompted in this walk window at cabin (legacy — pre-2026-04-04) |
 
 ### Return Monitoring Fields (`return_monitoring`)
 
@@ -356,10 +356,10 @@ Matches nest-dashboard exactly:
 
 | Source (dotfiles) | Destination (Mini) |
 |-------------------|--------------------|
-| `openclaw/ring-dashboard.py` | `~/.openclaw/bin/ring-dashboard.py` |
+| `openclaw/dog-walk-dashboard.py` | `~/.openclaw/bin/dog-walk-dashboard.py` |
 | `openclaw/skills/fi-collar/fi-api.py` | `~/.openclaw/skills/fi-collar/fi-api.py` |
 | `openclaw/skills/cabin-roomba/irobot-cloud.py` | `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
-| LaunchAgent plist (see below) | `~/Library/LaunchAgents/ai.openclaw.ring-dashboard.plist` |
+| LaunchAgent plist (see below) | `~/Library/LaunchAgents/ai.openclaw.dog-walk-dashboard.plist` |
 
 ### LaunchAgent Plist
 
@@ -370,20 +370,20 @@ Matches nest-dashboard exactly:
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>ai.openclaw.ring-dashboard</string>
+  <string>ai.openclaw.dog-walk-dashboard</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/dbochman/.openclaw/bin/ring-dashboard.py</string>
+    <string>/Users/dbochman/.openclaw/bin/dog-walk-dashboard.py</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/dbochman/.openclaw/logs/ring-dashboard.log</string>
+  <string>/Users/dbochman/.openclaw/logs/dog-walk-dashboard.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/dbochman/.openclaw/logs/ring-dashboard.err.log</string>
+  <string>/Users/dbochman/.openclaw/logs/dog-walk-dashboard.err.log</string>
   <key>WorkingDirectory</key>
   <string>/Users/dbochman</string>
 </dict>
@@ -394,7 +394,7 @@ Matches nest-dashboard exactly:
 
 ```bash
 # Local test (runs in foreground)
-python3 ~/.openclaw/bin/ring-dashboard.py &
+python3 ~/.openclaw/bin/dog-walk-dashboard.py &
 curl -s http://localhost:8552/api/current | python3 -m json.tool
 curl -s http://localhost:8552/api/events?days=1 | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{d[\"meta\"][\"count\"]} events')"
 kill %1

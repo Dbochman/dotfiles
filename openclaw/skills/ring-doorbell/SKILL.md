@@ -63,70 +63,6 @@ ring download 7620878129758806347 /tmp/recording.mp4
 ```
 Downloads the full MP4 video file. Get recording IDs from `ring videos` or `ring events`.
 
-## Real-Time Notifications
-
-A persistent listener (`ai.openclaw.ring-listener`) runs as a LaunchAgent on the Mini. It receives Ring events via FCM push:
-
-- **Doorbell dings**: instant iMessage notification + camera frame + AI description
-- **Motion with person detected**: processed silently for Roomba automation (no text notification)
-- **Generic motion** (animals, cars): silently ignored at Crosstown; treated as potential person at Cabin (no Ring Protect)
-
-### Dog Walk Automation
-
-The listener uses multi-frame video analysis (5 frames from each recording sent to Claude Haiku) to detect departures with dogs. Sightings are accumulated across a 10-minute sliding window since people/dogs often trigger separate motion events. **This is all handled automatically by the listener — OpenClaw does NOT need to trigger it manually.**
-
-**Pre-checks:**
-- **Time-of-day filter**: only active 8-10 AM, 11 AM-1 PM, 5-8 PM
-- **Presence cross-check**: skips if location is already `confirmed_vacant` (no one home to leave)
-
-**Departure triggers (no WiFi check — phones stay connected at the front door, so WiFi is unreliable for departure detection; WiFi is used for return monitoring only):**
-- **Crosstown: 1+ people + 1+ dogs** → auto-start Roombas + begin return tracking (both dogs always go on walks; vision often only detects one due to fisheye/occlusion)
-- **Cabin: 1+ people + 1+ dogs** → iMessage asking Dylan for confirmation ("Reply 'start roombas'") — no Ring Protect means all motion is treated as person + assumed dog, higher false positive risk
-
-**Per-location Roomba commands:**
-
-| Location | Doorbell ID | Start | Dock |
-|----------|-------------|-------|------|
-| Crosstown (19 Crosstown Ave, West Roxbury) | 684794187 | `crosstown-roomba start all` | `crosstown-roomba dock all` |
-| Cabin (95 School House Rd, Phillipston) | 697442349 | `roomba start floomba` + `roomba start philly` | `roomba dock floomba` + `roomba dock philly` |
-
-**Return detection (multi-signal):**
-
-After departure, the return monitor (`_return_poll_loop`) uses three signals — any one triggers Roomba docking:
-
-| Signal | Interval | How it works |
-|--------|----------|-------------|
-| **Ring motion** | Event-driven | Any person detected at the doorbell during monitoring. |
-| **WiFi / network presence** | Every 60s | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. |
-| **Fi GPS** | Every 60s | Polls Potato's Fi collar GPS via `fi-collar status`. Docks when Potato re-enters home geofence (150m Crosstown, 300m Cabin). Works at both locations independently of Ring. |
-
-- 2 minutes after departure, a network scan identifies **who left**
-- Safety fallback: auto-docks after 2 hours if no return detected
-
-**Standalone Fi GPS departure detection:**
-
-A separate polling loop (`_fi_departure_poll_loop`) runs every 3 minutes during walk hours, independently of Ring. If Potato leaves the geofence (2 consecutive readings outside, ≥3 min apart), it triggers departure + Roombas + return monitoring. This catches walks even when Ring's push receiver is down.
-
-**State tracking:**
-- Current state: `~/.openclaw/ring-listener/state.json` (dog_walk, roombas, return_monitoring, last_vision)
-- Daily history: `~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl`
-
-**Note:** The Cabin doorbell has no Ring Protect subscription, so no video/frame analysis or dog counting is available. Instead, the listener treats all Cabin motion as a potential person and assumes 1 dog, triggering the iMessage confirmation prompt ("Reply 'start roombas'") during walk hours. The prompt is sent once per walk window (8-10, 11-1, 5-8) to avoid spam. Auto-trigger (2+ dogs) is not possible at the Cabin. May produce occasional false positives from animals or cars.
-
-**Cabin return monitoring:** When Dylan replies "start roombas" to a confirmation prompt, the ring-listener detects the reply directly via BB message polling and starts Roombas + return monitoring itself. The agent does NOT need to act on this reply — the listener handles it end-to-end. If the agent also starts Roombas, it's harmless (duplicate but idempotent).
-
-To check the listener:
-```bash
-launchctl list | grep ring-listener    # should show PID
-tail -f ~/.openclaw/logs/ring-listener.log  # live logs
-```
-
-To restart:
-```bash
-launchctl unload ~/Library/LaunchAgents/ai.openclaw.ring-listener.plist
-launchctl load ~/Library/LaunchAgents/ai.openclaw.ring-listener.plist
-```
-
 ## IMPORTANT: Do NOT use `ring-doorbell` CLI directly
 
 Always use the `ring` command (custom wrapper). Never `pip install ring-doorbell` globally or run the library's built-in CLI. The wrapper handles venv paths and token caching.
@@ -152,13 +88,12 @@ Too many auth attempts. Wait a few minutes. Token caching prevents this under no
 
 ## Skill Boundaries
 
-This skill handles doorbell events, dog walk detection, and Roomba automation triggered by Ring motion.
+This skill handles Ring doorbell CLI queries only.
 
 For related tasks, switch to:
-- **presence**: Check who is home (presence feeds into dog walk detection as a pre-check — if `confirmed_vacant`, departure detection is skipped)
-- **roomba**: Direct Roomba control at the Cabin (dog walk detection triggers these automatically via confirmation prompt)
-- **crosstown-roomba**: Direct Roomba control at Crosstown (dog walk detection auto-triggers these when 2+ dogs detected)
-- **cabin-routines** / **crosstown-routines**: Full home routines — dog walk detection only controls Roombas, not lights/thermostats
-- Vacancy automation (`com.openclaw.vacancy-actions`) is a separate system that starts Roombas on vacancy — independent of dog walk detection
+- **dog-walk**: Automated dog walk detection + Roomba automation (uses Ring for return monitoring only)
+- **presence**: Check who is home
+- **roomba**: Direct Roomba control at the Cabin
+- **crosstown-roomba**: Direct Roomba control at Crosstown
 - "lock", "alarm", "arm/disarm" -> Ring Alarm NOT supported
 - "thermostat", "temperature" -> `nest-thermostat` skill

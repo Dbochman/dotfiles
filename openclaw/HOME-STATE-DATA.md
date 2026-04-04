@@ -16,14 +16,14 @@ Collected by `home-state-snapshot.py` via LaunchAgent `ai.openclaw.home-state-sn
 | Eight Sleep Pod 3 | Sleep scores, duration, stages, HRV, HR, RR, snoring | `8sleep sleep <side>` | Previous night |
 | Ring Doorbell | Battery level per doorbell | `ring status` | On-demand |
 
-### Event-Driven (Ring Listener)
+### Event-Driven (Dog Walk Listener)
 
-Collected by `ring-listener.py`, written on each dog walk event.
+Collected by `dog-walk-listener.py`, written on each dog walk event.
 
 | Source | Data | Trigger |
 |--------|------|---------|
-| Ring + Haiku Vision | People/dog counts, scene descriptions | Each person-detected motion event |
-| FindMy + Haiku Vision | Street location, near_home status | Every 5 min during active dog walk |
+| Fi GPS Collar | Departure detection (Potato leaves geofence) | Every 3 min during walk hours |
+| Ring motion + WiFi + Fi GPS | Return detection (multi-signal) | Every 60s during active walk |
 | Roomba automation | Start/dock times, triggers | Departure/return events |
 
 ### Existing (not part of this system)
@@ -42,7 +42,7 @@ Collected by `ring-listener.py`, written on each dog walk event.
 │   ├── current.json                     # Latest snapshot (overwritten)
 │   └── YYYY-MM-DD.jsonl                 # Daily history (appended)
 │
-├── ring-listener/                       # Event-driven data
+├── dog-walk/                            # Event-driven data
 │   ├── state.json                       # Current dog walk + Roomba state
 │   └── history/
 │       └── YYYY-MM-DD.jsonl             # Dog walk event history
@@ -124,7 +124,7 @@ Collected by `ring-listener.py`, written on each dog walk event.
 }
 ```
 
-### Ring Listener State (`ring-listener/state.json`)
+### Dog Walk Listener State (`dog-walk/state.json`)
 
 ```json
 {

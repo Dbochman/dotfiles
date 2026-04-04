@@ -67,7 +67,7 @@ dog-walk-start crosstown   # Start Roombas + return monitoring at crosstown
 
 Use bare `roomba start` ONLY for non-walk cleaning (cleaning day, routine, specific room, etc.) where you don't need auto-dock on return.
 
-When Dylan replies "start roombas" to a Ring doorbell dog walk prompt, the **ring-listener handles everything directly** — it detects the reply via BB message polling, starts the Roombas, and begins return monitoring. The agent does NOT need to act on these replies.
+The **dog-walk listener** handles walk detection automatically — when Potato's Fi GPS collar leaves the geofence, it starts the Roombas and begins return monitoring. The agent does NOT need to act on walk departures.
 
 ## Routine Integration
 
@@ -96,7 +96,7 @@ This skill controls Roombas at the **Cabin only** (Floomba + Philly via Google A
 For related tasks, switch to:
 - **crosstown-roomba**: Roomba control at Crosstown (Boston) — different robots, different protocol (MQTT via MacBook Pro)
 - **cabin-routines**: Full cabin routines (away, welcome home, goodnight) that include Roomba start/dock alongside lights, thermostats, and audio
-- **ring-doorbell**: Automated dog walk detection triggers Roomba start/dock at the cabin via iMessage confirmation prompt
+- **dog-walk**: Automated dog walk detection triggers Roomba start/dock via Fi GPS departure
 - **presence**: Check if anyone is home at the cabin before starting Roombas
 
 ## Troubleshooting

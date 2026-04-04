@@ -2,8 +2,8 @@
 """Dog Walk & Roomba Dashboard — single-file HTTP server with embedded UI.
 
 Serves a JSON API and Chart.js dashboard for dog walk history and Roomba operations.
-Reads JSONL events from ~/.openclaw/ring-listener/history/YYYY-MM-DD.jsonl
-and current state from ~/.openclaw/ring-listener/state.json
+Reads JSONL events from ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
+and current state from ~/.openclaw/dog-walk/state.json
 
 Same architecture as nest-dashboard.py. Intended for Tailscale-only access.
 """
@@ -20,8 +20,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 
-HISTORY_DIR = os.path.expanduser("~/.openclaw/ring-listener/history")
-STATE_FILE = os.path.expanduser("~/.openclaw/ring-listener/state.json")
+HISTORY_DIR = os.path.expanduser("~/.openclaw/dog-walk/history")
+STATE_FILE = os.path.expanduser("~/.openclaw/dog-walk/state.json")
 FI_COLLAR_CMD = os.path.expanduser("~/.openclaw/bin/fi-collar")
 SECRETS_FILE = os.path.expanduser("~/.openclaw/.secrets-cache")
 PORT = 8552
