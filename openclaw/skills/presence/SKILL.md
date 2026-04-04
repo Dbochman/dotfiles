@@ -154,6 +154,6 @@ This skill is **detection-only** — it reports who is home but takes no automat
 
 For related tasks, switch to:
 - **cabin-routines** / **crosstown-routines**: Run away/welcome home routines based on presence (user must explicitly request)
-- **dog-walk**: Uses presence as a pre-check for walk detection (skips departure if location is already `confirmed_vacant`)
+- **dog-walk**: Separate Fi GPS-based dog walk automation; no longer uses presence as a departure gate
 - **roomba** / **crosstown-roomba**: Start or dock Roombas — presence can inform whether it's safe to vacuum
 - Vacancy automation (`com.openclaw.vacancy-actions` LaunchAgent) watches `state.json` and triggers automated actions (lights off, eco mode, Roombas start) when a location becomes `confirmed_vacant` — this is fully automated and does NOT require the presence skill to be invoked

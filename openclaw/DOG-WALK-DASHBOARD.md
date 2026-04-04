@@ -2,7 +2,7 @@
 
 ## Status: v2.0 (2026-04-02)
 
-Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk departures, Roomba operations, return signal detection, and the departure suppression funnel. Serves at port 8552 on Mac Mini, Tailscale-only access.
+Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk departures, Roomba operations, return signal detection, and the Fi departure pipeline. Serves at port 8552 on Mac Mini, Tailscale-only access.
 
 ---
 
@@ -16,7 +16,7 @@ Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk de
 | Cabin Roomba Status | iRobot Cloud API (`irobot-cloud.py`) | Last mission outcome, duration, area |
 | Fi GPS Collar | `fi-collar status` | Potato's GPS, battery, activity, connection |
 | Network Presence | `presence-detect.sh` | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
-| Fi GPS Departure | `fi-collar status` (3min poll) | Standalone departure detection via collar geofence |
+| Fi GPS Departure | `fi-collar status` (3min poll) | Departure detection anchored to the collar's own nearest-home geofence |
 | Manual Trigger | `dog-walk-start` CLI | Inbox IPC to dog-walk |
 
 Two locations: **Cabin** (Phillipston) and **Crosstown** (West Roxbury).
@@ -31,6 +31,7 @@ Mac Mini (dylans-mac-mini)
 │   ├── State: ~/.openclaw/dog-walk/state.json
 │   ├── History: ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
 │   ├── Inbox: ~/.openclaw/dog-walk/inbox/ (dog-walk-start IPC)
+│   ├── Home anchor: last Fi geofence Potato was inside (`home_location`)
 │   └── FCM credentials: ~/.openclaw/dog-walk/fcm-credentials.json
 │
 ├── Dashboard Server: ~/.openclaw/bin/dog-walk-dashboard.py (port 8552)
@@ -69,11 +70,12 @@ One JSON object per line. Every line is a full state snapshot with an `event_typ
 
 | event_type | Meaning | Frequency |
 |------------|---------|-----------|
+| `departure_candidate` | First Fi reading outside geofence | Per candidate |
+| `departure_candidate_reset` | Candidate cleared before confirmation | Per reset |
 | `departure` | Walk started, Roombas running | Per walk |
 | `walkers_detected` | Who left detected ~2 min after departure | Per walk |
 | `dock` | Walk ended, Roombas docked (return detected) | Per walk |
 | `dock_timeout` | 2-hour safety fallback dock | Rare |
-| `departure_skip` | Departure suppressed by a filter | Per motion event during walk hours |
 | `vision` | (legacy, no longer generated) | — |
 | `return_start` | Return monitoring started | Per walk |
 | `return_poll` | Network/Fi GPS check during monitoring | Every ~60s during walk |
@@ -83,6 +85,13 @@ One JSON object per line. Every line is a full state snapshot with an `event_typ
 ### Current State (`~/.openclaw/dog-walk/state.json`)
 
 Live snapshot of the dog-walk's state. Same schema as JSONL lines but always reflects the latest write.
+
+The listener also persists a Fi-derived home anchor in `state.json`:
+
+- `home_location`: last home geofence Potato was positively inside (`cabin` or `crosstown`)
+- `home_location_seen_at`: when that anchor was last refreshed
+- `home_location_source`: currently always `fi_gps`
+- `home_location_distance_m`: last in-geofence distance from that home center
 
 ---
 
@@ -96,7 +105,7 @@ Live snapshot of the dog-walk's state. Same schema as JSONL lines but always ref
   "location": "cabin",
   "departed_at": "2026-03-28T14:30:00Z",
   "returned_at": "2026-03-28T15:05:00Z",
-  "people": 2,
+  "people": 0,
   "dogs": 1,
   "walkers": ["dylan", "julia"],
   "return_signal": "network_wifi",
@@ -110,8 +119,8 @@ Live snapshot of the dog-walk's state. Same schema as JSONL lines but always ref
 | `location` | string | departure | "cabin" or "crosstown" |
 | `departed_at` | ISO 8601 | departure | Walk start time |
 | `returned_at` | ISO 8601 | dock | Walk end time |
-| `people` | int | departure | People detected (0 = manual trigger) |
-| `dogs` | int | departure | Dogs detected (0 = manual trigger) |
+| `people` | int | departure | Always `0` in the Fi-only system (no people counting) |
+| `dogs` | int | departure | `1` for Fi-triggered auto walks, `0` for manual starts |
 | `walkers` | string[] | walkers_detected | Who left (from WiFi scan ~2 min after departure) |
 | `return_signal` | string | dock | What detected the return |
 | `walk_duration_minutes` | float | dock | Computed from departed_at → returned_at |
@@ -144,27 +153,32 @@ Live snapshot of the dog-walk's state. Same schema as JSONL lines but always ref
 }
 ```
 
-### Skip Event Fields (transient — only on `departure_skip` events)
+### Departure Candidate Fields (transient — only on candidate events)
 
 ```json
 {
-  "event_type": "departure_skip",
-  "skip_reason": "wifi_present",
-  "skip_location": "cabin",
-  "skip_details": {
-    "wifi": {"dylan": {"present": true}, "julia": {"present": true}}
-  }
+  "event_type": "departure_candidate_reset",
+  "candidate_location": "cabin",
+  "candidate_started_at": "2026-04-04T13:12:00Z",
+  "candidate_last_seen_at": "2026-04-04T13:15:00Z",
+  "candidate_first_distance_m": 418,
+  "candidate_last_distance_m": 26,
+  "candidate_source": "fi_gps",
+  "candidate_reset_reason": "inside_geofence"
 }
 ```
 
-**Skip reasons:**
+**Reset reasons:**
 
 | Reason | Description |
 |--------|-------------|
-| `outside_walk_hours` | Motion outside 8-10 AM / 11 AM-1 PM / 5-8 PM windows |
-| `confirmed_vacant` | Location already confirmed vacant (no one home to leave) |
-| `wifi_present` | Phone detected on WiFi at decision time (returning, not departing) |
-| `cabin_prompt_suppressed` | Already prompted in this walk window at cabin (legacy — pre-2026-04-04) |
+| `inside_geofence` | Potato returned inside the monitored geofence before a second outside reading |
+| `outside_walk_hours` | Candidate aged into a non-walk window before confirmation |
+| `return_monitor_active` | A walk was already active, so the candidate was discarded |
+| `no_occupied_location` | No Fi home anchor or nearest-home result was available for departure anchoring |
+| `location_changed` | The Fi-derived home anchor changed before confirmation |
+
+Candidates are anchored to `home_location` when available. If the listener restarts, it bootstraps from the persisted home anchor before evaluating new departures. If no anchor exists yet, it falls back to Fi's current nearest-home result until Potato is seen inside a home geofence again.
 
 ### Return Monitoring Fields (`return_monitoring`)
 
@@ -268,6 +282,7 @@ Note: Real-time cabin Roomba status (battery, phase) is not available — the ca
 |------|--------|---------|
 | **Current Walk** | `dog_walk.active` | Elapsed time (green) or "None" (gray) with last return time |
 | **Last Walk** | `dog_walk.walk_duration_minutes` | Duration + return signal badge |
+| **Departure Candidate** | `event_type=departure_candidate` | Pending first outside reading awaiting confirmation |
 | **Return Monitor** | `return_monitoring.active` | Poll count + Potato GPS distance |
 | **Potato Battery** | `/api/fi` | Battery % (green/amber/red), connection type, last report age |
 | **Potato Location** | `/api/fi` | Activity (Rest/Walk), distance from home, geofence status |
@@ -290,7 +305,7 @@ Note: Real-time cabin Roomba status (battery, phase) is not available — the ca
 | Column | Source |
 |--------|--------|
 | Date | `dog_walk.departed_at` |
-| Location | `dog_walk.location` (+ "manual" tag if `people == 0`) |
+| Location | `dog_walk.location` (+ "manual" tag if `roombas.<loc>.last_command_result.source == "dog-walk-start"`) |
 | Duration | `dog_walk.walk_duration_minutes` |
 | Return Signal | `dog_walk.return_signal` (color-coded badge) |
 | Walkers | `dog_walk.walkers` |
@@ -304,7 +319,7 @@ Pairs departure events with their matching dock events by location + departure t
 |-------|------|-------------|
 | **Walk Duration** | Scatter | `event_type=dock` → `walk_duration_minutes` over time, colored by location |
 | **Return Signal Distribution** | Doughnut | `event_type=dock` → group by `return_signal` |
-| **Detection Funnel** | Horizontal bar | Skip reasons (from `departure_skip`) + departures + docks |
+| **Departure Pipeline** | Horizontal bar | `departure_candidate` + reset reasons + Fi departures + manual starts + completed walks |
 | **Walks per Day** | Bar | `event_type=departure` grouped by date |
 
 ### Visual Style
@@ -410,9 +425,11 @@ curl -s http://dylans-mac-mini:8552/ | head -5
 | Question | Chart/Component | Data Path |
 |----------|----------------|-----------|
 | Is a walk happening now? | Status card | `dog_walk.active` |
+| Which house is the next departure anchored to? | Current state API | `home_location` |
 | How long was the last walk? | Status card + table | `walk_duration_minutes` |
 | How does the system detect returns? | Doughnut chart | `return_signal` distribution |
-| How many false positives does WiFi prevent? | Funnel chart | `departure_skip` count by reason |
+| How often does the Fi pipeline need a second reading? | Pipeline chart | `departure_candidate` count |
+| Why do candidates fail to confirm? | Pipeline chart | `departure_candidate_reset` grouped by `candidate_reset_reason` |
 | What time of day do walks happen? | Walk table | `departed_at` timestamps |
 | Are Roomba commands reliable? | Walk table | `last_command_result.success` |
 | How many walks per day/week? | Walks per day chart | `departure` events grouped by date |

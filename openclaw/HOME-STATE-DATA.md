@@ -128,46 +128,62 @@ Collected by `dog-walk-listener.py`, written on each dog walk event.
 
 ```json
 {
-  "timestamp": "2026-03-24T20:45:54Z",
+  "timestamp": "2026-04-04T13:18:00Z",
+  "event_type": "return_poll",
+  "home_location": "crosstown",
+  "home_location_seen_at": "2026-04-04T13:03:00Z",
+  "home_location_source": "fi_gps",
+  "home_location_distance_m": 19,
   "dog_walk": {
     "active": true,
     "location": "crosstown",
-    "departed_at": "2026-03-24T20:45:54Z",
+    "departed_at": "2026-04-04T13:06:00Z",
     "returned_at": null,
-    "people": 2,
-    "dogs": 2
+    "people": 0,
+    "dogs": 1,
+    "walkers": ["dylan", "julia"],
+    "return_signal": null,
+    "walk_duration_minutes": null
   },
   "roombas": {
     "crosstown": {
       "status": "running",
-      "started_at": "2026-03-24T20:45:55Z",
+      "started_at": "2026-04-04T13:06:01Z",
       "docked_at": null,
-      "trigger": "dog_walk_departure"
+      "trigger": "dog_walk_departure",
+      "last_command_result": {
+        "success": true,
+        "results": [
+          {"name": "crosstown-roomba", "command": "start all", "returncode": 0, "output": "OK", "error": null}
+        ]
+      }
     }
   },
-  "findmy_polling": {
+  "return_monitoring": {
     "active": true,
     "location": "crosstown",
-    "started_at": "2026-03-24T20:46:00Z",
+    "started_at": "2026-04-04T13:06:01Z",
     "polls": 3,
-    "last_poll_at": "2026-03-24T21:01:00Z",
-    "last_result": {
-      "street": "Washington St",
-      "near_home": false,
-      "description": "Pin is on Washington St, about 0.5 miles from Crosstown Ave"
+    "last_poll_at": "2026-04-04T13:18:00Z",
+    "last_fi_gps": {
+      "distance_m": 512,
+      "at_location": false,
+      "battery": 88,
+      "activity": "Walk",
+      "age_s": 41
+    },
+    "last_network_check": {
+      "any_present": false,
+      "people": {
+        "dylan": {"present": false},
+        "julia": {"present": false}
+      }
     }
-  },
-  "last_vision": {
-    "event_id": 7620926177557946699,
-    "description": "Two people with two dogs walking away from the front door",
-    "people": 2,
-    "dogs": 2,
-    "people_list": ["unknown", "unknown"],
-    "dogs_list": ["Potato", "Coconut"],
-    "analyzed_at": "2026-03-24T20:46:32Z"
   }
 }
 ```
+
+`home_location` is the last home geofence Potato was positively inside. Departure detection now anchors to that Fi-derived home rather than choosing a house from presence state first.
 
 ## LaunchAgent
 
@@ -191,7 +207,7 @@ The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials befo
 
 - **Daily JSONL files**: kept indefinitely (small, ~1-5 KB per day)
 - **current.json**: overwritten on each snapshot
-- **Ring listener state.json**: overwritten on each event (history in JSONL)
+- **Dog walk state.json**: overwritten on each event (history in JSONL)
 
 ## Trend Analysis Opportunities
 
@@ -215,8 +231,8 @@ The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials befo
 - Walk frequency per day/week
 - Walk duration (departed_at → returned_at)
 - Time-of-day patterns
-- How many FindMy polls before return detected
-- Vision detection accuracy (how often both dogs seen in one event)
+- Which return signal fires first (WiFi / Ring motion / Fi GPS / timeout)
+- How often first Fi departures reset before confirmation
 
 ## Dependencies
 
@@ -224,10 +240,9 @@ The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials befo
 |------------|-------------|------|
 | Litter-Robot venv | Cat weights | Whisker/AWS Cognito at `~/.config/litter-robot/config.yaml` |
 | Eight Sleep API | Sleep data | Token at `~/.config/eightctl/token-cache.json` |
-| Ring venv | Battery level | OAuth at `~/.config/ring/token-cache.json` |
-| `BLUEBUBBLES_PASSWORD` | Ring listener notifications | `~/.openclaw/.secrets-cache` |
-| Anthropic OAuth | Vision analysis | `~/.openclaw/.anthropic-oauth-cache` |
-| Peekaboo | FindMy screenshots | Screen Recording + Accessibility TCC grants |
+| Ring venv | Doorbell dings + return-motion signal | OAuth at `~/.config/ring/token-cache.json` |
+| Fi collar session | Dog walk GPS + geofence checks | `~/.config/fi-collar/session.json` |
+| `BLUEBUBBLES_PASSWORD` | Dog walk notifications | `~/.openclaw/.secrets-cache` |
 
 ## Future Extensions
 

@@ -81,6 +81,16 @@ HISTORY_DIR = Path.home() / ".openclaw/dog-walk/history"
 # State file serialization lock
 _state_lock = threading.Lock()
 _SKIP_KEYS = {"skip_reason", "skip_location", "skip_details"}
+_CANDIDATE_KEYS = {
+    "candidate_location",
+    "candidate_started_at",
+    "candidate_last_seen_at",
+    "candidate_first_distance_m",
+    "candidate_last_distance_m",
+    "candidate_source",
+    "candidate_reset_reason",
+}
+_CANDIDATE_EVENT_TYPES = {"departure_candidate", "departure_candidate_reset"}
 
 # Dedup: track recent Ring event IDs
 _recent_events: dict[int, float] = {}
@@ -124,6 +134,9 @@ def _read_state() -> dict:
 def _write_state(state: dict, event_type: str = "state_update") -> None:
     if event_type != "departure_skip":
         for key in _SKIP_KEYS:
+            state.pop(key, None)
+    if event_type not in _CANDIDATE_EVENT_TYPES:
+        for key in _CANDIDATE_KEYS:
             state.pop(key, None)
     state["event_type"] = event_type
     state["timestamp"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -253,6 +266,45 @@ def _update_state_return_monitor(
 
         state["return_monitoring"] = monitoring
         _write_state(state, event_type=f"return_{event}")
+
+
+def _update_state_departure_candidate(
+    location: str,
+    event: str,
+    first_distance_m: int | None = None,
+    last_distance_m: int | None = None,
+    started_at: str | None = None,
+    reset_reason: str | None = None,
+) -> None:
+    with _state_lock:
+        state = _read_state()
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        state["candidate_location"] = location
+        state["candidate_started_at"] = started_at or state.get("candidate_started_at") or now
+        state["candidate_last_seen_at"] = now
+        state["candidate_source"] = "fi_gps"
+
+        if first_distance_m is None:
+            first_distance_m = state.get("candidate_first_distance_m")
+        if last_distance_m is None:
+            last_distance_m = state.get("candidate_last_distance_m", first_distance_m)
+
+        if first_distance_m is not None:
+            state["candidate_first_distance_m"] = first_distance_m
+        if last_distance_m is not None:
+            state["candidate_last_distance_m"] = last_distance_m
+
+        if event == "start":
+            state.pop("candidate_reset_reason", None)
+            event_type = "departure_candidate"
+        elif event == "reset":
+            state["candidate_reset_reason"] = reset_reason or "unknown"
+            event_type = "departure_candidate_reset"
+        else:
+            raise ValueError(f"Unknown departure candidate event: {event}")
+
+        _write_state(state, event_type=event_type)
 
 
 def _emit_skip_event(location: str, reason: str, details: dict | None = None) -> None:
@@ -480,8 +532,12 @@ def _haversine(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def _check_fi_gps(location: str) -> dict | None:
-    """Check Potato's Fi GPS location. Returns dict or None on error."""
+def _check_fi_gps(location: str | None = None) -> dict | None:
+    """Check Potato's Fi GPS location.
+
+    If location is provided, also compute distance/at-home status for that monitored
+    location. The Fi CLI's own nearest-home fields are always preserved.
+    """
     try:
         env = os.environ.copy()
         env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
@@ -514,14 +570,15 @@ def _check_fi_gps(location: str) -> dict | None:
                 log(f"FI GPS: stale data ({int(age_s)}s old), ignoring")
                 return None
             result["age_s"] = int(age_s)
-        loc = _FI_LOCATIONS.get(location)
-        if loc:
-            dist = _haversine(result["latitude"], result["longitude"], loc["lat"], loc["lon"])
-            result["distance_to_monitored"] = round(dist)
-            result["at_monitored_location"] = dist <= loc["radius_m"]
-        else:
-            log(f"FI GPS: no geofence configured for {location}")
-            return None
+        if location:
+            loc = _FI_LOCATIONS.get(location)
+            if loc:
+                dist = _haversine(result["latitude"], result["longitude"], loc["lat"], loc["lon"])
+                result["distance_to_monitored"] = round(dist)
+                result["at_monitored_location"] = dist <= loc["radius_m"]
+            else:
+                log(f"FI GPS: no geofence configured for {location}")
+                return None
         battery = result.get("battery")
         if battery is not None and battery < 10:
             log(f"FI GPS: low battery warning ({battery}%)")
@@ -536,7 +593,6 @@ def _check_fi_gps(location: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 _WALK_HOURS = [(8, 10), (11, 13), (17, 20)]  # 8-10 AM, 11 AM-1 PM, 5-8 PM
-_PRESENCE_STATE = Path.home() / ".openclaw/presence/state.json"
 
 
 def _is_walk_hour() -> bool:
@@ -544,30 +600,42 @@ def _is_walk_hour() -> bool:
     return any(start <= hour < end for start, end in _WALK_HOURS)
 
 
-def _is_location_occupied(location: str) -> bool:
-    try:
-        if not _PRESENCE_STATE.exists():
-            return True
-        state = json.loads(_PRESENCE_STATE.read_text())
-        loc_state = state.get(location, {})
-        occupancy = loc_state.get("occupancy", "occupied")
-        return occupancy != "confirmed_vacant"
-    except Exception:
-        return True
+def _distance_to_location(fi_result: dict, location: str) -> int | None:
+    if location not in _FI_LOCATIONS:
+        return None
+    lat = fi_result.get("latitude")
+    lon = fi_result.get("longitude")
+    if lat is None or lon is None:
+        return None
+    loc = _FI_LOCATIONS[location]
+    return round(_haversine(lat, lon, loc["lat"], loc["lon"]))
 
 
-def _get_current_location() -> str | None:
+def _get_home_anchor() -> str | None:
     try:
-        if not _PRESENCE_STATE.exists():
-            return None
-        state = json.loads(_PRESENCE_STATE.read_text())
-        for loc in ("cabin", "crosstown"):
-            loc_state = state.get(loc, {})
-            if loc_state.get("occupancy") in ("occupied", "possibly_occupied"):
-                return loc
-        return None
+        state = _read_state()
+        location = state.get("home_location")
+        if location in _FI_LOCATIONS:
+            return location
     except Exception:
-        return None
+        pass
+    return None
+
+
+def _update_state_home_anchor(location: str, distance_m: int | None = None) -> None:
+    with _state_lock:
+        state = _read_state()
+        if state.get("home_location") == location:
+            return
+
+        state["home_location"] = location
+        state["home_location_seen_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        state["home_location_source"] = "fi_gps"
+        if distance_m is not None:
+            state["home_location_distance_m"] = distance_m
+        _write_state(state, event_type="state_update")
+
+    log(f"FI HOME: Home anchor set to {location}")
 
 
 # ---------------------------------------------------------------------------
@@ -684,67 +752,125 @@ async def _fi_departure_poll_loop() -> None:
     Triggers departure when Potato leaves the geofence:
     - 2 consecutive readings outside geofence, >=3 min apart
     - Both readings must be < 10 min old (not stale)
-    - Only during walk hours and when location is occupied
+    - Only during walk hours
     - Only when no walk is already active
     """
     FI_POLL_INTERVAL = 180  # 3 minutes
-    last_outside_reading = None  # (timestamp, location, distance)
+    last_outside_reading = None
+    home_anchor = _get_home_anchor()
 
     log("FI DEPARTURE: Polling loop started (every 3 min during walk hours)")
+    if home_anchor:
+        log(f"FI DEPARTURE: Bootstrapped home anchor from state: {home_anchor}")
+
+    def reset_candidate(reason: str, last_distance_m: int | None = None) -> None:
+        nonlocal last_outside_reading
+        if not last_outside_reading:
+            return
+
+        _update_state_departure_candidate(
+            last_outside_reading["location"],
+            "reset",
+            first_distance_m=last_outside_reading["first_distance_m"],
+            last_distance_m=(
+                last_distance_m
+                if last_distance_m is not None
+                else last_outside_reading["first_distance_m"]
+            ),
+            started_at=last_outside_reading["started_at"],
+            reset_reason=reason,
+        )
+        log(f"FI DEPARTURE: Candidate reset for {last_outside_reading['location']} ({reason})")
+        last_outside_reading = None
 
     while True:
         try:
             await asyncio.sleep(FI_POLL_INTERVAL)
 
             if not _is_walk_hour():
-                last_outside_reading = None
+                reset_candidate("outside_walk_hours")
                 continue
 
             if _return_monitor_active:
-                last_outside_reading = None
+                reset_candidate("return_monitor_active")
                 continue
 
-            location = _get_current_location()
-            if not location:
-                last_outside_reading = None
-                continue
-
-            if not _is_location_occupied(location):
-                last_outside_reading = None
-                continue
-
-            fi_result = await asyncio.to_thread(_check_fi_gps, location)
+            fi_result = await asyncio.to_thread(_check_fi_gps, None)
             if not fi_result:
                 continue
 
-            if fi_result.get("at_monitored_location"):
-                last_outside_reading = None
+            fi_location = fi_result.get("location")
+            fi_at_location = bool(fi_result.get("at_location")) and fi_location in _FI_LOCATIONS
+
+            if fi_at_location:
+                if fi_location != home_anchor:
+                    home_anchor = fi_location
+                    _update_state_home_anchor(fi_location, distance_m=fi_result.get("distance_m"))
+                reset_candidate("inside_geofence", fi_result.get("distance_m"))
                 continue
 
-            dist = fi_result.get("distance_to_monitored", 0)
+            candidate_location = home_anchor or fi_location
+            if not candidate_location:
+                reset_candidate("no_occupied_location")
+                continue
+
+            dist = _distance_to_location(fi_result, candidate_location)
+            if dist is None:
+                continue
             now = time.time()
+            now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            if last_outside_reading is None or last_outside_reading[1] != location:
-                last_outside_reading = (now, location, dist)
-                log(f"FI DEPARTURE: Potato {dist}m from {location} (first reading, need confirmation)")
+            if last_outside_reading is None:
+                last_outside_reading = {
+                    "monotonic_started_at": now,
+                    "started_at": now_iso,
+                    "location": candidate_location,
+                    "first_distance_m": dist,
+                }
+                _update_state_departure_candidate(
+                    candidate_location,
+                    "start",
+                    first_distance_m=dist,
+                    last_distance_m=dist,
+                    started_at=now_iso,
+                )
+                log(f"FI DEPARTURE: Potato {dist}m from {candidate_location} (first reading, need confirmation)")
                 continue
 
-            time_since_first = now - last_outside_reading[0]
+            if last_outside_reading["location"] != candidate_location:
+                reset_candidate("location_changed")
+                last_outside_reading = {
+                    "monotonic_started_at": now,
+                    "started_at": now_iso,
+                    "location": candidate_location,
+                    "first_distance_m": dist,
+                }
+                _update_state_departure_candidate(
+                    candidate_location,
+                    "start",
+                    first_distance_m=dist,
+                    last_distance_m=dist,
+                    started_at=now_iso,
+                )
+                log(f"FI DEPARTURE: Potato {dist}m from {candidate_location} (new location, need confirmation)")
+                continue
+
+            time_since_first = now - last_outside_reading["monotonic_started_at"]
             if time_since_first < 180:
-                log(f"FI DEPARTURE: Potato {dist}m from {location} (confirming, {int(time_since_first)}s since first)")
+                log(f"FI DEPARTURE: Potato {dist}m from {candidate_location} (confirming, {int(time_since_first)}s since first)")
                 continue
 
             # Confirmed departure
-            log(f"FI DEPARTURE: Confirmed! Potato {dist}m from {location} "
-                f"(first reading {int(time_since_first)}s ago at {last_outside_reading[2]}m)")
+            log(f"FI DEPARTURE: Confirmed! Potato {dist}m from {candidate_location} "
+                f"(first reading {int(time_since_first)}s ago at {last_outside_reading['first_distance_m']}m)")
             last_outside_reading = None
 
             send_imessage(
-                f"\U0001f9f9 Potato left {location} (GPS: {dist}m away) — starting Roombas!"
+                f"\U0001f9f9 Potato left {candidate_location} (GPS: {dist}m away) — starting Roombas!"
             )
-            roomba_result = run_roomba_command(location, "start")
-            _update_state_dog_walk(location, "departure", people=0, dogs=1, roomba_result=roomba_result)
-            start_return_monitor(location)
+            roomba_result = run_roomba_command(candidate_location, "start")
+            _update_state_dog_walk(candidate_location, "departure", people=0, dogs=1, roomba_result=roomba_result)
+            start_return_monitor(candidate_location)
 
         except asyncio.CancelledError:
             log("FI DEPARTURE: Polling loop cancelled")

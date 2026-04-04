@@ -13,19 +13,18 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
 
 ### Departure Detection (Fi GPS only)
 
-A polling loop checks Potato's Fi collar GPS every 3 minutes during walk hours. When Potato leaves the home geofence, Roombas start automatically.
+A polling loop checks Potato's Fi collar GPS every 3 minutes during walk hours. The listener treats the collar's GPS/geofence result as the source of truth for which home Potato is at, remembers the last home geofence he was inside, and starts Roombas when he leaves that home's geofence.
 
 **Trigger conditions:**
 - 2 consecutive Fi GPS readings outside geofence, >=3 min apart
 - Both readings must be < 10 min old (not stale)
-- Only during walk hours and when location is occupied
+- Only during walk hours, using the last home geofence Potato was inside as the departure anchor
 - Only when no walk is already active
 
 **Walk hours:** 8-10 AM, 11 AM-1 PM, 5-8 PM
 
 **Pre-checks:**
 - **Time-of-day filter**: only active during walk hours
-- **Presence cross-check**: skips if location is already `confirmed_vacant`
 
 **Per-location Roomba commands:**
 
@@ -91,7 +90,6 @@ This skill handles dog walk detection and Roomba automation triggered by Fi GPS 
 For related tasks, switch to:
 - **ring-doorbell**: Check Ring doorbell status, events, video, health (CLI only)
 - **fi-collar**: Direct Fi collar GPS/battery queries
-- **presence**: Check who is home (feeds into departure pre-check)
 - **roomba**: Direct Roomba control at the Cabin
 - **crosstown-roomba**: Direct Roomba control at Crosstown
 - **cabin-routines** / **crosstown-routines**: Full home routines

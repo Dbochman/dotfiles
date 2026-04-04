@@ -47,7 +47,7 @@ fi-collar login
 }
 ```
 
-## Integration with Ring Listener
+## Integration with Dog Walk Listener
 
 Fi GPS is polled every 60s during dog walk return monitoring. When Potato re-enters the home geofence, Roombas are docked automatically. This works at both Crosstown and Cabin locations.
 

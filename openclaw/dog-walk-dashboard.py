@@ -446,7 +446,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <div class="chart-box" id="durationBox"><h2>Walk Duration (minutes)</h2><div class="chart-wrap"><canvas id="durationChart"></canvas></div></div>
   <div class="chart-box" id="walksPerDayBox"><h2>Walks per Day</h2><div class="chart-wrap"><canvas id="walksPerDayChart"></canvas></div></div>
   <div class="chart-box" id="signalBox"><h2>Return Signal Distribution</h2><div class="chart-wrap"><canvas id="signalChart"></canvas></div></div>
-  <div class="chart-box" id="funnelBox"><h2>Detection Funnel</h2><div class="chart-wrap"><canvas id="funnelChart"></canvas></div></div>
+  <div class="chart-box" id="funnelBox"><h2>Departure Pipeline</h2><div class="chart-wrap"><canvas id="funnelChart"></canvas></div></div>
 </div>
 
 <script>
@@ -479,9 +479,16 @@ function fmtDuration(mins) {
 function filterByLocation(events) {
   if (currentLocation === 'all') return events;
   return events.filter(e => {
-    const loc = (e.dog_walk && e.dog_walk.location) || e.skip_location || e.location || '';
+    const loc = (e.dog_walk && e.dog_walk.location) || e.candidate_location || e.skip_location || e.location || '';
     return loc === currentLocation;
   });
+}
+
+function isManualDeparture(event) {
+  if (!event || event.event_type !== 'departure') return false;
+  const loc = event.dog_walk && event.dog_walk.location;
+  const result = loc && event.roombas && event.roombas[loc] && event.roombas[loc].last_command_result;
+  return !!(result && result.source === 'dog-walk-start');
 }
 
 // ── Staleness ──
@@ -524,6 +531,16 @@ function renderStatusCards(state) {
     html += '<div class="stat"><div class="stat-label">Last Walk</div>';
     html += '<div class="stat-value" style="color:' + C.blue + '">' + fmtDuration(walk.walk_duration_minutes) + '</div>';
     html += '<div class="stat-sub">' + (walk.location || '') + '<span class="stat-tag">' + (SIGNAL_LABELS[walk.return_signal] || walk.return_signal || '?') + '</span></div>';
+    html += '</div>';
+  }
+
+  if (!isActive && state.event_type === 'departure_candidate' && state.candidate_location) {
+    const ageMin = state.candidate_started_at ? Math.max(0, Math.round((Date.now() - new Date(state.candidate_started_at).getTime()) / 60000)) : null;
+    const dist = state.candidate_last_distance_m != null ? state.candidate_last_distance_m + 'm away' : 'outside geofence';
+    html += '<div class="stat"><div class="stat-label">Departure Candidate</div>';
+    html += '<div class="stat-value" style="color:' + C.amber + '">' + (ageMin != null ? ageMin + 'm' : 'Pending') + '</div>';
+    html += '<div class="stat-sub">' + state.candidate_location + ' · ' + dist + '</div>';
+    html += '<div class="stat-sub">Waiting for second Fi reading</div>';
     html += '</div>';
   }
 
@@ -690,7 +707,7 @@ function renderWalkTable(events) {
       return_signal: dock && dock.dog_walk ? dock.dog_walk.return_signal : null,
       walkers: (dock && dock.dog_walk && dock.dog_walk.walkers) || (dep.dog_walk && dep.dog_walk.walkers) || [],
       roomba_ok: dock && dock.roombas && dock.roombas[loc] && dock.roombas[loc].last_command_result ? dock.roombas[loc].last_command_result.success : null,
-      people: dep.dog_walk ? dep.dog_walk.people : 0,
+      manual: isManualDeparture(dep),
     });
   }
 
@@ -703,7 +720,7 @@ function renderWalkTable(events) {
     const sigBadgeColor = sig === 'timeout' ? 'red' : sig === 'findmy' ? 'purple' : sig === 'ring_motion' ? 'blue' : sig === 'fi_gps' ? 'teal' : 'green';
     const sigBadge = sig ? '<span class="badge badge-' + sigBadgeColor + '">' + (SIGNAL_LABELS[sig] || sig) + '</span>' : '-';
     const roombaBadge = w.roomba_ok === true ? '<span class="badge badge-ok">OK</span>' : w.roomba_ok === false ? '<span class="badge badge-err">Failed</span>' : '-';
-    const manual = w.people === 0 ? ' <span class="stat-tag">manual</span>' : '';
+    const manual = w.manual ? ' <span class="stat-tag">manual</span>' : '';
     return '<tr><td>' + fmtTime(w.departed_at) + '</td><td>' + (w.location || '?') + manual + '</td><td>' + fmtDuration(w.duration) + '</td><td>' + sigBadge + '</td><td>' + (w.walkers.length ? w.walkers.join(', ') : '-') + '</td><td>' + roombaBadge + '</td></tr>';
   }).join('');
 }
@@ -759,12 +776,17 @@ function buildSignalData(events) {
 
 function buildFunnelData(events) {
   const filtered = filterByLocation(events);
-  const skips = filtered.filter(e => e.event_type === 'departure_skip');
-  const departures = filtered.filter(e => e.event_type === 'departure').length;
-  const docks = filtered.filter(e => e.event_type === 'dock' || e.event_type === 'dock_timeout').length;
-  const skipReasons = {};
-  for (const s of skips) { const reason = s.skip_reason || 'unknown'; skipReasons[reason] = (skipReasons[reason] || 0) + 1; }
-  return { skipReasons, departures, docks };
+  const candidates = filtered.filter(e => e.event_type === 'departure_candidate').length;
+  const resets = filtered.filter(e => e.event_type === 'departure_candidate_reset');
+  const resetReasons = {};
+  for (const r of resets) {
+    const reason = r.candidate_reset_reason || 'unknown';
+    resetReasons[reason] = (resetReasons[reason] || 0) + 1;
+  }
+  const autoDepartures = filtered.filter(e => e.event_type === 'departure' && !isManualDeparture(e)).length;
+  const manualStarts = filtered.filter(e => e.event_type === 'departure' && isManualDeparture(e)).length;
+  const completions = filtered.filter(e => e.event_type === 'dock' || e.event_type === 'dock_timeout').length;
+  return { candidates, resetReasons, autoDepartures, manualStarts, completions };
 }
 
 function buildWalksPerDay(events) {
@@ -821,13 +843,32 @@ function renderCharts(events) {
 
   // Funnel horizontal bar
   const funnelBox = document.getElementById('funnelBox');
-  const SKIP_LABELS = { 'outside_walk_hours':'Outside Hours', 'confirmed_vacant':'Vacant', 'wifi_present':'WiFi Present', 'cabin_prompt_suppressed':'Prompt Suppressed' };
-  const SKIP_COLORS = { 'outside_walk_hours':'#6b7280', 'confirmed_vacant':C.muted, 'wifi_present':C.blue, 'cabin_prompt_suppressed':C.amber };
+  const SKIP_LABELS = {
+    'inside_geofence':'Reset: Back Inside',
+    'outside_walk_hours':'Reset: Outside Hours',
+    'return_monitor_active':'Reset: Monitor Active',
+    'no_occupied_location':'Reset: No Location',
+    'location_changed':'Reset: Location Changed',
+    'unknown':'Reset: Unknown',
+  };
+  const SKIP_COLORS = {
+    'inside_geofence':C.blue,
+    'outside_walk_hours':'#6b7280',
+    'return_monitor_active':C.purple,
+    'no_occupied_location':C.muted,
+    'location_changed':C.orange,
+    'unknown':'#6b7280',
+  };
   const fLabels = [], fValues = [], fColors = [];
-  for (const [reason, count] of Object.entries(funnel.skipReasons).sort((a, b) => b[1] - a[1])) {
+  fLabels.push('1st Outside Reading');
+  fValues.push(funnel.candidates);
+  fColors.push(C.amber);
+  for (const [reason, count] of Object.entries(funnel.resetReasons).sort((a, b) => b[1] - a[1])) {
     fLabels.push(SKIP_LABELS[reason] || reason); fValues.push(count); fColors.push(SKIP_COLORS[reason] || '#6b7280');
   }
-  fLabels.push('Departures', 'Docks'); fValues.push(funnel.departures, funnel.docks); fColors.push(C.green, C.teal);
+  fLabels.push('Fi Departures', 'Manual Starts', 'Completed Walks');
+  fValues.push(funnel.autoDepartures, funnel.manualStarts, funnel.completions);
+  fColors.push(C.green, C.orange, C.teal);
 
   if (fValues.some(v => v > 0)) {
     funnelBox.style.display = '';

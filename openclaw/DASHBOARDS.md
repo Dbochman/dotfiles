@@ -101,7 +101,7 @@ Tracks token consumption, costs, and agent activity for OpenClaw's Claude API us
 
 **Port 8552** · [Full spec](DOG-WALK-DASHBOARD.md)
 
-Visualizes dog walk departures, Roomba operations, return signal detection, and the departure suppression funnel.
+Visualizes dog walk departures, Roomba operations, return signal detection, and the Fi departure pipeline.
 
 ### What It Shows
 
@@ -112,7 +112,7 @@ Visualizes dog walk departures, Roomba operations, return signal detection, and 
 - **Recent Walks table** — date, location, duration, return signal badge, walkers, Roomba result
 - **Walk Duration** — scatter chart by location over time
 - **Return Signal Distribution** — doughnut (WiFi / Ring Motion / Fi GPS / Timeout)
-- **Detection Funnel** — horizontal bar showing skip reasons vs departures vs docks
+- **Departure Pipeline** — horizontal bar showing first outside reads, candidate resets, Fi departures, manual starts, and completed walks
 - **Walks per Day** — daily bar chart for trend analysis
 
 ### Data Sources
