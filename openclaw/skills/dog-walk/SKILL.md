@@ -81,16 +81,16 @@ The collar always resets to NORMAL when the walk ends (via the return monitor's 
 
 ### Roomba Snooze
 
-Roomba automation can be temporarily disabled per-location via the dog walk dashboard. When snoozed:
+Roomba automation can be temporarily disabled per-location via the **Roomba Dashboard** (port 8553). When snoozed:
 - **Start commands are skipped** — Roombas won't start on departure
 - **Dock commands still execute** — Roombas should never be left running
 - **Walk tracking continues** — GPS, return detection, and route data are unaffected
 
 Snooze state is stored at `~/.openclaw/dog-walk/snooze.json` and expires automatically.
 
-Dashboard UI: Snooze bar with 1h / 3h / 8h presets per location, plus a Clear button.
+Dashboard UI: Snooze bar on the Roomba Dashboard (port 8553) with 1h / 3h / 8h / Indef presets per location, plus a Clear button.
 
-API: `POST /api/snooze` with `{"location": "crosstown", "minutes": 60}` (or `"all"`, `0` to clear).
+API: `POST http://localhost:8553/api/snooze` with `{"location": "crosstown", "minutes": 60}` (or `"all"`, `0` to clear).
 
 ### Roomba Cooldown
 
@@ -133,6 +133,7 @@ Recent dog-walk changes touched these paths:
 
 - `openclaw/skills/dog-walk/dog-walk-listener.py`
 - `openclaw/dog-walk-dashboard.py`
+- `openclaw/roomba-dashboard.py`
 - `openclaw/skills/fi-collar/fi-api.py`
 
 If deploying to the Mac Mini, make sure the updated files are present under `~/.openclaw/`, then restart:
@@ -140,6 +141,7 @@ If deploying to the Mac Mini, make sure the updated files are present under `~/.
 ```bash
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-listener
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-dashboard
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.roomba-dashboard
 ```
 
 Quick verification:
@@ -147,7 +149,9 @@ Quick verification:
 ```bash
 tail -20 ~/.openclaw/logs/dog-walk-listener.log
 tail -20 ~/.openclaw/logs/dog-walk-dashboard.log
+tail -20 ~/.openclaw/logs/roomba-dashboard.log
 curl -s http://localhost:8552/api/routes?days=30 | jq '.meta'
+curl -s http://localhost:8553/api/roombas | jq '.'
 ```
 
 ## Skill Boundaries

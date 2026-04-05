@@ -8,7 +8,8 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 |------|-----------|-----|-------------|
 | 8550 | [Nest Climate](#nest-climate-dashboard) | http://dylans-mac-mini:8550 | 5 min (UI) · 30 min (snapshots) |
 | 8551 | [OpenClaw Usage](#openclaw-usage-dashboard) | http://dylans-mac-mini:8551 | 5 min (UI) · 15 min (snapshots) |
-| 8552 | [Dog Walk & Roomba](#dog-walk--roomba-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
+| 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
+| 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | On demand |
 
 ---
@@ -97,19 +98,18 @@ Tracks token consumption, costs, and agent activity for OpenClaw's Claude API us
 
 ---
 
-## Dog Walk & Roomba Dashboard
+## Dog Walk Dashboard
 
 **Port 8552** · [Full spec](DOG-WALK-DASHBOARD.md)
 
-Visualizes dog walk departures, Roomba operations, return signal detection, and the Fi departure pipeline.
+Visualizes dog walk departures, return signal detection, route maps, and the Fi departure pipeline.
 
 ### What It Shows
 
 - **Status cards** — current walk, last walk summary, return monitor state
 - **Potato (Fi collar) cards** — battery %, activity (Rest/Walk), GPS location, connection type, Fi base station status
-- **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status, tank level (via dorita980 MQTT)
-- **Cabin Roomba cards** — last mission outcome, duration, area cleaned (via iRobot Cloud API)
-- **Recent Walks table** — date, location, duration, return signal badge, walkers, Roomba result
+- **Walk map** — Leaflet route overlays and heatmaps per location
+- **Recent Walks table** — date, location, duration, return signal badge, walkers
 - **Walk Duration** — scatter chart by location over time
 - **Return Signal Distribution** — doughnut (WiFi / Ring Motion / Fi GPS / Timeout)
 - **Departure Pipeline** — horizontal bar showing first outside reads, candidate resets, Fi departures, manual starts, and completed walks
@@ -120,11 +120,44 @@ Visualizes dog walk departures, Roomba operations, return signal detection, and 
 | Source | Frequency | Data |
 |--------|-----------|------|
 | Dog Walk Listener | Event-driven | Fi GPS departure detection, return monitoring, dock lifecycle |
-| Crosstown Roomba (dorita980) | 5 min cache | Real-time battery, phase, bin, tank via SSH to MBP |
-| Cabin Roomba (iRobot Cloud) | 10 min cache | Last mission outcome via Gigya + AWS SigV4 REST API |
 | Fi GPS Collar | 2 min cache | Potato GPS, battery, activity, connection, geofence |
 | Network presence | Per walk + 60s polling | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
 | `dog-walk-start` CLI | Manual trigger | Inbox IPC to dog-walk listener |
+
+### Files
+
+| File | Path |
+|------|------|
+| Server | `openclaw/dog-walk-dashboard.py` → `~/.openclaw/bin/dog-walk-dashboard.py` |
+| Fi collar API | `openclaw/skills/fi-collar/fi-api.py` → `~/.openclaw/skills/fi-collar/fi-api.py` |
+| LaunchAgent | `openclaw/launchagents/ai.openclaw.dog-walk-dashboard.plist` |
+| Event history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
+| Current state | `~/.openclaw/dog-walk/state.json` |
+| Logs | `~/.openclaw/logs/dog-walk-dashboard.{log,err.log}` |
+
+---
+
+## Roomba Dashboard
+
+**Port 8553**
+
+Roomba status, snooze controls, and run history calendar heatmap for both locations.
+
+### What It Shows
+
+- **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status, tank level (via dorita980 MQTT)
+- **Cabin Roomba cards** — last mission outcome, duration, area cleaned (via iRobot Cloud API)
+- **Snooze controls** — temporarily disable Roomba automation per location (1h/3h/8h/Indef)
+- **Calendar heatmap** — monthly view of Roomba runs per location, gradient color scale, hover tooltips with run details
+
+### Data Sources
+
+| Source | Frequency | Data |
+|--------|-----------|------|
+| Crosstown Roomba (dorita980) | 5 min cache | Real-time battery, phase, bin, tank via SSH to MBP |
+| Cabin Roomba (iRobot Cloud) | 10 min cache | Last mission outcome via Gigya + AWS SigV4 REST API |
+| Dog Walk History JSONL | On demand | Roomba start/dock events per walk |
+| Snooze state | Real-time | Per-location snooze expiry |
 
 ### Locations
 
@@ -137,14 +170,12 @@ Visualizes dog walk departures, Roomba operations, return signal detection, and 
 
 | File | Path |
 |------|------|
-| Server | `openclaw/dog-walk-dashboard.py` → `~/.openclaw/bin/dog-walk-dashboard.py` |
-| Fi collar API | `openclaw/skills/fi-collar/fi-api.py` → `~/.openclaw/skills/fi-collar/fi-api.py` |
+| Server | `openclaw/roomba-dashboard.py` → `~/.openclaw/bin/roomba-dashboard.py` |
 | iRobot Cloud API | `openclaw/skills/cabin-roomba/irobot-cloud.py` → `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
-| LaunchAgent | `openclaw/launchagents/ai.openclaw.dog-walk-dashboard.plist` |
-| Event history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
-| Current state | `~/.openclaw/dog-walk/state.json` |
-| iRobot session cache | `~/.config/irobot-cloud/session.json` (1hr TTL) |
-| Logs | `~/.openclaw/logs/dog-walk-dashboard.{log,err.log}` |
+| LaunchAgent | `openclaw/launchagents/ai.openclaw.roomba-dashboard.plist` |
+| Snooze state | `~/.openclaw/dog-walk/snooze.json` |
+| Run history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
+| Logs | `~/.openclaw/logs/roomba-dashboard.{log,err.log}` |
 
 ---
 
@@ -228,5 +259,6 @@ ssh dbochman@dylans-mac-mini "tail -20 ~/.openclaw/logs/<name>-dashboard.err.log
 curl -s http://dylans-mac-mini:8550/ | head -5   # Nest
 curl -s http://dylans-mac-mini:8551/ | head -5   # Usage
 curl -s http://dylans-mac-mini:8552/ | head -5   # Dog Walk
+curl -s http://dylans-mac-mini:8553/ | head -5   # Roomba
 curl -s http://dylans-mac-mini:8585/ | head -5   # Financial
 ```

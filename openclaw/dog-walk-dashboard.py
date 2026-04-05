@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Dog Walk & Roomba Dashboard — single-file HTTP server with embedded UI.
+"""Dog Walk Dashboard — single-file HTTP server with embedded UI.
 
-Serves a JSON API and Chart.js dashboard for dog walk history and Roomba operations.
-Reads JSONL events from ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
-current state from ~/.openclaw/dog-walk/state.json, and route summaries from
-~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json
+Serves a JSON API and Chart.js dashboard for dog walk history, Fi GPS tracking,
+and route visualization. Roomba status and snooze controls moved to roomba-dashboard.py.
 
 Same architecture as nest-dashboard.py. Intended for Tailscale-only access.
 """
@@ -24,32 +22,13 @@ from urllib.parse import urlparse, parse_qs
 HISTORY_DIR = os.path.expanduser("~/.openclaw/dog-walk/history")
 STATE_FILE = os.path.expanduser("~/.openclaw/dog-walk/state.json")
 ROUTES_DIR = os.path.expanduser("~/.openclaw/dog-walk/routes")
-SNOOZE_FILE = os.path.expanduser("~/.openclaw/dog-walk/snooze.json")
 FI_COLLAR_CMD = os.path.expanduser("~/.openclaw/bin/fi-collar")
 SECRETS_FILE = os.path.expanduser("~/.openclaw/.secrets-cache")
 PORT = 8552
 MAX_DAYS = 365
 FI_CACHE_TTL = 120  # seconds — Fi GPS updates ~every 7min at rest, cache for 2min
-ROOMBA_CACHE_TTL = 300  # seconds — Roomba status changes slowly, cache for 5min
-ROOMBA_SSH_TIMEOUT = 25  # seconds per robot — dorita980 has 20s internal timeout
-CABIN_ROOMBA_CACHE_TTL = 600  # seconds — cloud API, cache for 10min
-IROBOT_CLOUD_SCRIPT = os.path.expanduser("~/.openclaw/skills/cabin-roomba/irobot-cloud.py")
-MACBOOK_HOST = "dylans-macbook-pro"
-ROOMBA_CMD_SCRIPT = "$HOME/.openclaw/rest980/roomba-cmd.js"
-ROOMBA_NODE = "/opt/homebrew/bin/node"
-ROOMBA_ENVS = {
-    "10max": {"env": "$HOME/.openclaw/rest980/env-10max", "label": "Roomba Combo 10 Max"},
-    "j5": {"env": "$HOME/.openclaw/rest980/env-j5", "label": "Roomba J5 (Scoomba)"},
-}
 
 _fi_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
-_roomba_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
-_cabin_roomba_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
-
-CABIN_ROBOT_BLIDS = {
-    "3D3ACA3E5298BA11AB7E84129F29D2DD": "Floomba",
-    "1D867094BA92F76D455065BCDBC68CCA": "Philly",
-}
 
 HOME_META = {
     "cabin": {
@@ -116,103 +95,6 @@ def fetch_fi_status():
         return data
     except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
         return {"error": str(e)}
-
-
-ROOMBA_PHASES = {
-    "charge": "Charging",
-    "new": "Starting",
-    "run": "Cleaning",
-    "pause": "Paused",
-    "stop": "Stopped",
-    "stuck": "Stuck!",
-    "hmMidMsn": "Recharging",
-    "hmUsrDock": "Returning",
-    "hmPostMsn": "Docking",
-    "evac": "Emptying bin",
-}
-
-
-def fetch_roomba_status():
-    """Fetch Crosstown Roomba statuses via SSH to MBP, with caching."""
-    with _roomba_cache["lock"]:
-        if time.time() - _roomba_cache["ts"] < ROOMBA_CACHE_TTL and _roomba_cache["data"] is not None:
-            return _roomba_cache["data"]
-
-    robots = {}
-    for name, cfg in ROOMBA_ENVS.items():
-        try:
-            cmd = f"PATH=/opt/homebrew/bin:$PATH {ROOMBA_NODE} {ROOMBA_CMD_SCRIPT} {cfg['env']} status"
-            result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=5", MACBOOK_HOST, cmd],
-                capture_output=True, text=True, timeout=ROOMBA_SSH_TIMEOUT,
-            )
-            if result.returncode != 0:
-                robots[name] = {"label": cfg["label"], "error": result.stderr[:200]}
-                continue
-
-            raw = json.loads(result.stdout.strip())
-            if "error" in raw:
-                robots[name] = {"label": cfg["label"], "error": raw.get("message", "unknown")}
-                continue
-
-            ms = raw.get("cleanMissionStatus", {})
-            phase = ms.get("phase", "unknown")
-            entry = {
-                "label": cfg["label"],
-                "phase": phase,
-                "status": ROOMBA_PHASES.get(phase, phase),
-                "battery": raw.get("batPct"),
-                "binFull": raw.get("bin", {}).get("full", False),
-                "binPresent": raw.get("bin", {}).get("present", True),
-                "error": ms.get("error", 0),
-                "missions": ms.get("nMssn"),
-            }
-            tank = raw.get("tankLvl")
-            if tank is not None:
-                entry["tank"] = tank
-            robots[name] = entry
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-            robots[name] = {"label": cfg["label"], "error": str(e)}
-
-    data = {"location": "crosstown", "robots": robots}
-    with _roomba_cache["lock"]:
-        _roomba_cache["data"] = data
-        _roomba_cache["ts"] = time.time()
-    return data
-
-
-def fetch_cabin_roomba_status():
-    """Fetch cabin Roomba last mission via iRobot cloud API, with caching."""
-    with _cabin_roomba_cache["lock"]:
-        if (time.time() - _cabin_roomba_cache["ts"] < CABIN_ROOMBA_CACHE_TTL
-                and _cabin_roomba_cache["data"] is not None):
-            return _cabin_roomba_cache["data"]
-
-    _load_secrets_env()
-    try:
-        result = subprocess.run(
-            [sys.executable, IROBOT_CLOUD_SCRIPT, "status"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            return {"error": "irobot-cloud failed", "stderr": result.stderr[:200]}
-
-        robots = {}
-        for line in result.stdout.strip().split("\n"):
-            if not line.strip():
-                continue
-            obj = json.loads(line)
-            name = obj.get("name", "unknown").lower()
-            if obj.get("blid") in CABIN_ROBOT_BLIDS:
-                robots[name] = obj
-        data = {"location": "cabin", "robots": robots}
-    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-        data = {"location": "cabin", "error": str(e)}
-
-    with _cabin_roomba_cache["lock"]:
-        _cabin_roomba_cache["data"] = data
-        _cabin_roomba_cache["ts"] = time.time()
-    return data
 
 
 def _parse_iso8601(ts_str):
@@ -296,36 +178,6 @@ def _route_matches(route, cutoff=None, allowed_locations=None):
     if cutoff is not None and started_dt < cutoff:
         return False
     return True
-
-
-def load_snooze():
-    """Load snooze state. Returns dict like {"crosstown": "2026-04-05T18:00:00Z", "cabin": null}."""
-    try:
-        if os.path.exists(SNOOZE_FILE):
-            with open(SNOOZE_FILE) as f:
-                data = json.load(f)
-            # Prune expired snoozes
-            now = datetime.now(timezone.utc)
-            changed = False
-            for loc in list(data):
-                if data[loc] and _parse_iso8601(data[loc]) and _parse_iso8601(data[loc]) < now:
-                    data[loc] = None
-                    changed = True
-            if changed:
-                save_snooze(data)
-            return data
-    except (OSError, json.JSONDecodeError):
-        pass
-    return {"crosstown": None, "cabin": None}
-
-
-def save_snooze(data):
-    """Persist snooze state to disk."""
-    os.makedirs(os.path.dirname(SNOOZE_FILE), exist_ok=True)
-    tmp = SNOOZE_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, SNOOZE_FILE)
 
 
 def load_events(days):
@@ -482,28 +334,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_heatmap(days, location)
         elif path == "/api/fi":
             self._serve_fi()
-        elif path == "/api/roombas":
-            self._serve_roombas()
-        elif path == "/api/cabin-roombas":
-            self._serve_cabin_roombas()
-        elif path == "/api/snooze":
-            self._serve_snooze_status()
-        else:
-            self._respond(404, {"error": "not found"})
-
-    def do_POST(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/") or "/"
-        if path == "/api/snooze":
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                body = json.loads(self.rfile.read(length)) if length else {}
-            except (json.JSONDecodeError, ValueError):
-                self._respond(400, {"error": "invalid json"})
-                return
-            location = body.get("location", "all")
-            minutes = body.get("minutes", 0)
-            self._set_snooze(location, minutes)
         else:
             self._respond(404, {"error": "not found"})
 
@@ -575,30 +405,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _serve_fi(self):
         data = fetch_fi_status()
         self._respond(200, data)
-
-    def _serve_roombas(self):
-        data = fetch_roomba_status()
-        self._respond(200, data)
-
-    def _serve_cabin_roombas(self):
-        data = fetch_cabin_roomba_status()
-        self._respond(200, data)
-
-    def _serve_snooze_status(self):
-        self._respond(200, load_snooze())
-
-    def _set_snooze(self, location, minutes):
-        snooze = load_snooze()
-        now = datetime.now(timezone.utc)
-        locations = ["crosstown", "cabin"] if location == "all" else [location]
-        for loc in locations:
-            if minutes > 0:
-                expires = (now + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                snooze[loc] = expires
-            else:
-                snooze[loc] = None
-        save_snooze(snooze)
-        self._respond(200, {"ok": True, "snooze": snooze})
 
     def _serve_html(self):
         body = DASHBOARD_HTML.encode()
@@ -728,18 +534,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
 .loading{text-align:center;color:var(--muted);padding:2rem}
 .error-banner{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:0.75rem;color:#ef4444;font-size:0.8rem;margin-bottom:1rem;display:none}
-
-/* Snooze bar */
-.snooze-bar{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0.75rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
-.snooze-bar h3{font-size:0.78rem;font-weight:600;color:var(--muted);white-space:nowrap}
-.snooze-group{display:flex;align-items:center;gap:0.5rem}
-.snooze-group .label{font-size:0.75rem;color:var(--text);min-width:70px}
-.snooze-group .status{font-size:0.72rem;min-width:80px}
-.snooze-btn{background:rgba(255,255,255,0.06);border:1px solid var(--border);color:var(--text);padding:0.25rem 0.6rem;border-radius:5px;cursor:pointer;font-size:0.7rem;transition:all 0.15s}
-.snooze-btn:hover{border-color:#f59e0b;color:#f59e0b}
-.snooze-btn.active{background:rgba(245,158,11,0.15);border-color:#f59e0b;color:#f59e0b}
-.snooze-btn.clear{border-color:rgba(34,197,94,0.4);color:#22c55e}
-.snooze-btn.clear:hover{border-color:#22c55e}
 </style>
 </head>
 <body>
@@ -756,31 +550,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 
 <div class="stats" id="statusCards"><div class="loading">Loading...</div></div>
 <div class="stats" id="potatoCard"></div>
-<div class="stats" id="roombaCards"></div>
-<div class="stats" id="cabinRoombaCards"></div>
-
-<div class="snooze-bar" id="snoozeBar">
-  <h3>Roomba Snooze</h3>
-  <div class="snooze-group" data-loc="crosstown">
-    <span class="label">Crosstown</span>
-    <span class="status" id="snoozeStatus-crosstown" style="color:var(--muted)">—</span>
-    <button class="snooze-btn" data-loc="crosstown" data-mins="60">1h</button>
-    <button class="snooze-btn" data-loc="crosstown" data-mins="180">3h</button>
-    <button class="snooze-btn" data-loc="crosstown" data-mins="480">8h</button>
-    <button class="snooze-btn" data-loc="crosstown" data-mins="525600">Indef</button>
-    <button class="snooze-btn clear" data-loc="crosstown" data-mins="0">Clear</button>
-  </div>
-  <div class="snooze-group" data-loc="cabin">
-    <span class="label">Cabin</span>
-    <span class="status" id="snoozeStatus-cabin" style="color:var(--muted)">—</span>
-    <button class="snooze-btn" data-loc="cabin" data-mins="60">1h</button>
-    <button class="snooze-btn" data-loc="cabin" data-mins="180">3h</button>
-    <button class="snooze-btn" data-loc="cabin" data-mins="480">8h</button>
-    <button class="snooze-btn" data-loc="cabin" data-mins="525600">Indef</button>
-    <button class="snooze-btn clear" data-loc="cabin" data-mins="0">Clear</button>
-  </div>
-</div>
-
 <div class="controls" id="locationControls">
   <button data-location="all" class="active">Both</button>
   <button data-location="cabin">Cabin</button>
@@ -1002,81 +771,6 @@ function renderPotatoCard(fi) {
     html += '</div>';
   }
 
-  el.innerHTML = html;
-}
-
-function renderRoombaCards(roombas) {
-  const el = document.getElementById('roombaCards');
-  if (!roombas || roombas.error || !roombas.robots) { el.innerHTML = ''; return; }
-
-  let html = '';
-  for (const [id, r] of Object.entries(roombas.robots)) {
-    if (r.error) {
-      html += '<div class="stat"><div class="stat-label">' + (r.label || id) + '</div>';
-      html += '<div class="stat-value" style="color:' + C.muted + '">Offline</div>';
-      html += '<div class="stat-sub" style="color:' + C.red + '">' + r.error + '</div></div>';
-      continue;
-    }
-
-    const status = r.status || 'Unknown';
-    const phase = r.phase || '';
-    const isActive = ['run', 'hmMidMsn', 'hmUsrDock', 'hmPostMsn', 'evac', 'new'].includes(phase);
-    const isError = phase === 'stuck' || r.error > 0;
-    const statusColor = isError ? C.red : isActive ? C.green : C.muted;
-
-    const bat = r.battery;
-    const batColor = bat == null ? C.muted : bat > 50 ? C.green : bat > 20 ? C.amber : C.red;
-
-    html += '<div class="stat"><div class="stat-label">' + (r.label || id) + '</div>';
-    html += '<div class="stat-value" style="color:' + statusColor + '">' + status + '</div>';
-
-    let sub = '';
-    if (bat != null) sub += '<span style="color:' + batColor + '">' + bat + '%</span>';
-    if (r.binFull) sub += ' <span class="badge badge-amber">Bin Full</span>';
-    if (!r.binPresent) sub += ' <span class="badge badge-red">No Bin</span>';
-    if (sub) html += '<div class="stat-sub">' + sub + '</div>';
-
-    if (r.tank != null) html += '<div class="stat-sub">Tank: ' + r.tank + '%</div>';
-    if (r.error > 0) html += '<div class="stat-sub" style="color:' + C.red + '">Error code ' + r.error + '</div>';
-    html += '</div>';
-  }
-  el.innerHTML = html;
-}
-
-function renderCabinRoombaCards(data) {
-  const el = document.getElementById('cabinRoombaCards');
-  if (!data || data.error || !data.robots || !Object.keys(data.robots).length) { el.innerHTML = ''; return; }
-
-  const MISSION_LABELS = { 'ok':'Completed', 'stuck':'Stuck', 'cancelled':'Cancelled' };
-  const MISSION_COLORS = { 'ok':C.green, 'stuck':C.red, 'cancelled':C.muted };
-
-  let html = '';
-  for (const [id, r] of Object.entries(data.robots)) {
-    if (r.error) {
-      html += '<div class="stat"><div class="stat-label">' + (r.name || id) + ' (Cabin)</div>';
-      html += '<div class="stat-value" style="color:' + C.muted + '">Offline</div></div>';
-      continue;
-    }
-
-    const mission = r.lastMission || 'unknown';
-    const label = MISSION_LABELS[mission] || mission;
-    const color = MISSION_COLORS[mission] || C.muted;
-
-    html += '<div class="stat"><div class="stat-label">' + (r.name || id) + ' (Cabin)</div>';
-    html += '<div class="stat-value" style="color:' + color + '">' + label + '</div>';
-
-    let sub = '';
-    if (r.durationMin != null) sub += r.durationMin + 'min';
-    if (r.sqft != null) sub += (sub ? ', ' : '') + r.sqft + ' sqft';
-    if (sub) html += '<div class="stat-sub">' + sub + '</div>';
-
-    if (r.startTime) {
-      const ago = Math.round((Date.now()/1000 - r.startTime) / 3600);
-      html += '<div class="stat-sub">' + (ago < 24 ? ago + 'h ago' : Math.round(ago/24) + 'd ago') + '</div>';
-    }
-    if (r.missions != null) html += '<div class="stat-sub">' + r.missions + ' missions</div>';
-    html += '</div>';
-  }
   el.innerHTML = html;
 }
 
@@ -1580,68 +1274,16 @@ function renderCharts(events) {
   }
 }
 
-// ── Snooze ──
-
-let currentSnooze = {};
-
-function renderSnooze(data) {
-  currentSnooze = data || {};
-  for (const loc of ['crosstown', 'cabin']) {
-    const el = document.getElementById('snoozeStatus-' + loc);
-    if (!el) continue;
-    const expires = currentSnooze[loc];
-    if (expires) {
-      const expDate = new Date(expires);
-      const remaining = Math.max(0, Math.round((expDate.getTime() - Date.now()) / 60000));
-      if (remaining > 0) {
-        el.textContent = remaining > 10000 ? 'Indefinite' : remaining < 60 ? remaining + 'm left' : Math.floor(remaining/60) + 'h ' + (remaining%60) + 'm left';
-        el.style.color = C.amber;
-      } else {
-        el.textContent = 'Active';
-        el.style.color = C.muted;
-      }
-    } else {
-      el.textContent = 'Active';
-      el.style.color = C.green;
-    }
-  }
-}
-
-async function setSnooze(location, minutes) {
-  try {
-    const resp = await fetch('/api/snooze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location, minutes }),
-    });
-    if (resp.ok) {
-      const result = await resp.json();
-      renderSnooze(result.snooze);
-    }
-  } catch (err) {
-    console.error('Snooze failed:', err);
-  }
-}
-
-document.getElementById('snoozeBar').addEventListener('click', e => {
-  const btn = e.target.closest('.snooze-btn');
-  if (!btn) return;
-  const loc = btn.dataset.loc;
-  const mins = parseInt(btn.dataset.mins);
-  setSnooze(loc, mins);
-});
-
 // ── Refresh ──
 
 async function refresh() {
   try {
-    const [eventsResp, stateResp, fiResp, routesResp, homesResp, snoozeResp] = await Promise.all([
+    const [eventsResp, stateResp, fiResp, routesResp, homesResp] = await Promise.all([
       fetch('/api/events?days=' + currentDays),
       fetch('/api/current'),
       fetch('/api/fi'),
       fetch('/api/routes?days=' + currentDays + '&location=' + currentLocation),
       fetch('/api/homes'),
-      fetch('/api/snooze'),
     ]);
     if (!eventsResp.ok || !stateResp.ok || !routesResp.ok || !homesResp.ok) throw new Error('HTTP ' + eventsResp.status);
     const eventsData = await eventsResp.json();
@@ -1656,7 +1298,6 @@ async function refresh() {
     renderStaleness(state);
     renderStatusCards(state);
     renderPotatoCard(fi);
-    renderSnooze(await snoozeResp.json());
     renderRouteCards();
     renderWalkTable();
     await renderMaps();
@@ -1665,17 +1306,6 @@ async function refresh() {
     console.error('Refresh failed:', err);
     document.getElementById('errorBanner').textContent = 'Failed to load data: ' + err.message;
     document.getElementById('errorBanner').style.display = 'block';
-  }
-  // Roombas fetched separately — SSH/cloud calls are slow, don't block page
-  try {
-    const [roombaResp, cabinResp] = await Promise.all([
-      fetch('/api/roombas'),
-      fetch('/api/cabin-roombas'),
-    ]);
-    renderRoombaCards(await roombaResp.json());
-    renderCabinRoombaCards(await cabinResp.json());
-  } catch (err) {
-    console.error('Roomba fetch failed:', err);
   }
 }
 
