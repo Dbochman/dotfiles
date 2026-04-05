@@ -321,7 +321,7 @@ COMMANDS = {
         "power_off": lambda a: ["samsung-tv", "power", a.get("name", "frame"), "off"],
     },
     "speaker": {
-        "wake": lambda a: [CATT_BIN, "-d", _SPEAKER_IPS.get(a["name"], a["name"]), "volume", "5"],
+        "wake": lambda a: ["speaker", "volume", a["name"], "5"],
         "volume": lambda a: ["speaker", "volume", a["name"], str(a["level"])],
         "mute": lambda a: ["speaker", "mute", a["name"]],
         "unmute": lambda a: ["speaker", "unmute", a["name"]],
