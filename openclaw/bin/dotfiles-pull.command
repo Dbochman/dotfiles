@@ -64,6 +64,17 @@ for wrapper in cielo roomba crosstown-roomba 8sleep mysa petlibro litter-robot c
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BIN_DST" >> "$LOG"
 
+# Deploy dashboard scripts to ~/.openclaw/bin/
+DASHBOARDS_DEPLOYED=0
+for dashboard in nest-dashboard.py usage-dashboard.py home-dashboard.py; do
+  if [ -f "$BIN_SRC/$dashboard" ]; then
+    cp "$BIN_SRC/$dashboard" "$BIN_DST/$dashboard"
+    chmod +x "$BIN_DST/$dashboard"
+    DASHBOARDS_DEPLOYED=$((DASHBOARDS_DEPLOYED + 1))
+  fi
+done
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) dashboards: deployed $DASHBOARDS_DEPLOYED to $BIN_DST" >> "$LOG"
+
 # Smoke test — verify CLIs resolve on PATH
 export PATH="$BIN_DST:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
 SMOKE_FAIL=0
