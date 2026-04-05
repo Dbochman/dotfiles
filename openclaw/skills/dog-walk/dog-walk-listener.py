@@ -385,6 +385,26 @@ def _route_point_from_fi(fi_result: dict | None) -> dict | None:
     }
 
 
+def _route_point_location(point: dict | None) -> str | None:
+    if not point:
+        return None
+    lat = point.get("lat")
+    lon = point.get("lon")
+    if lat is None or lon is None:
+        return None
+    for location, loc in _FI_LOCATIONS.items():
+        if _haversine(lat, lon, loc["lat"], loc["lon"]) <= loc["radius_m"]:
+            return location
+    return None
+
+
+def _route_end_location(route: dict) -> str | None:
+    points = route.get("points") or []
+    if not points:
+        return None
+    return _route_point_location(points[-1])
+
+
 def _coerce_distance_m(value) -> int | None:
     if value is None:
         return None
@@ -406,9 +426,15 @@ def _route_distance_m(points: list[dict]) -> int:
 def _summarize_route(route: dict, fi_result: dict | None = None) -> dict:
     points = route.get("points") or []
     fi_distance_m = _coerce_distance_m((fi_result or {}).get("walkDistance_m"))
+    end_location = _route_end_location(route)
+    origin_location = route.get("origin_location")
     return {
         "distance_m": fi_distance_m if fi_distance_m is not None else _route_distance_m(points),
         "point_count": len(points),
+        "end_location": end_location,
+        "is_interhome_transit": bool(
+            origin_location and end_location and origin_location != end_location
+        ),
     }
 
 
@@ -426,6 +452,8 @@ def _init_walk_route(
         "return_signal": None,
         "distance_m": 0,
         "point_count": 0,
+        "end_location": None,
+        "is_interhome_transit": False,
         "points": [],
     }
     point = _route_point_from_fi(fi_result)
@@ -461,6 +489,8 @@ def _append_walk_route_point(
             "return_signal": None,
             "distance_m": 0,
             "point_count": 0,
+            "end_location": None,
+            "is_interhome_transit": False,
             "points": [],
         }
 
@@ -506,6 +536,8 @@ def _finalize_walk_route(
             "return_signal": None,
             "distance_m": 0,
             "point_count": 0,
+            "end_location": None,
+            "is_interhome_transit": False,
             "points": [],
         }
 

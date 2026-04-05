@@ -189,7 +189,7 @@ Collected by `dog-walk-listener.py`, written on each dog walk event.
 
 `home_location` is the last home geofence Potato was positively inside. Departure detection now anchors to that Fi-derived home rather than choosing a house from presence state first.
 
-Per-walk route files are stored separately at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`. These contain `distance_m`, `point_count`, and the persisted Fi point list used for future route maps.
+Per-walk route files are stored separately at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`. These contain `distance_m`, `point_count`, the persisted Fi point list used for future route maps, and an inferred `end_location`. Routes marked as inter-home transits are filtered out of the dashboard route-summary API.
 
 ## LaunchAgent
 

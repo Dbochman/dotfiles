@@ -99,11 +99,15 @@ The listener also persists a Fi-derived home anchor in `state.json`:
 
 One JSON file per walk. These are written by the listener on departure, appended during return monitoring, and finalized on dock or timeout.
 
+Inter-home transits are marked at the route-file level and excluded from `GET /api/routes`, so future map views only see walks that start and end at the same house.
+
 Top-level fields:
 
 - `walk_id`: immutable walk identifier
 - `origin_location`: house the walk started from
 - `started_at` / `ended_at`
+- `end_location`: inferred home geofence for the final route point, when known
+- `is_interhome_transit`: true when `end_location` differs from `origin_location`
 - `return_signal`
 - `distance_m`
 - `point_count`

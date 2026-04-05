@@ -268,6 +268,8 @@ def load_route_summaries(days, location="all"):
             origin_location = route.get("origin_location")
             if allowed_locations is not None and origin_location not in allowed_locations:
                 continue
+            if route.get("is_interhome_transit"):
+                continue
 
             started_at = route.get("started_at")
             try:
@@ -282,6 +284,7 @@ def load_route_summaries(days, location="all"):
                 "origin_location": origin_location,
                 "started_at": started_at,
                 "ended_at": route.get("ended_at"),
+                "end_location": route.get("end_location"),
                 "return_signal": route.get("return_signal"),
                 "distance_m": route.get("distance_m", 0),
                 "point_count": route.get("point_count", 0),
