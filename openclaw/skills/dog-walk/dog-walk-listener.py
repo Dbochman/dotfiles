@@ -1049,7 +1049,11 @@ async def _fi_departure_poll_loop() -> None:
     - Only when no walk is already active
     """
     FI_POLL_INTERVAL = 180  # 3 minutes
+    FI_FAST_POLL_INTERVAL = 30  # faster polling after base disconnect
+    CONFIRM_NORMAL = 180  # normal: 2 readings 3 min apart
+    CONFIRM_BASE_DISCONNECT = 60  # faster: base station disconnected
     last_outside_reading = None
+    last_connection = "Base"  # track base station connection transitions
     home_anchor = _get_home_anchor()
 
     log("FI DEPARTURE: Polling loop started (every 3 min during walk hours)")
@@ -1078,10 +1082,13 @@ async def _fi_departure_poll_loop() -> None:
 
     while True:
         try:
-            await asyncio.sleep(FI_POLL_INTERVAL)
+            # Use faster polling after base station disconnect
+            poll_interval = FI_FAST_POLL_INTERVAL if last_connection != "Base" and last_outside_reading else FI_POLL_INTERVAL
+            await asyncio.sleep(poll_interval)
 
             if not _is_walk_hour():
                 reset_candidate("outside_walk_hours")
+                last_connection = "Base"  # reset on walk-hour boundary
                 continue
 
             if _return_monitor_active:
@@ -1092,6 +1099,12 @@ async def _fi_departure_poll_loop() -> None:
             if not fi_result:
                 continue
 
+            # Track base station connection transitions
+            connection = fi_result.get("connection", "")
+            if last_connection == "Base" and connection != "Base" and connection:
+                log(f"FI DEPARTURE: Base station disconnect detected (connection: {last_connection} → {connection})")
+            last_connection = connection or last_connection
+
             fi_location = fi_result.get("location")
             fi_at_location = bool(fi_result.get("at_location")) and fi_location in _FI_LOCATIONS
 
@@ -1100,6 +1113,8 @@ async def _fi_departure_poll_loop() -> None:
                     home_anchor = fi_location
                     _update_state_home_anchor(fi_location, distance_m=fi_result.get("distance_m"))
                 reset_candidate("inside_geofence", fi_result.get("distance_m"))
+                if connection == "Base":
+                    last_connection = "Base"  # reset on confirmed at-home
                 continue
 
             candidate_location = home_anchor or fi_location
@@ -1149,8 +1164,10 @@ async def _fi_departure_poll_loop() -> None:
                 continue
 
             time_since_first = now - last_outside_reading["monotonic_started_at"]
-            if time_since_first < 180:
-                log(f"FI DEPARTURE: Potato {dist}m from {candidate_location} (confirming, {int(time_since_first)}s since first)")
+            confirm_threshold = CONFIRM_BASE_DISCONNECT if last_connection != "Base" else CONFIRM_NORMAL
+            if time_since_first < confirm_threshold:
+                extra = f", base disconnected — fast confirm" if confirm_threshold == CONFIRM_BASE_DISCONNECT else ""
+                log(f"FI DEPARTURE: Potato {dist}m from {candidate_location} (confirming, {int(time_since_first)}s since first{extra})")
                 continue
 
             # Confirmed departure
