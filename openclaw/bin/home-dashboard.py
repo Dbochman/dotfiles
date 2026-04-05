@@ -22,6 +22,8 @@ PRESENCE_STATE_PATH = os.path.expanduser("~/.openclaw/presence/state.json")
 NEST_HISTORY_DIR = os.path.expanduser("~/.openclaw/nest-history")
 DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
 SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
+CATT_BIN = os.path.expanduser("~/.local/bin/catt")
+_SPEAKER_IPS = {"bedroom": "192.168.1.163", "living-room": "192.168.1.66"}
 
 
 def _load_secrets():
@@ -309,6 +311,7 @@ COMMANDS = {
         "power_off": lambda a: ["samsung-tv", "power", a.get("name", "frame"), "off"],
     },
     "speaker": {
+        "wake": lambda a: [CATT_BIN, "-d", _SPEAKER_IPS.get(a["name"], a["name"]), "volume", "5"],
         "volume": lambda a: ["speaker", "volume", a["name"], str(a["level"])],
         "mute": lambda a: ["speaker", "mute", a["name"]],
         "unmute": lambda a: ["speaker", "unmute", a["name"]],
@@ -522,8 +525,10 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .room-temp { font-size: 1.25rem; font-weight: 700; }
 .room-meta { margin-top: 6px; font-size: 0.82rem; color: var(--text-muted); }
 .controls { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
-.controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-.controls-grid input, .controls-grid select { width: 100%; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--text); padding: 10px 12px; font: inherit; }
+.controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.controls-grid input, .controls-grid select { width: 100%; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; }
+.controls-grid select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M2 4l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; padding-right: 32px; cursor: pointer; }
+.controls-grid select option { background: var(--surface); color: var(--text); padding: 8px; }
 .command-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .command-row button { background: transparent; }
 .command-row button:hover, .refresh-button:hover, .segmented button:hover { border-color: var(--text-muted); }
@@ -554,17 +559,6 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
   <div id="feedback" class="feedback hidden"></div>
 
   <section class="cards">
-    <article class="card card-wide" data-location="both">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Presence</div>
-          <h2>Presence</h2>
-        </div>
-        <span class="location-pill">Both</span>
-      </div>
-      <div id="presenceContent" class="content"></div>
-    </article>
-
     <article class="card" data-location="crosstown">
       <div class="card-header">
         <div>
@@ -823,10 +817,14 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
       <div id="speakersContent" class="content"></div>
       <div class="controls">
         <form id="speaker-form" class="controls-grid">
-          <input name="name" placeholder="Speaker name" value="bedroom">
+          <select name="name">
+            <option value="bedroom" selected>Bedroom</option>
+            <option value="living-room">Living Room</option>
+          </select>
           <input name="level" type="number" min="0" max="100" placeholder="Volume">
         </form>
         <div class="command-row">
+          <button type="button" data-command data-device="speaker" data-action="wake" data-form="speaker-form" data-fields="name">Wake</button>
           <button type="button" data-command data-device="speaker" data-action="volume" data-form="speaker-form" data-fields="name,level">Set Volume</button>
           <button type="button" data-command data-device="speaker" data-action="mute" data-form="speaker-form" data-fields="name">Mute</button>
           <button type="button" data-command data-device="speaker" data-action="unmute" data-form="speaker-form" data-fields="name">Unmute</button>
@@ -1111,6 +1109,31 @@ function renderLock(result) {
   </div>`;
 }
 
+function renderSpeakers(result) {
+  if (!result) return '<div class="muted">No speaker data</div>';
+  if (result.error) {
+    const msg = result.error || '';
+    if (msg.includes('timed out') || msg.includes('UNREACHABLE') || msg.includes('urlopen error')) {
+      return `<div class="subcard">
+        <div style="color:var(--text-muted);margin-bottom:8px">Speakers are likely asleep</div>
+        <div style="font-size:0.85rem;color:var(--text-muted)">Google Home speakers go idle after inactivity. Use the Wake button below to send a cast ping, then retry status.</div>
+      </div>`;
+    }
+    return renderError(result);
+  }
+  if (result.raw) {
+    const raw = result.raw || '';
+    if (raw.includes('UNREACHABLE') || raw.includes('timed out')) {
+      return `<div class="subcard">
+        <div style="color:var(--text-muted);margin-bottom:8px">Speakers are likely asleep</div>
+        <div style="font-size:0.85rem;color:var(--text-muted)">Google Home speakers go idle after inactivity. Use the Wake button below to send a cast ping, then retry status.</div>
+      </div>`;
+    }
+    return renderPre(raw);
+  }
+  return renderSimpleObject(result);
+}
+
 function renderDogWalk(result) {
   if (!result) return '<div class="muted">No dog walk data</div>';
   if (result.error) return renderError(result);
@@ -1176,7 +1199,6 @@ function applyLocationFilter() {
 
 function renderDashboard() {
   const data = state.data || {};
-  setContent('presenceContent', renderPresence(data.presence));
   setContent('hueCrosstownContent', renderRawResult(data.hue_crosstown));
   setContent('hueCabinContent', renderRawResult(data.hue_cabin));
   setContent('nestContent', renderNest(data.nest));
@@ -1186,7 +1208,7 @@ function renderDashboard() {
   setContent('roombasCrosstownContent', renderRawResult(data.roombas_crosstown));
   setContent('roombasCabinContent', renderRawResult(data.roombas_cabin));
   setContent('tvContent', renderRawResult(data.tv));
-  setContent('speakersContent', renderRawResult(data.speakers));
+  setContent('speakersContent', renderSpeakers(data.speakers));
   setContent('litterRobotContent', renderRawResult(data.litter_robot));
   setContent('petlibroContent', renderRawResult(data.petlibro));
   setContent('eightSleepContent', renderRawResult(data['8sleep']));
