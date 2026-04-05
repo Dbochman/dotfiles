@@ -19,5 +19,12 @@
     <string>/Users/dbochman/.openclaw/logs/home-dashboard.err.log</string>
     <key>WorkingDirectory</key>
     <string>/Users/dbochman</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/dbochman</string>
+        <key>PATH</key>
+        <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
 </dict>
 </plist>
