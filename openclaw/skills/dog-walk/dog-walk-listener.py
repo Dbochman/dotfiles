@@ -1094,95 +1094,95 @@ async def _return_poll_loop(location: str) -> None:
             elapsed = time.time() - start_time
 
             try:
+                return_signal = None
+                elapsed_min = int(elapsed / 60)
+
                 # 1. Ring motion (event-driven flag set by _handle_motion)
                 if _ring_motion_during_walk:
                     _ring_motion_during_walk = False
-                    elapsed_min = int(elapsed / 60)
+                    return_signal = "ring_motion"
                     log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
-                    # Final walk path + GPS capture before docking
-                    walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
-                    if walk_path:
-                        await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
-                    return_fi = await asyncio.to_thread(_check_fi_gps, location)
-                    if return_fi:
-                        _append_active_walk_route_point(return_fi)
-                    roomba_result = run_roomba_command(location, "dock")
-                    send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: Ring doorbell motion)")
-                    _update_state_dog_walk(location, "dock", return_signal="ring_motion", roomba_result=roomba_result)
-                    _update_state_return_monitor(location, "stop")
-                    return
 
                 # 2. Network WiFi presence (skip early — phones linger at front door)
-                if elapsed >= MIN_WALK_FOR_WIFI:
+                elif elapsed >= MIN_WALK_FOR_WIFI:
                     wifi_detail = await asyncio.to_thread(_check_network_presence, location)
                     _update_state_return_monitor(location, "poll", network_detail=wifi_detail)
                     if wifi_detail["any_present"]:
-                        elapsed_min = int(elapsed / 60)
+                        return_signal = "network_wifi"
                         log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
-                        # Final walk path + GPS capture before docking
+
+                # 3. Fi GPS geofence + speed check
+                if not return_signal:
+                    fi_result = await asyncio.to_thread(_check_fi_gps, location)
+                    if fi_result:
+                        _append_active_walk_route_point(fi_result)
+                        _update_state_return_monitor(location, "poll", fi_result=fi_result)
+
+                        # Car speed detection — switch to NORMAL to save battery
+                        if prev_gps and lost_dog_active:
+                            lat1, lon1 = prev_gps["latitude"], prev_gps["longitude"]
+                            lat2, lon2 = fi_result["latitude"], fi_result["longitude"]
+                            dist_between = _haversine(lat1, lon1, lat2, lon2)
+                            time_between = fi_result.get("age_s", 30)
+                            prev_age = prev_gps.get("age_s", 30)
+                            time_gap = max(abs(time_between - prev_age), 10)
+                            speed_mps = dist_between / time_gap if time_gap > 0 else 0
+                            if speed_mps >= CAR_SPEED_MPS:
+                                if car_speed_since is None:
+                                    car_speed_since = time.time()
+                                    log(f"RETURN MONITOR: Car speed detected ({speed_mps:.1f} m/s = {speed_mps * 2.237:.0f} mph)")
+                                elif time.time() - car_speed_since >= CAR_DURATION_S:
+                                    log(f"RETURN MONITOR: Car travel >6min — switching collar to NORMAL to save battery")
+                                    _set_fi_collar_mode("NORMAL")
+                                    lost_dog_active = False
+                            else:
+                                car_speed_since = None
+
+                        prev_gps = fi_result
+
+                        if fi_result.get("at_monitored_location"):
+                            dist = fi_result.get("distance_to_monitored", "?")
+                            return_signal = "fi_gps"
+                            log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
+                        else:
+                            dist = fi_result.get("distance_to_monitored", "?")
+                            log(f"RETURN MONITOR: Fi GPS — Potato {dist}m from {location} (outside geofence)")
+
+                # --- Dock and finalize if any signal triggered ---
+                if return_signal:
+                    # Walk path + final GPS — best effort, don't block finalization
+                    try:
                         walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
                         if walk_path:
                             await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
                         return_fi = await asyncio.to_thread(_check_fi_gps, location)
                         if return_fi:
                             _append_active_walk_route_point(return_fi)
+                    except Exception as e:
+                        log(f"RETURN MONITOR: Walk path capture failed (non-fatal): {e}")
+
+                    # Dock Roombas — best effort
+                    roomba_result = None
+                    try:
                         roomba_result = run_roomba_command(location, "dock")
-                        send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: WiFi reconnect)")
-                        _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
+                    except Exception as e:
+                        log(f"RETURN MONITOR: Dock command failed: {e}")
+                        roomba_result = {"success": False, "results": [], "error": str(e)}
+
+                    # Notify + finalize state — best effort
+                    signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": f"Fi GPS"}
+                    try:
+                        send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: {signal_labels.get(return_signal, return_signal)})")
+                    except Exception as e:
+                        log(f"RETURN MONITOR: iMessage failed (non-fatal): {e}")
+
+                    try:
+                        _update_state_dog_walk(location, "dock", return_signal=return_signal, roomba_result=roomba_result)
                         _update_state_return_monitor(location, "stop")
-                        return
+                    except Exception as e:
+                        log(f"RETURN MONITOR: State update failed (non-fatal): {e}")
 
-                # 3. Fi GPS geofence + speed check
-                fi_result = await asyncio.to_thread(_check_fi_gps, location)
-                if fi_result:
-                    _append_active_walk_route_point(fi_result)
-                    _update_state_return_monitor(location, "poll", fi_result=fi_result)
-
-                    # Car speed detection — switch to NORMAL to save battery
-                    if prev_gps and lost_dog_active:
-                        lat1, lon1 = prev_gps["latitude"], prev_gps["longitude"]
-                        lat2, lon2 = fi_result["latitude"], fi_result["longitude"]
-                        dist_between = _haversine(lat1, lon1, lat2, lon2)
-                        time_between = fi_result.get("age_s", 30)
-                        prev_age = prev_gps.get("age_s", 30)
-                        # Estimate time gap between the two readings
-                        time_gap = max(abs(time_between - prev_age), 10)
-                        speed_mps = dist_between / time_gap if time_gap > 0 else 0
-                        if speed_mps >= CAR_SPEED_MPS:
-                            if car_speed_since is None:
-                                car_speed_since = time.time()
-                                log(f"RETURN MONITOR: Car speed detected ({speed_mps:.1f} m/s = {speed_mps * 2.237:.0f} mph)")
-                            elif time.time() - car_speed_since >= CAR_DURATION_S:
-                                log(f"RETURN MONITOR: Car travel >6min — switching collar to NORMAL to save battery")
-                                _set_fi_collar_mode("NORMAL")
-                                lost_dog_active = False
-                        else:
-                            car_speed_since = None  # reset if speed drops
-
-                    prev_gps = fi_result
-
-                    if fi_result.get("at_monitored_location"):
-                        elapsed_min = int(elapsed / 60)
-                        dist = fi_result.get("distance_to_monitored", "?")
-                        log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
-                        # Final walk path capture before docking
-                        walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
-                        if walk_path:
-                            await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
-                        roomba_result = run_roomba_command(location, "dock")
-                        send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: Fi GPS — Potato {dist}m from home)")
-                        _update_state_dog_walk(
-                            location,
-                            "dock",
-                            return_signal="fi_gps",
-                            roomba_result=roomba_result,
-                            fi_result=fi_result,
-                        )
-                        _update_state_return_monitor(location, "stop")
-                        return
-                    else:
-                        dist = fi_result.get("distance_to_monitored", "?")
-                        log(f"RETURN MONITOR: Fi GPS — Potato {dist}m from {location} (outside geofence)")
+                    return  # Always exit after return detected — never loop back
 
             except asyncio.CancelledError:
                 log("RETURN MONITOR: Cancelled")
