@@ -11,7 +11,17 @@
 #   - press --app "FindMy"  (process name, no space)
 #   - image --mode frontmost (most reliable for screenshot capture)
 #
-# People order in sidebar: Me (0) → Julia Jennings (1) → Dylan Bochman (2)
+# FindMy People sidebar (0-indexed from top):
+#   0: Me (clawdbotbochman)
+#   1: Julia Jennings
+#   2: Dylan Bochman
+#
+# Navigation model:
+#   _open_and_reset positions the cursor at 0 (Me) by pressing Up x3.
+#   _navigate_and_capture takes a RELATIVE step count from the current
+#   cursor position — it does NOT reset. For sequential captures ("both"),
+#   each call moves incrementally. For single lookups, the step count is
+#   the absolute position from the top.
 #
 # Requires:
 #   - peekaboo with Screen Recording + Accessibility TCC grants
@@ -32,23 +42,33 @@ fi
 NAME_LOWER="$(echo "$NAME" | tr '[:upper:]' '[:lower:]')"
 
 # ---------------------------------------------------------------------------
-# Helper: navigate to sidebar position and capture
-# Args: $1=position (0-indexed), $2=person label, $3=file tag
-# Assumes FindMy is already frontmost and cursor is at position 0 (Me).
+# Helper: press Down N times from CURRENT cursor position, wait for the map
+# to settle, then capture the frontmost window.
+#
+# Args: $1=steps  Number of Down presses from wherever the cursor is now.
+#       $2=person Human-readable name for JSON output.
+#       $3=tag    Short slug for the filename (e.g. "dylan").
+#
+# Navigation model:
+#   _open_and_reset always leaves the cursor at position 0 (Me).
+#   After that, each call to _navigate_and_capture moves the cursor
+#   RELATIVE to its current position — it does NOT reset to the top.
+#   So for sequential captures (e.g. "both"), call this once with
+#   steps=1 for Julia, then again with steps=1 for Dylan.
+#   For a single lookup, pass the absolute position (e.g. steps=2
+#   for Dylan from the top).
 # ---------------------------------------------------------------------------
 _navigate_and_capture() {
-    local target_pos="$1" person="$2" tag="$3"
+    local steps="$1" person="$2" tag="$3"
 
-    # Navigate down from current position (0) to target
-    for i in $(seq 1 "$target_pos"); do
+    for i in $(seq 1 "$steps"); do
         peekaboo press down --app "FindMy" >/dev/null 2>&1
         sleep 0.5
     done
 
-    # Wait for map to animate and zoom
+    # Wait for map to animate and zoom to the selected person
     sleep 3
 
-    # Capture
     local ts
     ts=$(date +%s)
     local capture_path="$CAPTURE_DIR/findmy-${tag}-${ts}.png"

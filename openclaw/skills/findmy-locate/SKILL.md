@@ -49,13 +49,17 @@ The sidebar order matters — the script navigates via keyboard arrow keys.
 
 ## How It Works
 
-1. Opens Find My app (`open -a "Find My"`)
-2. Navigates to the top of the People sidebar (Up arrow x3)
-3. Arrow-downs to the target person's position
-4. Waits 3 seconds for the map to animate and zoom
-5. Captures the window screenshot via Peekaboo
+1. Opens Find My app and brings it to the front
+2. Resets the cursor to position 0 (Me) by pressing Up x3
+3. Presses Down N times to reach the target person
+4. Waits 3 seconds for the map to animate and zoom to the pin
+5. Captures the frontmost window via `peekaboo image --mode frontmost`
 
-FindMy blocks programmatic mouse clicks (accessibility API clicks are ignored) but accepts keyboard input via Peekaboo's key press automation.
+**Navigation is relative.** After reset, the cursor starts at position 0. Each `_navigate_and_capture` call moves Down by a step count relative to the *current* cursor position — it does NOT reset between captures. This is why `both` works in a single pass: reset → Down 1 (Julia, capture) → Down 1 more (Dylan, capture).
+
+**FindMy blocks mouse clicks** — accessibility API clicks are silently ignored. Keyboard arrow keys via Peekaboo are the only reliable way to navigate the sidebar.
+
+**If the People tab isn't showing** (Items or Devices tab is active), keyboard navigation won't reach the people list. The script assumes People is the active tab. If captures consistently fail, manually click the People tab once on the Mini.
 
 ## Requirements
 
