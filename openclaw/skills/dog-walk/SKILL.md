@@ -35,6 +35,7 @@ A polling loop checks Potato's Fi collar GPS every 3 minutes during walk hours. 
 
 **Pre-checks:**
 - **Time-of-day filter**: only active during walk hours
+- **Base-station echo filter**: when Fi API is slow to transition from Rest to Walk, it returns base station coords as pet position. If pet coords match a home location within 5m and connection is not "Base", the reading is discarded as stale.
 
 **Per-location Roomba commands:**
 
@@ -58,7 +59,7 @@ After departure, the return monitor uses three signals — any one triggers Room
 |--------|----------|-------------|
 | **Ring motion** | Event-driven | Person detected at doorbell during monitoring |
 | **WiFi / network presence** | Every 60s (after 10min) | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. **Ignored for first 10 minutes** — phones linger on WiFi at the front door. |
-| **Fi GPS** | Every 60s | Polls Potato's Fi collar GPS. Docks when Potato re-enters home geofence. |
+| **Fi GPS** | Every 60s | Polls Potato's Fi collar GPS. Docks when Potato re-enters home geofence. Base-station echo detection prevents false "at home" readings. |
 
 - 2 minutes after departure, a network scan identifies **who left**
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
