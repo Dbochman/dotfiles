@@ -6,11 +6,15 @@ Reference for all cron jobs defined in `~/.openclaw/cron/jobs.json` on the Mac M
 
 ## Recurring Jobs
 
-| ID | Schedule | Delivery | Description |
-|----|----------|----------|-------------|
-| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | silent (self-delivers text via BB API) | Julia's morning briefing: calendar preview, inbox triage (label/archive/draft), text summary to Julia via iMessage |
-| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | announce to Dylan via BB | Dylan's morning briefing: calendar (7-day) + inbox summary (24h). Read-only, no email actions |
-| `weekly-report-0001` | Sundays 3 PM ET | announce to Dylan via BB | Combined weekly activity report (log parsing, API calls, sessions, week-over-week), security check (gateway, BB, auth, disk, services), and CrisisMode health scan |
+| ID | Schedule | Tools | Delivery | Description |
+|----|----------|-------|----------|-------------|
+| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | silent (self-delivers text via BB API) | Julia's morning briefing: calendar preview, inbox triage, 8sleep summary, text to Julia via iMessage |
+| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `exec` | announce to Dylan via BB | Dylan's morning briefing: calendar (7-day) + inbox summary (24h) + 8sleep summary. Read-only, no email actions |
+| `weekly-report-0001` | Sundays 3 PM ET | `exec` | announce to Dylan via BB | Combined weekly activity report, security check (gateway, BB, auth, disk, services), and CrisisMode health scan |
+
+### Tool allowlists (added 2026-04-04, requires OpenClaw v2026.4.1+)
+
+Jobs with `tools: exec` can invoke shell commands via the exec tool. Isolated cron sessions do NOT have `~/.openclaw/bin` on PATH — all custom CLI commands must use **full absolute paths** (e.g. `/Users/dbochman/.openclaw/bin/8sleep sleep dylan`).
 
 ## One-Shot Date Night Bookings
 
