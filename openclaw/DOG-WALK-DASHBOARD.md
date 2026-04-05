@@ -80,7 +80,7 @@ One JSON object per line. Every line is a full state snapshot with an `event_typ
 | `dock_timeout` | 2-hour safety fallback dock | Rare |
 | `vision` | (legacy, no longer generated) | — |
 | `return_start` | Return monitoring started | Per walk |
-| `return_poll` | Network/Fi GPS check during monitoring | Every ~60s during walk |
+| `return_poll` | Network/Fi GPS check during monitoring | Every ~30s during walk |
 | `return_stop` | Return monitoring stopped | Per walk |
 | `state_update` | Generic state write (default) | Miscellaneous |
 

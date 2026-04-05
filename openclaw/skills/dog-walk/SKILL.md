@@ -58,11 +58,14 @@ After departure, the return monitor uses three signals — any one triggers Room
 | Signal | Interval | How it works |
 |--------|----------|-------------|
 | **Ring motion** | Event-driven | Person detected at doorbell during monitoring |
-| **WiFi / network presence** | Every 60s (after 10min) | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. **Ignored for first 10 minutes** — phones linger on WiFi at the front door. |
-| **Fi GPS** | Every 60s | Polls Potato's Fi collar GPS. Docks when Potato re-enters home geofence. Base-station echo detection prevents false "at home" readings. |
+| **WiFi / network presence** | Every 30s (after 10min) | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. **Ignored for first 10 minutes** — phones linger on WiFi at the front door. |
+| **Fi GPS** | Every 30s | Polls Potato's Fi collar GPS. Docks when Potato re-enters home geofence. Base-station echo detection prevents false "at home" readings. |
 
+- Departure GPS point is seeded as the first route point for dashboard maps
 - 2 minutes after departure, a network scan identifies **who left**
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
+- On return, a final Fi GPS point is captured before docking (for route completeness)
+- An iMessage notification is sent on return with walk duration and which signal triggered it
 - Safety fallback: auto-docks after 2 hours if no return detected
 
 ### Manual Trigger
