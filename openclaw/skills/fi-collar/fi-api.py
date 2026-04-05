@@ -249,6 +249,7 @@ def cmd_status():
                 "name": pet["name"],
                 "activity": activity.get("__typename", "Unknown").replace("Ongoing", ""),
                 "areaName": activity.get("areaName"),
+                "lastReport": activity.get("lastReportTimestamp") or activity.get("start"),
                 "connection": conn_type,
                 "connectionDetail": conn_detail,
                 "connectionDate": conn.get("date"),
@@ -264,6 +265,8 @@ def cmd_status():
             if activity.get("place"):
                 result["place"] = activity["place"].get("name")
                 result["address"] = activity["place"].get("address")
+            if activity.get("distance") is not None:
+                result["walkDistance_m"] = activity["distance"]
 
             print(json.dumps(result))
 

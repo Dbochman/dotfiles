@@ -77,6 +77,7 @@ if os.environ.get("CABIN_LAT") and os.environ.get("CABIN_LON"):
 
 STATE_FILE = Path.home() / ".openclaw/dog-walk/state.json"
 HISTORY_DIR = Path.home() / ".openclaw/dog-walk/history"
+ROUTES_DIR = Path.home() / ".openclaw/dog-walk/routes"
 
 # State file serialization lock
 _state_lock = threading.Lock()
@@ -167,6 +168,7 @@ def _update_state_dog_walk(
     walkers: list[str] | None = None,
     skip_reason: str | None = None,
     skip_details: dict | None = None,
+    fi_result: dict | None = None,
 ) -> None:
     with _state_lock:
         state = _read_state()
@@ -177,9 +179,12 @@ def _update_state_dog_walk(
         loc_roombas = roombas.get(location) or {}
 
         if event == "departure":
+            walk_id = _make_walk_id(location, now)
             walk = {
                 "active": True,
+                "walk_id": walk_id,
                 "location": location,
+                "origin_location": location,
                 "departed_at": now,
                 "returned_at": None,
                 "people": people,
@@ -187,7 +192,17 @@ def _update_state_dog_walk(
                 "walkers": None,
                 "return_signal": None,
                 "walk_duration_minutes": None,
+                "distance_m": 0,
+                "point_count": 0,
             }
+            route_summary = _init_walk_route(
+                walk_id,
+                origin_location=location,
+                started_at=now,
+                fi_result=fi_result,
+            )
+            walk["distance_m"] = route_summary["distance_m"]
+            walk["point_count"] = route_summary["point_count"]
             loc_roombas = {
                 "status": "running",
                 "started_at": now,
@@ -196,6 +211,7 @@ def _update_state_dog_walk(
             }
         elif event in ("dock", "dock_timeout"):
             walk["active"] = False
+            walk.setdefault("origin_location", walk.get("location") or location)
             walk["returned_at"] = now
             walk["return_signal"] = return_signal
             departed_at = walk.get("departed_at")
@@ -208,6 +224,17 @@ def _update_state_dog_walk(
                     )
                 except ValueError:
                     pass
+            route_summary = _finalize_walk_route(
+                walk_id=walk.get("walk_id"),
+                origin_location=walk.get("origin_location") or location,
+                started_at=walk.get("departed_at"),
+                ended_at=now,
+                return_signal=return_signal,
+                fi_result=fi_result,
+            )
+            if route_summary:
+                walk["distance_m"] = route_summary["distance_m"]
+                walk["point_count"] = route_summary["point_count"]
             loc_roombas["status"] = "docked"
             loc_roombas["docked_at"] = now
             if event == "dock_timeout":
@@ -309,6 +336,209 @@ def _update_state_departure_candidate(
 
 def _emit_skip_event(location: str, reason: str, details: dict | None = None) -> None:
     _update_state_dog_walk(location, "departure_skip", skip_reason=reason, skip_details=details)
+
+
+# ---------------------------------------------------------------------------
+# Route persistence
+# ---------------------------------------------------------------------------
+
+def _make_walk_id(location: str, started_at: str) -> str:
+    stamp = started_at.replace("-", "").replace(":", "")
+    return f"{stamp}-{location}-{uuid.uuid4().hex[:8]}"
+
+
+def _route_path(walk_id: str | None, origin_location: str | None, started_at: str | None) -> Path | None:
+    if not walk_id or not origin_location or not started_at:
+        return None
+    return ROUTES_DIR / origin_location / started_at[:10] / f"{walk_id}.json"
+
+
+def _write_json_file(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    with open(tmp_path, "w") as f:
+        f.write(json.dumps(data, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(str(tmp_path), str(path))
+
+
+def _read_json_file(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _route_point_from_fi(fi_result: dict | None) -> dict | None:
+    if not fi_result:
+        return None
+    lat = fi_result.get("latitude")
+    lon = fi_result.get("longitude")
+    if lat is None or lon is None:
+        return None
+    return {
+        "ts": fi_result.get("lastReport") or fi_result.get("connectionDate")
+        or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "lat": lat,
+        "lon": lon,
+    }
+
+
+def _coerce_distance_m(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return round(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _route_distance_m(points: list[dict]) -> int:
+    if len(points) < 2:
+        return 0
+    distance_m = 0.0
+    for prev, cur in zip(points, points[1:]):
+        distance_m += _haversine(prev["lat"], prev["lon"], cur["lat"], cur["lon"])
+    return round(distance_m)
+
+
+def _summarize_route(route: dict, fi_result: dict | None = None) -> dict:
+    points = route.get("points") or []
+    fi_distance_m = _coerce_distance_m((fi_result or {}).get("walkDistance_m"))
+    return {
+        "distance_m": fi_distance_m if fi_distance_m is not None else _route_distance_m(points),
+        "point_count": len(points),
+    }
+
+
+def _init_walk_route(
+    walk_id: str,
+    origin_location: str,
+    started_at: str,
+    fi_result: dict | None = None,
+) -> dict:
+    route = {
+        "walk_id": walk_id,
+        "origin_location": origin_location,
+        "started_at": started_at,
+        "ended_at": None,
+        "return_signal": None,
+        "distance_m": 0,
+        "point_count": 0,
+        "points": [],
+    }
+    point = _route_point_from_fi(fi_result)
+    if point:
+        route["points"].append(point)
+    route.update(_summarize_route(route, fi_result=fi_result))
+
+    path = _route_path(walk_id, origin_location, started_at)
+    if path:
+        _write_json_file(path, route)
+
+    return {"distance_m": route["distance_m"], "point_count": route["point_count"]}
+
+
+def _append_walk_route_point(
+    walk_id: str | None,
+    origin_location: str | None,
+    started_at: str | None,
+    fi_result: dict | None,
+) -> dict | None:
+    path = _route_path(walk_id, origin_location, started_at)
+    point = _route_point_from_fi(fi_result)
+    if not path or not point:
+        return None
+
+    route = _read_json_file(path)
+    if route is None:
+        route = {
+            "walk_id": walk_id,
+            "origin_location": origin_location,
+            "started_at": started_at,
+            "ended_at": None,
+            "return_signal": None,
+            "distance_m": 0,
+            "point_count": 0,
+            "points": [],
+        }
+
+    points = route.setdefault("points", [])
+    last_point = points[-1] if points else None
+    is_duplicate = bool(
+        last_point
+        and (
+            last_point.get("ts") == point["ts"]
+            or (
+                last_point.get("lat") == point["lat"]
+                and last_point.get("lon") == point["lon"]
+            )
+        )
+    )
+    if not is_duplicate:
+        points.append(point)
+
+    route.update(_summarize_route(route, fi_result=fi_result))
+    _write_json_file(path, route)
+    return {"distance_m": route["distance_m"], "point_count": route["point_count"]}
+
+
+def _finalize_walk_route(
+    walk_id: str | None,
+    origin_location: str | None,
+    started_at: str | None,
+    ended_at: str,
+    return_signal: str | None,
+    fi_result: dict | None = None,
+) -> dict | None:
+    path = _route_path(walk_id, origin_location, started_at)
+    if not path:
+        return None
+
+    route = _read_json_file(path)
+    if route is None:
+        route = {
+            "walk_id": walk_id,
+            "origin_location": origin_location,
+            "started_at": started_at,
+            "ended_at": None,
+            "return_signal": None,
+            "distance_m": 0,
+            "point_count": 0,
+            "points": [],
+        }
+
+    point = _route_point_from_fi(fi_result)
+    if point:
+        points = route.setdefault("points", [])
+        last_point = points[-1] if points else None
+        if not last_point or last_point.get("ts") != point["ts"]:
+            points.append(point)
+
+    route["ended_at"] = ended_at
+    route["return_signal"] = return_signal
+    route.update(_summarize_route(route, fi_result=fi_result))
+    _write_json_file(path, route)
+    return {"distance_m": route["distance_m"], "point_count": route["point_count"]}
+
+
+def _append_active_walk_route_point(fi_result: dict | None) -> dict | None:
+    with _state_lock:
+        state = _read_state()
+        walk = state.get("dog_walk") or {}
+        if not walk.get("active"):
+            return None
+        walk_id = walk.get("walk_id")
+        origin_location = walk.get("origin_location") or walk.get("location")
+        started_at = walk.get("departed_at")
+
+    return _append_walk_route_point(
+        walk_id=walk_id,
+        origin_location=origin_location,
+        started_at=started_at,
+        fi_result=fi_result,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -562,7 +792,7 @@ def _check_fi_gps(location: str | None = None) -> dict | None:
             log(f"FI GPS: API error: {result.get('message', result['error'])}")
             return None
         # Check staleness
-        last_report = result.get("connectionDate") or result.get("lastReport")
+        last_report = result.get("lastReport") or result.get("connectionDate")
         if last_report:
             report_time = datetime.fromisoformat(last_report.replace("Z", "+00:00"))
             age_s = (datetime.now(timezone.utc) - report_time).total_seconds()
@@ -691,13 +921,20 @@ async def _return_poll_loop(location: str) -> None:
                 # 3. Fi GPS geofence
                 fi_result = await asyncio.to_thread(_check_fi_gps, location)
                 if fi_result:
+                    _append_active_walk_route_point(fi_result)
                     _update_state_return_monitor(location, "poll", fi_result=fi_result)
                     if fi_result.get("at_monitored_location"):
                         elapsed_min = int(elapsed / 60)
                         dist = fi_result.get("distance_to_monitored", "?")
                         log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
                         roomba_result = run_roomba_command(location, "dock")
-                        _update_state_dog_walk(location, "dock", return_signal="fi_gps", roomba_result=roomba_result)
+                        _update_state_dog_walk(
+                            location,
+                            "dock",
+                            return_signal="fi_gps",
+                            roomba_result=roomba_result,
+                            fi_result=fi_result,
+                        )
                         _update_state_return_monitor(location, "stop")
                         return
                     else:
@@ -869,7 +1106,14 @@ async def _fi_departure_poll_loop() -> None:
                 f"\U0001f9f9 Potato left {candidate_location} (GPS: {dist}m away) — starting Roombas!"
             )
             roomba_result = run_roomba_command(candidate_location, "start")
-            _update_state_dog_walk(candidate_location, "departure", people=0, dogs=1, roomba_result=roomba_result)
+            _update_state_dog_walk(
+                candidate_location,
+                "departure",
+                people=0,
+                dogs=1,
+                roomba_result=roomba_result,
+                fi_result=fi_result,
+            )
             start_return_monitor(candidate_location)
 
         except asyncio.CancelledError:
