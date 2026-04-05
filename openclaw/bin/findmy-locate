@@ -1,0 +1,4 @@
+#!/bin/bash
+# findmy-locate — PATH wrapper for FindMy person locator
+SCRIPT_DIR="$HOME/.openclaw/skills/findmy-locate"
+exec "$SCRIPT_DIR/findmy-locate.sh" "$@"

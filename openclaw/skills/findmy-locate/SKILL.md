@@ -1,0 +1,105 @@
+---
+name: findmy-locate
+description: Locate Dylan, Julia, or both using Apple FindMy. Returns a screenshot of their map location. Use when asked "where is Dylan/Julia", "find Dylan/Julia", "locate someone", or anything about someone's physical location.
+allowed-tools: Bash(findmy-locate:*)
+metadata: {"openclaw":{"emoji":"P","requires":{"bins":["peekaboo"]}}}
+---
+
+# FindMy Locate
+
+Locate people using Apple **Find My** app via Peekaboo screen automation. Returns a screenshot of the zoomed map view showing the person's location pin.
+
+## Commands
+
+### Locate a person
+```bash
+findmy-locate dylan     # Dylan Bochman
+findmy-locate julia     # Julia Jennings
+findmy-locate me        # clawdbotbochman (Mac Mini)
+findmy-locate both      # Dylan + Julia (two screenshots)
+```
+
+Returns JSON with the screenshot path:
+```json
+{"success": true, "person": "Dylan Bochman", "capture": "/path/to/screenshot.png", "size": 285432}
+```
+
+For `both`, returns an array:
+```json
+{"results": [{"success": true, "person": "Dylan Bochman", ...}, {"success": true, "person": "Julia Jennings", ...}]}
+```
+
+### Interpreting results
+
+The screenshot shows FindMy's zoomed map view centered on the person's location pin. **Read the screenshot image** to determine:
+- Street address or neighborhood
+- Proximity to known locations (Crosstown at 19 Crosstown Ave, West Roxbury; Cabin at 95 School House Rd, Phillipston)
+- Whether the person is moving or stationary (FindMy shows a directional arrow when moving)
+- Nearby landmarks visible on the map
+
+## People in FindMy
+
+| Position | Name | Notes |
+|----------|------|-------|
+| 0 | Me (clawdbotbochman) | The Mac Mini itself — always at home |
+| 1 | Julia Jennings | |
+| 2 | Dylan Bochman | |
+
+The sidebar order matters — the script navigates via keyboard arrow keys.
+
+## How It Works
+
+1. Opens Find My app (`open -a "Find My"`)
+2. Navigates to the top of the People sidebar (Up arrow x3)
+3. Arrow-downs to the target person's position
+4. Waits 3 seconds for the map to animate and zoom
+5. Captures the window screenshot via Peekaboo
+
+FindMy blocks programmatic mouse clicks (accessibility API clicks are ignored) but accepts keyboard input via Peekaboo's key press automation.
+
+## Requirements
+
+- **Peekaboo** (`/opt/homebrew/bin/peekaboo`) with TCC grants:
+  - Screen Recording (for screenshots)
+  - Accessibility (for keyboard input)
+- **`~/Applications/Peekaboo.app`** — TCC wrapper that holds the grants
+- Must run from **LaunchAgent context or local terminal** — TCC blocks headless SSH sessions
+- Find My app must be signed into the shared Apple ID
+
+## Screenshots
+
+Captures are saved to `~/.openclaw/findmy-locate/` with the pattern:
+```
+findmy-<name>-<unix_timestamp>.png
+```
+
+Old captures are not automatically cleaned. Periodically prune:
+```bash
+find ~/.openclaw/findmy-locate/ -name "*.png" -mtime +7 -delete
+```
+
+## Troubleshooting
+
+### "Failed to capture FindMy — check Peekaboo TCC permissions"
+Screen Recording or Accessibility not granted to Peekaboo.app. Open System Settings > Privacy & Security on the Mini and grant both.
+
+### Screenshot is too small (< 50KB)
+Peekaboo captured an empty or partial window. FindMy may not be fully loaded. Try again — the script has fallbacks for Desktop-saved screenshots.
+
+### Wrong person selected
+The sidebar order may have changed (e.g., new person added to FindMy). Update the position constants in the script.
+
+### Keyboard navigation not working
+FindMy must be the frontmost app and the People tab must be active. If Items or Devices tab is showing, manually switch to People first.
+
+## Skill Boundaries
+
+This skill locates people via FindMy screenshots. It does NOT:
+- Track location continuously (use `fi-collar` for Potato's GPS)
+- Determine who is home (use `presence` skill for WiFi-based detection)
+- Trigger any automated actions
+
+For related tasks:
+- **presence**: WiFi-based home/away detection (faster, no screenshot needed)
+- **fi-collar**: Potato's GPS location via Fi collar API (structured data, not screenshots)
+- **dog-walk**: Automated walk detection + Roomba control
