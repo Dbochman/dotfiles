@@ -23,6 +23,19 @@ fi-collar status
 ```
 Returns JSON with location + battery level, connection type (Base/User/Cellular), activity type (Rest/Walk), and Fi base station status.
 
+### Get walk path (during active walk only)
+```bash
+fi-collar walk-path
+```
+Returns the dense GPS polyline from Fi's `OngoingWalk` — timestamped positions and path points. Returns `{"walking": false}` if not currently on a walk.
+
+### Set collar mode
+```bash
+fi-collar set-mode NORMAL      # standard GPS (~3-7min updates)
+fi-collar set-mode LOST_DOG    # high-frequency GPS (~15-30s updates)
+```
+LOST_DOG mode drains battery faster — used automatically by the dog walk listener during walks, then reset to NORMAL on return.
+
 ### Test login
 ```bash
 fi-collar login

@@ -66,9 +66,18 @@ After departure, the return monitor uses three signals — any one triggers Room
 - Departure GPS point is seeded as the first route point for dashboard maps
 - 2 minutes after departure, a network scan identifies **who left**
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
-- On return, a final Fi GPS point is captured before docking (for route completeness)
+- On return, the full Fi `OngoingWalk` path is fetched (dense polyline) and merged into the route file
+- A final Fi GPS point is captured before docking (for route completeness)
 - An iMessage notification is sent on return with walk duration and which signal triggered it
 - Safety fallback: auto-docks after 2 hours if no return detected
+
+### GPS Tracking Mode (Lost Dog)
+
+On departure, the collar switches to **LOST_DOG mode** for high-frequency GPS (~15-30s updates vs ~3-7min in NORMAL). This produces dense route data for dashboard mapping.
+
+**Battery protection:** If consecutive GPS readings show car speeds (>30mph) for 6+ minutes, the collar switches back to NORMAL to avoid unnecessary drain during inter-home car trips. Speed resets if Potato slows to walking pace.
+
+The collar always resets to NORMAL when the walk ends (via the return monitor's `finally` block).
 
 ### Manual Trigger
 
