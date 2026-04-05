@@ -1,0 +1,38 @@
+#!/bin/bash
+# august — control August smart lock at Crosstown via MBP
+# SSH to MacBook Pro, runs august-cmd.js with august-api
+#
+# Usage:
+#   august status              # Lock state, door position, battery
+#   august lock                # Lock the door
+#   august unlock              # Unlock the door
+#   august authorize           # Start 2FA (sends code to email)
+#   august validate <code>     # Complete 2FA
+#   august locks               # List all locks
+#   august details             # Full lock details
+
+set -euo pipefail
+
+MACBOOK="dylans-macbook-pro"
+NODE="/opt/homebrew/bin/node"
+CMD_SCRIPT="\$HOME/.openclaw/august/august-cmd.js"
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: august <command> [args]"
+  echo ""
+  echo "Commands:"
+  echo "  status              Lock state, door position, battery"
+  echo "  lock                Lock the door"
+  echo "  unlock              Unlock the door"
+  echo "  authorize           Start 2FA (sends verification code)"
+  echo "  validate <code>     Complete 2FA with 6-digit code"
+  echo "  locks               List all locks on account"
+  echo "  details             Full lock details JSON"
+  exit 1
+fi
+
+CMD="$1"
+shift
+
+ssh -o ConnectTimeout=5 "$MACBOOK" \
+  "PATH=/opt/homebrew/bin:\$PATH $NODE $CMD_SCRIPT $CMD $*" 2>&1
