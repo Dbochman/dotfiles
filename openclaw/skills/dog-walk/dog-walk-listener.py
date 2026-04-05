@@ -823,7 +823,8 @@ def run_roomba_command(location: str, action: str) -> dict:
     else:
         return {"success": False, "results": [], "skipped": "no_command"}
 
-    _roomba_last_action[cooldown_key] = now
+    if action != "dock":
+        _roomba_last_action[f"{location}_{action}"] = now
     success = all(r["returncode"] == 0 for r in results) if results else False
     return {"success": success, "results": results}
 
