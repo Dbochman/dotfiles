@@ -108,7 +108,7 @@ Visualizes dog walk departures, return signal detection, route maps, and the Fi 
 
 - **Status cards** — current walk, last walk summary, return monitor state
 - **Potato (Fi collar) cards** — battery %, activity (Rest/Walk), GPS location, connection type, Fi base station status
-- **Walk map** — Leaflet route overlays and heatmaps per location
+- **Walk map** — three layer modes: Routes (single-walk selection), Coverage (all walks at full weight with date range picker), Heatmap (density)
 - **Recent Walks table** — date, location, duration, return signal badge, walkers
 - **Walk Duration** — scatter chart by location over time
 - **Return Signal Distribution** — doughnut (WiFi / Ring Motion / Fi GPS / Timeout)
