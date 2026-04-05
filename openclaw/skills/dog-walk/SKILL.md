@@ -79,6 +79,19 @@ On departure, the collar switches to **LOST_DOG mode** for high-frequency GPS (~
 
 The collar always resets to NORMAL when the walk ends (via the return monitor's `finally` block). On listener startup, the collar mode is checked and reset to NORMAL if stuck in LOST_DOG (safety net for crashes/power outages).
 
+### Roomba Snooze
+
+Roomba automation can be temporarily disabled per-location via the dog walk dashboard. When snoozed:
+- **Start commands are skipped** — Roombas won't start on departure
+- **Dock commands still execute** — Roombas should never be left running
+- **Walk tracking continues** — GPS, return detection, and route data are unaffected
+
+Snooze state is stored at `~/.openclaw/dog-walk/snooze.json` and expires automatically.
+
+Dashboard UI: Snooze bar with 1h / 3h / 8h presets per location, plus a Clear button.
+
+API: `POST /api/snooze` with `{"location": "crosstown", "minutes": 60}` (or `"all"`, `0` to clear).
+
 ### Roomba Cooldown
 
 Start commands have a 2-hour cooldown to prevent re-triggering. Dock commands always execute immediately — Roombas should never be left running because of a cooldown.

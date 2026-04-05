@@ -78,6 +78,7 @@ if os.environ.get("CABIN_LAT") and os.environ.get("CABIN_LON"):
 STATE_FILE = Path.home() / ".openclaw/dog-walk/state.json"
 HISTORY_DIR = Path.home() / ".openclaw/dog-walk/history"
 ROUTES_DIR = Path.home() / ".openclaw/dog-walk/routes"
+SNOOZE_FILE = Path.home() / ".openclaw/dog-walk/snooze.json"
 
 # State file serialization lock
 _state_lock = threading.Lock()
@@ -744,8 +745,27 @@ def send_imessage(text: str) -> bool:
 # Roomba control
 # ---------------------------------------------------------------------------
 
+def _is_snoozed(location: str) -> bool:
+    """Check if Roomba automation is snoozed for this location."""
+    try:
+        if SNOOZE_FILE.exists():
+            data = json.loads(SNOOZE_FILE.read_text())
+            expires = data.get(location)
+            if expires:
+                exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+                if exp_dt > datetime.now(timezone.utc):
+                    return True
+    except Exception as e:
+        log(f"WARNING: Failed to read snooze file: {e}")
+    return False
+
+
 def run_roomba_command(location: str, action: str) -> dict:
     now = time.time()
+    # Snooze check — only skip start, dock should always work
+    if action != "dock" and _is_snoozed(location):
+        log(f"Roomba {action} for {location} SNOOZED — skipping")
+        return {"success": False, "results": [], "skipped": "snoozed"}
     # Cooldown only applies to start — dock should always work so Roombas don't run indefinitely
     if action != "dock":
         cooldown_key = f"{location}_{action}"
