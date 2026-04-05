@@ -92,6 +92,17 @@ The sidebar order may have changed (e.g., new person added to FindMy). Update th
 ### Keyboard navigation not working
 FindMy must be the frontmost app and the People tab must be active. If Items or Devices tab is showing, manually switch to People first.
 
+## Next Steps After Locating
+
+After capturing someone's location, consider whether the **places** skill (`goplaces` CLI) would be useful. Common follow-ups:
+
+- **"What's near them?"** — `goplaces search "restaurants" --lat=<lat> --lng=<lng>` to find nearby places
+- **"How far are they from home?"** — `goplaces directions <their location> "19 Crosstown Ave, West Roxbury MA"` for travel time
+- **"Find them a coffee shop"** — `goplaces search "coffee" --lat=<lat> --lng=<lng> --open-now`
+- **"What neighborhood is that?"** — `goplaces details <place_id>` for area context
+
+Read the FindMy screenshot to estimate coordinates or identify the neighborhood, then pass that to `goplaces` for structured place data, directions, or recommendations.
+
 ## Skill Boundaries
 
 This skill locates people via FindMy screenshots. It does NOT:
@@ -100,6 +111,7 @@ This skill locates people via FindMy screenshots. It does NOT:
 - Trigger any automated actions
 
 For related tasks:
+- **places**: Search nearby businesses, get directions, find restaurants/shops near someone's location
 - **presence**: WiFi-based home/away detection (faster, no screenshot needed)
 - **fi-collar**: Potato's GPS location via Fi collar API (structured data, not screenshots)
 - **dog-walk**: Automated walk detection + Roomba control
