@@ -77,7 +77,11 @@ On departure, the collar switches to **LOST_DOG mode** for high-frequency GPS (~
 
 **Battery protection:** If consecutive GPS readings show car speeds (>30mph) for 6+ minutes, the collar switches back to NORMAL to avoid unnecessary drain during inter-home car trips. Speed resets if Potato slows to walking pace.
 
-The collar always resets to NORMAL when the walk ends (via the return monitor's `finally` block).
+The collar always resets to NORMAL when the walk ends (via the return monitor's `finally` block). On listener startup, the collar mode is checked and reset to NORMAL if stuck in LOST_DOG (safety net for crashes/power outages).
+
+### Roomba Cooldown
+
+Start commands have a 2-hour cooldown to prevent re-triggering. Dock commands always execute immediately — Roombas should never be left running because of a cooldown.
 
 ### Manual Trigger
 
