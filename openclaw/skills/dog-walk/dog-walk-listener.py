@@ -893,6 +893,31 @@ def _haversine(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+def _set_fi_collar_mode(mode: str) -> bool:
+    """Set Fi collar mode (NORMAL or LOST_DOG).
+
+    LOST_DOG mode enables high-frequency GPS polling (~15-30s) for better
+    route tracking during walks. Must be reset to NORMAL after the walk.
+    """
+    try:
+        env = os.environ.copy()
+        env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
+        r = subprocess.run(
+            [f"{OPENCLAW_BIN}/fi-collar", "set-mode", mode],
+            capture_output=True, timeout=15, env=env, text=True,
+        )
+        if r.returncode == 0:
+            data = json.loads(r.stdout.strip())
+            if data.get("success"):
+                log(f"FI COLLAR: mode set to {data.get('mode', mode)}")
+                return True
+        log(f"FI COLLAR: failed to set mode {mode}: {r.stderr.strip() or r.stdout.strip()}")
+        return False
+    except Exception as e:
+        log(f"FI COLLAR: error setting mode {mode}: {e}")
+        return False
+
+
 def _check_fi_gps(location: str | None = None) -> dict | None:
     """Check Potato's Fi GPS location.
 
@@ -1123,7 +1148,9 @@ async def _return_poll_loop(location: str) -> None:
     finally:
         _return_monitor_active = False
         _ring_motion_during_walk = False
-        log("RETURN MONITOR: Ended — cleared _return_monitor_active flag")
+        # Always restore normal GPS mode when walk ends
+        _set_fi_collar_mode("NORMAL")
+        log("RETURN MONITOR: Ended — cleared _return_monitor_active flag, collar reset to NORMAL")
 
 
 def start_return_monitor(location: str) -> None:
@@ -1284,6 +1311,9 @@ async def _fi_departure_poll_loop() -> None:
             log(f"FI DEPARTURE: Confirmed! Potato {dist}m from {candidate_location} "
                 f"(first reading {int(time_since_first)}s ago at {last_outside_reading['first_distance_m']}m)")
             last_outside_reading = None
+
+            # Enable high-frequency GPS for route tracking
+            _set_fi_collar_mode("LOST_DOG")
 
             send_imessage(
                 f"\U0001f9f9 Potato left {candidate_location} (GPS: {dist}m away) — starting Roombas!"

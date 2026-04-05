@@ -282,6 +282,26 @@ def cmd_status():
             }))
 
 
+def cmd_set_mode(mode):
+    """Set collar operating mode (NORMAL or LOST_DOG)."""
+    if mode not in ("NORMAL", "LOST_DOG"):
+        print(json.dumps({"error": "invalid_mode", "message": f"Mode must be NORMAL or LOST_DOG, got: {mode}"}))
+        sys.exit(1)
+    session = get_session()
+    mutation = """mutation UpdateDeviceOperationParams($input: UpdateDeviceOperationParamsInput!) {
+      updateDeviceOperationParams(input: $input) {
+        moduleId operationParams { mode ledEnabled }
+      }
+    }"""
+    data = graphql(session, mutation, variables={"input": {"moduleId": "FC35G072187", "mode": mode}})
+    if "error" in data:
+        print(json.dumps(data))
+        sys.exit(1)
+    result = data.get("updateDeviceOperationParams", data)
+    new_mode = result.get("operationParams", {}).get("mode", "unknown")
+    print(json.dumps({"success": True, "mode": new_mode}))
+
+
 def cmd_walk_path():
     """Get the full GPS path if Potato is currently on a walk."""
     session = get_session()
@@ -334,9 +354,11 @@ if __name__ == "__main__":
         cmd_status()
     elif cmd == "walk-path":
         cmd_walk_path()
+    elif cmd == "set-mode":
+        cmd_set_mode(sys.argv[2] if len(sys.argv) > 2 else "")
     elif cmd == "login":
         s = login()
         print(json.dumps({"success": True, "userId": s["userId"]}))
     else:
-        print(f"Usage: fi-api.py [location|status|walk-path|login]", file=sys.stderr)
+        print(f"Usage: fi-api.py [location|status|walk-path|set-mode NORMAL|LOST_DOG|login]", file=sys.stderr)
         sys.exit(1)
