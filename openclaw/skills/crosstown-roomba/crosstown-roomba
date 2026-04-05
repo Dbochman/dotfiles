@@ -164,6 +164,11 @@ cmd_action() {
 
   if [[ "$robot" == "all" ]]; then
     for r in 10max j5; do
+      # dock needs stop first — dock alone doesn't interrupt an active cleaning cycle
+      if [[ "$action" == "dock" ]]; then
+        run_one "$r" "stop" >/dev/null 2>&1 || true
+        sleep 2
+      fi
       local result
       result=$(run_one "$r" "$action")
       if echo "$result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); sys.exit(1 if 'error' in d else 0)" 2>/dev/null; then
@@ -173,6 +178,11 @@ cmd_action() {
       fi
     done
   else
+    # dock needs stop first — dock alone doesn't interrupt an active cleaning cycle
+    if [[ "$action" == "dock" ]]; then
+      run_one "$robot" "stop" >/dev/null 2>&1 || true
+      sleep 2
+    fi
     local result
     result=$(run_one "$robot" "$action")
     if echo "$result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); sys.exit(1 if 'error' in d else 0)" 2>/dev/null; then

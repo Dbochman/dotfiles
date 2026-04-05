@@ -44,6 +44,7 @@ crosstown-roomba resume scoomba
 ```bash
 crosstown-roomba dock all
 ```
+The `dock` command automatically sends `stop` first, then `dock`. This is necessary because iRobot's MQTT `dock` command alone does not interrupt an active cleaning cycle — the robot ignores it while in `run` phase.
 
 ### Locate (play sound)
 ```bash
