@@ -746,12 +746,14 @@ def send_imessage(text: str) -> bool:
 
 def run_roomba_command(location: str, action: str) -> dict:
     now = time.time()
-    cooldown_key = f"{location}_{action}"
-    last = _roomba_last_action.get(cooldown_key, 0)
-    if now - last < _ROOMBA_COOLDOWN:
-        remaining = int((_ROOMBA_COOLDOWN - (now - last)) / 60)
-        log(f"Roomba {action} for {location} on cooldown ({remaining}min remaining)")
-        return {"success": False, "results": [], "skipped": "cooldown", "remaining_min": remaining}
+    # Cooldown only applies to start — dock should always work so Roombas don't run indefinitely
+    if action != "dock":
+        cooldown_key = f"{location}_{action}"
+        last = _roomba_last_action.get(cooldown_key, 0)
+        if now - last < _ROOMBA_COOLDOWN:
+            remaining = int((_ROOMBA_COOLDOWN - (now - last)) / 60)
+            log(f"Roomba {action} for {location} on cooldown ({remaining}min remaining)")
+            return {"success": False, "results": [], "skipped": "cooldown", "remaining_min": remaining}
 
     cmds = ROOMBA_COMMANDS.get(location, {})
     env = os.environ.copy()
@@ -1483,6 +1485,17 @@ async def main() -> None:
     global _ring
 
     log("Dog walk listener starting...")
+
+    # Safety: reset collar to NORMAL if stuck in LOST_DOG (e.g., after crash/power outage)
+    try:
+        fi_result = _check_fi_gps()
+        if fi_result and fi_result.get("mode") == "LOST_DOG":
+            log("STARTUP: Collar stuck in LOST_DOG mode — resetting to NORMAL")
+            _set_fi_collar_mode("NORMAL")
+        elif fi_result:
+            log(f"STARTUP: Collar mode OK ({fi_result.get('mode', 'unknown')})")
+    except Exception as e:
+        log(f"STARTUP: Could not check collar mode: {e}")
 
     # Auth
     token = load_ring_token()
