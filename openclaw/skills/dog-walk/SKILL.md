@@ -65,6 +65,7 @@ Starts Roombas and signals the listener to begin return monitoring via inbox IPC
 
 - Current state: `~/.openclaw/dog-walk/state.json`
 - Daily history: `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl`
+- Per-walk routes: `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`
 - Inbox (IPC): `~/.openclaw/dog-walk/inbox/`
 
 ## LaunchAgent

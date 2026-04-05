@@ -3,7 +3,8 @@
 
 Serves a JSON API and Chart.js dashboard for dog walk history and Roomba operations.
 Reads JSONL events from ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
-and current state from ~/.openclaw/dog-walk/state.json
+current state from ~/.openclaw/dog-walk/state.json, and route summaries from
+~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json
 
 Same architecture as nest-dashboard.py. Intended for Tailscale-only access.
 """
@@ -22,6 +23,7 @@ from urllib.parse import urlparse, parse_qs
 
 HISTORY_DIR = os.path.expanduser("~/.openclaw/dog-walk/history")
 STATE_FILE = os.path.expanduser("~/.openclaw/dog-walk/state.json")
+ROUTES_DIR = os.path.expanduser("~/.openclaw/dog-walk/routes")
 FI_COLLAR_CMD = os.path.expanduser("~/.openclaw/bin/fi-collar")
 SECRETS_FILE = os.path.expanduser("~/.openclaw/.secrets-cache")
 PORT = 8552
@@ -240,6 +242,56 @@ def load_current_state():
         return None
 
 
+def load_route_summaries(days, location="all"):
+    """Load per-walk route summaries from route files."""
+    days = min(max(1, days), MAX_DAYS)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    location = (location or "all").lower()
+    allowed_locations = None if location == "all" else {location}
+    summaries = []
+
+    if not os.path.isdir(ROUTES_DIR):
+        return summaries, days, location
+
+    for root, _, files in os.walk(ROUTES_DIR):
+        for name in files:
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                with open(path) as f:
+                    route = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+
+            origin_location = route.get("origin_location")
+            if allowed_locations is not None and origin_location not in allowed_locations:
+                continue
+
+            started_at = route.get("started_at")
+            try:
+                started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            except (AttributeError, ValueError):
+                continue
+            if started_dt < cutoff:
+                continue
+
+            summaries.append({
+                "walk_id": route.get("walk_id"),
+                "origin_location": origin_location,
+                "started_at": started_at,
+                "ended_at": route.get("ended_at"),
+                "return_signal": route.get("return_signal"),
+                "distance_m": route.get("distance_m", 0),
+                "point_count": route.get("point_count", 0),
+                "active": route.get("ended_at") is None,
+            })
+
+    summaries.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    return summaries, days, location
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"{self.address_string()} {args[0]}\n")
@@ -260,6 +312,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_events(days)
         elif path == "/api/current":
             self._serve_current()
+        elif path == "/api/routes":
+            days = 30
+            try:
+                days = int(qs.get("days", ["30"])[0])
+            except (ValueError, IndexError):
+                pass
+            location = qs.get("location", ["all"])[0]
+            self._serve_routes(days, location)
         elif path == "/api/fi":
             self._serve_fi()
         elif path == "/api/roombas":
@@ -291,6 +351,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._respond(200, state)
         else:
             self._respond(200, {"error": "no state data"})
+
+    def _serve_routes(self, days, location):
+        routes, clamped_days, normalized_location = load_route_summaries(days, location)
+        self._respond(200, {
+            "meta": {"days": clamped_days, "location": normalized_location, "count": len(routes)},
+            "routes": routes,
+        })
 
     def _serve_fi(self):
         data = fetch_fi_status()

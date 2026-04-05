@@ -136,14 +136,18 @@ Collected by `dog-walk-listener.py`, written on each dog walk event.
   "home_location_distance_m": 19,
   "dog_walk": {
     "active": true,
+    "walk_id": "20260404T130600Z-crosstown-deadbeef",
     "location": "crosstown",
+    "origin_location": "crosstown",
     "departed_at": "2026-04-04T13:06:00Z",
     "returned_at": null,
     "people": 0,
     "dogs": 1,
     "walkers": ["dylan", "julia"],
     "return_signal": null,
-    "walk_duration_minutes": null
+    "walk_duration_minutes": null,
+    "distance_m": 0,
+    "point_count": 1
   },
   "roombas": {
     "crosstown": {
@@ -185,6 +189,8 @@ Collected by `dog-walk-listener.py`, written on each dog walk event.
 
 `home_location` is the last home geofence Potato was positively inside. Departure detection now anchors to that Fi-derived home rather than choosing a house from presence state first.
 
+Per-walk route files are stored separately at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`. These contain `distance_m`, `point_count`, and the persisted Fi point list used for future route maps.
+
 ## LaunchAgent
 
 **Label:** `ai.openclaw.home-state-snapshot`
@@ -208,6 +214,7 @@ The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials befo
 - **Daily JSONL files**: kept indefinitely (small, ~1-5 KB per day)
 - **current.json**: overwritten on each snapshot
 - **Dog walk state.json**: overwritten on each event (history in JSONL)
+- **Dog walk route files**: one JSON file per walk under `dog-walk/routes/`
 
 ## Trend Analysis Opportunities
 

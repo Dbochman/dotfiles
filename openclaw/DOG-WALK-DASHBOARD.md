@@ -1,6 +1,6 @@
 # Dog Walk & Roomba Dashboard — Implementation Spec
 
-## Status: v2.0 (2026-04-02)
+## Status: v2.1 (2026-04-04)
 
 Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk departures, Roomba operations, return signal detection, and the Fi departure pipeline. Serves at port 8552 on Mac Mini, Tailscale-only access.
 
@@ -30,6 +30,7 @@ Mac Mini (dylans-mac-mini)
 ├── Dog Walk Listener: ~/.openclaw/skills/dog-walk/dog-walk-listener.py
 │   ├── State: ~/.openclaw/dog-walk/state.json
 │   ├── History: ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
+│   ├── Routes: ~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json
 │   ├── Inbox: ~/.openclaw/dog-walk/inbox/ (dog-walk-start IPC)
 │   ├── Home anchor: last Fi geofence Potato was inside (`home_location`)
 │   └── FCM credentials: ~/.openclaw/dog-walk/fcm-credentials.json
@@ -38,6 +39,7 @@ Mac Mini (dylans-mac-mini)
 │   ├── GET / → embedded HTML SPA
 │   ├── GET /api/events?days=N → JSONL event history
 │   ├── GET /api/current → current state.json
+│   ├── GET /api/routes?days=N&location=all|cabin|crosstown → per-walk route summaries
 │   ├── GET /api/fi → Fi collar GPS/battery/activity (2min cache)
 │   ├── GET /api/roombas → Crosstown Roomba status via dorita980 (5min cache)
 │   └── GET /api/cabin-roombas → Cabin Roomba last mission via iRobot Cloud (10min cache)
@@ -93,6 +95,20 @@ The listener also persists a Fi-derived home anchor in `state.json`:
 - `home_location_source`: currently always `fi_gps`
 - `home_location_distance_m`: last in-geofence distance from that home center
 
+### Route Files (`~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`)
+
+One JSON file per walk. These are written by the listener on departure, appended during return monitoring, and finalized on dock or timeout.
+
+Top-level fields:
+
+- `walk_id`: immutable walk identifier
+- `origin_location`: house the walk started from
+- `started_at` / `ended_at`
+- `return_signal`
+- `distance_m`
+- `point_count`
+- `points`: minimal Fi point list with `ts`, `lat`, `lon`
+
 ---
 
 ## JSONL Event Schema
@@ -102,21 +118,27 @@ The listener also persists a Fi-derived home anchor in `state.json`:
 ```json
 {
   "active": true,
+  "walk_id": "20260328T143000Z-cabin-deadbeef",
   "location": "cabin",
+  "origin_location": "cabin",
   "departed_at": "2026-03-28T14:30:00Z",
   "returned_at": "2026-03-28T15:05:00Z",
   "people": 0,
   "dogs": 1,
   "walkers": ["dylan", "julia"],
   "return_signal": "network_wifi",
-  "walk_duration_minutes": 35.0
+  "walk_duration_minutes": 35.0,
+  "distance_m": 2487,
+  "point_count": 18
 }
 ```
 
 | Field | Type | Set on | Description |
 |-------|------|--------|-------------|
 | `active` | bool | departure/dock | True while walk in progress |
+| `walk_id` | string | departure | Immutable ID for route files and future map views |
 | `location` | string | departure | "cabin" or "crosstown" |
+| `origin_location` | string | departure | House the walk started from; stable even if Fi later reports a different nearest home |
 | `departed_at` | ISO 8601 | departure | Walk start time |
 | `returned_at` | ISO 8601 | dock | Walk end time |
 | `people` | int | departure | Always `0` in the Fi-only system (no people counting) |
@@ -124,6 +146,8 @@ The listener also persists a Fi-derived home anchor in `state.json`:
 | `walkers` | string[] | walkers_detected | Who left (from WiFi scan ~2 min after departure) |
 | `return_signal` | string | dock | What detected the return |
 | `walk_duration_minutes` | float | dock | Computed from departed_at → returned_at |
+| `distance_m` | int | departure/dock | Route distance from Fi walk distance when available, else haversine over stored points |
+| `point_count` | int | departure/dock | Number of persisted Fi points in the route file |
 
 **Return signal values:**
 
