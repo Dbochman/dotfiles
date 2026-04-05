@@ -151,9 +151,16 @@ cmd_action() {
     exit 1
   fi
 
-  local action_labels
-  declare -A action_labels=( [start]="Cleaning started" [stop]="Cleaning stopped" [pause]="Paused" [resume]="Resumed" [dock]="Returning to dock" [find]="Playing sound" )
-  local msg="${action_labels[$action]:-$action done}"
+  local msg
+  case "$action" in
+    start)  msg="Cleaning started" ;;
+    stop)   msg="Cleaning stopped" ;;
+    pause)  msg="Paused" ;;
+    resume) msg="Resumed" ;;
+    dock)   msg="Returning to dock" ;;
+    find)   msg="Playing sound" ;;
+    *)      msg="$action done" ;;
+  esac
 
   if [[ "$robot" == "all" ]]; then
     for r in 10max j5; do
