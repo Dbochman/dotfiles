@@ -24,6 +24,7 @@ DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
 SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
 CATT_BIN = os.path.expanduser("~/.local/bin/catt")
 _SPEAKER_IPS = {"bedroom": "192.168.1.163", "living-room": "192.168.1.66"}
+_CABIN_SPEAKER_IPS = {"kitchen": "192.168.1.66", "bedroom": "192.168.1.163"}
 
 
 def _load_secrets():
@@ -180,6 +181,14 @@ def collect_speakers():
     return _run_cli(["speaker", "status"])
 
 
+def collect_cabin_speakers():
+    results = {}
+    for name, ip in _CABIN_SPEAKER_IPS.items():
+        r = _run_cli([CATT_BIN, "-d", ip, "status"])
+        results[name] = r.get("raw", r.get("error", "unknown")) if isinstance(r, dict) else str(r)
+    return {"speakers": results}
+
+
 def collect_litter_robot():
     return _run_cli(["litter-robot", "status"])
 
@@ -212,6 +221,7 @@ COLLECTORS = {
     "roombas_cabin": collect_roombas_cabin,
     "tv": collect_tv,
     "speakers": collect_speakers,
+    "cabin_speakers": collect_cabin_speakers,
     "litter_robot": collect_litter_robot,
     "petlibro": collect_petlibro,
     "8sleep": collect_8sleep,
@@ -315,6 +325,11 @@ COMMANDS = {
         "volume": lambda a: ["speaker", "volume", a["name"], str(a["level"])],
         "mute": lambda a: ["speaker", "mute", a["name"]],
         "unmute": lambda a: ["speaker", "unmute", a["name"]],
+    },
+    "cabin_speaker": {
+        "volume": lambda a: [CATT_BIN, "-d", _CABIN_SPEAKER_IPS.get(a["name"], a["name"]), "volume", str(a["level"])],
+        "stop": lambda a: [CATT_BIN, "-d", _CABIN_SPEAKER_IPS.get(a["name"], a["name"]), "stop"],
+        "status": lambda a: [CATT_BIN, "-d", _CABIN_SPEAKER_IPS.get(a["name"], a["name"]), "status"],
     },
     "litter_robot": {
         "clean": lambda a: ["litter-robot", "clean"],
@@ -832,6 +847,31 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
       </div>
     </article>
 
+    <article class="card" data-location="cabin">
+      <div class="card-header">
+        <div>
+          <div class="eyebrow">Media</div>
+          <h2>Cabin Speakers</h2>
+        </div>
+        <span class="location-pill">Cabin</span>
+      </div>
+      <div id="cabinSpeakersContent" class="content"></div>
+      <div class="controls">
+        <form id="cabin-speaker-form" class="controls-grid">
+          <select name="name">
+            <option value="kitchen" selected>Kitchen</option>
+            <option value="bedroom">Bedroom</option>
+          </select>
+          <input name="level" type="number" min="0" max="100" placeholder="Volume">
+        </form>
+        <div class="command-row">
+          <button type="button" data-command data-device="cabin_speaker" data-action="volume" data-form="cabin-speaker-form" data-fields="name,level">Set Volume</button>
+          <button type="button" data-command data-device="cabin_speaker" data-action="stop" data-form="cabin-speaker-form" data-fields="name">Stop</button>
+          <button type="button" data-command data-device="cabin_speaker" data-action="status" data-form="cabin-speaker-form" data-fields="name">Status</button>
+        </div>
+      </div>
+    </article>
+
     <article class="card" data-location="crosstown">
       <div class="card-header">
         <div>
@@ -1209,6 +1249,7 @@ function renderDashboard() {
   setContent('roombasCabinContent', renderRawResult(data.roombas_cabin));
   setContent('tvContent', renderRawResult(data.tv));
   setContent('speakersContent', renderSpeakers(data.speakers));
+  setContent('cabinSpeakersContent', renderRawResult(data.cabin_speakers));
   setContent('litterRobotContent', renderRawResult(data.litter_robot));
   setContent('petlibroContent', renderRawResult(data.petlibro));
   setContent('eightSleepContent', renderRawResult(data['8sleep']));
@@ -1250,6 +1291,7 @@ const DEVICE_TO_COLLECTOR = {
   cabin_roomba: 'roombas_cabin',
   tv: 'tv',
   speaker: 'speakers',
+  cabin_speaker: 'cabin_speakers',
   litter_robot: 'litter_robot',
   petlibro: 'petlibro',
   eightsleep: '8sleep',
