@@ -271,20 +271,24 @@ COMMANDS = {
         "on": lambda a: ["hue", "--crosstown", "on", a["room"]] + ([str(a["brightness"])] if "brightness" in a else []),
         "off": lambda a: ["hue", "--crosstown", "off", a["room"]],
         "bri": lambda a: ["hue", "--crosstown", "bri", a["room"], str(a["brightness"])],
+        "color": lambda a: ["hue", "--crosstown", "color", a["room"], a["color"]],
     },
     "hue_cabin": {
         "on": lambda a: ["hue", "--cabin", "on", a["room"]] + ([str(a["brightness"])] if "brightness" in a else []),
         "off": lambda a: ["hue", "--cabin", "off", a["room"]],
         "bri": lambda a: ["hue", "--cabin", "bri", a["room"], str(a["brightness"])],
+        "color": lambda a: ["hue", "--cabin", "color", a["room"], a["color"]],
     },
     "nest": {
         "set": lambda a: ["nest", "set", a["room"], str(a["temp"])],
+        "mode": lambda a: ["nest", "mode", a["room"], a["mode"]],
         "eco": lambda a: ["nest", "eco", a["room"], a.get("mode", "on")],
     },
     "cielo": {
         "on": lambda a: ["cielo", "on", "-d", a["device"]],
         "off": lambda a: ["cielo", "off", "-d", a["device"]],
         "temp": lambda a: ["cielo", "temp", str(a["temp"]), "-d", a["device"]],
+        "mode": lambda a: ["cielo", "mode", a["mode"], "-d", a["device"]],
     },
     "august": {
         "lock": lambda a: ["august", "lock"],
@@ -572,13 +576,36 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
       <div id="hueCrosstownContent" class="content"></div>
       <div class="controls">
         <form id="hue-crosstown-form" class="controls-grid">
-          <input name="room" placeholder="Room" value="bedroom">
+          <select name="room">
+            <option value="entryway">Entryway</option>
+            <option value="kitchen">Kitchen</option>
+            <option value="bedroom" selected>Bedroom</option>
+            <option value="movie">Movie</option>
+            <option value="living">Living</option>
+            <option value="office">Office</option>
+            <option value="upstairs">Upstairs</option>
+            <option value="downstairs">Downstairs</option>
+            <option value="master">Master</option>
+          </select>
           <input name="brightness" type="number" min="1" max="100" placeholder="Brightness">
+          <select name="color">
+            <option value="">Color...</option>
+            <option value="warm">Warm</option>
+            <option value="cool">Cool</option>
+            <option value="daylight">Daylight</option>
+            <option value="red">Red</option>
+            <option value="blue">Blue</option>
+            <option value="green">Green</option>
+            <option value="purple">Purple</option>
+            <option value="orange">Orange</option>
+            <option value="pink">Pink</option>
+          </select>
         </form>
         <div class="command-row">
           <button type="button" data-command data-device="hue_crosstown" data-action="on" data-form="hue-crosstown-form" data-fields="room,brightness">On</button>
           <button type="button" data-command data-device="hue_crosstown" data-action="off" data-form="hue-crosstown-form" data-fields="room">Off</button>
           <button type="button" data-command data-device="hue_crosstown" data-action="bri" data-form="hue-crosstown-form" data-fields="room,brightness">Set Brightness</button>
+          <button type="button" data-command data-device="hue_crosstown" data-action="color" data-form="hue-crosstown-form" data-fields="room,color">Set Color</button>
         </div>
       </div>
     </article>
@@ -594,13 +621,35 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
       <div id="hueCabinContent" class="content"></div>
       <div class="controls">
         <form id="hue-cabin-form" class="controls-grid">
-          <input name="room" placeholder="Room" value="living-room">
+          <select name="room">
+            <option value="kitchen">Kitchen</option>
+            <option value="living" selected>Living</option>
+            <option value="bathroom">Bathroom</option>
+            <option value="hallway">Hallway</option>
+            <option value="bedroom">Bedroom</option>
+            <option value="office">Office</option>
+            <option value="solarium">Solarium</option>
+            <option value="staircase">Staircase</option>
+          </select>
           <input name="brightness" type="number" min="1" max="100" placeholder="Brightness">
+          <select name="color">
+            <option value="">Color...</option>
+            <option value="warm">Warm</option>
+            <option value="cool">Cool</option>
+            <option value="daylight">Daylight</option>
+            <option value="red">Red</option>
+            <option value="blue">Blue</option>
+            <option value="green">Green</option>
+            <option value="purple">Purple</option>
+            <option value="orange">Orange</option>
+            <option value="pink">Pink</option>
+          </select>
         </form>
         <div class="command-row">
           <button type="button" data-command data-device="hue_cabin" data-action="on" data-form="hue-cabin-form" data-fields="room,brightness">On</button>
           <button type="button" data-command data-device="hue_cabin" data-action="off" data-form="hue-cabin-form" data-fields="room">Off</button>
           <button type="button" data-command data-device="hue_cabin" data-action="bri" data-form="hue-cabin-form" data-fields="room,brightness">Set Brightness</button>
+          <button type="button" data-command data-device="hue_cabin" data-action="color" data-form="hue-cabin-form" data-fields="room,color">Set Color</button>
         </div>
       </div>
     </article>
@@ -616,11 +665,21 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
       <div id="nestContent" class="content"></div>
       <div class="controls">
         <form id="nest-form" class="controls-grid">
-          <input name="room" placeholder="Room" value="Bedroom">
+          <select name="room">
+            <option value="Solarium">Solarium</option>
+            <option value="Living Room">Living Room</option>
+            <option value="Bedroom" selected>Bedroom</option>
+          </select>
           <input name="temp" type="number" step="1" placeholder="Temp °F">
+          <select name="mode">
+            <option value="">Mode...</option>
+            <option value="HEAT">Heat</option>
+            <option value="OFF">Off</option>
+          </select>
         </form>
         <div class="command-row">
           <button type="button" data-command data-device="nest" data-action="set" data-form="nest-form" data-fields="room,temp">Set Temp</button>
+          <button type="button" data-command data-device="nest" data-action="mode" data-form="nest-form" data-fields="room,mode">Set Mode</button>
           <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room">Eco On</button>
           <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room,mode" data-extra='{"mode":"off"}'>Eco Off</button>
         </div>
@@ -638,13 +697,27 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
       <div id="cieloContent" class="content"></div>
       <div class="controls">
         <form id="cielo-form" class="controls-grid">
-          <input name="device" placeholder="Device" value="bedroom">
+          <select name="device">
+            <option value="basement">Basement</option>
+            <option value="living room">Living Room</option>
+            <option value="office">Dylan's Office</option>
+            <option value="bedroom" selected>Bedroom</option>
+          </select>
           <input name="temp" type="number" step="1" placeholder="Temp °F">
+          <select name="mode">
+            <option value="">Mode...</option>
+            <option value="cool">Cool</option>
+            <option value="heat">Heat</option>
+            <option value="auto">Auto</option>
+            <option value="dry">Dry</option>
+            <option value="fan">Fan</option>
+          </select>
         </form>
         <div class="command-row">
           <button type="button" data-command data-device="cielo" data-action="on" data-form="cielo-form" data-fields="device">On</button>
           <button type="button" data-command data-device="cielo" data-action="off" data-form="cielo-form" data-fields="device">Off</button>
           <button type="button" data-command data-device="cielo" data-action="temp" data-form="cielo-form" data-fields="device,temp">Set Temp</button>
+          <button type="button" data-command data-device="cielo" data-action="mode" data-form="cielo-form" data-fields="device,mode">Set Mode</button>
         </div>
       </div>
     </article>
