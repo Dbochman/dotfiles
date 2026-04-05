@@ -1104,12 +1104,22 @@ function renderMapShell() {
 function ensureMap(location) {
   if (!window.L) return null;
   if (maps[location]) return maps[location];
-  const map = L.map('map-' + location, { scrollWheelZoom: false, zoomControl: true });
+  const el = document.getElementById('map-' + location);
+  if (!el) return null;
+  const map = L.map(el, { scrollWheelZoom: false, zoomControl: true });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap'
   }).addTo(map);
+  // Set an initial view so Leaflet starts loading tiles immediately
+  const home = currentHomes[location];
+  if (home && home.configured && home.lat != null) {
+    map.setView([home.lat, home.lon], 15);
+  } else {
+    map.setView([42.43, -71.66], 8);
+  }
   maps[location] = { map };
+  setTimeout(() => map.invalidateSize(), 100);
   return maps[location];
 }
 
@@ -1224,6 +1234,8 @@ async function renderRouteMaps(token) {
     } else {
       fitMap(map, location, allBounds);
     }
+    // Ensure tiles render after layout settles
+    setTimeout(() => map.invalidateSize(), 200);
     if (!routeDetails.length) {
       setMapMessage(location, 'No route points captured for this home in the selected window.');
     }
