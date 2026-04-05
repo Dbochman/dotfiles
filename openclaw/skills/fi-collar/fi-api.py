@@ -282,15 +282,61 @@ def cmd_status():
             }))
 
 
+def cmd_walk_path():
+    """Get the full GPS path if Potato is currently on a walk."""
+    session = get_session()
+    query = """query { currentUser { userHouseholds { household { pets {
+        id name
+        ongoingActivity { __typename start lastReportTimestamp
+            ... on OngoingWalk {
+                distance
+                positions { date position { latitude longitude } }
+                path { latitude longitude }
+            }
+        }
+    } } } } }"""
+    data = graphql(session, query)
+    if "error" in data:
+        print(json.dumps(data))
+        sys.exit(1)
+
+    for house in data["currentUser"]["userHouseholds"]:
+        for pet in house["household"]["pets"]:
+            activity = pet.get("ongoingActivity") or {}
+            typename = activity.get("__typename", "")
+            if typename != "OngoingWalk":
+                print(json.dumps({"walking": False, "activity": typename.replace("Ongoing", "")}))
+                return
+            result = {
+                "walking": True,
+                "start": activity.get("start"),
+                "lastReport": activity.get("lastReportTimestamp"),
+                "distance_m": activity.get("distance", 0),
+                "positions": [
+                    {"ts": p["date"], "lat": p["position"]["latitude"], "lon": p["position"]["longitude"]}
+                    for p in (activity.get("positions") or [])
+                ],
+                "path": [
+                    {"lat": p["latitude"], "lon": p["longitude"]}
+                    for p in (activity.get("path") or [])
+                ],
+            }
+            print(json.dumps(result))
+            return
+    print(json.dumps({"walking": False, "activity": "unknown"}))
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "location"
     if cmd == "location":
         cmd_location()
     elif cmd == "status":
         cmd_status()
+    elif cmd == "walk-path":
+        cmd_walk_path()
     elif cmd == "login":
         s = login()
         print(json.dumps({"success": True, "userId": s["userId"]}))
     else:
-        print(f"Usage: fi-api.py [location|status|login]", file=sys.stderr)
+        print(f"Usage: fi-api.py [location|status|walk-path|login]", file=sys.stderr)
         sys.exit(1)

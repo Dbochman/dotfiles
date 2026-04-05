@@ -573,6 +573,105 @@ def _append_active_walk_route_point(fi_result: dict | None) -> dict | None:
     )
 
 
+def _fetch_fi_walk_path() -> list[dict] | None:
+    """Fetch the full GPS path from Fi if Potato is on an OngoingWalk.
+
+    Returns a list of {"ts", "lat", "lon"} points, or None if not walking
+    or on error. The Fi API provides a dense polyline during active walks
+    that is much more detailed than our 30s polling.
+    """
+    try:
+        env = os.environ.copy()
+        env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
+        r = subprocess.run(
+            [f"{OPENCLAW_BIN}/fi-collar", "walk-path"],
+            capture_output=True, timeout=15, env=env, text=True,
+        )
+        if r.returncode != 0:
+            return None
+        data = json.loads(r.stdout.strip())
+        if not data.get("walking"):
+            return None
+        # Prefer timestamped positions over raw path polyline
+        points = data.get("positions") or []
+        if points:
+            log(f"FI WALK PATH: got {len(points)} timestamped positions from Fi")
+            return points
+        # Fall back to path polyline (no timestamps)
+        path = data.get("path") or []
+        if path:
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            log(f"FI WALK PATH: got {len(path)} path points from Fi (no timestamps)")
+            return [{"ts": now_iso, "lat": p["lat"], "lon": p["lon"]} for p in path]
+        return None
+    except Exception as e:
+        log(f"FI WALK PATH: error: {e}")
+        return None
+
+
+def _merge_walk_path_into_route(walk_path: list[dict]) -> None:
+    """Merge Fi's dense walk path into the active walk's route file.
+
+    Deduplicates against existing points by checking lat/lon proximity (<5m).
+    """
+    with _state_lock:
+        state = _read_state()
+        walk = state.get("dog_walk") or {}
+        if not walk.get("active"):
+            return
+        walk_id = walk.get("walk_id")
+        origin_location = walk.get("origin_location") or walk.get("location")
+        started_at = walk.get("departed_at")
+
+    if not walk_id or not origin_location:
+        return
+
+    route_dir = ROUTES_DIR / origin_location / (started_at or "")[:10]
+    route_file = route_dir / f"{walk_id}.json"
+    if not route_file.exists():
+        return
+
+    try:
+        route = json.loads(route_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    existing = route.get("points") or []
+
+    def is_duplicate(new_pt: dict) -> bool:
+        for ep in existing:
+            if _haversine(new_pt["lat"], new_pt["lon"], ep["lat"], ep["lon"]) < 5:
+                return True
+        return False
+
+    added = 0
+    for pt in walk_path:
+        if not is_duplicate(pt):
+            existing.append(pt)
+            added += 1
+
+    if added == 0:
+        log(f"FI WALK PATH: no new points to merge (all {len(walk_path)} were duplicates)")
+        return
+
+    # Sort by timestamp
+    existing.sort(key=lambda p: p.get("ts", ""))
+    route["points"] = existing
+    route["point_count"] = len(existing)
+
+    # Recompute distance
+    total_dist = 0
+    for i in range(1, len(existing)):
+        total_dist += _haversine(
+            existing[i - 1]["lat"], existing[i - 1]["lon"],
+            existing[i]["lat"], existing[i]["lon"],
+        )
+    route["distance_m"] = round(total_dist)
+
+    route_file.write_text(json.dumps(route, indent=2))
+    log(f"FI WALK PATH: merged {added} new points into route (total: {len(existing)}, distance: {round(total_dist)}m)")
+
+
 # ---------------------------------------------------------------------------
 # Ring auth helpers
 # ---------------------------------------------------------------------------
@@ -922,9 +1021,11 @@ async def _return_poll_loop(location: str) -> None:
     """
     global _return_monitor_active, _ring_motion_during_walk
     POLL_INTERVAL = 30  # faster polling for better route tracking
+    WALK_PATH_INTERVAL = 120  # fetch Fi walk path every 2 min for dense route data
     MAX_DURATION = 7200
     MIN_WALK_FOR_WIFI = 600  # ignore WiFi returns for first 10 min (phones linger at door)
     start_time = time.time()
+    last_walk_path_fetch = 0.0
 
     try:
         log(f"RETURN MONITOR: Starting for {location}")
@@ -940,13 +1041,24 @@ async def _return_poll_loop(location: str) -> None:
 
         while time.time() - start_time < MAX_DURATION:
             elapsed = time.time() - start_time
+
+            # Periodically fetch Fi's dense walk path (every 2 min)
+            if time.time() - last_walk_path_fetch >= WALK_PATH_INTERVAL:
+                walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
+                if walk_path:
+                    await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
+                last_walk_path_fetch = time.time()
+
             try:
                 # 1. Ring motion (event-driven flag set by _handle_motion)
                 if _ring_motion_during_walk:
                     _ring_motion_during_walk = False
                     elapsed_min = int(elapsed / 60)
                     log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
-                    # Capture return GPS point before docking
+                    # Final walk path + GPS capture before docking
+                    walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
+                    if walk_path:
+                        await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
                     return_fi = await asyncio.to_thread(_check_fi_gps, location)
                     if return_fi:
                         _append_active_walk_route_point(return_fi)
@@ -963,7 +1075,10 @@ async def _return_poll_loop(location: str) -> None:
                     if wifi_detail["any_present"]:
                         elapsed_min = int(elapsed / 60)
                         log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
-                        # Capture return GPS point before docking
+                        # Final walk path + GPS capture before docking
+                        walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
+                        if walk_path:
+                            await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
                         return_fi = await asyncio.to_thread(_check_fi_gps, location)
                         if return_fi:
                             _append_active_walk_route_point(return_fi)
