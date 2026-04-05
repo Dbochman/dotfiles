@@ -767,6 +767,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
     <button class="snooze-btn" data-loc="crosstown" data-mins="60">1h</button>
     <button class="snooze-btn" data-loc="crosstown" data-mins="180">3h</button>
     <button class="snooze-btn" data-loc="crosstown" data-mins="480">8h</button>
+    <button class="snooze-btn" data-loc="crosstown" data-mins="525600">Indef</button>
     <button class="snooze-btn clear" data-loc="crosstown" data-mins="0">Clear</button>
   </div>
   <div class="snooze-group" data-loc="cabin">
@@ -775,6 +776,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
     <button class="snooze-btn" data-loc="cabin" data-mins="60">1h</button>
     <button class="snooze-btn" data-loc="cabin" data-mins="180">3h</button>
     <button class="snooze-btn" data-loc="cabin" data-mins="480">8h</button>
+    <button class="snooze-btn" data-loc="cabin" data-mins="525600">Indef</button>
     <button class="snooze-btn clear" data-loc="cabin" data-mins="0">Clear</button>
   </div>
 </div>
@@ -1592,7 +1594,7 @@ function renderSnooze(data) {
       const expDate = new Date(expires);
       const remaining = Math.max(0, Math.round((expDate.getTime() - Date.now()) / 60000));
       if (remaining > 0) {
-        el.textContent = remaining + 'm left';
+        el.textContent = remaining > 10000 ? 'Indefinite' : remaining < 60 ? remaining + 'm left' : Math.floor(remaining/60) + 'h ' + (remaining%60) + 'm left';
         el.style.color = C.amber;
       } else {
         el.textContent = 'Active';
