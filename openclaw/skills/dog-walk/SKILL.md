@@ -70,6 +70,8 @@ After departure, the return monitor uses three signals — any one triggers Room
 - A final Fi GPS point is captured before docking (for route completeness)
 - An iMessage notification is sent on return with walk duration and which signal triggered it
 - Safety fallback: auto-docks after 2 hours if no return detected
+- **Resilient finalization:** once a return signal is confirmed, the loop always exits. Walk path capture, dock, iMessage, and state updates are each wrapped in individual try/except blocks so a failure in any step cannot cause the monitor to loop back and re-trigger
+- **Dock sends stop first:** the `crosstown-roomba dock` command sends `stop` before `dock` because iRobot's MQTT `dock` is silently ignored during active cleaning
 
 ### GPS Tracking Mode (Lost Dog)
 
