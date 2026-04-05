@@ -42,8 +42,8 @@ The screenshot shows FindMy's zoomed map view centered on the person's location 
 | Position | Name | Notes |
 |----------|------|-------|
 | 0 | Me (clawdbotbochman) | The Mac Mini itself — always at home |
-| 1 | Julia Jennings | |
-| 2 | Dylan Bochman | |
+| 1 | Dylan Bochman | |
+| 2 | Julia Jennings | |
 
 The sidebar order matters — the script navigates via keyboard arrow keys.
 
@@ -55,7 +55,7 @@ The sidebar order matters — the script navigates via keyboard arrow keys.
 4. Waits 3 seconds for the map to animate and zoom to the pin
 5. Captures the frontmost window via `peekaboo image --mode frontmost`
 
-**Navigation is relative.** After reset, the cursor starts at position 0. Each `_navigate_and_capture` call moves Down by a step count relative to the *current* cursor position — it does NOT reset between captures. This is why `both` works in a single pass: reset → Down 1 (Julia, capture) → Down 1 more (Dylan, capture).
+**Navigation is relative.** After reset, the cursor starts at position 0. Each `_navigate_and_capture` call moves Down by a step count relative to the *current* cursor position — it does NOT reset between captures. This is why `both` works in a single pass: reset → Down 1 (Dylan, capture) → Down 1 more (Julia, capture).
 
 **FindMy blocks mouse clicks** — accessibility API clicks are silently ignored. Keyboard arrow keys via Peekaboo are the only reliable way to navigate the sidebar.
 

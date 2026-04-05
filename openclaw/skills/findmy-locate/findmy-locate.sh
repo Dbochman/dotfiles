@@ -13,8 +13,8 @@
 #
 # FindMy People sidebar (0-indexed from top):
 #   0: Me (clawdbotbochman)
-#   1: Julia Jennings
-#   2: Dylan Bochman
+#   1: Dylan Bochman
+#   2: Julia Jennings
 #
 # Navigation model:
 #   _open_and_reset positions the cursor at 0 (Me) by pressing Up x3.
@@ -100,29 +100,29 @@ _open_and_reset() {
 # ---------------------------------------------------------------------------
 
 if [ "$NAME_LOWER" = "both" ] || [ "$NAME_LOWER" = "all" ]; then
-    # Single pass: open FindMy, navigate to Julia (pos 1), capture,
-    # then down one more to Dylan (pos 2), capture.
+    # Single pass: open FindMy, navigate to Dylan (pos 1), capture,
+    # then down one more to Julia (pos 2), capture.
     _open_and_reset
 
-    # Julia is at position 1 — navigate down 1 from top
-    RESULT_JULIA=$(_navigate_and_capture 1 "Julia Jennings" "julia")
-
-    # Dylan is one step below Julia — navigate down 1 more
+    # Dylan is at position 1 — navigate down 1 from top
     RESULT_DYLAN=$(_navigate_and_capture 1 "Dylan Bochman" "dylan")
 
-    echo "{\"results\": [$RESULT_JULIA, $RESULT_DYLAN]}"
+    # Julia is one step below Dylan — navigate down 1 more
+    RESULT_JULIA=$(_navigate_and_capture 1 "Julia Jennings" "julia")
+
+    echo "{\"results\": [$RESULT_DYLAN, $RESULT_JULIA]}"
     exit 0
 fi
 
 # Single person lookup
 case "$NAME_LOWER" in
     dylan|"dylan bochman"|db)
-        TARGET_POS=2
+        TARGET_POS=1
         PERSON="Dylan Bochman"
         TAG="dylan"
         ;;
     julia|"julia jennings"|jj)
-        TARGET_POS=1
+        TARGET_POS=2
         PERSON="Julia Jennings"
         TAG="julia"
         ;;
