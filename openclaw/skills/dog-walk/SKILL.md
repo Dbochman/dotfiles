@@ -26,10 +26,12 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
 A polling loop checks Potato's Fi collar GPS every 3 minutes during walk hours. The listener treats the collar's GPS/geofence result as the source of truth for which home Potato is at, remembers the last home geofence he was inside, and starts Roombas when he leaves that home's geofence.
 
 **Trigger conditions:**
-- 2 consecutive Fi GPS readings outside geofence, >=3 min apart
+- 2 consecutive Fi GPS readings outside geofence, confirmed after a time threshold
 - Both readings must be < 10 min old (not stale)
 - Only during walk hours, using the last home geofence Potato was inside as the departure anchor
 - Only when no walk is already active
+
+**Base station disconnect acceleration:** When the Fi collar disconnects from its base station (`connection` transitions from `"Base"` to `"Unknown"`/`"User"`), the departure polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 150m geofence is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
 
 **Walk hours:** 7 AM-12 PM, 12-5 PM, 5-9 PM
 
