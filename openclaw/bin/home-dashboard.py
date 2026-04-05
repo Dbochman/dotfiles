@@ -145,7 +145,11 @@ def collect_roombas_crosstown():
 
 
 def collect_roombas_cabin():
-    return _run_cli(["roomba", "status"])
+    results = {}
+    for name in ("floomba", "philly"):
+        r = _run_cli(["roomba", "status", name])
+        results[name] = r.get("raw", r.get("error", "unknown")) if isinstance(r, dict) else str(r)
+    return {"robots": results}
 
 
 def collect_tv():
