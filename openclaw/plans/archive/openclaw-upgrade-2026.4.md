@@ -1,6 +1,8 @@
 # OpenClaw Upgrade Plan: v2026.2.21 → v2026.4.2
 
-## Status: PLANNED
+## Status: COMPLETED (2026-04-04)
+
+**Result**: Clean upgrade. Plist survived, gateway healthy, BB plugin loaded, cron `--tools exec` confirmed working. Found dual-install issue (npm global prefix vs node@22 keg) — fixed with `--prefix /opt/homebrew/opt/node@22`.
 
 ## Scope
 
