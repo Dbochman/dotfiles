@@ -74,6 +74,7 @@
       "serverUrl": "http://localhost:1234",
       "password": "${BLUEBUBBLES_PASSWORD}",
       "webhookPath": "/bluebubbles-webhook",
+      "allowPrivateNetwork": true,
       "sendReadReceipts": true,
       "dmPolicy": "open",
       "groupPolicy": "open",
