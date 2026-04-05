@@ -7,6 +7,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | Plan | Summary |
 |------|---------|
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
+| [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
 | [fi-collar-presence](fi-collar-presence.md) | Add Potato's Fi collar to Cabin presence detection |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
 
