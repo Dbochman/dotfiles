@@ -1138,8 +1138,12 @@ function addHomeCircle(map, location) {
 }
 
 function fitMap(map, location, points) {
-  if (points && points.length) {
+  if (points && points.length > 1) {
     map.fitBounds(L.latLngBounds(points), { padding: [24, 24] });
+    return;
+  }
+  if (points && points.length === 1) {
+    map.setView(points[0], 16);
     return;
   }
   const home = currentHomes[location];
