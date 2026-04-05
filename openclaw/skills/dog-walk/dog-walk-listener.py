@@ -921,7 +921,7 @@ async def _return_poll_loop(location: str) -> None:
     Checks every 60 seconds. Safety timeout: 2 hours.
     """
     global _return_monitor_active, _ring_motion_during_walk
-    POLL_INTERVAL = 60
+    POLL_INTERVAL = 30  # faster polling for better route tracking
     MAX_DURATION = 7200
     MIN_WALK_FOR_WIFI = 600  # ignore WiFi returns for first 10 min (phones linger at door)
     start_time = time.time()
@@ -946,6 +946,10 @@ async def _return_poll_loop(location: str) -> None:
                     _ring_motion_during_walk = False
                     elapsed_min = int(elapsed / 60)
                     log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
+                    # Capture return GPS point before docking
+                    return_fi = await asyncio.to_thread(_check_fi_gps, location)
+                    if return_fi:
+                        _append_active_walk_route_point(return_fi)
                     roomba_result = run_roomba_command(location, "dock")
                     _update_state_dog_walk(location, "dock", return_signal="ring_motion", roomba_result=roomba_result)
                     _update_state_return_monitor(location, "stop")
@@ -958,6 +962,10 @@ async def _return_poll_loop(location: str) -> None:
                     if wifi_detail["any_present"]:
                         elapsed_min = int(elapsed / 60)
                         log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
+                        # Capture return GPS point before docking
+                        return_fi = await asyncio.to_thread(_check_fi_gps, location)
+                        if return_fi:
+                            _append_active_walk_route_point(return_fi)
                         roomba_result = run_roomba_command(location, "dock")
                         _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
                         _update_state_return_monitor(location, "stop")
@@ -1159,6 +1167,8 @@ async def _fi_departure_poll_loop() -> None:
                 roomba_result=roomba_result,
                 fi_result=fi_result,
             )
+            # Seed the route with departure GPS point
+            _append_active_walk_route_point(fi_result)
             start_return_monitor(candidate_location)
 
         except asyncio.CancelledError:
