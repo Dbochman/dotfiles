@@ -823,6 +823,17 @@ def _check_fi_gps(location: str | None = None) -> dict | None:
         if result.get("error"):
             log(f"FI GPS: API error: {result.get('message', result['error'])}")
             return None
+        # Detect base-station echo: when activity is Rest/OngoingRest, Fi returns
+        # base station coords as pet position. If pet coords match any home location
+        # within 5m and connection is not "Base", the GPS is unreliable.
+        connection = result.get("connection", "")
+        if connection != "Base":
+            pet_lat, pet_lon = result["latitude"], result["longitude"]
+            for loc_name, loc in _FI_LOCATIONS.items():
+                dist_to_home = _haversine(pet_lat, pet_lon, loc["lat"], loc["lon"])
+                if dist_to_home < 5:  # within 5m of base station = echo
+                    log(f"FI GPS: base-station echo detected ({dist_to_home:.0f}m from {loc_name} base, connection={connection}), treating as stale")
+                    return None
         # Check staleness
         last_report = result.get("lastReport") or result.get("connectionDate")
         if last_report:
