@@ -1,5 +1,19 @@
 # Dog Walk Route Visualization — Plan
 
+## Status
+
+Implemented on 2026-04-04 for the dashboard surface in `openclaw/dog-walk-dashboard.py`.
+
+Route capture primitives were already present in the Fi-first listener lifecycle:
+
+- `walk_id` creation on departure
+- immutable `origin_location`
+- route-file persistence under `~/.openclaw/dog-walk/routes/...`
+- deduped Fi point appends during return monitoring
+- route finalization with `ended_at`, `return_signal`, `distance_m`, and `point_count`
+
+This document now serves as an implementation record plus a short list of remaining follow-ups.
+
 ## Goal
 
 Add a simple route view to the dog-walk dashboard that shows:
@@ -87,25 +101,40 @@ Distance priority:
 
 This keeps all route capture inside the lifecycle the listener already owns.
 
-## Dashboard/API Changes
+## Implemented Dashboard/API
 
-Add to `openclaw/dog-walk-dashboard.py`:
+Added to `openclaw/dog-walk-dashboard.py`:
 
 - `/api/homes`
 - `/api/routes?days=30&location=cabin|crosstown|all`
 - `/api/route?id=<walk_id>`
 - `/api/heatmap?days=30&location=cabin|crosstown`
 
-Recommended UI stack:
+Implemented UI stack:
 
-- Leaflet for maps
+- Leaflet for route maps
 - `Leaflet.heat` for heatmaps
 
-Do not use Google Maps heatmap APIs as the feature foundation.
+Implemented dashboard behavior:
 
-## Rollout
+- `Cabin` and `Crosstown` each render a single map
+- `Both` renders two maps side by side and stacks on smaller screens
+- `Routes` / `Heatmap` layer toggle is wired to the new APIs
+- recent-walk table is route-backed and clickable by `walk_id`
+- per-walk distance and aggregate distance cards are shown from route summaries
+- route maps respect `origin_location`, not Fi's later nearest-home result
+
+Current rendering notes:
+
+- route overlays are intentionally approximate Fi traces, not street-accurate replay
+- route views hide inter-home transit files using `is_interhome_transit`
+- heatmaps are per-house only; there is still no combined global map
+
+## Rollout Status
 
 ### Phase 1
+
+Done:
 
 - `walk_id` and `origin_location`
 - route-file persistence
@@ -113,16 +142,25 @@ Do not use Google Maps heatmap APIs as the feature foundation.
 
 ### Phase 2
 
+Done:
+
 - single-house route map
 - `Both` split view
 - clickable walk selection from the recent-walk list
 
 ### Phase 3
 
+Done:
+
 - per-house heatmap mode
 - aggregate distance cards
 
-## Open Questions
+Not yet done:
 
-- Whether Fi's `positions` payload is already enough for most active walks, or if explicit point appends from the listener are still needed every poll
-- Whether old walks should be shown without maps, or hidden from route-specific views entirely
+- dashboard deployment/restart wiring on this machine was not updated as part of the implementation record
+
+## Follow-Ups
+
+- Decide whether old event-only walks should appear in route mode as list rows without maps, or stay hidden unless a route file exists. The current implementation shows route-backed walks only.
+- Decide whether the dashboard should surface point count / no-map fallbacks more explicitly for walks with sparse Fi data.
+- If deployment should be standardized, add the copy/symlink + LaunchAgent restart step to the dog-walk operational docs so the repo file and live dashboard do not drift.

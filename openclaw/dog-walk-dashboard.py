@@ -50,6 +50,23 @@ CABIN_ROBOT_BLIDS = {
     "1D867094BA92F76D455065BCDBC68CCA": "Philly",
 }
 
+HOME_META = {
+    "cabin": {
+        "label": "Cabin",
+        "env_lat": "CABIN_LAT",
+        "env_lon": "CABIN_LON",
+        "radius_m": 300,
+        "color": "#FF8C00",
+    },
+    "crosstown": {
+        "label": "Crosstown",
+        "env_lat": "CROSSTOWN_LAT",
+        "env_lon": "CROSSTOWN_LON",
+        "radius_m": 150,
+        "color": "#4A90D9",
+    },
+}
+
 
 def _load_secrets_env():
     """Load secrets into env if not already set (for Fi API auth)."""
@@ -197,6 +214,89 @@ def fetch_cabin_roomba_status():
     return data
 
 
+def _parse_iso8601(ts_str):
+    if not ts_str:
+        return None
+    try:
+        return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _normalize_location(location, allow_all=True):
+    location = (location or "all").lower()
+    if location == "both":
+        location = "all"
+    if allow_all and location == "all":
+        return location
+    if location in HOME_META:
+        return location
+    return "all" if allow_all else None
+
+
+def _load_home_config():
+    _load_secrets_env()
+    homes = {}
+    for location, meta in HOME_META.items():
+        lat = os.environ.get(meta["env_lat"])
+        lon = os.environ.get(meta["env_lon"])
+        homes[location] = {
+            "location": location,
+            "label": meta["label"],
+            "radius_m": meta["radius_m"],
+            "color": meta["color"],
+            "lat": float(lat) if lat else None,
+            "lon": float(lon) if lon else None,
+            "configured": bool(lat and lon),
+        }
+    return homes
+
+
+def _iter_route_files():
+    if not os.path.isdir(ROUTES_DIR):
+        return
+    for root, _, files in os.walk(ROUTES_DIR):
+        for name in files:
+            if name.endswith(".json"):
+                yield os.path.join(root, name)
+
+
+def _load_route_file(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _route_summary(route):
+    return {
+        "walk_id": route.get("walk_id"),
+        "origin_location": route.get("origin_location"),
+        "started_at": route.get("started_at"),
+        "ended_at": route.get("ended_at"),
+        "end_location": route.get("end_location"),
+        "return_signal": route.get("return_signal"),
+        "distance_m": route.get("distance_m", 0),
+        "point_count": route.get("point_count", len(route.get("points") or [])),
+        "active": route.get("ended_at") is None,
+    }
+
+
+def _route_matches(route, cutoff=None, allowed_locations=None):
+    origin_location = route.get("origin_location")
+    if allowed_locations is not None and origin_location not in allowed_locations:
+        return False
+    if route.get("is_interhome_transit"):
+        return False
+    started_dt = _parse_iso8601(route.get("started_at"))
+    if started_dt is None:
+        return False
+    if cutoff is not None and started_dt < cutoff:
+        return False
+    return True
+
+
 def load_events(days):
     """Load events from JSONL files covering the requested time range."""
     days = min(max(1, days), MAX_DAYS)
@@ -221,8 +321,10 @@ def load_events(days):
                         continue
                     ts_str = rec.get("timestamp", "")
                     try:
-                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                    except (ValueError, AttributeError):
+                        ts = _parse_iso8601(ts_str)
+                    except (ValueError, TypeError):
+                        ts = None
+                    if ts is None:
                         continue
                     if ts >= cutoff:
                         records.append(rec)
@@ -247,52 +349,63 @@ def load_route_summaries(days, location="all"):
     days = min(max(1, days), MAX_DAYS)
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(days=days)
-    location = (location or "all").lower()
+    location = _normalize_location(location, allow_all=True)
     allowed_locations = None if location == "all" else {location}
     summaries = []
 
-    if not os.path.isdir(ROUTES_DIR):
-        return summaries, days, location
-
-    for root, _, files in os.walk(ROUTES_DIR):
-        for name in files:
-            if not name.endswith(".json"):
-                continue
-            path = os.path.join(root, name)
-            try:
-                with open(path) as f:
-                    route = json.load(f)
-            except (OSError, json.JSONDecodeError):
-                continue
-
-            origin_location = route.get("origin_location")
-            if allowed_locations is not None and origin_location not in allowed_locations:
-                continue
-            if route.get("is_interhome_transit"):
-                continue
-
-            started_at = route.get("started_at")
-            try:
-                started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-            except (AttributeError, ValueError):
-                continue
-            if started_dt < cutoff:
-                continue
-
-            summaries.append({
-                "walk_id": route.get("walk_id"),
-                "origin_location": origin_location,
-                "started_at": started_at,
-                "ended_at": route.get("ended_at"),
-                "end_location": route.get("end_location"),
-                "return_signal": route.get("return_signal"),
-                "distance_m": route.get("distance_m", 0),
-                "point_count": route.get("point_count", 0),
-                "active": route.get("ended_at") is None,
-            })
+    for path in _iter_route_files() or []:
+        route = _load_route_file(path)
+        if route is None or not _route_matches(route, cutoff=cutoff, allowed_locations=allowed_locations):
+            continue
+        summaries.append(_route_summary(route))
 
     summaries.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return summaries, days, location
+
+
+def load_route_detail(walk_id):
+    if not walk_id:
+        return None
+    for path in _iter_route_files() or []:
+        if os.path.basename(path) != f"{walk_id}.json":
+            continue
+        route = _load_route_file(path)
+        if route is None or route.get("is_interhome_transit"):
+            return None
+        return route
+    return None
+
+
+def load_heatmap_points(days, location):
+    days = min(max(1, days), MAX_DAYS)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    location = _normalize_location(location, allow_all=False)
+    if location is None:
+        return [], days, None
+
+    points = []
+    walk_count = 0
+    for path in _iter_route_files() or []:
+        route = _load_route_file(path)
+        if route is None or not _route_matches(route, cutoff=cutoff, allowed_locations={location}):
+            continue
+        route_points = route.get("points") or []
+        if not route_points:
+            continue
+        walk_count += 1
+        for point in route_points:
+            lat = point.get("lat")
+            lon = point.get("lon")
+            if lat is None or lon is None:
+                continue
+            points.append([lat, lon, 0.35])
+
+    return points, days, {
+        "location": location,
+        "walk_count": walk_count,
+        "point_count": len(points),
+    }
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -306,6 +419,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         if path == "/":
             self._serve_html()
+        elif path == "/api/homes":
+            self._serve_homes()
         elif path == "/api/events":
             days = 30
             try:
@@ -323,6 +438,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 pass
             location = qs.get("location", ["all"])[0]
             self._serve_routes(days, location)
+        elif path == "/api/route":
+            walk_id = qs.get("id", [""])[0]
+            self._serve_route(walk_id)
+        elif path == "/api/heatmap":
+            days = 30
+            try:
+                days = int(qs.get("days", ["30"])[0])
+            except (ValueError, IndexError):
+                pass
+            location = qs.get("location", ["all"])[0]
+            self._serve_heatmap(days, location)
         elif path == "/api/fi":
             self._serve_fi()
         elif path == "/api/roombas":
@@ -355,11 +481,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             self._respond(200, {"error": "no state data"})
 
+    def _serve_homes(self):
+        homes = _load_home_config()
+        self._respond(200, {"homes": homes})
+
     def _serve_routes(self, days, location):
         routes, clamped_days, normalized_location = load_route_summaries(days, location)
+        total_distance_m = sum(route.get("distance_m", 0) or 0 for route in routes)
         self._respond(200, {
-            "meta": {"days": clamped_days, "location": normalized_location, "count": len(routes)},
+            "meta": {
+                "days": clamped_days,
+                "location": normalized_location,
+                "count": len(routes),
+                "total_distance_m": total_distance_m,
+            },
             "routes": routes,
+        })
+
+    def _serve_route(self, walk_id):
+        if not walk_id:
+            self._respond(400, {"error": "missing route id"})
+            return
+        route = load_route_detail(walk_id)
+        if route is None:
+            self._respond(404, {"error": "route not found"})
+            return
+        self._respond(200, route)
+
+    def _serve_heatmap(self, days, location):
+        points, clamped_days, meta = load_heatmap_points(days, location)
+        if meta is None:
+            self._respond(400, {"error": "location must be cabin or crosstown"})
+            return
+        self._respond(200, {
+            "meta": {
+                "days": clamped_days,
+                "location": meta["location"],
+                "walk_count": meta["walk_count"],
+                "point_count": meta["point_count"],
+            },
+            "points": points,
         })
 
     def _serve_fi(self):
@@ -422,6 +583,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 <noscript><p style="color:#f87171;text-align:center;margin:2rem">JavaScript required.</p></noscript>
 <style>
 :root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e4e4e7;--muted:#9ca3af}
@@ -449,6 +613,23 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .stat-sub{font-size:0.75rem;color:var(--muted);margin-top:0.15rem}
 .stat-tag{display:inline-block;font-size:0.6rem;padding:0.1rem 0.4rem;border-radius:3px;background:rgba(255,255,255,0.08);color:var(--muted);margin-left:0.4rem;vertical-align:middle;letter-spacing:0.03em}
 
+/* Map section */
+.map-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0.85rem;margin-bottom:1rem}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.75rem;flex-wrap:wrap}
+.section-head h2{font-size:0.82rem;font-weight:600;color:var(--muted)}
+.section-meta{font-size:0.72rem;color:var(--muted)}
+.map-grid{display:grid;grid-template-columns:1fr;gap:0.75rem}
+.map-grid.two-up{grid-template-columns:1fr 1fr}
+@media(max-width:840px){.map-grid.two-up{grid-template-columns:1fr}}
+.map-card{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:10px;padding:0.65rem}
+.map-head{display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.55rem;flex-wrap:wrap}
+.map-head h3{font-size:0.85rem;font-weight:600}
+.map-sub{font-size:0.72rem;color:var(--muted)}
+.map-canvas{height:360px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.05)}
+.map-empty{padding:1rem 0.25rem;font-size:0.78rem;color:var(--muted)}
+.leaflet-container{background:#0b1220;color:#111827}
+.leaflet-control-attribution{font-size:0.62rem}
+
 /* Charts */
 .charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1rem}
 @media(max-width:500px){.charts-grid{grid-template-columns:1fr}}
@@ -464,6 +645,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .walk-table th{text-align:left;padding:0.4rem 0.6rem;border-bottom:1px solid var(--border);color:var(--muted);font-weight:500;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em}
 .walk-table td{padding:0.4rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.03)}
 .walk-table tr:last-child td{border-bottom:none}
+.walk-table tbody tr{cursor:pointer;transition:background 0.12s}
+.walk-table tbody tr:hover{background:rgba(59,130,246,0.08)}
+.walk-table tbody tr.selected{background:rgba(59,130,246,0.16)}
 
 /* Badges */
 .badge{display:inline-block;padding:0.1rem 0.45rem;border-radius:4px;font-size:0.7rem;font-weight:500}
@@ -509,8 +693,22 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <button data-days="90">90d</button>
   <button data-days="365">1Y</button>
 </div>
+<div class="controls" id="layerControls">
+  <button data-layer="routes" class="active">Routes</button>
+  <button data-layer="heatmap">Heatmap</button>
+</div>
 
-<div class="table-section"><h2>Recent Walks</h2><table class="walk-table"><thead><tr><th>Date</th><th>Location</th><th>Duration</th><th>Return Signal</th><th>Walkers</th><th>Roombas</th></tr></thead><tbody id="walkBody"></tbody></table></div>
+<div class="stats" id="routeCards"></div>
+
+<div class="map-section">
+  <div class="section-head">
+    <h2>Walk Map</h2>
+    <span class="section-meta" id="mapMeta"></span>
+  </div>
+  <div class="map-grid" id="mapGrid"><div class="loading">Loading route data...</div></div>
+</div>
+
+<div class="table-section"><h2>Recent Walks</h2><table class="walk-table"><thead><tr><th>Date</th><th>Location</th><th>Distance</th><th>Duration</th><th>Return</th><th>Walkers</th></tr></thead><tbody id="walkBody"></tbody></table></div>
 
 <div class="charts-grid">
   <div class="chart-box" id="durationBox"><h2>Walk Duration (minutes)</h2><div class="chart-wrap"><canvas id="durationChart"></canvas></div></div>
@@ -526,8 +724,16 @@ const SIGNAL_LABELS = { 'network_wifi':'WiFi', 'ring_motion':'Ring Motion', 'fin
 const LOCATION_COLORS = { 'cabin':'#FF8C00', 'crosstown':'#4A90D9' };
 
 let charts = {};
+let maps = {};
 let currentDays = 7;
 let currentLocation = 'all';
+let currentLayer = 'routes';
+let currentEvents = [];
+let currentRoutes = [];
+let currentHomes = {};
+let currentSelectedWalkId = null;
+let mapRenderToken = 0;
+const routeDetailCache = new Map();
 
 // ── Helpers ──
 
@@ -544,6 +750,20 @@ function fmtDuration(mins) {
   const h = Math.floor(mins / 60);
   const m = Math.round(mins % 60);
   return h + 'h ' + m + 'm';
+}
+
+function fmtDistance(meters) {
+  if (meters == null) return '-';
+  if (meters < 160) return Math.round(meters) + 'm';
+  return (meters / 1609.344).toFixed(1) + ' mi';
+}
+
+function homeLabel(location) {
+  return (currentHomes[location] && currentHomes[location].label) || (location ? location.charAt(0).toUpperCase() + location.slice(1) : '?');
+}
+
+function getVisibleLocations() {
+  return currentLocation === 'all' ? ['cabin', 'crosstown'] : [currentLocation];
 }
 
 function filterByLocation(events) {
@@ -590,6 +810,7 @@ function renderStatusCards(state) {
     const elapsed = walk.departed_at ? Math.round((Date.now() - new Date(walk.departed_at).getTime()) / 60000) : 0;
     html += '<div class="stat-value" style="color:' + C.green + '">' + elapsed + 'm</div>';
     html += '<div class="stat-sub">Active at ' + (walk.location || '?') + '</div>';
+    if (walk.distance_m != null) html += '<div class="stat-sub">Distance: ' + fmtDistance(walk.distance_m) + '</div>';
     if (walk.walkers && walk.walkers.length) html += '<div class="stat-sub">Walkers: ' + walk.walkers.join(', ') + '</div>';
   } else {
     html += '<div class="stat-value" style="color:' + C.muted + '">None</div>';
@@ -601,6 +822,7 @@ function renderStatusCards(state) {
     html += '<div class="stat"><div class="stat-label">Last Walk</div>';
     html += '<div class="stat-value" style="color:' + C.blue + '">' + fmtDuration(walk.walk_duration_minutes) + '</div>';
     html += '<div class="stat-sub">' + (walk.location || '') + '<span class="stat-tag">' + (SIGNAL_LABELS[walk.return_signal] || walk.return_signal || '?') + '</span></div>';
+    if (walk.distance_m != null) html += '<div class="stat-sub">' + fmtDistance(walk.distance_m) + ' tracked</div>';
     html += '</div>';
   }
 
@@ -759,40 +981,310 @@ function renderCabinRoombaCards(data) {
   el.innerHTML = html;
 }
 
-// ── Walk table ──
+function buildWalkRows(routes, events) {
+  const byWalkId = new Map();
 
-function renderWalkTable(events) {
-  const walks = [];
-  const departures = events.filter(e => e.event_type === 'departure');
-  const docks = events.filter(e => e.event_type === 'dock' || e.event_type === 'dock_timeout');
-
-  for (const dep of departures) {
-    const loc = dep.dog_walk && dep.dog_walk.location;
-    const depTime = dep.dog_walk && dep.dog_walk.departed_at;
-    const dock = docks.find(d => d.dog_walk && d.dog_walk.location === loc && d.dog_walk.departed_at === depTime);
-    walks.push({
-      departed_at: depTime,
-      location: loc,
-      duration: dock && dock.dog_walk ? dock.dog_walk.walk_duration_minutes : null,
-      return_signal: dock && dock.dog_walk ? dock.dog_walk.return_signal : null,
-      walkers: (dock && dock.dog_walk && dock.dog_walk.walkers) || (dep.dog_walk && dep.dog_walk.walkers) || [],
-      roomba_ok: dock && dock.roombas && dock.roombas[loc] && dock.roombas[loc].last_command_result ? dock.roombas[loc].last_command_result.success : null,
-      manual: isManualDeparture(dep),
-    });
+  for (const event of events) {
+    const walk = event.dog_walk || {};
+    const walkId = walk.walk_id;
+    if (!walkId) continue;
+    if (!byWalkId.has(walkId)) byWalkId.set(walkId, {});
+    const row = byWalkId.get(walkId);
+    if (event.event_type === 'departure') row.departure = event;
+    if (event.event_type === 'walkers_detected') row.walkers = event;
+    if (event.event_type === 'dock' || event.event_type === 'dock_timeout') row.dock = event;
   }
 
-  walks.reverse();
+  return routes.map(route => {
+    const joined = byWalkId.get(route.walk_id) || {};
+    const departure = joined.departure;
+    const dock = joined.dock;
+    const duration = dock && dock.dog_walk && dock.dog_walk.walk_duration_minutes != null
+      ? dock.dog_walk.walk_duration_minutes
+      : (route.started_at && route.ended_at)
+        ? (new Date(route.ended_at).getTime() - new Date(route.started_at).getTime()) / 60000
+        : null;
+    return {
+      walk_id: route.walk_id,
+      started_at: route.started_at,
+      location: route.origin_location,
+      distance_m: route.distance_m,
+      point_count: route.point_count,
+      active: route.active,
+      duration,
+      return_signal: route.return_signal,
+      walkers: (dock && dock.dog_walk && dock.dog_walk.walkers) || (joined.walkers && joined.walkers.dog_walk && joined.walkers.dog_walk.walkers) || (departure && departure.dog_walk && departure.dog_walk.walkers) || [],
+      manual: departure ? isManualDeparture(departure) : false,
+    };
+  }).sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+}
+
+function normalizeSelectedWalk() {
+  if (!currentRoutes.length) {
+    currentSelectedWalkId = null;
+    return;
+  }
+  if (currentSelectedWalkId && currentRoutes.some(route => route.walk_id === currentSelectedWalkId)) {
+    return;
+  }
+  const withPoints = currentRoutes.find(route => (route.point_count || 0) > 0);
+  currentSelectedWalkId = (withPoints || currentRoutes[0]).walk_id;
+}
+
+function renderRouteCards() {
+  const el = document.getElementById('routeCards');
+  if (!currentRoutes.length) {
+    el.innerHTML = '<div class="stat"><div class="stat-label">Route Data</div><div class="stat-value" style="color:' + C.muted + '">None</div><div class="stat-sub">No tracked walks in this period</div></div>';
+    return;
+  }
+
+  const totalDistance = currentRoutes.reduce((sum, route) => sum + (route.distance_m || 0), 0);
+  const avgDistance = totalDistance / currentRoutes.length;
+  const activeCount = currentRoutes.filter(route => route.active).length;
+  const selected = currentRoutes.find(route => route.walk_id === currentSelectedWalkId);
+
+  let html = '';
+  html += '<div class="stat"><div class="stat-label">Tracked Distance</div><div class="stat-value" style="color:' + C.blue + '">' + fmtDistance(totalDistance) + '</div><div class="stat-sub">' + currentRoutes.length + ' walks</div></div>';
+  html += '<div class="stat"><div class="stat-label">Average Walk</div><div class="stat-value" style="color:' + C.teal + '">' + fmtDistance(avgDistance) + '</div><div class="stat-sub">' + getVisibleLocations().map(homeLabel).join(' + ') + '</div></div>';
+  html += '<div class="stat"><div class="stat-label">Maps</div><div class="stat-value" style="color:' + (currentLayer === 'heatmap' ? C.orange : C.green) + '">' + (currentLayer === 'heatmap' ? 'Heatmap' : 'Routes') + '</div><div class="stat-sub">' + (activeCount ? activeCount + ' active walk' + (activeCount === 1 ? '' : 's') : 'Historical view') + '</div></div>';
+  if (selected) {
+    const signal = selected.active ? 'Active' : (SIGNAL_LABELS[selected.return_signal] || selected.return_signal || 'Pending');
+    html += '<div class="stat"><div class="stat-label">Selected Walk</div><div class="stat-value" style="color:' + (LOCATION_COLORS[selected.origin_location] || C.muted) + '">' + fmtDistance(selected.distance_m) + '</div><div class="stat-sub">' + homeLabel(selected.origin_location) + ' · ' + fmtTime(selected.started_at) + '</div><div class="stat-sub">' + signal + ' · ' + (selected.point_count || 0) + ' pts</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderWalkTable() {
+  const walks = buildWalkRows(currentRoutes, currentEvents);
   const tbody = document.getElementById('walkBody');
-  if (!walks.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:' + C.muted + ';text-align:center;padding:1rem">No walks in this period</td></tr>'; return; }
+  if (!walks.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="color:' + C.muted + ';text-align:center;padding:1rem">No tracked walks in this period</td></tr>';
+    return;
+  }
 
   tbody.innerHTML = walks.slice(0, 50).map(w => {
-    const sig = w.return_signal;
-    const sigBadgeColor = sig === 'timeout' ? 'red' : sig === 'findmy' ? 'purple' : sig === 'ring_motion' ? 'blue' : sig === 'fi_gps' ? 'teal' : 'green';
-    const sigBadge = sig ? '<span class="badge badge-' + sigBadgeColor + '">' + (SIGNAL_LABELS[sig] || sig) + '</span>' : '-';
-    const roombaBadge = w.roomba_ok === true ? '<span class="badge badge-ok">OK</span>' : w.roomba_ok === false ? '<span class="badge badge-err">Failed</span>' : '-';
+    const sig = w.active ? 'active' : w.return_signal;
+    const sigBadgeColor = sig === 'timeout' ? 'red' : sig === 'findmy' ? 'purple' : sig === 'ring_motion' ? 'blue' : sig === 'fi_gps' ? 'teal' : sig === 'active' ? 'amber' : 'green';
+    const sigLabel = w.active ? 'Active' : (SIGNAL_LABELS[sig] || sig || '-');
+    const sigBadge = sig ? '<span class="badge badge-' + sigBadgeColor + '">' + sigLabel + '</span>' : '-';
     const manual = w.manual ? ' <span class="stat-tag">manual</span>' : '';
-    return '<tr><td>' + fmtTime(w.departed_at) + '</td><td>' + (w.location || '?') + manual + '</td><td>' + fmtDuration(w.duration) + '</td><td>' + sigBadge + '</td><td>' + (w.walkers.length ? w.walkers.join(', ') : '-') + '</td><td>' + roombaBadge + '</td></tr>';
+    const duration = w.active && w.started_at ? Math.max(0, (Date.now() - new Date(w.started_at).getTime()) / 60000) : w.duration;
+    return '<tr data-walk-id="' + (w.walk_id || '') + '" class="' + (w.walk_id === currentSelectedWalkId ? 'selected' : '') + '"><td>' + fmtTime(w.started_at) + '</td><td>' + homeLabel(w.location) + manual + '</td><td>' + fmtDistance(w.distance_m) + '</td><td>' + fmtDuration(duration) + '</td><td>' + sigBadge + '</td><td>' + (w.walkers.length ? w.walkers.join(', ') : '-') + '</td></tr>';
   }).join('');
+}
+
+// ── Maps ──
+
+function destroyMaps() {
+  for (const state of Object.values(maps)) {
+    if (state && state.map) state.map.remove();
+  }
+  maps = {};
+}
+
+function setMapMeta() {
+  const meta = document.getElementById('mapMeta');
+  if (!currentRoutes.length) {
+    meta.textContent = 'No tracked route files in the selected window';
+    return;
+  }
+  const label = currentLayer === 'heatmap' ? 'Heatmap density' : 'Approximate Fi route overlays';
+  meta.textContent = label + ' · ' + currentDays + 'd · ' + currentRoutes.length + ' walks';
+}
+
+function renderMapShell() {
+  const grid = document.getElementById('mapGrid');
+  const visible = getVisibleLocations();
+  grid.className = 'map-grid' + (visible.length === 2 ? ' two-up' : '');
+  grid.innerHTML = visible.map(location => {
+    return '<div class="map-card"><div class="map-head"><h3>' + homeLabel(location) + '</h3><span class="map-sub" id="mapSub-' + location + '"></span></div><div class="map-canvas" id="map-' + location + '"></div><div class="map-empty" id="mapEmpty-' + location + '" style="display:none"></div></div>';
+  }).join('');
+}
+
+function ensureMap(location) {
+  if (!window.L) return null;
+  if (maps[location]) return maps[location];
+  const map = L.map('map-' + location, { scrollWheelZoom: false, zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  maps[location] = { map };
+  return maps[location];
+}
+
+function setMapMessage(location, message) {
+  const empty = document.getElementById('mapEmpty-' + location);
+  if (!empty) return;
+  empty.style.display = '';
+  empty.textContent = message;
+}
+
+function setMapSub(location, message) {
+  const sub = document.getElementById('mapSub-' + location);
+  if (sub) sub.textContent = message;
+}
+
+function addHomeCircle(map, location) {
+  const home = currentHomes[location];
+  if (!home || !home.configured || home.lat == null || home.lon == null) return null;
+  return L.circle([home.lat, home.lon], {
+    radius: home.radius_m || 150,
+    color: LOCATION_COLORS[location] || '#9ca3af',
+    weight: 1,
+    fillOpacity: 0.03,
+    dashArray: '6 6'
+  }).addTo(map);
+}
+
+function fitMap(map, location, points) {
+  if (points && points.length) {
+    map.fitBounds(L.latLngBounds(points), { padding: [24, 24] });
+    return;
+  }
+  const home = currentHomes[location];
+  if (home && home.configured && home.lat != null && home.lon != null) {
+    map.setView([home.lat, home.lon], 15);
+    return;
+  }
+  map.setView([42.43, -71.66], 8);
+}
+
+function fetchRouteDetail(walkId) {
+  if (!walkId) return Promise.resolve(null);
+  if (routeDetailCache.has(walkId)) return routeDetailCache.get(walkId);
+  const promise = fetch('/api/route?id=' + encodeURIComponent(walkId))
+    .then(resp => resp.ok ? resp.json() : null)
+    .catch(() => null);
+  routeDetailCache.set(walkId, promise);
+  return promise;
+}
+
+async function renderRouteMaps(token) {
+  const visible = getVisibleLocations();
+  const details = await Promise.all(currentRoutes.filter(route => (route.point_count || 0) > 0).map(route => fetchRouteDetail(route.walk_id)));
+  if (token !== mapRenderToken) return;
+
+  const detailById = new Map();
+  for (const detail of details) {
+    if (detail && detail.walk_id) detailById.set(detail.walk_id, detail);
+  }
+
+  for (const location of visible) {
+    const state = ensureMap(location);
+    if (!state) continue;
+    const map = state.map;
+    const locationRoutes = currentRoutes.filter(route => route.origin_location === location);
+    const routeDetails = locationRoutes.map(route => detailById.get(route.walk_id)).filter(Boolean);
+    const selected = detailById.get(currentSelectedWalkId);
+    const selectedHere = selected && selected.origin_location === location ? selected : null;
+    const allBounds = [];
+
+    addHomeCircle(map, location);
+
+    for (const detail of routeDetails) {
+      const points = (detail.points || []).filter(point => point.lat != null && point.lon != null).map(point => [point.lat, point.lon]);
+      if (!points.length) continue;
+      allBounds.push(...points);
+      const isSelected = detail.walk_id === currentSelectedWalkId;
+      const color = LOCATION_COLORS[location] || '#9ca3af';
+      const layer = points.length === 1
+        ? L.circleMarker(points[0], {
+            radius: isSelected ? 7 : 4,
+            color,
+            weight: isSelected ? 3 : 2,
+            opacity: isSelected ? 1 : 0.4,
+            fillOpacity: isSelected ? 0.75 : 0.25,
+          }).addTo(map)
+        : L.polyline(points, {
+            color,
+            weight: isSelected ? 5 : 2,
+            opacity: isSelected ? 0.96 : 0.24,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }).addTo(map);
+      layer.on('click', () => {
+        currentSelectedWalkId = detail.walk_id;
+        renderRouteCards();
+        renderWalkTable();
+        renderMaps();
+      });
+      if (isSelected && layer.bringToFront) layer.bringToFront();
+    }
+
+    const totalDistance = locationRoutes.reduce((sum, route) => sum + (route.distance_m || 0), 0);
+    setMapSub(location, locationRoutes.length + ' walks · ' + fmtDistance(totalDistance));
+    if (selectedHere && selectedHere.points && selectedHere.points.length) {
+      const selectedPoints = selectedHere.points.filter(point => point.lat != null && point.lon != null).map(point => [point.lat, point.lon]);
+      fitMap(map, location, selectedPoints);
+    } else {
+      fitMap(map, location, allBounds);
+    }
+    if (!routeDetails.length) {
+      setMapMessage(location, 'No route points captured for this home in the selected window.');
+    }
+  }
+}
+
+async function renderHeatmaps(token) {
+  const visible = getVisibleLocations();
+  const results = await Promise.all(visible.map(location => {
+    return fetch('/api/heatmap?days=' + currentDays + '&location=' + location)
+      .then(resp => resp.ok ? resp.json() : null)
+      .catch(() => null);
+  }));
+  if (token !== mapRenderToken) return;
+
+  for (let i = 0; i < visible.length; i++) {
+    const location = visible[i];
+    const state = ensureMap(location);
+    if (!state) continue;
+    const map = state.map;
+    const data = results[i];
+    const points = data && data.points ? data.points : [];
+    addHomeCircle(map, location);
+
+    if (points.length && window.L && L.heatLayer) {
+      L.heatLayer(points, {
+        radius: 24,
+        blur: 18,
+        minOpacity: 0.25,
+        maxZoom: 17,
+        gradient: {
+          0.2: '#60a5fa',
+          0.45: '#22c55e',
+          0.7: '#f59e0b',
+          1.0: '#ef4444'
+        }
+      }).addTo(map);
+      fitMap(map, location, points.map(point => [point[0], point[1]]));
+      const meta = data.meta || {};
+      setMapSub(location, (meta.walk_count || 0) + ' walks · ' + (meta.point_count || 0) + ' points');
+    } else {
+      fitMap(map, location, []);
+      setMapSub(location, 'No heatmap points');
+      setMapMessage(location, 'No Fi route points are available to build a heatmap here yet.');
+    }
+  }
+}
+
+async function renderMaps() {
+  destroyMaps();
+  setMapMeta();
+
+  const grid = document.getElementById('mapGrid');
+  if (!window.L) {
+    grid.innerHTML = '<div class="map-card"><div class="map-empty" style="display:block">Leaflet failed to load. Route maps are unavailable.</div></div>';
+    return;
+  }
+
+  renderMapShell();
+  const token = ++mapRenderToken;
+  if (currentLayer === 'heatmap') {
+    await renderHeatmaps(token);
+  } else {
+    await renderRouteMaps(token);
+  }
 }
 
 // ── Charts (shared infrastructure matching usage dashboard) ──
@@ -977,23 +1469,30 @@ function renderCharts(events) {
 
 async function refresh() {
   try {
-    const [eventsResp, stateResp, fiResp] = await Promise.all([
+    const [eventsResp, stateResp, fiResp, routesResp, homesResp] = await Promise.all([
       fetch('/api/events?days=' + currentDays),
       fetch('/api/current'),
       fetch('/api/fi'),
+      fetch('/api/routes?days=' + currentDays + '&location=' + currentLocation),
+      fetch('/api/homes'),
     ]);
-    if (!eventsResp.ok || !stateResp.ok) throw new Error('HTTP ' + eventsResp.status);
+    if (!eventsResp.ok || !stateResp.ok || !routesResp.ok || !homesResp.ok) throw new Error('HTTP ' + eventsResp.status);
     const eventsData = await eventsResp.json();
     const state = await stateResp.json();
     const fi = await fiResp.json();
-    const events = eventsData.events || [];
+    currentEvents = eventsData.events || [];
+    currentRoutes = (await routesResp.json()).routes || [];
+    currentHomes = (await homesResp.json()).homes || {};
+    normalizeSelectedWalk();
 
     document.getElementById('errorBanner').style.display = 'none';
     renderStaleness(state);
     renderStatusCards(state);
     renderPotatoCard(fi);
-    renderWalkTable(filterByLocation(events));
-    if (typeof Chart !== 'undefined') renderCharts(events);
+    renderRouteCards();
+    renderWalkTable();
+    await renderMaps();
+    if (typeof Chart !== 'undefined') renderCharts(currentEvents);
   } catch (err) {
     console.error('Refresh failed:', err);
     document.getElementById('errorBanner').textContent = 'Failed to load data: ' + err.message;
@@ -1017,6 +1516,7 @@ async function refresh() {
 document.getElementById('locationControls').addEventListener('click', e => {
   if (e.target.tagName !== 'BUTTON') return;
   currentLocation = e.target.dataset.location;
+  currentSelectedWalkId = null;
   document.querySelectorAll('#locationControls button').forEach(b => b.classList.toggle('active', b.dataset.location === currentLocation));
   Object.values(charts).forEach(c => { try { c.destroy(); } catch(e) {} });
   charts = {};
@@ -1029,6 +1529,21 @@ document.getElementById('timeControls').addEventListener('click', e => {
   Object.values(charts).forEach(c => { try { c.destroy(); } catch(e) {} });
   charts = {};
   refresh();
+});
+document.getElementById('layerControls').addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  currentLayer = e.target.dataset.layer;
+  document.querySelectorAll('#layerControls button').forEach(b => b.classList.toggle('active', b.dataset.layer === currentLayer));
+  renderRouteCards();
+  renderMaps();
+});
+document.getElementById('walkBody').addEventListener('click', e => {
+  const row = e.target.closest('tr[data-walk-id]');
+  if (!row) return;
+  currentSelectedWalkId = row.dataset.walkId || null;
+  renderRouteCards();
+  renderWalkTable();
+  if (currentLayer === 'routes') renderMaps();
 });
 
 refresh();
