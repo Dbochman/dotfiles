@@ -532,6 +532,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .badge-teal{background:rgba(20,184,166,0.15);color:#14b8a6}
 .badge-gray{background:rgba(107,114,128,0.15);color:#6b7280}
 
+/* Coverage date range */
+.date-range{display:none;align-items:center;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap}
+.date-range.visible{display:flex}
+.date-range label{font-size:0.72rem;color:var(--muted)}
+.date-range input[type="date"]{background:var(--surface);border:1px solid var(--border);color:var(--text);padding:0.3rem 0.5rem;border-radius:5px;font-size:0.72rem;font-family:inherit}
+.date-range input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7)}
+
 .loading{text-align:center;color:var(--muted);padding:2rem}
 .error-banner{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:0.75rem;color:#ef4444;font-size:0.8rem;margin-bottom:1rem;display:none}
 </style>
@@ -563,7 +570,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 </div>
 <div class="controls" id="layerControls">
   <button data-layer="routes" class="active">Routes</button>
+  <button data-layer="coverage">Coverage</button>
   <button data-layer="heatmap">Heatmap</button>
+</div>
+<div class="date-range" id="dateRange">
+  <label>From</label>
+  <input type="date" id="dateFrom">
+  <label>To</label>
+  <input type="date" id="dateTo">
 </div>
 
 <div class="stats" id="routeCards"></div>
@@ -881,7 +895,7 @@ function setMapMeta() {
     meta.textContent = 'No tracked route files in the selected window';
     return;
   }
-  const label = currentLayer === 'heatmap' ? 'Heatmap density' : 'Approximate Fi route overlays';
+  const label = currentLayer === 'heatmap' ? 'Heatmap density' : currentLayer === 'coverage' ? 'Street coverage — all walks shown at full weight' : 'Approximate Fi route overlays';
   meta.textContent = label + ' · ' + currentDays + 'd · ' + currentRoutes.length + ' walks';
 }
 
@@ -1077,6 +1091,56 @@ async function renderHeatmaps(token) {
   }
 }
 
+async function renderCoverageMaps(token) {
+  const visible = getVisibleLocations();
+  const fromDate = document.getElementById('dateFrom').value;
+  const toDate = document.getElementById('dateTo').value;
+
+  // Filter routes by date range
+  let filtered = currentRoutes;
+  if (fromDate) filtered = filtered.filter(r => r.started_at && r.started_at.slice(0,10) >= fromDate);
+  if (toDate) filtered = filtered.filter(r => r.started_at && r.started_at.slice(0,10) <= toDate);
+
+  const details = await Promise.all(filtered.filter(r => (r.point_count || 0) > 0).map(r => fetchRouteDetail(r.walk_id)));
+  if (token !== mapRenderToken) return;
+
+  const detailById = new Map();
+  for (const d of details) { if (d && d.walk_id) detailById.set(d.walk_id, d); }
+
+  for (const location of visible) {
+    const state = ensureMap(location);
+    if (!state) continue;
+    const map = state.map;
+    const locRoutes = filtered.filter(r => r.origin_location === location);
+    const locDetails = locRoutes.map(r => detailById.get(r.walk_id)).filter(Boolean);
+    const allBounds = [];
+
+    addHomeCircle(map, location);
+
+    for (const detail of locDetails) {
+      const points = (detail.points || []).filter(p => p.lat != null && p.lon != null).map(p => [p.lat, p.lon]);
+      if (!points.length) continue;
+      allBounds.push(...points);
+      const color = LOCATION_COLORS[location] || '#9ca3af';
+      L.polyline(points, {
+        color,
+        weight: 4,
+        opacity: 0.7,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }).addTo(map);
+    }
+
+    const totalDist = locRoutes.reduce((s, r) => s + (r.distance_m || 0), 0);
+    setMapSub(location, locDetails.length + ' walks · ' + fmtDistance(totalDist) + ' coverage');
+    fitMap(map, location, allBounds);
+    setTimeout(() => map.invalidateSize(), 200);
+    if (!locDetails.length) {
+      setMapMessage(location, 'No route points in the selected date range.');
+    }
+  }
+}
+
 async function renderMaps() {
   destroyMaps();
   setMapMeta();
@@ -1091,6 +1155,8 @@ async function renderMaps() {
   const token = ++mapRenderToken;
   if (currentLayer === 'heatmap') {
     await renderHeatmaps(token);
+  } else if (currentLayer === 'coverage') {
+    await renderCoverageMaps(token);
   } else {
     await renderRouteMaps(token);
   }
@@ -1332,9 +1398,22 @@ document.getElementById('layerControls').addEventListener('click', e => {
   if (e.target.tagName !== 'BUTTON') return;
   currentLayer = e.target.dataset.layer;
   document.querySelectorAll('#layerControls button').forEach(b => b.classList.toggle('active', b.dataset.layer === currentLayer));
+  document.getElementById('dateRange').classList.toggle('visible', currentLayer === 'coverage');
   renderRouteCards();
   renderMaps();
 });
+// Date range inputs for coverage mode
+document.getElementById('dateFrom').addEventListener('change', () => { if (currentLayer === 'coverage') renderMaps(); });
+document.getElementById('dateTo').addEventListener('change', () => { if (currentLayer === 'coverage') renderMaps(); });
+// Initialize date range defaults
+(function() {
+  const now = new Date();
+  const to = now.toISOString().slice(0,10);
+  const from = new Date(now.getTime() - currentDays * 86400000).toISOString().slice(0,10);
+  document.getElementById('dateFrom').value = from;
+  document.getElementById('dateTo').value = to;
+})();
+
 document.getElementById('walkBody').addEventListener('click', e => {
   const row = e.target.closest('tr[data-walk-id]');
   if (!row) return;
