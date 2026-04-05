@@ -9,6 +9,16 @@ metadata: {"openclaw":{"emoji":"D","requires":{"bins":["fi-collar","crosstown-ro
 
 Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automation with **multi-signal return detection** (Ring motion + WiFi + Fi GPS).
 
+## Current Model
+
+- Departure detection is **Fi-only**. Ring and presence no longer decide whether a walk started.
+- The listener uses Potato's Fi GPS/geofence result to choose the home, and stores the last confirmed in-geofence home as `home_location`.
+- Walks now get immutable `walk_id` and `origin_location` fields at departure.
+- Route files are persisted during return monitoring at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`.
+- Route files include `distance_m`, `point_count`, inferred `end_location`, and `is_interhome_transit`.
+- Inter-home transits are filtered out of the dashboard route-summary API, so future map views only show same-home walks.
+- Walk hours now cover the full day in three contiguous sections: `7 AM-12 PM`, `12 PM-5 PM`, `5 PM-9 PM`.
+
 ## How It Works
 
 ### Departure Detection (Fi GPS only)
@@ -82,6 +92,29 @@ To restart:
 ```bash
 launchctl unload ~/Library/LaunchAgents/ai.openclaw.dog-walk-listener.plist
 launchctl load ~/Library/LaunchAgents/ai.openclaw.dog-walk-listener.plist
+```
+
+## Deploy Notes
+
+Recent dog-walk changes touched these paths:
+
+- `openclaw/skills/dog-walk/dog-walk-listener.py`
+- `openclaw/dog-walk-dashboard.py`
+- `openclaw/skills/fi-collar/fi-api.py`
+
+If deploying to the Mac Mini, make sure the updated files are present under `~/.openclaw/`, then restart:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-listener
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-dashboard
+```
+
+Quick verification:
+
+```bash
+tail -20 ~/.openclaw/logs/dog-walk-listener.log
+tail -20 ~/.openclaw/logs/dog-walk-dashboard.log
+curl -s http://localhost:8552/api/routes?days=30 | jq '.meta'
 ```
 
 ## Skill Boundaries
