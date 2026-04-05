@@ -912,6 +912,7 @@ async def _return_poll_loop(location: str) -> None:
     global _return_monitor_active, _ring_motion_during_walk
     POLL_INTERVAL = 60
     MAX_DURATION = 7200
+    MIN_WALK_FOR_WIFI = 600  # ignore WiFi returns for first 10 min (phones linger at door)
     start_time = time.time()
 
     try:
@@ -939,16 +940,17 @@ async def _return_poll_loop(location: str) -> None:
                     _update_state_return_monitor(location, "stop")
                     return
 
-                # 2. Network WiFi presence
-                wifi_detail = await asyncio.to_thread(_check_network_presence, location)
-                _update_state_return_monitor(location, "poll", network_detail=wifi_detail)
-                if wifi_detail["any_present"]:
-                    elapsed_min = int(elapsed / 60)
-                    log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
-                    roomba_result = run_roomba_command(location, "dock")
-                    _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
-                    _update_state_return_monitor(location, "stop")
-                    return
+                # 2. Network WiFi presence (skip early — phones linger at front door)
+                if elapsed >= MIN_WALK_FOR_WIFI:
+                    wifi_detail = await asyncio.to_thread(_check_network_presence, location)
+                    _update_state_return_monitor(location, "poll", network_detail=wifi_detail)
+                    if wifi_detail["any_present"]:
+                        elapsed_min = int(elapsed / 60)
+                        log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
+                        roomba_result = run_roomba_command(location, "dock")
+                        _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
+                        _update_state_return_monitor(location, "stop")
+                        return
 
                 # 3. Fi GPS geofence
                 fi_result = await asyncio.to_thread(_check_fi_gps, location)
