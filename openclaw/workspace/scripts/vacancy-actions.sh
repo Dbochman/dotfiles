@@ -27,6 +27,30 @@ log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
 }
 
+# Load secrets (BB password, etc.) — cache-only, no op read
+SECRETS_FILE="$HOME/.openclaw/.secrets-cache"
+if [[ -f "$SECRETS_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$SECRETS_FILE"
+  set +a
+fi
+
+BB_PASSWORD="${BLUEBUBBLES_PASSWORD:-}"
+DYLAN_CHAT="any;-;dylanbochman@gmail.com"
+
+_send_imessage() {
+  local msg="$1"
+  if [[ -z "$BB_PASSWORD" ]]; then
+    log "  WARN: BLUEBUBBLES_PASSWORD not set, skipping iMessage"
+    return 1
+  fi
+  curl -s -X POST "http://localhost:1234/api/v1/message/text?password=$BB_PASSWORD" \
+    -H "Content-Type: application/json" \
+    -d "{\"chatGuid\":\"$DYLAN_CHAT\",\"message\":\"$msg\",\"method\":\"private-api\"}" \
+    > /dev/null 2>&1 || log "  WARN: iMessage send failed"
+}
+
 mkdir -p "$MARKER_DIR"
 
 if [[ ! -f "$STATE_FILE" ]]; then
@@ -86,6 +110,28 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
       log "  ERROR: Failed to turn off Eight Sleep $side"
     fi
   done
+
+  # Lock front door
+  lock_output=$(august status 2>&1) || true
+  lock_state=$(echo "$lock_output" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('state',{}).get('locked','unknown'))" 2>/dev/null || echo "unknown")
+  if [[ "$lock_state" == "True" ]]; then
+    log "  Front door: ALREADY LOCKED"
+    _send_imessage "🔒 Crosstown vacant — front door was already locked"
+  else
+    if lock_result=$(august lock 2>&1); then
+      locked=$(echo "$lock_result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('state',{}).get('locked',False))" 2>/dev/null || echo "False")
+      if [[ "$locked" == "True" ]]; then
+        log "  Front door: LOCKED"
+        _send_imessage "🔒 Crosstown vacant — front door locked automatically"
+      else
+        log "  ERROR: Lock command succeeded but door not confirmed locked"
+        _send_imessage "⚠️ Crosstown vacant — lock command sent but could not confirm door is locked"
+      fi
+    else
+      log "  ERROR: Failed to lock front door"
+      _send_imessage "🚨 Crosstown vacant — FAILED to lock front door! Please check manually"
+    fi
+  fi
 
   # Start Roombas
   if crosstown-roomba start all >> "$LOG_FILE" 2>&1; then
