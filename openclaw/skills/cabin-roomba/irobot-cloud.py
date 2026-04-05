@@ -69,7 +69,12 @@ def http_post(url, data=None, json_body=None, headers=None):
 
 
 def discover():
-    """Get iRobot API endpoints."""
+    """Get iRobot API endpoints.
+
+    Returns deployment tiers (v005/v007/v011) with httpBase, httpBaseAuth,
+    mqtt endpoint, and Gigya credentials. The Gigya API key rotates
+    periodically so it must be fetched from discovery, never hardcoded.
+    """
     return http_get(DISCOVERY_URL)
 
 
@@ -111,9 +116,9 @@ def full_login():
 
     # Step 1: Discovery
     disc = discover()
-    # Find the deployment
-    deploy_key = list(disc.get("deployments", {}).keys())[0]
-    deploy = disc["deployments"][deploy_key]
+    # Use v011 deployment (matches cabin roombas svcDeplId), fall back to first
+    deployments = disc.get("deployments", {})
+    deploy = deployments.get("v011") or deployments[list(deployments.keys())[0]]
     http_base = deploy["httpBase"]
     gigya_key = disc["gigya"]["api_key"]
     gigya_dc = disc["gigya"]["datacenter_domain"]
@@ -146,6 +151,11 @@ def full_login():
         "http_base_auth": deploy.get("httpBaseAuth", ""),
         "aws_region": deploy.get("awsRegion", "us-east-1"),
         "mqtt_endpoint": deploy.get("mqtt", ""),
+        # IoT custom authorizer tokens (for MQTT over WebSocket)
+        "iot_token": irobot_resp.get("iot_token", ""),
+        "iot_clientid": irobot_resp.get("iot_clientid", ""),
+        "iot_signature": irobot_resp.get("iot_signature", ""),
+        "iot_authorizer_name": irobot_resp.get("iot_authorizer_name", ""),
         "cached_at": time.time(),
     }
     with open(TOKEN_FILE, "w") as f:

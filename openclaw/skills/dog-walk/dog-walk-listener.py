@@ -140,7 +140,7 @@ def _write_state(state: dict, event_type: str = "state_update") -> None:
         for key in _CANDIDATE_KEYS:
             state.pop(key, None)
     state["event_type"] = event_type
-    state["timestamp"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    state["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     tmp_path = STATE_FILE.with_suffix(".tmp")
@@ -152,7 +152,7 @@ def _write_state(state: dict, event_type: str = "state_update") -> None:
     os.replace(str(tmp_path), str(STATE_FILE))
 
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    history_file = HISTORY_DIR / f"{datetime.utcnow().strftime('%Y-%m-%d')}.jsonl"
+    history_file = HISTORY_DIR / f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.jsonl"
     with open(history_file, "a") as f:
         f.write(json.dumps(state) + "\n")
         f.flush()
@@ -172,7 +172,7 @@ def _update_state_dog_walk(
 ) -> None:
     with _state_lock:
         state = _read_state()
-        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         walk = state.get("dog_walk") or {}
         roombas = state.get("roombas") or {}
@@ -262,7 +262,7 @@ def _update_state_return_monitor(
 ) -> None:
     with _state_lock:
         state = _read_state()
-        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         monitoring = state.get("return_monitoring") or {}
 
         if event == "start":
@@ -305,7 +305,7 @@ def _update_state_departure_candidate(
 ) -> None:
     with _state_lock:
         state = _read_state()
-        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         state["candidate_location"] = location
         state["candidate_started_at"] = started_at or state.get("candidate_started_at") or now
@@ -379,7 +379,7 @@ def _route_point_from_fi(fi_result: dict | None) -> dict | None:
         return None
     return {
         "ts": fi_result.get("lastReport") or fi_result.get("connectionDate")
-        or datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "lat": lat,
         "lon": lon,
     }
@@ -891,7 +891,7 @@ def _update_state_home_anchor(location: str, distance_m: int | None = None) -> N
             return
 
         state["home_location"] = location
-        state["home_location_seen_at"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        state["home_location_seen_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         state["home_location_source"] = "fi_gps"
         if distance_m is not None:
             state["home_location_distance_m"] = distance_m
@@ -1087,7 +1087,7 @@ async def _fi_departure_poll_loop() -> None:
             if dist is None:
                 continue
             now = time.time()
-            now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             if last_outside_reading is None:
                 last_outside_reading = {
