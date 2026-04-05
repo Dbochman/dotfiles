@@ -13,3 +13,6 @@ alias chrome-debug='/Applications/Google\ Chrome\ Canary.app/Contents/MacOS/Goog
 
 # npm global packages
 export PATH="$HOME/.npm-global/bin:$PATH"
+
+# API keys (local secrets file, chmod 600)
+[[ -f "$HOME/.secrets" ]] && source "$HOME/.secrets"

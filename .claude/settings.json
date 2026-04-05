@@ -47,7 +47,8 @@
   },
   "alwaysThinkingEnabled": false,
   "effortLevel": "high",
+  "voiceEnabled": true,
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
-  "voiceEnabled": true
+  "model": "opus[1m]"
 }
