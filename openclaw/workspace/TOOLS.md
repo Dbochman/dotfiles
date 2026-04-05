@@ -33,9 +33,10 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 - Petlibro Granary Smart Feeder + Dockstream 2 Cordless Fountain (cloud API)
 - Google smart speakers
 - Litter-Robot 4 (cloud API via pylitterbot, tracks Sopaipilla + Burrito weights)
+- August Wi-Fi Smart Lock (5th gen, front door — cloud API via august-api on MBP)
 
 ### Vacancy Automation
-When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent automatically: turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), and starts all Roombas.
+When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent automatically: turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), locks front door (August), and starts all Roombas. iMessage notification sent for lock status.
 
 ## Eight Sleep Pod
 
@@ -55,6 +56,24 @@ CLI at `/opt/homebrew/bin/8sleep`. Controls the Pod 3 (King) at Crosstown. Both 
 - Env vars (`EIGHTSLEEP_*`) loaded from `~/.openclaw/.secrets-cache`
 - Token cache at `~/.config/eightctl/token-cache.json` (auto-refreshes)
 - API rate-limits aggressively on repeated auth failures — wait 5-10 min
+
+## August Smart Lock
+
+CLI at `/opt/homebrew/bin/august`. Controls the August Wi-Fi Smart Lock (5th gen) on Crosstown front door.
+
+```bash
+august status       # Lock state, door position, battery, WiFi signal
+august lock         # Lock the front door
+august unlock       # Unlock the front door
+august locks        # List all locks on account
+```
+
+- Account: `dylanbochman@gmail.com`
+- Lock: "Front Door" at "Potato's House", serial L5V82000F7
+- Auth: JWT token via installId (cached at `~/.openclaw/august/config.json` on MBP, ~120 day expiry)
+- Re-auth: `august authorize` then `august validate <code>` (sends 6-digit code to email)
+- Architecture: SSH to MBP → Node.js august-cmd.js → August cloud API
+- Auto-locks on vacancy via `vacancy-actions.sh` (checks status first, texts result)
 
 ## Image Tool — Path Policy
 
