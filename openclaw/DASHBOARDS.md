@@ -10,6 +10,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 | 8551 | [OpenClaw Usage](#openclaw-usage-dashboard) | http://dylans-mac-mini:8551 | 5 min (UI) · 15 min (snapshots) |
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
+| 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | On demand |
 
 ---
@@ -214,6 +215,123 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 
 ---
 
+## Home Control Plane Dashboard
+
+**Port 8558**
+
+Unified control plane for all smart home devices across both locations. Single-pane-of-glass for monitoring status and issuing commands to 16 device categories.
+
+### What It Shows
+
+- **Presence** — occupancy per location (from presence scanner state file)
+- **Hue Lights** — room-by-room status with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
+- **Nest Thermostat** — per-room temp, setpoint, HVAC mode with set temp / set mode / eco controls (Cabin: 3 rooms)
+- **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)
+- **Mysa Heaters** — per-heater temp, setpoint, humidity, duty cycle (read-only; Crosstown: 3 units)
+- **August Lock** — lock state, door state, battery with lock/unlock controls
+- **Roombas** — battery, status per robot with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google)
+- **Samsung TV** — power state with on/off controls
+- **Google Speakers** — volume with set volume / mute / unmute
+- **Litter-Robot** — status, waste level with clean/reset
+- **Petlibro** — feeder + fountain status with manual feed
+- **Eight Sleep** — per-side temp level with on/off/set temp
+- **Ring Doorbell** — battery, last motion (read-only; both locations)
+- **Dog Walk** — active/inactive status, last walk details (read-only)
+
+### Architecture
+
+```
+Browser → home-dashboard.py (port 8558)
+            ├── GET /                        → embedded HTML dashboard
+            ├── GET /api/status              → all 16 collectors (cached)
+            ├── GET /api/status?refresh=true → force re-poll all CLIs
+            ├── GET /api/status/<device>     → refresh single device
+            ├── POST /api/command            → execute device command
+            └── GET /api/presence            → presence state
+```
+
+- **Precache on startup** — all 16 collectors run in parallel via `ThreadPoolExecutor` at boot
+- **Background refresh** — every 5 minutes, all collectors re-run in background
+- **Per-device refresh** — `GET /api/status/<device_name>` refreshes one collector and updates cache
+- **60s cache TTL** — CLI results cached to avoid hammering APIs
+- **30s command timeout** — accommodates slower SSH-based collectors (crosstown roombas, speakers)
+- **Secrets loading** — sources `~/.openclaw/.secrets-cache` at startup for CLI env vars (Petlibro, 8sleep, etc.)
+
+### Controls
+
+All controls use dropdown selectors (not text inputs) with pre-populated room/device lists:
+
+| Device | Room/Device Selector | Extra Controls |
+|--------|---------------------|----------------|
+| Hue Crosstown | 9 rooms dropdown | Brightness, Color (warm/cool/daylight/red/blue/green/purple/orange/pink) |
+| Hue Cabin | 8 rooms dropdown | Brightness, Color |
+| Nest | 3 rooms dropdown | Temp °F, Mode (HEAT/OFF), Eco on/off |
+| Cielo | 4 devices dropdown | Temp °F, Mode (cool/heat/auto/dry/fan) |
+| August | — | Lock / Unlock |
+| Crosstown Roomba | Robot selector | Start / Stop / Dock |
+| Cabin Roomba | Robot selector | Start / Stop / Dock |
+| Samsung TV | — | Power On / Off |
+| Speakers | Speaker selector | Volume, Mute / Unmute |
+| Litter-Robot | — | Clean / Reset |
+| Petlibro | — | Feed (portions) |
+| Eight Sleep | Side (Dylan/Julia) | Level (-100 to +100), On / Off |
+
+### Data Sources
+
+| Source | Type | Data |
+|--------|------|------|
+| `~/.openclaw/presence/state.json` | File | Occupancy per location |
+| `hue --crosstown/--cabin status` | CLI | Room-by-room light status |
+| `~/.openclaw/nest-history/*.jsonl` | File | Latest Nest snapshot |
+| `cielo status --json` | CLI | Minisplit status (JSON) |
+| `mysa` | CLI | Baseboard heater status (JSON) |
+| `august status` | CLI | Lock state (JSON, via SSH to MBP) |
+| `crosstown-roomba status` | CLI | Roomba status (via SSH+MQTT to MBP) |
+| `roomba status <name>` | CLI | Cabin roombas (per-robot, Google Assistant) |
+| `samsung-tv status` | CLI | TV power state |
+| `speaker status` | CLI | Speaker volume/reachability |
+| `litter-robot status` | CLI | LR4 status |
+| `petlibro status` | CLI | Feeder + fountain |
+| `8sleep status` | CLI | Pod temp, both sides |
+| `ring status` | CLI | Doorbell battery, motion |
+| `~/.openclaw/dog-walk/state.json` | File | Walk state |
+
+### Device → Location Mapping
+
+| Device | Crosstown | Cabin |
+|--------|-----------|-------|
+| Hue Lights | Entryway, Kitchen, Bedroom, Movie, Living, Office, Upstairs, Downstairs, Master | Kitchen, Living, Bathroom, Hallway, Bedroom, Office, Solarium, Staircase |
+| Nest | — | Solarium, Living Room, Bedroom |
+| Cielo AC | Basement, Living Room, Dylan's Office, Bedroom | — |
+| Mysa Heaters | Cat Room, Basement door, Movie room | — |
+| August Lock | Front Door | — |
+| Roombas | 10 Max + J5 (MQTT via MBP) | Floomba + Philly (Google) |
+| Samsung TV | Frame 65 | — |
+| Google Speakers | Bedroom + Living Room | — |
+| Litter-Robot | LR4 | — |
+| Petlibro | Feeder + Fountain | (seasonal, unplugged) |
+| Eight Sleep | Pod 3 (both sides) | — |
+| Ring Doorbell | Front Door | Front Door |
+| Dog Walk | Yes | Yes |
+| Presence | Yes | Yes |
+
+### Files
+
+| File | Path |
+|------|------|
+| Server | `openclaw/bin/home-dashboard.py` → `~/.openclaw/bin/home-dashboard.py` |
+| LaunchAgent | `openclaw/launchagents/ai.openclaw.home-dashboard.plist` |
+| Logs | `~/.openclaw/logs/home-dashboard.{log,err.log}` |
+
+### Known Limitations
+
+- **Mysa is read-only** — the Mysa API doesn't expose setpoint changes or on/off; use the Mysa app or physical thermostat
+- **Cabin Roombas use Google Assistant** — responses are natural language text, not structured JSON
+- **Petlibro/8sleep** require env vars from `~/.openclaw/.secrets-cache` — if secrets are stale, these collectors will error
+- **Crosstown Roombas and Speakers** route through SSH to MBP — if MBP is offline, these time out
+
+---
+
 ## Common Architecture
 
 All dashboards follow the same single-file Python server pattern:
@@ -260,5 +378,6 @@ curl -s http://dylans-mac-mini:8550/ | head -5   # Nest
 curl -s http://dylans-mac-mini:8551/ | head -5   # Usage
 curl -s http://dylans-mac-mini:8552/ | head -5   # Dog Walk
 curl -s http://dylans-mac-mini:8553/ | head -5   # Roomba
+curl -s http://dylans-mac-mini:8558/ | head -5   # Home Control Plane
 curl -s http://dylans-mac-mini:8585/ | head -5   # Financial
 ```
