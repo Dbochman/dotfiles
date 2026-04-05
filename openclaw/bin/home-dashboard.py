@@ -21,6 +21,24 @@ COMMAND_TIMEOUT_SECONDS = 30
 PRESENCE_STATE_PATH = os.path.expanduser("~/.openclaw/presence/state.json")
 NEST_HISTORY_DIR = os.path.expanduser("~/.openclaw/nest-history")
 DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
+SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
+
+
+def _load_secrets():
+    """Source ~/.openclaw/.secrets-cache into os.environ so CLIs get their env vars."""
+    try:
+        with open(SECRETS_CACHE_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip())
+    except FileNotFoundError:
+        pass
+
+
+_load_secrets()
 STATUS_CACHE = {}
 STATUS_CACHE_LOCK = threading.Lock()
 
