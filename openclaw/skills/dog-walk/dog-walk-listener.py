@@ -1021,11 +1021,9 @@ async def _return_poll_loop(location: str) -> None:
     """
     global _return_monitor_active, _ring_motion_during_walk
     POLL_INTERVAL = 30  # faster polling for better route tracking
-    WALK_PATH_INTERVAL = 120  # fetch Fi walk path every 2 min for dense route data
     MAX_DURATION = 7200
     MIN_WALK_FOR_WIFI = 600  # ignore WiFi returns for first 10 min (phones linger at door)
     start_time = time.time()
-    last_walk_path_fetch = 0.0
 
     try:
         log(f"RETURN MONITOR: Starting for {location}")
@@ -1041,13 +1039,6 @@ async def _return_poll_loop(location: str) -> None:
 
         while time.time() - start_time < MAX_DURATION:
             elapsed = time.time() - start_time
-
-            # Periodically fetch Fi's dense walk path (every 2 min)
-            if time.time() - last_walk_path_fetch >= WALK_PATH_INTERVAL:
-                walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
-                if walk_path:
-                    await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
-                last_walk_path_fetch = time.time()
 
             try:
                 # 1. Ring motion (event-driven flag set by _handle_motion)
@@ -1097,6 +1088,10 @@ async def _return_poll_loop(location: str) -> None:
                         elapsed_min = int(elapsed / 60)
                         dist = fi_result.get("distance_to_monitored", "?")
                         log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
+                        # Final walk path capture before docking
+                        walk_path = await asyncio.to_thread(_fetch_fi_walk_path)
+                        if walk_path:
+                            await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
                         roomba_result = run_roomba_command(location, "dock")
                         send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: Fi GPS — Potato {dist}m from home)")
                         _update_state_dog_walk(
