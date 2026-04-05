@@ -45,6 +45,8 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def nearest_location(lat, lon):
     """Return the nearest known location and distance."""
+    if not LOCATIONS:
+        return {"location": None, "label": "Unknown", "distance_m": None, "at_location": False}
     best = None
     best_dist = float("inf")
     for name, loc in LOCATIONS.items():

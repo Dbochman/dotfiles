@@ -37,6 +37,25 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 ### Vacancy Automation
 When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent automatically: turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), and starts all Roombas.
 
+## Eight Sleep Pod
+
+CLI at `/opt/homebrew/bin/8sleep`. Controls the Pod 3 (King) at Crosstown. Both sides: Dylan (left), Julia (right).
+
+```bash
+8sleep status                  # Both sides: temp, state, water
+8sleep sleep dylan              # Last night's sleep (score, duration, stages)
+8sleep sleep julia 2026-04-01   # Specific date
+8sleep temp dylan -30           # Set temp (-100 to +100)
+8sleep off julia                # Turn off side
+8sleep on dylan                 # Resume smart schedule
+8sleep device                   # Device info, firmware, connectivity
+```
+
+- Sleep data is keyed by **wake-up date** (today), not bedtime (yesterday)
+- Env vars (`EIGHTSLEEP_*`) loaded from `~/.openclaw/.secrets-cache`
+- Token cache at `~/.config/eightctl/token-cache.json` (auto-refreshes)
+- API rate-limits aggressively on repeated auth failures — wait 5-10 min
+
 ## Image Tool — Path Policy
 
 The `image` tool is restricted to workspace paths (`tools.fs.workspaceOnly: true`). Always save images to `~/.openclaw/workspace/tmp/` before passing them to the image tool — never use `/tmp` or `~/Downloads`.

@@ -304,9 +304,10 @@ def cmd_sleep(side_name, date=None):
     if date:
         path = f"users/{uid}/trends?tz=America/New_York&from={date}&to={date}"
     else:
-        from datetime import datetime, timedelta
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        path = f"users/{uid}/trends?tz=America/New_York&from={yesterday}&to={yesterday}"
+        # Eight Sleep keys sleep by wake-up date, so "last night" = today
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        path = f"users/{uid}/trends?tz=America/New_York&from={today}&to={today}"
 
     result = api_get(path, token_data)
     result["side"] = side_name
