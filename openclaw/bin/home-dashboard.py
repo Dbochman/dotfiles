@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 PORT = 8558
 CACHE_TTL_SECONDS = 60
-COMMAND_TIMEOUT_SECONDS = 15
+COMMAND_TIMEOUT_SECONDS = 30
 PRESENCE_STATE_PATH = os.path.expanduser("~/.openclaw/presence/state.json")
 NEST_HISTORY_DIR = os.path.expanduser("~/.openclaw/nest-history")
 DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
@@ -133,11 +133,11 @@ def collect_cielo():
 
 
 def collect_mysa():
-    return _run_cli(["mysa"])
+    return _run_cli(["mysa"], parse_json=True)
 
 
 def collect_lock():
-    return _run_cli(["august", "status"])
+    return _run_cli(["august", "status"], parse_json=True)
 
 
 def collect_roombas_crosstown():
@@ -386,6 +386,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/api/status":
             refresh = qs.get("refresh", ["false"])[0].lower() in {"1", "true", "yes"}
             self._respond(200, collect_status_bundle(refresh=refresh))
+        elif path.startswith("/api/status/"):
+            device_name = path.split("/api/status/", 1)[1]
+            if device_name in COLLECTORS:
+                data = COLLECTORS[device_name]()
+                with STATUS_CACHE_LOCK:
+                    STATUS_CACHE[device_name] = {"data": data, "timestamp": time.time()}
+                self._respond(200, data)
+            else:
+                self._respond(404, {"error": f"unknown device: {device_name}"})
         elif path == "/api/presence":
             self._respond(200, collect_presence())
         else:
@@ -943,6 +952,101 @@ function roomMeta(room) {
   return parts.join(' · ') || 'No extra metrics';
 }
 
+function renderCielo(result) {
+  if (!result) return '<div class="muted">No Cielo data</div>';
+  if (result.error) return renderError(result);
+  const devices = result.data || result.devices || (Array.isArray(result) ? result : null);
+  if (!devices) return renderSimpleObject(result);
+  return '<div class="room-grid">' + devices.map((d) => {
+    const name = d.deviceName || d.name || '?';
+    const action = d.latestAction || {};
+    const env = d.latEnv || {};
+    const power = action.power || 'off';
+    const temp = env.temp !== undefined ? env.temp + '°' : '—';
+    const setpoint = action.temp ? action.temp + '°' : '—';
+    const mode = action.mode || '—';
+    const fan = action.fanspeed || '—';
+    const humidity = env.humidity !== undefined ? env.humidity + '%' : '—';
+    const online = d.deviceStatus === 1;
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name)} ${online ? '' : '<span class="error-text">(offline)</span>'}</div>
+      <div class="room-temp">${escapeHtml(temp)}</div>
+      <div class="room-meta">Set: ${escapeHtml(setpoint)} · ${escapeHtml(mode)} · Fan: ${escapeHtml(fan)} · ${escapeHtml(humidity)} · Power: ${escapeHtml(power)}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderMysa(result) {
+  if (!result) return '<div class="muted">No Mysa data</div>';
+  if (result.error) return renderError(result);
+  if (result.raw) return renderPre(result.raw);
+  const devices = result.devices || (Array.isArray(result.data) ? result.data : null);
+  if (!devices) return renderSimpleObject(result);
+  return '<div class="room-grid">' + devices.map((d) => {
+    const name = d.name || '?';
+    const temp = d.temp_f !== undefined ? d.temp_f + '°F' : (d.temp_c !== undefined ? d.temp_c + '°C' : '—');
+    const setpoint = d.setpoint_f !== undefined ? d.setpoint_f + '°F' : '—';
+    const humidity = d.humidity !== undefined ? d.humidity + '%' : '—';
+    const duty = d.duty_pct !== undefined ? d.duty_pct + '%' : '—';
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name)}</div>
+      <div class="room-temp">${escapeHtml(temp)}</div>
+      <div class="room-meta">Set: ${escapeHtml(setpoint)} · Humidity: ${escapeHtml(humidity)} · Duty: ${escapeHtml(duty)}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function renderLock(result) {
+  if (!result) return '<div class="muted">No lock data</div>';
+  if (result.error) return renderError(result);
+  if (result.raw) return renderPre(result.raw);
+  const locked = result.state ? result.state.locked : null;
+  const lockStatus = result.status || '—';
+  const doorState = result.doorState || '—';
+  const lockIcon = locked === true ? '&#x1F512;' : locked === false ? '&#x1F513;' : '';
+  const info = result.info || {};
+  const battery = info.battery !== undefined ? info.battery + '%' : '';
+  const wlan = info.wlanRSSI !== undefined ? info.wlanRSSI + ' dBm' : '';
+  return `<div class="subcard">
+    <div style="font-size:1.5rem;font-weight:700;margin-bottom:8px">${lockIcon} ${locked ? 'Locked' : locked === false ? 'Unlocked' : 'Unknown'}</div>
+    <div class="metric"><span>Door</span><strong>${escapeHtml(doorState.replace('kAugDoorState_', ''))}</strong></div>
+    <div class="metric"><span>Status</span><strong>${escapeHtml(lockStatus)}</strong></div>
+    ${battery ? `<div class="metric"><span>Battery</span><strong>${escapeHtml(battery)}</strong></div>` : ''}
+    ${wlan ? `<div class="metric"><span>WiFi</span><strong>${escapeHtml(wlan)}</strong></div>` : ''}
+  </div>`;
+}
+
+function renderDogWalk(result) {
+  if (!result) return '<div class="muted">No dog walk data</div>';
+  if (result.error) return renderError(result);
+  const walk = result.dog_walk;
+  if (!walk) return renderSimpleObject(result);
+  const active = walk.active;
+  const location = walk.location || '—';
+  const walkers = (walk.walkers || []).join(', ') || '—';
+  if (active) {
+    const departed = formatTimestamp(walk.departed_at);
+    return `<div class="subcard">
+      <div style="font-size:1.1rem;font-weight:700;color:#22c55e;margin-bottom:8px">Active Walk</div>
+      <div class="metric"><span>Location</span><strong>${escapeHtml(location)}</strong></div>
+      <div class="metric"><span>Walkers</span><strong>${escapeHtml(walkers)}</strong></div>
+      <div class="metric"><span>Departed</span><strong>${escapeHtml(departed)}</strong></div>
+      <div class="metric"><span>Distance</span><strong>${walk.distance_m ? (walk.distance_m / 1609.34).toFixed(2) + ' mi' : '—'}</strong></div>
+    </div>`;
+  }
+  const duration = walk.walk_duration_minutes ? walk.walk_duration_minutes.toFixed(0) + ' min' : '—';
+  const distance = walk.distance_m ? (walk.distance_m / 1609.34).toFixed(2) + ' mi' : '—';
+  const returned = formatTimestamp(walk.returned_at);
+  return `<div class="subcard">
+    <div style="font-size:1.1rem;font-weight:700;color:var(--text-muted);margin-bottom:8px">No Active Walk</div>
+    <div class="metric"><span>Last Walk</span><strong>${escapeHtml(returned)}</strong></div>
+    <div class="metric"><span>Duration</span><strong>${escapeHtml(duration)}</strong></div>
+    <div class="metric"><span>Distance</span><strong>${escapeHtml(distance)}</strong></div>
+    <div class="metric"><span>Location</span><strong>${escapeHtml(location)}</strong></div>
+    <div class="metric"><span>Walkers</span><strong>${escapeHtml(walkers)}</strong></div>
+  </div>`;
+}
+
 function renderNest(result) {
   if (!result) return '<div class="muted">No Nest data</div>';
   if (result.error) return renderError(result);
@@ -981,9 +1085,9 @@ function renderDashboard() {
   setContent('hueCrosstownContent', renderRawResult(data.hue_crosstown));
   setContent('hueCabinContent', renderRawResult(data.hue_cabin));
   setContent('nestContent', renderNest(data.nest));
-  setContent('cieloContent', renderSimpleObject(data.cielo));
-  setContent('mysaContent', renderRawResult(data.mysa));
-  setContent('lockContent', renderRawResult(data.lock));
+  setContent('cieloContent', renderCielo(data.cielo));
+  setContent('mysaContent', renderMysa(data.mysa));
+  setContent('lockContent', renderLock(data.lock));
   setContent('roombasCrosstownContent', renderRawResult(data.roombas_crosstown));
   setContent('roombasCabinContent', renderRawResult(data.roombas_cabin));
   setContent('tvContent', renderRawResult(data.tv));
@@ -992,7 +1096,7 @@ function renderDashboard() {
   setContent('petlibroContent', renderRawResult(data.petlibro));
   setContent('eightSleepContent', renderRawResult(data['8sleep']));
   setContent('ringContent', renderRawResult(data.ring));
-  setContent('dogWalkContent', renderSimpleObject(data.dog_walk));
+  setContent('dogWalkContent', renderDogWalk(data.dog_walk));
   document.getElementById('lastUpdated').textContent = formatTimestamp(data.meta && data.meta.timestamp);
   applyLocationFilter();
 }
@@ -1016,6 +1120,38 @@ async function fetchStatus(refresh=false) {
     showFeedback(error.message || 'Failed to load status', 'error');
   } finally {
     state.loading = false;
+  }
+}
+
+const DEVICE_TO_COLLECTOR = {
+  hue_crosstown: 'hue_crosstown',
+  hue_cabin: 'hue_cabin',
+  nest: 'nest',
+  cielo: 'cielo',
+  august: 'lock',
+  crosstown_roomba: 'roombas_crosstown',
+  cabin_roomba: 'roombas_cabin',
+  tv: 'tv',
+  speaker: 'speakers',
+  litter_robot: 'litter_robot',
+  petlibro: 'petlibro',
+  eightsleep: '8sleep',
+};
+
+async function refreshDevice(deviceKey) {
+  if (!deviceKey) return;
+  try {
+    const response = await fetch(`/api/status/${encodeURIComponent(deviceKey)}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to refresh device');
+    }
+    if (state.data) {
+      state.data[deviceKey] = data;
+      renderDashboard();
+    }
+  } catch (error) {
+    console.error('refresh failed', error);
   }
 }
 
@@ -1047,6 +1183,7 @@ async function postCommand(button) {
   const device = button.dataset.device;
   const action = button.dataset.action;
   const args = collectArgs(button);
+  const collectorKey = DEVICE_TO_COLLECTOR[device];
 
   showFeedback(`Running ${device} ${action}...`);
 
@@ -1061,7 +1198,7 @@ async function postCommand(button) {
       throw new Error(data.error || data.output || `Command failed (${response.status})`);
     }
     showFeedback(`${device} ${action} succeeded`, 'success');
-    await fetchStatus(true);
+    await refreshDevice(collectorKey);
   } catch (error) {
     console.error(error);
     showFeedback(error.message || 'Command failed', 'error');
@@ -1093,6 +1230,21 @@ setInterval(() => fetchStatus(), 5 * 60 * 1000);
 
 def run():
     server = ThreadedHTTPServer(("0.0.0.0", PORT), DashboardHandler)
+
+    # Precache all collectors on startup
+    threading.Thread(target=collect_status_bundle, daemon=True).start()
+
+    # Periodic background refresh every 5 minutes
+    def _periodic_refresh():
+        while True:
+            time.sleep(300)
+            try:
+                collect_status_bundle(refresh=True)
+            except Exception:
+                pass
+
+    threading.Thread(target=_periodic_refresh, daemon=True).start()
+
     print(f"Home Control Plane running on http://0.0.0.0:{PORT}", flush=True)
     print("  Access via Tailscale IP or localhost", flush=True)
 
