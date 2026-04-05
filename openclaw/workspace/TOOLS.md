@@ -139,6 +139,23 @@ All restarts share a 15-min cooldown. Gateway restarts are **deferred while cron
 - Reaction types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
 - For Private API curl examples: `qmd query "bluebubbles private API"`
 
+## FindMy Locate
+
+CLI at `~/.openclaw/bin/findmy-locate`. Locates Dylan, Julia, or both via Apple FindMy screenshots using Peekaboo screen automation.
+
+```bash
+findmy-locate dylan     # Screenshot of Dylan's map pin
+findmy-locate julia     # Screenshot of Julia's map pin
+findmy-locate both      # Single pass: Dylan then Julia
+```
+
+Returns JSON with the screenshot path. **Read the screenshot image** to determine street address, neighborhood, or proximity to known locations. After locating, consider using the **places** skill (`goplaces`) for nearby search, directions, or recommendations.
+
+- Captures saved to `~/.openclaw/findmy-locate/`
+- Requires Peekaboo Screen Recording + Accessibility TCC grants
+- Must run from GUI context (LaunchAgent or local terminal, not SSH)
+- People sidebar order: Me (0) → Dylan (1) → Julia (2)
+
 ## Presence Detection
 
 Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Sticky/arrival-based model: once detected at a location, person stays until detected at the other.
@@ -157,5 +174,7 @@ Mac Mini → MacBook Pro SSH via Tailscale (`ssh dylans-macbook-pro`), dedicated
 |---|---|---|
 | Nest Climate | 8550 | Thermostat + weather + presence |
 | Usage | 8551 | Token consumption + agent activity |
+| Dog Walk | 8552 | Walk history, Fi GPS, Roomba status, route maps |
+| Financial | 8585 | Utilities, spending |
 
-For API endpoints and UI features: `qmd query "nest dashboard API"` or `qmd query "usage dashboard"`
+For API endpoints and UI features: `qmd query "nest dashboard API"` or `qmd query "usage dashboard"` or `qmd query "dog walk dashboard"`
