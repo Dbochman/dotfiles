@@ -23,7 +23,7 @@ NEST_HISTORY_DIR = os.path.expanduser("~/.openclaw/nest-history")
 DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
 SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
 CATT_BIN = os.path.expanduser("~/.local/bin/catt")
-_SPEAKER_IPS = {"bedroom": "192.168.1.163", "living-room": "192.168.1.66"}
+_SPEAKER_IPS = {"bedroom": "192.168.165.146", "living room": "192.168.165.113"}
 _CABIN_SPEAKER_IPS = {"kitchen": "192.168.1.66", "bedroom": "192.168.1.163"}
 
 
@@ -834,7 +834,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
         <form id="speaker-form" class="controls-grid">
           <select name="name">
             <option value="bedroom" selected>Bedroom</option>
-            <option value="living-room">Living Room</option>
+            <option value="living room">Living Room</option>
           </select>
           <input name="level" type="number" min="0" max="100" placeholder="Volume">
         </form>
