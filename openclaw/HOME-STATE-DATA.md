@@ -22,7 +22,7 @@ Collected by `dog-walk-listener.py`, written on each dog walk event.
 
 | Source | Data | Trigger |
 |--------|------|---------|
-| Fi GPS Collar | Departure detection (Potato leaves geofence) | Every 3 min during walk hours |
+| Fi GPS Collar | Departure detection (Potato leaves geofence) | Every 3 min from 7 AM-9 PM (three contiguous windows) |
 | Ring motion + WiFi + Fi GPS | Return detection (multi-signal) | Every 60s during active walk |
 | Roomba automation | Start/dock times, triggers | Departure/return events |
 

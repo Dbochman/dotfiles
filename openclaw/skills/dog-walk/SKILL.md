@@ -21,7 +21,7 @@ A polling loop checks Potato's Fi collar GPS every 3 minutes during walk hours. 
 - Only during walk hours, using the last home geofence Potato was inside as the departure anchor
 - Only when no walk is already active
 
-**Walk hours:** 8-10 AM, 11 AM-1 PM, 5-8 PM
+**Walk hours:** 7 AM-12 PM, 12-5 PM, 5-9 PM
 
 **Pre-checks:**
 - **Time-of-day filter**: only active during walk hours

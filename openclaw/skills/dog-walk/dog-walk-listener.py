@@ -854,7 +854,7 @@ def _check_fi_gps(location: str | None = None) -> dict | None:
 # Walk hours & presence
 # ---------------------------------------------------------------------------
 
-_WALK_HOURS = [(8, 10), (11, 13), (17, 20)]  # 8-10 AM, 11 AM-1 PM, 5-8 PM
+_WALK_HOURS = [(7, 12), (12, 17), (17, 21)]  # 7 AM-12 PM, 12-5 PM, 5-9 PM
 
 
 def _is_walk_hour() -> bool:
