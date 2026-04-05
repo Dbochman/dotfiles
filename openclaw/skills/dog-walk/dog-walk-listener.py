@@ -1048,7 +1048,11 @@ async def _return_poll_loop(location: str) -> None:
     POLL_INTERVAL = 30  # faster polling for better route tracking
     MAX_DURATION = 7200
     MIN_WALK_FOR_WIFI = 600  # ignore WiFi returns for first 10 min (phones linger at door)
+    CAR_SPEED_MPS = 13.4  # ~30 mph threshold for car detection
+    CAR_DURATION_S = 360  # 6 minutes at car speed → switch to NORMAL
     start_time = time.time()
+    car_speed_since: float | None = None  # timestamp when car speed first detected
+    lost_dog_active = True  # track whether we're in LOST_DOG mode
 
     try:
         log(f"RETURN MONITOR: Starting for {location}")
@@ -1061,6 +1065,7 @@ async def _return_poll_loop(location: str) -> None:
         _update_state_dog_walk(location, "walkers_detected", walkers=walkers)
 
         _ring_motion_during_walk = False
+        prev_gps: dict | None = None  # for speed calculation
 
         while time.time() - start_time < MAX_DURATION:
             elapsed = time.time() - start_time
@@ -1104,11 +1109,35 @@ async def _return_poll_loop(location: str) -> None:
                         _update_state_return_monitor(location, "stop")
                         return
 
-                # 3. Fi GPS geofence
+                # 3. Fi GPS geofence + speed check
                 fi_result = await asyncio.to_thread(_check_fi_gps, location)
                 if fi_result:
                     _append_active_walk_route_point(fi_result)
                     _update_state_return_monitor(location, "poll", fi_result=fi_result)
+
+                    # Car speed detection — switch to NORMAL to save battery
+                    if prev_gps and lost_dog_active:
+                        lat1, lon1 = prev_gps["latitude"], prev_gps["longitude"]
+                        lat2, lon2 = fi_result["latitude"], fi_result["longitude"]
+                        dist_between = _haversine(lat1, lon1, lat2, lon2)
+                        time_between = fi_result.get("age_s", 30)
+                        prev_age = prev_gps.get("age_s", 30)
+                        # Estimate time gap between the two readings
+                        time_gap = max(abs(time_between - prev_age), 10)
+                        speed_mps = dist_between / time_gap if time_gap > 0 else 0
+                        if speed_mps >= CAR_SPEED_MPS:
+                            if car_speed_since is None:
+                                car_speed_since = time.time()
+                                log(f"RETURN MONITOR: Car speed detected ({speed_mps:.1f} m/s = {speed_mps * 2.237:.0f} mph)")
+                            elif time.time() - car_speed_since >= CAR_DURATION_S:
+                                log(f"RETURN MONITOR: Car travel >6min — switching collar to NORMAL to save battery")
+                                _set_fi_collar_mode("NORMAL")
+                                lost_dog_active = False
+                        else:
+                            car_speed_since = None  # reset if speed drops
+
+                    prev_gps = fi_result
+
                     if fi_result.get("at_monitored_location"):
                         elapsed_min = int(elapsed / 60)
                         dist = fi_result.get("distance_to_monitored", "?")
