@@ -951,6 +951,7 @@ async def _return_poll_loop(location: str) -> None:
                     if return_fi:
                         _append_active_walk_route_point(return_fi)
                     roomba_result = run_roomba_command(location, "dock")
+                    send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: Ring doorbell motion)")
                     _update_state_dog_walk(location, "dock", return_signal="ring_motion", roomba_result=roomba_result)
                     _update_state_return_monitor(location, "stop")
                     return
@@ -967,6 +968,7 @@ async def _return_poll_loop(location: str) -> None:
                         if return_fi:
                             _append_active_walk_route_point(return_fi)
                         roomba_result = run_roomba_command(location, "dock")
+                        send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: WiFi reconnect)")
                         _update_state_dog_walk(location, "dock", return_signal="network_wifi", roomba_result=roomba_result)
                         _update_state_return_monitor(location, "stop")
                         return
@@ -981,6 +983,7 @@ async def _return_poll_loop(location: str) -> None:
                         dist = fi_result.get("distance_to_monitored", "?")
                         log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
                         roomba_result = run_roomba_command(location, "dock")
+                        send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: Fi GPS — Potato {dist}m from home)")
                         _update_state_dog_walk(
                             location,
                             "dock",
