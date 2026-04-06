@@ -1288,10 +1288,16 @@ function renderHue(result) {
     const [, name, state, brightness, lightCount, mired] = m;
     const isOn = state.toUpperCase() === 'ON';
     const dot = isOn ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+    let meta = '';
+    if (isOn) {
+      const mi = parseInt(mired, 10);
+      const warmth = mi >= 500 ? 'Candlelight' : mi >= 400 ? 'Warm White' : mi >= 300 ? 'Neutral' : mi >= 200 ? 'Cool White' : 'Daylight';
+      meta = `<div class="room-meta">${escapeHtml(brightness)}% · ${warmth}</div>`;
+    }
     return `<div class="room-chip">
       <div class="room-name">${escapeHtml(name.trim())}</div>
       <div class="room-temp">${dot} ${escapeHtml(state)}</div>
-      <div class="room-meta">${escapeHtml(brightness)}% · ${escapeHtml(lightCount)} light${lightCount !== '1' ? 's' : ''} · ${escapeHtml(mired)} mired</div>
+      ${meta}
     </div>`;
   }).filter(Boolean).join('');
   return `<div class="room-grid">${rooms}</div>`;
