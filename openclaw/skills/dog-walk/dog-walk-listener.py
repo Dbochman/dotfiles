@@ -1652,12 +1652,16 @@ def on_event(event: RingEvent) -> None:
     log(f"Event: kind={kind} device={device} doorbot_id={doorbot_id} state={event.state}")
 
     if kind == "ding":
+        # _handle_ding does I/O (iMessage) so schedule on the event loop thread-safely
         loop = asyncio.get_event_loop()
-        loop.create_task(_handle_ding(device, doorbot_id, event.id))
+        asyncio.run_coroutine_threadsafe(_handle_ding(device, doorbot_id, event.id), loop)
 
     elif kind == "motion":
-        loop = asyncio.get_event_loop()
-        loop.create_task(_handle_motion(device, doorbot_id, event.id, state=event.state or ""))
+        # Handle motion synchronously — these are just dict/bool writes that are
+        # GIL-atomic. Running them inline in the FCM callback thread avoids the
+        # race where create_task() from a non-asyncio thread silently drops or
+        # delays the coroutine past the Fi poll that checks _ring_departure_motion.
+        _handle_motion_sync(doorbot_id, event.state or "")
 
 
 async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
@@ -1666,13 +1670,17 @@ async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
     send_imessage(msg)
 
 
-async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str = "") -> None:
-    """Handle motion — used for return detection AND departure combo trigger."""
+def _handle_motion_sync(doorbot_id: int, state: str) -> None:
+    """Handle motion — used for return detection AND departure combo trigger.
+
+    Runs synchronously on the FCM callback thread. Only touches GIL-atomic
+    dict/bool assignments so no lock is needed.
+    """
+    global _ring_motion_during_walk
     try:
         person_detected = state.lower() == "human"
 
         if person_detected and _return_monitor_active:
-            global _ring_motion_during_walk
             _ring_motion_during_walk = True
             log("RING MOTION during walk monitoring — signaling return")
 

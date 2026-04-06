@@ -1,0 +1,434 @@
+# Dog Walk Detection — Implementation Spec
+
+Implementation details for the departure and return detection logic in `dog-walk-listener.py`. This document covers signal sources, timing, state machines, and known edge cases.
+
+For operational docs (deploy, snooze, dashboard), see `skills/dog-walk/SKILL.md`.
+
+---
+
+## Architecture Overview
+
+A single Python asyncio process (`ai.openclaw.dog-walk-listener` LaunchAgent) runs three concurrent loops plus an event-driven callback:
+
+| Component | Type | Purpose |
+|-----------|------|---------|
+| `_fi_departure_poll_loop` | asyncio task | Polls Fi GPS API to detect departures |
+| `_return_poll_loop` | asyncio task | Polls Fi GPS + WiFi to detect returns (spawned per walk) |
+| `_inbox_poll_loop` | asyncio task | Watches filesystem inbox for manual trigger IPC |
+| `on_event` (FCM callback) | Sync callback on FCM thread | Receives Ring doorbell events in real-time |
+
+All loops share state via module-level globals. The FCM callback runs on a **background thread** (not the asyncio event loop), so its writes to shared state must be GIL-atomic (dict assignments, bool assignments). See [Thread Safety](#thread-safety-fcm-callback).
+
+---
+
+## Signal Sources
+
+### Fi GPS Collar (Potato)
+
+- **API**: GraphQL at `https://api.tryfi.com/graphql`, session cookie auth
+- **CLI wrapper**: `fi-collar status` (calls `fi-api.py`)
+- **Update frequency**:
+  - NORMAL mode (resting): ~7 min between reports (measured: 420s)
+  - NORMAL mode (walking): faster, collar enters `OngoingWalk` with position trail
+  - LOST_DOG mode: ~15-30s (drains battery, used only during active walks)
+- **Connection states**: `Base` (on charger/nearby), `User` (BLE to phone), `Cellular`, `Unknown`
+- **Key field**: `ongoingActivity.__typename` — `OngoingRest` or `OngoingWalk`
+- **Historical walks**: `activityFeed(limit: N) { activities { __typename start end ... on Walk { distance presentUser { firstName } } } }` — returns completed walks with Fi's own start/end timestamps
+
+### Ring Doorbell (FCM Push)
+
+- **Delivery**: Firebase Cloud Messaging push → `ring_doorbell` Python library → `on_event` callback
+- **Event types**: `motion` (with `state`: `human` / `other`), `ding` (doorbell press)
+- **Latency**: Near-instant (~1-3s from physical motion to callback)
+- **Coverage**: Front door only (no back door coverage at either location)
+
+### WiFi Network Presence
+
+- **Crosstown**: ARP scan via SSH to MacBook Pro (`presence-detect.sh crosstown`)
+- **Cabin**: ARP scan locally (`presence-detect.sh cabin`)
+- **Detects**: Phone reconnecting to home WiFi network
+- **Limitation**: Phones linger on WiFi at the front door for several minutes after departure (see [WiFi Departure Unreliability](#wifi-departure-unreliability))
+
+---
+
+## Departure Detection
+
+### State Machine
+
+```
+                ┌──────────────────────────────────────────────────────┐
+                │                    IDLE                               │
+                │  Polling Fi API every 3 min (FI_POLL_INTERVAL=180s)   │
+                └────────┬────────────────────────┬────────────────────┘
+                         │                        │
+              Ring motion fires             Fi GPS outside geofence
+              (stores timestamp)            (first reading)
+                         │                        │
+                         ▼                        ▼
+                ┌─────────────────┐     ┌──────────────────────────┐
+                │ RING_MOTION_SET │     │ CANDIDATE                │
+                │                 │     │ (need confirmation)      │
+                │ Fast poll: 30s  │     │ Poll: 30s if disconnected│
+                │ if has_recent_  │     │       180s otherwise     │
+                │ ring = true     │     │                          │
+                └────────┬────────┘     └────────┬─────────────────┘
+                         │                        │
+                    Fi base disconnect       Wait for threshold:
+                    detected on next poll    - 60s if base disconnected
+                         │                   - 180s if still on base
+                         │                        │
+                         ▼                        ▼
+                ┌─────────────────┐     ┌──────────────────────────┐
+                │ COMBO TRIGGER   │     │ GPS CONFIRMED            │
+                │ (immediate)     │     │ (2nd reading outside)    │
+                └────────┬────────┘     └────────┬─────────────────┘
+                         │                        │
+                         └──────────┬─────────────┘
+                                    ▼
+                         ┌──────────────────────┐
+                         │ DEPARTURE CONFIRMED  │
+                         │ → LOST_DOG mode      │
+                         │ → Start Roombas      │
+                         │ → iMessage notify    │
+                         │ → Start return mon.  │
+                         └──────────────────────┘
+```
+
+### Path 1: Ring + Fi Combo Trigger (Primary)
+
+The fastest departure path. Two independent signals confirm departure without needing GPS geofence confirmation.
+
+**Sequence:**
+1. Person walks out front door → Ring doorbell detects human motion
+2. `on_event` callback fires on FCM thread → `_handle_motion_sync` sets `_ring_departure_motion[location] = time.monotonic()`
+3. On next Fi poll iteration, `has_recent_ring` evaluates True → poll interval drops to 30s (`FI_FAST_POLL_INTERVAL`)
+4. Fi API response shows `connection` transitioned from `"Base"` to `"User"` or `"Cellular"` → `base_just_disconnected = True`
+5. Combo check: `home_anchor in _ring_departure_motion` AND `ring_age <= 300s` → **departure confirmed immediately**
+6. No GPS geofence confirmation needed
+
+**Timing budget:**
+| Step | Duration | Cumulative |
+|------|----------|------------|
+| Ring motion → FCM callback | ~1-3s | ~2s |
+| Waiting for next Fi poll | 0-30s (fast poll) or 0-180s (normal) | ~15-90s |
+| Fi API HTTP call | ~1-2s | ~16-92s |
+| Base disconnect detection | 0s (same poll) | ~16-92s |
+| **Total** | | **~15-90s typical** |
+
+**Why the poll interval matters**: The `has_recent_ring` check at the top of the loop uses the Ring motion timestamp to decide whether to fast-poll (30s) or normal-poll (180s). If Ring motion fires WHILE the loop is sleeping (which it usually does), the CURRENT sleep completes at normal pace, but the NEXT iteration sleeps only 30s. So the first poll after Ring motion could be anywhere from 0-180s, but subsequent polls are 30s.
+
+**Key constants:**
+```python
+_RING_DEPARTURE_WINDOW = 300   # Ring motion must be within 5 min of Fi disconnect
+FI_FAST_POLL_INTERVAL = 30     # Fast polling when Ring motion detected
+```
+
+### Path 2: GPS-Only Fallback
+
+Used when the combo trigger doesn't fire (back door exit, Ring offline, etc.).
+
+**Sequence:**
+1. Fi GPS poll shows Potato outside the home geofence (150m Crosstown, 300m Cabin)
+2. Record as first candidate reading with timestamp
+3. Continue polling (30s if base disconnected, 180s otherwise)
+4. Second reading also outside geofence AND time since first exceeds threshold:
+   - `CONFIRM_BASE_DISCONNECT = 60s` if collar disconnected from base
+   - `CONFIRM_NORMAL = 180s` if still showing base connection
+5. **Departure confirmed**
+
+**Timing budget:**
+| Scenario | First reading delay | Confirmation | Total |
+|----------|-------------------|--------------|-------|
+| Base disconnected, fast poll | 0-30s | 60s | ~1.5-2 min |
+| Base disconnected, normal poll | 0-180s | 60s | ~1-4 min |
+| No base disconnect | 0-180s | 180s | ~3-6 min |
+
+**Key constants:**
+```python
+FI_POLL_INTERVAL = 180         # Normal polling: 3 minutes
+FI_FAST_POLL_INTERVAL = 30     # Fast polling after base disconnect or Ring motion
+CONFIRM_NORMAL = 180           # GPS-only confirmation: 3 min apart
+CONFIRM_BASE_DISCONNECT = 60   # GPS + base disconnect: 1 min apart
+```
+
+### Candidate Reset Conditions
+
+A departure candidate is reset (detection starts over) when:
+
+| Condition | Reason |
+|-----------|--------|
+| `inside_geofence` | Dog came back inside geofence radius |
+| `outside_walk_hours` | Walk hours ended (before 7 AM or after 9 PM) |
+| `return_monitor_active` | A walk is already in progress |
+| `location_changed` | Dog appeared near a different home |
+| `no_occupied_location` | No home anchor established |
+| `combo_trigger` | Combo fired, so candidate tracking resets |
+
+### Home Anchor
+
+The listener tracks `home_location` — the last Fi geofence Potato was confirmed inside. This is the reference point for departure detection (not the nearest location at any given moment).
+
+- **Bootstrapped** from `state.json` on startup
+- **Updated** when Fi GPS confirms Potato inside a geofence (`fi_at_location = True`)
+- **Persists** across restarts via state file
+
+### Pre-checks (Departure Skips)
+
+Before confirming departure, the system validates:
+
+1. **Walk hours**: 7 AM - 9 PM local time (three windows: 7-12, 12-17, 17-21)
+2. **No active walk**: `_return_monitor_active` must be False
+3. **GPS freshness**: `lastReport` must be < 10 minutes old
+4. **Base-station echo filter**: If pet coordinates match a home location within 5m AND connection is not `"Base"`, the reading is discarded. This handles the Fi API lag during Rest→Walk transitions where it returns base station coords as pet position.
+5. **Snooze**: Roomba start is skipped if snoozed (but walk tracking still happens)
+6. **Cooldown**: Roomba start has a 2-hour cooldown per location
+
+---
+
+## Return Detection
+
+Starts immediately after departure is confirmed. Uses three independent signals — **any one** triggers return.
+
+### Signal Priority & Behavior
+
+| Signal | Check method | Interval | Suppression |
+|--------|-------------|----------|-------------|
+| Ring motion | Event-driven flag (`_ring_motion_during_walk`) | Instant | None |
+| WiFi presence | Network scan (`_check_network_presence`) | Every 30s | **First 10 min suppressed** |
+| Fi GPS | Poll (`_check_fi_gps` with monitored location) | Every 30s | None |
+
+**WiFi suppression rationale**: Phones stay connected to home WiFi for several minutes after walking out the front door. The 10-minute `MIN_WALK_FOR_WIFI` delay avoids false returns from lingering WiFi connections.
+
+### Return Flow
+
+```
+DEPARTURE CONFIRMED
+        │
+        ├─ Wait 2 min → detect walkers (network scan for who's absent)
+        │
+        ▼
+┌───────────────────────────────────────────────┐
+│               RETURN MONITOR LOOP              │
+│  Every 30s, check:                             │
+│  1. Ring motion flag (event-driven)            │
+│  2. WiFi presence (after 10min)                │
+│  3. Fi GPS geofence (always)                   │
+│                                                │
+│  Also: route point appended each poll          │
+│  Also: car speed check (>30mph for 6min →      │
+│         switch collar to NORMAL)               │
+└───────────┬───────────────────────────────────┘
+            │ Any signal triggers return
+            ▼
+┌───────────────────────────────────────────────┐
+│           RETURN FINALIZATION                  │
+│  1. Fetch Fi OngoingWalk path (dense polyline) │
+│  2. Merge into route file                      │
+│  3. Capture final GPS point                    │
+│  4. Dock Roombas (sends stop first, then dock) │
+│  5. Start dock verification thread (3min)      │
+│  6. Send iMessage with walk summary            │
+│  7. Update state + history                     │
+│  8. Reset collar to NORMAL                     │
+│                                                │
+│  Each step is try/except wrapped so failures   │
+│  cannot cause the loop to repeat finalization. │
+│  Once a return signal is set, the loop ALWAYS  │
+│  exits.                                        │
+└───────────────────────────────────────────────┘
+```
+
+### Car Speed Detection
+
+During return monitoring, consecutive GPS readings are compared to detect car travel:
+- Threshold: >30 mph (`CAR_SPEED_MPS = 13.4 m/s`) sustained for 6+ minutes (`CAR_DURATION_S = 360`)
+- Action: Switch collar from LOST_DOG to NORMAL to save battery
+- Resets: If speed drops below threshold between any two readings
+- Purpose: Inter-home car trips (Crosstown ↔ Cabin) would drain collar battery at LOST_DOG polling rates
+
+### Dock Verification
+
+After sending the dock command, a background daemon thread verifies:
+1. Wait 3 minutes
+2. Check Roomba status (is it actually charging/on dock?)
+3. If not docked: retry dock command (up to 2 retries, 3 min between each)
+4. If still not docked after retries: send iMessage warning
+5. State updated with `dock_verified: true/false` and `dock_retry_count`
+
+### Safety Timeout
+
+If no return signal is detected within 2 hours (`MAX_DURATION = 7200`), the monitor auto-docks Roombas and sends a timeout notification.
+
+---
+
+## GPS Tracking (Route Recording)
+
+### LOST_DOG Mode
+
+On departure, the collar switches to LOST_DOG mode for ~15-30s GPS updates (vs ~7 min in NORMAL). This produces dense route data.
+
+- **Set on**: departure confirmed
+- **Reset on**: return monitor exits (in `finally` block, guaranteed)
+- **Startup safety**: if listener starts and collar is in LOST_DOG, it resets to NORMAL
+
+### Route Files
+
+Each walk produces a route file at:
+```
+~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json
+```
+
+**Structure:**
+```json
+{
+  "walk_id": "20260405T202347Z-crosstown-9030538a",
+  "origin_location": "crosstown",
+  "started_at": "2026-04-05T20:23:47Z",
+  "ended_at": "2026-04-05T20:47:08Z",
+  "return_signal": "fi_gps",
+  "distance_m": 2184,
+  "point_count": 133,
+  "end_location": "crosstown",
+  "is_interhome_transit": false,
+  "points": [
+    {"ts": "2026-04-05T20:15:11.248Z", "lat": 42.262500, "lon": -71.164310},
+    ...
+  ]
+}
+```
+
+**Point sources:**
+1. **Departure GPS seed**: first point from the Fi API response at departure
+2. **30s polling**: each return monitor poll appends the current Fi GPS reading
+3. **Fi OngoingWalk path merge**: on return, the full dense polyline from Fi's API is fetched and merged (deduplicated by lat/lon within 5m)
+
+**Distance calculation:** Uses the route file's `distance_m`, which prefers Fi's `walkDistance_m` (from `OngoingWalk.distance`) when available, falling back to haversine sum of consecutive points.
+
+---
+
+## Thread Safety: FCM Callback
+
+The Ring doorbell library's FCM push receiver runs on a **background thread**, not the asyncio event loop. The `on_event` callback is invoked on this thread.
+
+### The Problem (Fixed 2026-04-06)
+
+Previously, `on_event` used `loop.create_task()` to schedule async handlers. This is **not thread-safe** — `create_task` from a non-asyncio thread can silently drop or delay coroutines. The motion handler's `_ring_departure_motion` dict write would not execute reliably, causing the combo trigger to miss valid Ring + Fi disconnect pairs.
+
+### The Fix
+
+Motion handling is now **synchronous** in `_handle_motion_sync`. The two writes are GIL-atomic:
+- `_ring_departure_motion[location] = time.monotonic()` (dict assignment)
+- `_ring_motion_during_walk = True` (bool assignment)
+
+No asyncio scheduling needed. The write happens immediately on the FCM thread.
+
+The ding handler (`_handle_ding`) still needs async scheduling (it sends an iMessage), so it uses `asyncio.run_coroutine_threadsafe()` which is the thread-safe equivalent.
+
+### Shared State Between Threads
+
+| Variable | Written by | Read by | Thread safety |
+|----------|-----------|---------|---------------|
+| `_ring_departure_motion` | FCM thread (sync) | asyncio loop (Fi poll) | GIL-atomic dict write |
+| `_ring_motion_during_walk` | FCM thread (sync) | asyncio loop (return poll) | GIL-atomic bool write |
+| `_return_monitor_active` | asyncio loop | FCM thread (sync read) | GIL-atomic bool; minor race is acceptable (worst case: one motion event routes to wrong branch) |
+| `_recent_events` | FCM thread | FCM thread | Single-thread access (all FCM callbacks are serialized) |
+
+---
+
+## Geofences
+
+Geofence coordinates are loaded from environment variables at startup (not hardcoded).
+
+| Location | Env vars | Radius | Notes |
+|----------|----------|--------|-------|
+| Crosstown | `CROSSTOWN_LAT`, `CROSSTOWN_LON` | 150m | Uses custom coords, NOT Fi base station coords (those report wrong location) |
+| Cabin | `CABIN_LAT`, `CABIN_LON` | 300m | Larger radius for rural GPS accuracy |
+
+---
+
+## Timing Constants Reference
+
+| Constant | Value | Context |
+|----------|-------|---------|
+| `FI_POLL_INTERVAL` | 180s (3 min) | Normal departure polling |
+| `FI_FAST_POLL_INTERVAL` | 30s | Polling after base disconnect or Ring motion |
+| `CONFIRM_NORMAL` | 180s (3 min) | GPS-only: time between 2 outside readings |
+| `CONFIRM_BASE_DISCONNECT` | 60s (1 min) | GPS + disconnect: time between 2 outside readings |
+| `_RING_DEPARTURE_WINDOW` | 300s (5 min) | Max age of Ring motion for combo trigger |
+| `POLL_INTERVAL` (return) | 30s | Return monitor check interval |
+| `MIN_WALK_FOR_WIFI` | 600s (10 min) | WiFi suppression window after departure |
+| `MAX_DURATION` (return) | 7200s (2 hr) | Safety timeout for return monitor |
+| `_ROOMBA_COOLDOWN` | 7200s (2 hr) | Prevent re-triggering Roomba start |
+| `_DEDUP_WINDOW` | 300s (5 min) | Ring event deduplication window |
+| `_INBOX_MAX_AGE` | 7200s (2 hr) | Max age for manual trigger requests |
+| `CAR_SPEED_MPS` | 13.4 m/s (~30 mph) | Car detection threshold |
+| `CAR_DURATION_S` | 360s (6 min) | Sustained car speed before collar reset |
+
+---
+
+## Walk Hours
+
+```python
+_WALK_HOURS = [(7, 12), (12, 17), (17, 21)]  # 7 AM - 9 PM local time
+```
+
+Outside these hours, the departure poll loop skips Fi checks entirely and resets any active candidate. The return monitor has no time restriction — if a walk departs at 8:55 PM, it will track the return regardless of when that occurs.
+
+---
+
+## Known Edge Cases
+
+### Back Door Departure
+The Ring doorbell only covers the front door. Back door exits bypass the combo trigger entirely and fall through to GPS-only detection (~5-7 min latency).
+
+### WiFi Departure Unreliability
+Phones stay connected to home WiFi well past the front door. WiFi is intentionally NOT used for departure detection — only for return. Even for return, WiFi signals are suppressed for the first 10 minutes.
+
+### Base-Station Echo
+When the Fi API transitions from `OngoingRest` to `OngoingWalk`, there's a brief window where it returns base station coordinates as the pet's position. The echo filter discards readings within 5m of any home location when the connection type is not `"Base"`.
+
+### Ring Motion Cleared on At-Home Poll
+When the Fi poll confirms the dog is inside the geofence (`fi_at_location = True`), it clears `_ring_departure_motion` for that location (line 1489). This is intentional — it prevents stale Ring motion from triggering a false combo later. But it means Ring motion that fires DURING an at-home Fi poll can be immediately cleared. The fix for the thread safety issue (synchronous writes) reduces but doesn't eliminate this window.
+
+### Inter-Home Transit
+If a walk ends at a different location than it started (Crosstown → Cabin or vice versa), the route file is marked with `is_interhome_transit: true`. The dashboard API filters these out of walk history views.
+
+### Listener Restarts
+The listener process may restart (KeepAlive LaunchAgent). On restart:
+- Home anchor is bootstrapped from `state.json`
+- Collar mode is checked and reset to NORMAL if stuck in LOST_DOG
+- All in-memory state (`_ring_departure_motion`, candidates, etc.) is lost
+- FCM credentials are reloaded for Ring event listener
+
+---
+
+## File Layout
+
+```
+~/.openclaw/dog-walk/
+├── state.json                  # Current state (walk active, roombas, candidate, etc.)
+├── history/
+│   └── YYYY-MM-DD.jsonl        # All state changes as append-only log
+├── routes/
+│   └── <location>/
+│       └── YYYY-MM-DD/
+│           └── <walk_id>.json  # GPS route + metadata per walk
+├── inbox/                      # IPC for manual trigger (dog-walk-start)
+├── snooze.json                 # Roomba snooze state per location
+└── fcm-credentials.json        # Ring FCM push credentials
+
+~/.openclaw/logs/
+└── dog-walk-listener.log       # Operational log (local timestamps)
+```
+
+---
+
+## Manual Trigger
+
+External processes can request return monitoring via filesystem IPC:
+
+```bash
+dog-walk-start <location>
+```
+
+This writes a JSON file to `~/.openclaw/dog-walk/inbox/` with `location` and `requested_at`. The inbox poll loop (5s interval) picks it up, starts Roombas, and begins return monitoring. Stale requests (>2 hours old) are ignored.
