@@ -219,24 +219,37 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 
 **Port 8558**
 
-Unified control plane for all smart home devices across both locations. Single-pane-of-glass for monitoring status and issuing commands to 17 device categories.
+Unified control plane for all smart home devices across both locations. Single-pane-of-glass for monitoring status and issuing commands to 18 device categories, organized into five collapsible sections.
+
+### Layout
+
+Cards are grouped into collapsible sections (all open by default, click header to collapse):
+
+1. **Lighting** — Hue Crosstown, Hue Cabin
+2. **Temperature** — Nest, Cielo, Mysa, Eight Sleep
+3. **Security** — August Lock, Ring Doorbell, Nest Camera
+4. **Pets** — Litter-Robot, Petlibro, Dog Walk
+5. **Misc** — TV, Speakers, Cabin Speakers, Roombas (Crosstown + Cabin)
+
+Command feedback (Running/Success/Error) appears inline below the section header of the clicked card, not at the top of the page. Success/error auto-dismiss after 4s.
 
 ### What It Shows
 
-- **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label) with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
+- **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label e.g. "Warm White") with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
 - **Nest Thermostat** — per-room temp, setpoint, HVAC mode with set temp / set mode / eco controls (Cabin: 3 rooms)
 - **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)
 - **Mysa Heaters** — per-heater temp, setpoint, humidity, duty cycle (read-only; Crosstown: 3 units)
+- **Eight Sleep** — chip cards per side (bed temp °F, active/idle status) with on/off/set temp
 - **August Lock** — lock state, door state, battery with lock/unlock controls
-- **Roombas** — chip cards per robot (status, battery, bin state) with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google)
+- **Ring Doorbell** — chip cards per doorbell (battery, last event with relative time) + snapshot capture with Crosstown/Cabin selector
+- **Nest Camera** — live snapshot capture via WebRTC (Kitchen camera, Cabin); image displayed inline with relative timestamp
+- **Litter-Robot** — chip card with status, waste level, cycle count, cat weights; clean/reset controls
+- **Petlibro** — chip cards per device (fountain: water level, battery, filter alert; feeder: food level, next feed) with manual feed
+- **Dog Walk** — active/inactive status, last walk details (read-only)
 - **Samsung TV** — power state with on/off controls; shows friendly "TV is likely off" when unreachable
 - **Google Speakers** — volume with set volume / mute / unmute; shows friendly "Speakers are likely asleep" when unreachable
 - **Cabin Speakers** — chip cards per speaker (online/asleep status) with set volume / stop (via catt by IP)
-- **Litter-Robot** — chip card with status, waste level, cycle count, cat weights; clean/reset controls
-- **Petlibro** — chip cards per device (fountain: water level, battery, filter alert; feeder: food level, next feed) with manual feed
-- **Eight Sleep** — chip cards per side (bed temp °F, active/idle status) with on/off/set temp
-- **Ring Doorbell** — chip cards per doorbell (battery, last event with relative time) (read-only; both locations)
-- **Dog Walk** — active/inactive status, last walk details (read-only)
+- **Roombas** — chip cards per robot (status, battery, bin state) with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google)
 
 ### Architecture
 
@@ -244,9 +257,10 @@ Unified control plane for all smart home devices across both locations. Single-p
 Browser → home-dashboard.py (port 8558)
             ├── GET /                        → embedded HTML dashboard
             ├── GET /api/status              → cached results (instant, non-blocking)
-            ├── GET /api/status?refresh=true → force re-poll all 17 CLIs
+            ├── GET /api/status?refresh=true → force re-poll all 18 CLIs
             ├── GET /api/status/<device>     → refresh single device
             ├── POST /api/command            → execute device command
+            ├── GET /api/camera-snap/<name>  → serve JPEG snapshot (nest/ring)
             └── GET /api/presence            → presence state
 ```
 
@@ -258,6 +272,8 @@ Browser → home-dashboard.py (port 8558)
 - **30s command timeout** — accommodates slower SSH-based collectors (crosstown roombas, speakers)
 - **Secrets loading** — sources `~/.openclaw/.secrets-cache` at startup for CLI env vars (Petlibro, 8sleep, etc.)
 - **Custom renderers** — all device categories have dedicated JS renderers with room-chip card layout; TV and Speakers show friendly messages when devices are off/asleep; Hue shows human-readable color temp (Warm White, Daylight, etc.) only when lights are on
+- **Camera snapshots** — Nest (WebRTC) and Ring snapshots saved to `~/.openclaw/camera-snaps/`, served via `/api/camera-snap/<name>` with timestamp header; loaded on page refresh
+- **Inline feedback** — command status messages appear below the section header of the clicked card, auto-dismiss success/error after 4s
 
 ### Controls
 
@@ -269,14 +285,16 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Hue Cabin | 8 rooms dropdown | Brightness, Color |
 | Nest | 3 rooms dropdown | Temp °F, Mode (HEAT/OFF), Eco on/off |
 | Cielo | 4 devices dropdown | Temp °F, Mode (cool/heat/auto/dry/fan) |
+| Eight Sleep | Side (Dylan/Julia) | Level (-100 to +100), On / Off |
 | August | — | Lock / Unlock |
-| Crosstown Roomba | Robot selector | Start / Stop / Dock |
-| Cabin Roomba | Robot selector | Start / Stop / Dock |
-| Samsung TV | — | Power On / Off |
-| Speakers | Speaker selector | Volume, Mute / Unmute |
+| Ring Doorbell | Crosstown/Cabin dropdown | Take Snapshot |
+| Nest Camera | Kitchen dropdown | Take Snapshot |
 | Litter-Robot | — | Clean / Reset |
 | Petlibro | — | Feed (portions) |
-| Eight Sleep | Side (Dylan/Julia) | Level (-100 to +100), On / Off |
+| Samsung TV | — | Power On / Off |
+| Speakers | Speaker selector | Volume, Mute / Unmute |
+| Crosstown Roomba | Robot selector | Start / Stop / Dock |
+| Cabin Roomba | Robot selector | Start / Stop / Dock |
 
 ### Data Sources
 
@@ -296,6 +314,9 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | `petlibro status` | CLI | Feeder + fountain |
 | `8sleep status` | CLI | Pod temp, both sides |
 | `ring status` | CLI | Doorbell battery, motion |
+| `ring snapshot <path> [id]` | CLI | Doorbell camera snapshot (JPEG) |
+| `nest camera snap <room> <path>` | CLI | Nest camera snapshot via WebRTC (JPEG) |
+| `~/.openclaw/camera-snaps/*.jpg` | File | Cached camera/doorbell snapshots |
 | `~/.openclaw/dog-walk/state.json` | File | Walk state |
 
 ### Device → Location Mapping
@@ -313,7 +334,8 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Litter-Robot | LR4 | — |
 | Petlibro | Feeder + Fountain | (seasonal, unplugged) |
 | Eight Sleep | Pod 3 (both sides) | — |
-| Ring Doorbell | Front Door | Front Door |
+| Ring Doorbell | Front Door (snap + status) | Front Door (snap + status) |
+| Nest Camera | — | Kitchen (snap) |
 | Dog Walk | Yes | Yes |
 | Presence | Yes | Yes |
 
@@ -323,6 +345,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 |------|------|
 | Server | `openclaw/bin/home-dashboard.py` → `~/.openclaw/bin/home-dashboard.py` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.home-dashboard.plist` |
+| Camera snaps | `~/.openclaw/camera-snaps/*.jpg` |
 | Logs | `~/.openclaw/logs/home-dashboard.{log,err.log}` |
 
 ### Known Limitations
@@ -331,6 +354,8 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 - **Cabin Roombas use Google Assistant** — responses are natural language text, not structured JSON
 - **Petlibro/8sleep** require env vars from `~/.openclaw/.secrets-cache` — if secrets are stale, these collectors will error
 - **Crosstown Roombas and Speakers** route through SSH to MBP — if MBP is offline, these time out
+- **Nest Camera snapshot** takes ~10-15s (WebRTC negotiation + first frame); SDM API exposes no battery/online status for cameras
+- **Ring snapshot** may fail on battery doorbells if the doorbell is asleep; requires Ring Protect subscription
 
 ---
 
