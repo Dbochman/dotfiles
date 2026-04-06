@@ -23,6 +23,7 @@ NEST_HISTORY_DIR = os.path.expanduser("~/.openclaw/nest-history")
 DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
 SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
 CATT_BIN = os.path.expanduser("~/.local/bin/catt")
+CAMERA_SNAP_DIR = os.path.expanduser("~/.openclaw/camera-snaps")
 _SPEAKER_IPS = {"bedroom": "192.168.165.146", "living room": "192.168.165.113"}
 _CABIN_SPEAKER_IPS = {"kitchen": "192.168.1.66", "bedroom": "192.168.1.163"}
 
@@ -378,6 +379,10 @@ COMMANDS = {
         "off": lambda a: ["8sleep", "off", a["side"]],
         "on": lambda a: ["8sleep", "on", a["side"]],
     },
+    "nest_camera": {
+        "snap": lambda a: ["nest", "camera", "snap", a.get("room", "kitchen"),
+                           os.path.join(CAMERA_SNAP_DIR, a.get("room", "kitchen") + ".jpg")],
+    },
 }
 
 
@@ -479,6 +484,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._respond(404, {"error": f"unknown device: {device_name}"})
         elif path == "/api/presence":
             self._respond(200, collect_presence())
+        elif path.startswith("/api/camera-snap/"):
+            room = path.split("/api/camera-snap/", 1)[1]
+            self._serve_camera_snap(room)
         else:
             self._respond(404, {"error": "not found"})
 
@@ -522,6 +530,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_camera_snap(self, room):
+        import re
+        if not re.match(r'^[a-z0-9 _-]+$', room):
+            self._respond(400, {"error": "invalid room name"})
+            return
+        snap_path = os.path.join(CAMERA_SNAP_DIR, room + ".jpg")
+        if not os.path.isfile(snap_path):
+            self._respond(404, {"error": "no snapshot available"})
+            return
+        with open(snap_path, "rb") as f:
+            body = f.read()
+        mtime = os.path.getmtime(snap_path)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Snapshot-Timestamp", str(int(mtime)))
+        self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
 
@@ -586,6 +614,8 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .command-row button { background: transparent; }
 .command-row button:hover, .refresh-button:hover, .segmented button:hover { border-color: var(--text-muted); }
 .hidden { display: none !important; }
+.camera-snap { width: 100%; border-radius: 10px; margin-top: 8px; }
+.camera-snap-meta { font-size: 0.82rem; color: var(--text-muted); margin-top: 6px; }
 .dashboard-section { margin-bottom: 8px; }
 .dashboard-section > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 12px 0 8px; user-select: none; }
 .dashboard-section > summary::-webkit-details-marker { display: none; }
@@ -853,6 +883,29 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
           <span class="location-pill">Both</span>
         </div>
         <div id="ringContent" class="content"></div>
+      </article>
+
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Camera</div>
+            <h2>Nest Camera</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
+        </div>
+        <div id="nestCameraContent" class="content">
+          <div class="muted">No snapshot yet</div>
+        </div>
+        <div class="controls">
+          <form id="nest-camera-form" class="controls-grid">
+            <select name="room">
+              <option value="kitchen" selected>Kitchen</option>
+            </select>
+          </form>
+          <div class="command-row">
+            <button type="button" id="cameraSnapBtn" data-command data-device="nest_camera" data-action="snap" data-form="nest-camera-form" data-fields="room">Take Snapshot</button>
+          </div>
+        </div>
       </article>
     </section>
   </details>
@@ -1736,7 +1789,11 @@ async function postCommand(button) {
       throw new Error(data.error || data.output || `Command failed (${response.status})`);
     }
     showFeedback(`${device} ${action} succeeded`, 'success');
-    await refreshDevice(collectorKey);
+    if (device === 'nest_camera' && action === 'snap') {
+      loadCameraSnap(args.room || 'kitchen');
+    } else {
+      await refreshDevice(collectorKey);
+    }
   } catch (error) {
     console.error(error);
     showFeedback(error.message || 'Command failed', 'error');
@@ -1757,6 +1814,35 @@ document.addEventListener('click', (event) => {
   if (!button) return;
   postCommand(button);
 });
+
+function loadCameraSnap(room) {
+  const container = document.getElementById('nestCameraContent');
+  if (!container) return;
+  const url = '/api/camera-snap/' + encodeURIComponent(room) + '?t=' + Date.now();
+  fetch(url).then(resp => {
+    if (!resp.ok) {
+      container.innerHTML = '<div class="muted">No snapshot yet</div>';
+      return;
+    }
+    const ts = resp.headers.get('X-Snapshot-Timestamp');
+    resp.blob().then(blob => {
+      const imgUrl = URL.createObjectURL(blob);
+      let meta = '';
+      if (ts) {
+        const d = new Date(parseInt(ts, 10) * 1000);
+        const ago = Math.round((Date.now() - d.getTime()) / 60000);
+        const agoText = ago < 1 ? 'Just now' : ago < 60 ? ago + 'm ago' : Math.round(ago / 60) + 'h ago';
+        meta = '<div class="camera-snap-meta">Captured ' + agoText + '</div>';
+      }
+      container.innerHTML = '<img src="' + imgUrl + '" class="camera-snap" alt="Camera snapshot">' + meta;
+    });
+  }).catch(() => {
+    container.innerHTML = '<div class="muted">No snapshot yet</div>';
+  });
+}
+
+// Try to load existing snapshot on page load
+loadCameraSnap('kitchen');
 
 fetchStatus();
 setInterval(() => fetchStatus(), 5 * 60 * 1000);
