@@ -615,6 +615,104 @@ def _fetch_fi_walk_path() -> list[dict] | None:
         return None
 
 
+def _fetch_fi_walk_summary() -> dict | None:
+    """Fetch the most recent completed walk from Fi's activityFeed.
+
+    Returns {"fi_start", "fi_end", "fi_distance_m", "fi_walker"} or None.
+    Called after return detection to get authoritative walk timestamps/distance.
+    """
+    try:
+        env = os.environ.copy()
+        env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
+        # Use fi-collar to get a fresh session, then query activityFeed directly
+        r = subprocess.run(
+            [f"{OPENCLAW_BIN}/fi-collar", "status"],
+            capture_output=True, timeout=15, env=env, text=True,
+        )
+        # Read session for cookie
+        config_dir = Path.home() / ".config/fi-collar"
+        session_file = config_dir / "session.json"
+        if not session_file.exists():
+            log("FI WALK SUMMARY: no session file")
+            return None
+        session = json.loads(session_file.read_text())
+        cookie = session.get("cookie", "")
+
+        query = """query { currentUser { userHouseholds { household { pets {
+            activityFeed(limit: 3) { activities {
+                __typename start end
+                ... on Walk { distance presentUser { firstName } }
+            } }
+        } } } } }"""
+
+        body = json.dumps({"query": query}).encode()
+        req = urllib.request.Request(
+            "https://api.tryfi.com/graphql", data=body, method="POST",
+            headers={"Content-Type": "application/json", "Cookie": cookie},
+        )
+        resp = urllib.request.urlopen(req, timeout=15)
+        data = json.loads(resp.read().decode())
+        if "errors" in data:
+            log(f"FI WALK SUMMARY: GraphQL error: {data['errors'][0].get('message', '')}")
+            return None
+
+        for house in data.get("data", {}).get("currentUser", {}).get("userHouseholds", []):
+            for pet in house.get("household", {}).get("pets", []):
+                for activity in pet.get("activityFeed", {}).get("activities", []):
+                    if activity.get("__typename") == "Walk":
+                        walker = (activity.get("presentUser") or {}).get("firstName")
+                        result = {
+                            "fi_start": activity["start"],
+                            "fi_end": activity["end"],
+                            "fi_distance_m": round(activity.get("distance", 0)),
+                            "fi_walker": walker,
+                        }
+                        log(f"FI WALK SUMMARY: {result['fi_start']} -> {result['fi_end']} "
+                            f"({result['fi_distance_m']}m, walker: {walker})")
+                        return result
+        log("FI WALK SUMMARY: no walks found in activityFeed")
+        return None
+    except Exception as e:
+        log(f"FI WALK SUMMARY: error: {e}")
+        return None
+
+
+def _enrich_route_with_fi_summary(fi_summary: dict) -> None:
+    """Enrich the active walk's route file with Fi walk summary data."""
+    if not fi_summary:
+        return
+    with _state_lock:
+        state = _read_state()
+        walk = state.get("dog_walk") or {}
+        if not walk.get("walk_id"):
+            return
+        walk_id = walk["walk_id"]
+        origin = walk.get("origin_location") or walk.get("location")
+        started_at = walk.get("departed_at")
+
+    path = _route_path(walk_id, origin, started_at)
+    if not path or not path.exists():
+        return
+
+    try:
+        route = json.loads(path.read_text())
+        route["fi_walk_start"] = fi_summary["fi_start"]
+        route["fi_walk_end"] = fi_summary["fi_end"]
+        route["fi_distance_m"] = fi_summary["fi_distance_m"]
+        route["fi_walker"] = fi_summary.get("fi_walker")
+
+        # Calculate detection latency
+        fi_start = datetime.fromisoformat(fi_summary["fi_start"].replace("Z", "+00:00"))
+        our_start = datetime.fromisoformat(route.get("started_at", "").replace("Z", "+00:00"))
+        route["detection_latency_s"] = round((our_start - fi_start).total_seconds())
+
+        path.write_text(json.dumps(route, indent=2))
+        log(f"FI WALK SUMMARY: enriched route {walk_id} "
+            f"(latency: {route['detection_latency_s']}s, fi_dist: {fi_summary['fi_distance_m']}m)")
+    except Exception as e:
+        log(f"FI WALK SUMMARY: error enriching route: {e}")
+
+
 def _merge_walk_path_into_route(walk_path: list[dict]) -> None:
     """Merge Fi's dense walk path into the active walk's route file.
 
@@ -1302,6 +1400,14 @@ async def _return_poll_loop(location: str) -> None:
                         target=_verify_dock_and_retry, args=(location,),
                         daemon=True, name=f"dock-verify-{location}",
                     ).start()
+
+                    # Enrich route with Fi walk summary (authoritative start/end/distance)
+                    try:
+                        fi_summary = await asyncio.to_thread(_fetch_fi_walk_summary)
+                        if fi_summary:
+                            await asyncio.to_thread(_enrich_route_with_fi_summary, fi_summary)
+                    except Exception as e:
+                        log(f"RETURN MONITOR: Fi walk summary failed (non-fatal): {e}")
 
                     # Notify + finalize state — best effort
                     signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": f"Fi GPS"}
