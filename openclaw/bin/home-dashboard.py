@@ -586,6 +586,13 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .command-row button { background: transparent; }
 .command-row button:hover, .refresh-button:hover, .segmented button:hover { border-color: var(--text-muted); }
 .hidden { display: none !important; }
+.dashboard-section { margin-bottom: 8px; }
+.dashboard-section > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 12px 0 8px; user-select: none; }
+.dashboard-section > summary::-webkit-details-marker { display: none; }
+.dashboard-section > summary::before { content: '▾'; font-size: 0.75rem; color: var(--text-muted); transition: transform 0.2s; }
+.dashboard-section:not([open]) > summary::before { transform: rotate(-90deg); }
+.dashboard-section > summary h2 { font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 0; }
+.dashboard-section > .cards { padding-top: 4px; }
 @media (max-width: 900px) {
   .header { flex-direction: column; }
   .card-wide { grid-column: span 1; }
@@ -611,388 +618,410 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 
   <div id="feedback" class="feedback hidden"></div>
 
-  <section class="cards">
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Lights</div>
-          <h2>Hue Crosstown</h2>
+  <!-- LIGHTING -->
+  <details class="dashboard-section" open>
+    <summary><h2>Lighting</h2></summary>
+    <section class="cards">
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Lights</div>
+            <h2>Hue Crosstown</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="hueCrosstownContent" class="content"></div>
-      <div class="controls">
-        <form id="hue-crosstown-form" class="controls-grid">
-          <select name="room">
-            <option value="entryway">Entryway</option>
-            <option value="kitchen">Kitchen</option>
-            <option value="bedroom" selected>Bedroom</option>
-            <option value="movie">Movie</option>
-            <option value="living">Living</option>
-            <option value="office">Office</option>
-            <option value="upstairs">Upstairs</option>
-            <option value="downstairs">Downstairs</option>
-            <option value="master">Master</option>
-          </select>
-          <input name="brightness" type="number" min="1" max="100" placeholder="Brightness">
-          <select name="color">
-            <option value="">Color...</option>
-            <option value="warm">Warm</option>
-            <option value="cool">Cool</option>
-            <option value="daylight">Daylight</option>
-            <option value="red">Red</option>
-            <option value="blue">Blue</option>
-            <option value="green">Green</option>
-            <option value="purple">Purple</option>
-            <option value="orange">Orange</option>
-            <option value="pink">Pink</option>
-          </select>
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="hue_crosstown" data-action="on" data-form="hue-crosstown-form" data-fields="room,brightness">On</button>
-          <button type="button" data-command data-device="hue_crosstown" data-action="off" data-form="hue-crosstown-form" data-fields="room">Off</button>
-          <button type="button" data-command data-device="hue_crosstown" data-action="bri" data-form="hue-crosstown-form" data-fields="room,brightness">Set Brightness</button>
-          <button type="button" data-command data-device="hue_crosstown" data-action="color" data-form="hue-crosstown-form" data-fields="room,color">Set Color</button>
+        <div id="hueCrosstownContent" class="content"></div>
+        <div class="controls">
+          <form id="hue-crosstown-form" class="controls-grid">
+            <select name="room">
+              <option value="entryway">Entryway</option>
+              <option value="kitchen">Kitchen</option>
+              <option value="bedroom" selected>Bedroom</option>
+              <option value="movie">Movie</option>
+              <option value="living">Living</option>
+              <option value="office">Office</option>
+              <option value="upstairs">Upstairs</option>
+              <option value="downstairs">Downstairs</option>
+              <option value="master">Master</option>
+            </select>
+            <input name="brightness" type="number" min="1" max="100" placeholder="Brightness">
+            <select name="color">
+              <option value="">Color...</option>
+              <option value="warm">Warm</option>
+              <option value="cool">Cool</option>
+              <option value="daylight">Daylight</option>
+              <option value="red">Red</option>
+              <option value="blue">Blue</option>
+              <option value="green">Green</option>
+              <option value="purple">Purple</option>
+              <option value="orange">Orange</option>
+              <option value="pink">Pink</option>
+            </select>
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="hue_crosstown" data-action="on" data-form="hue-crosstown-form" data-fields="room,brightness">On</button>
+            <button type="button" data-command data-device="hue_crosstown" data-action="off" data-form="hue-crosstown-form" data-fields="room">Off</button>
+            <button type="button" data-command data-device="hue_crosstown" data-action="bri" data-form="hue-crosstown-form" data-fields="room,brightness">Set Brightness</button>
+            <button type="button" data-command data-device="hue_crosstown" data-action="color" data-form="hue-crosstown-form" data-fields="room,color">Set Color</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="cabin">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Lights</div>
-          <h2>Hue Cabin</h2>
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Lights</div>
+            <h2>Hue Cabin</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
         </div>
-        <span class="location-pill">Cabin</span>
-      </div>
-      <div id="hueCabinContent" class="content"></div>
-      <div class="controls">
-        <form id="hue-cabin-form" class="controls-grid">
-          <select name="room">
-            <option value="kitchen">Kitchen</option>
-            <option value="living" selected>Living</option>
-            <option value="bathroom">Bathroom</option>
-            <option value="hallway">Hallway</option>
-            <option value="bedroom">Bedroom</option>
-            <option value="office">Office</option>
-            <option value="solarium">Solarium</option>
-            <option value="staircase">Staircase</option>
-          </select>
-          <input name="brightness" type="number" min="1" max="100" placeholder="Brightness">
-          <select name="color">
-            <option value="">Color...</option>
-            <option value="warm">Warm</option>
-            <option value="cool">Cool</option>
-            <option value="daylight">Daylight</option>
-            <option value="red">Red</option>
-            <option value="blue">Blue</option>
-            <option value="green">Green</option>
-            <option value="purple">Purple</option>
-            <option value="orange">Orange</option>
-            <option value="pink">Pink</option>
-          </select>
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="hue_cabin" data-action="on" data-form="hue-cabin-form" data-fields="room,brightness">On</button>
-          <button type="button" data-command data-device="hue_cabin" data-action="off" data-form="hue-cabin-form" data-fields="room">Off</button>
-          <button type="button" data-command data-device="hue_cabin" data-action="bri" data-form="hue-cabin-form" data-fields="room,brightness">Set Brightness</button>
-          <button type="button" data-command data-device="hue_cabin" data-action="color" data-form="hue-cabin-form" data-fields="room,color">Set Color</button>
+        <div id="hueCabinContent" class="content"></div>
+        <div class="controls">
+          <form id="hue-cabin-form" class="controls-grid">
+            <select name="room">
+              <option value="kitchen">Kitchen</option>
+              <option value="living" selected>Living</option>
+              <option value="bathroom">Bathroom</option>
+              <option value="hallway">Hallway</option>
+              <option value="bedroom">Bedroom</option>
+              <option value="office">Office</option>
+              <option value="solarium">Solarium</option>
+              <option value="staircase">Staircase</option>
+            </select>
+            <input name="brightness" type="number" min="1" max="100" placeholder="Brightness">
+            <select name="color">
+              <option value="">Color...</option>
+              <option value="warm">Warm</option>
+              <option value="cool">Cool</option>
+              <option value="daylight">Daylight</option>
+              <option value="red">Red</option>
+              <option value="blue">Blue</option>
+              <option value="green">Green</option>
+              <option value="purple">Purple</option>
+              <option value="orange">Orange</option>
+              <option value="pink">Pink</option>
+            </select>
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="hue_cabin" data-action="on" data-form="hue-cabin-form" data-fields="room,brightness">On</button>
+            <button type="button" data-command data-device="hue_cabin" data-action="off" data-form="hue-cabin-form" data-fields="room">Off</button>
+            <button type="button" data-command data-device="hue_cabin" data-action="bri" data-form="hue-cabin-form" data-fields="room,brightness">Set Brightness</button>
+            <button type="button" data-command data-device="hue_cabin" data-action="color" data-form="hue-cabin-form" data-fields="room,color">Set Color</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
+    </section>
+  </details>
 
-    <article class="card" data-location="cabin">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Temperature</div>
-          <h2>Nest</h2>
+  <!-- TEMPERATURE -->
+  <details class="dashboard-section" open>
+    <summary><h2>Temperature</h2></summary>
+    <section class="cards">
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Temperature</div>
+            <h2>Nest</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
         </div>
-        <span class="location-pill">Cabin</span>
-      </div>
-      <div id="nestContent" class="content"></div>
-      <div class="controls">
-        <form id="nest-form" class="controls-grid">
-          <select name="room">
-            <option value="Solarium">Solarium</option>
-            <option value="Living Room">Living Room</option>
-            <option value="Bedroom" selected>Bedroom</option>
-          </select>
-          <input name="temp" type="number" step="1" placeholder="Temp °F">
-          <select name="mode">
-            <option value="">Mode...</option>
-            <option value="HEAT">Heat</option>
-            <option value="OFF">Off</option>
-          </select>
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="nest" data-action="set" data-form="nest-form" data-fields="room,temp">Set Temp</button>
-          <button type="button" data-command data-device="nest" data-action="mode" data-form="nest-form" data-fields="room,mode">Set Mode</button>
-          <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room">Eco On</button>
-          <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room,mode" data-extra='{"mode":"off"}'>Eco Off</button>
+        <div id="nestContent" class="content"></div>
+        <div class="controls">
+          <form id="nest-form" class="controls-grid">
+            <select name="room">
+              <option value="Solarium">Solarium</option>
+              <option value="Living Room">Living Room</option>
+              <option value="Bedroom" selected>Bedroom</option>
+            </select>
+            <input name="temp" type="number" step="1" placeholder="Temp °F">
+            <select name="mode">
+              <option value="">Mode...</option>
+              <option value="HEAT">Heat</option>
+              <option value="OFF">Off</option>
+            </select>
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="nest" data-action="set" data-form="nest-form" data-fields="room,temp">Set Temp</button>
+            <button type="button" data-command data-device="nest" data-action="mode" data-form="nest-form" data-fields="room,mode">Set Mode</button>
+            <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room">Eco On</button>
+            <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room,mode" data-extra='{"mode":"off"}'>Eco Off</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Temperature</div>
-          <h2>Cielo</h2>
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Temperature</div>
+            <h2>Cielo</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="cieloContent" class="content"></div>
-      <div class="controls">
-        <form id="cielo-form" class="controls-grid">
-          <select name="device">
-            <option value="basement">Basement</option>
-            <option value="living room">Living Room</option>
-            <option value="office">Dylan's Office</option>
-            <option value="bedroom" selected>Bedroom</option>
-          </select>
-          <input name="temp" type="number" step="1" placeholder="Temp °F">
-          <select name="mode">
-            <option value="">Mode...</option>
-            <option value="cool">Cool</option>
-            <option value="heat">Heat</option>
-            <option value="auto">Auto</option>
-            <option value="dry">Dry</option>
-            <option value="fan">Fan</option>
-          </select>
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="cielo" data-action="on" data-form="cielo-form" data-fields="device">On</button>
-          <button type="button" data-command data-device="cielo" data-action="off" data-form="cielo-form" data-fields="device">Off</button>
-          <button type="button" data-command data-device="cielo" data-action="temp" data-form="cielo-form" data-fields="device,temp">Set Temp</button>
-          <button type="button" data-command data-device="cielo" data-action="mode" data-form="cielo-form" data-fields="device,mode">Set Mode</button>
+        <div id="cieloContent" class="content"></div>
+        <div class="controls">
+          <form id="cielo-form" class="controls-grid">
+            <select name="device">
+              <option value="basement">Basement</option>
+              <option value="living room">Living Room</option>
+              <option value="office">Dylan's Office</option>
+              <option value="bedroom" selected>Bedroom</option>
+            </select>
+            <input name="temp" type="number" step="1" placeholder="Temp °F">
+            <select name="mode">
+              <option value="">Mode...</option>
+              <option value="cool">Cool</option>
+              <option value="heat">Heat</option>
+              <option value="auto">Auto</option>
+              <option value="dry">Dry</option>
+              <option value="fan">Fan</option>
+            </select>
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="cielo" data-action="on" data-form="cielo-form" data-fields="device">On</button>
+            <button type="button" data-command data-device="cielo" data-action="off" data-form="cielo-form" data-fields="device">Off</button>
+            <button type="button" data-command data-device="cielo" data-action="temp" data-form="cielo-form" data-fields="device,temp">Set Temp</button>
+            <button type="button" data-command data-device="cielo" data-action="mode" data-form="cielo-form" data-fields="device,mode">Set Mode</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Temperature</div>
-          <h2>Mysa</h2>
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Temperature</div>
+            <h2>Mysa</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="mysaContent" class="content"></div>
-    </article>
+        <div id="mysaContent" class="content"></div>
+      </article>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Lock</div>
-          <h2>August</h2>
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Sleep</div>
+            <h2>Eight Sleep</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="lockContent" class="content"></div>
-      <div class="controls">
-        <div class="command-row">
-          <button type="button" data-command data-device="august" data-action="lock">Lock</button>
-          <button type="button" data-command data-device="august" data-action="unlock">Unlock</button>
+        <div id="eightSleepContent" class="content"></div>
+        <div class="controls">
+          <form id="eightsleep-form" class="controls-grid">
+            <select name="side">
+              <option value="dylan">Dylan</option>
+              <option value="julia">Julia</option>
+            </select>
+            <input name="level" type="number" min="-100" max="100" step="10" placeholder="Level (-100 to +100)">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="eightsleep" data-action="on" data-form="eightsleep-form" data-fields="side">On</button>
+            <button type="button" data-command data-device="eightsleep" data-action="off" data-form="eightsleep-form" data-fields="side">Off</button>
+            <button type="button" data-command data-device="eightsleep" data-action="temp" data-form="eightsleep-form" data-fields="side,level">Set Temp</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
+    </section>
+  </details>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Roombas</div>
-          <h2>Crosstown</h2>
+  <!-- PETS -->
+  <details class="dashboard-section" open>
+    <summary><h2>Pets</h2></summary>
+    <section class="cards">
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Pets</div>
+            <h2>Litter-Robot</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="roombasCrosstownContent" class="content"></div>
-      <div class="controls">
-        <form id="roombas-crosstown-form" class="controls-grid">
-          <input name="robot" placeholder="Robot" value="all">
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="crosstown_roomba" data-action="start" data-form="roombas-crosstown-form" data-fields="robot">Start</button>
-          <button type="button" data-command data-device="crosstown_roomba" data-action="stop" data-form="roombas-crosstown-form" data-fields="robot">Stop</button>
-          <button type="button" data-command data-device="crosstown_roomba" data-action="dock" data-form="roombas-crosstown-form" data-fields="robot">Dock</button>
+        <div id="litterRobotContent" class="content"></div>
+        <div class="controls">
+          <div class="command-row">
+            <button type="button" data-command data-device="litter_robot" data-action="clean">Clean</button>
+            <button type="button" data-command data-device="litter_robot" data-action="reset">Reset</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="cabin">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Roombas</div>
-          <h2>Cabin</h2>
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Pets</div>
+            <h2>Petlibro</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Cabin</span>
-      </div>
-      <div id="roombasCabinContent" class="content"></div>
-      <div class="controls">
-        <form id="roombas-cabin-form" class="controls-grid">
-          <input name="robot" placeholder="Robot" value="all">
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="cabin_roomba" data-action="start" data-form="roombas-cabin-form" data-fields="robot">Start</button>
-          <button type="button" data-command data-device="cabin_roomba" data-action="stop" data-form="roombas-cabin-form" data-fields="robot">Stop</button>
-          <button type="button" data-command data-device="cabin_roomba" data-action="dock" data-form="roombas-cabin-form" data-fields="robot">Dock</button>
+        <div id="petlibroContent" class="content"></div>
+        <div class="controls">
+          <form id="petlibro-form" class="controls-grid">
+            <input name="portions" type="number" min="1" step="1" placeholder="Portions">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="petlibro" data-action="feed" data-form="petlibro-form" data-fields="portions">Feed</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Media</div>
-          <h2>TV</h2>
+      <article class="card" data-location="both">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Dog Walk</div>
+            <h2>Walk State</h2>
+          </div>
+          <span class="location-pill">Both</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="tvContent" class="content"></div>
-      <div class="controls">
-        <form id="tv-form" class="controls-grid">
-          <input name="name" placeholder="TV name" value="frame">
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="tv" data-action="power_on" data-form="tv-form" data-fields="name">Power On</button>
-          <button type="button" data-command data-device="tv" data-action="power_off" data-form="tv-form" data-fields="name">Power Off</button>
-        </div>
-      </div>
-    </article>
+        <div id="dogWalkContent" class="content"></div>
+      </article>
+    </section>
+  </details>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Media</div>
-          <h2>Speakers</h2>
+  <!-- MISC -->
+  <details class="dashboard-section" open>
+    <summary><h2>Misc</h2></summary>
+    <section class="cards">
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Media</div>
+            <h2>TV</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="speakersContent" class="content"></div>
-      <div class="controls">
-        <form id="speaker-form" class="controls-grid">
-          <select name="name">
-            <option value="bedroom" selected>Bedroom</option>
-            <option value="living room">Living Room</option>
-          </select>
-          <input name="level" type="number" min="0" max="100" placeholder="Volume">
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="speaker" data-action="wake" data-form="speaker-form" data-fields="name">Wake</button>
-          <button type="button" data-command data-device="speaker" data-action="volume" data-form="speaker-form" data-fields="name,level">Set Volume</button>
-          <button type="button" data-command data-device="speaker" data-action="mute" data-form="speaker-form" data-fields="name">Mute</button>
-          <button type="button" data-command data-device="speaker" data-action="unmute" data-form="speaker-form" data-fields="name">Unmute</button>
+        <div id="tvContent" class="content"></div>
+        <div class="controls">
+          <form id="tv-form" class="controls-grid">
+            <input name="name" placeholder="TV name" value="frame">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="tv" data-action="power_on" data-form="tv-form" data-fields="name">Power On</button>
+            <button type="button" data-command data-device="tv" data-action="power_off" data-form="tv-form" data-fields="name">Power Off</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="cabin">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Media</div>
-          <h2>Cabin Speakers</h2>
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Media</div>
+            <h2>Speakers</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Cabin</span>
-      </div>
-      <div id="cabinSpeakersContent" class="content"></div>
-      <div class="controls">
-        <form id="cabin-speaker-form" class="controls-grid">
-          <select name="name">
-            <option value="kitchen" selected>Kitchen</option>
-            <option value="bedroom">Bedroom</option>
-          </select>
-          <input name="level" type="number" min="0" max="100" placeholder="Volume">
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="cabin_speaker" data-action="volume" data-form="cabin-speaker-form" data-fields="name,level">Set Volume</button>
-          <button type="button" data-command data-device="cabin_speaker" data-action="stop" data-form="cabin-speaker-form" data-fields="name">Stop</button>
-          <button type="button" data-command data-device="cabin_speaker" data-action="status" data-form="cabin-speaker-form" data-fields="name">Status</button>
+        <div id="speakersContent" class="content"></div>
+        <div class="controls">
+          <form id="speaker-form" class="controls-grid">
+            <select name="name">
+              <option value="bedroom" selected>Bedroom</option>
+              <option value="living room">Living Room</option>
+            </select>
+            <input name="level" type="number" min="0" max="100" placeholder="Volume">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="speaker" data-action="wake" data-form="speaker-form" data-fields="name">Wake</button>
+            <button type="button" data-command data-device="speaker" data-action="volume" data-form="speaker-form" data-fields="name,level">Set Volume</button>
+            <button type="button" data-command data-device="speaker" data-action="mute" data-form="speaker-form" data-fields="name">Mute</button>
+            <button type="button" data-command data-device="speaker" data-action="unmute" data-form="speaker-form" data-fields="name">Unmute</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Pets</div>
-          <h2>Litter-Robot</h2>
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Media</div>
+            <h2>Cabin Speakers</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="litterRobotContent" class="content"></div>
-      <div class="controls">
-        <div class="command-row">
-          <button type="button" data-command data-device="litter_robot" data-action="clean">Clean</button>
-          <button type="button" data-command data-device="litter_robot" data-action="reset">Reset</button>
+        <div id="cabinSpeakersContent" class="content"></div>
+        <div class="controls">
+          <form id="cabin-speaker-form" class="controls-grid">
+            <select name="name">
+              <option value="kitchen" selected>Kitchen</option>
+              <option value="bedroom">Bedroom</option>
+            </select>
+            <input name="level" type="number" min="0" max="100" placeholder="Volume">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="cabin_speaker" data-action="volume" data-form="cabin-speaker-form" data-fields="name,level">Set Volume</button>
+            <button type="button" data-command data-device="cabin_speaker" data-action="stop" data-form="cabin-speaker-form" data-fields="name">Stop</button>
+            <button type="button" data-command data-device="cabin_speaker" data-action="status" data-form="cabin-speaker-form" data-fields="name">Status</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Pets</div>
-          <h2>Petlibro</h2>
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Lock</div>
+            <h2>August</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="petlibroContent" class="content"></div>
-      <div class="controls">
-        <form id="petlibro-form" class="controls-grid">
-          <input name="portions" type="number" min="1" step="1" placeholder="Portions">
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="petlibro" data-action="feed" data-form="petlibro-form" data-fields="portions">Feed</button>
+        <div id="lockContent" class="content"></div>
+        <div class="controls">
+          <div class="command-row">
+            <button type="button" data-command data-device="august" data-action="lock">Lock</button>
+            <button type="button" data-command data-device="august" data-action="unlock">Unlock</button>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
 
-    <article class="card" data-location="crosstown">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Sleep</div>
-          <h2>Eight Sleep</h2>
+      <article class="card" data-location="both">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Doorbell</div>
+            <h2>Ring</h2>
+          </div>
+          <span class="location-pill">Both</span>
         </div>
-        <span class="location-pill">Crosstown</span>
-      </div>
-      <div id="eightSleepContent" class="content"></div>
-      <div class="controls">
-        <form id="eightsleep-form" class="controls-grid">
-          <select name="side">
-            <option value="dylan">Dylan</option>
-            <option value="julia">Julia</option>
-          </select>
-          <input name="level" type="number" min="-100" max="100" step="10" placeholder="Level (-100 to +100)">
-        </form>
-        <div class="command-row">
-          <button type="button" data-command data-device="eightsleep" data-action="on" data-form="eightsleep-form" data-fields="side">On</button>
-          <button type="button" data-command data-device="eightsleep" data-action="off" data-form="eightsleep-form" data-fields="side">Off</button>
-          <button type="button" data-command data-device="eightsleep" data-action="temp" data-form="eightsleep-form" data-fields="side,level">Set Temp</button>
-        </div>
-      </div>
-    </article>
+        <div id="ringContent" class="content"></div>
+      </article>
 
-    <article class="card" data-location="both">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Doorbell</div>
-          <h2>Ring</h2>
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Roombas</div>
+            <h2>Crosstown</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <span class="location-pill">Both</span>
-      </div>
-      <div id="ringContent" class="content"></div>
-    </article>
+        <div id="roombasCrosstownContent" class="content"></div>
+        <div class="controls">
+          <form id="roombas-crosstown-form" class="controls-grid">
+            <input name="robot" placeholder="Robot" value="all">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="crosstown_roomba" data-action="start" data-form="roombas-crosstown-form" data-fields="robot">Start</button>
+            <button type="button" data-command data-device="crosstown_roomba" data-action="stop" data-form="roombas-crosstown-form" data-fields="robot">Stop</button>
+            <button type="button" data-command data-device="crosstown_roomba" data-action="dock" data-form="roombas-crosstown-form" data-fields="robot">Dock</button>
+          </div>
+        </div>
+      </article>
 
-    <article class="card" data-location="both">
-      <div class="card-header">
-        <div>
-          <div class="eyebrow">Dog Walk</div>
-          <h2>Walk State</h2>
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Roombas</div>
+            <h2>Cabin</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
         </div>
-        <span class="location-pill">Both</span>
-      </div>
-      <div id="dogWalkContent" class="content"></div>
-    </article>
-  </section>
+        <div id="roombasCabinContent" class="content"></div>
+        <div class="controls">
+          <form id="roombas-cabin-form" class="controls-grid">
+            <input name="robot" placeholder="Robot" value="all">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="cabin_roomba" data-action="start" data-form="roombas-cabin-form" data-fields="robot">Start</button>
+            <button type="button" data-command data-device="cabin_roomba" data-action="stop" data-form="roombas-cabin-form" data-fields="robot">Stop</button>
+            <button type="button" data-command data-device="cabin_roomba" data-action="dock" data-form="roombas-cabin-form" data-fields="robot">Dock</button>
+          </div>
+        </div>
+      </article>
+    </section>
+  </details>
 </div>
 
 <script>
