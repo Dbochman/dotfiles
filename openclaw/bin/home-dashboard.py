@@ -823,6 +823,40 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
     </section>
   </details>
 
+  <!-- SECURITY -->
+  <details class="dashboard-section" open>
+    <summary><h2>Security</h2></summary>
+    <section class="cards">
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Lock</div>
+            <h2>August</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
+        </div>
+        <div id="lockContent" class="content"></div>
+        <div class="controls">
+          <div class="command-row">
+            <button type="button" data-command data-device="august" data-action="lock">Lock</button>
+            <button type="button" data-command data-device="august" data-action="unlock">Unlock</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-location="both">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Doorbell</div>
+            <h2>Ring</h2>
+          </div>
+          <span class="location-pill">Both</span>
+        </div>
+        <div id="ringContent" class="content"></div>
+      </article>
+    </section>
+  </details>
+
   <!-- PETS -->
   <details class="dashboard-section" open>
     <summary><h2>Pets</h2></summary>
@@ -949,34 +983,6 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
             <button type="button" data-command data-device="cabin_speaker" data-action="status" data-form="cabin-speaker-form" data-fields="name">Status</button>
           </div>
         </div>
-      </article>
-
-      <article class="card" data-location="crosstown">
-        <div class="card-header">
-          <div>
-            <div class="eyebrow">Lock</div>
-            <h2>August</h2>
-          </div>
-          <span class="location-pill">Crosstown</span>
-        </div>
-        <div id="lockContent" class="content"></div>
-        <div class="controls">
-          <div class="command-row">
-            <button type="button" data-command data-device="august" data-action="lock">Lock</button>
-            <button type="button" data-command data-device="august" data-action="unlock">Unlock</button>
-          </div>
-        </div>
-      </article>
-
-      <article class="card" data-location="both">
-        <div class="card-header">
-          <div>
-            <div class="eyebrow">Doorbell</div>
-            <h2>Ring</h2>
-          </div>
-          <span class="location-pill">Both</span>
-        </div>
-        <div id="ringContent" class="content"></div>
       </article>
 
       <article class="card" data-location="crosstown">
