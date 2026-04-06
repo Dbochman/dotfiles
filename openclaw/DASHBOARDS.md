@@ -223,19 +223,19 @@ Unified control plane for all smart home devices across both locations. Single-p
 
 ### What It Shows
 
-- **Hue Lights** — room chip cards (ON/OFF indicator, brightness, light count) with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
+- **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label) with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
 - **Nest Thermostat** — per-room temp, setpoint, HVAC mode with set temp / set mode / eco controls (Cabin: 3 rooms)
 - **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)
 - **Mysa Heaters** — per-heater temp, setpoint, humidity, duty cycle (read-only; Crosstown: 3 units)
 - **August Lock** — lock state, door state, battery with lock/unlock controls
-- **Roombas** — battery, status per robot with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google)
+- **Roombas** — chip cards per robot (status, battery, bin state) with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google)
 - **Samsung TV** — power state with on/off controls; shows friendly "TV is likely off" when unreachable
 - **Google Speakers** — volume with set volume / mute / unmute; shows friendly "Speakers are likely asleep" when unreachable
-- **Cabin Speakers** — volume with set volume / stop (via catt by IP)
-- **Litter-Robot** — status, waste level with clean/reset
-- **Petlibro** — feeder + fountain status with manual feed
-- **Eight Sleep** — per-side temp level with on/off/set temp
-- **Ring Doorbell** — battery, last motion (read-only; both locations)
+- **Cabin Speakers** — chip cards per speaker (online/asleep status) with set volume / stop (via catt by IP)
+- **Litter-Robot** — chip card with status, waste level, cycle count, cat weights; clean/reset controls
+- **Petlibro** — chip cards per device (fountain: water level, battery, filter alert; feeder: food level, next feed) with manual feed
+- **Eight Sleep** — chip cards per side (bed temp °F, active/idle status) with on/off/set temp
+- **Ring Doorbell** — chip cards per doorbell (battery, last event with relative time) (read-only; both locations)
 - **Dog Walk** — active/inactive status, last walk details (read-only)
 
 ### Architecture
@@ -257,7 +257,7 @@ Browser → home-dashboard.py (port 8558)
 - **60s cache TTL** — CLI results cached to avoid hammering APIs
 - **30s command timeout** — accommodates slower SSH-based collectors (crosstown roombas, speakers)
 - **Secrets loading** — sources `~/.openclaw/.secrets-cache` at startup for CLI env vars (Petlibro, 8sleep, etc.)
-- **Custom renderers** — Hue, Nest, Cielo, Mysa, Lock, TV, Speakers, Dog Walk all have dedicated JS renderers with room-chip card layout; TV and Speakers show friendly messages when devices are off/asleep
+- **Custom renderers** — all device categories have dedicated JS renderers with room-chip card layout; TV and Speakers show friendly messages when devices are off/asleep; Hue shows human-readable color temp (Warm White, Daylight, etc.) only when lights are on
 
 ### Controls
 
