@@ -1303,6 +1303,61 @@ function renderHue(result) {
   return `<div class="room-grid">${rooms}</div>`;
 }
 
+function renderRoombas(result) {
+  if (!result) return '<div class="muted">No Roomba data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const raw = result.raw || '';
+  if (!raw) return '<div class="muted">No data</div>';
+  // Split into robot blocks: "Name (Model):\n  Key: Value\n  Key: Value"
+  const blocks = raw.split(/\n(?=\S)/).filter(b => b.trim());
+  const cards = blocks.map(block => {
+    const lines = block.split('\n');
+    const nameMatch = lines[0].match(/^(.+?):/);
+    if (!nameMatch) return null;
+    const name = nameMatch[1].trim();
+    const props = {};
+    lines.slice(1).forEach(l => {
+      const kv = l.match(/^\s+(.+?):\s+(.+)$/);
+      if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
+    });
+    const status = props.status || 'Unknown';
+    const battery = props.battery || '?';
+    const bin = props.bin || '';
+    const isActive = !status.toLowerCase().includes('charging') && !status.toLowerCase().includes('dock');
+    const dot = isActive ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+    const meta = [`🔋 ${escapeHtml(battery)}`];
+    if (bin) meta.push(`🗑️ ${escapeHtml(bin)}`);
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name)}</div>
+      <div class="room-temp">${dot} ${escapeHtml(status)}</div>
+      <div class="room-meta">${meta.join(' · ')}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+  return `<div class="room-grid">${cards}</div>`;
+}
+
+function renderRoombasCabin(result) {
+  if (!result) return '<div class="muted">No Roomba data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const robots = result.robots;
+  if (!robots || typeof robots !== 'object') return renderRawResult(result);
+  const cards = Object.entries(robots).map(([name, raw]) => {
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    // Extract status from "Response: Floomba isn't running." style
+    const respMatch = text.match(/Response:\s*(.+)/i);
+    const status = respMatch ? respMatch[1].trim() : text.trim();
+    const isActive = status.toLowerCase().includes('running') && !status.toLowerCase().includes("isn't");
+    const dot = isActive ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name.charAt(0).toUpperCase() + name.slice(1))}</div>
+      <div class="room-temp">${dot} ${escapeHtml(status)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="room-grid">${cards}</div>`;
+}
+
 function renderNest(result) {
   if (!result) return '<div class="muted">No Nest data</div>';
   if (isPending(result)) return renderPending();
@@ -1344,8 +1399,8 @@ function renderDashboard() {
   setContent('cieloContent', renderCielo(data.cielo));
   setContent('mysaContent', renderMysa(data.mysa));
   setContent('lockContent', renderLock(data.lock));
-  setContent('roombasCrosstownContent', renderRawResult(data.roombas_crosstown));
-  setContent('roombasCabinContent', renderRawResult(data.roombas_cabin));
+  setContent('roombasCrosstownContent', renderRoombas(data.roombas_crosstown));
+  setContent('roombasCabinContent', renderRoombasCabin(data.roombas_cabin));
   setContent('tvContent', renderTV(data.tv));
   setContent('speakersContent', renderSpeakers(data.speakers));
   setContent('cabinSpeakersContent', renderRawResult(data.cabin_speakers));
