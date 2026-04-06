@@ -304,6 +304,67 @@ Each walk produces a route file at:
 
 **Distance calculation:** Uses the route file's `distance_m`, which prefers Fi's `walkDistance_m` (from `OngoingWalk.distance`) when available, falling back to haversine sum of consecutive points.
 
+### Fi Walk Summary Enrichment (Post-Walk)
+
+After return finalization, the listener queries Fi's `activityFeed` for the most recent completed walk and enriches the route file with authoritative data:
+
+| Field | Source | Purpose |
+|-------|--------|---------|
+| `fi_walk_start` | `activityFeed → Walk.start` | Fi's actual walk start time |
+| `fi_walk_end` | `activityFeed → Walk.end` | Fi's actual walk end time |
+| `fi_distance_m` | `activityFeed → Walk.distance` | Fi's measured distance (more accurate than GPS point sum) |
+| `fi_walker` | `activityFeed → Walk.presentUser.firstName` | Who Fi detected walking (phone BLE) |
+| `detection_latency_s` | `our started_at - fi_walk_start` | How late our detection was vs Fi's |
+
+**Safety check**: The enrichment only applies when the Fi walk's start time is within 15 minutes of our detected start. This prevents stale data from a previous walk being stamped onto a new one (e.g., short walks where Fi hasn't updated its feed yet).
+
+**Note**: Fi's `activityFeed` returns only summary data (start, end, distance, walker) — not GPS track points. Route visualization still relies on our own GPS polling.
+
+### Walker Detection
+
+On departure, the listener waits 2 minutes then runs an ARP network scan to identify who left. This is cross-referenced with the sticky presence system:
+
+1. Read `~/.openclaw/presence/state.json` for who was at this location
+2. ARP scan for phones on the network
+3. Walkers = people at this location AND absent from network
+4. If nobody detected as absent, falls back to "all people at location"
+
+This prevents the false "dylan, julia" walker listing when one person left hours ago — the presence system's `location` field tracks where each person was last detected, so only people actually at the departure location are candidates.
+
+---
+
+## Dashboard Display
+
+### Status Cards
+
+The top-level status cards show:
+
+| Card | Source | Notes |
+|------|--------|-------|
+| **Today's Distance** | Sum of `fi_distance_m` (or `distance_m`) for walks 7 AM – 11 PM local | Walk count and active indicator |
+| **Today's Duration** | Sum of Fi-derived or fallback durations for same window | Active walk elapsed time as sub-label |
+| **Departure Candidate** | Live `state.json` | Shows when GPS-only confirmation is pending |
+| **Return Monitor** | Live `state.json` | Shows poll count and Potato distance |
+
+### Fi Data Preference
+
+The dashboard prefers Fi authoritative data when available:
+
+| Field | Primary source | Fallback |
+|-------|---------------|----------|
+| Distance | `fi_distance_m` | `distance_m` (GPS point sum) |
+| Duration | `fi_walk_end - fi_walk_start` | `walk_duration_minutes` from JSONL or `ended_at - started_at` |
+| Walkers | `fi_walker` | JSONL walkers from ARP detection |
+| Start time | `started_at` (our detection time) | — |
+
+### Junk Walk Filtering
+
+GPS jitter can cause false-positive departures — the collar briefly reports being outside the geofence by a few meters, triggering a walk that docks within minutes with negligible distance. The dashboard filters these from the walk table:
+
+- **Filter**: walks with <50m distance AND <5 min duration are hidden
+- **Active walks** always display (they haven't finished yet)
+- **The listener still triggers** for junk walks (better to dock roombas on a false positive than miss a real walk)
+
 ---
 
 ## Thread Safety: FCM Callback
@@ -392,6 +453,9 @@ When the Fi poll confirms the dog is inside the geofence (`fi_at_location = True
 
 ### Inter-Home Transit
 If a walk ends at a different location than it started (Crosstown → Cabin or vice versa), the route file is marked with `is_interhome_transit: true`. The dashboard API filters these out of walk history views.
+
+### GPS Jitter False Positives
+The Fi collar can briefly report coordinates just outside the geofence radius due to GPS accuracy limitations (~5-15m error). This triggers the GPS-only departure path when two jittery readings happen within the confirmation window. The resulting "walk" has near-zero distance (e.g., 4m) and docks within minutes. The dashboard filters these out (<50m AND <5 min), but the listener still processes them to avoid missing real walks.
 
 ### Listener Restarts
 The listener process may restart (KeepAlive LaunchAgent). On restart:

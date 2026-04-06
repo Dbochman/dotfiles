@@ -161,6 +161,11 @@ def _route_summary(route):
         "end_location": route.get("end_location"),
         "return_signal": route.get("return_signal"),
         "distance_m": route.get("distance_m", 0),
+        "fi_distance_m": route.get("fi_distance_m"),
+        "fi_walk_start": route.get("fi_walk_start"),
+        "fi_walk_end": route.get("fi_walk_end"),
+        "fi_walker": route.get("fi_walker"),
+        "detection_latency_s": route.get("detection_latency_s"),
         "point_count": route.get("point_count", len(route.get("points") or [])),
         "active": route.get("ended_at") is None,
     }
@@ -687,26 +692,31 @@ function renderStatusCards(state) {
   const walk = state.dog_walk || {};
   const isActive = walk.active;
 
-  html += '<div class="stat"><div class="stat-label">Current Walk</div>';
-  if (isActive) {
-    const elapsed = walk.departed_at ? Math.round((Date.now() - new Date(walk.departed_at).getTime()) / 60000) : 0;
-    html += '<div class="stat-value" style="color:' + C.green + '">' + elapsed + 'm</div>';
-    html += '<div class="stat-sub">Active at ' + (walk.location || '?') + '</div>';
-    if (walk.distance_m != null) html += '<div class="stat-sub">Distance: ' + fmtDistance(walk.distance_m) + '</div>';
-    if (walk.walkers && walk.walkers.length) html += '<div class="stat-sub">Walkers: ' + walk.walkers.join(', ') + '</div>';
-  } else {
-    html += '<div class="stat-value" style="color:' + C.muted + '">None</div>';
-    if (walk.returned_at) html += '<div class="stat-sub">Last: ' + fmtTime(walk.returned_at) + '</div>';
-  }
+  // Today's totals (8 AM - midnight local time)
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 7, 0, 0);
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 0, 0);
+  const todayWalks = buildWalkRows(currentRoutes, currentEvents).filter(w => {
+    if (!w.started_at) return false;
+    const t = new Date(w.started_at);
+    return t >= todayStart && t < todayEnd;
+  });
+  const todayDistance = todayWalks.reduce((sum, w) => sum + (w.distance_m || 0), 0);
+  const todayDuration = todayWalks.reduce((sum, w) => sum + (w.duration || 0), 0);
+  const activeWalk = todayWalks.find(w => w.active);
+
+  html += '<div class="stat"><div class="stat-label">Today\'s Distance</div>';
+  html += '<div class="stat-value" style="color:' + (todayDistance > 0 ? C.blue : C.muted) + '">' + fmtDistance(todayDistance) + '</div>';
+  html += '<div class="stat-sub">' + todayWalks.length + ' walk' + (todayWalks.length !== 1 ? 's' : '') + (activeWalk ? ' (1 active)' : '') + '</div>';
   html += '</div>';
 
-  if (walk.walk_duration_minutes != null && !isActive) {
-    html += '<div class="stat"><div class="stat-label">Last Walk</div>';
-    html += '<div class="stat-value" style="color:' + C.blue + '">' + fmtDuration(walk.walk_duration_minutes) + '</div>';
-    html += '<div class="stat-sub">' + (walk.location || '') + '<span class="stat-tag">' + (SIGNAL_LABELS[walk.return_signal] || walk.return_signal || '?') + '</span></div>';
-    if (walk.distance_m != null) html += '<div class="stat-sub">' + fmtDistance(walk.distance_m) + ' tracked</div>';
-    html += '</div>';
+  html += '<div class="stat"><div class="stat-label">Today\'s Duration</div>';
+  html += '<div class="stat-value" style="color:' + (todayDuration > 0 ? C.green : C.muted) + '">' + fmtDuration(todayDuration) + '</div>';
+  if (activeWalk) {
+    const elapsed = walk.departed_at ? Math.round((Date.now() - new Date(walk.departed_at).getTime()) / 60000) : 0;
+    html += '<div class="stat-sub">Active: ' + elapsed + 'm at ' + (walk.location || '?') + '</div>';
   }
+  html += '</div>';
 
   if (!isActive && state.event_type === 'departure_candidate' && state.candidate_location) {
     const ageMin = state.candidate_started_at ? Math.max(0, Math.round((Date.now() - new Date(state.candidate_started_at).getTime()) / 60000)) : null;
@@ -806,24 +816,32 @@ function buildWalkRows(routes, events) {
     const joined = byWalkId.get(route.walk_id) || {};
     const departure = joined.departure;
     const dock = joined.dock;
-    const duration = dock && dock.dog_walk && dock.dog_walk.walk_duration_minutes != null
-      ? dock.dog_walk.walk_duration_minutes
-      : (route.started_at && route.ended_at)
-        ? (new Date(route.ended_at).getTime() - new Date(route.started_at).getTime()) / 60000
-        : null;
+    // Prefer Fi authoritative data for duration and distance
+    const fiDuration = (route.fi_walk_start && route.fi_walk_end)
+      ? (new Date(route.fi_walk_end).getTime() - new Date(route.fi_walk_start).getTime()) / 60000
+      : null;
+    const duration = fiDuration
+      ?? (dock && dock.dog_walk && dock.dog_walk.walk_duration_minutes != null
+        ? dock.dog_walk.walk_duration_minutes
+        : (route.started_at && route.ended_at)
+          ? (new Date(route.ended_at).getTime() - new Date(route.started_at).getTime()) / 60000
+          : null);
+    const fiWalkers = route.fi_walker ? [route.fi_walker.toLowerCase()] : null;
     return {
       walk_id: route.walk_id,
       started_at: route.started_at,
       location: route.origin_location,
-      distance_m: route.distance_m,
+      distance_m: route.fi_distance_m || route.distance_m,
       point_count: route.point_count,
       active: route.active,
       duration,
       return_signal: route.return_signal,
-      walkers: (dock && dock.dog_walk && dock.dog_walk.walkers) || (joined.walkers && joined.walkers.dog_walk && joined.walkers.dog_walk.walkers) || (departure && departure.dog_walk && departure.dog_walk.walkers) || [],
+      walkers: fiWalkers || (dock && dock.dog_walk && dock.dog_walk.walkers) || (joined.walkers && joined.walkers.dog_walk && joined.walkers.dog_walk.walkers) || (departure && departure.dog_walk && departure.dog_walk.walkers) || [],
       manual: departure ? isManualDeparture(departure) : false,
+      detection_latency_s: route.detection_latency_s,
     };
-  }).sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+  }).filter(w => w.active || (w.distance_m != null && w.distance_m >= 50) || (w.duration != null && w.duration >= 5))
+    .sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
 }
 
 function normalizeSelectedWalk() {
@@ -853,7 +871,7 @@ function renderRouteCards() {
   let html = '';
   html += '<div class="stat"><div class="stat-label">Tracked Distance</div><div class="stat-value" style="color:' + C.blue + '">' + fmtDistance(totalDistance) + '</div><div class="stat-sub">' + currentRoutes.length + ' walks</div></div>';
   html += '<div class="stat"><div class="stat-label">Average Walk</div><div class="stat-value" style="color:' + C.teal + '">' + fmtDistance(avgDistance) + '</div><div class="stat-sub">' + getVisibleLocations().map(homeLabel).join(' + ') + '</div></div>';
-  html += '<div class="stat"><div class="stat-label">Maps</div><div class="stat-value" style="color:' + (currentLayer === 'heatmap' ? C.orange : C.green) + '">' + (currentLayer === 'heatmap' ? 'Heatmap' : 'Routes') + '</div><div class="stat-sub">' + (activeCount ? activeCount + ' active walk' + (activeCount === 1 ? '' : 's') : 'Historical view') + '</div></div>';
+
   if (selected) {
     const signal = selected.active ? 'Active' : (SIGNAL_LABELS[selected.return_signal] || selected.return_signal || 'Pending');
     html += '<div class="stat"><div class="stat-label">Selected Walk</div><div class="stat-value" style="color:' + (LOCATION_COLORS[selected.origin_location] || C.muted) + '">' + fmtDistance(selected.distance_m) + '</div><div class="stat-sub">' + homeLabel(selected.origin_location) + ' · ' + fmtTime(selected.started_at) + '</div><div class="stat-sub">' + signal + ' · ' + (selected.point_count || 0) + ' pts</div></div>';

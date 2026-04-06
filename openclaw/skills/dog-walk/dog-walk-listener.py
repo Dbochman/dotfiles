@@ -696,14 +696,22 @@ def _enrich_route_with_fi_summary(fi_summary: dict) -> None:
 
     try:
         route = json.loads(path.read_text())
+        our_start = datetime.fromisoformat(route.get("started_at", "").replace("Z", "+00:00"))
+        fi_start = datetime.fromisoformat(fi_summary["fi_start"].replace("Z", "+00:00"))
+        fi_end = datetime.fromisoformat(fi_summary["fi_end"].replace("Z", "+00:00"))
+
+        # Verify the Fi walk actually corresponds to this walk:
+        # Fi start should be within 15 minutes of our detected start
+        gap = abs((our_start - fi_start).total_seconds())
+        if gap > 900:
+            log(f"FI WALK SUMMARY: skipping — Fi walk start ({fi_summary['fi_start']}) "
+                f"is {gap:.0f}s from our start ({route.get('started_at')}), threshold 900s")
+            return
+
         route["fi_walk_start"] = fi_summary["fi_start"]
         route["fi_walk_end"] = fi_summary["fi_end"]
         route["fi_distance_m"] = fi_summary["fi_distance_m"]
         route["fi_walker"] = fi_summary.get("fi_walker")
-
-        # Calculate detection latency
-        fi_start = datetime.fromisoformat(fi_summary["fi_start"].replace("Z", "+00:00"))
-        our_start = datetime.fromisoformat(route.get("started_at", "").replace("Z", "+00:00"))
         route["detection_latency_s"] = round((our_start - fi_start).total_seconds())
 
         path.write_text(json.dumps(route, indent=2))
