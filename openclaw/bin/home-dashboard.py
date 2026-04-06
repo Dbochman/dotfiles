@@ -1241,6 +1241,189 @@ function renderSpeakers(result) {
   return renderSimpleObject(result);
 }
 
+function renderCabinSpeakers(result) {
+  if (!result) return '<div class="muted">No speaker data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const speakers = result.speakers;
+  if (!speakers || typeof speakers !== 'object') return renderRawResult(result);
+  const cards = Object.entries(speakers).map(([name, raw]) => {
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    const asleep = text.includes('timed out') || text.includes('UNREACHABLE') || text.includes('urlopen error') || text.includes('Connection refused');
+    const dot = asleep ? '<span style="color:var(--text-muted)">○</span>' : '<span style="color:#4ade80">●</span>';
+    const status = asleep ? 'Asleep' : 'Online';
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name.charAt(0).toUpperCase() + name.slice(1))}</div>
+      <div class="room-temp">${dot} ${escapeHtml(status)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="room-grid">${cards}</div>`;
+}
+
+function renderPetlibro(result) {
+  if (!result) return '<div class="muted">No Petlibro data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const raw = result.raw || '';
+  if (!raw) return '<div class="muted">No data</div>';
+  const blocks = raw.split(/\n(?=\S)/).filter(b => b.trim());
+  const cards = blocks.map(block => {
+    const lines = block.split('\n');
+    const headerMatch = lines[0].match(/^(.+?)\s+\((\w+)\)\s*—\s*(\w+)/);
+    if (!headerMatch) return null;
+    const [, name, , status] = headerMatch;
+    const isOnline = status.toLowerCase() === 'online';
+    const dot = isOnline ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+    const props = {};
+    lines.slice(1).forEach(l => {
+      const kv = l.match(/^\s+(.+?):\s+(.+)$/);
+      if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
+    });
+    const meta = [];
+    if (props['water level']) meta.push('💧 ' + props['water level']);
+    if (props['battery']) meta.push('🔋 ' + props['battery']);
+    if (props['food level']) meta.push('🍽️ ' + props['food level']);
+    if (props['next feed']) meta.push('⏰ ' + props['next feed']);
+    if (props['today drunk']) meta.push(props['today drunk'] + ' today');
+    if (props['filter'] && props['filter'].includes('OVERDUE')) meta.push('⚠️ Filter overdue');
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name.trim())}</div>
+      <div class="room-temp">${dot} ${escapeHtml(status)}</div>
+      ${meta.length ? '<div class="room-meta">' + meta.join(' · ') + '</div>' : ''}
+    </div>`;
+  }).filter(Boolean).join('');
+  return `<div class="room-grid">${cards}</div>`;
+}
+
+function renderLitterRobot(result) {
+  if (!result) return '<div class="muted">No Litter-Robot data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const raw = result.raw || '';
+  if (!raw) return '<div class="muted">No data</div>';
+  // Split into main block and cats block
+  const catSection = raw.match(/Cats:\n([\s\S]+)/);
+  const mainLines = (catSection ? raw.slice(0, catSection.index) : raw).split('\n');
+  const headerMatch = mainLines[0].match(/^(.+?)\s*—\s*(\w+)/);
+  const status = headerMatch ? headerMatch[2] : 'Unknown';
+  const isOnline = status.toLowerCase() === 'online';
+  const dot = isOnline ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+  const props = {};
+  mainLines.slice(1).forEach(l => {
+    const kv = l.match(/^\s+(.+?):\s+(.+)$/);
+    if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
+  });
+  const meta = [];
+  if (props['status']) meta.push(props['status']);
+  if (props['waste level']) meta.push('🗑️ ' + props['waste level']);
+  if (props['cycles']) meta.push(props['cycles'] + ' cycles');
+  // Parse cats
+  const cats = [];
+  if (catSection) {
+    catSection[1].split('\n').forEach(l => {
+      const cm = l.match(/^\s+(.+?)\s*—\s*(.+)/);
+      if (cm) cats.push(cm[1].trim() + ' · ' + cm[2].trim());
+    });
+  }
+  return `<div class="room-grid"><div class="room-chip">
+    <div class="room-name">Litter-Robot 4</div>
+    <div class="room-temp">${dot} ${escapeHtml(status)}</div>
+    ${meta.length ? '<div class="room-meta">' + meta.join(' · ') + '</div>' : ''}
+    ${cats.length ? '<div class="room-meta">🐱 ' + cats.map(c => escapeHtml(c)).join(' · ') + '</div>' : ''}
+  </div></div>`;
+}
+
+function renderEightSleep(result) {
+  if (!result) return '<div class="muted">No Eight Sleep data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const raw = result.raw || '';
+  if (!raw) return '<div class="muted">No data</div>';
+  // Parse person blocks: "Name (side):\n  Key: Value"
+  const blocks = raw.split(/\n(?=\S)/).filter(b => b.trim());
+  const cards = [];
+  let podStatus = '';
+  blocks.forEach(block => {
+    const lines = block.split('\n');
+    // Pod header: "Eight Sleep Pod (king Pod3)"
+    if (lines[0].match(/^Eight Sleep Pod/)) {
+      const props = {};
+      lines.slice(1).forEach(l => {
+        const kv = l.match(/^\s+(.+?):\s+(.+)$/);
+        if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
+      });
+      podStatus = props['water'] || '';
+      return;
+    }
+    // Smart schedule line — skip
+    if (lines[0].match(/Smart Schedule/i)) return;
+    // Person block: "Dylan (left):"
+    const personMatch = lines[0].match(/^(.+?)\s*\((\w+)\):/);
+    if (!personMatch) return;
+    const [, name, side] = personMatch;
+    const props = {};
+    lines.slice(1).forEach(l => {
+      const kv = l.match(/^\s+(.+?):\s+(.+)$/);
+      if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
+    });
+    const level = props['level'] || '?';
+    const status = props['status'] || 'Unknown';
+    const isActive = status.toLowerCase() !== 'idle' && status.toLowerCase() !== 'off';
+    const dot = isActive ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+    // Extract temp from level like "-39 (~72F)"
+    const tempMatch = level.match(/\(~?(\d+)F\)/);
+    const temp = tempMatch ? tempMatch[1] + '°F' : level;
+    cards.push(`<div class="room-chip">
+      <div class="room-name">${escapeHtml(name)} (${escapeHtml(side)})</div>
+      <div class="room-temp">${dot} ${escapeHtml(temp)}</div>
+      <div class="room-meta">${escapeHtml(status)}</div>
+    </div>`);
+  });
+  return `<div class="room-grid">${cards.join('')}</div>`;
+}
+
+function renderRing(result) {
+  if (!result) return '<div class="muted">No Ring data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const raw = result.raw || '';
+  if (!raw) return '<div class="muted">No data</div>';
+  const blocks = raw.split(/\n(?=\S)/).filter(b => b.trim());
+  const cards = blocks.map(block => {
+    const lines = block.split('\n');
+    const headerMatch = lines[0].match(/^(.+?)\s*\(/);
+    if (!headerMatch) return null;
+    const name = headerMatch[1].trim();
+    const isShared = lines[0].includes('[shared]');
+    const props = {};
+    lines.slice(1).forEach(l => {
+      const kv = l.match(/^\s+(.+?):\s+(.+)$/);
+      if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
+    });
+    const battery = props['battery'] || '?';
+    const lastEvent = props['last event'] || '';
+    // Parse last event: "motion [person] at 2026-04-06 13:07:42..."
+    const eventMatch = lastEvent.match(/^(\w+)(?:\s+\[(\w+)\])?\s+at\s+(.+)/);
+    let eventText = lastEvent;
+    if (eventMatch) {
+      const [, type, tag, ts] = eventMatch;
+      const d = new Date(ts);
+      const ago = Math.round((Date.now() - d.getTime()) / 60000);
+      const agoText = ago < 60 ? ago + 'm ago' : Math.round(ago / 60) + 'h ago';
+      eventText = type + (tag ? ' [' + tag + ']' : '') + ' ' + agoText;
+    }
+    const dot = '<span style="color:#4ade80">●</span>';
+    const meta = ['🔋 ' + battery];
+    if (eventText) meta.push(eventText);
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name)}${isShared ? ' (shared)' : ''}</div>
+      <div class="room-temp">${dot} Online</div>
+      <div class="room-meta">${meta.join(' · ')}</div>
+    </div>`;
+  }).filter(Boolean).join('');
+  return `<div class="room-grid">${cards}</div>`;
+}
+
 function renderDogWalk(result) {
   if (!result) return '<div class="muted">No dog walk data</div>';
   if (isPending(result)) return renderPending();
@@ -1403,11 +1586,11 @@ function renderDashboard() {
   setContent('roombasCabinContent', renderRoombasCabin(data.roombas_cabin));
   setContent('tvContent', renderTV(data.tv));
   setContent('speakersContent', renderSpeakers(data.speakers));
-  setContent('cabinSpeakersContent', renderRawResult(data.cabin_speakers));
-  setContent('litterRobotContent', renderRawResult(data.litter_robot));
-  setContent('petlibroContent', renderRawResult(data.petlibro));
-  setContent('eightSleepContent', renderRawResult(data['8sleep']));
-  setContent('ringContent', renderRawResult(data.ring));
+  setContent('cabinSpeakersContent', renderCabinSpeakers(data.cabin_speakers));
+  setContent('litterRobotContent', renderLitterRobot(data.litter_robot));
+  setContent('petlibroContent', renderPetlibro(data.petlibro));
+  setContent('eightSleepContent', renderEightSleep(data['8sleep']));
+  setContent('ringContent', renderRing(data.ring));
   setContent('dogWalkContent', renderDogWalk(data.dog_walk));
   document.getElementById('lastUpdated').textContent = formatTimestamp(data.meta && data.meta.timestamp);
   applyLocationFilter();
