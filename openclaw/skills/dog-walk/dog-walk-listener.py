@@ -1098,8 +1098,40 @@ def _check_network_presence(location: str) -> dict:
         return {"any_present": False, "people": {}}
 
 
+def _people_at_location(location: str) -> set[str]:
+    """Read presence state to determine who was recently at this location.
+
+    Uses the sticky presence model — once detected at a location, a person stays
+    there until detected elsewhere. Returns lowercase names.
+    """
+    try:
+        presence_file = Path.home() / ".openclaw/presence/state.json"
+        if not presence_file.exists():
+            return {"dylan", "julia"}
+        state = json.loads(presence_file.read_text())
+        people = state.get("people", {})
+        at_location = set()
+        for name, info in people.items():
+            if info.get("location", "").lower() == location.lower():
+                at_location.add(name.lower())
+        return at_location if at_location else {"dylan", "julia"}
+    except Exception as e:
+        log(f"WHO LEFT: error reading presence state: {e}")
+        return {"dylan", "julia"}
+
+
 def _detect_who_left(location: str) -> list[str]:
-    """Determine who left by checking who's absent from the network."""
+    """Determine who left by checking who's absent from the network.
+
+    Cross-references the ARP scan with the presence state: only people who were
+    recently at this location (per sticky presence model) are candidates. If
+    someone was already away, they're absent from ARP because they're not home,
+    not because they left on a walk.
+    """
+    # Who was at this location before the walk started?
+    candidates = _people_at_location(location)
+    log(f"WHO LEFT: candidates at {location} (from presence state): {sorted(candidates)}")
+
     try:
         if location == "crosstown":
             result = subprocess.run(
@@ -1111,21 +1143,32 @@ def _detect_who_left(location: str) -> list[str]:
             script = str(Path.home() / ".openclaw/workspace/scripts/presence-detect.sh")
             result = subprocess.run([script, "cabin"], capture_output=True, timeout=60, text=True)
         else:
-            return ["dylan", "julia"]
+            return sorted(candidates)
 
         if result.returncode != 0:
-            return ["dylan", "julia"]
+            log(f"WHO LEFT: network scan failed (rc={result.returncode})")
+            return sorted(candidates)
 
         scan = json.loads(result.stdout)
         presence = scan.get("presence", {})
-        absent = []
+
+        # People absent from ARP AND were at this location = walkers
+        absent_from_network = set()
         for person_key, info in presence.items():
             if not info.get("present"):
-                absent.append(person_key.lower())
-        return absent if absent else ["dylan", "julia"]
+                absent_from_network.add(person_key.lower())
+
+        walkers = absent_from_network & candidates
+        still_home = candidates - absent_from_network
+
+        if still_home:
+            log(f"WHO LEFT: still on network at {location}: {sorted(still_home)}")
+
+        # If nobody who was at this location is absent, fall back to candidates
+        return sorted(walkers) if walkers else sorted(candidates)
     except Exception as e:
         log(f"WHO LEFT: error detecting: {e}")
-        return ["dylan", "julia"]
+        return sorted(candidates)
 
 
 # ---------------------------------------------------------------------------
