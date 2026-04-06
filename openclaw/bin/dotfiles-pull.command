@@ -46,6 +46,8 @@ if [ -d "$SKILLS_SRC" ]; then
     cp -R "$skill_dir" "$SKILLS_DST/$skill_name"
     # Remove any nested symlinks that snuck in
     find "$SKILLS_DST/$skill_name" -type l -delete 2>/dev/null
+    # Preserve executable bit on CLI wrappers inside skills
+    find "$SKILLS_DST/$skill_name" -maxdepth 1 -type f ! -name "*.md" ! -name "*.json" ! -name "*.yaml" -exec chmod +x {} +
     DEPLOYED=$((DEPLOYED + 1))
   done
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skills: deployed $DEPLOYED skills to $SKILLS_DST" >> "$LOG"
