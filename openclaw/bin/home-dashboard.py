@@ -586,6 +586,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .feedback { margin-bottom: 20px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .feedback.error { border-color: #ef4444; color: #fca5a5; }
 .feedback.success { border-color: #22c55e; color: #86efac; }
+.card-feedback { margin: 0 0 8px; font-size: 0.85rem; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; min-height: 220px; display: flex; flex-direction: column; gap: 14px; }
 .card-wide { grid-column: span 2; }
@@ -1125,15 +1126,32 @@ function formatTimestamp(value) {
   return date.toLocaleString();
 }
 
-function showFeedback(message, kind) {
-  const el = document.getElementById('feedback');
-  if (!message) {
-    el.className = 'feedback hidden';
-    el.textContent = '';
-    return;
+function showFeedback(message, kind, button) {
+  // Clear any previous inline feedback
+  document.querySelectorAll('.card-feedback').forEach(el => el.remove());
+  // Also clear the global fallback
+  const global = document.getElementById('feedback');
+  global.className = 'feedback hidden';
+  global.textContent = '';
+  if (!message) return;
+  // If we have a button context, show inline in that card's section header
+  if (button) {
+    const section = button.closest('.dashboard-section');
+    if (section) {
+      const fb = document.createElement('div');
+      fb.className = `card-feedback feedback ${kind || ''}`.trim();
+      fb.textContent = message;
+      const summary = section.querySelector('summary');
+      if (summary) {
+        summary.after(fb);
+        if (kind) setTimeout(() => fb.remove(), 4000);
+        return;
+      }
+    }
   }
-  el.className = `feedback ${kind || ''}`.trim();
-  el.textContent = message;
+  // Fallback to global
+  global.className = `feedback ${kind || ''}`.trim();
+  global.textContent = message;
 }
 
 function normalizeObject(value) {
@@ -1794,7 +1812,7 @@ async function postCommand(button) {
   const args = collectArgs(button);
   const collectorKey = DEVICE_TO_COLLECTOR[device];
 
-  showFeedback(`Running ${device} ${action}...`);
+  showFeedback(`Running ${device} ${action}...`, '', button);
 
   try {
     const response = await fetch('/api/command', {
@@ -1806,7 +1824,7 @@ async function postCommand(button) {
     if (!response.ok || !data.success) {
       throw new Error(data.error || data.output || `Command failed (${response.status})`);
     }
-    showFeedback(`${device} ${action} succeeded`, 'success');
+    showFeedback(`${device} ${action} succeeded`, 'success', button);
     if (device === 'nest_camera' && action === 'snap') {
       loadCameraSnap(args.room || 'kitchen', 'nestCameraContent');
     } else if (device === 'ring_camera' && action === 'snap') {
@@ -1816,7 +1834,7 @@ async function postCommand(button) {
     }
   } catch (error) {
     console.error(error);
-    showFeedback(error.message || 'Command failed', 'error');
+    showFeedback(error.message || 'Command failed', 'error', button);
   }
 }
 
