@@ -385,7 +385,8 @@ COMMANDS = {
     },
     "ring_camera": {
         "snap": lambda a: ["ring", "snapshot",
-                           os.path.join(CAMERA_SNAP_DIR, "ring-doorbell.jpg")],
+                           os.path.join(CAMERA_SNAP_DIR, "ring-" + a.get("doorbell", "crosstown") + ".jpg"),
+                           a.get("doorbell_id", "")],
     },
 }
 
@@ -889,8 +890,15 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
         <div id="ringContent" class="content"></div>
         <div id="ringSnapContent" class="content"></div>
         <div class="controls">
+          <form id="ring-camera-form" class="controls-grid">
+            <select name="doorbell" onchange="this.form.doorbell_id.value=this.selectedOptions[0].dataset.id">
+              <option value="crosstown" data-id="684794187" selected>Crosstown</option>
+              <option value="cabin" data-id="697442349">Cabin</option>
+            </select>
+            <input type="hidden" name="doorbell_id" value="684794187">
+          </form>
           <div class="command-row">
-            <button type="button" data-command data-device="ring_camera" data-action="snap">Take Snapshot</button>
+            <button type="button" data-command data-device="ring_camera" data-action="snap" data-form="ring-camera-form" data-fields="doorbell,doorbell_id">Take Snapshot</button>
           </div>
         </div>
       </article>
@@ -1802,7 +1810,7 @@ async function postCommand(button) {
     if (device === 'nest_camera' && action === 'snap') {
       loadCameraSnap(args.room || 'kitchen', 'nestCameraContent');
     } else if (device === 'ring_camera' && action === 'snap') {
-      loadCameraSnap('ring-doorbell', 'ringSnapContent');
+      loadCameraSnap('ring-' + (args.doorbell || 'crosstown'), 'ringSnapContent');
     } else {
       await refreshDevice(collectorKey);
     }
@@ -1855,7 +1863,7 @@ function loadCameraSnap(name, containerId) {
 
 // Try to load existing snapshots on page load
 loadCameraSnap('kitchen', 'nestCameraContent');
-loadCameraSnap('ring-doorbell', 'ringSnapContent');
+loadCameraSnap('ring-crosstown', 'ringSnapContent');
 
 fetchStatus();
 setInterval(() => fetchStatus(), 5 * 60 * 1000);

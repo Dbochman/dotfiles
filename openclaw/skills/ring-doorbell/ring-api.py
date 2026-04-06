@@ -272,12 +272,12 @@ async def cmd_videos(limit=5):
     print(json.dumps(output, indent=2, default=str))
 
 
-async def cmd_snapshot(filename=None):
-    """Capture a snapshot from the first subscribed doorbell."""
+async def cmd_snapshot(filename=None, device_id=None):
+    """Capture a snapshot from a doorbell (default: first subscribed)."""
     ring = await get_ring()
     devices = ring.devices()
     doorbells = list(devices.doorbots) + list(devices.authorized_doorbots)
-    db = find_doorbell(doorbells)
+    db = find_doorbell(doorbells, device_id)
     if not db:
         print(json.dumps({"error": "no_device", "message": "No doorbell found"}))
         sys.exit(1)
@@ -390,7 +390,8 @@ def main():
         asyncio.run(cmd_videos(limit))
     elif cmd == "snapshot":
         filename = sys.argv[2] if len(sys.argv) > 2 else None
-        asyncio.run(cmd_snapshot(filename))
+        device_id = sys.argv[3] if len(sys.argv) > 3 else None
+        asyncio.run(cmd_snapshot(filename, device_id))
     elif cmd == "download":
         if len(sys.argv) < 4:
             print(json.dumps({"error": "missing_arg",
