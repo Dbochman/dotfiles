@@ -383,6 +383,10 @@ COMMANDS = {
         "snap": lambda a: ["nest", "camera", "snap", a.get("room", "kitchen"),
                            os.path.join(CAMERA_SNAP_DIR, a.get("room", "kitchen") + ".jpg")],
     },
+    "ring_camera": {
+        "snap": lambda a: ["ring", "snapshot",
+                           os.path.join(CAMERA_SNAP_DIR, "ring-doorbell.jpg")],
+    },
 }
 
 
@@ -883,6 +887,12 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
           <span class="location-pill">Both</span>
         </div>
         <div id="ringContent" class="content"></div>
+        <div id="ringSnapContent" class="content"></div>
+        <div class="controls">
+          <div class="command-row">
+            <button type="button" data-command data-device="ring_camera" data-action="snap">Take Snapshot</button>
+          </div>
+        </div>
       </article>
 
       <article class="card" data-location="cabin">
@@ -1790,7 +1800,9 @@ async function postCommand(button) {
     }
     showFeedback(`${device} ${action} succeeded`, 'success');
     if (device === 'nest_camera' && action === 'snap') {
-      loadCameraSnap(args.room || 'kitchen');
+      loadCameraSnap(args.room || 'kitchen', 'nestCameraContent');
+    } else if (device === 'ring_camera' && action === 'snap') {
+      loadCameraSnap('ring-doorbell', 'ringSnapContent');
     } else {
       await refreshDevice(collectorKey);
     }
@@ -1815,10 +1827,10 @@ document.addEventListener('click', (event) => {
   postCommand(button);
 });
 
-function loadCameraSnap(room) {
-  const container = document.getElementById('nestCameraContent');
+function loadCameraSnap(name, containerId) {
+  const container = document.getElementById(containerId);
   if (!container) return;
-  const url = '/api/camera-snap/' + encodeURIComponent(room) + '?t=' + Date.now();
+  const url = '/api/camera-snap/' + encodeURIComponent(name) + '?t=' + Date.now();
   fetch(url).then(resp => {
     if (!resp.ok) {
       container.innerHTML = '<div class="muted">No snapshot yet</div>';
@@ -1841,8 +1853,9 @@ function loadCameraSnap(room) {
   });
 }
 
-// Try to load existing snapshot on page load
-loadCameraSnap('kitchen');
+// Try to load existing snapshots on page load
+loadCameraSnap('kitchen', 'nestCameraContent');
+loadCameraSnap('ring-doorbell', 'ringSnapContent');
 
 fetchStatus();
 setInterval(() => fetchStatus(), 5 * 60 * 1000);
