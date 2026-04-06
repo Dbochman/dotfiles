@@ -107,6 +107,11 @@ _return_poll_task: asyncio.Task | None = None
 _return_monitor_active: bool = False
 _ring_motion_during_walk: bool = False
 
+# Departure combo trigger: Ring motion timestamps per doorbell location
+# Used by Fi departure loop to fast-trigger when both Ring motion + Fi disconnect occur
+_ring_departure_motion: dict[str, float] = {}  # location → monotonic timestamp
+_RING_DEPARTURE_WINDOW = 300  # 5 minutes — Ring motion must be within this window of Fi disconnect
+
 # Inbox directory for external processes (dog-walk-start) to request return monitoring.
 _INBOX_DIR = Path.home() / ".openclaw/dog-walk/inbox"
 _INBOX_POLL_INTERVAL = 5  # seconds
@@ -768,8 +773,7 @@ def run_roomba_command(location: str, action: str) -> dict:
         return {"success": False, "results": [], "skipped": "snoozed"}
     # Cooldown only applies to start — dock should always work so Roombas don't run indefinitely
     if action != "dock":
-        cooldown_key = f"{location}_{action}"
-        last = _roomba_last_action.get(cooldown_key, 0)
+        last = _roomba_last_action.get(f"{location}_{action}", 0)
         if now - last < _ROOMBA_COOLDOWN:
             remaining = int((_ROOMBA_COOLDOWN - (now - last)) / 60)
             log(f"Roomba {action} for {location} on cooldown ({remaining}min remaining)")
@@ -780,14 +784,17 @@ def run_roomba_command(location: str, action: str) -> dict:
     env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
     results = []
 
+    # dock all is sequential (stop+dock per robot via SSH+MQTT) — needs ~45s for 2 robots
+    cmd_timeout = 90 if action == "dock" else 30
+
     if location == "crosstown":
         cmd = cmds.get(action)
         if cmd:
             log(f"ROOMBA: {' '.join(cmd)}")
             try:
-                r = subprocess.run(cmd, capture_output=True, timeout=30, env=env)
-                output = r.stdout.decode()[:200]
-                error = r.stderr.decode()[:200] if r.returncode != 0 else None
+                r = subprocess.run(cmd, capture_output=True, timeout=cmd_timeout, env=env)
+                output = r.stdout.decode()[:500]
+                error = r.stderr.decode()[:500] if r.returncode != 0 else None
                 log(f"ROOMBA result: {output}")
                 if error:
                     log(f"ROOMBA error: {error}")
@@ -808,9 +815,9 @@ def run_roomba_command(location: str, action: str) -> dict:
             if cmd:
                 log(f"ROOMBA: {' '.join(cmd)}")
                 try:
-                    r = subprocess.run(cmd, capture_output=True, timeout=30, env=env)
-                    output = r.stdout.decode()[:200]
-                    error = r.stderr.decode()[:200] if r.returncode != 0 else None
+                    r = subprocess.run(cmd, capture_output=True, timeout=cmd_timeout, env=env)
+                    output = r.stdout.decode()[:500]
+                    error = r.stderr.decode()[:500] if r.returncode != 0 else None
                     log(f"ROOMBA result: {output}")
                     if error:
                         log(f"ROOMBA error: {error}")
@@ -827,6 +834,127 @@ def run_roomba_command(location: str, action: str) -> dict:
         _roomba_last_action[f"{location}_{action}"] = now
     success = all(r["returncode"] == 0 for r in results) if results else False
     return {"success": success, "results": results}
+
+
+def _check_roomba_dock_status(location: str) -> dict:
+    """Check if roombas at a location are actually on the dock.
+
+    Returns {"all_docked": bool, "robots": {name: {"docked": bool, "status": str}}}
+    """
+    env = os.environ.copy()
+    env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
+    robots = {}
+
+    if location == "crosstown":
+        try:
+            r = subprocess.run(
+                ["crosstown-roomba", "status"],
+                capture_output=True, timeout=30, env=env,
+            )
+            output = r.stdout.decode()
+            # Parse multi-robot output — each robot separated by blank line
+            for block in output.split("\n\n"):
+                block = block.strip()
+                if not block:
+                    continue
+                name = block.split(":")[0].strip() if ":" in block else "unknown"
+                status_line = ""
+                for line in block.split("\n"):
+                    if "Status:" in line:
+                        status_line = line.split("Status:")[1].strip()
+                        break
+                docked = "on dock" in status_line.lower() or "charging" in status_line.lower()
+                robots[name] = {"docked": docked, "status": status_line}
+        except Exception as e:
+            log(f"DOCK VERIFY: Status check failed: {e}")
+            return {"all_docked": False, "robots": {}, "error": str(e)}
+    elif location == "cabin":
+        for name in ("floomba", "philly"):
+            try:
+                r = subprocess.run(
+                    ["roomba", "status", name],
+                    capture_output=True, timeout=30, env=env,
+                )
+                output = r.stdout.decode()
+                docked = "docking" in output.lower() or "dock" in output.lower()
+                robots[name] = {"docked": docked, "status": output.strip()[:200]}
+            except Exception as e:
+                robots[name] = {"docked": False, "status": f"error: {e}"}
+
+    all_docked = bool(robots) and all(r["docked"] for r in robots.values())
+    return {"all_docked": all_docked, "robots": robots}
+
+
+def _verify_dock_and_retry(location: str) -> None:
+    """Background task: wait 3 minutes, check if roombas actually docked, retry if not.
+
+    Runs in a daemon thread so it doesn't block the return monitor exit.
+    """
+    VERIFY_DELAY = 180  # 3 minutes
+    MAX_RETRIES = 2
+
+    time.sleep(VERIFY_DELAY)
+
+    for attempt in range(MAX_RETRIES):
+        status = _check_roomba_dock_status(location)
+        if status.get("all_docked"):
+            log(f"DOCK VERIFY: All roombas at {location} confirmed on dock")
+            with _state_lock:
+                state = _read_state()
+                roombas = state.get("roombas", {})
+                loc_roombas = roombas.get(location, {})
+                loc_roombas["dock_verified"] = True
+                roombas[location] = loc_roombas
+                state["roombas"] = roombas
+                _write_state(state, event_type="dock_verified")
+            return
+
+        not_docked = [
+            f"{name} ({info['status']})"
+            for name, info in status.get("robots", {}).items()
+            if not info["docked"]
+        ]
+        log(f"DOCK VERIFY: Attempt {attempt + 1} — not docked: {', '.join(not_docked)}")
+
+        # Retry dock
+        retry_result = run_roomba_command(location, "dock")
+        log(f"DOCK VERIFY: Retry dock result: {retry_result}")
+
+        with _state_lock:
+            state = _read_state()
+            roombas = state.get("roombas", {})
+            loc_roombas = roombas.get(location, {})
+            loc_roombas["dock_verified"] = False
+            loc_roombas["dock_retry_count"] = attempt + 1
+            loc_roombas["last_command_result"] = retry_result
+            roombas[location] = loc_roombas
+            state["roombas"] = roombas
+            _write_state(state, event_type="dock_retry")
+
+        if attempt < MAX_RETRIES - 1:
+            time.sleep(VERIFY_DELAY)
+
+    # Final check after last retry
+    time.sleep(VERIFY_DELAY)
+    final_status = _check_roomba_dock_status(location)
+    if final_status.get("all_docked"):
+        log(f"DOCK VERIFY: All roombas at {location} confirmed on dock after retries")
+        with _state_lock:
+            state = _read_state()
+            roombas = state.get("roombas", {})
+            loc_roombas = roombas.get(location, {})
+            loc_roombas["dock_verified"] = True
+            roombas[location] = loc_roombas
+            state["roombas"] = roombas
+            _write_state(state, event_type="dock_verified")
+    else:
+        not_docked = [
+            f"{name} ({info['status']})"
+            for name, info in final_status.get("robots", {}).items()
+            if not info["docked"]
+        ]
+        log(f"DOCK VERIFY: FAILED after {MAX_RETRIES} retries — still not docked: {', '.join(not_docked)}")
+        send_imessage(f"\u26a0\ufe0f Roombas at {location} didn't dock after {MAX_RETRIES} retries: {', '.join(not_docked)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1169,6 +1297,12 @@ async def _return_poll_loop(location: str) -> None:
                         log(f"RETURN MONITOR: Dock command failed: {e}")
                         roomba_result = {"success": False, "results": [], "error": str(e)}
 
+                    # Launch background verification (3min delay, retries if not docked)
+                    threading.Thread(
+                        target=_verify_dock_and_retry, args=(location,),
+                        daemon=True, name=f"dock-verify-{location}",
+                    ).start()
+
                     # Notify + finalize state — best effort
                     signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": f"Fi GPS"}
                     try:
@@ -1188,13 +1322,23 @@ async def _return_poll_loop(location: str) -> None:
                 log("RETURN MONITOR: Cancelled")
                 return
             except Exception as e:
-                log(f"RETURN MONITOR: Error: {e}")
+                log(f"RETURN MONITOR: Error in poll loop: {e}")
+                # If we had a return signal but finalization threw, still exit —
+                # don't loop back and re-dock repeatedly
+                if return_signal:
+                    log(f"RETURN MONITOR: Exiting despite error (return_signal={return_signal} was set)")
+                    return
 
             await asyncio.sleep(POLL_INTERVAL)
 
         log(f"RETURN MONITOR: Timeout after {MAX_DURATION // 60}min — docking as safety fallback")
         send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
         roomba_result = run_roomba_command(location, "dock")
+        # Launch background verification (3min delay, retries if not docked)
+        threading.Thread(
+            target=_verify_dock_and_retry, args=(location,),
+            daemon=True, name=f"dock-verify-{location}",
+        ).start()
         _update_state_dog_walk(location, "dock_timeout", return_signal="timeout", roomba_result=roomba_result)
         _update_state_return_monitor(location, "stop")
     finally:
@@ -1271,8 +1415,13 @@ async def _fi_departure_poll_loop() -> None:
 
     while True:
         try:
-            # Use faster polling after base station disconnect
-            poll_interval = FI_FAST_POLL_INTERVAL if last_connection != "Base" and last_outside_reading else FI_POLL_INTERVAL
+            # Use faster polling after base station disconnect OR when Ring motion was recently detected
+            has_recent_ring = any(
+                time.monotonic() - ts <= _RING_DEPARTURE_WINDOW
+                for ts in _ring_departure_motion.values()
+            )
+            fast_poll = (last_connection != "Base" and last_outside_reading) or has_recent_ring
+            poll_interval = FI_FAST_POLL_INTERVAL if fast_poll else FI_POLL_INTERVAL
             await asyncio.sleep(poll_interval)
 
             if not _is_walk_hour():
@@ -1290,9 +1439,43 @@ async def _fi_departure_poll_loop() -> None:
 
             # Track base station connection transitions
             connection = fi_result.get("connection", "")
+            base_just_disconnected = False
             if last_connection == "Base" and connection != "Base" and connection:
                 log(f"FI DEPARTURE: Base station disconnect detected (connection: {last_connection} → {connection})")
+                base_just_disconnected = True
             last_connection = connection or last_connection
+
+            # --- Ring + Fi combo trigger ---
+            # If Fi just disconnected from base AND we saw Ring motion recently,
+            # skip GPS geofence confirmation and trigger departure immediately.
+            if base_just_disconnected:
+                combo_location = home_anchor
+                if combo_location and combo_location in _ring_departure_motion:
+                    ring_age = time.monotonic() - _ring_departure_motion[combo_location]
+                    if ring_age <= _RING_DEPARTURE_WINDOW:
+                        log(f"FI DEPARTURE: COMBO TRIGGER — Ring motion {int(ring_age)}s ago + Fi base disconnect at {combo_location}")
+                        del _ring_departure_motion[combo_location]
+                        reset_candidate("combo_trigger")
+
+                        dist = _distance_to_location(fi_result, combo_location) or 0
+                        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                        _set_fi_collar_mode("LOST_DOG")
+                        send_imessage(
+                            f"\U0001f9f9 Potato left {combo_location} (Ring + Fi combo: base disconnected) — starting Roombas!"
+                        )
+                        roomba_result = run_roomba_command(combo_location, "start")
+                        _update_state_dog_walk(
+                            combo_location,
+                            "departure",
+                            people=0,
+                            dogs=1,
+                            roomba_result=roomba_result,
+                            fi_result=fi_result,
+                        )
+                        _append_active_walk_route_point(fi_result)
+                        start_return_monitor(combo_location)
+                        continue
 
             fi_location = fi_result.get("location")
             fi_at_location = bool(fi_result.get("at_location")) and fi_location in _FI_LOCATIONS
@@ -1302,6 +1485,8 @@ async def _fi_departure_poll_loop() -> None:
                     home_anchor = fi_location
                     _update_state_home_anchor(fi_location, distance_m=fi_result.get("distance_m"))
                 reset_candidate("inside_geofence", fi_result.get("distance_m"))
+                # Clear stale Ring departure motion when confirmed home
+                _ring_departure_motion.pop(fi_location, None)
                 if connection == "Base":
                     last_connection = "Base"  # reset on confirmed at-home
                 continue
@@ -1482,7 +1667,7 @@ async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
 
 
 async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str = "") -> None:
-    """Handle motion — only used as a return signal during active walk monitoring."""
+    """Handle motion — used for return detection AND departure combo trigger."""
     try:
         person_detected = state.lower() == "human"
 
@@ -1490,6 +1675,12 @@ async def _handle_motion(device: str, doorbot_id: int, event_id: int, state: str
             global _ring_motion_during_walk
             _ring_motion_during_walk = True
             log("RING MOTION during walk monitoring — signaling return")
+
+        elif person_detected and not _return_monitor_active:
+            # Track motion for departure combo trigger (Ring + Fi disconnect)
+            location = DOORBELL_LOCATIONS.get(doorbot_id)
+            if location:
+                _ring_departure_motion[location] = time.monotonic()
 
     except Exception as e:
         log(f"ERROR handling motion: {e}")

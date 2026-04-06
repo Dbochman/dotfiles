@@ -21,15 +21,29 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
 
 ## How It Works
 
-### Departure Detection (Fi GPS only)
+### Departure Detection (Ring + Fi combo, with GPS fallback)
 
-A polling loop checks Potato's Fi collar GPS every 3 minutes during walk hours. The listener treats the collar's GPS/geofence result as the source of truth for which home Potato is at, remembers the last home geofence he was inside, and starts Roombas when he leaves that home's geofence.
+Departure uses a **combo trigger** (Ring doorbell motion + Fi base station disconnect) for ~1 minute latency, with a GPS-only fallback path.
 
-**Trigger conditions:**
+#### Primary: Ring + Fi Combo Trigger
+
+1. Ring doorbell detects human motion → timestamp stored per location
+2. Polling immediately switches from 3min to 30s intervals (to catch Fi disconnect faster)
+3. When Fi collar disconnects from base station AND recent Ring motion exists (within 5min) → **departure confirmed immediately**
+4. No GPS geofence confirmation needed — the two independent signals (Ring saw someone leave + dog left base station range) are sufficient
+
+**Typical latency:** ~1 minute (Ring fires instantly, Fi disconnect detected on next 30s poll)
+
+#### Fallback: GPS-only
+
+If Ring didn't fire (e.g., left through back door, Ring battery dead), the GPS-only path still works:
+
 - 2 consecutive Fi GPS readings outside geofence, confirmed after a time threshold
 - Both readings must be < 10 min old (not stale)
 - Only during walk hours, using the last home geofence Potato was inside as the departure anchor
 - Only when no walk is already active
+
+**Typical latency:** ~5-7 minutes
 
 **Base station disconnect acceleration:** When the Fi collar disconnects from its base station (`connection` transitions from `"Base"` to `"Unknown"`/`"User"`), the departure polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 150m geofence is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
 
@@ -72,6 +86,7 @@ After departure, the return monitor uses three signals — any one triggers Room
 - Safety fallback: auto-docks after 2 hours if no return detected
 - **Resilient finalization:** once a return signal is confirmed, the loop always exits. Walk path capture, dock, iMessage, and state updates are each wrapped in individual try/except blocks so a failure in any step cannot cause the monitor to loop back and re-trigger
 - **Dock sends stop first:** the `crosstown-roomba dock` command sends `stop` before `dock` because iRobot's MQTT `dock` is silently ignored during active cleaning
+- **Post-dock verification:** 3 minutes after the dock command, a background thread checks if roombas are actually on the dock (`Charging (on dock)` in status). If not, it retries the dock command up to 2 times (3min between each). If still not docked after all retries, sends an iMessage warning. State is updated with `dock_verified: true/false` and `dock_retry_count`.
 
 ### GPS Tracking Mode (Lost Dog)
 

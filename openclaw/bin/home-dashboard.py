@@ -278,6 +278,41 @@ def collect_status_bundle(refresh=False):
     return payload
 
 
+def collect_status_cached_fast():
+    """Return whatever is in cache immediately — no blocking on collectors.
+
+    Returns partial data if some collectors haven't finished yet.
+    The 'pending' list tells the frontend which devices to poll individually.
+    """
+    now = time.time()
+    results = {}
+    cache_info = {}
+    pending = []
+
+    with STATUS_CACHE_LOCK:
+        for name in COLLECTORS:
+            cached = STATUS_CACHE.get(name)
+            if cached:
+                results[name] = cached["data"]
+                cache_info[name] = {"cached": True, "timestamp": _iso_timestamp(cached["timestamp"])}
+            else:
+                results[name] = {"_pending": True}
+                pending.append(name)
+
+    payload = {
+        "meta": {
+            "timestamp": _iso_timestamp(),
+            "ttl_seconds": CACHE_TTL_SECONDS,
+            "refresh": False,
+            "pending": pending,
+        }
+    }
+    for name in COLLECTORS:
+        payload[name] = results.get(name, {"error": "collector missing"})
+    payload["cache"] = cache_info
+    return payload
+
+
 COMMANDS = {
     "hue_crosstown": {
         "on": lambda a: ["hue", "--crosstown", "on", a["room"]] + ([str(a["brightness"])] if "brightness" in a else []),
@@ -429,7 +464,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_html()
         elif path == "/api/status":
             refresh = qs.get("refresh", ["false"])[0].lower() in {"1", "true", "yes"}
-            self._respond(200, collect_status_bundle(refresh=refresh))
+            if refresh:
+                self._respond(200, collect_status_bundle(refresh=True))
+            else:
+                self._respond(200, collect_status_cached_fast())
         elif path.startswith("/api/status/"):
             device_name = path.split("/api/status/", 1)[1]
             if device_name in COLLECTORS:
@@ -1007,6 +1045,13 @@ function summarizeValue(value) {
   return String(value);
 }
 
+function isPending(result) {
+  return result && result._pending;
+}
+function renderPending() {
+  return '<div class="muted" style="opacity:0.5">Loading...</div>';
+}
+
 function renderError(result) {
   return `<div class="error-text">${escapeHtml(result.error || 'Unknown error')}</div>`;
 }
@@ -1029,6 +1074,7 @@ function renderSimpleObject(result) {
 
 function renderRawResult(result) {
   if (!result) return '<div class="muted">No data available</div>';
+  if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
   if (result.raw !== undefined) return renderPre(result.raw);
   return renderSimpleObject(result);
@@ -1087,6 +1133,7 @@ function roomMeta(room) {
 
 function renderCielo(result) {
   if (!result) return '<div class="muted">No Cielo data</div>';
+  if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
   const devices = result.data || result.devices || (Array.isArray(result) ? result : null);
   if (!devices) return renderSimpleObject(result);
@@ -1111,6 +1158,7 @@ function renderCielo(result) {
 
 function renderMysa(result) {
   if (!result) return '<div class="muted">No Mysa data</div>';
+  if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
   if (result.raw) return renderPre(result.raw);
   const devices = result.devices || (Array.isArray(result.data) ? result.data : null);
@@ -1131,6 +1179,7 @@ function renderMysa(result) {
 
 function renderLock(result) {
   if (!result) return '<div class="muted">No lock data</div>';
+  if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
   if (result.raw) return renderPre(result.raw);
   const locked = result.state ? result.state.locked : null;
@@ -1149,8 +1198,26 @@ function renderLock(result) {
   </div>`;
 }
 
+function renderTV(result) {
+  if (!result) return '<div class="muted">No TV data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) {
+    const msg = result.error || '';
+    if (msg.includes('timed out') || msg.includes('unreachable') || msg.includes('Unreachable') || msg.includes('ConnectTimeout')) {
+      return `<div class="subcard">
+        <div style="color:var(--text-muted);margin-bottom:8px">TV is likely off or in standby</div>
+        <div style="font-size:0.85rem;color:var(--text-muted)">Samsung TV is unreachable when powered off. Use Power On to wake via WoL.</div>
+      </div>`;
+    }
+    return renderError(result);
+  }
+  if (result.raw) return renderPre(result.raw);
+  return renderSimpleObject(result);
+}
+
 function renderSpeakers(result) {
   if (!result) return '<div class="muted">No speaker data</div>';
+  if (isPending(result)) return renderPending();
   if (result.error) {
     const msg = result.error || '';
     if (msg.includes('timed out') || msg.includes('UNREACHABLE') || msg.includes('urlopen error')) {
@@ -1176,6 +1243,7 @@ function renderSpeakers(result) {
 
 function renderDogWalk(result) {
   if (!result) return '<div class="muted">No dog walk data</div>';
+  if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
   const walk = result.dog_walk;
   if (!walk) return renderSimpleObject(result);
@@ -1205,8 +1273,33 @@ function renderDogWalk(result) {
   </div>`;
 }
 
+function renderHue(result) {
+  if (!result) return '<div class="muted">No Hue data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const raw = result.raw || '';
+  if (!raw) return '<div class="muted">No data</div>';
+  const lines = raw.split('\n').filter(l => l.trim());
+  if (!lines.length) return '<div class="muted">No rooms</div>';
+  const rooms = lines.map(line => {
+    // Parse: "Room Name            ON/OFF  brightness%  count lights  mired mired"
+    const m = line.match(/^(.+?)\s{2,}(ON|OFF)\s+(\d+)%\s+(\d+)\s+lights?\s+(\d+)\s+mired$/i);
+    if (!m) return null;
+    const [, name, state, brightness, lightCount, mired] = m;
+    const isOn = state.toUpperCase() === 'ON';
+    const dot = isOn ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name.trim())}</div>
+      <div class="room-temp">${dot} ${escapeHtml(state)}</div>
+      <div class="room-meta">${escapeHtml(brightness)}% · ${escapeHtml(lightCount)} light${lightCount !== '1' ? 's' : ''} · ${escapeHtml(mired)} mired</div>
+    </div>`;
+  }).filter(Boolean).join('');
+  return `<div class="room-grid">${rooms}</div>`;
+}
+
 function renderNest(result) {
   if (!result) return '<div class="muted">No Nest data</div>';
+  if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
   if (!Array.isArray(result.rooms)) return renderSimpleObject(result);
   const rooms = result.rooms.map((room) => `
@@ -1239,15 +1332,15 @@ function applyLocationFilter() {
 
 function renderDashboard() {
   const data = state.data || {};
-  setContent('hueCrosstownContent', renderRawResult(data.hue_crosstown));
-  setContent('hueCabinContent', renderRawResult(data.hue_cabin));
+  setContent('hueCrosstownContent', renderHue(data.hue_crosstown));
+  setContent('hueCabinContent', renderHue(data.hue_cabin));
   setContent('nestContent', renderNest(data.nest));
   setContent('cieloContent', renderCielo(data.cielo));
   setContent('mysaContent', renderMysa(data.mysa));
   setContent('lockContent', renderLock(data.lock));
   setContent('roombasCrosstownContent', renderRawResult(data.roombas_crosstown));
   setContent('roombasCabinContent', renderRawResult(data.roombas_cabin));
-  setContent('tvContent', renderRawResult(data.tv));
+  setContent('tvContent', renderTV(data.tv));
   setContent('speakersContent', renderSpeakers(data.speakers));
   setContent('cabinSpeakersContent', renderRawResult(data.cabin_speakers));
   setContent('litterRobotContent', renderRawResult(data.litter_robot));
@@ -1272,6 +1365,13 @@ async function fetchStatus(refresh=false) {
     renderDashboard();
     if (!refresh) {
       showFeedback('');
+    }
+    // If there are pending devices (cache miss), poll them in background
+    const pending = (data.meta && data.meta.pending) || [];
+    if (pending.length > 0) {
+      pending.forEach(deviceKey => {
+        refreshDevice(deviceKey);
+      });
     }
   } catch (error) {
     console.error(error);

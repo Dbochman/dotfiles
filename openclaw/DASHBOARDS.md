@@ -219,19 +219,19 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 
 **Port 8558**
 
-Unified control plane for all smart home devices across both locations. Single-pane-of-glass for monitoring status and issuing commands to 16 device categories.
+Unified control plane for all smart home devices across both locations. Single-pane-of-glass for monitoring status and issuing commands to 17 device categories.
 
 ### What It Shows
 
-- **Presence** — occupancy per location (from presence scanner state file)
-- **Hue Lights** — room-by-room status with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
+- **Hue Lights** — room chip cards (ON/OFF indicator, brightness, light count) with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
 - **Nest Thermostat** — per-room temp, setpoint, HVAC mode with set temp / set mode / eco controls (Cabin: 3 rooms)
 - **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)
 - **Mysa Heaters** — per-heater temp, setpoint, humidity, duty cycle (read-only; Crosstown: 3 units)
 - **August Lock** — lock state, door state, battery with lock/unlock controls
 - **Roombas** — battery, status per robot with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google)
-- **Samsung TV** — power state with on/off controls
-- **Google Speakers** — volume with set volume / mute / unmute
+- **Samsung TV** — power state with on/off controls; shows friendly "TV is likely off" when unreachable
+- **Google Speakers** — volume with set volume / mute / unmute; shows friendly "Speakers are likely asleep" when unreachable
+- **Cabin Speakers** — volume with set volume / stop (via catt by IP)
 - **Litter-Robot** — status, waste level with clean/reset
 - **Petlibro** — feeder + fountain status with manual feed
 - **Eight Sleep** — per-side temp level with on/off/set temp
@@ -243,19 +243,21 @@ Unified control plane for all smart home devices across both locations. Single-p
 ```
 Browser → home-dashboard.py (port 8558)
             ├── GET /                        → embedded HTML dashboard
-            ├── GET /api/status              → all 16 collectors (cached)
-            ├── GET /api/status?refresh=true → force re-poll all CLIs
+            ├── GET /api/status              → cached results (instant, non-blocking)
+            ├── GET /api/status?refresh=true → force re-poll all 17 CLIs
             ├── GET /api/status/<device>     → refresh single device
             ├── POST /api/command            → execute device command
             └── GET /api/presence            → presence state
 ```
 
-- **Precache on startup** — all 16 collectors run in parallel via `ThreadPoolExecutor` at boot
+- **Progressive loading** — `GET /api/status` returns cached data instantly (no blocking). Uncached devices listed in `meta.pending`; frontend polls them individually in background. Cards render as data arrives.
+- **Precache on startup** — all 17 collectors run in parallel via `ThreadPoolExecutor` at boot
 - **Background refresh** — every 5 minutes, all collectors re-run in background
 - **Per-device refresh** — `GET /api/status/<device_name>` refreshes one collector and updates cache
 - **60s cache TTL** — CLI results cached to avoid hammering APIs
 - **30s command timeout** — accommodates slower SSH-based collectors (crosstown roombas, speakers)
 - **Secrets loading** — sources `~/.openclaw/.secrets-cache` at startup for CLI env vars (Petlibro, 8sleep, etc.)
+- **Custom renderers** — Hue, Nest, Cielo, Mysa, Lock, TV, Speakers, Dog Walk all have dedicated JS renderers with room-chip card layout; TV and Speakers show friendly messages when devices are off/asleep
 
 ### Controls
 
@@ -307,7 +309,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | August Lock | Front Door | — |
 | Roombas | 10 Max + J5 (MQTT via MBP) | Floomba + Philly (Google) |
 | Samsung TV | Frame 65 | — |
-| Google Speakers | Bedroom + Living Room | — |
+| Google Speakers | Bedroom + Living Room | Kitchen + Bedroom |
 | Litter-Robot | LR4 | — |
 | Petlibro | Feeder + Fountain | (seasonal, unplugged) |
 | Eight Sleep | Pod 3 (both sides) | — |
