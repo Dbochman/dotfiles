@@ -242,9 +242,13 @@ DEPARTURE CONFIRMED
 
 During return monitoring, consecutive GPS readings are compared to detect car travel:
 - Threshold: >30 mph (`CAR_SPEED_MPS = 13.4 m/s`) sustained for 6+ minutes (`CAR_DURATION_S = 360`)
-- Action: Switch collar from LOST_DOG to NORMAL to save battery
+- Actions:
+  1. Switch collar from LOST_DOG to NORMAL to save battery
+  2. Set `is_car_trip = True` on the route file during finalization
 - Resets: If speed drops below threshold between any two readings
-- Purpose: Inter-home car trips (Crosstown ↔ Cabin) would drain collar battery at LOST_DOG polling rates
+- Purpose: Prevents car trips (errands, inter-home transit) from appearing as walks in the dashboard
+- The return monitor continues running — when the car returns home, it docks Roombas normally
+- Dashboard filters `is_car_trip: true` routes from the walk table and today's totals
 
 ### Dock Verification
 
@@ -456,6 +460,9 @@ If a walk ends at a different location than it started (Crosstown → Cabin or v
 
 ### GPS Jitter False Positives
 The Fi collar can briefly report coordinates just outside the geofence radius due to GPS accuracy limitations (~5-15m error). This triggers the GPS-only departure path when two jittery readings happen within the confirmation window. The resulting "walk" has near-zero distance (e.g., 4m) and docks within minutes. The dashboard filters these out (<50m AND <5 min), but the listener still processes them to avoid missing real walks.
+
+### Car Trips (Round-Trip)
+A departure to run errands (Crosstown → store → Crosstown) triggers departure detection like any walk. The car speed check switches the collar to NORMAL after 6 minutes at >30 mph, and marks the route with `is_car_trip: true` on finalization. The `is_interhome_transit` flag only catches walks that end at a *different* known location, so round-trip car errands need this separate flag. The dashboard filters both `is_car_trip` and `is_interhome_transit` from the walk list.
 
 ### Listener Restarts
 The listener process may restart (KeepAlive LaunchAgent). On restart:

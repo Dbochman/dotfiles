@@ -166,6 +166,7 @@ def _route_summary(route):
         "fi_walk_end": route.get("fi_walk_end"),
         "fi_walker": route.get("fi_walker"),
         "detection_latency_s": route.get("detection_latency_s"),
+        "is_car_trip": route.get("is_car_trip", False),
         "point_count": route.get("point_count", len(route.get("points") or [])),
         "active": route.get("ended_at") is None,
     }
@@ -839,8 +840,10 @@ function buildWalkRows(routes, events) {
       walkers: fiWalkers || (dock && dock.dog_walk && dock.dog_walk.walkers) || (joined.walkers && joined.walkers.dog_walk && joined.walkers.dog_walk.walkers) || (departure && departure.dog_walk && departure.dog_walk.walkers) || [],
       manual: departure ? isManualDeparture(departure) : false,
       detection_latency_s: route.detection_latency_s,
+      is_car_trip: route.is_car_trip,
     };
-  }).filter(w => w.active || (w.distance_m != null && w.distance_m >= 50) || (w.duration != null && w.duration >= 5))
+  }).filter(w => !w.is_car_trip)
+    .filter(w => w.active || (w.distance_m != null && w.distance_m >= 50) || (w.duration != null && w.duration >= 5))
     .sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
 }
 

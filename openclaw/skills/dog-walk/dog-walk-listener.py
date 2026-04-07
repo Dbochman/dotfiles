@@ -721,6 +721,30 @@ def _enrich_route_with_fi_summary(fi_summary: dict) -> None:
         log(f"FI WALK SUMMARY: error enriching route: {e}")
 
 
+def _mark_route_car_trip(location: str) -> None:
+    """Mark the current walk's route file as a car trip."""
+    with _state_lock:
+        state = _read_state()
+        walk = state.get("dog_walk") or {}
+        if not walk.get("walk_id"):
+            return
+        walk_id = walk["walk_id"]
+        origin = walk.get("origin_location") or walk.get("location")
+        started_at = walk.get("departed_at")
+
+    path = _route_path(walk_id, origin, started_at)
+    if not path or not path.exists():
+        return
+
+    try:
+        route = json.loads(path.read_text())
+        route["is_car_trip"] = True
+        path.write_text(json.dumps(route, indent=2))
+        log(f"CAR TRIP: marked route {walk_id} as car trip")
+    except Exception as e:
+        log(f"CAR TRIP: error marking route: {e}")
+
+
 def _merge_walk_path_into_route(walk_path: list[dict]) -> None:
     """Merge Fi's dense walk path into the active walk's route file.
 
@@ -1353,6 +1377,7 @@ async def _return_poll_loop(location: str) -> None:
     start_time = time.time()
     car_speed_since: float | None = None  # timestamp when car speed first detected
     lost_dog_active = True  # track whether we're in LOST_DOG mode
+    is_car_trip = False  # set True when sustained car speed detected
 
     try:
         log(f"RETURN MONITOR: Starting for {location}")
@@ -1412,6 +1437,7 @@ async def _return_poll_loop(location: str) -> None:
                                     log(f"RETURN MONITOR: Car travel >6min — switching collar to NORMAL to save battery")
                                     _set_fi_collar_mode("NORMAL")
                                     lost_dog_active = False
+                                    is_car_trip = True
                             else:
                                 car_speed_since = None
 
@@ -1459,6 +1485,13 @@ async def _return_poll_loop(location: str) -> None:
                             await asyncio.to_thread(_enrich_route_with_fi_summary, fi_summary)
                     except Exception as e:
                         log(f"RETURN MONITOR: Fi walk summary failed (non-fatal): {e}")
+
+                    # Mark car trips on the route file
+                    if is_car_trip:
+                        try:
+                            await asyncio.to_thread(_mark_route_car_trip, location)
+                        except Exception as e:
+                            log(f"RETURN MONITOR: Car trip marking failed (non-fatal): {e}")
 
                     # Notify + finalize state — best effort
                     signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": f"Fi GPS"}
