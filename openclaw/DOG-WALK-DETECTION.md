@@ -328,14 +328,24 @@ After return finalization, the listener queries Fi's `activityFeed` for the most
 
 ### Walker Detection
 
-On departure, the listener waits 2 minutes then runs an ARP network scan to identify who left. This is cross-referenced with the sticky presence system:
+On departure, the listener waits 2 minutes then runs a fresh ARP/WiFi network scan to identify who left. Three sources are cross-referenced:
 
-1. Read `~/.openclaw/presence/state.json` for who was at this location
-2. ARP scan for phones on the network
-3. Walkers = people at this location AND absent from network
-4. If nobody detected as absent, falls back to "all people at location"
+1. **Sticky presence state** (`~/.openclaw/presence/state.json`): who was at this location → candidates
+2. **Fresh network scan** (`presence-detect.sh <location>`): who is currently absent from the network
+3. **Last periodic scan** (`~/.openclaw/presence/<location>-scan.json`): who was recently present on the network (within 1 hour)
 
-This prevents the false "dylan, julia" walker listing when one person left hours ago — the presence system's `location` field tracks where each person was last detected, so only people actually at the departure location are candidates.
+A person is only flagged as a walker if **all three** conditions are met:
+- Presence state says they were at this location (candidate)
+- Fresh scan shows them absent from the network
+- Last periodic scan (< 1 hour old) showed them present
+
+This prevents two classes of false positives:
+- Someone who left for work hours ago (absent from ARP, but not recently present → excluded)
+- Someone at the other location whose sticky presence is stale (not a candidate → excluded)
+
+If nobody qualifies after all three checks, the system falls back to all candidates at the location.
+
+**Note**: Fi's `fi_walker` BLE field (who was near the collar) is stored in the route file but not used for dashboard display — it only detects one phone, so multi-walker walks would undercount.
 
 ---
 
@@ -360,7 +370,7 @@ The dashboard prefers Fi authoritative data when available:
 |-------|---------------|----------|
 | Distance | `fi_distance_m` | `distance_m` (GPS point sum) |
 | Duration | `fi_walk_end - fi_walk_start` | `walk_duration_minutes` from JSONL or `ended_at - started_at` |
-| Walkers | `fi_walker` | JSONL walkers from ARP detection |
+| Walkers | JSONL walkers (ARP detection) | — (`fi_walker` stored but not used for display; Fi BLE only detects one phone) |
 | Start time | `started_at` (our detection time) | — |
 
 ### Junk Walk Filtering
