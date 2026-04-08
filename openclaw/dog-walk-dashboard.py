@@ -176,7 +176,7 @@ def _route_matches(route, cutoff=None, allowed_locations=None):
     origin_location = route.get("origin_location")
     if allowed_locations is not None and origin_location not in allowed_locations:
         return False
-    if route.get("is_interhome_transit"):
+    if route.get("is_interhome_transit") or route.get("is_car_trip"):
         return False
     started_dt = _parse_iso8601(route.get("started_at"))
     if started_dt is None:
@@ -259,7 +259,7 @@ def load_route_detail(walk_id):
         if os.path.basename(path) != f"{walk_id}.json":
             continue
         route = _load_route_file(path)
-        if route is None or route.get("is_interhome_transit"):
+        if route is None or route.get("is_interhome_transit") or route.get("is_car_trip"):
             return None
         return route
     return None

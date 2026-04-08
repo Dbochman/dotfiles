@@ -8,8 +8,10 @@ Runs as a persistent LaunchAgent (ai.openclaw.dog-walk-listener).
 """
 
 import asyncio
+import faulthandler
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -19,6 +21,10 @@ import urllib.error
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Enable faulthandler for SIGUSR1 — dumps all thread tracebacks to stderr
+faulthandler.enable()
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 # Use venv packages (Ring doorbell library for FCM push events)
 VENV_SITE = Path.home() / ".openclaw/ring/venv/lib"
@@ -93,6 +99,9 @@ _CANDIDATE_KEYS = {
     "candidate_reset_reason",
 }
 _CANDIDATE_EVENT_TYPES = {"departure_candidate", "departure_candidate_reset"}
+
+# Main event loop reference — set in main(), used by on_event() for thread-safe bridging
+_main_loop: asyncio.AbstractEventLoop | None = None
 
 # Dedup: track recent Ring event IDs
 _recent_events: dict[int, float] = {}
@@ -1242,6 +1251,41 @@ def _set_fi_collar_mode(mode: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Async wrappers for blocking helpers (used in async code paths)
+# ---------------------------------------------------------------------------
+
+async def _send_imessage_async(text: str) -> bool:
+    return await asyncio.to_thread(send_imessage, text)
+
+
+async def _run_roomba_command_async(location: str, action: str) -> dict:
+    return await asyncio.to_thread(run_roomba_command, location, action)
+
+
+async def _set_fi_collar_mode_async(mode: str) -> bool:
+    return await asyncio.to_thread(_set_fi_collar_mode, mode)
+
+
+async def _append_route_point_async(fi_result: dict | None) -> dict | None:
+    return await asyncio.to_thread(_append_active_walk_route_point, fi_result)
+
+
+async def _update_state_return_monitor_async(
+    location: str,
+    event: str,
+    fi_result: dict | None = None,
+    network_detail: dict | None = None,
+) -> None:
+    await asyncio.to_thread(
+        _update_state_return_monitor, location, event, fi_result, network_detail,
+    )
+
+
+async def _update_state_dog_walk_async(location: str, event: str, **kwargs) -> None:
+    await asyncio.to_thread(_update_state_dog_walk, location, event, **kwargs)
+
+
 def _check_fi_gps(location: str | None = None) -> dict | None:
     """Check Potato's Fi GPS location.
 
@@ -1321,6 +1365,17 @@ def _is_walk_hour() -> bool:
     return any(start <= hour < end for start, end in _WALK_HOURS)
 
 
+def _fi_reported_at(fi_result: dict) -> datetime | None:
+    """Extract a timezone-aware report timestamp from a Fi GPS result."""
+    raw = fi_result.get("lastReport") or fi_result.get("connectionDate")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _distance_to_location(fi_result: dict, location: str) -> int | None:
     if location not in _FI_LOCATIONS:
         return None
@@ -1378,16 +1433,18 @@ async def _return_poll_loop(location: str) -> None:
     car_speed_since: float | None = None  # timestamp when car speed first detected
     lost_dog_active = True  # track whether we're in LOST_DOG mode
     is_car_trip = False  # set True when sustained car speed detected
+    consecutive_at_home = 0  # consecutive Fi readings at home (used after car trip)
+    CAR_RETURN_READINGS = 3  # require 3 consecutive at-home readings after car trip
 
     try:
         log(f"RETURN MONITOR: Starting for {location}")
-        send_imessage(f"\U0001f4cd Tracking your walk at {location} — will dock Roombas when you're back")
+        await _send_imessage_async(f"\U0001f4cd Tracking your walk at {location} — will dock Roombas when you're back")
 
         # Wait 2 minutes then detect who left
         await asyncio.sleep(120)
         walkers = await asyncio.to_thread(_detect_who_left, location)
         log(f"RETURN MONITOR: Walkers detected: {walkers}")
-        _update_state_dog_walk(location, "walkers_detected", walkers=walkers)
+        await _update_state_dog_walk_async(location, "walkers_detected", walkers=walkers)
 
         _ring_motion_during_walk = False
         prev_gps: dict | None = None  # for speed calculation
@@ -1399,6 +1456,10 @@ async def _return_poll_loop(location: str) -> None:
                 return_signal = None
                 elapsed_min = int(elapsed / 60)
 
+                # Gather poll data, then write state once at the end
+                poll_wifi_detail = None
+                poll_fi_result = None
+
                 # 1. Ring motion (event-driven flag set by _handle_motion)
                 if _ring_motion_during_walk:
                     _ring_motion_during_walk = False
@@ -1407,9 +1468,8 @@ async def _return_poll_loop(location: str) -> None:
 
                 # 2. Network WiFi presence (skip early — phones linger at front door)
                 elif elapsed >= MIN_WALK_FOR_WIFI:
-                    wifi_detail = await asyncio.to_thread(_check_network_presence, location)
-                    _update_state_return_monitor(location, "poll", network_detail=wifi_detail)
-                    if wifi_detail["any_present"]:
+                    poll_wifi_detail = await asyncio.to_thread(_check_network_presence, location)
+                    if poll_wifi_detail["any_present"]:
                         return_signal = "network_wifi"
                         log(f"RETURN MONITOR: Network return after {elapsed_min}min — docking at {location}")
 
@@ -1417,25 +1477,25 @@ async def _return_poll_loop(location: str) -> None:
                 if not return_signal:
                     fi_result = await asyncio.to_thread(_check_fi_gps, location)
                     if fi_result:
-                        _append_active_walk_route_point(fi_result)
-                        _update_state_return_monitor(location, "poll", fi_result=fi_result)
+                        await _append_route_point_async(fi_result)
+                        poll_fi_result = fi_result
 
                         # Car speed detection — switch to NORMAL to save battery
                         if prev_gps and lost_dog_active:
                             lat1, lon1 = prev_gps["latitude"], prev_gps["longitude"]
                             lat2, lon2 = fi_result["latitude"], fi_result["longitude"]
                             dist_between = _haversine(lat1, lon1, lat2, lon2)
-                            time_between = fi_result.get("age_s", 30)
-                            prev_age = prev_gps.get("age_s", 30)
-                            time_gap = max(abs(time_between - prev_age), 10)
-                            speed_mps = dist_between / time_gap if time_gap > 0 else 0
+                            prev_ts = _fi_reported_at(prev_gps)
+                            cur_ts = _fi_reported_at(fi_result)
+                            time_gap = (cur_ts - prev_ts).total_seconds() if prev_ts and cur_ts else 0
+                            speed_mps = dist_between / time_gap if 0 < time_gap <= 900 else 0
                             if speed_mps >= CAR_SPEED_MPS:
                                 if car_speed_since is None:
                                     car_speed_since = time.time()
                                     log(f"RETURN MONITOR: Car speed detected ({speed_mps:.1f} m/s = {speed_mps * 2.237:.0f} mph)")
                                 elif time.time() - car_speed_since >= CAR_DURATION_S:
                                     log(f"RETURN MONITOR: Car travel >6min — switching collar to NORMAL to save battery")
-                                    _set_fi_collar_mode("NORMAL")
+                                    await _set_fi_collar_mode_async("NORMAL")
                                     lost_dog_active = False
                                     is_car_trip = True
                             else:
@@ -1444,12 +1504,26 @@ async def _return_poll_loop(location: str) -> None:
                         prev_gps = fi_result
 
                         if fi_result.get("at_monitored_location"):
+                            consecutive_at_home += 1
                             dist = fi_result.get("distance_to_monitored", "?")
-                            return_signal = "fi_gps"
-                            log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
+                            if is_car_trip and consecutive_at_home < CAR_RETURN_READINGS:
+                                log(f"RETURN MONITOR: Fi GPS — Potato {dist}m from {location} "
+                                    f"(at home {consecutive_at_home}/{CAR_RETURN_READINGS}, car trip — waiting for confirmation)")
+                            else:
+                                return_signal = "fi_gps"
+                                log(f"RETURN MONITOR: Fi GPS shows Potato {dist}m from {location} after {elapsed_min}min — docking")
                         else:
+                            consecutive_at_home = 0
                             dist = fi_result.get("distance_to_monitored", "?")
                             log(f"RETURN MONITOR: Fi GPS — Potato {dist}m from {location} (outside geofence)")
+
+                # Consolidated state write — one per iteration
+                if poll_wifi_detail or poll_fi_result:
+                    await _update_state_return_monitor_async(
+                        location, "poll",
+                        fi_result=poll_fi_result,
+                        network_detail=poll_wifi_detail,
+                    )
 
                 # --- Dock and finalize if any signal triggered ---
                 if return_signal:
@@ -1460,14 +1534,14 @@ async def _return_poll_loop(location: str) -> None:
                             await asyncio.to_thread(_merge_walk_path_into_route, walk_path)
                         return_fi = await asyncio.to_thread(_check_fi_gps, location)
                         if return_fi:
-                            _append_active_walk_route_point(return_fi)
+                            await _append_route_point_async(return_fi)
                     except Exception as e:
                         log(f"RETURN MONITOR: Walk path capture failed (non-fatal): {e}")
 
                     # Dock Roombas — best effort
                     roomba_result = None
                     try:
-                        roomba_result = run_roomba_command(location, "dock")
+                        roomba_result = await _run_roomba_command_async(location, "dock")
                     except Exception as e:
                         log(f"RETURN MONITOR: Dock command failed: {e}")
                         roomba_result = {"success": False, "results": [], "error": str(e)}
@@ -1496,13 +1570,13 @@ async def _return_poll_loop(location: str) -> None:
                     # Notify + finalize state — best effort
                     signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": f"Fi GPS"}
                     try:
-                        send_imessage(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: {signal_labels.get(return_signal, return_signal)})")
+                        await _send_imessage_async(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: {signal_labels.get(return_signal, return_signal)})")
                     except Exception as e:
                         log(f"RETURN MONITOR: iMessage failed (non-fatal): {e}")
 
                     try:
-                        _update_state_dog_walk(location, "dock", return_signal=return_signal, roomba_result=roomba_result)
-                        _update_state_return_monitor(location, "stop")
+                        await _update_state_dog_walk_async(location, "dock", return_signal=return_signal, roomba_result=roomba_result)
+                        await _update_state_return_monitor_async(location, "stop")
                     except Exception as e:
                         log(f"RETURN MONITOR: State update failed (non-fatal): {e}")
 
@@ -1522,20 +1596,20 @@ async def _return_poll_loop(location: str) -> None:
             await asyncio.sleep(POLL_INTERVAL)
 
         log(f"RETURN MONITOR: Timeout after {MAX_DURATION // 60}min — docking as safety fallback")
-        send_imessage(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
-        roomba_result = run_roomba_command(location, "dock")
+        await _send_imessage_async(f"\u23f0 Walk tracking timed out after 2 hours — docking Roombas at {location}.")
+        roomba_result = await _run_roomba_command_async(location, "dock")
         # Launch background verification (3min delay, retries if not docked)
         threading.Thread(
             target=_verify_dock_and_retry, args=(location,),
             daemon=True, name=f"dock-verify-{location}",
         ).start()
-        _update_state_dog_walk(location, "dock_timeout", return_signal="timeout", roomba_result=roomba_result)
-        _update_state_return_monitor(location, "stop")
+        await _update_state_dog_walk_async(location, "dock_timeout", return_signal="timeout", roomba_result=roomba_result)
+        await _update_state_return_monitor_async(location, "stop")
     finally:
         _return_monitor_active = False
         _ring_motion_during_walk = False
         # Always restore normal GPS mode when walk ends
-        _set_fi_collar_mode("NORMAL")
+        await _set_fi_collar_mode_async("NORMAL")
         log("RETURN MONITOR: Ended — cleared _return_monitor_active flag, collar reset to NORMAL")
 
 
@@ -1545,7 +1619,7 @@ def start_return_monitor(location: str) -> None:
         _return_poll_task.cancel()
     _return_monitor_active = True
     _update_state_return_monitor(location, "start")
-    _return_poll_task = asyncio.get_event_loop().create_task(_return_poll_loop(location))
+    _return_poll_task = asyncio.create_task(_return_poll_loop(location))
 
 
 def stop_return_monitor() -> None:
@@ -1603,6 +1677,7 @@ async def _fi_departure_poll_loop() -> None:
         log(f"FI DEPARTURE: Candidate reset for {last_outside_reading['location']} ({reason})")
         last_outside_reading = None
 
+    _poll_count = 0
     while True:
         try:
             # Use faster polling after base station disconnect OR when Ring motion was recently detected
@@ -1613,6 +1688,7 @@ async def _fi_departure_poll_loop() -> None:
             fast_poll = (last_connection != "Base" and last_outside_reading) or has_recent_ring
             poll_interval = FI_FAST_POLL_INTERVAL if fast_poll else FI_POLL_INTERVAL
             await asyncio.sleep(poll_interval)
+            _poll_count += 1
 
             if not _is_walk_hour():
                 reset_candidate("outside_walk_hours")
@@ -1650,12 +1726,12 @@ async def _fi_departure_poll_loop() -> None:
                         dist = _distance_to_location(fi_result, combo_location) or 0
                         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-                        _set_fi_collar_mode("LOST_DOG")
-                        send_imessage(
+                        await _set_fi_collar_mode_async("LOST_DOG")
+                        await _send_imessage_async(
                             f"\U0001f9f9 Potato left {combo_location} (Ring + Fi combo: base disconnected) — starting Roombas!"
                         )
-                        roomba_result = run_roomba_command(combo_location, "start")
-                        _update_state_dog_walk(
+                        roomba_result = await _run_roomba_command_async(combo_location, "start")
+                        await _update_state_dog_walk_async(
                             combo_location,
                             "departure",
                             people=0,
@@ -1663,7 +1739,7 @@ async def _fi_departure_poll_loop() -> None:
                             roomba_result=roomba_result,
                             fi_result=fi_result,
                         )
-                        _append_active_walk_route_point(fi_result)
+                        await _append_route_point_async(fi_result)
                         start_return_monitor(combo_location)
                         continue
 
@@ -1679,6 +1755,10 @@ async def _fi_departure_poll_loop() -> None:
                 _ring_departure_motion.pop(fi_location, None)
                 if connection == "Base":
                     last_connection = "Base"  # reset on confirmed at-home
+                # Log periodically so silence doesn't look like a freeze
+                if _poll_count == 1 or _poll_count % 5 == 0:
+                    dist = fi_result.get("distance_m", "?")
+                    log(f"FI DEPARTURE: Potato home at {fi_location} ({dist}m, conn={connection}, polls={_poll_count})")
                 continue
 
             candidate_location = home_anchor or fi_location
@@ -1740,13 +1820,13 @@ async def _fi_departure_poll_loop() -> None:
             last_outside_reading = None
 
             # Enable high-frequency GPS for route tracking
-            _set_fi_collar_mode("LOST_DOG")
+            await _set_fi_collar_mode_async("LOST_DOG")
 
-            send_imessage(
+            await _send_imessage_async(
                 f"\U0001f9f9 Potato left {candidate_location} (GPS: {dist}m away) — starting Roombas!"
             )
-            roomba_result = run_roomba_command(candidate_location, "start")
-            _update_state_dog_walk(
+            roomba_result = await _run_roomba_command_async(candidate_location, "start")
+            await _update_state_dog_walk_async(
                 candidate_location,
                 "departure",
                 people=0,
@@ -1755,7 +1835,7 @@ async def _fi_departure_poll_loop() -> None:
                 fi_result=fi_result,
             )
             # Seed the route with departure GPS point
-            _append_active_walk_route_point(fi_result)
+            await _append_route_point_async(fi_result)
             start_return_monitor(candidate_location)
 
         except asyncio.CancelledError:
@@ -1806,7 +1886,7 @@ async def _inbox_poll_loop() -> None:
                     continue
 
                 log(f"INBOX: starting return monitor for {location}")
-                _update_state_dog_walk(
+                await _update_state_dog_walk_async(
                     location, "departure",
                     people=0, dogs=0,
                     roomba_result={"success": True, "results": [], "source": "dog-walk-start"},
@@ -1823,48 +1903,68 @@ async def _inbox_poll_loop() -> None:
 # ---------------------------------------------------------------------------
 
 def on_event(event: RingEvent) -> None:
+    """Thin bridge from FCM callback thread to the main asyncio loop.
+
+    Reads minimal event fields then hands off to the loop thread via
+    call_soon_threadsafe. All mutable state is mutated on the loop thread only.
+    """
+    if event.is_update:
+        return
+    if _main_loop is None:
+        log("WARNING: Ring event received before main loop is set — dropping")
+        return
+    _main_loop.call_soon_threadsafe(
+        _process_ring_event_on_loop,
+        event.id,
+        event.kind,
+        event.device_name,
+        event.doorbot_id,
+        event.state or "",
+    )
+
+
+def _process_ring_event_on_loop(
+    event_id: int,
+    kind: str,
+    device: str,
+    doorbot_id: int,
+    state: str,
+) -> None:
+    """Process a Ring event on the asyncio loop thread.
+
+    Owns all mutable state: _recent_events, _ring_departure_motion,
+    _ring_motion_during_walk. Called via call_soon_threadsafe from on_event().
+    """
     now = time.time()
 
+    # Dedup cleanup
     expired = [eid for eid, ts in _recent_events.items() if now - ts > _DEDUP_WINDOW]
     for eid in expired:
         del _recent_events[eid]
 
-    if event.is_update:
+    if event_id in _recent_events:
         return
-    if event.id in _recent_events:
-        return
-    _recent_events[event.id] = now
+    _recent_events[event_id] = now
 
-    kind = event.kind
-    device = event.device_name
-    doorbot_id = event.doorbot_id
-
-    log(f"Event: kind={kind} device={device} doorbot_id={doorbot_id} state={event.state}")
+    log(f"Event: kind={kind} device={device} doorbot_id={doorbot_id} state={state}")
 
     if kind == "ding":
-        # _handle_ding does I/O (iMessage) so schedule on the event loop thread-safely
-        loop = asyncio.get_event_loop()
-        asyncio.run_coroutine_threadsafe(_handle_ding(device, doorbot_id, event.id), loop)
-
+        asyncio.create_task(_handle_ding(device, doorbot_id, event_id))
     elif kind == "motion":
-        # Handle motion synchronously — these are just dict/bool writes that are
-        # GIL-atomic. Running them inline in the FCM callback thread avoids the
-        # race where create_task() from a non-asyncio thread silently drops or
-        # delays the coroutine past the Fi poll that checks _ring_departure_motion.
-        _handle_motion_sync(doorbot_id, event.state or "")
+        _handle_motion(doorbot_id, state)
 
 
 async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
     msg = f"\U0001f514 {device}: Doorbell rang!"
     log(f"NOTIFY: {msg}")
-    send_imessage(msg)
+    await _send_imessage_async(msg)
 
 
-def _handle_motion_sync(doorbot_id: int, state: str) -> None:
+def _handle_motion(doorbot_id: int, state: str) -> None:
     """Handle motion — used for return detection AND departure combo trigger.
 
-    Runs synchronously on the FCM callback thread. Only touches GIL-atomic
-    dict/bool assignments so no lock is needed.
+    Runs on the asyncio loop thread (called from _process_ring_event_on_loop),
+    so access to _ring_departure_motion and _ring_motion_during_walk is safe.
     """
     global _ring_motion_during_walk
     try:
@@ -1892,16 +1992,17 @@ _ring: Ring | None = None
 
 
 async def main() -> None:
-    global _ring
+    global _ring, _main_loop
+    _main_loop = asyncio.get_running_loop()
 
     log("Dog walk listener starting...")
 
     # Safety: reset collar to NORMAL if stuck in LOST_DOG (e.g., after crash/power outage)
     try:
-        fi_result = _check_fi_gps()
+        fi_result = await asyncio.to_thread(_check_fi_gps)
         if fi_result and fi_result.get("mode") == "LOST_DOG":
             log("STARTUP: Collar stuck in LOST_DOG mode — resetting to NORMAL")
-            _set_fi_collar_mode("NORMAL")
+            await _set_fi_collar_mode_async("NORMAL")
         elif fi_result:
             log(f"STARTUP: Collar mode OK ({fi_result.get('mode', 'unknown')})")
     except Exception as e:
@@ -1948,8 +2049,8 @@ async def main() -> None:
     log("Ring event listener started (doorbell dings + return motion signal)")
 
     # Start background loops
-    asyncio.get_event_loop().create_task(_inbox_poll_loop())
-    asyncio.get_event_loop().create_task(_fi_departure_poll_loop())
+    asyncio.create_task(_inbox_poll_loop())
+    asyncio.create_task(_fi_departure_poll_loop())
 
     # Watchdog — restart listener if FCM push receiver dies
     try:

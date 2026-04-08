@@ -17,7 +17,7 @@ A single Python asyncio process (`ai.openclaw.dog-walk-listener` LaunchAgent) ru
 | `_inbox_poll_loop` | asyncio task | Watches filesystem inbox for manual trigger IPC |
 | `on_event` (FCM callback) | Sync callback on FCM thread | Receives Ring doorbell events in real-time |
 
-All loops share state via module-level globals. The FCM callback runs on a **background thread** (not the asyncio event loop), so its writes to shared state must be GIL-atomic (dict assignments, bool assignments). See [Thread Safety](#thread-safety-fcm-callback).
+All loops share state via module-level globals. The FCM callback runs on a **background thread** (not the asyncio event loop) and bridges events to the main loop via `call_soon_threadsafe`. See [Thread Safety](#thread-safety-fcm-callback).
 
 ---
 
@@ -240,8 +240,10 @@ DEPARTURE CONFIRMED
 
 ### Car Speed Detection
 
-During return monitoring, consecutive GPS readings are compared to detect car travel:
+During return monitoring, consecutive GPS readings are compared to detect car travel. Speed is calculated using real Fi report timestamps (`lastReport` / `connectionDate` fields) — not staleness deltas — to avoid inflation from variable poll timing.
+
 - Threshold: >30 mph (`CAR_SPEED_MPS = 13.4 m/s`) sustained for 6+ minutes (`CAR_DURATION_S = 360`)
+- Speed formula: `haversine(prev, cur) / (cur_report_ts - prev_report_ts).total_seconds()`, clamped to 0 if the time gap exceeds 15 minutes or is non-positive
 - Actions:
   1. Switch collar from LOST_DOG to NORMAL to save battery
   2. Set `is_car_trip = True` on the route file during finalization
@@ -375,28 +377,50 @@ GPS jitter can cause false-positive departures — the collar briefly reports be
 
 The Ring doorbell library's FCM push receiver runs on a **background thread**, not the asyncio event loop. The `on_event` callback is invoked on this thread.
 
-### The Problem (Fixed 2026-04-06)
+### The Problem (Fixed 2026-04-07)
 
-Previously, `on_event` used `loop.create_task()` to schedule async handlers. This is **not thread-safe** — `create_task` from a non-asyncio thread can silently drop or delay coroutines. The motion handler's `_ring_departure_motion` dict write would not execute reliably, causing the combo trigger to miss valid Ring + Fi disconnect pairs.
+Previously, `on_event` directly mutated shared dicts and bools from the FCM thread, relying on CPython's GIL for atomicity. While technically safe for simple assignments, this was fragile — any future refactoring that added compound operations would silently introduce race conditions. An earlier iteration also used `loop.create_task()` to schedule async handlers from the FCM thread, which is **not thread-safe** and could silently drop coroutines.
 
-### The Fix
+### The Fix: `call_soon_threadsafe` Bridge
 
-Motion handling is now **synchronous** in `_handle_motion_sync`. The two writes are GIL-atomic:
-- `_ring_departure_motion[location] = time.monotonic()` (dict assignment)
-- `_ring_motion_during_walk = True` (bool assignment)
+`on_event` is now a **thin bridge** that copies event fields into plain values and schedules all processing on the asyncio loop thread:
 
-No asyncio scheduling needed. The write happens immediately on the FCM thread.
+```python
+def on_event(event: RingEvent) -> None:
+    if event.is_update:
+        return
+    _main_loop.call_soon_threadsafe(
+        _process_ring_event_on_loop,
+        event.id, event.kind, event.device_name, event.doorbot_id, event.state or "",
+    )
+```
 
-The ding handler (`_handle_ding`) still needs async scheduling (it sends an iMessage), so it uses `asyncio.run_coroutine_threadsafe()` which is the thread-safe equivalent.
+`_process_ring_event_on_loop` runs on the main asyncio thread and owns all shared state writes (`_ring_departure_motion`, `_ring_motion_during_walk`, `_recent_events`). No shared mutable state is touched from the FCM thread.
 
-### Shared State Between Threads
+The `_main_loop` reference is set once in `main()` via `asyncio.get_running_loop()` before the Ring listener starts. Events that arrive before this (startup race) are logged and dropped.
 
-| Variable | Written by | Read by | Thread safety |
-|----------|-----------|---------|---------------|
-| `_ring_departure_motion` | FCM thread (sync) | asyncio loop (Fi poll) | GIL-atomic dict write |
-| `_ring_motion_during_walk` | FCM thread (sync) | asyncio loop (return poll) | GIL-atomic bool write |
-| `_return_monitor_active` | asyncio loop | FCM thread (sync read) | GIL-atomic bool; minor race is acceptable (worst case: one motion event routes to wrong branch) |
-| `_recent_events` | FCM thread | FCM thread | Single-thread access (all FCM callbacks are serialized) |
+### Blocking I/O Off the Event Loop
+
+All subprocess calls (`fi-collar`, `roomba`, `imsg`), network I/O (`send_imessage`), and file writes (state/route JSON persistence) are wrapped in `asyncio.to_thread()` so they don't block the event loop:
+
+```python
+await _send_imessage_async(text)        # → asyncio.to_thread(send_imessage, text)
+await _run_roomba_command_async(loc, a)  # → asyncio.to_thread(run_roomba_command, loc, a)
+await _update_state_dog_walk_async(...)  # → asyncio.to_thread(_update_state_dog_walk, ...)
+```
+
+File persistence functions use a `threading.Lock` (`_state_lock`) to serialize concurrent writes from worker threads.
+
+### Shared State Model (Post-Hardening)
+
+All shared state is now accessed exclusively from the asyncio loop thread:
+
+| Variable | Written by | Read by | Notes |
+|----------|-----------|---------|-------|
+| `_ring_departure_motion` | loop thread (via bridge) | loop thread (Fi poll) | Single-thread access |
+| `_ring_motion_during_walk` | loop thread (via bridge) | loop thread (return poll) | Single-thread access |
+| `_return_monitor_active` | loop thread | loop thread (bridge reads it) | Single-thread access |
+| `_recent_events` | loop thread (via bridge) | loop thread (via bridge) | Single-thread access |
 
 ---
 
