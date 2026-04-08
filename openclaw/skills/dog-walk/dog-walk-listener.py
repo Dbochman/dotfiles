@@ -1161,17 +1161,58 @@ def _people_at_location(location: str) -> set[str]:
         return {"dylan", "julia"}
 
 
+def _recently_present_on_network(location: str) -> set[str]:
+    """Check the last saved scan to see who was recently on the local network.
+
+    Reads the periodic scan file written by presence-detect.sh.  Returns
+    lowercase names of people whose phone was present AND the scan is less
+    than 1 hour old.  This prevents flagging someone as a "walker" when
+    they left for work hours ago and simply aren't on WiFi.
+    """
+    RECENCY_S = 3600  # 1 hour
+    scan_file = Path.home() / f".openclaw/presence/{location}-scan.json"
+    try:
+        if not scan_file.exists():
+            return set()
+        data = json.loads(scan_file.read_text())
+        ts_str = data.get("timestamp", "")
+        if not ts_str:
+            return set()
+        scan_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        age_s = (datetime.now(timezone.utc) - scan_ts).total_seconds()
+        if age_s > RECENCY_S:
+            log(f"WHO LEFT: last {location} scan is {int(age_s)}s old (>{RECENCY_S}s), skipping recency check")
+            return set()
+        presence = data.get("presence", {})
+        return {name.lower() for name, info in presence.items() if info.get("present")}
+    except Exception as e:
+        log(f"WHO LEFT: error reading last scan for {location}: {e}")
+        return set()
+
+
 def _detect_who_left(location: str) -> list[str]:
     """Determine who left by checking who's absent from the network.
 
-    Cross-references the ARP scan with the presence state: only people who were
-    recently at this location (per sticky presence model) are candidates. If
-    someone was already away, they're absent from ARP because they're not home,
-    not because they left on a walk.
+    Cross-references three sources:
+    1. Sticky presence state → who was at this location (candidates)
+    2. Fresh ARP/WiFi scan → who is currently absent from the network
+    3. Last saved periodic scan → who was recently present (within 1 hour)
+
+    A person is only counted as a walker if they are:
+    - A candidate (presence state says they were at this location), AND
+    - Absent from the fresh scan, AND
+    - Recently present on the network (seen within the last hour)
+
+    This prevents false walker detection when someone left for work hours
+    ago — their phone is absent but they weren't recently on the network.
     """
     # Who was at this location before the walk started?
     candidates = _people_at_location(location)
     log(f"WHO LEFT: candidates at {location} (from presence state): {sorted(candidates)}")
+
+    # Who was recently on the network? (from last periodic scan, within 1 hour)
+    recently_present = _recently_present_on_network(location)
+    log(f"WHO LEFT: recently present on {location} network: {sorted(recently_present)}")
 
     try:
         if location == "crosstown":
@@ -1193,19 +1234,23 @@ def _detect_who_left(location: str) -> list[str]:
         scan = json.loads(result.stdout)
         presence = scan.get("presence", {})
 
-        # People absent from ARP AND were at this location = walkers
+        # People absent from the fresh scan
         absent_from_network = set()
         for person_key, info in presence.items():
             if not info.get("present"):
                 absent_from_network.add(person_key.lower())
 
-        walkers = absent_from_network & candidates
+        # Walkers = absent now AND were at this location AND recently on network
+        walkers = absent_from_network & candidates & recently_present
         still_home = candidates - absent_from_network
+        absent_but_not_recent = (absent_from_network & candidates) - recently_present
 
         if still_home:
             log(f"WHO LEFT: still on network at {location}: {sorted(still_home)}")
+        if absent_but_not_recent:
+            log(f"WHO LEFT: absent but not recently on network (excluded): {sorted(absent_but_not_recent)}")
 
-        # If nobody who was at this location is absent, fall back to candidates
+        # If nobody qualifies, fall back to all candidates
         return sorted(walkers) if walkers else sorted(candidates)
     except Exception as e:
         log(f"WHO LEFT: error detecting: {e}")
