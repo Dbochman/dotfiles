@@ -827,11 +827,7 @@ function buildWalkRows(routes, events) {
         : (route.started_at && route.ended_at)
           ? (new Date(route.ended_at).getTime() - new Date(route.started_at).getTime()) / 60000
           : null);
-    const arpWalkers = (dock && dock.dog_walk && dock.dog_walk.walkers) || (joined.walkers && joined.walkers.dog_walk && joined.walkers.dog_walk.walkers) || (departure && departure.dog_walk && departure.dog_walk.walkers) || [];
-    const fiWalker = route.fi_walker ? route.fi_walker.toLowerCase() : null;
-    const mergedWalkers = arpWalkers.length > 0
-      ? [...new Set([...arpWalkers.map(w => w.toLowerCase()), ...(fiWalker ? [fiWalker] : [])])]
-      : (fiWalker ? [fiWalker] : []);
+    const fiWalkers = route.fi_walker ? [route.fi_walker.toLowerCase()] : null;
     return {
       walk_id: route.walk_id,
       started_at: route.started_at,
@@ -841,7 +837,7 @@ function buildWalkRows(routes, events) {
       active: route.active,
       duration,
       return_signal: route.return_signal,
-      walkers: mergedWalkers,
+      walkers: fiWalkers || (dock && dock.dog_walk && dock.dog_walk.walkers) || (joined.walkers && joined.walkers.dog_walk && joined.walkers.dog_walk.walkers) || (departure && departure.dog_walk && departure.dog_walk.walkers) || [],
       manual: departure ? isManualDeparture(departure) : false,
       detection_latency_s: route.detection_latency_s,
       is_car_trip: route.is_car_trip,
