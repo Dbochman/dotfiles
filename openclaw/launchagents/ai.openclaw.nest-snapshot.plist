@@ -29,5 +29,7 @@ done
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>

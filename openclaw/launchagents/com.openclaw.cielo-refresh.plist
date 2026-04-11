@@ -24,5 +24,7 @@
     <string>/Users/dbochman/.openclaw/logs/cielo-refresh.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/dbochman/.openclaw/logs/cielo-refresh.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>

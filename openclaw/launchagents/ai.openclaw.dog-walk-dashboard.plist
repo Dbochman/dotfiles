@@ -18,6 +18,13 @@
   <string>/Users/dbochman/.openclaw/logs/dog-walk-dashboard.log</string>
   <key>StandardErrorPath</key>
   <string>/Users/dbochman/.openclaw/logs/dog-walk-dashboard.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/dbochman</string>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
   <key>WorkingDirectory</key>
   <string>/Users/dbochman</string>
 </dict>

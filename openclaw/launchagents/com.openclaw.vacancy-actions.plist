@@ -21,8 +21,10 @@
         <string>/Users/dbochman/.openclaw/presence/state.json</string>
     </array>
     <key>StandardOutPath</key>
-    <string>/dev/null</string>
+    <string>/Users/dbochman/.openclaw/logs/vacancy-actions.log</string>
     <key>StandardErrorPath</key>
-    <string>/dev/null</string>
+    <string>/Users/dbochman/.openclaw/logs/vacancy-actions.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>

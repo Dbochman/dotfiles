@@ -22,8 +22,10 @@
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/dev/null</string>
+    <string>/Users/dbochman/.openclaw/logs/presence-cabin.log</string>
     <key>StandardErrorPath</key>
-    <string>/dev/null</string>
+    <string>/Users/dbochman/.openclaw/logs/presence-cabin.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>

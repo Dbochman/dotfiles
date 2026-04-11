@@ -26,5 +26,7 @@
         <key>PATH</key>
         <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>

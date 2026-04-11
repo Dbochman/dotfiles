@@ -25,6 +25,8 @@
     <string>/Users/dbochman/.openclaw/logs/usage-token-push.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/dbochman/.openclaw/logs/usage-token-push.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
     <key>WorkingDirectory</key>
     <string>/Users/dbochman</string>
 </dict>

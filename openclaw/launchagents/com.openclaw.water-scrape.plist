@@ -71,6 +71,8 @@
     <string>/Users/juliajoy/.openclaw/logs/water-scrape.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/juliajoy/.openclaw/logs/water-scrape.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
     <key>WorkingDirectory</key>
     <string>/Users/juliajoy/repos/financial-dashboard</string>
 </dict>

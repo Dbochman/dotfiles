@@ -24,6 +24,8 @@
     <string>/Users/dbochman/.openclaw/logs/oauth-refresh.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/dbochman/.openclaw/logs/oauth-refresh.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
     <key>WorkingDirectory</key>
     <string>/Users/dbochman</string>
 </dict>

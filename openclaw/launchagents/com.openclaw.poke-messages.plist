@@ -17,5 +17,12 @@
     <string>/Users/dbochman/.openclaw/logs/poke-messages.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/dbochman/.openclaw/logs/poke-messages.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/dbochman</string>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>

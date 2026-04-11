@@ -27,6 +27,8 @@
     <string>/Users/dbochman/.openclaw/logs/8sleep-snapshot.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/dbochman/.openclaw/logs/8sleep-snapshot.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
     <key>WorkingDirectory</key>
     <string>/Users/dbochman</string>
 </dict>

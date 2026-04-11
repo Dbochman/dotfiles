@@ -24,6 +24,8 @@
     <string>/Users/dbochman/.openclaw/logs/usage-snapshot.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/dbochman/.openclaw/logs/usage-snapshot.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
     <key>WorkingDirectory</key>
     <string>/Users/dbochman</string>
 </dict>
