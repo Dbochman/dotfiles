@@ -141,6 +141,8 @@ WORKSPACE_DST="$HOME/.openclaw/workspace"
 if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
   for f in TOOLS.md HEARTBEAT.md; do
     if [ -f "$WORKSPACE_SRC/$f" ]; then
+      # Remove symlinks first — cp fails if dst is a symlink to src
+      [ -L "$WORKSPACE_DST/$f" ] && rm -f "$WORKSPACE_DST/$f"
       cp "$WORKSPACE_SRC/$f" "$WORKSPACE_DST/$f"
     fi
   done
@@ -155,6 +157,7 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
     for script in "$SCRIPTS_SRC"/*; do
       [ -f "$script" ] || continue
       fname=$(basename "$script")
+      [ -L "$SCRIPTS_DST/$fname" ] && rm -f "$SCRIPTS_DST/$fname"
       cp "$script" "$SCRIPTS_DST/$fname"
       chmod +x "$SCRIPTS_DST/$fname"
       WS_SCRIPTS_DEPLOYED=$((WS_SCRIPTS_DEPLOYED + 1))
