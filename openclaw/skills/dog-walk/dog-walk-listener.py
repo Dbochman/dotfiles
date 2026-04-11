@@ -72,13 +72,13 @@ if os.environ.get("CROSSTOWN_LAT") and os.environ.get("CROSSTOWN_LON"):
     _FI_LOCATIONS["crosstown"] = {
         "lat": float(os.environ["CROSSTOWN_LAT"]),
         "lon": float(os.environ["CROSSTOWN_LON"]),
-        "radius_m": 50,
+        "radius_m": 30,
     }
 if os.environ.get("CABIN_LAT") and os.environ.get("CABIN_LON"):
     _FI_LOCATIONS["cabin"] = {
         "lat": float(os.environ["CABIN_LAT"]),
         "lon": float(os.environ["CABIN_LON"]),
-        "radius_m": 150,
+        "radius_m": 75,
     }
 
 STATE_FILE = Path.home() / ".openclaw/dog-walk/state.json"
