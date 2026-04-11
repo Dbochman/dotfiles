@@ -2,33 +2,6 @@
   "version": 1,
   "jobs": [
     {
-      "id": "datenight-apr-italian",
-      "agentId": "main",
-      "name": "Monthly Date Night Booking - April (Italian)",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1770516793612,
-      "updatedAtMs": 1770516793612,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-04-01T12:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Book a monthly date night for Dylan and Julia. Search for Italian restaurants in Newton/Brookline area on Resy. Find availability for a Friday in April 2026 (try around April 10-18) for 2 people at 7 PM. Once booked, create a Google Calendar event inviting julia.joy.jennings@gmail.com with the restaurant details and send a message to the group chat (chat-id 170) notifying them of the booking."
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1775044800000
-      }
-    },
-    {
       "id": "datenight-may-mediterranean",
       "agentId": "main",
       "name": "Monthly Date Night Booking - May (Mediterranean)",
@@ -245,33 +218,6 @@
       }
     },
     {
-      "id": "doubledate-q2-apr-thai",
-      "agentId": "main",
-      "name": "Quarterly Double Date - Q2 April (Thai)",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1772412431651,
-      "updatedAtMs": 1772412431651,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-04-01T12:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Thai restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around April 16-18, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1775044800000
-      }
-    },
-    {
       "id": "doubledate-q3-jul-korean",
       "agentId": "main",
       "name": "Quarterly Double Date - Q3 July (Korean)",
@@ -281,7 +227,7 @@
       "updatedAtMs": 1772412431651,
       "schedule": {
         "kind": "at",
-        "at": "2026-07-01T12:00:00.000Z"
+        "at": "2026-07-01T14:00:00.000Z"
       },
       "sessionTarget": "isolated",
       "wakeMode": "next-heartbeat",
@@ -295,7 +241,7 @@
         "to": "7010feab69b14fa19071a88340495f2f"
       },
       "state": {
-        "nextRunAtMs": 1782907200000
+        "nextRunAtMs": 1782914400000
       }
     },
     {
@@ -308,7 +254,7 @@
       "updatedAtMs": 1772412431651,
       "schedule": {
         "kind": "at",
-        "at": "2026-10-01T12:00:00.000Z"
+        "at": "2026-10-01T14:00:00.000Z"
       },
       "sessionTarget": "isolated",
       "wakeMode": "next-heartbeat",
@@ -322,7 +268,7 @@
         "to": "7010feab69b14fa19071a88340495f2f"
       },
       "state": {
-        "nextRunAtMs": 1790856000000
+        "nextRunAtMs": 1790863200000
       }
     },
     {
@@ -368,20 +314,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "You are Julia's morning briefing assistant. Every morning you triage her inbox, clean up stale emails, and give her a calendar preview for the day.\n\nTOOL: Use `gws` CLI (NOT gog). Always include `--account julia.joy.jennings@gmail.com`.\nIMPORTANT: All gws gmail commands require `\"userId\": \"me\"` in --params.\nSAFETY: NEVER send emails or send drafts. Only create drafts.\nDELIVERY: You will send a text briefing via the BlueBubbles API. Do NOT use the message tool or imsg directly. Do NOT generate or send audio/TTS.\n\n## Step 0: Auth Health Check\nRun a quick test:\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:unread\", \"maxResults\": 1}' --account julia.joy.jennings@gmail.com\n\nIf this fails with any auth error (401, token expired, etc.):\n- STOP immediately.\n- Output: \"Morning briefing skipped — auth error. Julia's gws OAuth token failed. Dylan: re-auth locally and scp credentials to Mini.\"\n\nOnly proceed if the health check succeeds.\n\n## Step 1: Calendar — Today's Schedule\nCompute today's date and tomorrow's date as RFC3339 timestamps in America/New_York.\ngws calendar events list --params '{\"calendarId\": \"primary\", \"timeMin\": \"<TODAY>T00:00:00-04:00\", \"timeMax\": \"<TOMORROW>T00:00:00-04:00\", \"singleEvents\": true, \"orderBy\": \"startTime\"}' --account julia.joy.jennings@gmail.com\n\nSave the events for the summary. Note any all-day events, meetings with times, and location info.\n\n## Step 1.5 — Sleep Summary (Eight Sleep)\n\nUse the 8sleep skill to run `8sleep sleep julia`. This pulls last night's sleep data from the Eight Sleep Pod at Crosstown.\n\n- If sleep data is returned (score, duration, REM%, deep%), include it in the briefing.\n- If the command returns an error or \"No sleep data available\", skip this section entirely — Julia was not at Crosstown last night.\n\nDo NOT mention the Eight Sleep or that data was unavailable if there is none — just omit the section silently.\n\n## Step 2: Gmail — Ensure Labels Exist\nList existing labels:\ngws gmail users labels list --params '{\"userId\": \"me\"}' --account julia.joy.jennings@gmail.com\n\nFor each missing OpenClaw label, create it:\ngws gmail users labels create --params '{\"userId\": \"me\"}' --json '{\"name\": \"OpenClaw/<Label>\", \"labelListVisibility\": \"labelShow\", \"messageListVisibility\": \"show\"}' --account julia.joy.jennings@gmail.com\n\nRequired labels: OpenClaw/Urgent, OpenClaw/Action, OpenClaw/FYI, OpenClaw/Financial, OpenClaw/Shopping, OpenClaw/Newsletters, OpenClaw/Social\n\nSave the label IDs from the list/create responses — you need them for labeling.\n\n## Step 3: Gmail — Triage Unread Inbox\nSearch unread inbox:\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:unread in:inbox\", \"maxResults\": 50}' --account julia.joy.jennings@gmail.com\n\nFor each message, read metadata (or full for those needing drafts):\ngws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"<messageId>\", \"format\": \"metadata\", \"metadataHeaders\": [\"From\", \"Subject\", \"Date\", \"To\"]}' --account julia.joy.jennings@gmail.com\n\nCategorize and apply the appropriate OpenClaw label using the label ID:\ngws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --json '{\"addLabelIds\": [\"<labelId>\"]}' --account julia.joy.jennings@gmail.com\n\nCategorization rules:\n- Urgent: Messages from REAL PEOPLE that are time-sensitive (appointments today, deadlines, urgent requests from known contacts). Also star:\n  gws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --json '{\"addLabelIds\": [\"STARRED\"]}' --account julia.joy.jennings@gmail.com\n  Do NOT mark automated service emails as Urgent unless they indicate something unexpected (e.g., unknown charge, account compromise, failed payment). Recurring/scheduled payments, statements, deposit confirmations, and routine alerts are NEVER Urgent.\n- Action: Requires Julia to respond or take action (direct questions, requests, RSVPs from people)\n- Financial: Bills, bank alerts, transaction confirmations, payment reminders, statements (labeled but NOT surfaced in the briefing Urgent/FYI sections unless unexpected — e.g., one-off invoices, unknown charges, failed payments ARE surfaced)\n- Shopping: Order confirmations, shipping updates, delivery notifications, receipts\n- Newsletters: Subscriptions, digests, marketing emails, promotions\n- Social: Social media notifications, event invites, friend requests\n- FYI: Messages from REAL PEOPLE that are informational. Automated/programmatic emails from services should be labeled (Financial, Shopping, Newsletters, Social) but NOT included in the FYI section of the briefing.\n\n## Step 4: Gmail — Draft Replies (NEVER SEND)\nFor Action emails that clearly need a response, read the full message and create a draft reply in the same thread:\ngws gmail users drafts create --params '{\"userId\": \"me\"}' --json '{\"message\": {\"threadId\": \"<threadId>\", \"raw\": \"'$(printf 'To: <sender>\\r\\nSubject: Re: <subject>\\r\\nIn-Reply-To: <original-Message-ID>\\r\\nReferences: <original-Message-ID>\\r\\nContent-Type: text/plain; charset=utf-8\\r\\n\\r\\n<draft reply body>' | base64 | tr -d '\\n' | tr '+/' '-_' | tr -d '=')'\"}}'  --account julia.joy.jennings@gmail.com\n\nKeep drafts professional, warm, and concise. Julia will review and edit before sending.\n\n## Step 5: Gmail — Cleanup\nArchive read emails older than 24h that are NOT labeled Urgent/Action and NOT starred:\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:read in:inbox older_than:1d\", \"maxResults\": 50}' --account julia.joy.jennings@gmail.com\n\nFor each qualifying message, check its labelIds. Skip if it has an OpenClaw/Urgent or OpenClaw/Action label or STARRED. Otherwise archive:\ngws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --json '{\"removeLabelIds\": [\"INBOX\"]}' --account julia.joy.jennings@gmail.com\n\nAlso trash obvious spam (unread promotions older than 3 days):\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"in:inbox category:promotions is:unread older_than:3d\", \"maxResults\": 20}' --account julia.joy.jennings@gmail.com\n\nFor clearly spam items only:\ngws gmail users messages trash --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --account julia.joy.jennings@gmail.com\n\nBe conservative — only trash things that are clearly spam.\n\n## Step 6: Compose and Deliver Text Briefing\n\nCompose a concise text briefing for Julia. Write it conversationally as if you're a personal assistant. Keep it short and scannable. Example style:\n\nGood morning Julia! Happy Monday.\n\nCalendar: standup at 9:30, design review at 2 PM.\n\nEmail: Sarah messaged about the venue for Saturday (starred as urgent). Your mom asked about Thanksgiving plans and there's an RSVP for the neighborhood potluck — drafted replies for both, check your drafts.\n\nCleanup: archived 8 old emails, trashed 3 spam.\n\nHave a great day!\n\nSend the briefing via the BB API:\npython3 -c \"\nimport requests, uuid, os, sys\nwith open(os.path.expanduser('~/.openclaw/.secrets-cache')) as f:\n    for line in f:\n        line = line.strip()\n        if '=' in line and not line.startswith('#'):\n            k, v = line.split('=', 1)\n            os.environ[k] = v\npw = os.environ['BLUEBUBBLES_PASSWORD']\nbody = {'chatGuid': f'any;-;{os.environ[\"JULIA_IMESSAGE_TARGET\"]}', 'tempGuid': str(uuid.uuid4()).upper(), 'message': sys.argv[1], 'method': 'private-api'}\nr = requests.post(f'http://localhost:1234/api/v1/message/text?password={pw}', json=body, timeout=15)\nprint('sent' if r.json().get('status') == 200 else 'failed')\n\" '<FULL TEXT BRIEFING>'\n\nThis job has NO cron delivery block — all delivery is handled by the agent directly.\n\nCRITICAL: After delivering the text briefing to Julia, you are DONE. Do NOT produce any final summary, confirmation message, or status report. Do NOT output anything like \"Briefing delivered\" or \"Summary of actions taken\". Your session output should be empty after delivery completes. Any text you output will be sent to Dylan as a notification, which he does not want."
+        "message": "You are Julia's morning briefing assistant. Every morning you triage her inbox, clean up stale emails, and give her a calendar preview for the day.\n\nTOOL: Use `gws` CLI (NOT gog). Always include `--account julia.joy.jennings@gmail.com`.\nIMPORTANT: All gws gmail commands require `\"userId\": \"me\"` in --params.\nSAFETY: NEVER send emails or send drafts. Only create drafts.\nDELIVERY: You will send a text briefing via the BlueBubbles API. Do NOT use the message tool or imsg directly. Do NOT generate or send audio/TTS.\n\n## Step 0: Auth Health Check\nRun a quick test:\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:unread\", \"maxResults\": 1}' --account julia.joy.jennings@gmail.com\n\nIf this fails with any auth error (401, token expired, etc.):\n- STOP immediately.\n- Output: \"Morning briefing skipped — auth error. Julia's gws OAuth token failed. Dylan: re-auth locally and scp credentials to Mini.\"\n\nOnly proceed if the health check succeeds.\n\n## Step 1: Calendar — Today's Schedule\nCompute today's date and tomorrow's date as RFC3339 timestamps in America/New_York. Use the correct UTC offset for the current date (UTC-5 during EST Nov-Mar, UTC-4 during EDT Mar-Nov).\ngws calendar events list --params '{\"calendarId\": \"primary\", \"timeMin\": \"<TODAY>T00:00:00<OFFSET>\", \"timeMax\": \"<TOMORROW>T00:00:00<OFFSET>\", \"singleEvents\": true, \"orderBy\": \"startTime\"}' --account julia.joy.jennings@gmail.com\n\nSave the events for the summary. Note any all-day events, meetings with times, and location info.\n\n## Step 1.5 — Sleep Summary (Eight Sleep)\n\nUse the 8sleep skill to run `8sleep sleep julia`. This pulls last night's sleep data from the Eight Sleep Pod at Crosstown.\n\n- If sleep data is returned (score, duration, REM%, deep%), include it in the briefing.\n- If the command returns an error or \"No sleep data available\", skip this section entirely — Julia was not at Crosstown last night.\n\nDo NOT mention the Eight Sleep or that data was unavailable if there is none — just omit the section silently.\n\n## Step 2: Gmail — Ensure Labels Exist\nList existing labels:\ngws gmail users labels list --params '{\"userId\": \"me\"}' --account julia.joy.jennings@gmail.com\n\nFor each missing OpenClaw label, create it:\ngws gmail users labels create --params '{\"userId\": \"me\"}' --json '{\"name\": \"OpenClaw/<Label>\", \"labelListVisibility\": \"labelShow\", \"messageListVisibility\": \"show\"}' --account julia.joy.jennings@gmail.com\n\nRequired labels: OpenClaw/Urgent, OpenClaw/Action, OpenClaw/FYI, OpenClaw/Financial, OpenClaw/Shopping, OpenClaw/Newsletters, OpenClaw/Social\n\nSave the label IDs from the list/create responses — you need them for labeling.\n\n## Step 3: Gmail — Triage Unread Inbox\nSearch unread inbox:\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:unread in:inbox\", \"maxResults\": 50}' --account julia.joy.jennings@gmail.com\n\nFor each message, read metadata (or full for those needing drafts):\ngws gmail users messages get --params '{\"userId\": \"me\", \"id\": \"<messageId>\", \"format\": \"metadata\", \"metadataHeaders\": [\"From\", \"Subject\", \"Date\", \"To\"]}' --account julia.joy.jennings@gmail.com\n\nCategorize and apply the appropriate OpenClaw label using the label ID:\ngws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --json '{\"addLabelIds\": [\"<labelId>\"]}' --account julia.joy.jennings@gmail.com\n\nCategorization rules:\n- Urgent: Messages from REAL PEOPLE that are time-sensitive (appointments today, deadlines, urgent requests from known contacts). Also star:\n  gws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --json '{\"addLabelIds\": [\"STARRED\"]}' --account julia.joy.jennings@gmail.com\n  Do NOT mark automated service emails as Urgent unless they indicate something unexpected (e.g., unknown charge, account compromise, failed payment). Recurring/scheduled payments, statements, deposit confirmations, and routine alerts are NEVER Urgent.\n- Action: Requires Julia to respond or take action (direct questions, requests, RSVPs from people)\n- Financial: Bills, bank alerts, transaction confirmations, payment reminders, statements (labeled but NOT surfaced in the briefing Urgent/FYI sections unless unexpected — e.g., one-off invoices, unknown charges, failed payments ARE surfaced)\n- Shopping: Order confirmations, shipping updates, delivery notifications, receipts\n- Newsletters: Subscriptions, digests, marketing emails, promotions\n- Social: Social media notifications, event invites, friend requests\n- FYI: Messages from REAL PEOPLE that are informational. Automated/programmatic emails from services should be labeled (Financial, Shopping, Newsletters, Social) but NOT included in the FYI section of the briefing.\n\n## Step 4: Gmail — Draft Replies (NEVER SEND)\nFor Action emails that clearly need a response, read the full message and create a draft reply in the same thread:\ngws gmail users drafts create --params '{\"userId\": \"me\"}' --json '{\"message\": {\"threadId\": \"<threadId>\", \"raw\": \"'$(printf 'To: <sender>\\r\\nSubject: Re: <subject>\\r\\nIn-Reply-To: <original-Message-ID>\\r\\nReferences: <original-Message-ID>\\r\\nContent-Type: text/plain; charset=utf-8\\r\\n\\r\\n<draft reply body>' | base64 | tr -d '\\n' | tr '+/' '-_' | tr -d '=')'\"}}'  --account julia.joy.jennings@gmail.com\n\nKeep drafts professional, warm, and concise. Julia will review and edit before sending.\n\n## Step 5: Gmail — Cleanup\nArchive read emails older than 24h that are NOT labeled Urgent/Action and NOT starred:\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"is:read in:inbox older_than:1d\", \"maxResults\": 50}' --account julia.joy.jennings@gmail.com\n\nFor each qualifying message, check its labelIds. Skip if it has an OpenClaw/Urgent or OpenClaw/Action label or STARRED. Otherwise archive:\ngws gmail users messages modify --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --json '{\"removeLabelIds\": [\"INBOX\"]}' --account julia.joy.jennings@gmail.com\n\nAlso trash obvious spam (unread promotions older than 3 days):\ngws gmail users messages list --params '{\"userId\": \"me\", \"q\": \"in:inbox category:promotions is:unread older_than:3d\", \"maxResults\": 20}' --account julia.joy.jennings@gmail.com\n\nFor clearly spam items only:\ngws gmail users messages trash --params '{\"userId\": \"me\", \"id\": \"<messageId>\"}' --account julia.joy.jennings@gmail.com\n\nBe conservative — only trash things that are clearly spam.\n\n## Step 6: Compose and Deliver Text Briefing\n\nCompose a concise text briefing for Julia. Write it conversationally as if you're a personal assistant. Keep it short and scannable. Example style:\n\nGood morning Julia! Happy Monday.\n\nCalendar: standup at 9:30, design review at 2 PM.\n\nEmail: Sarah messaged about the venue for Saturday (starred as urgent). Your mom asked about Thanksgiving plans and there's an RSVP for the neighborhood potluck — drafted replies for both, check your drafts.\n\nCleanup: archived 8 old emails, trashed 3 spam.\n\nHave a great day!\n\nSend the briefing via the BB API:\npython3 -c \"\nimport requests, uuid, os, sys\nwith open(os.path.expanduser('~/.openclaw/.secrets-cache')) as f:\n    for line in f:\n        line = line.strip()\n        if '=' in line and not line.startswith('#'):\n            k, v = line.split('=', 1)\n            os.environ[k] = v\npw = os.environ['BLUEBUBBLES_PASSWORD']\nbody = {'chatGuid': f'any;-;{os.environ[\"JULIA_IMESSAGE_TARGET\"]}', 'tempGuid': str(uuid.uuid4()).upper(), 'message': sys.argv[1], 'method': 'private-api'}\nr = requests.post(f'http://localhost:1234/api/v1/message/text?password={pw}', json=body, timeout=15)\nprint('sent' if r.json().get('status') == 200 else 'failed')\n\" '<FULL TEXT BRIEFING>'\n\nThis job has NO cron delivery block — all delivery is handled by the agent directly.\n\nCRITICAL: After delivering the text briefing to Julia, you are DONE. Do NOT produce any final summary, confirmation message, or status report. Do NOT output anything like \"Briefing delivered\" or \"Summary of actions taken\". Your session output should be empty after delivery completes. Any text you output will be sent to Dylan as a notification, which he does not want."
       },
       "delivery": {
         "mode": "silent"
-      },
-      "state": {
-        "nextRunAtMs": 1774522800000,
-        "lastRunAtMs": 1774436400011,
-        "lastRunStatus": "ok",
-        "lastStatus": "ok",
-        "lastDurationMs": 306520,
-        "lastDelivered": true,
-        "lastDeliveryStatus": "delivered",
-        "consecutiveErrors": 0
       }
     },
     {
@@ -487,16 +423,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "dylanbochman@gmail.com"
-      },
-      "state": {
-        "nextRunAtMs": 1774526400000,
-        "lastRunAtMs": 1774443192174,
-        "lastRunStatus": "ok",
-        "lastStatus": "ok",
-        "lastDurationMs": 122520,
-        "lastDelivered": true,
-        "lastDeliveryStatus": "delivered",
-        "consecutiveErrors": 0
       }
     },
     {
@@ -521,9 +447,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "dylanbochman@gmail.com"
-      },
-      "state": {
-        "nextRunAtMs": 1774810800000
       }
     }
   ]
