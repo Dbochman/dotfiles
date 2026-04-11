@@ -686,25 +686,43 @@ def _fetch_fi_walk_summary() -> dict | None:
         return None
 
 
-def _enrich_route_with_fi_summary(fi_summary: dict) -> None:
-    """Enrich the active walk's route file with Fi walk summary data."""
+def _enrich_route_with_fi_summary(fi_summary: dict, *,
+                                   walk_id: str | None = None,
+                                   origin: str | None = None,
+                                   started_at: str | None = None) -> bool:
+    """Enrich a walk's route file with Fi walk summary data.
+
+    If walk_id/origin/started_at are provided, uses those directly (for delayed
+    retries after the walk state has been cleared). Otherwise reads from current
+    state (original behaviour).
+
+    Returns True if enrichment succeeded, False otherwise.
+    """
     if not fi_summary:
-        return
-    with _state_lock:
-        state = _read_state()
-        walk = state.get("dog_walk") or {}
-        if not walk.get("walk_id"):
-            return
-        walk_id = walk["walk_id"]
-        origin = walk.get("origin_location") or walk.get("location")
-        started_at = walk.get("departed_at")
+        return False
+
+    if not walk_id:
+        with _state_lock:
+            state = _read_state()
+            walk = state.get("dog_walk") or {}
+            if not walk.get("walk_id"):
+                return False
+            walk_id = walk["walk_id"]
+            origin = walk.get("origin_location") or walk.get("location")
+            started_at = walk.get("departed_at")
 
     path = _route_path(walk_id, origin, started_at)
     if not path or not path.exists():
-        return
+        return False
 
     try:
         route = json.loads(path.read_text())
+
+        # Already enriched by a previous attempt — skip
+        if route.get("fi_walk_start"):
+            log(f"FI WALK SUMMARY: route {walk_id} already enriched — skipping")
+            return True
+
         our_start = datetime.fromisoformat(route.get("started_at", "").replace("Z", "+00:00"))
         fi_start = datetime.fromisoformat(fi_summary["fi_start"].replace("Z", "+00:00"))
         fi_end = datetime.fromisoformat(fi_summary["fi_end"].replace("Z", "+00:00"))
@@ -715,7 +733,7 @@ def _enrich_route_with_fi_summary(fi_summary: dict) -> None:
         if gap > 900:
             log(f"FI WALK SUMMARY: skipping — Fi walk start ({fi_summary['fi_start']}) "
                 f"is {gap:.0f}s from our start ({route.get('started_at')}), threshold 900s")
-            return
+            return False
 
         route["fi_walk_start"] = fi_summary["fi_start"]
         route["fi_walk_end"] = fi_summary["fi_end"]
@@ -726,8 +744,47 @@ def _enrich_route_with_fi_summary(fi_summary: dict) -> None:
         path.write_text(json.dumps(route, indent=2))
         log(f"FI WALK SUMMARY: enriched route {walk_id} "
             f"(latency: {route['detection_latency_s']}s, fi_dist: {fi_summary['fi_distance_m']}m)")
+        return True
     except Exception as e:
         log(f"FI WALK SUMMARY: error enriching route: {e}")
+        return False
+
+
+_FI_ENRICHMENT_RETRY_DELAYS = [300, 600, 1200]  # 5min, 10min, 20min
+
+
+def _delayed_fi_enrichment_retry(walk_id: str, origin: str, started_at: str) -> None:
+    """Background thread: retry Fi walk enrichment at increasing delays.
+
+    Fi's activityFeed often hasn't finalized the current walk by the time the
+    listener detects return. This retries at 5, 10, and 20 minutes to catch it
+    once Fi has processed the walk.
+    """
+    for delay in _FI_ENRICHMENT_RETRY_DELAYS:
+        time.sleep(delay)
+        try:
+            # Check if already enriched (previous retry or immediate attempt)
+            path = _route_path(walk_id, origin, started_at)
+            if path and path.exists():
+                route = json.loads(path.read_text())
+                if route.get("fi_walk_start"):
+                    log(f"FI WALK RETRY: route {walk_id} already enriched — stopping retries")
+                    return
+
+            log(f"FI WALK RETRY: attempting enrichment for {walk_id} (delay={delay}s)")
+            fi_summary = _fetch_fi_walk_summary()
+            if fi_summary:
+                success = _enrich_route_with_fi_summary(
+                    fi_summary, walk_id=walk_id, origin=origin, started_at=started_at)
+                if success:
+                    log(f"FI WALK RETRY: enriched {walk_id} on retry (delay={delay}s)")
+                    return
+            else:
+                log(f"FI WALK RETRY: no Fi walk found for {walk_id} (delay={delay}s)")
+        except Exception as e:
+            log(f"FI WALK RETRY: error on retry for {walk_id} (delay={delay}s): {e}")
+
+    log(f"FI WALK RETRY: exhausted retries for {walk_id} — walk not enriched")
 
 
 def _mark_route_car_trip(location: str) -> None:
@@ -1598,12 +1655,29 @@ async def _return_poll_loop(location: str) -> None:
                     ).start()
 
                     # Enrich route with Fi walk summary (authoritative start/end/distance)
+                    # Capture walk details now — state will be cleared after finalization
+                    with _state_lock:
+                        _enrich_state = _read_state()
+                    _enrich_dw = _enrich_state.get("dog_walk") or {}
+                    _enrich_walk_id = _enrich_dw.get("walk_id")
+                    _enrich_origin = _enrich_dw.get("origin_location") or _enrich_dw.get("location")
+                    _enrich_started_at = _enrich_dw.get("departed_at")
+                    fi_enriched = False
                     try:
                         fi_summary = await asyncio.to_thread(_fetch_fi_walk_summary)
                         if fi_summary:
-                            await asyncio.to_thread(_enrich_route_with_fi_summary, fi_summary)
+                            fi_enriched = await asyncio.to_thread(
+                                _enrich_route_with_fi_summary, fi_summary)
                     except Exception as e:
                         log(f"RETURN MONITOR: Fi walk summary failed (non-fatal): {e}")
+
+                    # If immediate enrichment failed, retry in background at 5/10/20 min
+                    if not fi_enriched and _enrich_walk_id:
+                        threading.Thread(
+                            target=_delayed_fi_enrichment_retry,
+                            args=(_enrich_walk_id, _enrich_origin, _enrich_started_at),
+                            daemon=True, name=f"fi-enrich-retry-{_enrich_walk_id}",
+                        ).start()
 
                     # Mark car trips on the route file
                     if is_car_trip:

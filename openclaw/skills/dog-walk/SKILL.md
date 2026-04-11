@@ -81,6 +81,7 @@ After departure, the return monitor uses three signals — any one triggers Room
 - 2 minutes after departure, a network scan identifies **who left**
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
 - On return, the full Fi `OngoingWalk` path is fetched (dense polyline) and merged into the route file
+- **Fi walk enrichment** queries `activityFeed` for authoritative walk timestamps and distance. If Fi hasn't finalized the walk yet (common — feed still shows the previous walk), a background thread retries at 5, 10, and 20 minutes. Only applied when Fi walk start is within 15min of detected departure (prevents matching wrong walks).
 - A final Fi GPS point is captured before docking (for route completeness)
 - An iMessage notification is sent on return with walk duration and which signal triggered it
 - Safety fallback: auto-docks after 2 hours if no return detected
