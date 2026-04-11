@@ -1621,6 +1621,21 @@ async def _return_poll_loop(location: str) -> None:
                             dist = fi_result.get("distance_to_monitored", "?")
                             log(f"RETURN MONITOR: Fi GPS — Potato {dist}m from {location} (outside geofence)")
 
+                            # Check if Potato arrived at the OTHER home (inter-home transit)
+                            pet_lat = fi_result.get("latitude")
+                            pet_lon = fi_result.get("longitude")
+                            if pet_lat and pet_lon:
+                                for other_name, other_loc in _FI_LOCATIONS.items():
+                                    if other_name == location:
+                                        continue
+                                    other_dist = _haversine(pet_lat, pet_lon, other_loc["lat"], other_loc["lon"])
+                                    if other_dist <= other_loc["radius_m"]:
+                                        return_signal = "fi_gps_interhome"
+                                        is_car_trip = True
+                                        log(f"RETURN MONITOR: Inter-home transit detected — Potato {other_dist:.0f}m from {other_name} "
+                                            f"(inside {other_name} geofence, departed from {location})")
+                                        break
+
                 # Consolidated state write — one per iteration
                 if poll_wifi_detail or poll_fi_result:
                     await _update_state_return_monitor_async(
@@ -1689,7 +1704,7 @@ async def _return_poll_loop(location: str) -> None:
                             log(f"RETURN MONITOR: Car trip marking failed (non-fatal): {e}")
 
                     # Notify + finalize state — best effort
-                    signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": f"Fi GPS"}
+                    signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": "Fi GPS", "fi_gps_interhome": "Fi GPS (inter-home transit)"}
                     try:
                         await _send_imessage_async(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: {signal_labels.get(return_signal, return_signal)})")
                     except Exception as e:
@@ -1700,6 +1715,14 @@ async def _return_poll_loop(location: str) -> None:
                         await _update_state_return_monitor_async(location, "stop")
                     except Exception as e:
                         log(f"RETURN MONITOR: State update failed (non-fatal): {e}")
+
+                    # Update home anchor if inter-home transit
+                    if return_signal == "fi_gps_interhome":
+                        for other_name in _FI_LOCATIONS:
+                            if other_name != location:
+                                _update_state_home_anchor(other_name)
+                                log(f"RETURN MONITOR: Home anchor updated to {other_name} (inter-home transit)")
+                                break
 
                     return  # Always exit after return detected — never loop back
 

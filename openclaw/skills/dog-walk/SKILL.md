@@ -85,6 +85,7 @@ After departure, the return monitor uses three signals — any one triggers Room
 | **Ring motion** | Event-driven | Person detected at doorbell during monitoring |
 | **WiFi / network presence** | Every 30s (after 10min) | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. **Ignored for first 10 minutes** — phones linger on WiFi at the front door. |
 | **Fi GPS** | Every 30s | Polls Potato's Fi collar GPS. Docks when Potato re-enters home geofence. Base-station echo detection prevents false "at home" readings. |
+| **Fi GPS (inter-home)** | Every 30s | If Potato enters the *other* home's geofence during monitoring, the walk is auto-finalized as an inter-home transit. Roombas dock at origin, home anchor updates to the new location. |
 
 - Departure GPS point is seeded as the first route point for dashboard maps
 - 2 minutes after departure, a network scan identifies **who left**
