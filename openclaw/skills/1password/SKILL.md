@@ -92,6 +92,19 @@ When making online purchases with the credit card:
 - Items in other vaults (`Private`, etc.) are NOT accessible
 - The `OP_SERVICE_ACCOUNT_TOKEN` is loaded from `~/.openclaw/.env-token`
 
+## CRITICAL: LaunchAgent Scripts That Call `op`
+
+**Any script run by a LaunchAgent that calls `op` (directly or via a CLI like `opentable`, `resy`, `nest`) MUST set `OP_SERVICE_ACCOUNT_TOKEN` before invoking `op`.** Without it, `op` falls back to the 1Password desktop app's Mach bootstrap service, which triggers a GUI permission popup for "bash" every run. On a headless Mini with no VNC, this popup is impossible to approve and the `op` call hangs until timeout.
+
+```bash
+# Add this near the top of any LaunchAgent script that may call op
+if [[ -f "$HOME/.openclaw/.env-token" ]]; then
+  export OP_SERVICE_ACCOUNT_TOKEN=$(cat "$HOME/.openclaw/.env-token")
+fi
+```
+
+This applies even to scripts that only _indirectly_ call `op` — e.g., a bash script that calls `opentable snipe`, which internally calls `op read` when its credential cache expires. See `LAUNCHAGENTS.md § New LaunchAgent Checklist` for the full list of rules.
+
 ## Secret Caching (Gateway Only)
 
 The gateway wrapper uses a **cached secrets file** instead of calling `op read` at startup.
