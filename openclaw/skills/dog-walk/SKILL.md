@@ -54,7 +54,7 @@ If no combo trigger fires, the GPS-only path still works:
 
 **Typical latency:** ~5-7 minutes (normal), ~2 minutes (accelerated)
 
-**Acceleration:** When the base station is disconnected OR Fi activity is Walk, polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 100m geofence (Crosstown) / 200m geofence (Cabin) is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
+**Acceleration:** When the base station is disconnected OR Fi activity is Walk, polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 50m geofence (Crosstown) / 150m geofence (Cabin) is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
 
 **Walk hours:** 7 AM-12 PM, 12-5 PM, 5-9 PM
 
@@ -73,8 +73,8 @@ If no combo trigger fires, the GPS-only path still works:
 
 | Location | Radius |
 |----------|--------|
-| Crosstown (19 Crosstown Ave, West Roxbury) | 100m |
-| Cabin (95 School House Rd, Phillipston) | 200m |
+| Crosstown (19 Crosstown Ave, West Roxbury) | 50m |
+| Cabin (95 School House Rd, Phillipston) | 150m |
 
 ### Return Detection (multi-signal)
 
