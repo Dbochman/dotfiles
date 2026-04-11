@@ -7,10 +7,15 @@
 LOG="$HOME/.openclaw/logs/dotfiles-pull.log"
 REPO="$HOME/dotfiles"
 
+set -euo pipefail
+trap 'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) FATAL: dotfiles-pull failed at line $LINENO" >> "$LOG"' ERR
+
 cd "$REPO" || exit 1
 
 DIRTY=$(git status --porcelain)
 
+# Git stash operations can fail benignly — disable strict error mode for this section
+set +e
 if [ -n "$DIRTY" ]; then
   # Stash local changes, pull, then reapply
   STASH_OUT=$(git stash push -m "auto-stash before daily pull" 2>&1)
@@ -34,6 +39,7 @@ else
   PULL_STATUS=$?
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) exit=$PULL_STATUS $PULL_OUT" >> "$LOG"
 fi
+set -e
 
 # Deploy skills as real copies (OpenClaw rejects symlinks via realPath check)
 SKILLS_SRC="$REPO/openclaw/skills"
@@ -53,34 +59,48 @@ if [ -d "$SKILLS_SRC" ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skills: deployed $DEPLOYED skills to $SKILLS_DST" >> "$LOG"
 fi
 
-# Deploy CLI wrappers to ~/.openclaw/bin/
+# Deploy CLI wrappers and scripts to ~/.openclaw/bin/
 BIN_SRC="$REPO/openclaw/bin"
 BIN_DST="$HOME/.openclaw/bin"
 WRAPPER_DEPLOYED=0
-for wrapper in cielo roomba crosstown-roomba 8sleep mysa petlibro litter-robot crisismode ring; do
-  if [ -f "$BIN_SRC/$wrapper" ]; then
-    cp "$BIN_SRC/$wrapper" "$BIN_DST/$wrapper"
-    chmod +x "$BIN_DST/$wrapper"
-    WRAPPER_DEPLOYED=$((WRAPPER_DEPLOYED + 1))
-  fi
+DEPLOYED_WRAPPERS=""
+for wrapper in "$BIN_SRC"/*; do
+  [ -f "$wrapper" ] || continue
+  fname=$(basename "$wrapper")
+  # Skip files with extensions (deployed separately or not wrappers) and non-executables
+  case "$fname" in
+    *.py|*.sh|*.command|*.md|*.json|*.yaml) continue ;;
+  esac
+  [ -x "$wrapper" ] || continue
+  cp "$wrapper" "$BIN_DST/$fname"
+  chmod +x "$BIN_DST/$fname"
+  WRAPPER_DEPLOYED=$((WRAPPER_DEPLOYED + 1))
+  DEPLOYED_WRAPPERS="$DEPLOYED_WRAPPERS $fname"
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BIN_DST" >> "$LOG"
 
-# Deploy dashboard scripts to ~/.openclaw/bin/
-DASHBOARDS_DEPLOYED=0
-for dashboard in nest-dashboard.py usage-dashboard.py home-dashboard.py; do
-  if [ -f "$BIN_SRC/$dashboard" ]; then
-    cp "$BIN_SRC/$dashboard" "$BIN_DST/$dashboard"
-    chmod +x "$BIN_DST/$dashboard"
-    DASHBOARDS_DEPLOYED=$((DASHBOARDS_DEPLOYED + 1))
-  fi
+# Deploy dashboard and utility scripts to ~/.openclaw/bin/
+SCRIPTS_DEPLOYED=0
+for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
+  [ -f "$script" ] || continue
+  fname=$(basename "$script")
+  cp "$script" "$BIN_DST/$fname"
+  chmod +x "$BIN_DST/$fname"
+  SCRIPTS_DEPLOYED=$((SCRIPTS_DEPLOYED + 1))
 done
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) dashboards: deployed $DASHBOARDS_DEPLOYED to $BIN_DST" >> "$LOG"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) scripts: deployed $SCRIPTS_DEPLOYED to $BIN_DST" >> "$LOG"
 
-# Smoke test — verify CLIs resolve on PATH
+# Smoke test — verify deployed wrappers resolve on PATH
 export PATH="$BIN_DST:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
 SMOKE_FAIL=0
-for cmd in cielo roomba crosstown-roomba 8sleep mysa petlibro litter-robot crisismode ring nest hue speaker; do
+for cmd in $DEPLOYED_WRAPPERS; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: $cmd not on PATH" >> "$LOG"
+    SMOKE_FAIL=$((SMOKE_FAIL + 1))
+  fi
+done
+# Also check external CLIs expected on PATH
+for cmd in hue speaker goplaces; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: $cmd not on PATH" >> "$LOG"
     SMOKE_FAIL=$((SMOKE_FAIL + 1))
@@ -126,6 +146,21 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
   done
   # SOUL.md has real values on Mini (not placeholders) — don't overwrite
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed TOOLS.md, HEARTBEAT.md" >> "$LOG"
+
+  # Deploy workspace scripts (presence-detect, grocery-reorder, etc.)
+  SCRIPTS_SRC="$REPO/openclaw/workspace/scripts"
+  SCRIPTS_DST="$WORKSPACE_DST/scripts"
+  if [ -d "$SCRIPTS_SRC" ] && [ -d "$SCRIPTS_DST" ]; then
+    WS_SCRIPTS_DEPLOYED=0
+    for script in "$SCRIPTS_SRC"/*; do
+      [ -f "$script" ] || continue
+      fname=$(basename "$script")
+      cp "$script" "$SCRIPTS_DST/$fname"
+      chmod +x "$SCRIPTS_DST/$fname"
+      WS_SCRIPTS_DEPLOYED=$((WS_SCRIPTS_DEPLOYED + 1))
+    done
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed $WS_SCRIPTS_DEPLOYED scripts to $SCRIPTS_DST" >> "$LOG"
+  fi
 fi
 
 # Deploy updated cron job definitions (preserves runtime state)
