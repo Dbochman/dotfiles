@@ -11,6 +11,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
 | [fi-collar-presence](fi-collar-presence.md) | Add Potato's Fi collar to Cabin presence detection |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
+| [system-hardening-2026-04](system-hardening-2026-04.md) | Multi-agent reliability, deployment, and automation hardening sprint |
 
 ## Archive
 
