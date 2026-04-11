@@ -6,12 +6,12 @@
 #   sync-cron-jobs.sh deploy  — Merge dotfiles definitions into live jobs.json, preserving state
 #
 # Files:
-#   dotfiles/openclaw/cron-jobs.json  — Job definitions (no state), tracked in git
+#   dotfiles/openclaw/cron/jobs.json  — Job definitions (no state), tracked in git
 #   ~/.openclaw/cron/jobs.json        — Live file with runtime state, NOT tracked
 
 set -euo pipefail
 
-DOTFILES_JOBS="$HOME/dotfiles/openclaw/cron-jobs.json"
+DOTFILES_JOBS="$HOME/dotfiles/openclaw/cron/jobs.json"
 LIVE_JOBS="$HOME/.openclaw/cron/jobs.json"
 
 usage() {
