@@ -35,14 +35,14 @@ HOME_META = {
         "label": "Cabin",
         "env_lat": "CABIN_LAT",
         "env_lon": "CABIN_LON",
-        "radius_m": 300,
+        "radius_m": 150,
         "color": "#FF8C00",
     },
     "crosstown": {
         "label": "Crosstown",
         "env_lat": "CROSSTOWN_LAT",
         "env_lon": "CROSSTOWN_LON",
-        "radius_m": 150,
+        "radius_m": 50,
         "color": "#4A90D9",
     },
 }
