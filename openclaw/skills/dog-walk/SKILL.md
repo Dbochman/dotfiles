@@ -21,31 +21,40 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
 
 ## How It Works
 
-### Departure Detection (Ring + Fi combo, with GPS fallback)
+### Departure Detection (combo triggers + GPS fallback)
 
-Departure uses a **combo trigger** (Ring doorbell motion + Fi base station disconnect) for ~1 minute latency, with a GPS-only fallback path.
+Departure uses **combo triggers** for fast detection (~1 min), with a GPS geofence fallback.
 
-#### Primary: Ring + Fi Combo Trigger
+#### Combo Trigger 1: Ring + Fi Base Disconnect
 
 1. Ring doorbell detects human motion → timestamp stored per location
-2. Polling immediately switches from 3min to 30s intervals (to catch Fi disconnect faster)
+2. Polling immediately switches from 3min to 30s intervals
 3. When Fi collar disconnects from base station AND recent Ring motion exists (within 5min) → **departure confirmed immediately**
-4. No GPS geofence confirmation needed — the two independent signals (Ring saw someone leave + dog left base station range) are sufficient
 
-**Typical latency:** ~1 minute (Ring fires instantly, Fi disconnect detected on next 30s poll)
+**Typical latency:** ~1 minute
 
-#### Fallback: GPS-only
+#### Combo Trigger 2: Fi Activity Rest→Walk + Base Disconnect
 
-If Ring didn't fire (e.g., left through back door, Ring battery dead), the GPS-only path still works:
+1. Fi collar activity transitions from Rest to Walk (Fi detects the dog is moving)
+2. Base station is already disconnected (dog left BLE range)
+3. Both signals together → **departure confirmed immediately**
+
+This trigger works without Ring (e.g., leaving through back door at cabin) and fires as soon as Fi recognizes the walk activity.
+
+**Typical latency:** ~1-2 minutes
+
+#### Fallback: GPS Geofence
+
+If no combo trigger fires, the GPS-only path still works:
 
 - 2 consecutive Fi GPS readings outside geofence, confirmed after a time threshold
 - Both readings must be < 10 min old (not stale)
 - Only during walk hours, using the last home geofence Potato was inside as the departure anchor
 - Only when no walk is already active
 
-**Typical latency:** ~5-7 minutes
+**Typical latency:** ~5-7 minutes (normal), ~2 minutes (accelerated)
 
-**Base station disconnect acceleration:** When the Fi collar disconnects from its base station (`connection` transitions from `"Base"` to `"Unknown"`/`"User"`), the departure polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 100m geofence (Crosstown) / 200m geofence (Cabin) is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
+**Acceleration:** When the base station is disconnected OR Fi activity is Walk, polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 100m geofence (Crosstown) / 200m geofence (Cabin) is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
 
 **Walk hours:** 7 AM-12 PM, 12-5 PM, 5-9 PM
 

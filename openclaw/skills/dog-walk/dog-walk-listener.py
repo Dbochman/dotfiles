@@ -1772,6 +1772,7 @@ async def _fi_departure_poll_loop() -> None:
     CONFIRM_BASE_DISCONNECT = 60  # faster: base station disconnected
     last_outside_reading = None
     last_connection = "Base"  # track base station connection transitions
+    last_activity = "Rest"  # track Fi activity transitions (Rest→Walk)
     home_anchor = _get_home_anchor()
 
     log("FI DEPARTURE: Polling loop started (every 3 min during walk hours)")
@@ -1801,12 +1802,13 @@ async def _fi_departure_poll_loop() -> None:
     _poll_count = 0
     while True:
         try:
-            # Use faster polling after base station disconnect OR when Ring motion was recently detected
+            # Use faster polling after base station disconnect, Walk activity, or recent Ring motion
             has_recent_ring = any(
                 time.monotonic() - ts <= _RING_DEPARTURE_WINDOW
                 for ts in _ring_departure_motion.values()
             )
-            fast_poll = (last_connection != "Base" and last_outside_reading) or has_recent_ring
+            fi_departed = last_connection != "Base" or last_activity == "Walk"
+            fast_poll = (fi_departed and last_outside_reading) or has_recent_ring
             poll_interval = FI_FAST_POLL_INTERVAL if fast_poll else FI_POLL_INTERVAL
             await asyncio.sleep(poll_interval)
             _poll_count += 1
@@ -1814,6 +1816,7 @@ async def _fi_departure_poll_loop() -> None:
             if not _is_walk_hour():
                 reset_candidate("outside_walk_hours")
                 last_connection = "Base"  # reset on walk-hour boundary
+                last_activity = "Rest"
                 continue
 
             if _return_monitor_active:
@@ -1831,6 +1834,14 @@ async def _fi_departure_poll_loop() -> None:
                 log(f"FI DEPARTURE: Base station disconnect detected (connection: {last_connection} → {connection})")
                 base_just_disconnected = True
             last_connection = connection or last_connection
+
+            # Track Fi activity transitions (Rest→Walk)
+            activity = fi_result.get("activity", "")
+            activity_just_walked = False
+            if last_activity == "Rest" and activity == "Walk":
+                log(f"FI DEPARTURE: Activity transition detected (Rest → Walk)")
+                activity_just_walked = True
+            last_activity = activity or last_activity
 
             # --- Ring + Fi combo trigger ---
             # If Fi just disconnected from base AND we saw Ring motion recently,
@@ -1864,6 +1875,34 @@ async def _fi_departure_poll_loop() -> None:
                         start_return_monitor(combo_location)
                         continue
 
+            # --- Activity Walk + base disconnect combo trigger ---
+            # Fi says the dog is walking AND base is disconnected — strong departure signal
+            # even without Ring motion (e.g., left through back door at cabin).
+            if activity_just_walked and last_connection != "Base" and home_anchor:
+                combo_location = home_anchor
+                log(f"FI DEPARTURE: COMBO TRIGGER — activity Rest→Walk + base disconnected at {combo_location}")
+                reset_candidate("activity_walk_combo")
+
+                dist = _distance_to_location(fi_result, combo_location) or 0
+                now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                await _set_fi_collar_mode_async("LOST_DOG")
+                await _send_imessage_async(
+                    f"\U0001f9f9 Potato left {combo_location} (Fi activity: Rest→Walk + base disconnected) — starting Roombas!"
+                )
+                roomba_result = await _run_roomba_command_async(combo_location, "start")
+                await _update_state_dog_walk_async(
+                    combo_location,
+                    "departure",
+                    people=0,
+                    dogs=1,
+                    roomba_result=roomba_result,
+                    fi_result=fi_result,
+                )
+                await _append_route_point_async(fi_result)
+                start_return_monitor(combo_location)
+                continue
+
             fi_location = fi_result.get("location")
             fi_at_location = bool(fi_result.get("at_location")) and fi_location in _FI_LOCATIONS
 
@@ -1876,6 +1915,8 @@ async def _fi_departure_poll_loop() -> None:
                 _ring_departure_motion.pop(fi_location, None)
                 if connection == "Base":
                     last_connection = "Base"  # reset on confirmed at-home
+                if activity == "Rest":
+                    last_activity = "Rest"  # reset on confirmed at-home
                 # Log periodically so silence doesn't look like a freeze
                 if _poll_count == 1 or _poll_count % 5 == 0:
                     dist = fi_result.get("distance_m", "?")
@@ -1929,9 +1970,17 @@ async def _fi_departure_poll_loop() -> None:
                 continue
 
             time_since_first = now - last_outside_reading["monotonic_started_at"]
-            confirm_threshold = CONFIRM_BASE_DISCONNECT if last_connection != "Base" else CONFIRM_NORMAL
+            fi_fast = last_connection != "Base" or last_activity == "Walk"
+            confirm_threshold = CONFIRM_BASE_DISCONNECT if fi_fast else CONFIRM_NORMAL
             if time_since_first < confirm_threshold:
-                extra = f", base disconnected — fast confirm" if confirm_threshold == CONFIRM_BASE_DISCONNECT else ""
+                extra = ""
+                if fi_fast:
+                    reasons = []
+                    if last_connection != "Base":
+                        reasons.append("base disconnected")
+                    if last_activity == "Walk":
+                        reasons.append("activity=Walk")
+                    extra = f", {' + '.join(reasons)} — fast confirm"
                 log(f"FI DEPARTURE: Potato {dist}m from {candidate_location} (confirming, {int(time_since_first)}s since first{extra})")
                 continue
 
