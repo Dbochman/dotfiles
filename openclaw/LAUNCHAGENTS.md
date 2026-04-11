@@ -26,7 +26,6 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
-| `ai.openclaw.mahaniyom-snipe` | 30min | `mahaniyom-snipe.sh` | OpenTable snipe for Mahaniyom (ID 1267699) — polls Apr 16-18 for 7 PM dinner slots, party of 4, auto-books on match. Temporary — remove after target dates pass. |
 
 ## Mac Mini — Calendar-Based (StartCalendarInterval)
 
@@ -73,6 +72,17 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 |-------|------|--------|
 | `ai.openclaw.weekly-upgrade` | `.plist.disabled` | Weekly auto-upgrade removed 2026-03-12; upgrades now manual |
 | `ai.openclaw.usage-token-push` | `usage-token-push.plist` | Replaced by `oauth-refresh` — was pushing OAuth cache from laptop keychain to Mini, fragile (required laptop open + keychain readable) |
+
+## New LaunchAgent Checklist
+
+Every new LaunchAgent script MUST follow these rules:
+
+1. **Set `HOME` and `PATH`** in the plist `EnvironmentVariables` — LaunchAgents inherit a minimal environment (`/usr/bin:/bin:/usr/sbin:/sbin`)
+2. **Set `OP_SERVICE_ACCOUNT_TOKEN`** in any script that calls `op` (directly or via a CLI that calls `op` internally like `opentable`, `resy`, `nest`). Without it, `op` tries the 1Password desktop app's Mach bootstrap service, which triggers a GUI permission popup on every run — impossible to approve without VNC. Use: `export OP_SERVICE_ACCOUNT_TOKEN=$(cat "$HOME/.openclaw/.env-token")`
+3. **Source `.secrets-cache`** for environment secrets: `set -a && source ~/.openclaw/.secrets-cache && set +a`
+4. **Use `IdentityAgent none`** for any SSH/scp to known hosts — the default 1Password SSH agent also triggers GUI popups under launchd
+5. **Set `StandardOutPath` and `StandardErrorPath`** in the plist to `~/.openclaw/logs/`
+6. **Track the plist** in `openclaw/launchagents/` in the dotfiles repo (deploy via scp)
 
 ## Notes
 
