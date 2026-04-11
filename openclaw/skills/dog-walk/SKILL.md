@@ -45,7 +45,7 @@ If Ring didn't fire (e.g., left through back door, Ring battery dead), the GPS-o
 
 **Typical latency:** ~5-7 minutes
 
-**Base station disconnect acceleration:** When the Fi collar disconnects from its base station (`connection` transitions from `"Base"` to `"Unknown"`/`"User"`), the departure polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 150m geofence is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
+**Base station disconnect acceleration:** When the Fi collar disconnects from its base station (`connection` transitions from `"Base"` to `"Unknown"`/`"User"`), the departure polling switches from 3min to 30s and the confirmation threshold drops from 3min to 60s. Backyard time does not trigger departure — the 100m geofence (Crosstown) / 200m geofence (Cabin) is large enough that GPS still shows Potato at home even with base station BLE out of range (~30-50m).
 
 **Walk hours:** 7 AM-12 PM, 12-5 PM, 5-9 PM
 
@@ -64,8 +64,8 @@ If Ring didn't fire (e.g., left through back door, Ring battery dead), the GPS-o
 
 | Location | Radius |
 |----------|--------|
-| Crosstown (19 Crosstown Ave, West Roxbury) | 150m |
-| Cabin (95 School House Rd, Phillipston) | 300m |
+| Crosstown (19 Crosstown Ave, West Roxbury) | 100m |
+| Cabin (95 School House Rd, Phillipston) | 200m |
 
 ### Return Detection (multi-signal)
 
@@ -81,7 +81,7 @@ After departure, the return monitor uses three signals — any one triggers Room
 - 2 minutes after departure, a network scan identifies **who left**
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
 - On return, the full Fi `OngoingWalk` path is fetched (dense polyline) and merged into the route file
-- **Fi walk enrichment** queries `activityFeed` for authoritative walk timestamps and distance. If Fi hasn't finalized the walk yet (common — feed still shows the previous walk), a background thread retries at 5, 10, and 20 minutes. Only applied when Fi walk start is within 15min of detected departure (prevents matching wrong walks).
+- **Fi walk enrichment** queries `activityFeed` for authoritative walk timestamps and distance. If Fi hasn't finalized the walk yet (common — feed still shows the previous walk), a background thread retries at 5, 10, and 20 minutes. Only applied when the detected departure falls within the Fi walk window (`fi_start` to `fi_end`, ±5min tolerance) — prevents matching wrong walks.
 - A final Fi GPS point is captured before docking (for route completeness)
 - An iMessage notification is sent on return with walk duration and which signal triggered it
 - Safety fallback: auto-docks after 2 hours if no return detected

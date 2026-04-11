@@ -19,7 +19,7 @@ import time
 import urllib.request
 import urllib.error
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Enable faulthandler for SIGUSR1 — dumps all thread tracebacks to stderr
@@ -72,13 +72,13 @@ if os.environ.get("CROSSTOWN_LAT") and os.environ.get("CROSSTOWN_LON"):
     _FI_LOCATIONS["crosstown"] = {
         "lat": float(os.environ["CROSSTOWN_LAT"]),
         "lon": float(os.environ["CROSSTOWN_LON"]),
-        "radius_m": 150,
+        "radius_m": 100,
     }
 if os.environ.get("CABIN_LAT") and os.environ.get("CABIN_LON"):
     _FI_LOCATIONS["cabin"] = {
         "lat": float(os.environ["CABIN_LAT"]),
         "lon": float(os.environ["CABIN_LON"]),
-        "radius_m": 300,
+        "radius_m": 200,
     }
 
 STATE_FILE = Path.home() / ".openclaw/dog-walk/state.json"
@@ -728,11 +728,13 @@ def _enrich_route_with_fi_summary(fi_summary: dict, *,
         fi_end = datetime.fromisoformat(fi_summary["fi_end"].replace("Z", "+00:00"))
 
         # Verify the Fi walk actually corresponds to this walk:
-        # Fi start should be within 15 minutes of our detected start
-        gap = abs((our_start - fi_start).total_seconds())
-        if gap > 900:
-            log(f"FI WALK SUMMARY: skipping — Fi walk start ({fi_summary['fi_start']}) "
-                f"is {gap:.0f}s from our start ({route.get('started_at')}), threshold 900s")
+        # Our departure must fall within the Fi walk window (fi_start to fi_end)
+        # with 5 min tolerance on each side for detection lag.
+        tolerance = 300  # 5 minutes
+        if not (fi_start - timedelta(seconds=tolerance) <= our_start <= fi_end + timedelta(seconds=tolerance)):
+            log(f"FI WALK SUMMARY: skipping — our start ({route.get('started_at')}) "
+                f"not within Fi walk window {fi_summary['fi_start']}..{fi_summary['fi_end']} "
+                f"(±{tolerance}s tolerance)")
             return False
 
         route["fi_walk_start"] = fi_summary["fi_start"]
