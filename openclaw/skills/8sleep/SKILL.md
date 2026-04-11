@@ -102,7 +102,7 @@ The `eightctl` Go CLI is **broken** — it sends the wrong `client_id` and uses 
 Too many auth attempts. Wait 5-10 minutes. Token is cached with refresh token support — should rarely need full re-auth.
 
 ### "Invalid credentials"
-Check `~/.config/eightctl/config.yaml` on Mac Mini. Password was set via "Forgot Password" reset flow.
+Check the `8sleep` wrapper config on Mac Mini (`~/.openclaw/8sleep/` directory). Password was set via "Forgot Password" reset flow.
 
 ### "Could not parse response"
 Eight Sleep API may have changed. Use `8sleep raw users/me` for raw response.

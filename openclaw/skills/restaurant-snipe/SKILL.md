@@ -78,7 +78,7 @@ for date in $DATES; do
         log "$output"
 
         # Notify via iMessage (group chat or DM)
-        curl -s -X POST "http://localhost:1234/api/v1/message/text" \
+        curl -s -X POST "http://localhost:1234/api/v1/message/text?password=$BLUEBUBBLES_PASSWORD" \
             -H "Content-Type: application/json" \
             -d "{
                 \"chatGuid\": \"<chat_guid>\",
