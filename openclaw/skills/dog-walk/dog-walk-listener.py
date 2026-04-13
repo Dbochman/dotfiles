@@ -1567,8 +1567,13 @@ async def _return_poll_loop(location: str) -> None:
                 # 1. Ring motion (event-driven flag set by _handle_motion)
                 if _ring_motion_during_walk:
                     _ring_motion_during_walk = False
-                    return_signal = "ring_motion"
-                    log(f"RETURN MONITOR: Ring motion after {elapsed_min}min — docking at {location}")
+                    # Only trust Ring as return if dog is within 200m of home
+                    last_dist = prev_gps.get("distance_to_monitored") if prev_gps else None
+                    if last_dist is not None and last_dist <= 200:
+                        return_signal = "ring_motion"
+                        log(f"RETURN MONITOR: Ring motion after {elapsed_min}min ({last_dist}m from home) — docking at {location}")
+                    else:
+                        log(f"RETURN MONITOR: Ring motion ignored — Potato {last_dist}m from {location} (>200m, likely not the dog)")
 
                 # 2. Network WiFi presence (skip early — phones linger at front door)
                 elif elapsed >= MIN_WALK_FOR_WIFI:
