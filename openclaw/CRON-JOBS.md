@@ -8,7 +8,7 @@ Reference for all cron jobs defined in `~/.openclaw/cron/jobs.json` on the Mac M
 
 | ID | Schedule | Tools | Delivery | Description |
 |----|----------|-------|----------|-------------|
-| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | silent (self-delivers text via BB API) | Julia's morning briefing: calendar preview, inbox triage, 8sleep summary, text to Julia via iMessage |
+| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | announce to Julia via BB | Julia's morning briefing: calendar preview, inbox triage (label, draft replies, cleanup), 8sleep summary |
 | `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `exec` | announce to Dylan via BB | Dylan's morning briefing: calendar (7-day) + inbox summary (24h) + 8sleep summary. Read-only, no email actions |
 | `weekly-report-0001` | Sundays 3 PM ET | `exec` | announce to Dylan via BB | Combined weekly activity report, security check (gateway, BB, auth, disk, services), and CrisisMode health scan |
 
