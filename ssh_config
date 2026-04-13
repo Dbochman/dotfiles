@@ -8,9 +8,19 @@ Host dylans-macbook-pro
   HostName 100.107.209.85
   User dbochman
 
+# Work MacBook Pro (via Tailscale)
+Host dylans-work-mbp
+  HostName 100.73.15.5
+  User dbochman
+
 # On the local MBP, id_launchd bypasses 1Password Touch ID prompts for Mini SSH.
 Match originalhost dylans-mac-mini exec "test -f ~/.ssh/id_launchd"
   IdentityFile ~/.ssh/id_launchd
+  IdentityAgent none
+
+# Dedicated key for work MBP, bypasses 1Password agent.
+Match originalhost dylans-work-mbp exec "test -f ~/.ssh/id_work_mbp"
+  IdentityFile ~/.ssh/id_work_mbp
   IdentityAgent none
 
 # On the Mini, id_mini_to_mbp bypasses 1Password agent (hangs under launchd).
