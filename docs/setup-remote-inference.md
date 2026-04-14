@@ -81,6 +81,72 @@ Match originalhost dylans-work-mbp exec "test -f ~/.ssh/id_work_mbp"
 
 The `Match` block bypasses 1Password agent for this key (it hangs under launchd / overflows auth attempts).
 
+## Reverse SSH: work MBP -> Dylan's Mac
+
+This is the opposite direction: initiating SSH from the work MBP into this personal machine over Tailscale.
+
+### Host identity
+
+- `dylans-mac` = this machine (`dylans-mac.tail3e55f9.ts.net`, user `dylanbochman`)
+- `dylans-mac-mini` = a different machine
+
+Do not use the `dylans-mac-mini` alias when the target is this machine.
+
+### 1. Generate a dedicated key on the work MBP
+
+Run on the **work MBP**:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+ssh-keygen -t ed25519 -f ~/.ssh/id_work_mbp -C "dbochman@work-mbp"
+```
+
+### 2. Add the public key to `authorized_keys` on `dylans-mac`
+
+On the **work MBP**, print the public key:
+
+```bash
+cat ~/.ssh/id_work_mbp.pub
+```
+
+Paste the full line starting with `ssh-ed25519` into `~/.ssh/authorized_keys` on `dylans-mac`.
+
+If `.pub` was not written for some reason, derive it from the private key:
+
+```bash
+ssh-keygen -y -f ~/.ssh/id_work_mbp
+```
+
+Important: the fingerprint (`SHA256:...`) is not enough. `authorized_keys` needs the full public key line.
+
+### 3. SSH config entry
+
+Already in `ssh_config` (this repo):
+
+```sshconfig
+Host dylans-mac
+  HostName dylans-mac.tail3e55f9.ts.net
+  User dylanbochman
+
+Match originalhost dylans-mac exec "test -f ~/.ssh/id_work_mbp"
+  IdentityFile ~/.ssh/id_work_mbp
+  IdentityAgent none
+```
+
+### 4. Connect from the work MBP
+
+Without relying on shared config:
+
+```bash
+ssh -i ~/.ssh/id_work_mbp dylanbochman@dylans-mac.tail3e55f9.ts.net
+```
+
+With the shared config installed:
+
+```bash
+ssh dylans-mac
+```
+
 ## One-time setup on the work MBP
 
 ### Keychain auto-lock
@@ -137,5 +203,11 @@ Token lifetime: the Claude `setup-token` OAuth token is valid for 1 year. Regene
 **"Not logged in" in Claude Code over SSH** — the keychain credential is being preferred over the env var. Delete `~/.claude/.credentials.json` on the work MBP and ensure `CLAUDE_CODE_OAUTH_TOKEN` is in `~/.zshenv`.
 
 **"Too many authentication failures"** — 1Password agent is offering too many keys. The `Match` block in `ssh_config` uses `IdentityAgent none` to bypass it.
+
+**`ls ~/.ssh/id_work_mbp` says "No such file or directory" on the work MBP** — generate the key there first. The private key must exist on the initiating machine.
+
+**You only pasted a fingerprint like `SHA256:...`** — that is not a public key. Use `cat ~/.ssh/id_work_mbp.pub` or `ssh-keygen -y -f ~/.ssh/id_work_mbp` and paste the full `ssh-ed25519 ...` line.
+
+**`ssh dylans-mac-mini` connects to the wrong machine** — this machine is `dylans-mac`. `dylans-mac-mini` is a separate host.
 
 **"User interaction is not allowed" from `security`** — keychain is locked. Run `security set-keychain-settings ~/Library/Keychains/login.keychain-db` on the work MBP to remove auto-lock.

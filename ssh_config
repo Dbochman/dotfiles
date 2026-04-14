@@ -1,3 +1,8 @@
+# Dylan's Mac (via Tailscale)
+Host dylans-mac
+  HostName dylans-mac.tail3e55f9.ts.net
+  User dylanbochman
+
 # Mac Mini (via Tailscale)
 Host dylans-mac-mini
   HostName dylans-mac-mini
@@ -16,6 +21,11 @@ Host dylans-work-mbp
 # On the local MBP, id_launchd bypasses 1Password Touch ID prompts for Mini SSH.
 Match originalhost dylans-mac-mini exec "test -f ~/.ssh/id_launchd"
   IdentityFile ~/.ssh/id_launchd
+  IdentityAgent none
+
+# On the work MBP, id_work_mbp bypasses 1Password agent for Dylan's Mac SSH.
+Match originalhost dylans-mac exec "test -f ~/.ssh/id_work_mbp"
+  IdentityFile ~/.ssh/id_work_mbp
   IdentityAgent none
 
 # Dedicated key for work MBP, bypasses 1Password agent.
