@@ -356,6 +356,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 - **Crosstown Roombas and Speakers** route through SSH to MBP — if MBP is offline, these time out
 - **Nest Camera snapshot** takes ~10-15s (WebRTC negotiation + first frame); SDM API exposes no battery/online status for cameras
 - **Ring snapshot** may fail on battery doorbells if the doorbell is asleep; requires Ring Protect subscription
+- **Samsung TV status is REST-only** — `samsung-tv status` deliberately skips the WebSocket/art-mode probe because opening the WS wakes the Frame's panel and shows a connection notification every poll. Use `samsung-tv art frame` explicitly when art-mode info is needed.
 
 ---
 

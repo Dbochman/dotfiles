@@ -142,6 +142,9 @@ def resolve_app_id(query, installed_apps=None):
 
 
 def cmd_status(_args):
+    # REST-only: opening the WS connection wakes the Frame's panel and shows a
+    # connection notification, even with a saved token. Use `samsung-tv art`
+    # explicitly when art-mode info is needed.
     tvs = load_tvs()
     try:
         from samsungtvws import SamsungTVWS
@@ -154,7 +157,6 @@ def cmd_status(_args):
         tp = token_path(name)
         tv = SamsungTVWS(host=ip, port=8002, token_file=tp, timeout=5, name="OpenClaw")
 
-        # Check power via REST API (doesn't require WS)
         try:
             device_info = tv.rest_device_info()
             dev = device_info.get("device", device_info)
@@ -168,28 +170,6 @@ def cmd_status(_args):
             print(f"  {name}")
             print(f"    IP:     {ip}")
             print(f"    Power:  UNREACHABLE")
-            continue
-
-        if power != "on":
-            continue
-
-        # Check art mode via WS
-        try:
-            tv.open()
-            art = tv.art()
-            if art.supported():
-                mode = art.get_artmode()
-                print(f"    Art:    {mode}")
-                if mode == "off":
-                    current = art.get_current()
-                    if isinstance(current, dict):
-                        cid = current.get("content_id", "")
-                        if cid:
-                            print(f"    Artwork: {cid}")
-            art.close()
-            tv.close()
-        except Exception:
-            pass
 
 
 def cmd_power_on(name, info):
