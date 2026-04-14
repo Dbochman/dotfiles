@@ -8,9 +8,16 @@ export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agen
 alias codex-quick='codex -c model_reasoning_effort="medium"'
 alias cq='codex-quick review'
 
-# Remote Claude Code on work MBP
-alias rcc='ssh -t dylans-work-mbp "zsh -l -c /Users/dbochman/.local/bin/claude"'
-alias rcx='ssh -t dylans-work-mbp "zsh -l -c /opt/homebrew/bin/codex"'
+# Remote Claude Code / Codex on work MBP
+# Usage: rcc [dir]  — defaults to ~ on the work MBP
+rcc() {
+  local dir="${1:-~}"
+  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /Users/dbochman/.local/bin/claude"
+}
+rcx() {
+  local dir="${1:-~}"
+  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /opt/homebrew/bin/codex"
+}
 
 # Chrome with remote debugging for MCP
 alias chrome-debug='/Applications/Google\ Chrome\ Canary.app/Contents/MacOS/Google\ Chrome\ Canary --remote-debugging-port=9222 --user-data-dir="$HOME/.chrome-debug-profile"'

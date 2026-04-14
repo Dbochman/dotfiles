@@ -6,17 +6,46 @@ Setup for running Claude Code and Codex on a remote machine's enterprise subscri
 
 The work MBP has an NVIDIA enterprise Claude subscription. Rather than copying auth tokens to personal machines (which may violate enterprise ToS and risks device-binding revocation), we SSH to the work MBP so all inference genuinely originates there.
 
-## Aliases
+## Functions
 
 From `zshrc`:
 
 ```bash
-alias rcc='ssh -t dylans-work-mbp "zsh -l -c /Users/dbochman/.local/bin/claude"'
-alias rcx='ssh -t dylans-work-mbp "zsh -l -c /opt/homebrew/bin/codex"'
+# Usage: rcc [dir]  — defaults to ~ on the work MBP
+rcc() {
+  local dir="${1:-~}"
+  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /Users/dbochman/.local/bin/claude"
+}
+rcx() {
+  local dir="${1:-~}"
+  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /opt/homebrew/bin/codex"
+}
 ```
 
-- `rcc` → remote Claude Code
-- `rcx` → remote Codex
+- `rcc` → remote Claude Code (at `~`)
+- `rcc ~/repos/some-project` → remote Claude Code in a specific dir
+- `rcx` / `rcx ~/repos/some-project` → same for Codex
+
+## Copying repos to the work MBP
+
+Use `rsync` over the same SSH alias:
+
+```bash
+rsync -avz --progress ~/repos/<name>/ dylans-work-mbp:~/repos/<name>/
+```
+
+Exclude build artifacts when relevant:
+
+```bash
+rsync -avz --progress --exclude node_modules --exclude .next --exclude dist \
+  ~/repos/<name>/ dylans-work-mbp:~/repos/<name>/
+```
+
+Or `git clone` remotely if the repo has a remote:
+
+```bash
+ssh dylans-work-mbp 'git clone <url> ~/repos/<name>'
+```
 
 ## One-time setup for a new local machine
 
