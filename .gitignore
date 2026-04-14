@@ -5,6 +5,10 @@
 # Local-only settings (machine-specific, not synced)
 .claude/settings.local.json
 
+# Agent teams skills mirror (duplicates .claude/skills/, populated by experimental
+# CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS feature)
+.agents/
+
 # Plans directory (temporary planning files)
 .claude/plans/
 
