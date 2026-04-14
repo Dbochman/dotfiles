@@ -1,5 +1,10 @@
 model = "gpt-5.4"
 
+[features]
+multi_agent = true
+shell_snapshot = true
+unified_exec = true
+
 [model_providers.groq]
 base_url = "https://api.groq.com/openai/v1"
 env_key = "GROQ_API_KEY"
@@ -17,7 +22,9 @@ model_provider = "groq"
 [sandbox_workspace_write]
 network_access = true
 
-[features]
-unified_exec = true
-shell_snapshot = true
-multi_agent = true
+[shell_environment_policy]
+inherit = "core"
+
+[shell_environment_policy.set]
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"
+DISABLE_AUTOUPDATER = "1"

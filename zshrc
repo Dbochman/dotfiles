@@ -10,13 +10,19 @@ alias cq='codex-quick review'
 
 # Remote Claude Code / Codex on work MBP
 # Usage: rcc [dir]  — defaults to ~ on the work MBP
+# Rewrites local home prefix so ~/repos/foo works naturally.
+_rcc_remote_dir() {
+  local dir="${1:-$HOME}"
+  # Replace local home prefix with remote home
+  echo "${dir/#$HOME//Users/dbochman}"
+}
 rcc() {
-  local dir="${1:-~}"
-  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /Users/dbochman/.local/bin/claude"
+  local dir; dir=$(_rcc_remote_dir "$1")
+  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c /Users/dbochman/.local/bin/claude"
 }
 rcx() {
-  local dir="${1:-~}"
-  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /opt/homebrew/bin/codex"
+  local dir; dir=$(_rcc_remote_dir "$1")
+  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c /opt/homebrew/bin/codex"
 }
 
 # Chrome with remote debugging for MCP

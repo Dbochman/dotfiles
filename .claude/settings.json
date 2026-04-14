@@ -1,8 +1,8 @@
 {
   "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+    "DISABLE_AUTOUPDATER": "1"
   },
-  "model": "opus[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -46,9 +46,7 @@
     "claude-hud@claude-hud": true,
     "claude-delegator@jarrodwatts-claude-delegator": true
   },
-  "alwaysThinkingEnabled": false,
-  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
   "voiceEnabled": true,
-  "showThinkingSummaries": true,
-  "skipDangerousModePermissionPrompt": true
+  "showThinkingSummaries": true
 }
