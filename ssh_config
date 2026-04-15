@@ -8,6 +8,14 @@ Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
 
+# Mac Mini alias with dedicated key (bypasses 1Password)
+Host mac-mini
+  HostName dylans-mac-mini.tail3e55f9.ts.net
+  User dbochman
+  IdentityFile ~/.ssh/id_mac_mini
+  IdentitiesOnly yes
+  IdentityAgent none
+
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro
   HostName 100.107.209.85

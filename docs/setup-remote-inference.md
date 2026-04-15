@@ -81,70 +81,65 @@ Match originalhost dylans-work-mbp exec "test -f ~/.ssh/id_work_mbp"
 
 The `Match` block bypasses 1Password agent for this key (it hangs under launchd / overflows auth attempts).
 
-## Reverse SSH: work MBP -> Dylan's Mac
+## Reverse SSH: work MBP -> personal machines
 
-This is the opposite direction: initiating SSH from the work MBP into this personal machine over Tailscale.
+The work MBP uses a single dedicated key (`~/.ssh/id_mac_mini`) to reach both the Mac Mini and personal Mac over Tailscale. This key was generated on the local MBP and copied to the work MBP — it is **not** managed by 1Password.
 
-### Host identity
+The work MBP's `~/.ssh/config` is **standalone** (not symlinked to this repo). The host blocks below must be added manually on the work MBP.
 
-- `dylans-mac` = this machine (`dylans-mac.tail3e55f9.ts.net`, user `dylanbochman`)
-- `dylans-mac-mini` = a different machine
+### Key setup (one-time)
 
-Do not use the `dylans-mac-mini` alias when the target is this machine.
-
-### 1. Generate a dedicated key on the work MBP
-
-Run on the **work MBP**:
+On the **local MBP**, generate the key and copy it to the work MBP:
 
 ```bash
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-ssh-keygen -t ed25519 -f ~/.ssh/id_work_mbp -C "dbochman@work-mbp"
+ssh-keygen -t ed25519 -f ~/.ssh/id_mac_mini -N ""
+scp ~/.ssh/id_mac_mini ~/.ssh/id_mac_mini.pub dbochman@100.73.15.5:~/.ssh/
+ssh dylans-work-mbp "chmod 600 ~/.ssh/id_mac_mini"
 ```
 
-### 2. Add the public key to `authorized_keys` on `dylans-mac`
+### work MBP -> Mac Mini
 
-On the **work MBP**, print the public key:
+Authorize the key on the Mac Mini (run from local MBP):
 
 ```bash
-cat ~/.ssh/id_work_mbp.pub
+cat ~/.ssh/id_mac_mini.pub | ssh dylans-mac-mini "cat >> ~/.ssh/authorized_keys"
 ```
 
-Paste the full line starting with `ssh-ed25519` into `~/.ssh/authorized_keys` on `dylans-mac`.
+Add to `~/.ssh/config` on the **work MBP**:
 
-If `.pub` was not written for some reason, derive it from the private key:
+```sshconfig
+Host mac-mini
+  HostName dylans-mac-mini.tail3e55f9.ts.net
+  User dbochman
+  IdentityFile ~/.ssh/id_mac_mini
+  IdentitiesOnly yes
+  IdentityAgent none
+```
+
+### work MBP -> personal Mac (`dylans-mac`)
+
+Authorize the key on the personal Mac — run this on `dylans-mac`:
 
 ```bash
-ssh-keygen -y -f ~/.ssh/id_work_mbp
+echo "$(ssh dylans-work-mbp 'cat ~/.ssh/id_mac_mini.pub')" >> ~/.ssh/authorized_keys
 ```
 
-Important: the fingerprint (`SHA256:...`) is not enough. `authorized_keys` needs the full public key line.
-
-### 3. SSH config entry
-
-Already in `ssh_config` (this repo):
+Add to `~/.ssh/config` on the **work MBP**:
 
 ```sshconfig
 Host dylans-mac
   HostName dylans-mac.tail3e55f9.ts.net
   User dylanbochman
-
-Match originalhost dylans-mac exec "test -f ~/.ssh/id_work_mbp"
-  IdentityFile ~/.ssh/id_work_mbp
+  IdentityFile ~/.ssh/id_mac_mini
+  IdentitiesOnly yes
   IdentityAgent none
 ```
 
-### 4. Connect from the work MBP
-
-Without relying on shared config:
+### Connect
 
 ```bash
-ssh -i ~/.ssh/id_work_mbp dylanbochman@dylans-mac.tail3e55f9.ts.net
-```
-
-With the shared config installed:
-
-```bash
-ssh dylans-mac
+ssh mac-mini      # from work MBP -> Mac Mini
+ssh dylans-mac    # from work MBP -> personal Mac
 ```
 
 ## One-time setup on the work MBP
