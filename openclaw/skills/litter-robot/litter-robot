@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 API_SCRIPT="$SCRIPT_DIR/litter-robot-api.py"
 PYTHON="$HOME/.openclaw/litter-robot/venv/bin/python3"
 
-run_api() { "$PYTHON" "$API_SCRIPT" "$@" 2>&1; }
+run_api() { "$PYTHON" "$API_SCRIPT" "$@"; }  # stderr kept separate — don't mix into JSON stdout
 
 parse_status() {
   python3 -c "
