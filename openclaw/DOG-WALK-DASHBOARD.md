@@ -399,7 +399,7 @@ Matches nest-dashboard exactly:
 
 | Source (dotfiles) | Destination (Mini) |
 |-------------------|--------------------|
-| `openclaw/dog-walk-dashboard.py` | `~/.openclaw/bin/dog-walk-dashboard.py` |
+| `openclaw/bin/dog-walk-dashboard.py` | `~/.openclaw/bin/dog-walk-dashboard.py` |
 | `openclaw/skills/fi-collar/fi-api.py` | `~/.openclaw/skills/fi-collar/fi-api.py` |
 | `openclaw/skills/cabin-roomba/irobot-cloud.py` | `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
 | LaunchAgent plist (see below) | `~/Library/LaunchAgents/ai.openclaw.dog-walk-dashboard.plist` |

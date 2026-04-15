@@ -51,7 +51,7 @@ Monitors thermostats and weather across two locations via three heating/cooling 
 
 | File | Path |
 |------|------|
-| Server | `openclaw/nest-dashboard.py` → `~/.openclaw/bin/nest-dashboard.py` |
+| Server | `openclaw/bin/nest-dashboard.py` → `~/.openclaw/bin/nest-dashboard.py` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` |
 | Data | `~/.openclaw/nest-history/YYYY-MM-DD.jsonl` |
 | Presence | `~/.openclaw/presence/state.json` + `history/` |
@@ -129,7 +129,7 @@ Visualizes dog walk departures, return signal detection, route maps, and the Fi 
 
 | File | Path |
 |------|------|
-| Server | `openclaw/dog-walk-dashboard.py` → `~/.openclaw/bin/dog-walk-dashboard.py` |
+| Server | `openclaw/bin/dog-walk-dashboard.py` → `~/.openclaw/bin/dog-walk-dashboard.py` |
 | Fi collar API | `openclaw/skills/fi-collar/fi-api.py` → `~/.openclaw/skills/fi-collar/fi-api.py` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.dog-walk-dashboard.plist` |
 | Event history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
@@ -171,7 +171,7 @@ Roomba status, snooze controls, and run history calendar heatmap for both locati
 
 | File | Path |
 |------|------|
-| Server | `openclaw/roomba-dashboard.py` → `~/.openclaw/bin/roomba-dashboard.py` |
+| Server | `openclaw/bin/roomba-dashboard.py` → `~/.openclaw/bin/roomba-dashboard.py` |
 | iRobot Cloud API | `openclaw/skills/cabin-roomba/irobot-cloud.py` → `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.roomba-dashboard.plist` |
 | Snooze state | `~/.openclaw/dog-walk/snooze.json` |

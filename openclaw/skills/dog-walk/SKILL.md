@@ -160,8 +160,8 @@ launchctl load ~/Library/LaunchAgents/ai.openclaw.dog-walk-listener.plist
 Recent dog-walk changes touched these paths:
 
 - `openclaw/skills/dog-walk/dog-walk-listener.py`
-- `openclaw/dog-walk-dashboard.py`
-- `openclaw/roomba-dashboard.py`
+- `openclaw/bin/dog-walk-dashboard.py`
+- `openclaw/bin/roomba-dashboard.py`
 - `openclaw/skills/fi-collar/fi-api.py`
 
 If deploying to the Mac Mini, make sure the updated files are present under `~/.openclaw/`, then restart:
