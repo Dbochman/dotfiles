@@ -27,6 +27,7 @@ SECRETS_FILE = os.path.expanduser("~/.openclaw/.secrets-cache")
 PORT = 8552
 MAX_DAYS = 365
 FI_CACHE_TTL = 120  # seconds — Fi GPS updates ~every 7min at rest, cache for 2min
+PRESENCE_FILE = os.path.expanduser("~/.openclaw/presence/state.json")
 
 _fi_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
 
@@ -340,6 +341,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_heatmap(days, location)
         elif path == "/api/fi":
             self._serve_fi()
+        elif path == "/api/presence":
+            self._serve_presence()
         else:
             self._respond(404, {"error": "not found"})
 
@@ -412,6 +415,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         data = fetch_fi_status()
         self._respond(200, data)
 
+    def _serve_presence(self):
+        try:
+            with open(PRESENCE_FILE) as f:
+                self._respond(200, json.load(f))
+        except Exception as e:
+            self._respond(200, {"error": str(e)})
+
+
     def _serve_html(self):
         body = DASHBOARD_HTML.encode()
         self.send_response(200)
@@ -457,6 +468,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dog Walk Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐶</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
@@ -1443,7 +1455,24 @@ document.getElementById('walkBody').addEventListener('click', e => {
   if (currentLayer === 'routes') renderMaps();
 });
 
-refresh();
+async function initLocation() {
+  try {
+    const resp = await fetch('/api/presence');
+    const presence = await resp.json();
+    if (!presence.error) {
+      const cabinOccupied = presence.cabin && presence.cabin.occupancy === 'occupied';
+      const crosstownOccupied = presence.crosstown && presence.crosstown.occupancy === 'occupied';
+      if (cabinOccupied && !crosstownOccupied) {
+        currentLocation = 'cabin';
+      } else if (crosstownOccupied && !cabinOccupied) {
+        currentLocation = 'crosstown';
+      }
+      document.querySelectorAll('#locationControls button').forEach(b => b.classList.toggle('active', b.dataset.location === currentLocation));
+    }
+  } catch (e) { /* fall through to default 'all' */ }
+}
+
+initLocation().then(refresh);
 setInterval(refresh, 5 * 60 * 1000);
 </script>
 </body>
