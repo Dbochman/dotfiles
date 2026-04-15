@@ -92,18 +92,9 @@ def cmd_status(args):
             muted = "MUTED" if cast.status.volume_muted else ""
             app = cast.status.display_name or "Idle"
 
-            mc = cast.media_controller
-            mc.update_status()
-            time.sleep(0.5)
-            ms = mc.status
-            if ms and ms.player_state and ms.player_state != "UNKNOWN":
-                state = ms.player_state
-                title = ms.title or ""
-                info = f"{state} {title}".strip()
-            else:
-                info = app
-
-            print(f"  {name:25s}  {vol:3d}%  {muted:5s}  {info}")
+            # Use receiver status only — mc.update_status() causes chimes on
+            # Google Home devices and isn't needed for basic volume/app display.
+            print(f"  {name:25s}  {vol:3d}%  {muted:5s}  {app}")
             disconnect(cast)
         except Exception as e:
             print(f"  {name:25s}  UNREACHABLE ({e})")

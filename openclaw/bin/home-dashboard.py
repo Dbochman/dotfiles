@@ -230,6 +230,11 @@ COLLECTORS = {
     "dog_walk": collect_dog_walk,
 }
 
+# Collectors excluded from background refresh — polled only on page load or
+# explicit request. Speakers use Cast protocol connections that cause chimes
+# on Google Home devices when the device is idle.
+_NO_BG_REFRESH = {"speakers", "cabin_speakers"}
+
 
 def _collect_with_cache(name, collector, refresh=False):
     now = time.time()
@@ -1898,11 +1903,24 @@ def run():
     threading.Thread(target=collect_status_bundle, daemon=True).start()
 
     # Periodic background refresh every 5 minutes
+    # Collectors in _NO_BG_REFRESH are skipped — they are polled only on page
+    # load or explicit request to avoid unwanted side effects (e.g. Cast
+    # connections cause chimes on idle Google Home devices).
     def _periodic_refresh():
+        bg_collectors = {k: v for k, v in COLLECTORS.items() if k not in _NO_BG_REFRESH}
         while True:
             time.sleep(300)
             try:
-                collect_status_bundle(refresh=True)
+                with ThreadPoolExecutor(max_workers=len(bg_collectors)) as executor:
+                    futures = {
+                        executor.submit(_collect_with_cache, name, collector, True): name
+                        for name, collector in bg_collectors.items()
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
