@@ -266,7 +266,7 @@ Browser → home-dashboard.py (port 8558)
 
 - **Progressive loading** — `GET /api/status` returns cached data instantly (no blocking). Uncached devices listed in `meta.pending`; frontend polls them individually in background. Cards render as data arrives.
 - **Precache on startup** — all 17 collectors run in parallel via `ThreadPoolExecutor` at boot
-- **Background refresh** — every 5 minutes, all collectors re-run in background
+- **Background refresh** — every 5 minutes, most collectors re-run in background; speakers/cabin_speakers are excluded to avoid Cast connections that cause chimes on idle Google Home devices (polled on page load only)
 - **Per-device refresh** — `GET /api/status/<device_name>` refreshes one collector and updates cache
 - **60s cache TTL** — CLI results cached to avoid hammering APIs
 - **30s command timeout** — accommodates slower SSH-based collectors (crosstown roombas, speakers)
@@ -309,7 +309,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | `crosstown-roomba status` | CLI | Roomba status (via SSH+MQTT to MBP) |
 | `roomba status <name>` | CLI | Cabin roombas (per-robot, Google Assistant) |
 | `samsung-tv status` | CLI | TV power state |
-| `speaker status` | CLI | Speaker volume/reachability |
+| `speaker status` | CLI | Speaker volume/reachability (page load only; excluded from bg refresh to prevent Cast chimes) |
 | `litter-robot status` | CLI | LR4 status |
 | `petlibro status` | CLI | Feeder + fountain |
 | `8sleep status` | CLI | Pod temp, both sides |
