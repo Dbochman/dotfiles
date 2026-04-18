@@ -33,7 +33,7 @@ All loops share state via module-level globals. The FCM callback runs on a **bac
   - LOST_DOG mode: ~15-30s (drains battery, used only during active walks)
 - **Connection states**: `Base` (on charger/nearby), `User` (BLE to phone), `Cellular`, `Unknown`
 - **Key field**: `ongoingActivity.__typename` — `OngoingRest` or `OngoingWalk`
-- **Historical walks**: `activityFeed(limit: N) { activities { __typename start end ... on Walk { distance presentUser { firstName } } } }` — returns completed walks with Fi's own start/end timestamps
+- **Historical walks**: `activityFeed(limit: N) { activities { __typename start end ... on Walk { distance presentUser { firstName } } } }` — returns recent activities (Walk, Play, Rest, Travel) with Fi's own start/end timestamps. A single outing often spans multiple `Walk` entries interleaved with `Play`/`Rest` when the dog pauses — see the enrichment merge logic below.
 
 ### Ring Doorbell (FCM Push)
 
@@ -312,19 +312,32 @@ Each walk produces a route file at:
 
 ### Fi Walk Summary Enrichment (Post-Walk)
 
-After return finalization, the listener queries Fi's `activityFeed` for the most recent completed walk and enriches the route file with authoritative data:
+After return finalization, the listener queries Fi's `activityFeed` (limit 15) and **merges all Walk segments that overlap our outing window** into a single enrichment. Fi frequently splits a single outing into multiple `Walk` activities separated by `Play`/`Rest` periods (dog sitting, sniffing, running around the yard between trail segments) — the merge stitches them back together.
 
-| Field | Source | Purpose |
-|-------|--------|---------|
-| `fi_walk_start` | `activityFeed → Walk.start` | Fi's actual walk start time |
-| `fi_walk_end` | `activityFeed → Walk.end` | Fi's actual walk end time |
-| `fi_distance_m` | `activityFeed → Walk.distance` | Fi's measured distance (more accurate than GPS point sum) |
-| `fi_walker` | `activityFeed → Walk.presentUser.firstName` | Who Fi detected walking (phone BLE) |
-| `detection_latency_s` | `our started_at - fi_walk_start` | How late our detection was vs Fi's |
+**Merge rule:** select every Walk segment whose `start` falls within `[our_started_at - 5min, our_ended_at + 5min]`, then:
 
-**Safety check**: The enrichment only applies when the Fi walk's start time is within 15 minutes of our detected start. This prevents stale data from a previous walk being stamped onto a new one (e.g., short walks where Fi hasn't updated its feed yet).
+| Merged field | Value |
+|--------------|-------|
+| `fi_walk_start` | earliest Walk `start` |
+| `fi_walk_end` | latest Walk `end` |
+| `fi_distance_m` | sum of segment distances |
+| `fi_walker` | unique non-null `presentUser.firstName` values, joined |
+| `fi_walk_count` | number of Walk segments merged (transparency) |
+| `detection_latency_s` | `our started_at - fi_walk_start` |
 
-**Note**: Fi's `activityFeed` returns only summary data (start, end, distance, walker) — not GPS track points. Route visualization still relies on our own GPS polling.
+**Example (Apr 18, 2026 cabin outing):**
+- Our detection: `13:27:23Z → 14:22:21Z` (55 min, 810m GPS)
+- Fi activityFeed:
+  - Walk 1: `13:25:32 → 13:33:15` (531m, Dylan)
+  - Play: `13:33:15 → 14:17:37` (44 min, no distance — yard time)
+  - Walk 2: `14:17:37 → 14:22:31` (400m)
+- Merged: `fi_walk_start=13:25:32`, `fi_walk_end=14:22:31`, `fi_distance_m=931`, `fi_walker=Dylan`, `fi_walk_count=2`
+
+**Retry strategy:** A background thread re-runs enrichment at 5 / 10 / 20 min after return. Retries are always scheduled (not gated on first-attempt failure) because Fi often emits additional Walk segments after the dog returns — the last stretch of walking back to the door can land minutes later. Retries are idempotent: if the merge output matches what's already stored, no write occurs.
+
+**Safety guard:** Only Walk segments whose `start` falls inside our outing window (±5min) are considered. Walks from other outings in the same feed window (e.g. a short walk Fi finalizes from this morning when we're checking last night's) are ignored.
+
+**Note:** Fi's `activityFeed` returns only summary data (start, end, distance, walker) — not GPS track points. Route visualization still relies on our own GPS polling. `Play` activities don't carry distance, so their movement is not counted in `fi_distance_m` — but because a Play between two Walks is captured in `[fi_walk_start, fi_walk_end]`, the duration is correct.
 
 ### Walker Detection
 
@@ -368,8 +381,8 @@ The dashboard prefers Fi authoritative data when available:
 
 | Field | Primary source | Fallback |
 |-------|---------------|----------|
-| Distance | `fi_distance_m` | `distance_m` (GPS point sum) |
-| Duration | `fi_walk_end - fi_walk_start` | `walk_duration_minutes` from JSONL or `ended_at - started_at` |
+| Distance | `fi_distance_m` (sum across merged Walk segments) | `distance_m` (GPS point sum) |
+| Duration | `fi_walk_end - fi_walk_start` (spans all merged segments, including any Play/Rest between them) | `walk_duration_minutes` from JSONL or `ended_at - started_at` |
 | Walkers | JSONL walkers (ARP detection) | — (`fi_walker` stored but not used for display; Fi BLE only detects one phone) |
 | Start time | `started_at` (our detection time) | — |
 

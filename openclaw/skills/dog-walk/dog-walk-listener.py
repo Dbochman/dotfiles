@@ -775,17 +775,30 @@ def _fetch_fi_walk_path() -> list[dict] | None:
         return None
 
 
-def _fetch_fi_walk_summary() -> dict | None:
-    """Fetch the most recent completed walk from Fi's activityFeed.
+_FI_MERGE_TOLERANCE = timedelta(minutes=5)
 
-    Returns {"fi_start", "fi_end", "fi_distance_m", "fi_walker"} or None.
-    Called after return detection to get authoritative walk timestamps/distance.
+
+def _parse_iso(s: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat((s or "").replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _fetch_fi_walks() -> list[dict] | None:
+    """Fetch recent Walk activities from Fi's activityFeed.
+
+    Returns a list of {"fi_start", "fi_end", "fi_distance_m", "fi_walker"} (newest
+    first) or None on error. The feed mixes Walk/Play/Rest/Travel — we filter to
+    Walk only. Play periods between two Walk activities are common at Cabin when
+    the dog runs around the yard between trail segments; the merge logic in
+    `_merge_fi_walks` stitches adjacent Walks into a single outing.
     """
     try:
         env = os.environ.copy()
         env["PATH"] = f"{OPENCLAW_BIN}:{env.get('PATH', '')}"
         # Use fi-collar to get a fresh session, then query activityFeed directly
-        r = subprocess.run(
+        subprocess.run(
             [f"{OPENCLAW_BIN}/fi-collar", "status"],
             capture_output=True, timeout=15, env=env, text=True,
         )
@@ -793,13 +806,15 @@ def _fetch_fi_walk_summary() -> dict | None:
         config_dir = Path.home() / ".config/fi-collar"
         session_file = config_dir / "session.json"
         if not session_file.exists():
-            log("FI WALK SUMMARY: no session file")
+            log("FI WALKS: no session file")
             return None
         session = json.loads(session_file.read_text())
         cookie = session.get("cookie", "")
 
+        # limit=15 because Play/Rest/Travel interleave with Walk — need headroom
+        # to see both Walks bracketing a long outing
         query = """query { currentUser { userHouseholds { household { pets {
-            activityFeed(limit: 3) { activities {
+            activityFeed(limit: 15) { activities {
                 __typename start end
                 ... on Walk { distance presentUser { firstName } }
             } }
@@ -813,43 +828,105 @@ def _fetch_fi_walk_summary() -> dict | None:
         resp = urllib.request.urlopen(req, timeout=15)
         data = json.loads(resp.read().decode())
         if "errors" in data:
-            log(f"FI WALK SUMMARY: GraphQL error: {data['errors'][0].get('message', '')}")
+            log(f"FI WALKS: GraphQL error: {data['errors'][0].get('message', '')}")
             return None
 
+        walks: list[dict] = []
         for house in data.get("data", {}).get("currentUser", {}).get("userHouseholds", []):
             for pet in house.get("household", {}).get("pets", []):
                 for activity in pet.get("activityFeed", {}).get("activities", []):
                     if activity.get("__typename") == "Walk":
                         walker = (activity.get("presentUser") or {}).get("firstName")
-                        result = {
+                        walks.append({
                             "fi_start": activity["start"],
                             "fi_end": activity["end"],
                             "fi_distance_m": round(activity.get("distance", 0)),
                             "fi_walker": walker,
-                        }
-                        log(f"FI WALK SUMMARY: {result['fi_start']} -> {result['fi_end']} "
-                            f"({result['fi_distance_m']}m, walker: {walker})")
-                        return result
-        log("FI WALK SUMMARY: no walks found in activityFeed")
-        return None
+                        })
+        if not walks:
+            log("FI WALKS: no walks found in activityFeed")
+            return None
+        log(f"FI WALKS: fetched {len(walks)} recent walks")
+        return walks
     except Exception as e:
-        log(f"FI WALK SUMMARY: error: {e}")
+        log(f"FI WALKS: error: {e}")
         return None
 
 
-def _enrich_route_with_fi_summary(fi_summary: dict, *,
-                                   walk_id: str | None = None,
-                                   origin: str | None = None,
-                                   started_at: str | None = None) -> bool:
-    """Enrich a walk's route file with Fi walk summary data.
+def _merge_fi_walks(fi_walks: list[dict], our_start_iso: str, our_end_iso: str | None) -> dict | None:
+    """Pick Fi Walks whose start falls within our outing window and merge them.
+
+    Fi often splits a single outing into multiple Walk activities when the dog
+    pauses long enough to drop to Rest/Play (e.g. sniffing, hanging out in the
+    yard). Each activity has its own distance but the continuous outing is what
+    matters for dashboard display. We merge by:
+      - fi_walk_start  = earliest Fi start
+      - fi_walk_end    = latest Fi end
+      - fi_distance_m  = sum of all segment distances
+      - fi_walker      = unique non-null walkers, joined
+      - fi_walk_count  = number of segments merged (transparency)
+
+    Returns None if no Fi walks fall within the window.
+    """
+    if not fi_walks:
+        return None
+    our_start = _parse_iso(our_start_iso)
+    if not our_start:
+        return None
+    our_end = _parse_iso(our_end_iso) if our_end_iso else None
+
+    window_lo = our_start - _FI_MERGE_TOLERANCE
+    window_hi = (our_end if our_end else our_start) + _FI_MERGE_TOLERANCE
+
+    selected: list[tuple[datetime, datetime, dict]] = []
+    for w in fi_walks:
+        fs = _parse_iso(w.get("fi_start", ""))
+        fe = _parse_iso(w.get("fi_end", ""))
+        if not fs or not fe:
+            continue
+        if window_lo <= fs <= window_hi:
+            selected.append((fs, fe, w))
+
+    if not selected:
+        return None
+
+    selected.sort(key=lambda t: t[0])
+    earliest = selected[0]
+    latest = max(selected, key=lambda t: t[1])
+    total_dist = sum((w.get("fi_distance_m") or 0) for _, _, w in selected)
+
+    seen: set[str] = set()
+    walkers_ordered: list[str] = []
+    for _, _, w in selected:
+        name = w.get("fi_walker")
+        if name and name not in seen:
+            seen.add(name)
+            walkers_ordered.append(name)
+    walker = ", ".join(walkers_ordered) if walkers_ordered else None
+
+    return {
+        "fi_start": earliest[2]["fi_start"],
+        "fi_end": latest[2]["fi_end"],
+        "fi_distance_m": total_dist,
+        "fi_walker": walker,
+        "fi_walk_count": len(selected),
+    }
+
+
+def _enrich_route_with_fi_walks(fi_walks: list[dict] | None, *,
+                                 walk_id: str | None = None,
+                                 origin: str | None = None,
+                                 started_at: str | None = None) -> bool:
+    """Enrich a walk's route file by merging overlapping Fi Walk segments.
 
     If walk_id/origin/started_at are provided, uses those directly (for delayed
     retries after the walk state has been cleared). Otherwise reads from current
     state (original behaviour).
 
-    Returns True if enrichment succeeded, False otherwise.
+    Returns True if enrichment succeeded OR if merged result matches what's
+    already stored (idempotent). False if no Fi walks overlap.
     """
-    if not fi_summary:
+    if not fi_walks:
         return False
 
     if not walk_id:
@@ -868,38 +945,42 @@ def _enrich_route_with_fi_summary(fi_summary: dict, *,
 
     try:
         route = json.loads(path.read_text())
-
-        # Already enriched by a previous attempt — skip
-        if route.get("fi_walk_start"):
-            log(f"FI WALK SUMMARY: route {walk_id} already enriched — skipping")
-            return True
-
-        our_start = datetime.fromisoformat(route.get("started_at", "").replace("Z", "+00:00"))
-        fi_start = datetime.fromisoformat(fi_summary["fi_start"].replace("Z", "+00:00"))
-        fi_end = datetime.fromisoformat(fi_summary["fi_end"].replace("Z", "+00:00"))
-
-        # Verify the Fi walk actually corresponds to this walk:
-        # Our departure must fall within the Fi walk window (fi_start to fi_end)
-        # with 5 min tolerance on each side for detection lag.
-        tolerance = 300  # 5 minutes
-        if not (fi_start - timedelta(seconds=tolerance) <= our_start <= fi_end + timedelta(seconds=tolerance)):
-            log(f"FI WALK SUMMARY: skipping — our start ({route.get('started_at')}) "
-                f"not within Fi walk window {fi_summary['fi_start']}..{fi_summary['fi_end']} "
-                f"(±{tolerance}s tolerance)")
+        merged = _merge_fi_walks(
+            fi_walks,
+            route.get("started_at", ""),
+            route.get("ended_at"),
+        )
+        if not merged:
+            log(f"FI ENRICH: no Fi walks overlap route {walk_id} window "
+                f"({route.get('started_at')}..{route.get('ended_at')})")
             return False
 
-        route["fi_walk_start"] = fi_summary["fi_start"]
-        route["fi_walk_end"] = fi_summary["fi_end"]
-        route["fi_distance_m"] = fi_summary["fi_distance_m"]
-        route["fi_walker"] = fi_summary.get("fi_walker")
-        route["detection_latency_s"] = round((our_start - fi_start).total_seconds())
+        # Idempotent: if merged result matches stored values, nothing to do
+        if (route.get("fi_walk_start") == merged["fi_start"]
+                and route.get("fi_walk_end") == merged["fi_end"]
+                and route.get("fi_distance_m") == merged["fi_distance_m"]):
+            log(f"FI ENRICH: route {walk_id} already has merged data — no change")
+            return True
+
+        our_start = _parse_iso(route.get("started_at", ""))
+        fi_start = _parse_iso(merged["fi_start"])
+        latency_s = round((our_start - fi_start).total_seconds()) if (our_start and fi_start) else 0
+
+        route["fi_walk_start"] = merged["fi_start"]
+        route["fi_walk_end"] = merged["fi_end"]
+        route["fi_distance_m"] = merged["fi_distance_m"]
+        route["fi_walker"] = merged["fi_walker"]
+        route["fi_walk_count"] = merged["fi_walk_count"]
+        route["detection_latency_s"] = latency_s
 
         path.write_text(json.dumps(route, indent=2))
-        log(f"FI WALK SUMMARY: enriched route {walk_id} "
-            f"(latency: {route['detection_latency_s']}s, fi_dist: {fi_summary['fi_distance_m']}m)")
+        log(f"FI ENRICH: enriched route {walk_id} — "
+            f"{merged['fi_walk_count']} segment(s), "
+            f"{merged['fi_start']} -> {merged['fi_end']}, "
+            f"{merged['fi_distance_m']}m, walker={merged['fi_walker']}")
         return True
     except Exception as e:
-        log(f"FI WALK SUMMARY: error enriching route: {e}")
+        log(f"FI ENRICH: error enriching route: {e}")
         return False
 
 
@@ -910,34 +991,29 @@ def _delayed_fi_enrichment_retry(walk_id: str, origin: str, started_at: str) -> 
     """Background thread: retry Fi walk enrichment at increasing delays.
 
     Fi's activityFeed often hasn't finalized the current walk by the time the
-    listener detects return. This retries at 5, 10, and 20 minutes to catch it
-    once Fi has processed the walk.
+    listener detects return, and Fi may emit additional Walk segments in the
+    minutes after return. Retries continue even after initial enrichment
+    succeeds so later segments can be merged in.
     """
     for delay in _FI_ENRICHMENT_RETRY_DELAYS:
         time.sleep(delay)
         try:
-            # Check if already enriched (previous retry or immediate attempt)
             path = _route_path(walk_id, origin, started_at)
-            if path and path.exists():
-                route = json.loads(path.read_text())
-                if route.get("fi_walk_start"):
-                    log(f"FI WALK RETRY: route {walk_id} already enriched — stopping retries")
-                    return
+            if not (path and path.exists()):
+                log(f"FI WALK RETRY: route missing for {walk_id} — stopping retries")
+                return
 
             log(f"FI WALK RETRY: attempting enrichment for {walk_id} (delay={delay}s)")
-            fi_summary = _fetch_fi_walk_summary()
-            if fi_summary:
-                success = _enrich_route_with_fi_summary(
-                    fi_summary, walk_id=walk_id, origin=origin, started_at=started_at)
-                if success:
-                    log(f"FI WALK RETRY: enriched {walk_id} on retry (delay={delay}s)")
-                    return
+            fi_walks = _fetch_fi_walks()
+            if fi_walks:
+                _enrich_route_with_fi_walks(
+                    fi_walks, walk_id=walk_id, origin=origin, started_at=started_at)
             else:
-                log(f"FI WALK RETRY: no Fi walk found for {walk_id} (delay={delay}s)")
+                log(f"FI WALK RETRY: no Fi walks found for {walk_id} (delay={delay}s)")
         except Exception as e:
             log(f"FI WALK RETRY: error on retry for {walk_id} (delay={delay}s): {e}")
 
-    log(f"FI WALK RETRY: exhausted retries for {walk_id} — walk not enriched")
+    log(f"FI WALK RETRY: completed retry cycle for {walk_id}")
 
 
 def _mark_route_car_trip(location: str) -> None:
@@ -1835,17 +1911,19 @@ async def _return_poll_loop(location: str) -> None:
                     _enrich_walk_id = _enrich_dw.get("walk_id")
                     _enrich_origin = _enrich_dw.get("origin_location") or _enrich_dw.get("location")
                     _enrich_started_at = _enrich_dw.get("departed_at")
-                    fi_enriched = False
                     try:
-                        fi_summary = await asyncio.to_thread(_fetch_fi_walk_summary)
-                        if fi_summary:
-                            fi_enriched = await asyncio.to_thread(
-                                _enrich_route_with_fi_summary, fi_summary)
+                        fi_walks = await asyncio.to_thread(_fetch_fi_walks)
+                        if fi_walks:
+                            await asyncio.to_thread(
+                                _enrich_route_with_fi_walks, fi_walks)
                     except Exception as e:
-                        log(f"RETURN MONITOR: Fi walk summary failed (non-fatal): {e}")
+                        log(f"RETURN MONITOR: Fi walk fetch failed (non-fatal): {e}")
 
-                    # If immediate enrichment failed, retry in background at 5/10/20 min
-                    if not fi_enriched and _enrich_walk_id:
+                    # Always schedule retries: Fi may finalize additional Walk
+                    # segments after return (e.g. the last bit of walking back
+                    # to the door). Retries are idempotent — they only update
+                    # the route if new segments merge into a longer window.
+                    if _enrich_walk_id:
                         threading.Thread(
                             target=_delayed_fi_enrichment_retry,
                             args=(_enrich_walk_id, _enrich_origin, _enrich_started_at),

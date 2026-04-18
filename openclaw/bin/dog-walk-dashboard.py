@@ -166,6 +166,7 @@ def _route_summary(route):
         "fi_walk_start": route.get("fi_walk_start"),
         "fi_walk_end": route.get("fi_walk_end"),
         "fi_walker": route.get("fi_walker"),
+        "fi_walk_count": route.get("fi_walk_count"),
         "detection_latency_s": route.get("detection_latency_s"),
         "is_car_trip": route.get("is_car_trip", False),
         "point_count": route.get("point_count", len(route.get("points") or [])),

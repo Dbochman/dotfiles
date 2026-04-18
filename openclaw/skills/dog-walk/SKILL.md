@@ -91,7 +91,7 @@ After departure, the return monitor uses three signals — any one triggers Room
 - 2 minutes after departure, a network scan identifies **who left**
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
 - On return, the full Fi `OngoingWalk` path is fetched (dense polyline) and merged into the route file
-- **Fi walk enrichment** queries `activityFeed` for authoritative walk timestamps and distance. If Fi hasn't finalized the walk yet (common — feed still shows the previous walk), a background thread retries at 5, 10, and 20 minutes. Only applied when the detected departure falls within the Fi walk window (`fi_start` to `fi_end`, ±5min tolerance) — prevents matching wrong walks.
+- **Fi walk enrichment** queries `activityFeed` for authoritative timestamps and distance, then **merges all Walk segments that overlap our outing window** (`[our_started_at - 5min, our_ended_at + 5min]`). Fi splits a single outing into multiple Walks when the dog pauses for Play/Rest (sniffing, yard time); the merge takes the earliest start, latest end, sum of distances, and records `fi_walk_count` for transparency. A background thread retries at 5 / 10 / 20 min after return to catch Walks Fi finalizes late — retries are idempotent and always scheduled so late segments can be merged in.
 - A final Fi GPS point is captured before docking (for route completeness)
 - An iMessage notification is sent on return with walk duration and which signal triggered it
 - Safety fallback: auto-docks after 2 hours if no return detected
