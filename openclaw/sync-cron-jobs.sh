@@ -42,7 +42,7 @@ print(f'Saved {len(data[\"jobs\"])} job definitions to {\"$DOTFILES_JOBS\"} (sta
     # Merge definitions from dotfiles into live file, preserving existing state
     [ -f "$DOTFILES_JOBS" ] || { echo "Error: $DOTFILES_JOBS not found" >&2; exit 1; }
     python3 -c "
-import json, sys, os, shutil
+import json, os, tempfile
 
 dotfiles_path = '$DOTFILES_JOBS'
 live_path = '$LIVE_JOBS'
@@ -64,13 +64,23 @@ for job in new_defs['jobs']:
     if job['id'] in state_by_id:
         job['state'] = state_by_id[job['id']]
 
-# Backup live file before overwriting
-if os.path.exists(live_path):
-    shutil.copy2(live_path, live_path + '.bak')
-
-with open(live_path, 'w') as f:
-    json.dump(new_defs, f, indent=2)
-    f.write('\n')
+# Atomic write: write to sibling tmp, fsync, rename. os.replace is a directory
+# entry swap and doesn't need extra filesystem space, so tight-disk conditions
+# don't silently wedge the sync (which happened 2026-04-14 → 2026-04-18 when
+# the .bak copy_file failed with ENOSPC and the whole sync bailed).
+target_dir = os.path.dirname(live_path) or '.'
+fd, tmp_path = tempfile.mkstemp(prefix='.jobs.', suffix='.tmp', dir=target_dir)
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(new_defs, f, indent=2)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, live_path)
+except Exception:
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
+    raise
 
 preserved = sum(1 for j in new_defs['jobs'] if 'state' in j)
 print(f'Deployed {len(new_defs[\"jobs\"])} jobs to {live_path} ({preserved} with preserved state)')

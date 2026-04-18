@@ -26,6 +26,157 @@ from pathlib import Path
 faulthandler.enable()
 faulthandler.register(signal.SIGUSR1, all_threads=True)
 
+# ---------------------------------------------------------------------------
+# Stderr dedup/rate-limit guard
+# ---------------------------------------------------------------------------
+# Why: a broken FCM connection inside ring_doorbell/firebase_messaging can enter
+# a tight exception loop that writes the same traceback to stderr thousands of
+# times per second. On 2026-04-14 this filled 703GB before the disk was full.
+# Mitigation: wrap stderr so consecutive duplicate lines collapse into a count,
+# and bytes/sec is capped. After a sustained spam window, force-exit so launchd
+# restarts us (KeepAlive=true) with the logfile rotated by the wrapper.
+
+_STDERR_MAX_BPS = 64 * 1024        # 64KB/sec sustained
+_STDERR_SPAM_WINDOW_SEC = 60       # window for spam detection
+_STDERR_SPAM_EXIT_BYTES = 16 * 1024 * 1024  # 16MB in 60s → self-exit
+_STDERR_DEDUP_FLUSH_SEC = 5        # flush summary for suppressed lines every 5s
+
+
+class _DedupStderr:
+    """Stderr wrapper that dedupes consecutive identical lines and rate-limits bytes.
+
+    Installed over FD 2 via os.dup2 so library code (including asyncio's default
+    exception handler) is also throttled. Forces process exit if stderr spam
+    exceeds _STDERR_SPAM_EXIT_BYTES inside _STDERR_SPAM_WINDOW_SEC — launchd
+    will restart us fresh.
+    """
+
+    def __init__(self, real):
+        self._real = real
+        self._lock = threading.Lock()
+        self._last_line = ""
+        self._dup_count = 0
+        self._last_flush = time.monotonic()
+        self._window_bytes = 0
+        self._window_start = time.monotonic()
+
+    def _emit(self, data: str) -> None:
+        try:
+            self._real.write(data)
+            self._real.flush()
+        except Exception:
+            pass
+
+    def _flush_dup(self) -> None:
+        if self._dup_count > 1:
+            self._emit(f"[stderr-dedup] suppressed {self._dup_count - 1} "
+                       f"duplicate lines\n")
+        self._dup_count = 0
+        self._last_flush = time.monotonic()
+
+    def write(self, data):
+        if not data:
+            return 0
+        if isinstance(data, bytes):
+            try:
+                data = data.decode("utf-8", errors="replace")
+            except Exception:
+                data = repr(data)
+        with self._lock:
+            now = time.monotonic()
+            # Spam window accounting → self-exit on sustained runaway
+            if now - self._window_start > _STDERR_SPAM_WINDOW_SEC:
+                self._window_start = now
+                self._window_bytes = 0
+            self._window_bytes += len(data)
+            if self._window_bytes > _STDERR_SPAM_EXIT_BYTES:
+                self._emit(
+                    f"[stderr-dedup] FATAL: stderr spam {self._window_bytes}B "
+                    f"in {_STDERR_SPAM_WINDOW_SEC}s — forcing exit so launchd "
+                    f"restarts us\n"
+                )
+                os._exit(1)
+
+            # Rate-limit: if a burst exceeds the sustained cap, drop silently
+            if self._window_bytes > _STDERR_MAX_BPS * _STDERR_SPAM_WINDOW_SEC:
+                return len(data)
+
+            for line in data.splitlines(keepends=True):
+                if line == self._last_line:
+                    self._dup_count += 1
+                    # Flush a running count every few seconds so log isn't silent
+                    if now - self._last_flush > _STDERR_DEDUP_FLUSH_SEC:
+                        self._flush_dup()
+                        self._emit(line)
+                        self._last_line = line
+                        self._dup_count = 1
+                else:
+                    if self._dup_count > 1:
+                        self._flush_dup()
+                    self._emit(line)
+                    self._last_line = line
+                    self._dup_count = 1
+        return len(data)
+
+    def flush(self):
+        with self._lock:
+            if self._dup_count > 1:
+                self._flush_dup()
+            try:
+                self._real.flush()
+            except Exception:
+                pass
+
+    def fileno(self):
+        return self._real.fileno()
+
+    def isatty(self):
+        try:
+            return self._real.isatty()
+        except Exception:
+            return False
+
+
+def _install_stderr_guard() -> None:
+    """Route FD 2 through a pipe into a dedup/rate-limit pump thread.
+
+    dup2 onto FD 2 guarantees even C-extension writes (os.write(2, ...)) are
+    caught — Python-level sys.stderr reassignment alone wouldn't cover them.
+    """
+    real_stderr_fd = os.dup(2)
+    real_stderr = os.fdopen(real_stderr_fd, "w", buffering=1, encoding="utf-8",
+                            errors="replace")
+    dedup = _DedupStderr(real_stderr)
+
+    r_fd, w_fd = os.pipe()
+    os.dup2(w_fd, 2)
+    os.close(w_fd)
+    # Keep sys.stderr pointing at the same FD (now the pipe write end)
+    sys.stderr = os.fdopen(2, "w", buffering=1, encoding="utf-8",
+                           errors="replace", closefd=False)
+
+    def pump():
+        with os.fdopen(r_fd, "rb", buffering=0) as reader:
+            buf = b""
+            while True:
+                chunk = reader.read(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    dedup.write(line.decode("utf-8", errors="replace") + "\n")
+                if len(buf) > 65536:
+                    # oversized line without newline — flush what we have
+                    dedup.write(buf.decode("utf-8", errors="replace"))
+                    buf = b""
+
+    t = threading.Thread(target=pump, name="stderr-dedup-pump", daemon=True)
+    t.start()
+
+
+_install_stderr_guard()
+
 # Use venv packages (Ring doorbell library for FCM push events)
 VENV_SITE = Path.home() / ".openclaw/ring/venv/lib"
 for p in VENV_SITE.glob("python*/site-packages"):
@@ -2250,12 +2401,18 @@ async def main() -> None:
     asyncio.create_task(_inbox_poll_loop())
     asyncio.create_task(_fi_departure_poll_loop())
 
-    # Watchdog — restart listener if FCM push receiver dies
+    # Watchdog — restart listener if FCM push receiver dies.
+    # Poll every 60s with bounded exponential backoff on consecutive restart
+    # failures to avoid hammering Ring/FCM when the service is down.
     try:
+        restart_failures = 0
+        last_heartbeat = 0.0
         while True:
-            await asyncio.sleep(300)
+            await asyncio.sleep(60)
             if not listener.started:
-                log("WARNING: Event listener died — attempting restart...")
+                backoff = min(60 * (2 ** restart_failures), 900)
+                log(f"WARNING: Event listener died — attempting restart "
+                    f"(backoff after {restart_failures} failures: {backoff}s)...")
                 try:
                     fcm_creds = load_fcm_credentials()
                     listener = RingEventListener(ring, credentials=fcm_creds,
@@ -2265,12 +2422,22 @@ async def main() -> None:
                     restarted = await listener.start(timeout=30)
                     if restarted:
                         log("Event listener restarted successfully")
+                        restart_failures = 0
                     else:
-                        log("ERROR: Event listener restart failed — will retry in 5 min")
+                        restart_failures += 1
+                        log(f"ERROR: Event listener restart failed "
+                            f"(#{restart_failures}) — waiting {backoff}s")
+                        await asyncio.sleep(backoff)
                 except Exception as e:
-                    log(f"ERROR: Event listener restart exception: {e} — will retry in 5 min")
-            elif int(time.time()) % 3600 < 300:
-                log("Heartbeat — listener still running")
+                    restart_failures += 1
+                    log(f"ERROR: Event listener restart exception: {e} "
+                        f"(#{restart_failures}) — waiting {backoff}s")
+                    await asyncio.sleep(backoff)
+            else:
+                now = time.monotonic()
+                if now - last_heartbeat > 3600:
+                    log("Heartbeat — listener still running")
+                    last_heartbeat = now
     except asyncio.CancelledError:
         pass
     finally:
