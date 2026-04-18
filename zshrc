@@ -33,3 +33,8 @@ export PATH="$HOME/.npm-global/bin:$PATH"
 
 # API keys (local secrets file, chmod 600)
 [[ -f "$HOME/.secrets" ]] && source "$HOME/.secrets"
+
+unset ANTHROPIC_API_KEY
+unset ANTHROPIC_BASE_URL
+unset ANTHROPIC_MODEL
+unset ANTHROPIC_SMALL_FAST_MODEL
