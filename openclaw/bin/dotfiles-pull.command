@@ -90,6 +90,27 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) scripts: deployed $SCRIPTS_DEPLOYED to $BIN_DST" >> "$LOG"
 
+# Symlink top-level bin/ scripts into /opt/homebrew/bin/ so they track dotfiles HEAD.
+# Matches the pattern set by install.sh for hue/nest/speaker — replaces any stale
+# regular-file copies so a fix committed to bin/<cli> propagates on the next pull.
+TOP_BIN_SRC="$REPO/bin"
+TOP_BIN_DST="/opt/homebrew/bin"
+TOP_BIN_LINKED=0
+if [ -d "$TOP_BIN_SRC" ]; then
+  for script in "$TOP_BIN_SRC"/*; do
+    [ -f "$script" ] || continue
+    [ -x "$script" ] || continue
+    fname=$(basename "$script")
+    # Skip if already pointing at the right place
+    if [ -L "$TOP_BIN_DST/$fname" ] && [ "$(readlink "$TOP_BIN_DST/$fname")" = "$script" ]; then
+      continue
+    fi
+    ln -sfn "$script" "$TOP_BIN_DST/$fname"
+    TOP_BIN_LINKED=$((TOP_BIN_LINKED + 1))
+  done
+fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) top-bin: linked $TOP_BIN_LINKED to $TOP_BIN_DST" >> "$LOG"
+
 # Smoke test — verify deployed wrappers resolve on PATH
 export PATH="$BIN_DST:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
 SMOKE_FAIL=0
