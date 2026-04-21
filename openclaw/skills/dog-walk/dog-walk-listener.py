@@ -266,6 +266,11 @@ _ROOMBA_COOLDOWN = 7200  # 2 hours
 _return_poll_task: asyncio.Task | None = None
 _return_monitor_active: bool = False
 _ring_motion_during_walk: bool = False
+# Set when return monitor exits so the Fi departure poll reseeds its transition
+# trackers from the current Fi state instead of firing on a stale pre-walk baseline
+# (otherwise activity=Walk / connection!=Base lingering from the just-ended walk
+# reads as a phantom Rest→Walk + base-disconnect combo, creating a ghost walk).
+_reset_departure_trackers: bool = False
 
 # Departure combo trigger: Ring motion timestamps per doorbell location
 # Used by Fi departure loop to fast-trigger when both Ring motion + Fi disconnect occur
@@ -1754,7 +1759,7 @@ async def _return_poll_loop(location: str) -> None:
 
     Checks every 60 seconds. Safety timeout: 2 hours.
     """
-    global _return_monitor_active, _ring_motion_during_walk
+    global _return_monitor_active, _ring_motion_during_walk, _reset_departure_trackers
     POLL_INTERVAL = 30  # faster polling for better route tracking
     MAX_DURATION = 7200
     MIN_WALK_FOR_WIFI = 600  # ignore WiFi returns for first 10 min (phones linger at door)
@@ -1986,6 +1991,7 @@ async def _return_poll_loop(location: str) -> None:
     finally:
         _return_monitor_active = False
         _ring_motion_during_walk = False
+        _reset_departure_trackers = True
         # Always restore normal GPS mode when walk ends
         await _set_fi_collar_mode_async("NORMAL")
         log("RETURN MONITOR: Ended — cleared _return_monitor_active flag, collar reset to NORMAL")
@@ -2023,6 +2029,7 @@ async def _fi_departure_poll_loop() -> None:
     - Only during walk hours
     - Only when no walk is already active
     """
+    global _reset_departure_trackers
     FI_POLL_INTERVAL = 180  # 3 minutes
     FI_FAST_POLL_INTERVAL = 30  # faster polling after base disconnect
     CONFIRM_NORMAL = 180  # normal: 2 readings 3 min apart
@@ -2084,6 +2091,17 @@ async def _fi_departure_poll_loop() -> None:
             if not fi_result:
                 continue
 
+            # First poll after return monitor exits: reseed transition trackers
+            # from current Fi state and skip this iteration's transition detection.
+            # Prevents a phantom Rest→Walk + base-disconnect combo when the just-
+            # ended walk's activity/connection values haven't cleared yet.
+            if _reset_departure_trackers:
+                last_connection = fi_result.get("connection", "") or last_connection
+                last_activity = fi_result.get("activity", "") or last_activity
+                _reset_departure_trackers = False
+                log(f"FI DEPARTURE: Reseeded trackers after return (connection={last_connection}, activity={last_activity})")
+                continue
+
             # Track base station connection transitions
             connection = fi_result.get("connection", "")
             base_just_disconnected = False
@@ -2108,39 +2126,53 @@ async def _fi_departure_poll_loop() -> None:
                 if combo_location and combo_location in _ring_departure_motion:
                     ring_age = time.monotonic() - _ring_departure_motion[combo_location]
                     if ring_age <= _RING_DEPARTURE_WINDOW:
-                        log(f"FI DEPARTURE: COMBO TRIGGER — Ring motion {int(ring_age)}s ago + Fi base disconnect at {combo_location}")
-                        del _ring_departure_motion[combo_location]
-                        reset_candidate("combo_trigger")
+                        # Geofence guard: require Potato actually outside before trusting the combo.
+                        # Avoids phantom departures when Fi reports a brief disconnect while the dog is home.
+                        combo_dist = _distance_to_location(fi_result, combo_location)
+                        combo_radius = _FI_LOCATIONS.get(combo_location, {}).get("radius_m", 0)
+                        if combo_dist is not None and combo_dist <= combo_radius:
+                            log(f"FI DEPARTURE: COMBO SUPPRESSED (Ring) — Potato {combo_dist}m from {combo_location} (inside geofence)")
+                        else:
+                            log(f"FI DEPARTURE: COMBO TRIGGER — Ring motion {int(ring_age)}s ago + Fi base disconnect at {combo_location}")
+                            del _ring_departure_motion[combo_location]
+                            reset_candidate("combo_trigger")
 
-                        dist = _distance_to_location(fi_result, combo_location) or 0
-                        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                            dist = _distance_to_location(fi_result, combo_location) or 0
+                            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-                        await _set_fi_collar_mode_async("LOST_DOG")
-                        await _send_imessage_async(
-                            f"\U0001f9f9 Potato left {combo_location} (Ring + Fi combo: base disconnected) — starting Roombas!"
-                        )
-                        roomba_result = await _run_roomba_command_async(combo_location, "start")
-                        await _update_state_dog_walk_async(
-                            combo_location,
-                            "departure",
-                            people=0,
-                            dogs=1,
-                            roomba_result=roomba_result,
-                            fi_result=fi_result,
-                        )
-                        await _append_route_point_async(fi_result)
-                        start_return_monitor(combo_location)
-                        continue
+                            await _set_fi_collar_mode_async("LOST_DOG")
+                            await _send_imessage_async(
+                                f"\U0001f9f9 Potato left {combo_location} (Ring + Fi combo: base disconnected) — starting Roombas!"
+                            )
+                            roomba_result = await _run_roomba_command_async(combo_location, "start")
+                            await _update_state_dog_walk_async(
+                                combo_location,
+                                "departure",
+                                people=0,
+                                dogs=1,
+                                roomba_result=roomba_result,
+                                fi_result=fi_result,
+                            )
+                            await _append_route_point_async(fi_result)
+                            start_return_monitor(combo_location)
+                            continue
 
             # --- Activity Walk + base disconnect combo trigger ---
             # Fi says the dog is walking AND base is disconnected — strong departure signal
             # even without Ring motion (e.g., left through back door at cabin).
             if activity_just_walked and last_connection != "Base" and home_anchor:
                 combo_location = home_anchor
+                # Geofence guard: require Potato actually outside. Fi's activity feed lags
+                # after a real return, so a Rest→Walk flip can fire while the dog is home.
+                combo_dist = _distance_to_location(fi_result, combo_location)
+                combo_radius = _FI_LOCATIONS.get(combo_location, {}).get("radius_m", 0)
+                if combo_dist is not None and combo_dist <= combo_radius:
+                    log(f"FI DEPARTURE: COMBO SUPPRESSED (activity) — Potato {combo_dist}m from {combo_location} (inside geofence)")
+                    continue
                 log(f"FI DEPARTURE: COMBO TRIGGER — activity Rest→Walk + base disconnected at {combo_location}")
                 reset_candidate("activity_walk_combo")
 
-                dist = _distance_to_location(fi_result, combo_location) or 0
+                dist = combo_dist or 0
                 now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
                 await _set_fi_collar_mode_async("LOST_DOG")

@@ -180,8 +180,10 @@ Before confirming departure, the system validates:
 2. **No active walk**: `_return_monitor_active` must be False
 3. **GPS freshness**: `lastReport` must be < 10 minutes old
 4. **Base-station echo filter**: If pet coordinates match a home location within 5m AND connection is not `"Base"`, the reading is discarded. This handles the Fi API lag during Rest→Walk transitions where it returns base station coords as pet position.
-5. **Snooze**: Roomba start is skipped if snoozed (but walk tracking still happens)
-6. **Cooldown**: Roomba start has a 2-hour cooldown per location
+5. **Geofence guard on combo triggers** (2026-04-21): Both combo triggers (Ring+disconnect and activity+disconnect) require Potato's Fi GPS to be outside the home geofence radius before firing. Fi's activity feed and base-station connection can lag after a real return, so without this guard a Rest→Walk flip or User→Base→User blip while the dog is home reads as a new departure.
+6. **Post-return tracker reseed** (2026-04-21): When return monitor exits, `_reset_departure_trackers` is set; the next Fi poll reseeds `last_connection` / `last_activity` from current Fi state and skips transition detection for that iteration. Prevents a phantom `Rest→Walk + base-disconnect` combo when the just-ended walk's values haven't cleared yet.
+7. **Snooze**: Roomba start is skipped if snoozed (but walk tracking still happens)
+8. **Cooldown**: Roomba start has a 2-hour cooldown per location
 
 ---
 
