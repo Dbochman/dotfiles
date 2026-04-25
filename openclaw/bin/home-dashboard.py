@@ -319,18 +319,36 @@ def collect_status_cached_fast():
     return payload
 
 
+def _build_hue_command(bridge_flag, action, args):
+    room = args["room"]
+    if room == "all":
+        if action == "on":
+            return ["hue", bridge_flag, "all-on"]
+        if action == "off":
+            return ["hue", bridge_flag, "all-off"]
+    if action == "on":
+        return ["hue", bridge_flag, "on", room] + ([str(args["brightness"])] if "brightness" in args else [])
+    if action == "off":
+        return ["hue", bridge_flag, "off", room]
+    if action == "bri":
+        return ["hue", bridge_flag, "bri", room, str(args["brightness"])]
+    if action == "color":
+        return ["hue", bridge_flag, "color", room, args["color"]]
+    raise KeyError("action")
+
+
 COMMANDS = {
     "hue_crosstown": {
-        "on": lambda a: ["hue", "--crosstown", "on", a["room"]] + ([str(a["brightness"])] if "brightness" in a else []),
-        "off": lambda a: ["hue", "--crosstown", "off", a["room"]],
-        "bri": lambda a: ["hue", "--crosstown", "bri", a["room"], str(a["brightness"])],
-        "color": lambda a: ["hue", "--crosstown", "color", a["room"], a["color"]],
+        "on": lambda a: _build_hue_command("--crosstown", "on", a),
+        "off": lambda a: _build_hue_command("--crosstown", "off", a),
+        "bri": lambda a: _build_hue_command("--crosstown", "bri", a),
+        "color": lambda a: _build_hue_command("--crosstown", "color", a),
     },
     "hue_cabin": {
-        "on": lambda a: ["hue", "--cabin", "on", a["room"]] + ([str(a["brightness"])] if "brightness" in a else []),
-        "off": lambda a: ["hue", "--cabin", "off", a["room"]],
-        "bri": lambda a: ["hue", "--cabin", "bri", a["room"], str(a["brightness"])],
-        "color": lambda a: ["hue", "--cabin", "color", a["room"], a["color"]],
+        "on": lambda a: _build_hue_command("--cabin", "on", a),
+        "off": lambda a: _build_hue_command("--cabin", "off", a),
+        "bri": lambda a: _build_hue_command("--cabin", "bri", a),
+        "color": lambda a: _build_hue_command("--cabin", "color", a),
     },
     "nest": {
         "set": lambda a: ["nest", "set", a["room"], str(a["temp"])],
@@ -619,7 +637,9 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .controls { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
 .controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
 .controls-grid input, .controls-grid select { width: 100%; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); padding: 10px 12px; font: inherit; }
+.controls-grid input:disabled, .controls-grid select:disabled { opacity: 0.5; cursor: not-allowed; }
 .controls-grid select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M2 4l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; padding-right: 32px; cursor: pointer; }
+.controls-grid select:disabled { background-image: none; }
 .controls-grid select option { background: var(--surface); color: var(--text); padding: 8px; }
 .command-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .command-row button { background: transparent; }
@@ -675,6 +695,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
         <div class="controls">
           <form id="hue-crosstown-form" class="controls-grid">
             <select name="room">
+              <option value="all">All Lights</option>
               <option value="entryway">Entryway</option>
               <option value="kitchen">Kitchen</option>
               <option value="bedroom" selected>Bedroom</option>
@@ -720,6 +741,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
         <div class="controls">
           <form id="hue-cabin-form" class="controls-grid">
             <select name="room">
+              <option value="all">All Lights</option>
               <option value="kitchen">Kitchen</option>
               <option value="living" selected>Living</option>
               <option value="bathroom">Bathroom</option>
@@ -1843,6 +1865,35 @@ async function postCommand(button) {
   }
 }
 
+function updateHueFormState(formId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const room = form.querySelector('[name="room"]');
+  const brightness = form.querySelector('[name="brightness"]');
+  const color = form.querySelector('[name="color"]');
+  const disableExtras = room && room.value === 'all';
+  if (brightness) {
+    brightness.disabled = disableExtras;
+    if (disableExtras) brightness.value = '';
+  }
+  if (color) {
+    color.disabled = disableExtras;
+    if (disableExtras) color.value = '';
+  }
+}
+
+function initHueFormState() {
+  ['hue-crosstown-form', 'hue-cabin-form'].forEach((formId) => {
+    updateHueFormState(formId);
+    const form = document.getElementById(formId);
+    if (!form) return;
+    const room = form.querySelector('[name="room"]');
+    if (room) {
+      room.addEventListener('change', () => updateHueFormState(formId));
+    }
+  });
+}
+
 document.getElementById('locationSelector').addEventListener('click', (event) => {
   const button = event.target.closest('[data-location-filter]');
   if (!button) return;
@@ -1887,6 +1938,7 @@ function loadCameraSnap(name, containerId) {
 // Try to load existing snapshots on page load
 loadCameraSnap('kitchen', 'nestCameraContent');
 loadCameraSnap('ring-crosstown', 'ringSnapContent');
+initHueFormState();
 
 fetchStatus();
 setInterval(() => fetchStatus(), 5 * 60 * 1000);
