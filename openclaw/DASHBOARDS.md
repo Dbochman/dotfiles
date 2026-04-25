@@ -140,7 +140,7 @@ Visualizes dog walk departures, return signal detection, route maps, and the Fi 
 
 ## Roomba Dashboard
 
-**Port 8553**
+**Port 8553** · [Full spec](ROOMBA-DASHBOARD.md)
 
 Roomba status, snooze controls, and run history calendar heatmap for both locations.
 
