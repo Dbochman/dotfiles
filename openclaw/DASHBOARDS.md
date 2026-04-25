@@ -217,7 +217,7 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 
 ## Home Control Plane Dashboard
 
-**Port 8558**
+**Port 8558** · [Full spec](HOME-CONTROL-PLANE-DASHBOARD.md)
 
 Unified control plane for all smart home devices across both locations. Single-pane-of-glass for monitoring status and issuing commands to 18 device categories, organized into five collapsible sections.
 
@@ -281,8 +281,8 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 
 | Device | Room/Device Selector | Extra Controls |
 |--------|---------------------|----------------|
-| Hue Crosstown | 9 rooms dropdown | Brightness, Color (warm/cool/daylight/red/blue/green/purple/orange/pink) |
-| Hue Cabin | 8 rooms dropdown | Brightness, Color |
+| Hue Crosstown | 9 rooms + **All Lights** dropdown | Brightness, Color (warm/cool/daylight/red/blue/green/purple/orange/pink). In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle |
+| Hue Cabin | 8 rooms + **All Lights** dropdown | Brightness, Color. In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle |
 | Nest | 3 rooms dropdown | Temp °F, Mode (HEAT/OFF), Eco on/off |
 | Cielo | 4 devices dropdown | Temp °F, Mode (cool/heat/auto/dry/fan) |
 | Eight Sleep | Side (Dylan/Julia) | Level (-100 to +100), On / Off |
