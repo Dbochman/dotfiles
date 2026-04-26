@@ -2,7 +2,7 @@
 
 ## Status: v1.0 (2026-03-14)
 
-Python HTTP server serving 6 HTML dashboard pages with 26 JSON API endpoints backed by SQLite. Runs at port 8585 on Mac Mini, LAN access via `http://dylans-mac-mini:8585/`.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 29 JSON API endpoints backed by SQLite. Runs at port 8585 on Mac Mini, LAN access via `http://dylans-mac-mini:8585/`.
 
 ---
 
@@ -46,7 +46,7 @@ Mac Mini (dylans-mac-mini)
 | `/mortgage` | Mortgage | Amortization, payment history |
 | `/expenses` | Expenses | Category breakdown, trends, top merchants |
 
-26 JSON API endpoints under `/api/` — see `serve_dashboard.py` for full reference.
+29 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
 
 ---
 
