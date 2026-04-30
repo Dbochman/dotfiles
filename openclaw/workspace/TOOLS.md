@@ -87,7 +87,7 @@ cp /tmp/screenshot.png ~/.openclaw/workspace/tmp/screenshot.png
 
 ## GWS (Google Workspace CLI)
 
-CLI at `/opt/homebrew/bin/gws` (v0.4.4, Rust binary). Gmail, Calendar, Drive, Tasks.
+CLI at `/opt/homebrew/bin/gws` (**pinned at v0.4.4**, Rust binary). Gmail, Calendar, Drive, Tasks. Do NOT bump — 0.22.x is a breaking redesign that drops `--account` in favor of per-account `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` dirs. See `openclaw/plans/gws-0.22-migration.md` for the full migration plan before upgrading.
 
 - Command pattern: `gws <service> <resource> <method> [--params '<JSON>'] [--json '<JSON>'] [--account <email>]`
 - Credentials: AES-256-GCM encrypted at `~/.config/gws/`
