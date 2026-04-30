@@ -394,10 +394,10 @@ case "$LOCATION" in
     result=$(scan_crosstown)
     echo "$result" > "${STATE_DIR}/crosstown-scan.json"
     log "Crosstown scan: $(echo "$result" | tr -d '\n' | head -c 300)"
-    # Push state to Mac Mini via Tailscale
-    echo "$result" | $TAILSCALE file cp - dylans-mac-mini: 2>/dev/null && \
+    # Push state to Mac Mini via Tailscale; capture stderr so failures don't go silent
+    push_err=$(echo "$result" | $TAILSCALE file cp - dylans-mac-mini: 2>&1 >/dev/null) && \
       log "Pushed crosstown state to Mac Mini via Tailscale" || \
-      log "WARN: Failed to push crosstown state to Mac Mini"
+      log "WARN: Failed to push crosstown state to Mac Mini: ${push_err:-unknown error}"
     echo "$result"
     ;;
   evaluate)

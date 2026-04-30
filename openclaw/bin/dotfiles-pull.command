@@ -184,6 +184,37 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
       WS_SCRIPTS_DEPLOYED=$((WS_SCRIPTS_DEPLOYED + 1))
     done
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed $WS_SCRIPTS_DEPLOYED scripts to $SCRIPTS_DST" >> "$LOG"
+
+    # Sync scripts the Crosstown MBP runs (it has no dotfiles auto-pull of
+    # its own; without this, scripts on MBP go stale relative to dotfiles).
+    # The Mini owns the dedicated SSH key, so existence of the key implies
+    # we're on the Mini and the MBP is the intended target.
+    MBP_SSH_KEY="$HOME/.ssh/id_mini_to_mbp"
+    MBP_HOST="dylans-macbook-pro"
+    MBP_SCRIPTS=(presence-detect.sh)
+    if [ -f "$MBP_SSH_KEY" ]; then
+      MBP_SYNC_OK=0
+      MBP_SYNC_TOTAL=0
+      MBP_SYNC_ERR=""
+      for script in "${MBP_SCRIPTS[@]}"; do
+        src="$SCRIPTS_SRC/$script"
+        [ -f "$src" ] || continue
+        MBP_SYNC_TOTAL=$((MBP_SYNC_TOTAL + 1))
+        if scp_err=$(scp -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+                         -o StrictHostKeyChecking=accept-new \
+                         -o ConnectTimeout=10 -q \
+                         "$src" "$MBP_HOST:.openclaw/workspace/scripts/$script" 2>&1); then
+          MBP_SYNC_OK=$((MBP_SYNC_OK + 1))
+        else
+          MBP_SYNC_ERR="$scp_err"
+        fi
+      done
+      if [ "$MBP_SYNC_OK" -eq "$MBP_SYNC_TOTAL" ]; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL scripts to $MBP_HOST" >> "$LOG"
+      else
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: WARN synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL scripts to $MBP_HOST: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
+      fi
+    fi
   fi
 fi
 
