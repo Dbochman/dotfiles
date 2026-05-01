@@ -625,12 +625,99 @@ Commands:
   dashboard start|stop      Start/stop dashboard LaunchAgent
   dashboard restart|status  Restart or check dashboard status
   raw                       Raw JSON device dump
+  reauth                    Re-run Google Device Access OAuth (e.g. to add a new camera)
   help                      Show this help
 
 Room names are fuzzy-matched (e.g. "bed" matches "Bedroom").
 History is stored in ~/.openclaw/nest-history/ as daily JSONL files.
 Weather data from Open-Meteo. Location: ~/.openclaw/nest-location.conf
 HELP
+}
+
+cmd_reauth() {
+  # Re-run Google Device Access OAuth consent to add newly-paired Nest devices.
+  # Required whenever a device is added in the Google Home app after initial setup —
+  # SDM only exposes devices that were ticked on the consent screen at grant time.
+  local client_id client_secret project_id redirect_uri input code resp
+  local refresh_token access_token
+
+  client_id=$(_cached_op_read "clientID")
+  client_secret=$(_cached_op_read "client_secret")
+  project_id=$(_cached_op_read "project_id")
+  redirect_uri="${NEST_REAUTH_REDIRECT_URI:-https://www.google.com}"
+
+  if [[ -z "$client_id" || -z "$project_id" || -z "$client_secret" ]]; then
+    echo "Missing client_id, client_secret, or project_id from 1Password cache" >&2
+    echo "Cache dir: $CACHE_DIR" >&2
+    exit 1
+  fi
+
+  cat <<EOF
+1) Open this URL in a browser. On the consent screen, tick EVERY device you want
+   SDM to see — including ones already authorized AND any newly-added ones.
+   Anything left unticked will become invisible to the API.
+
+   https://nestservices.google.com/partnerconnections/${project_id}/auth?redirect_uri=${redirect_uri}&access_type=offline&prompt=consent&client_id=${client_id}&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fsdm.service
+
+2) After consenting, the browser will redirect to a URL like:
+     ${redirect_uri}/?code=<LONG_CODE>&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fsdm.service
+
+3) Paste the full redirect URL (or just the code= value) below.
+
+EOF
+
+  printf "redirect URL or code: "
+  read -r input
+
+  # Extract code from full URL or accept bare code
+  if [[ "$input" == *"code="* ]]; then
+    code="${input#*code=}"
+    code="${code%%&*}"
+  else
+    code="$input"
+  fi
+
+  if [[ -z "$code" ]]; then
+    echo "No code provided" >&2
+    exit 1
+  fi
+
+  echo "Exchanging code for tokens..."
+  resp=$(curl -s -X POST "https://www.googleapis.com/oauth2/v4/token" \
+    -d "client_id=${client_id}" \
+    -d "client_secret=${client_secret}" \
+    -d "code=${code}" \
+    -d "grant_type=authorization_code" \
+    --data-urlencode "redirect_uri=${redirect_uri}")
+
+  refresh_token=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))" 2>/dev/null)
+  access_token=$(echo "$resp" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null)
+
+  if [[ -z "$refresh_token" ]]; then
+    echo "Failed to obtain refresh_token. Response from Google:" >&2
+    echo "$resp" >&2
+    exit 1
+  fi
+
+  mkdir -p "$CACHE_DIR"
+  echo "$refresh_token" > "$CACHE_DIR/refresh_token"
+  echo "$access_token" > "$CACHE_DIR/access_token"
+  chmod 600 "$CACHE_DIR/refresh_token" "$CACHE_DIR/access_token"
+
+  echo "✓ New refresh_token + access_token saved to $CACHE_DIR"
+  echo "  (Update 1Password 'Google Nest' item's refresh_token field if you want"
+  echo "   it to survive a cache wipe — current cache TTL is 1 year.)"
+  echo
+  echo "Visible devices now:"
+  _api GET /devices | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for d in data.get('devices', []):
+    t = d['type'].split('.')[-1]
+    name = d['parentRelations'][0].get('displayName') if d.get('parentRelations') else '?'
+    custom = d['traits'].get('sdm.devices.traits.Info', {}).get('customName') or ''
+    print(f'  {t:14}  {name:20}  {custom}')
+"
 }
 
 cmd_camera_snap() {
@@ -691,6 +778,7 @@ case "${1:-help}" in
   history)          cmd_history "${2:-24}" "${3:-}" ;;
   dashboard)        cmd_dashboard "${2:-open}" ;;
   raw)              cmd_raw ;;
+  reauth)           cmd_reauth ;;
   help|--help|-h)   cmd_help ;;
   *)                echo "Unknown command: $1. Run 'nest help'." >&2; exit 1 ;;
 esac

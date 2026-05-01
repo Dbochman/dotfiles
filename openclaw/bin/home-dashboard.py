@@ -931,25 +931,44 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
         </div>
       </article>
 
-      <article class="card" data-location="cabin">
+      <article class="card" data-location="crosstown">
         <div class="card-header">
           <div>
             <div class="eyebrow">Camera</div>
-            <h2>Nest Camera</h2>
+            <h2>Nest — Kitchen</h2>
           </div>
-          <span class="location-pill">Cabin</span>
+          <span class="location-pill">Crosstown</span>
         </div>
-        <div id="nestCameraContent" class="content">
+        <div id="nestKitchenContent" class="content">
           <div class="muted">No snapshot yet</div>
         </div>
         <div class="controls">
-          <form id="nest-camera-form" class="controls-grid">
-            <select name="room">
-              <option value="kitchen" selected>Kitchen</option>
-            </select>
+          <form id="nest-kitchen-form" class="controls-grid">
+            <input type="hidden" name="room" value="kitchen">
           </form>
           <div class="command-row">
-            <button type="button" id="cameraSnapBtn" data-command data-device="nest_camera" data-action="snap" data-form="nest-camera-form" data-fields="room">Take Snapshot</button>
+            <button type="button" data-command data-device="nest_camera" data-action="snap" data-form="nest-kitchen-form" data-fields="room">Take Snapshot</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Camera</div>
+            <h2>Nest — Laundry</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
+        </div>
+        <div id="nestLaundryContent" class="content">
+          <div class="muted">No snapshot yet</div>
+        </div>
+        <div class="controls">
+          <form id="nest-laundry-form" class="controls-grid">
+            <input type="hidden" name="room" value="laundry">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="nest_camera" data-action="snap" data-form="nest-laundry-form" data-fields="room">Take Snapshot</button>
           </div>
         </div>
       </article>
@@ -1853,7 +1872,9 @@ async function postCommand(button) {
     }
     showFeedback(`${device} ${action} succeeded`, 'success', button);
     if (device === 'nest_camera' && action === 'snap') {
-      loadCameraSnap(args.room || 'kitchen', 'nestCameraContent');
+      const room = args.room || 'kitchen';
+      const containerId = 'nest' + room.charAt(0).toUpperCase() + room.slice(1) + 'Content';
+      loadCameraSnap(room, containerId);
     } else if (device === 'ring_camera' && action === 'snap') {
       loadCameraSnap('ring-' + (args.doorbell || 'crosstown'), 'ringSnapContent');
     } else {
@@ -1936,7 +1957,8 @@ function loadCameraSnap(name, containerId) {
 }
 
 // Try to load existing snapshots on page load
-loadCameraSnap('kitchen', 'nestCameraContent');
+loadCameraSnap('kitchen', 'nestKitchenContent');
+loadCameraSnap('laundry', 'nestLaundryContent');
 loadCameraSnap('ring-crosstown', 'ringSnapContent');
 initHueFormState();
 
