@@ -467,6 +467,20 @@ case "$ACTION" in
     log "STALL DETECTED: ${REASON}"
     log "ACTION: Restarting BlueBubbles..."
 
+    # Record lastRestart BEFORE doing the work so it's persisted even if
+    # the script is killed mid-restart or a later OK-path run does a stale
+    # read-write that overwrites the post-restart write at end of this block.
+    # The cooldown check reads this field; recording at decision-time also
+    # prevents rapid back-to-back restart attempts on flaky processes.
+    $NODE -e "
+const fs = require('fs');
+const stateFile = '$STATE_FILE';
+let prev = {};
+try { prev = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
+prev.lastRestart = Date.now();
+fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
+" 2>/dev/null
+
     # Graceful quit
     osascript -e 'tell application "BlueBubbles" to quit' 2>/dev/null || true
     sleep 5
@@ -492,8 +506,12 @@ case "$ACTION" in
     else
       log "WARN: Gateway restart failed — webhook may be stale"
     fi
+    # (lastRestart already written at decision-time above)
+    ;;
+  restart-gateway)
+    log "GATEWAY BB PLUGIN DEAD: ${REASON}"
 
-    # Record restart in state
+    # Record lastRestart BEFORE doing the work (see restart) action above for rationale.
     $NODE -e "
 const fs = require('fs');
 const stateFile = '$STATE_FILE';
@@ -502,9 +520,7 @@ try { prev = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
 prev.lastRestart = Date.now();
 fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
 " 2>/dev/null
-    ;;
-  restart-gateway)
-    log "GATEWAY BB PLUGIN DEAD: ${REASON}"
+
     RUNNING_JOBS=$(cron_job_running)
     if [[ $? -eq 0 ]]; then
       log "DEFER: Gateway restart deferred — cron job(s) running: ${RUNNING_JOBS}"
@@ -516,15 +532,6 @@ fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
         log "WARN: Gateway restart failed"
       fi
     fi
-    # Record restart in state
-    $NODE -e "
-const fs = require('fs');
-const stateFile = '$STATE_FILE';
-let prev = {};
-try { prev = JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch {}
-prev.lastRestart = Date.now();
-fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
-" 2>/dev/null
     ;;
   error)
     log "ERROR: ${REASON}"
