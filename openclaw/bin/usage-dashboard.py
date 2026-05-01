@@ -145,8 +145,8 @@ def load_ccusage():
 LAUNCHAGENT_DIR = os.path.expanduser("~/Library/LaunchAgents")
 
 
-def _plist_log_path(label):
-    """Read the StandardOutPath or StandardErrorPath from a plist."""
+def _plist_info(label):
+    """Read full plist as dict via plutil."""
     plist_path = os.path.join(LAUNCHAGENT_DIR, label + ".plist")
     try:
         result = subprocess.run(
@@ -154,11 +154,67 @@ def _plist_log_path(label):
             capture_output=True, text=True, timeout=3
         )
         if result.returncode == 0:
-            d = json.loads(result.stdout)
-            return d.get("StandardOutPath") or d.get("StandardErrorPath") or ""
+            return json.loads(result.stdout)
     except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
         pass
-    return ""
+    return {}
+
+
+def _next_calendar_match(spec, now):
+    """Find next datetime matching a launchd StartCalendarInterval dict.
+
+    launchd Weekday: 0 or 7 = Sunday, 1=Mon, ..., 6=Sat.
+    Python isoweekday: 1=Mon, ..., 7=Sun. We map via `iso % 7` so Sun=0.
+    """
+    candidate = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)
+    end = candidate + timedelta(days=370)
+    while candidate < end:
+        if "Minute" in spec and candidate.minute != spec["Minute"]:
+            candidate += timedelta(minutes=1); continue
+        if "Hour" in spec and candidate.hour != spec["Hour"]:
+            candidate += timedelta(minutes=1); continue
+        if "Day" in spec and candidate.day != spec["Day"]:
+            candidate += timedelta(minutes=1); continue
+        if "Month" in spec and candidate.month != spec["Month"]:
+            candidate += timedelta(minutes=1); continue
+        if "Weekday" in spec:
+            wd = candidate.isoweekday() % 7
+            if wd != (spec["Weekday"] % 7):
+                candidate += timedelta(minutes=1); continue
+        return candidate
+    return None
+
+
+def _compute_next_run(plist, last_run_ts):
+    """Return (next_run_iso, schedule_kind) for a plist dict."""
+    if plist.get("KeepAlive"):
+        return None, "keepalive"
+    if plist.get("WatchPaths"):
+        return None, "watch"
+    interval = plist.get("StartInterval")
+    if isinstance(interval, (int, float)) and interval > 0:
+        if last_run_ts:
+            nxt = last_run_ts + interval
+            # If we've blown past the schedule, project forward to the next slot.
+            now_ts = datetime.now(tz=timezone.utc).timestamp()
+            if nxt < now_ts:
+                missed = int((now_ts - last_run_ts) // interval) + 1
+                nxt = last_run_ts + missed * interval
+            return datetime.fromtimestamp(nxt, tz=timezone.utc).isoformat(), "interval"
+        return None, "interval"
+    cal = plist.get("StartCalendarInterval")
+    if cal:
+        # plutil emits a single dict or a list of dicts
+        specs = cal if isinstance(cal, list) else [cal]
+        now_local = datetime.now()
+        candidates = [m for m in (_next_calendar_match(s, now_local) for s in specs) if m]
+        if candidates:
+            nxt_local = min(candidates)
+            return nxt_local.astimezone(timezone.utc).isoformat(), "calendar"
+        return None, "calendar"
+    if plist.get("RunAtLoad"):
+        return None, "runonce"
+    return None, "unknown"
 
 
 def get_launchagent_status():
@@ -186,21 +242,28 @@ def get_launchagent_status():
             except ValueError:
                 last_exit = None
 
-            # Get last activity time from log file mtime
+            plist = _plist_info(label)
+            log_path = plist.get("StandardOutPath") or plist.get("StandardErrorPath") or ""
+
+            # Last activity time from log file mtime
             last_run_iso = None
-            log_path = _plist_log_path(label)
+            last_run_ts = None
             if log_path:
                 try:
-                    mtime = os.path.getmtime(log_path)
-                    last_run_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                    last_run_ts = os.path.getmtime(log_path)
+                    last_run_iso = datetime.fromtimestamp(last_run_ts, tz=timezone.utc).isoformat()
                 except OSError:
                     pass
+
+            next_run_iso, schedule_kind = _compute_next_run(plist, last_run_ts)
 
             services.append({
                 "label": label,
                 "status": status,
                 "last_exit": last_exit,
                 "last_run": last_run_iso,
+                "next_run": next_run_iso,
+                "schedule": schedule_kind,
             })
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -704,8 +767,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 <div class="cron-section">
   <h2>LaunchAgent Services</h2>
   <table class="cron-table" id="servicesTable">
-    <thead><tr><th>Service</th><th>Status</th><th>Last Run</th><th>Exit</th></tr></thead>
-    <tbody id="servicesBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
+    <thead><tr><th>Service</th><th>Status</th><th>Last Run</th><th>Next Run</th><th>Exit</th></tr></thead>
+    <tbody id="servicesBody"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
   </table>
 </div>
 
@@ -1230,7 +1293,7 @@ async function refreshServices() {
     const svcs = d.services || [];
     const el = document.getElementById('servicesBody');
     if (!svcs.length) {
-      el.innerHTML = '<tr><td colspan="4" style="color:' + C.muted + ';text-align:center;padding:1rem">No services found</td></tr>';
+      el.innerHTML = '<tr><td colspan="5" style="color:' + C.muted + ';text-align:center;padding:1rem">No services found</td></tr>';
       return;
     }
     el.innerHTML = svcs.map(s => {
@@ -1242,10 +1305,24 @@ async function refreshServices() {
       const exitBadge = exitCode == null ? '<span style="color:' + C.muted + '">-</span>' :
         exitCode === 0 ? '<span class="badge badge-ok">ok</span>' :
         '<span class="badge badge-err">error (' + exitCode + ')</span>';
+      let nextCell;
+      if (s.next_run) {
+        const nextMs = new Date(s.next_run).getTime();
+        nextCell = `${fmtDate(nextMs)} <span style="color:${C.muted}">(${fmtRelativeTime(nextMs)})</span>`;
+      } else if (s.schedule === 'keepalive') {
+        nextCell = '<span style="color:' + C.muted + '">always-on</span>';
+      } else if (s.schedule === 'watch') {
+        nextCell = '<span style="color:' + C.muted + '">on event</span>';
+      } else if (s.schedule === 'runonce') {
+        nextCell = '<span style="color:' + C.muted + '">run-once</span>';
+      } else {
+        nextCell = '<span style="color:' + C.muted + '">-</span>';
+      }
       return `<tr>
         <td><span style="color:${dotColor};margin-right:0.4rem">${dot}</span>${label}</td>
         <td><span class="badge ${isRunning ? 'badge-ok' : ''}" style="${isRunning ? '' : 'color:' + C.muted}">${isRunning ? 'running' : 'idle'}</span></td>
         <td style="color:${C.muted}">${fmtAgo(s.last_run)}</td>
+        <td>${nextCell}</td>
         <td>${exitBadge}</td>
       </tr>`;
     }).join('');

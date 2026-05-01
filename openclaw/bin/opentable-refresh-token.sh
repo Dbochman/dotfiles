@@ -47,15 +47,15 @@ pt_eval() {
 log "Navigating to OpenTable login..."
 pinchtab navigate "https://www.opentable.com/authenticate/start?isPopup=false" &>/dev/null
 
-# Wait for login form to render (Akamai bot check can delay it)
-for wait_attempt in 1 2 3 4; do
-  sleep 3
+# Wait for login form to render (Akamai bot check can delay it, esp. on rapid retries)
+for wait_attempt in $(seq 1 12); do
+  sleep 5
   FOUND=$(pt_eval '(() => {
     const btn = Array.from(document.querySelectorAll("button")).find(el => el.textContent.trim().toLowerCase() === "use email instead");
     return btn ? "found" : "not_yet";
   })()')
   [[ "$FOUND" == "found" ]] && break
-  log "Waiting for login form... (attempt $wait_attempt/4)"
+  log "Waiting for login form... (attempt $wait_attempt/12)"
 done
 
 # Step 3: Click "Use email instead"
