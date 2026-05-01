@@ -4,9 +4,10 @@
 # Detects who is home at each location by querying local network devices.
 #
 # Usage:
-#   presence-detect.sh cabin       # Scan cabin WiFi (run on Mac Mini)
+#   presence-detect.sh cabin       # Scan cabin WiFi + Potato GPS (run on Mac Mini)
 #   presence-detect.sh crosstown   # Scan Crosstown LAN (run on MacBook Pro)
-#   presence-detect.sh evaluate    # Correlate both locations (run on Mac Mini)
+#   presence-detect.sh potato      # Scan Potato GPS only (run on Mac Mini)
+#   presence-detect.sh evaluate    # Correlate all signals (run on Mac Mini)
 #
 # Cabin (Philly):   Starlink gRPC API via grpcurl (Mac Mini, local)
 # Crosstown (Boston): ARP scan (MacBook Pro, local)
@@ -207,10 +208,45 @@ console.log(JSON.stringify({
 " "$arp_output" 2>/dev/null || echo '{"error":"parse_failed","location":"crosstown"}'
 }
 
+# ── Potato: Fi collar GPS (runs on Mac Mini, queries cellular API) ──────────
+# Fi-collar already classifies coords against CROSSTOWN_LAT/LON and CABIN_LAT/LON
+# (radii 150m/300m); we just relay its `location`/`at_location` fields.
+
+scan_potato() {
+  local fi_response
+  fi_response=$(
+    set -a
+    [ -f "$HOME/.openclaw/.secrets-cache" ] && . "$HOME/.openclaw/.secrets-cache"
+    set +a
+    /opt/homebrew/bin/fi-collar location 2>/dev/null
+  )
+
+  if [ -z "$fi_response" ] || [ "$fi_response" = "{}" ]; then
+    echo '{"error":"fi_unreachable","name":"Potato"}'
+    return 1
+  fi
+
+  $NODE -e "
+const data = JSON.parse(process.argv[1]);
+if (data.error) { console.log(JSON.stringify({error: data.error, name: 'Potato'})); process.exit(0); }
+console.log(JSON.stringify({
+  name: 'Potato',
+  timestamp: new Date().toISOString(),
+  location: data.location,
+  at_location: data.at_location,
+  distance_m: data.distance_m,
+  activity: data.activity,
+  lastReport: data.lastReport,
+  latitude: data.latitude,
+  longitude: data.longitude
+}, null, 2));
+" "$fi_response" 2>/dev/null || echo '{"error":"parse_failed","name":"Potato"}'
+}
+
 # ── Evaluate: Correlate both locations (runs on Mac Mini) ────────────────────
 
 evaluate() {
-  local cabin_state crosstown_state
+  local cabin_state crosstown_state potato_state
 
   # Read cabin state (local, from last cabin scan)
   cabin_state=$(cat "${STATE_DIR}/cabin-scan.json" 2>/dev/null || echo '{}')
@@ -218,10 +254,14 @@ evaluate() {
   # Read crosstown state (pushed by MacBook Pro via Tailscale)
   crosstown_state=$(cat "${STATE_DIR}/crosstown-scan.json" 2>/dev/null || echo '{}')
 
+  # Read Potato state (informational; written by `cabin` action via Fi collar)
+  potato_state=$(cat "${STATE_DIR}/potato-scan.json" 2>/dev/null || echo '{}')
+
   $NODE -e "
 const fs = require('fs');
 const cabin = JSON.parse(process.argv[1]);
 const crosstown = JSON.parse(process.argv[2]);
+const potato = JSON.parse(process.argv[3]);
 // Per-location tracked people — vacancy requires all tracked people for THAT
 // location to be absent AND confirmed at the other location.
 const cabinTracked = $CABIN_TRACKED;
@@ -271,6 +311,25 @@ for (const person of allTracked) {
     cabin: location === 'cabin',
     crosstown: location === 'crosstown',
     location
+  };
+}
+
+// Potato (Fi collar GPS) — informational only, not in allTracked, doesn't gate vacancy.
+// fi-collar.location is 'cabin' / 'crosstown' / null (when env coords aren't set or unknown).
+if (potato && !potato.error && potato.latitude != null) {
+  let loc;
+  if (potato.at_location && (potato.location === 'cabin' || potato.location === 'crosstown')) {
+    loc = potato.location;
+  } else {
+    loc = 'traveling';
+  }
+  people['Potato'] = {
+    cabin: loc === 'cabin',
+    crosstown: loc === 'crosstown',
+    location: loc,
+    activity: potato.activity || null,
+    distance_m: potato.distance_m ?? null,
+    source: 'fi-collar'
   };
 }
 
@@ -371,7 +430,7 @@ const histRecord = JSON.stringify({
 fs.appendFileSync(histDir + '/' + dayKey + '.jsonl', histRecord + '\n');
 
 console.log(JSON.stringify(result, null, 2));
-" "$cabin_state" "$crosstown_state" 2>/dev/null || echo '{"error":"evaluate_failed"}'
+" "$cabin_state" "$crosstown_state" "$potato_state" 2>/dev/null || echo '{"error":"evaluate_failed"}'
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -393,8 +452,18 @@ case "$LOCATION" in
     result=$(scan_cabin)
     echo "$result" > "${STATE_DIR}/cabin-scan.json"
     log "Cabin scan: $(echo "$result" | tr -d '\n' | head -c 300)"
+    # Also refresh Potato's Fi-collar GPS — runs on Mini, queries cellular API
+    potato_result=$(scan_potato)
+    echo "$potato_result" > "${STATE_DIR}/potato-scan.json"
+    log "Potato scan: $(echo "$potato_result" | tr -d '\n' | head -c 200)"
     # After scanning, run evaluate to update correlated state
     evaluate
+    ;;
+  potato)
+    result=$(scan_potato)
+    echo "$result" > "${STATE_DIR}/potato-scan.json"
+    log "Potato scan: $(echo "$result" | tr -d '\n' | head -c 200)"
+    echo "$result"
     ;;
   crosstown)
     result=$(scan_crosstown)
