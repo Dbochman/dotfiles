@@ -224,5 +224,19 @@ if [ -x "$REPO/openclaw/sync-cron-jobs.sh" ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sync-cron-jobs: $SYNC_OUT" >> "$LOG"
 fi
 
+# Self-update: keep the deployed copy of this script in sync with repo HEAD.
+# Without this, fixes to dotfiles-pull.command itself (and anything its later
+# blocks deploy) never reach the Mini — launchd runs the DEPLOYED copy, and
+# the wrapper-deploy loop above skips *.command. Use cp+mv for atomic replace
+# so the still-running bash process keeps reading the old inode.
+SELF_SRC="$REPO/openclaw/bin/dotfiles-pull.command"
+SELF_DST="$HOME/.openclaw/bin/dotfiles-pull.command"
+if [ -f "$SELF_SRC" ] && ! cmp -s "$SELF_SRC" "$SELF_DST"; then
+  cp "$SELF_SRC" "$SELF_DST.new"
+  chmod +x "$SELF_DST.new"
+  mv "$SELF_DST.new" "$SELF_DST"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) self: updated $SELF_DST from repo" >> "$LOG"
+fi
+
 # Close this Terminal window after completion
 osascript -e 'tell application "Terminal" to close (every window whose name contains "dotfiles-pull")' &>/dev/null &

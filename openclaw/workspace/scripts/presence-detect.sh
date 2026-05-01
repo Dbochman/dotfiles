@@ -22,7 +22,13 @@
 set -euo pipefail
 
 LOG_FILE="$HOME/.openclaw/logs/presence-detect.log"
-NODE="/opt/homebrew/bin/node"
+if [ -x "/opt/homebrew/opt/node@22/bin/node" ]; then
+  NODE="/opt/homebrew/opt/node@22/bin/node"
+elif [ -x "/opt/homebrew/bin/node" ]; then
+  NODE="/opt/homebrew/bin/node"
+else
+  NODE="$(command -v node || echo /opt/homebrew/bin/node)"
+fi
 GRPCURL="/opt/homebrew/bin/grpcurl"
 TAILSCALE="/usr/local/bin/tailscale"
 [ -x "$TAILSCALE" ] || TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
