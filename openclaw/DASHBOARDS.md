@@ -75,6 +75,12 @@ Tracks token consumption, costs, and agent activity for OpenClaw's Claude API us
 - **Model Split** — doughnut chart (Opus / Sonnet / Haiku usage)
 - **Tool Usage** — horizontal bar of most-used tools
 - **Recent Cron Runs** — table with status badges, duration, token counts
+- **BlueBubbles Health** — service + watchdog observability section:
+  - Summary banner (green/amber/red): online state, helper-connected, proxy mode, last-msg age, last-restart age
+  - 4-column stats: server (version, helper, drift, account), watchdog (last msg + guid, pending stall checks), restarts (today / 7d / last), lag events (today / 7d / 30d / max+avg)
+  - Recent watchdog activity table (last 25 log lines color-coded by level — OK / STALL / ACTION / WARN)
+  - Recent restarts table with parsed reason from "STALL DETECTED:" lines
+  - 60s background refresh, 30s server-side cache on the BB API call
 
 ### Data Sources
 
@@ -86,6 +92,10 @@ Tracks token consumption, costs, and agent activity for OpenClaw's Claude API us
 | Cron run logs | Event-driven | Job ID, status, duration, tokens |
 | BlueBubbles API | 15 min | Message send/receive counts |
 | ccusage push | 30 min | Claude Code daily token usage (from MacBook) |
+| BB API `/server/info` | 30s (cached) | Server version, helper_connected, private_api, proxy, clock drift, detected iMessage |
+| `~/.openclaw/bb-watchdog/state.json` | per request | allGuid (last msg seen), allSeenAt, lastRestart, pendingChecks |
+| `~/.openclaw/logs/bb-watchdog.log` | per request | Tailed + parsed for OK/STALL/ACTION events, restart history |
+| `~/.openclaw/logs/bb-ingest-lag.log` | per request | CSV of lag events; aggregated to today/7d/30d counts + max/avg |
 
 ### Files
 
