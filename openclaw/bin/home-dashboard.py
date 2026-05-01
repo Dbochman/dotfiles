@@ -931,13 +931,13 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
         </div>
       </article>
 
-      <article class="card" data-location="crosstown">
+      <article class="card" data-location="cabin">
         <div class="card-header">
           <div>
             <div class="eyebrow">Camera</div>
             <h2>Nest — Kitchen</h2>
           </div>
-          <span class="location-pill">Crosstown</span>
+          <span class="location-pill">Cabin</span>
         </div>
         <div id="nestKitchenContent" class="content">
           <div class="muted">No snapshot yet</div>
