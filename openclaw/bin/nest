@@ -736,10 +736,11 @@ import json, sys
 query = '$room'.lower()
 data = json.load(sys.stdin)
 for d in data.get('devices', []):
-    if 'CAMERA' not in d.get('type', ''):
+    if 'CAMERA' not in d.get('type', '') and 'DOORBELL' not in d.get('type', ''):
         continue
-    room = d.get('parentRelations', [{}])[0].get('displayName', '').lower()
-    if query in room:
+    room_name = d.get('parentRelations', [{}])[0].get('displayName', '').lower()
+    custom_name = d.get('traits', {}).get('sdm.devices.traits.Info', {}).get('customName', '').lower()
+    if query in room_name or (custom_name and query in custom_name):
         print(d['name'].split('/')[-1])
         break
 " <<< "$data")

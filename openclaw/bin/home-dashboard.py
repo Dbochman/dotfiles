@@ -972,6 +972,27 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
           </div>
         </div>
       </article>
+
+      <article class="card" data-location="crosstown">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Camera</div>
+            <h2>Nest — Living Room</h2>
+          </div>
+          <span class="location-pill">Crosstown</span>
+        </div>
+        <div id="nestLivingroomContent" class="content">
+          <div class="muted">No snapshot yet</div>
+        </div>
+        <div class="controls">
+          <form id="nest-livingroom-form" class="controls-grid">
+            <input type="hidden" name="room" value="livingroom">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="nest_camera" data-action="snap" data-form="nest-livingroom-form" data-fields="room">Take Snapshot</button>
+          </div>
+        </div>
+      </article>
     </section>
   </details>
 
@@ -1959,6 +1980,7 @@ function loadCameraSnap(name, containerId) {
 // Try to load existing snapshots on page load
 loadCameraSnap('kitchen', 'nestKitchenContent');
 loadCameraSnap('laundry', 'nestLaundryContent');
+loadCameraSnap('livingroom', 'nestLivingroomContent');
 loadCameraSnap('ring-crosstown', 'ringSnapContent');
 initHueFormState();
 
