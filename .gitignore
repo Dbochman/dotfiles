@@ -5,6 +5,12 @@
 # Local-only settings (machine-specific, not synced)
 .claude/settings.local.json
 
+# Plugin marketplaces registry (contains machine-specific absolute installLocation
+# paths; rewritten by Claude Code on every plugin op, causing constant churn).
+# Re-add marketplaces on a fresh install via `/plugin marketplace add <repo>` —
+# see install.sh "Plugins" section for the canonical list.
+.claude/plugins/known_marketplaces.json
+
 # Agent teams skills mirror (duplicates .claude/skills/, populated by experimental
 # CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS feature)
 .agents/

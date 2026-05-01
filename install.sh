@@ -574,11 +574,21 @@ install_dotfiles() {
   log ""
 
   # === Plugins ===
+  # known_marketplaces.json is machine-local (absolute installLocation paths) and gitignored.
+  # On a fresh install, re-add the marketplaces from inside Claude Code:
+  #   /plugin marketplace add anthropics/claude-plugins-official
+  #   /plugin marketplace add jarrodwatts/claude-hud
+  #   /plugin marketplace add jarrodwatts/claude-delegator
   log "${BLUE}Plugins:${NC}"
   if [[ "$DRY_RUN" != true ]]; then
     mkdir -p "$HOME/.claude/plugins"
   fi
-  link_file "$DOTFILES_DIR/.claude/plugins/known_marketplaces.json" "$HOME/.claude/plugins/known_marketplaces.json"
+  if [[ ! -f "$HOME/.claude/plugins/known_marketplaces.json" ]]; then
+    log "  Marketplaces not yet registered. Inside Claude Code, run:"
+    log "    /plugin marketplace add anthropics/claude-plugins-official"
+    log "    /plugin marketplace add jarrodwatts/claude-hud"
+    log "    /plugin marketplace add jarrodwatts/claude-delegator"
+  fi
   log ""
 
   # === OpenClaw Config ===
