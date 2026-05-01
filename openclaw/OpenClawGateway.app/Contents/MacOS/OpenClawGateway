@@ -31,4 +31,4 @@ if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   exit 1
 fi
 
-exec /opt/homebrew/Cellar/node@22/22.22.0/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789
+exec /opt/homebrew/opt/node@22/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789
