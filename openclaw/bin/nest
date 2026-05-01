@@ -638,8 +638,12 @@ cmd_reauth() {
   # Re-run Google Device Access OAuth consent to add newly-paired Nest devices.
   # Required whenever a device is added in the Google Home app after initial setup —
   # SDM only exposes devices that were ticked on the consent screen at grant time.
-  local client_id client_secret project_id redirect_uri input code resp
-  local refresh_token access_token
+  #
+  # Two-step (non-interactive) flow so it works fine over SSH/`!` shell-out:
+  #   1) `nest reauth`             → prints the consent URL
+  #   2) `nest reauth <code-or-redirect-url>` → exchanges code for tokens
+  local client_id client_secret project_id redirect_uri code resp
+  local refresh_token access_token input="${1:-}"
 
   client_id=$(_cached_op_read "clientID")
   client_secret=$(_cached_op_read "client_secret")
@@ -652,22 +656,21 @@ cmd_reauth() {
     exit 1
   fi
 
-  cat <<EOF
-1) Open this URL in a browser. On the consent screen, tick EVERY device you want
-   SDM to see — including ones already authorized AND any newly-added ones.
-   Anything left unticked will become invisible to the API.
+  if [[ -z "$input" ]]; then
+    cat <<EOF
+1) Open this URL in a browser. On the consent screen, tick EVERY device you
+   want SDM to see — both previously-authorized AND any newly-added ones.
+   Anything left unticked becomes invisible to the API.
 
    https://nestservices.google.com/partnerconnections/${project_id}/auth?redirect_uri=${redirect_uri}&access_type=offline&prompt=consent&client_id=${client_id}&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fsdm.service
 
 2) After consenting, the browser will redirect to a URL like:
-     ${redirect_uri}/?code=<LONG_CODE>&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fsdm.service
+     ${redirect_uri}/?code=<LONG_CODE>&scope=...
 
-3) Paste the full redirect URL (or just the code= value) below.
-
+3) Run:  nest reauth '<that-redirect-URL-or-bare-code>'
 EOF
-
-  printf "redirect URL or code: "
-  read -r input
+    return 0
+  fi
 
   # Extract code from full URL or accept bare code
   if [[ "$input" == *"code="* ]]; then
@@ -705,8 +708,8 @@ EOF
   chmod 600 "$CACHE_DIR/refresh_token" "$CACHE_DIR/access_token"
 
   echo "✓ New refresh_token + access_token saved to $CACHE_DIR"
-  echo "  (Update 1Password 'Google Nest' item's refresh_token field if you want"
-  echo "   it to survive a cache wipe — current cache TTL is 1 year.)"
+  echo "  (Update 1Password 'Google Nest' item's refresh_token field if you"
+  echo "   want it to survive a cache wipe — current cache TTL is 1 year.)"
   echo
   echo "Visible devices now:"
   _api GET /devices | python3 -c "
@@ -778,7 +781,7 @@ case "${1:-help}" in
   history)          cmd_history "${2:-24}" "${3:-}" ;;
   dashboard)        cmd_dashboard "${2:-open}" ;;
   raw)              cmd_raw ;;
-  reauth)           cmd_reauth ;;
+  reauth)           cmd_reauth "${2:-}" ;;
   help|--help|-h)   cmd_help ;;
   *)                echo "Unknown command: $1. Run 'nest help'." >&2; exit 1 ;;
 esac
