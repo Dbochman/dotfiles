@@ -258,6 +258,203 @@ def fetch_gateway_usage():
 
 CRON_JOBS_PATH = os.path.expanduser("~/.openclaw/cron/jobs.json")
 
+# ── BlueBubbles health ────────────────────────────────────────────────────
+BB_API_BASE = "http://localhost:1234/api/v1"
+BB_STATE_FILE = os.path.expanduser("~/.openclaw/bb-watchdog/state.json")
+BB_WATCHDOG_LOG = os.path.expanduser("~/.openclaw/logs/bb-watchdog.log")
+BB_LAG_LOG = os.path.expanduser("~/.openclaw/logs/bb-ingest-lag.log")
+BB_CACHE_TTL = 30  # seconds
+_bb_cache = {"data": None, "ts": 0}
+_bb_lock = threading.Lock()
+
+
+def _bb_password():
+    """Read BLUEBUBBLES_PASSWORD from secrets cache."""
+    if not os.path.exists(SECRETS_CACHE):
+        return ""
+    try:
+        for line in open(SECRETS_CACHE):
+            line = line.strip()
+            if line.startswith("BLUEBUBBLES_PASSWORD="):
+                return line.split("=", 1)[1]
+    except OSError:
+        pass
+    return ""
+
+
+def _bb_server_info():
+    """GET /api/v1/server/info — returns dict or None on failure."""
+    pw = _bb_password()
+    if not pw:
+        return None
+    try:
+        import urllib.request
+        url = f"{BB_API_BASE}/server/info?password={pw}"
+        with urllib.request.urlopen(url, timeout=3) as r:
+            return json.loads(r.read().decode("utf-8", "ignore")).get("data")
+    except Exception:
+        return None
+
+
+def _tail_bb_log(n=50):
+    """Return last n parsed log lines: [{ts, level, message}, ...]."""
+    if not os.path.exists(BB_WATCHDOG_LOG):
+        return []
+    try:
+        with open(BB_WATCHDOG_LOG) as f:
+            lines = f.readlines()[-n:]
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        line = line.rstrip("\n")
+        # Format: [YYYY-MM-DD HH:MM:SS] LEVEL: message
+        if not line.startswith("[") or "] " not in line:
+            continue
+        ts, _, rest = line[1:].partition("] ")
+        # Determine level from message keywords
+        if rest.startswith("OK") or rest.startswith("ok"):
+            level = "ok"
+        elif "STALL" in rest or "ERROR" in rest:
+            level = "stall"
+        elif rest.startswith("ACTION") or "Restart" in rest:
+            level = "action"
+        elif rest.startswith("WARN") or rest.startswith("LAG"):
+            level = "warn"
+        else:
+            level = "info"
+        out.append({"ts": ts, "level": level, "message": rest})
+    return out
+
+
+def _lag_stats():
+    """Aggregate ~/.openclaw/logs/bb-ingest-lag.log (CSV: ts,age_sec,thresh,guid)."""
+    if not os.path.exists(BB_LAG_LOG):
+        return {"today": 0, "week": 0, "month": 0, "max_sec": 0, "avg_sec": 0, "recent": []}
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_cutoff = datetime.now() - timedelta(days=7)
+    month_cutoff = datetime.now() - timedelta(days=30)
+    today_n = week_n = month_n = 0
+    max_sec = 0
+    sum_sec = 0
+    recent = []
+    try:
+        with open(BB_LAG_LOG) as f:
+            lines = f.readlines()
+    except OSError:
+        return {"today": 0, "week": 0, "month": 0, "max_sec": 0, "avg_sec": 0, "recent": []}
+    for line in lines:
+        parts = line.strip().split(",")
+        if len(parts) < 4:
+            continue
+        ts_str, age_str = parts[0], parts[1]
+        try:
+            age = int(age_str)
+            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            continue
+        if ts_str.startswith(today):
+            today_n += 1
+        if ts >= week_cutoff:
+            week_n += 1
+        if ts >= month_cutoff:
+            month_n += 1
+            sum_sec += age
+            if age > max_sec:
+                max_sec = age
+        recent.append({"ts": ts_str, "age_sec": age, "guid": parts[3][:8]})
+    avg_sec = int(sum_sec / month_n) if month_n else 0
+    return {
+        "today": today_n, "week": week_n, "month": month_n,
+        "max_sec": max_sec, "avg_sec": avg_sec,
+        "recent": recent[-10:][::-1],  # last 10, newest first
+    }
+
+
+def _restart_history():
+    """Parse 'Restarting BlueBubbles...' lines from watchdog log to count restarts."""
+    if not os.path.exists(BB_WATCHDOG_LOG):
+        return {"today": 0, "week": 0, "recent": []}
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_cutoff = datetime.now() - timedelta(days=7)
+    today_n = week_n = 0
+    recent = []
+    pending_reason = None
+    try:
+        with open(BB_WATCHDOG_LOG) as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if not line.startswith("["):
+                    continue
+                ts_str = line[1:20]
+                try:
+                    ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    continue
+                if "STALL DETECTED" in line:
+                    pending_reason = line.split("STALL DETECTED:", 1)[1].strip().rstrip(",")[:100]
+                elif "Restarting BlueBubbles" in line or "BlueBubbles restarted" in line:
+                    if "BlueBubbles restarted" in line:
+                        if ts_str.startswith(today):
+                            today_n += 1
+                        if ts >= week_cutoff:
+                            week_n += 1
+                        recent.append({"ts": ts_str, "reason": pending_reason or "unknown"})
+                        pending_reason = None
+    except OSError:
+        return {"today": 0, "week": 0, "recent": []}
+    return {"today": today_n, "week": week_n, "recent": recent[-10:][::-1]}
+
+
+def fetch_bluebubbles_health():
+    """Aggregate BB service info, watchdog state, recent events, lag, restarts."""
+    now = datetime.now(timezone.utc).timestamp()
+    with _bb_lock:
+        if _bb_cache["data"] and (now - _bb_cache["ts"]) < BB_CACHE_TTL:
+            return _bb_cache["data"]
+
+    server = _bb_server_info()
+    state = {}
+    if os.path.exists(BB_STATE_FILE):
+        try:
+            with open(BB_STATE_FILE) as f:
+                state = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            state = {}
+
+    now_ms = int(now * 1000)
+    all_seen_age_min = (now_ms - state["allSeenAt"]) // 60000 if state.get("allSeenAt") else None
+    last_restart_age_min = (now_ms - state["lastRestart"]) // 60000 if state.get("lastRestart") else None
+
+    data = {
+        "server": {
+            "online": server is not None,
+            "version": server.get("server_version") if server else None,
+            "helper_connected": server.get("helper_connected") if server else False,
+            "private_api": server.get("private_api") if server else False,
+            "proxy_service": server.get("proxy_service") if server else None,
+            "macos_time_sync": server.get("macos_time_sync") if server else None,
+            "detected_imessage": server.get("detected_imessage") if server else None,
+        },
+        "watchdog": {
+            "all_guid": state.get("allGuid"),
+            "all_seen_at_ms": state.get("allSeenAt"),
+            "all_seen_age_min": all_seen_age_min,
+            "last_restart_ms": state.get("lastRestart"),
+            "last_restart_age_min": last_restart_age_min,
+            "pending_guid": state.get("pendingGuid", ""),
+            "pending_checks": state.get("pendingChecks", 0),
+        },
+        "events": _tail_bb_log(50),
+        "lag": _lag_stats(),
+        "restarts": _restart_history(),
+    }
+
+    with _bb_lock:
+        _bb_cache["data"] = data
+        _bb_cache["ts"] = now
+    return data
+
 
 def get_upcoming_cron_jobs():
     """Read cron jobs.json and return upcoming scheduled runs."""
@@ -315,6 +512,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._respond(200, {"services": get_launchagent_status()})
         elif path == "/api/cron":
             self._respond(200, {"jobs": get_upcoming_cron_jobs()})
+        elif path == "/api/bluebubbles":
+            self._respond(200, fetch_bluebubbles_health())
         elif path == "/api/gateway-usage":
             data = fetch_gateway_usage()
             if data:
@@ -525,6 +724,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <table class="cron-table" id="upcomingTable">
     <thead><tr><th>Job</th><th>Next Run</th><th>Last</th><th>Type</th></tr></thead>
     <tbody id="upcomingBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
+  </table>
+</div>
+
+<!-- BlueBubbles health -->
+<div class="cron-section">
+  <h2>BlueBubbles</h2>
+  <div id="bbHealthSummary" class="loading" style="margin-bottom:0.75rem">Loading...</div>
+  <table class="cron-table" id="bbStatsTable" style="margin-bottom:1rem">
+    <thead><tr><th>Server</th><th>Watchdog</th><th>Restarts</th><th>Lag Events</th></tr></thead>
+    <tbody id="bbStatsBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
+  </table>
+  <h2 style="font-size:0.8rem">Recent Watchdog Activity</h2>
+  <table class="cron-table" id="bbEventsTable" style="margin-bottom:1rem">
+    <thead><tr><th style="width:11rem">Time</th><th style="width:5rem">Level</th><th>Message</th></tr></thead>
+    <tbody id="bbEventsBody"><tr><td colspan="3" class="loading">Loading...</td></tr></tbody>
+  </table>
+  <h2 style="font-size:0.8rem">Recent Restarts</h2>
+  <table class="cron-table" id="bbRestartsTable">
+    <thead><tr><th style="width:11rem">Time</th><th>Reason</th></tr></thead>
+    <tbody id="bbRestartsBody"><tr><td colspan="2" class="loading">Loading...</td></tr></tbody>
   </table>
 </div>
 
@@ -1254,9 +1473,87 @@ document.getElementById('timeControls').addEventListener('click', e => {
   refresh();
 });
 
+async function refreshBluebubbles() {
+  try {
+    const r = await fetch('/api/bluebubbles');
+    if (!r.ok) return;
+    const d = await r.json();
+
+    // Summary banner
+    const s = d.server || {};
+    const w = d.watchdog || {};
+    const summaryEl = document.getElementById('bbHealthSummary');
+    const overallOk = s.online && s.helper_connected;
+    const dot = overallOk ? '<span style="color:' + C.green + '">●</span>' :
+                s.online ? '<span style="color:' + C.amber + '">●</span>' :
+                           '<span style="color:' + C.red + '">●</span>';
+    const msg = !s.online ? 'BB API unreachable' :
+                !s.helper_connected ? 'BB up but Private API helper disconnected — sending limited' :
+                'Healthy — server v' + (s.version || '?') + ', helper connected, ' + (s.proxy_service || '?') + ' proxy';
+    summaryEl.classList.remove('loading');
+    summaryEl.innerHTML = dot + ' ' + msg + ' · last msg ' +
+      (w.all_seen_age_min == null ? 'never' : w.all_seen_age_min + 'm ago') +
+      ' · last restart ' + (w.last_restart_age_min == null ? 'never' :
+        (w.last_restart_age_min < 60 ? w.last_restart_age_min + 'm ago' :
+         w.last_restart_age_min < 1440 ? Math.floor(w.last_restart_age_min/60) + 'h ago' :
+         Math.floor(w.last_restart_age_min/1440) + 'd ago'));
+
+    // Stats row
+    const statsEl = document.getElementById('bbStatsBody');
+    const drift = s.macos_time_sync == null ? '?' : (Math.abs(s.macos_time_sync) < 1 ? 'OK' : s.macos_time_sync.toFixed(2) + 's');
+    const lag = d.lag || {};
+    const restarts = d.restarts || {};
+    statsEl.innerHTML = `<tr>
+      <td>v${s.version || '?'}<br>
+        <span style="font-size:0.75rem;color:${C.muted}">helper: ${s.helper_connected ? '<span style="color:'+C.green+'">on</span>' : '<span style="color:'+C.red+'">off</span>'} · drift: ${drift}</span><br>
+        <span style="font-size:0.7rem;color:${C.muted}">${s.detected_imessage || ''}</span>
+      </td>
+      <td>last msg: ${w.all_seen_age_min == null ? '-' : w.all_seen_age_min + 'm ago'}<br>
+        <span style="font-size:0.75rem;color:${C.muted}">guid: ${(w.all_guid || '-').slice(0, 8)}</span><br>
+        <span style="font-size:0.7rem;color:${w.pending_checks > 0 ? C.amber : C.muted}">pending: ${w.pending_checks || 0}</span>
+      </td>
+      <td>today: <strong>${restarts.today || 0}</strong> · 7d: ${restarts.week || 0}<br>
+        <span style="font-size:0.75rem;color:${C.muted}">last: ${w.last_restart_age_min == null ? 'never' : w.last_restart_age_min + 'm ago'}</span>
+      </td>
+      <td>today: <strong>${lag.today || 0}</strong> · 7d: ${lag.week || 0} · 30d: ${lag.month || 0}<br>
+        <span style="font-size:0.75rem;color:${C.muted}">max: ${lag.max_sec || 0}s · avg: ${lag.avg_sec || 0}s</span>
+      </td>
+    </tr>`;
+
+    // Events table
+    const events = d.events || [];
+    const evEl = document.getElementById('bbEventsBody');
+    if (!events.length) {
+      evEl.innerHTML = '<tr><td colspan="3" style="color:'+C.muted+';text-align:center;padding:1rem">No events</td></tr>';
+    } else {
+      const colorFor = lvl => lvl === 'ok' ? C.green : lvl === 'stall' ? C.red :
+                              lvl === 'action' ? C.amber : lvl === 'warn' ? C.orange : C.muted;
+      evEl.innerHTML = events.slice(-25).reverse().map(e => `<tr>
+        <td style="color:${C.muted};font-size:0.78rem">${e.ts}</td>
+        <td><span style="color:${colorFor(e.level)};text-transform:uppercase;font-size:0.75rem">${e.level}</span></td>
+        <td style="font-size:0.85rem">${e.message.replace(/</g,'&lt;')}</td>
+      </tr>`).join('');
+    }
+
+    // Restarts table
+    const rEl = document.getElementById('bbRestartsBody');
+    const rs = restarts.recent || [];
+    if (!rs.length) {
+      rEl.innerHTML = '<tr><td colspan="2" style="color:'+C.muted+';text-align:center;padding:1rem">No restarts logged</td></tr>';
+    } else {
+      rEl.innerHTML = rs.map(r => `<tr>
+        <td style="color:${C.muted};font-size:0.78rem">${r.ts}</td>
+        <td style="font-size:0.85rem">${(r.reason || '').replace(/</g,'&lt;')}</td>
+      </tr>`).join('');
+    }
+  } catch(e) {}
+}
+
 refresh();
 refreshServices();
 refreshUpcoming();
+refreshBluebubbles();
+setInterval(refreshBluebubbles, 60 * 1000);
 setInterval(refresh, 5 * 60 * 1000);
 setInterval(refreshServices, 60 * 1000);
 setInterval(refreshUpcoming, 5 * 60 * 1000);
