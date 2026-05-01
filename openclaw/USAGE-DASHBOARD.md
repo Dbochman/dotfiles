@@ -1,6 +1,6 @@
 # OpenClaw Usage Dashboard
 
-## Status: v7.1 (2026-03-10)
+## Status: v7.2 (2026-05-01)
 
 Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Mac Mini, Tailscale-only access.
 
@@ -45,6 +45,13 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Ma
 
 **Cron table** — Recent runs with job ID, status badge, delivered column (✓/✗), model, duration, tokens, time.
 
+**LaunchAgent Services panel** — One row per `*openclaw*` service registered with `launchctl`. Columns: Service, Status (running/idle), Last Run (mtime of `StandardOutPath`), Next Run, Exit. The Next Run column reads each plist via `plutil` and computes the next firing time:
+- `StartInterval` → last_run + interval (catches up if overdue)
+- `StartCalendarInterval` → minute-by-minute search forward (handles single dict or list of dicts)
+- `KeepAlive: true` → "always-on"
+- `WatchPaths` → "on event"
+- `RunAtLoad`-only → "run-once"
+
 **Time controls** — 6h, 24h, 7d, 30d with adaptive chart bucketing.
 
 ### Adaptive Chart Bucketing
@@ -78,13 +85,16 @@ Since ccusage data is daily granularity and the push runs on a laptop (not alway
 | `/` | GET | Dashboard HTML |
 | `/api/data?hours=N` | GET | Snapshots + ccusage for last N hours (max 8760). Downsampled to ~hourly beyond 7 days. |
 | `/api/current` | GET | Latest snapshot only |
-| `/api/services` | GET | LaunchAgent service status |
+| `/api/services` | GET | LaunchAgent service status (label, status, last_run, next_run, schedule kind, last_exit) |
 | `/api/cron` | GET | Upcoming cron job schedule |
 | `/api/gateway-usage` | GET | Gateway sessions.usage RPC (5-min cached). Returns totals, sessions, daily, aggregates. |
 
 ---
 
 ## Changelog
+
+### v7.2 (2026-05-01)
+- **Next Run column on Services panel** — `/api/services` now returns `next_run` (ISO UTC) and `schedule` kind (`interval`, `calendar`, `keepalive`, `watch`, `runonce`) per service. Frontend renders absolute time + relative offset for scheduled jobs, and friendly labels for non-scheduled types.
 
 ### v7.1 (2026-03-10)
 - **Downsampling data loss fix** — `_downsample_hourly` (used for 30d view) was dropping activity deltas and cron job entries from non-kept snapshots, causing 30d to show fewer cron runs/messages than 7d. Now merges activity counts and `cron_jobs` from dropped snapshots into the kept one per hourly bucket.
