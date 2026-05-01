@@ -9,8 +9,69 @@ Reference for all cron jobs defined in `~/.openclaw/cron/jobs.json` on the Mac M
 > - **Edit:** `openclaw cron edit <id> --message "..."` (and other `--flag` options — see `openclaw cron edit --help`)
 > - **Read (authoritative):** `openclaw cron list --json` — `jobs.json` on disk can be stale
 > - **Add / disable / enable / remove:** `openclaw cron add|disable|enable|rm`
->
-> When removing jobs, also delete their run state files at `~/.openclaw/cron/runs/<job-id>.jsonl` — the cron subsystem persists `nextRunAtMs` independently of the job definition and will keep executing ghost jobs otherwise. (`openclaw cron rm` may not handle this for you.)
+
+### CRITICAL: edits are volatile until the gateway syncs to disk
+
+`openclaw cron edit` mutates **gateway in-memory state only**. The
+gateway syncs to `jobs.json` on its own periodic cadence (typically
+within ~60s). If the gateway restarts in that gap — manual `launchctl
+kickstart`, plist reload, npm upgrade post-install, crash, machine
+reboot — the in-memory change is silently discarded and the gateway
+re-loads the OLD `jobs.json` config on startup. **No warning is
+logged, no error is returned**. Hit on 2026-05-01 with the
+`datenight-may` incident: edits to 7 jobs were wiped by an unrelated
+gateway restart and had to be re-applied.
+
+After any `openclaw cron edit`, verify durability before any restart:
+
+```bash
+# 1. Confirm jobs.json mtime is fresh (within ~60s of the edit)
+stat -f '%Sm  %N' ~/.openclaw/cron/jobs.json
+
+# 2. Confirm jobs.json content reflects the change
+grep -A2 'datenight-jun' ~/.openclaw/cron/jobs.json | head
+```
+
+If `jobs.json` doesn't show the change yet, **wait** — don't restart
+the gateway. For batch edits, add a 30-60s sleep at the end of the
+script and re-read `jobs.json` to confirm all changes landed before
+exiting.
+
+### Removing jobs (ghost-job pitfalls)
+
+A job can keep firing even after you think you've deleted it. The
+canonical removal procedure:
+
+```bash
+# 1. Remove from gateway state
+openclaw cron rm <job-id>
+
+# 2. Delete the run state file (cron subsystem reads nextRunAtMs from
+#    here independently of jobs.json — orphan files re-fire jobs)
+rm -f ~/.openclaw/cron/runs/<job-id>.jsonl
+
+# 3. Verify gone everywhere
+openclaw cron list --json | grep <job-id>           # → empty
+grep <job-id> ~/.openclaw/cron/jobs.json            # → empty
+ls ~/.openclaw/cron/runs/<job-id>.jsonl 2>/dev/null # → no such file
+```
+
+If the gateway is in a weird state and a removed job keeps firing
+(seen 2026-05-01: `cron rm` returned `removed: false` but the agent
+still ran 18 minutes later), the recovery is:
+
+```bash
+# 1. Delete runs file
+rm -f ~/.openclaw/cron/runs/<job-id>.jsonl
+# 2. Restart gateway to flush in-memory state
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+# 3. CRITICAL: re-apply any pending `cron edit` changes the restart wiped
+#    (see "edits are volatile" above)
+# 4. Verify jobs.json on disk reflects the desired state
+```
+
+Triple-verify across all three layers (gateway memory, jobs.json,
+runs/) before considering a job dead — they can drift independently.
 
 ## Avoiding double delivery
 
