@@ -1,3 +1,10 @@
 #!/bin/bash
 # cielo — Cielo Home AC control
-exec /opt/homebrew/bin/node "$HOME/repos/cielo-cli/cli.js" "$@"
+if [ -x /opt/homebrew/opt/node@22/bin/node ]; then
+  NODE=/opt/homebrew/opt/node@22/bin/node
+elif [ -x /opt/homebrew/bin/node ]; then
+  NODE=/opt/homebrew/bin/node
+else
+  NODE="$(command -v node)"
+fi
+exec "$NODE" "$HOME/repos/cielo-cli/cli.js" "$@"

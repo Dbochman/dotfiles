@@ -11,7 +11,6 @@ set -euo pipefail
 LOG_FILE="$HOME/.openclaw/logs/presence-detect.log"
 STATE_DIR="${HOME}/.openclaw/presence"
 RECV_DIR="${STATE_DIR}/incoming"
-NODE="/opt/homebrew/bin/node"
 
 mkdir -p "$RECV_DIR"
 

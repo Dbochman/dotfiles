@@ -44,7 +44,13 @@ if [[ -f "$LOG_FILE" ]]; then
     find "$HOME/.openclaw/logs" -maxdepth 1 -name 'bb-watchdog.log.*' -mtime +7 -delete 2>/dev/null || true
   fi
 fi
-NODE="/opt/homebrew/bin/node"
+if [ -x "/opt/homebrew/opt/node@22/bin/node" ]; then
+  NODE="/opt/homebrew/opt/node@22/bin/node"
+elif [ -x "/opt/homebrew/bin/node" ]; then
+  NODE="/opt/homebrew/bin/node"
+else
+  NODE="$(command -v node || echo /opt/homebrew/bin/node)"
+fi
 BB_LOG="${HOME}/Library/Logs/bluebubbles-server/main.log"
 CRON_JOBS_FILE="${HOME}/.openclaw/cron/jobs.json"
 
