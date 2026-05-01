@@ -2,7 +2,72 @@
 
 Reference for all cron jobs defined in `~/.openclaw/cron/jobs.json` on the Mac Mini.
 
-> **Important**: When removing jobs from `jobs.json`, also delete their run state files at `~/.openclaw/cron/runs/<job-id>.jsonl` — the cron subsystem persists `nextRunAtMs` independently and will keep executing ghost jobs otherwise.
+## Editing & reading jobs
+
+> **The gateway is the source of truth, not `jobs.json`.** The gateway loads `jobs.json` on startup and holds job definitions in memory. Direct edits to the file are silently reverted the next time the gateway syncs in-memory state to disk (which it does on its own cadence). Always go through the CLI:
+>
+> - **Edit:** `openclaw cron edit <id> --message "..."` (and other `--flag` options — see `openclaw cron edit --help`)
+> - **Read (authoritative):** `openclaw cron list --json` — `jobs.json` on disk can be stale
+> - **Add / disable / enable / remove:** `openclaw cron add|disable|enable|rm`
+>
+> When removing jobs, also delete their run state files at `~/.openclaw/cron/runs/<job-id>.jsonl` — the cron subsystem persists `nextRunAtMs` independently of the job definition and will keep executing ghost jobs otherwise. (`openclaw cron rm` may not handle this for you.)
+
+## Avoiding double delivery
+
+Pick **one** delivery path per job, not both:
+
+- Cron-managed: set `delivery: { mode: "announce", channel: ..., to: ... }` and **do not** instruct the agent to send the message itself. The cron subsystem sends the agent's summary and applies a stale-delivery guard so very-late retries are dropped.
+- Agent-managed: set `delivery.mode: "silent"` (cron does not deliver) and instruct the agent to send via the `message` tool. Good when the agent should compose a custom-formatted message — but no stale-delivery guard, so an agent retry hours later still sends.
+
+If both fire, the recipient gets two messages per run, and BB stalls during the agent's send produce `status:error` (despite cron's announce delivering successfully) which triggers cron retry — re-running the entire agent task (including any side effects like restaurant bookings). See the 2026-05-01 `datenight-may-mediterranean` incident for the full failure mode.
+
+## Safe one-shots with side effects
+
+Any one-shot (`deleteAfterRun: true`) whose agent makes external bookings,
+purchases, or other irreversible side effects MUST follow all three of these
+or it can run multiple times and create duplicates:
+
+1. **`delivery.mode: "none"`** (set via `--no-deliver`). With `announce`,
+   a delivery-channel failure (BB stall, network blip) flips the run to
+   `status:error` even when the agent's task succeeded — the cron subsystem
+   then retries, and each retry spawns a fresh agent session that re-does
+   the side effect. Use `none` and have the agent self-deliver via the
+   `message` tool inside the prompt; cron will record the run as `ok`
+   based on agent return alone, and `deleteAfterRun` consumes the job.
+
+2. **Idempotency check at the top of the prompt.** Even with delivery
+   disabled, a worker crash, gateway restart, or manual re-run could
+   re-fire the agent. Make the agent check whether the side effect was
+   already done before doing it. For Resy/OpenTable bookings:
+
+   ```
+   IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for any
+   existing Friday 7 PM upcoming booking in <month> 2026. If one already
+   exists, send chat-id 170 a status message ("<month> date night already
+   booked: [restaurant], [date]") and STOP — do NOT book another.
+
+   Otherwise: <original task prompt>
+   ```
+
+3. **`deleteAfterRun: true`** (set via `--delete-after-run`). Combined
+   with (1), this guarantees the job is removed after the agent's first
+   successful return — no second attempt, no orphan run state.
+
+When removing the job after it fires, also `rm
+~/.openclaw/cron/runs/<job-id>.jsonl` — the run state file persists
+independently and the cron subsystem will keep trying to fire the job
+otherwise (it'll log "skipping stale delivery" but it's clutter and a
+foot-gun if the schedule is ever bumped forward).
+
+### 2026-05-01 datenight-may incident
+The `datenight-may-mediterranean` job ran 8 times that morning between
+08:04 and 12:21 UTC. Each delivery failed (BB watchdog had been silently
+broken since the last `node@22` upgrade — `/opt/homebrew/bin/node`
+hardcode), the cron retried, and each retry's fresh agent session booked
+a different restaurant. Resy ended up holding 2 actual reservations
+(May 8 and May 16) plus 3 attempted bookings that hit 412 conflicts
+against the earlier ones. Fixed by switching all 7 remaining datenight
+jobs (Jun-Dec) to `delivery.mode: "none"` + idempotency-check prompts.
 
 ## Recurring Jobs
 
@@ -18,12 +83,14 @@ Jobs with `tools: exec` can invoke shell commands via the exec tool. Isolated cr
 
 ## One-Shot Date Night Bookings
 
-Monthly date nights for Dylan and Julia (2 people, Fridays at 7 PM, Newton/Brookline area via Resy). All `deleteAfterRun: true`, delivered to group chat (chat-id 170).
+Monthly date nights for Dylan and Julia (2 people, Fridays at 7 PM,
+Newton/Brookline area via Resy). All `deleteAfterRun: true`, agent
+self-delivers to group chat (chat-id 170) via the `message` tool —
+`delivery.mode: "none"` at the cron layer (see "Safe one-shots" above).
+Each prompt opens with an idempotency check against `resy reservations`.
 
 | ID | Fires On | Cuisine |
 |----|----------|---------|
-| `datenight-apr-italian` | Apr 1, 2026 | Italian |
-| `datenight-may-mediterranean` | May 1, 2026 | Mediterranean |
 | `datenight-jun-tapas` | Jun 1, 2026 | Spanish/Tapas |
 | `datenight-jul-japanese` | Jul 1, 2026 | Japanese/Asian |
 | `datenight-aug-farmtotable` | Aug 1, 2026 | Farm-to-Table |
