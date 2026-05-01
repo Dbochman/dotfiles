@@ -1,6 +1,6 @@
 # Fi Collar Presence Integration — Plan
 
-## Status: IMPLEMENTED (2026-03-30)
+## Status: COMPLETE (2026-05-01)
 
 ## Goal
 Add Potato's Fi Series 3+ collar to the Crosstown presence detection system.
@@ -53,3 +53,40 @@ Password reset completed for `dylanbochman@gmail.com`. Fi API is fully operation
 - Session cached at `~/.config/fi-collar/session.json` (12hr TTL, auto-re-login on 401)
 - GPS coordinates available at both Crosstown and Cabin (collar has built-in GNSS + cellular)
 - Integrated into ring-listener return monitor as Phase 1 of [fi-gps-dog-walk-integration](archive/fi-gps-dog-walk-integration.md)
+
+## Potato re-added to presence scan via Fi GPS — 2026-05-01
+
+Reversed the 2026-04-02 removal: Potato is back in `state.json.people`, but
+this time via Fi cellular GPS instead of base-station WiFi detection. Works
+at both locations (cellular fallback when out of base range).
+
+### Implementation
+- New `scan_potato()` function in `presence-detect.sh` calls
+  `/opt/homebrew/bin/fi-collar location` in a subshell with
+  `~/.openclaw/.secrets-cache` sourced (so `TRYFI_*`, `CROSSTOWN_LAT/LON`,
+  `CABIN_LAT/LON` are available without leaking into the parent env).
+- `fi-api.py`'s existing `nearest_location()` does the cabin/crosstown
+  classification (150m / 300m radii via haversine).
+- Result cached at `~/.openclaw/presence/potato-scan.json`; the evaluator
+  reads it and merges Potato into `people['Potato']` with `location`,
+  `activity`, `distance_m`, and `source: "fi-collar"`.
+- Runs on every `cabin` cron tick (Fi API call ~1-2s); also exposed as
+  `presence-detect.sh potato` for manual testing.
+
+### Vacancy gating unchanged
+Potato is NOT in `CABIN_TRACKED` / `CROSSTOWN_TRACKED`. Cabin and crosstown
+occupancy still gates on humans only — dog home alone still triggers eco /
+Roombas / lights-off, as before.
+
+### `location` values
+- `"cabin"` — within 300m of `CABIN_LAT/LON` and `at_location: true`
+- `"crosstown"` — within 150m of `CROSSTOWN_LAT/LON`
+- `"traveling"` — has GPS but outside both radii (walks, car trips, etc.)
+- key omitted entirely when Fi returns an error or no GPS fix
+
+### Coexistence with dog-walk listener
+The dog-walk listener still polls Fi GPS independently (every 3 min) for
+active walk detection; that path is unchanged. The presence scan provides
+the resting-state location signal that downstream consumers (home control
+plane dashboard, `state.json` readers) want without each having to call the
+Fi API themselves.

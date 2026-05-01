@@ -9,7 +9,6 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [dog-walk-listener-hardening](dog-walk-listener-hardening.md) | Thread-safety and async hot-path hardening for `dog-walk-listener.py` |
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
-| [fi-collar-presence](fi-collar-presence.md) | Add Potato's Fi collar to Cabin presence detection |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
 | [system-hardening-2026-04](system-hardening-2026-04.md) | Multi-agent reliability, deployment, and automation hardening sprint |
 
@@ -24,6 +23,7 @@ Completed or historical plans in [`archive/`](archive/).
 | [cli-path-standardization](archive/cli-path-standardization.md) | Standardize CLI wrappers in `~/.openclaw/bin/` | Complete |
 | [crosstown-8sleep](archive/crosstown-8sleep.md) | Eight Sleep Pod skill implementation | Complete |
 | [crosstown-roomba-10-max](archive/crosstown-roomba-10-max.md) | Crosstown Roomba skill implementation | Complete |
+| [fi-collar-presence](archive/fi-collar-presence.md) | Add Potato to presence scan via Fi GPS | Complete |
 | [financial-dashboard-scraping](archive/financial-dashboard-scraping.md) | Web scraping pattern for utility bills | Complete |
 | [gog-cutover](archive/gog-cutover.md) | GOG → GWS CLI migration | Complete |
 | [mysa](archive/mysa.md) | Mysa thermostat integration | Complete |
