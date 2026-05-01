@@ -242,7 +242,7 @@ Command feedback (Running/Success/Error) appears inline below the section header
 - **Eight Sleep** — chip cards per side (bed temp °F, active/idle status) with on/off/set temp
 - **August Lock** — lock state, door state, battery with lock/unlock controls
 - **Ring Doorbell** — chip cards per doorbell (battery, last event with relative time) + snapshot capture with Crosstown/Cabin selector
-- **Nest Camera** — live snapshot capture via WebRTC (Kitchen camera, Cabin); image displayed inline with relative timestamp
+- **Nest Cameras** — live snapshot capture via WebRTC, one card per camera with inline image + relative timestamp. Three cameras across two locations: Kitchen (Cabin/Philly), Laundry (Crosstown — physically in the Garage room in Nest), Living Room (Crosstown). Camera discovery in the `nest` CLI matches against `customName` as a fallback to `parentRelations.displayName` so dashboard labels can diverge from Google Home room names. New devices require `nest reauth` (one-time OAuth re-consent) to become visible to SDM
 - **Litter-Robot** — chip card with status, waste level, cycle count, cat weights; clean/reset controls
 - **Petlibro** — chip cards per device (fountain: water level, battery, filter alert; feeder: food level, next feed) with manual feed
 - **Dog Walk** — active/inactive status, last walk details (read-only)
@@ -288,7 +288,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Eight Sleep | Side (Dylan/Julia) | Level (-100 to +100), On / Off |
 | August | — | Lock / Unlock |
 | Ring Doorbell | Crosstown/Cabin dropdown | Take Snapshot |
-| Nest Camera | Kitchen dropdown | Take Snapshot |
+| Nest Cameras | One card per camera (Kitchen @ Cabin; Laundry + Living Room @ Crosstown) | Take Snapshot per card |
 | Litter-Robot | — | Clean / Reset |
 | Petlibro | — | Feed (portions) |
 | Samsung TV | — | Power On / Off |
