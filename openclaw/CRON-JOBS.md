@@ -114,11 +114,41 @@ or it can run multiple times and create duplicates:
    with (1), this guarantees the job is removed after the agent's first
    successful return — no second attempt, no orphan run state.
 
-When removing the job after it fires, also `rm
-~/.openclaw/cron/runs/<job-id>.jsonl` — the run state file persists
-independently and the cron subsystem will keep trying to fire the job
-otherwise (it'll log "skipping stale delivery" but it's clutter and a
-foot-gun if the schedule is ever bumped forward).
+   **Caveat**: `deleteAfterRun` does NOT actually delete the job — it
+   flips `enabled: false` and writes `updatedAtMs`, but the job entry
+   stays in `jobs.json` AND the runs/ state file persists. Combined
+   with the runs/ file's stored `nextRunAtMs`, a gateway restart can
+   re-fire the "consumed" job on the next tick. Always follow up with
+   the explicit removal procedure below once the agent confirms
+   success — don't trust `deleteAfterRun` alone.
+
+4. **Explicit removal after the run lands.** The morning after the
+   agent fires (or as soon as you've verified the side effect), run:
+
+   ```bash
+   openclaw cron rm <job-id>
+   rm -f ~/.openclaw/cron/runs/<job-id>.jsonl
+   ```
+
+   The run state file persists independently and the cron subsystem
+   will keep trying to fire the job otherwise — it logs "skipping
+   stale delivery" as clutter, and is a live foot-gun if a gateway
+   restart resets the in-memory disable.
+
+### 2026-05-02 datenight-may ghost re-fire
+The `datenight-may-mediterranean` job was consumed (`enabled: false`,
+`deleteAfterRun: true`) after the 2026-05-01 incident — but the job
+entry stayed in `jobs.json` and the runs/ jsonl file was never deleted.
+At 2026-05-02 06:00 ET the gateway re-fired the "consumed" job from
+the persisted `nextRunAtMs`. The agent's idempotency check correctly
+identified the existing Thistle & Leek booking and did NOT double-book,
+but it self-delivered another "May Date Night booked!" message to the
+group chat, and the cron-layer announce delivery failed (`status:error`
+recorded in runs/). Fixed by `cron rm` + deleting the runs/ file, plus
+re-applying the `--no-deliver` migration to Jun-Dec (which a prior
+gateway restart had wiped per the sync-gap pitfall above). Lesson: the
+"Safe one-shots" pattern needs an explicit cleanup step (4) after the
+run lands — `deleteAfterRun` only disables.
 
 ### 2026-05-01 datenight-may incident
 The `datenight-may-mediterranean` job ran 8 times that morning between
