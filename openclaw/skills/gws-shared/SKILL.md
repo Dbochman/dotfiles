@@ -58,6 +58,45 @@ gws <service> <resource> [sub-resource] <method> [flags]
 | `--page-limit <N>` | Max pages when using --page-all (default: 10) |
 | `--page-delay <MS>` | Delay between pages in ms (default: 100) |
 
+## Account selection: `--account` vs `GOOGLE_WORKSPACE_CLI_ACCOUNT`
+
+The CLI has two ways to pick an account, and they don't behave identically:
+
+- **`--account <email>`** — works on the helper subcommands (`+agenda`, `+insert`, `+inbox`, etc.) and on `gws auth ...`.
+- **`GOOGLE_WORKSPACE_CLI_ACCOUNT=<email>`** — works on EVERYTHING, including the raw API resource calls (`calendar events list`, `gmail users messages get`, `calendar calendarList list`, etc.).
+
+Calling raw API endpoints with `--account` may return `401 "No credentials provided"` even though the account is fully authenticated — the flag isn't plumbed through to those code paths in v0.4.4. Set the env var instead:
+
+```bash
+GOOGLE_WORKSPACE_CLI_ACCOUNT=dylanbochman@gmail.com gws calendar events list \
+  --params '{"calendarId":"primary","maxResults":3}'
+```
+
+For scripts that hit raw endpoints, export the var once at the top instead of passing `--account` per call.
+
+## Transient auth errors — retry once
+
+The gws CLI occasionally returns this error mid-token-refresh:
+
+```json
+{"error":{"code":401,"message":"<service> auth failed: Failed to get token","reason":"authError"}}
+```
+
+This is a **race**, not a real auth failure: the local token cache is being rewritten while the API call reads it. Distinguishable from real auth failures because real ones say `Access denied. No credentials provided. Run gws auth login` instead.
+
+**When you see "Failed to get token", retry once after sleeping 3-5 seconds before reporting auth failure.** A second call almost always succeeds.
+
+```bash
+out=$(gws calendar +agenda --days 7 2>&1)
+if echo "$out" | grep -q '"Failed to get token"'; then
+  sleep 5
+  out=$(gws calendar +agenda --days 7 2>&1)
+fi
+echo "$out"
+```
+
+Hit on 2026-05-02 — Dylan's morning briefing fired at 08:00 ET, which was the exact moment the token cache file was being rewritten. The agent saw the 401, didn't retry, and reported "Calendar auth is failing" in the briefing. Manual retry 30 minutes later worked first try.
+
 ## Security Rules
 
 - **Never** output secrets (API keys, tokens) directly

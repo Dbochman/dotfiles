@@ -102,6 +102,35 @@ gws gmail users messages get --params '{
 }'
 ```
 
+### Response shape — where headers actually live
+
+The `metadata` response does NOT put headers at the top level. They're nested under `payload.headers` as an array of `{name, value}` objects:
+
+```json
+{
+  "id": "...",
+  "internalDate": "1777719291000",
+  "labelIds": ["INBOX", ...],
+  "payload": {
+    "headers": [
+      {"name": "From", "value": "..."},
+      {"name": "Subject", "value": "..."},
+      {"name": "Date", "value": "..."}
+    ]
+  }
+}
+```
+
+To extract them flat, pipe through jq:
+
+```bash
+gws gmail users messages get --params '{"userId":"me","id":"<id>","format":"metadata","metadataHeaders":["From","Subject","Date"]}' \
+  | jq '.payload.headers | map({(.name): .value}) | add'
+# → {"From":"sender@x.com","Subject":"...","Date":"..."}
+```
+
+For batch summaries (e.g., morning briefing), loop a list call's IDs through this pattern and concat — don't fall back to `format: "full"` snippets, which is slow and lossy.
+
 ## Get a Thread
 
 ```bash
