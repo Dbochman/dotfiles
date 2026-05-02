@@ -2,33 +2,6 @@
   "version": 1,
   "jobs": [
     {
-      "id": "datenight-may-mediterranean",
-      "agentId": "main",
-      "name": "Monthly Date Night Booking - May (Mediterranean)",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1770516797748,
-      "updatedAtMs": 1770516797748,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-05-01T12:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Mediterranean restaurants in Newton/Brookline on Resy. Find availability for a Friday in May 2026 (try around May 8-16) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1777636800000
-      }
-    },
-    {
       "id": "datenight-jun-tapas",
       "agentId": "main",
       "name": "Monthly Date Night Booking - June (Spanish/Tapas)",
@@ -44,12 +17,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Spanish/Tapas restaurants in Newton/Brookline on Resy. Friday in June 2026 (try June 12-20) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in June 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY June 2026 booking exists, send chat-id 170 a status message (\"June date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any June booking, the agent's job is done.\n\nIf no June 2026 booking exists, proceed:\n\nBook monthly date night. Search for Spanish/Tapas restaurants in Newton/Brookline on Resy. Friday in June 2026 (try June 12-20) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any June booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       },
       "state": {
         "nextRunAtMs": 1780315200000
@@ -71,12 +42,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Japanese/Asian restaurants in Newton/Brookline on Resy. Friday in July 2026 (try July 10-18) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in July 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY July 2026 booking exists, send chat-id 170 a status message (\"July date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any July booking, the agent's job is done.\n\nIf no July 2026 booking exists, proceed:\n\nBook monthly date night. Search for Japanese/Asian restaurants in Newton/Brookline on Resy. Friday in July 2026 (try July 10-24) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any July booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       },
       "state": {
         "nextRunAtMs": 1782907200000
@@ -98,12 +67,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Farm-to-Table restaurants in Newton/Brookline on Resy. Friday in August 2026 (try Aug 7-15) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in August 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY August 2026 booking exists, send chat-id 170 a status message (\"August date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any August booking, the agent's job is done.\n\nIf no August 2026 booking exists, proceed:\n\nBook monthly date night. Search for Farm-to-Table restaurants in Newton/Brookline on Resy. Friday in August 2026 (try August 7-21) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any August booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       },
       "state": {
         "nextRunAtMs": 1785585600000
@@ -125,12 +92,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for American/Steakhouse restaurants in Newton/Brookline on Resy. Friday in September 2026 (try Sept 11-19) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in September 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY September 2026 booking exists, send chat-id 170 a status message (\"September date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any September booking, the agent's job is done.\n\nIf no September 2026 booking exists, proceed:\n\nBook monthly date night. Search for American/Steakhouse restaurants in Newton/Brookline on Resy. Friday in September 2026 (try September 11-25) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any September booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       },
       "state": {
         "nextRunAtMs": 1788264000000
@@ -152,12 +117,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Indian restaurants in Newton/Brookline on Resy. Friday in October 2026 (try Oct 9-17) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in October 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY October 2026 booking exists, send chat-id 170 a status message (\"October date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any October booking, the agent's job is done.\n\nIf no October 2026 booking exists, proceed:\n\nBook monthly date night. Search for Indian restaurants in Newton/Brookline on Resy. Friday in October 2026 (try October 9-23) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any October booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       },
       "state": {
         "nextRunAtMs": 1790856000000
@@ -179,12 +142,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Modern American restaurants in Newton/Brookline on Resy. Friday in November 2026 (try Nov 13-21) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in November 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY November 2026 booking exists, send chat-id 170 a status message (\"November date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any November booking, the agent's job is done.\n\nIf no November 2026 booking exists, proceed:\n\nBook monthly date night. Search for Modern American restaurants in Newton/Brookline on Resy. Friday in November 2026 (try November 6-20) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any November booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       },
       "state": {
         "nextRunAtMs": 1793534400000
@@ -206,12 +167,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book monthly date night. Search for Upscale restaurants (French, Italian, Contemporary) in Newton/Brookline on Resy. Friday in December 2026 (try Dec 11-19) for 2 people at 7 PM. Book it, create Calendar event with julia.joy.jennings@gmail.com, send group chat update (chat-id 170)."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in December 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY December 2026 booking exists, send chat-id 170 a status message (\"December date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any December booking, the agent's job is done.\n\nIf no December 2026 booking exists, proceed:\n\nBook monthly date night. Search for Upscale (French/Italian/Contemporary) restaurants in Newton/Brookline on Resy. Friday in December 2026 (try December 4-18) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any December booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       },
       "state": {
         "nextRunAtMs": 1796126400000

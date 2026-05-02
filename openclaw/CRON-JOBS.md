@@ -4,38 +4,62 @@ Reference for all cron jobs defined in `~/.openclaw/cron/jobs.json` on the Mac M
 
 ## Editing & reading jobs
 
-> **The gateway is the source of truth, not `jobs.json`.** The gateway loads `jobs.json` on startup and holds job definitions in memory. Direct edits to the file are silently reverted the next time the gateway syncs in-memory state to disk (which it does on its own cadence). Always go through the CLI:
->
-> - **Edit:** `openclaw cron edit <id> --message "..."` (and other `--flag` options — see `openclaw cron edit --help`)
-> - **Read (authoritative):** `openclaw cron list --json` — `jobs.json` on disk can be stale
-> - **Add / disable / enable / remove:** `openclaw cron add|disable|enable|rm`
+### State lives in 4 places — and the repo wins
 
-### CRITICAL: edits are volatile until the gateway syncs to disk
+There are **four** independent stores of cron-job state, and they can drift:
 
-`openclaw cron edit` mutates **gateway in-memory state only**. The
-gateway syncs to `jobs.json` on its own periodic cadence (typically
-within ~60s). If the gateway restarts in that gap — manual `launchctl
-kickstart`, plist reload, npm upgrade post-install, crash, machine
-reboot — the in-memory change is silently discarded and the gateway
-re-loads the OLD `jobs.json` config on startup. **No warning is
-logged, no error is returned**. Hit on 2026-05-01 with the
-`datenight-may` incident: edits to 7 jobs were wiped by an unrelated
-gateway restart and had to be re-applied.
+| Layer | Path | Updated by |
+|-------|------|------------|
+| **1. Repo (apex source of truth)** | `~/dotfiles/openclaw/cron/jobs.json` (in this repo) | git commits |
+| **2. Live config** | `~/.openclaw/cron/jobs.json` on the Mini | `dotfiles-pull` `sync-cron-jobs` (~every 30 min); gateway's own periodic sync |
+| **3. Gateway in-memory** | gateway process state | `openclaw cron edit/add/rm` (and on-startup load from layer 2) |
+| **4. Run state** | `~/.openclaw/cron/runs/<id>.jsonl` | gateway after each run; persists `nextRunAtMs` |
 
-After any `openclaw cron edit`, verify durability before any restart:
+The **repo wins on a 30-minute cycle**. `dotfiles-pull` runs every ~30 min, calls `sync-cron-jobs`, and re-deploys the repo's `jobs.json` to layer 2 — preserving runs/ state but **overwriting job definitions**. Any `cron edit` or `cron rm` you made via the CLI is **lost** at the next deploy unless you also commit the same change to the repo.
+
+This is the trap: `cron edit ... --message "..."` shows the change in `cron list --json` immediately and looks durable. Then 25 minutes later, dotfiles-pull silently reseeds the live file from the repo, the gateway re-reads it, and your edit is gone. Same for `cron rm`: a removed-and-not-pushed job is **resurrected** at the next deploy, complete with its old schedule (which the cron loop reads as "fire ASAP").
+
+### CLI commands
+
+> - **Edit:** `openclaw cron edit <id> --message "..."` — mutates gateway memory; **also commit the same change to the repo `jobs.json`** or it dies in 30 min.
+> - **Read (authoritative for current run cycle):** `openclaw cron list --json`
+> - **Add / disable / enable / remove:** `openclaw cron add|disable|enable|rm` — same caveat: also update repo.
+
+### CRITICAL: a CLI-only edit is doomed
+
+Two ways the layer drift kills you:
+
+- **Within ~60 seconds**: `openclaw cron edit` mutates in-memory state only. The gateway syncs to live `jobs.json` on its own cadence. If the gateway restarts in that gap (`launchctl kickstart`, npm upgrade, crash, reboot), the in-memory change is silently discarded and reload happens from the unchanged live file. No warning, no error. Hit on 2026-05-01 — edits to 7 jobs were wiped by an unrelated restart.
+
+- **Within ~30 minutes**: even after the in-memory change syncs to live disk, the next `dotfiles-pull` re-deploys the repo's `jobs.json` over it. CLI changes that aren't also committed to the repo die quietly. Hit on 2026-05-02 — `cron rm datenight-may-mediterranean` ran cleanly, but the next deploy resurrected the job from the repo, and the resurrected job fired and booked La Morra (a different restaurant on a different Friday) because its old prompt lacked the idempotency check.
+
+**Therefore: every cron-job change is a two-step commit:**
 
 ```bash
-# 1. Confirm jobs.json mtime is fresh (within ~60s of the edit)
-stat -f '%Sm  %N' ~/.openclaw/cron/jobs.json
+# 1. Apply via CLI (so the change takes effect immediately, with
+#    proper validation and gateway notification)
+openclaw cron edit <job-id> --message "..."
 
-# 2. Confirm jobs.json content reflects the change
-grep -A2 'datenight-jun' ~/.openclaw/cron/jobs.json | head
+# 2. Mirror the same change into the repo and push
+$EDITOR ~/dotfiles/openclaw/cron/jobs.json
+cd ~/dotfiles && git add openclaw/cron/jobs.json && git commit && git push
+# (or wait for the next dotfiles-pull cycle to deploy)
 ```
 
-If `jobs.json` doesn't show the change yet, **wait** — don't restart
-the gateway. For batch edits, add a 30-60s sleep at the end of the
-script and re-read `jobs.json` to confirm all changes landed before
-exiting.
+Verify durability before any restart:
+
+```bash
+# Confirm live jobs.json mtime is fresh (within ~60s of the edit)
+stat -f '%Sm  %N' ~/.openclaw/cron/jobs.json
+
+# Confirm live jobs.json reflects the change
+grep -A2 '<job-id>' ~/.openclaw/cron/jobs.json | head
+
+# Confirm repo also has the change (so the next deploy doesn't undo it)
+grep -A2 '<job-id>' ~/dotfiles/openclaw/cron/jobs.json | head
+```
+
+If live shows the change but repo doesn't, the next dotfiles-pull will revert it. Commit the repo before walking away.
 
 ### Removing jobs (ghost-job pitfalls)
 
@@ -50,10 +74,16 @@ openclaw cron rm <job-id>
 #    here independently of jobs.json — orphan files re-fire jobs)
 rm -f ~/.openclaw/cron/runs/<job-id>.jsonl
 
-# 3. Verify gone everywhere
-openclaw cron list --json | grep <job-id>           # → empty
-grep <job-id> ~/.openclaw/cron/jobs.json            # → empty
-ls ~/.openclaw/cron/runs/<job-id>.jsonl 2>/dev/null # → no such file
+# 3. Remove from repo jobs.json — otherwise dotfiles-pull resurrects
+#    the job at the next ~30-min deploy cycle
+$EDITOR ~/dotfiles/openclaw/cron/jobs.json   # delete the entry
+cd ~/dotfiles && git add openclaw/cron/jobs.json && git commit && git push
+
+# 4. Verify gone everywhere (all 4 layers)
+openclaw cron list --json | grep <job-id>            # → empty
+grep <job-id> ~/.openclaw/cron/jobs.json             # → empty
+ls ~/.openclaw/cron/runs/<job-id>.jsonl 2>/dev/null  # → no such file
+grep <job-id> ~/dotfiles/openclaw/cron/jobs.json     # → empty
 ```
 
 If the gateway is in a weird state and a removed job keeps firing
@@ -66,12 +96,12 @@ rm -f ~/.openclaw/cron/runs/<job-id>.jsonl
 # 2. Restart gateway to flush in-memory state
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 # 3. CRITICAL: re-apply any pending `cron edit` changes the restart wiped
-#    (see "edits are volatile" above)
+#    (see "a CLI-only edit is doomed" above) — and commit them to the repo
 # 4. Verify jobs.json on disk reflects the desired state
 ```
 
-Triple-verify across all three layers (gateway memory, jobs.json,
-runs/) before considering a job dead — they can drift independently.
+Quad-verify across all four layers (repo, live jobs.json, gateway memory, runs/)
+before considering a job dead — they can drift independently.
 
 ## Avoiding double delivery
 
@@ -103,12 +133,21 @@ or it can run multiple times and create duplicates:
 
    ```
    IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for any
-   existing Friday 7 PM upcoming booking in <month> 2026. If one already
-   exists, send chat-id 170 a status message ("<month> date night already
-   booked: [restaurant], [date]") and STOP — do NOT book another.
+   existing upcoming booking in <month> 2026 (any date, any time, any
+   restaurant — not just the specific Friday). If ANY May 2026 booking
+   exists, send chat-id 170 a status message ("<month> date night
+   already booked: [restaurant], [date]") and STOP — do NOT book
+   another.
 
    Otherwise: <original task prompt>
    ```
+
+   **Critical wording**: the check must say "any booking in <month>",
+   not "the specific Friday at 7 PM". If the prompt also says "try around
+   May 8-16", an agent that finds a May 8 conflict will helpfully pivot
+   to May 15 — which is exactly what happened on 2026-05-02 with La Morra
+   (post-mortem below). Make the idempotency window match the agent's
+   own search window, or it'll book around the conflict.
 
 3. **`deleteAfterRun: true`** (set via `--delete-after-run`). Combined
    with (1), this guarantees the job is removed after the agent's first
@@ -122,18 +161,64 @@ or it can run multiple times and create duplicates:
    the explicit removal procedure below once the agent confirms
    success — don't trust `deleteAfterRun` alone.
 
-4. **Explicit removal after the run lands.** The morning after the
-   agent fires (or as soon as you've verified the side effect), run:
+4. **Explicit removal after the run lands — across all 4 layers.**
+   The morning after the agent fires (or as soon as you've verified
+   the side effect), run:
 
    ```bash
+   # Live state
    openclaw cron rm <job-id>
    rm -f ~/.openclaw/cron/runs/<job-id>.jsonl
+
+   # Repo source-of-truth (or dotfiles-pull resurrects the job within ~30 min)
+   $EDITOR ~/dotfiles/openclaw/cron/jobs.json   # delete the entry
+   cd ~/dotfiles && git add openclaw/cron/jobs.json && git commit -m "..." && git push
    ```
 
    The run state file persists independently and the cron subsystem
    will keep trying to fire the job otherwise — it logs "skipping
    stale delivery" as clutter, and is a live foot-gun if a gateway
-   restart resets the in-memory disable.
+   restart resets the in-memory disable. And the repo step matters
+   because `dotfiles-pull` re-deploys the repo's `jobs.json` every
+   ~30 min, restoring any job you removed via CLI alone.
+
+### 2026-05-02 datenight-may La Morra ghost-booking
+After the morning ghost re-fire (below) was cleaned up via `cron rm` +
+runs file delete at 07:57 ET, two more runs fired the same day at
+08:46 and 09:10 ET because the canonical removal had skipped the
+**repo** step — the repo's `~/dotfiles/openclaw/cron/jobs.json` still
+contained the May job, and `dotfiles-pull` ran at 08:25 ET via
+launchd, calling `sync-cron-jobs`, which re-deployed the repo's
+config back over the live file. The gateway re-loaded the May job
+with its old schedule (`at: 2026-05-01T12:00:00Z`) which the cron
+loop reads as "fire ASAP".
+
+The 08:46 ET run found an existing May 8 booking (Thistle & Leek),
+got a 412 from Resy, and reported `BOOKING FAILED — Existing
+reservation conflict` (no booking created — Resy's own collision
+guard saved us). The 09:10 ET run reasoned around the conflict
+instead: "Dylan already has Thistle & Leek on May 8 and Olivia's
+Bistro on May 16. Let me try Friday May 15 for La Morra." The
+"try around May 8-16" wording in the original (un-migrated) prompt
+gave the agent license to pick *any* Friday, and the prompt had no
+idempotency stop because May was supposed to be deleted before the
+Jun-Dec migration. So La Morra got booked on May 15.
+
+Two compounding root causes:
+
+1. **Removal didn't propagate to the repo.** The CRON-JOBS.md "canonical
+   removal" recipe at the time only listed `cron rm` + runs file delete.
+   It missed the repo. Updated above to include the repo edit + commit
+   as step 3 of the 4-layer removal procedure.
+
+2. **Idempotency check was missing AND would have been too narrow even
+   if present.** The May job was never migrated (it was being deleted),
+   so the original prompt — "try around May 8-16" with no stop condition —
+   ran instead. Even the migrated form ("Friday 7 PM in May") would have
+   been too narrow if combined with a multi-day search window: it would
+   match May 8's Thistle & Leek but not prevent booking another Friday.
+   Updated the idempotency template above to require "any booking in
+   <month>", matching the agent's own search window.
 
 ### 2026-05-02 datenight-may ghost re-fire
 The `datenight-may-mediterranean` job was consumed (`enabled: false`,
