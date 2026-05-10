@@ -72,7 +72,7 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | Label | File | Reason |
 |-------|------|--------|
 | `ai.openclaw.weekly-upgrade` | `.plist.disabled` | Weekly auto-upgrade removed 2026-03-12; upgrades now manual |
-| `ai.openclaw.usage-token-push` | `usage-token-push.plist` | Replaced by `oauth-refresh` — was pushing OAuth cache from laptop keychain to Mini, fragile (required laptop open + keychain readable) |
+| `ai.openclaw.usage-token-push` | `usage-token-push.plist.disabled` | Replaced by `oauth-refresh` — was pushing OAuth cache from laptop keychain to Mini, fragile (required laptop open + keychain readable). Lingered as `.plist` on Mini for weeks firing self-loop SSH every 30 min and exit-255'ing; renamed to `.disabled` and bootout'd on 2026-05-10 post-Tahoe-26.4.1 reboot. |
 
 ## New LaunchAgent Checklist
 
