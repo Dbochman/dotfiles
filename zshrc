@@ -1,12 +1,31 @@
 alias python=/usr/bin/python3
 export PATH="$HOME/.local/bin:$PATH"
 
+# Prefer Homebrew's keg-only Node 22 for CLIs with `env node` shebangs.
+export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+
 # 1Password SSH Agent
 export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock
 
 # Codex quick review alias (lower reasoning effort for speed)
 alias codex-quick='codex -c model_reasoning_effort="medium"'
 alias cq='codex-quick review'
+
+# Open the devcontainer SSH target in cmux.
+devc() {
+  if ! cmux ping >/dev/null 2>&1; then
+    open /Applications/cmux.app >/dev/null 2>&1
+
+    local i
+    for i in {1..100}; do
+      cmux ping >/dev/null 2>&1 && break
+      sleep 0.1
+    done
+  fi
+
+  cmux ssh devc --name devc "$@" || \
+    cmux new-workspace --name devc --command "ssh devc"
+}
 
 # Remote Claude Code / Codex on work MBP
 # Usage: rcc [dir]  — defaults to ~ on the work MBP
@@ -21,8 +40,24 @@ rcc() {
   ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c /Users/dbochman/.local/bin/claude"
 }
 rcx() {
-  local dir; dir=$(_rcc_remote_dir "$1")
-  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c /opt/homebrew/bin/codex"
+  local dir="$HOME"
+  local codex_cmd="/opt/homebrew/bin/codex"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yolo)
+        codex_cmd="${codex_cmd} --yolo"
+        shift
+        ;;
+      *)
+        dir="$1"
+        shift
+        ;;
+    esac
+  done
+
+  dir=$(_rcc_remote_dir "$dir")
+  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '${codex_cmd}'"
 }
 
 # Chrome with remote debugging for MCP
