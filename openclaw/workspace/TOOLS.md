@@ -112,7 +112,7 @@ CLI at `/opt/homebrew/bin/gws` (**pinned at v0.4.4**, Rust binary). Gmail, Calen
 
 ## Pinchtab (Browser Automation)
 
-CLI at `/opt/homebrew/bin/pinchtab` (v0.7.6). Headless Chrome control for web tasks.
+CLI at `/opt/homebrew/bin/pinchtab` (v0.11.0). Headless Chrome control for web tasks. The native binary lives at `~/.pinchtab/bin/<version>/pinchtab-darwin-arm64`; the npm `pinchtab` shim resolves it.
 
 ### Lifecycle
 
@@ -140,8 +140,11 @@ pinchtab ss -o /tmp/screenshot.png  # Screenshot
 ### Gotchas
 
 - React SPAs: `element.click()` via `eval` may not trigger React handlers — use `pinchtab click <ref>` instead
-- Always `pkill -f pinchtab` when done — leftover Chrome processes eat memory
+- Always `pkill -f pinchtab` when done — leftover Chrome processes eat memory. `pinchtab daemon stop` only stops the LaunchAgent daemon; auto-spawned background servers from `pinchtab nav` need pkill.
 - Cookie/session state persists between `nav` calls within the same server session
+- v0.11.0+: `pinchtab eval` and the `/evaluate` HTTP endpoint are gated by `security.allowEvaluate` (default off, returns 403). Required for grocery-reorder. Set with `pinchtab config set security.allowEvaluate true`. Restart the server after the change — config is read at startup.
+- v0.11.0+: native binary at `~/.pinchtab/bin/<version>/pinchtab-darwin-arm64` is downloaded by `node scripts/postinstall.js` in the npm package. If `npm install -g` finishes but `pinchtab` errors with "binary not found", run that script manually from `/opt/homebrew/lib/node_modules/pinchtab`.
+- v0.11.0+: profile path is `~/.pinchtab/profiles/<name>/` (was `~/.pinchtab/chrome-profile/`). Multi-profile parent dir, not a single profile.
 
 ## BlueBubbles
 

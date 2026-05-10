@@ -154,7 +154,7 @@ gws auth still works.
 |---|---|---|---|
 | Mini | `@anthropic-ai/claude-code` | 2.1.76 → 2.1.123 | Tier 2 — OAuth refresh chain. Bump in a window where you can verify the next refresh fires cleanly. |
 | Mini | `openclaw` | 2026.4.2 → 2026.4.27 | Tier 3 — see procedure below. ~25 versions of drift. **Done 2026-05-10** — bumped past 2026.4.27 to v2026.5.7. Doctor auto-rewrote `openclaw.json` (added `anthropic.enabled: true`, version-stamp bump only); see `~/repos/openclaw-operator/audit-log.md` 2026-05-10 entry. |
-| Mini | `pinchtab` | 0.7.6 → 0.10.0 | Tier 3 — major bump, breaks browser automation downstream if incompatible. Test against grocery-reorder before. |
+| Mini | `pinchtab` | 0.7.6 → 0.10.0 | Tier 3 — major bump, breaks browser automation downstream if incompatible. Test against grocery-reorder before. **Done 2026-05-10** — bumped to v0.11.0. Required: (1) manual `node scripts/postinstall.js` after `npm install -g` because npm postinstall didn't fire (downloads platform-specific Mach-O binary to `~/.pinchtab/bin/<version>/`), (2) `pinchtab config set security.allowEvaluate true` because `/evaluate` is now 403 by default — grocery-reorder hits this endpoint directly. New profile path is `~/.pinchtab/profiles/default/` (was `~/.pinchtab/chrome-profile/`); session cookies migrated cleanly. Backup at `~/.pinchtab.pre-0.11.0/` on Mini. |
 | Mini | macOS 26.4 → 26.4.1 | system | Tier 3 — full downtime ~30 min. Schedule. |
 | MBP | `pinchtab` | check at next audit | unknown if installed |
 | Both | `@googleworkspace/cli` | 0.4.4 | **Tier 4 / pinned** — see migration plan |
