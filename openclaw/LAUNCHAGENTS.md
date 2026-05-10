@@ -52,7 +52,7 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `com.openclaw.presence-crosstown` | 15min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale |
+| `com.openclaw.presence-crosstown` | 15min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale. **Must NOT be loaded on Mini** — the script ARP-scans `192.168.165.x`, which the Mini isn't on, so the scan returns nothing and Tailscale `file cp` to self fails. A misplaced copy ran on Mini until 2026-05-10. |
 
 ## Julia's MacBook (dormant, not currently deployed)
 
