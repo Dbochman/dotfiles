@@ -48,13 +48,6 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 
 > **Note**: `bt_connect` is a compiled Mach-O arm64 binary (not tracked in git). It lives only on the Mini at `~/.openclaw/bin/bt_connect`.
 
-### iMessage Group Sync
-
-| Script | Description |
-|--------|-------------|
-| `sync-imessage-groups.py` | Queries `~/Library/Messages/chat.db` for group chats (style=43) and adds missing ROWIDs to `channels.imessage.groups` in `openclaw.json`. Preserves existing per-group config and the `*` wildcard. |
-| `sync-imessage-groups.command` | GUI-context wrapper for `sync-imessage-groups.py` — needed for Full Disk Access to read `chat.db`. Auto-closes Terminal window after completion. |
-
 ### Dotfiles Sync
 
 | Script | Description |

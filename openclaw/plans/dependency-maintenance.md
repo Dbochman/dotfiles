@@ -153,7 +153,7 @@ gws auth still works.
 | Host | What | Current → Latest | Why held |
 |---|---|---|---|
 | Mini | `@anthropic-ai/claude-code` | 2.1.76 → 2.1.123 | Tier 2 — OAuth refresh chain. Bump in a window where you can verify the next refresh fires cleanly. |
-| Mini | `openclaw` | 2026.4.2 → 2026.4.27 | Tier 3 — see procedure below. ~25 versions of drift. |
+| Mini | `openclaw` | 2026.4.2 → 2026.4.27 | Tier 3 — see procedure below. ~25 versions of drift. **Done 2026-05-10** — bumped past 2026.4.27 to v2026.5.7. Doctor auto-rewrote `openclaw.json` (added `anthropic.enabled: true`, version-stamp bump only); see `~/repos/openclaw-operator/audit-log.md` 2026-05-10 entry. |
 | Mini | `pinchtab` | 0.7.6 → 0.10.0 | Tier 3 — major bump, breaks browser automation downstream if incompatible. Test against grocery-reorder before. |
 | Mini | macOS 26.4 → 26.4.1 | system | Tier 3 — full downtime ~30 min. Schedule. |
 | MBP | `pinchtab` | check at next audit | unknown if installed |

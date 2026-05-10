@@ -1,7 +1,7 @@
 {
   "meta": {
-    "lastTouchedVersion": "2026.3.2",
-    "lastTouchedAt": "2026-03-04T23:04:56.610Z"
+    "lastTouchedVersion": "2026.5.7",
+    "lastTouchedAt": "2026-05-10T13:06:17.072Z"
   },
   "auth": {
     "profiles": {
@@ -74,13 +74,15 @@
       "serverUrl": "http://localhost:1234",
       "password": "${BLUEBUBBLES_PASSWORD}",
       "webhookPath": "/bluebubbles-webhook",
-      "allowPrivateNetwork": true,
       "sendReadReceipts": true,
       "dmPolicy": "open",
       "groupPolicy": "open",
       "allowFrom": [
         "*"
       ],
+      "network": {
+        "dangerouslyAllowPrivateNetwork": true
+      },
       "groups": {
         "*": {}
       },
@@ -135,6 +137,12 @@
   "plugins": {
     "entries": {
       "bluebubbles": {
+        "enabled": true
+      },
+      "browser": {
+        "enabled": true
+      },
+      "anthropic": {
         "enabled": true
       }
     }

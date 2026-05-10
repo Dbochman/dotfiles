@@ -78,5 +78,5 @@ These may exist from previous configurations and can be safely removed:
 - `*.log.old` — pre-migration logs moved from `/tmp/`
 - `weekly-upgrade.*` — weekly auto-upgrade was removed 2026-03-12
 - `op-test-*` — 1Password testing artifacts
-- `group-sync*` — iMessage group sync (superseded by `sync-imessage-groups`)
+- `group-sync*` and `sync-imessage-groups*` — iMessage group sync; both retired with the BB plugin migration (groups now live under `channels.bluebubbles.groups`)
 - `gateway-wrapper.log` — old gateway wrapper output
