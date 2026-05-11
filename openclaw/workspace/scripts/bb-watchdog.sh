@@ -150,9 +150,14 @@ if [[ "$HELPER_CONNECTED" == "false" ]]; then
       log "WARN: Private API helper still disconnected after full restart"
     fi
 
-    # Step 3: Restart gateway to re-establish clean webhook connection
-    RUNNING_JOBS=$(cron_job_running)
-    if [[ $? -eq 0 ]]; then
+    # Step 3: Restart gateway to re-establish clean webhook connection.
+    # `|| true` is required: cron_job_running returns 1 when no jobs run,
+    # and `RUNNING_JOBS=$(...)` under `set -euo pipefail` would otherwise
+    # kill the script before reaching launchctl. Switch the branch check
+    # from $? to non-empty output, which is what we actually care about
+    # (function prints job IDs when any are running).
+    RUNNING_JOBS=$(cron_job_running || true)
+    if [[ -n "$RUNNING_JOBS" ]]; then
       log "DEFER: Gateway restart deferred — cron job(s) running: ${RUNNING_JOBS}"
     elif launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
       log "ACTION: Gateway restarted after Private API helper recovery"
@@ -179,9 +184,30 @@ fi
 # BB plugin failed to load (e.g., broken module import after npm upgrade), BB
 # will dispatch webhooks into the void and no messages reach OpenClaw.
 GW_URL="http://localhost:18789"
+GW_HEALTH_CODE=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "${GW_URL}/health" 2>/dev/null || echo "000")
 GW_BB_HEALTHY=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' "${GW_URL}/__openclaw__/canvas/" 2>/dev/null || echo "000")
 if [[ "$GW_BB_HEALTHY" == "000" ]]; then
   log "WARN: Gateway not reachable — BB webhooks may not be received"
+fi
+
+# Direct liveness probe of the BB webhook route. If the gateway's BB plugin is
+# loaded, this route exists and POSTing returns 401 (no auth) or 4xx (bad body)
+# — anything that proves the route exists. If the plugin is NOT loaded, the
+# gateway returns 404 (no route registered). This is far more reliable than
+# scraping rotated daily log files for a startup-marker string, and it works
+# correctly regardless of gateway uptime. Used to short-circuit log-scraping
+# detection in the decision block below.
+BB_PLUGIN_VERIFIED_HEALTHY=0
+if [[ "$GW_HEALTH_CODE" == "200" ]]; then
+  WH_CODE=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' \
+    -X POST "${GW_URL}/bluebubbles-webhook" \
+    -H 'Content-Type: application/json' -d '{}' 2>/dev/null || echo "000")
+  # 401 unauthorized = route registered, auth check fired (plugin loaded).
+  # 4xx body validation errors are also acceptable (plugin loaded, request rejected).
+  # 404 / 000 / 5xx = plugin not loaded or gateway sick.
+  if [[ "$WH_CODE" =~ ^4[0-9][0-9]$ && "$WH_CODE" != "404" ]]; then
+    BB_PLUGIN_VERIFIED_HEALTHY=1
+  fi
 fi
 
 # Query latest message (any sender) — this is what we track for stall detection
@@ -252,21 +278,31 @@ try {
 // BB can dispatch webhooks successfully (webhookAgeMin is low) but the gateway
 // may not have its BB plugin loaded (e.g., broken import after npm upgrade).
 //
-// Strategy: find the last gateway startup line ('listening on ws://') in the
-// log, then check if 'webhook listening' (BB plugin init) appears AFTER it.
-// This scopes the check to the current gateway process, avoiding:
-//   - False negatives from stale startup lines in earlier process lifetimes
-//   - False positives from multi-day uptime aging out of scan window
+// Primary signal: the BB webhook route liveness probe in the shell prefix.
+// If the gateway responded 4xx (not 404) to a POST /bluebubbles-webhook, the
+// route is registered, which proves the plugin loaded — no log-scraping
+// needed. Used to short-circuit and avoid false positives from rotated logs.
+//
+// Fallback signal: scan the structured runtime log for the gateway HTTP-start
+// marker, then check if 'webhook listening' (BB plugin init) appears AFTER it.
+// This only runs when the liveness probe failed or was inconclusive.
 let gatewayBbAliveMin = 999;
-let gatewayBbPluginLoaded = false;
-try {
-  // Gateway log is named by local date, not UTC — check today and yesterday
-  const localNow = new Date(now - new Date().getTimezoneOffset() * 60000);
-  const localToday = localNow.toISOString().slice(0, 10);
-  const localYesterday = new Date(localNow - 86400000).toISOString().slice(0, 10);
-  const candidates = [localToday, localYesterday];
+let gatewayBbPluginLoaded = process.argv[4] === '1';
 
-  // Phase 1: Find the last gateway startup line across log files
+try {
+  // Gateway log is named by local date, not UTC — check the last 3 days to
+  // tolerate multi-day uptime aging the startup line out of "today" alone.
+  const localNow = new Date(now - new Date().getTimezoneOffset() * 60000);
+  const candidates = [0, 1, 2].map(d =>
+    new Date(localNow - d * 86400000).toISOString().slice(0, 10)
+  );
+
+  // Phase 1: Find the last gateway HTTP-start line across log files.
+  // The marker is '[gateway] http server listening (N plugins: ...)' in the
+  // structured JSON runtime log. The previous version of this script looked
+  // for 'listening on ws://' — that string never existed in the runtime log
+  // (the gateway uses HTTP/webhook transport, not a top-level WebSocket),
+  // so detection always failed and every check fell through to 'plugin dead'.
   let startupLineIdx = -1;
   let startupLogLines = null;
   for (const day of candidates) {
@@ -275,7 +311,7 @@ try {
     const gwContent = fs.readFileSync(gwLogPath, 'utf8');
     const gwLines = gwContent.split('\n');
     for (let i = gwLines.length - 1; i >= 0; i--) {
-      if (gwLines[i].includes('listening on ws://')) {
+      if (gwLines[i].includes('http server listening')) {
         startupLineIdx = i;
         startupLogLines = gwLines;
         break;
@@ -425,7 +461,7 @@ if (saveState) {
 }
 
 console.log([action, reason, msgAgeMin, webhookAgeMin, latestGuid, msgAgeSec, lagAlert ? '1' : '0'].join('|'));
-" "$ALL_LATEST_JSON" "$LAG_ALERT_SEC" "$POKE_RETRY_THRESHOLD" 2>/dev/null || echo "error|node failed|0|0||0|0")
+" "$ALL_LATEST_JSON" "$LAG_ALERT_SEC" "$POKE_RETRY_THRESHOLD" "$BB_PLUGIN_VERIFIED_HEALTHY" 2>/dev/null || echo "error|node failed|0|0||0|0")
 
 ACTION=$(echo "$RESULT" | cut -d'|' -f1)
 REASON=$(echo "$RESULT" | cut -d'|' -f2)
@@ -498,8 +534,8 @@ fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
     # BB restart invalidates the gateway's webhook registration — without this,
     # the gateway holds a stale webhook and never receives new messages.
     sleep 15
-    RUNNING_JOBS=$(cron_job_running)
-    if [[ $? -eq 0 ]]; then
+    RUNNING_JOBS=$(cron_job_running || true)
+    if [[ -n "$RUNNING_JOBS" ]]; then
       log "DEFER: Gateway restart deferred — cron job(s) running: ${RUNNING_JOBS}"
     elif launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null; then
       log "ACTION: Gateway restarted (webhook re-registration after BB restart)"
@@ -521,8 +557,8 @@ prev.lastRestart = Date.now();
 fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
 " 2>/dev/null
 
-    RUNNING_JOBS=$(cron_job_running)
-    if [[ $? -eq 0 ]]; then
+    RUNNING_JOBS=$(cron_job_running || true)
+    if [[ -n "$RUNNING_JOBS" ]]; then
       log "DEFER: Gateway restart deferred — cron job(s) running: ${RUNNING_JOBS}"
     else
       log "ACTION: Restarting gateway only (BB is healthy)..."
