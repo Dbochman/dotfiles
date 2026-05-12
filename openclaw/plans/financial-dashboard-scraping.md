@@ -342,10 +342,20 @@ Julia's employer uses ADP. Search query refinements to try (in order):
     "message": "Run the financial dashboard scrapers. Working directory: ~/repos/financial-dashboard. Venv Python: ./venv/bin/python3.\n\nFor each scraper below, run it and check the exit code. If a Tier 2 scraper fails with a session/auth error, attempt self-healing re-auth via Pinchtab (see re-auth instructions below). Tier 3 scrapers: just alert on failure.\n\n--- Tier 1 (API only) ---\n1. ./venv/bin/python3 scrape_tesla_solar.py\n\n--- Tier 2 (self-healing via --cookies) ---\n2. ./venv/bin/python3 scrape_eversource.py --cookies --headless\n3. ./venv/bin/python3 scrape_national_grid_electric.py --cookies --headless\n4. ./venv/bin/python3 scrape_bwsc.py --cookies --headless\n\n--- Tier 3 (headless, alert on failure) ---\n5. ./venv/bin/python3 scrape_national_grid.py --headless (no --cookies until Phase 2a)\n6. ./venv/bin/python3 scrape_mortgage.py --lender boa --headless\n7. ./venv/bin/python3 scrape_mortgage.py --lender pennymac --headless\n\n--- Import results to SQLite ---\n./venv/bin/python3 update_data.py import-json-utilities\n./venv/bin/python3 update_data.py import-json-gas\n./venv/bin/python3 update_data.py import-json-electric-cabin\n./venv/bin/python3 update_data.py import-json-solar-cabin\n./venv/bin/python3 update_data.py import-json-water\n./venv/bin/python3 update_data.py import-json-boa-mortgage\n./venv/bin/python3 update_data.py import-json-pennymac-mortgage\n\nIf .env has PLAID_CLIENT_ID set:\n./venv/bin/python3 update_data.py sync\n\n--- Re-auth instructions (Tier 2 only) ---\nIf a Tier 2 scraper fails with 'session expired' or 'login' in the output:\n1. Disable Cielo refresh to avoid Pinchtab conflicts: launchctl unload ~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist\n2. Export credentials: export PROVIDER_USER=$(op read 'op://Personal/<provider>/username') && export PROVIDER_PW=$(op read 'op://Personal/<provider>/password')\n3. Open Chrome to provider login URL via pinchtab navigate_page\n4. Fill username and password fields via CDP fill tool\n5. Wait for redirect to authenticated page (~10s)\n6. Unset credentials immediately: unset PROVIDER_USER PROVIDER_PW\n7. Re-enable Cielo refresh: launchctl load ~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist\n8. Retry the scraper command\n\nOnly message Dylan if there were failures (include which scrapers and the error summary). Imports are idempotent — safe to re-run."
   },
   "delivery": {
-    "mode": "silent"
+    "mode": "none"
   }
 }
 ```
+
+> **Schema note (2026-05-12):** the gateway's `delivery.mode` enum is
+> `"none"` or `"announce"`, not `"silent"`. An earlier draft of this
+> plan used `"silent"`, which the gateway silently coerced to
+> `announce → last`, fail-closed at delivery time. The prose elsewhere
+> in this doc still calls this pattern "silent delivery" — that
+> describes intent (no cron-layer delivery, agent self-messages on
+> failure only via the `message` tool), not a literal config value.
+> If you want the cron layer to deliver, use `"announce"` with
+> `channel` + `to`; otherwise use `"none"`.
 
 ### Biweekly Paystub Job
 
