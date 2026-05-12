@@ -12,27 +12,56 @@ trap 'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) FATAL: dotfiles-pull failed at line $
 
 cd "$REPO" || exit 1
 
+# Pre-flight: detect an unresolved merge state left over from a prior run.
+# Files in U?/?U/AA/DD/UU state can't be stashed (git stash push silently
+# omits them) and prevent `git pull --ff-only` from advancing. If we don't
+# bail here, the next steps would: (a) stash nothing, (b) fail to pull,
+# (c) the script would proceed to deploy with the stale local checkout,
+# silently reverting any commits pushed since the conflict. Bail loudly so
+# the operator notices and resolves manually.
+UNRESOLVED=$(git status --porcelain | awk '/^(U[ADMU]|[ADMU]U|AA|DD) /')
+if [ -n "$UNRESOLVED" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ABORT: unresolved merge state from prior run; refusing to deploy stale files:" >> "$LOG"
+  echo "$UNRESOLVED" >> "$LOG"
+  exit 1
+fi
+
 DIRTY=$(git status --porcelain)
 
-# Git stash operations can fail benignly — disable strict error mode for this section
+# Disable the ERR trap inside the stash block. Each git command's exit
+# code is captured and logged explicitly here — the trap firing on every
+# non-zero would just add noise like "FATAL: line 41" for handled
+# branches (set +e suppresses errexit but does NOT suppress the trap).
+trap - ERR
 set +e
+PULL_STATUS=99   # sentinel: unset until the pull actually runs
 if [ -n "$DIRTY" ]; then
-  # Stash local changes, pull, then reapply
+  # Stash local changes, pull, then reapply. Capture stash-list count
+  # before/after so we know whether stash push actually created an entry
+  # (push returns 0 even when nothing was stashed — e.g., dirty state was
+  # only untracked files, which push doesn't capture by default).
+  STASH_COUNT_BEFORE=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
   STASH_OUT=$(git stash push -m "auto-stash before daily pull" 2>&1)
+  STASH_COUNT_AFTER=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) Stashed local changes: $STASH_OUT" >> "$LOG"
 
   PULL_OUT=$(git pull --ff-only origin main 2>&1)
   PULL_STATUS=$?
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) exit=$PULL_STATUS $PULL_OUT" >> "$LOG"
 
-  POP_OUT=$(git stash pop 2>&1)
-  POP_STATUS=$?
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) stash-pop exit=$POP_STATUS $POP_OUT" >> "$LOG"
+  # Only pop if push actually created a stash entry
+  if [ "$STASH_COUNT_AFTER" -gt "$STASH_COUNT_BEFORE" ]; then
+    POP_OUT=$(git stash pop 2>&1)
+    POP_STATUS=$?
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) stash-pop exit=$POP_STATUS $POP_OUT" >> "$LOG"
 
-  if [ $POP_STATUS -ne 0 ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: stash pop had conflicts, dropping stash" >> "$LOG"
-    git checkout --theirs . 2>/dev/null
-    git stash drop 2>/dev/null
+    if [ $POP_STATUS -ne 0 ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARNING: stash pop had conflicts, dropping stash" >> "$LOG"
+      git checkout --theirs . 2>/dev/null
+      git stash drop 2>/dev/null
+    fi
+  else
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) stash-push created no entry (likely untracked-only); skipping pop" >> "$LOG"
   fi
 else
   PULL_OUT=$(git pull --ff-only origin main 2>&1)
@@ -40,6 +69,18 @@ else
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) exit=$PULL_STATUS $PULL_OUT" >> "$LOG"
 fi
 set -e
+trap 'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) FATAL: dotfiles-pull failed at line $LINENO" >> "$LOG"' ERR
+
+# Refuse to deploy stale files if pull failed. Without this guard, a
+# silently-failed pull (network blip, merge conflict, ff-only refusal)
+# would result in re-deploying the local checkout's frozen state, which
+# silently reverts commits that have been pushed upstream. This was the
+# root cause of the bb-watchdog fix being un-deployed on 2026-05-12 when
+# an unresolved UU zshrc state blocked git pull at 06:00.
+if [ "$PULL_STATUS" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ABORT: git pull failed (exit=$PULL_STATUS); refusing to deploy stale files" >> "$LOG"
+  exit 1
+fi
 
 # Deploy skills as real copies (OpenClaw rejects symlinks via realPath check)
 SKILLS_SRC="$REPO/openclaw/skills"
