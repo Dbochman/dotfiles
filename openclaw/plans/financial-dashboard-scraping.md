@@ -376,12 +376,10 @@ Julia's employer uses ADP. Search query refinements to try (in order):
   "wakeMode": "next-heartbeat",
   "payload": {
     "kind": "agentTurn",
-    "message": "Check Julia's Gmail for recent paystub PDFs and import them to the financial dashboard.\n\n1. Search: gws gmail users messages list --account julia.joy.jennings@gmail.com --params '{\"userId\":\"me\",\"q\":\"subject:(pay stub OR earnings statement) newer_than:16d has:attachment\",\"maxResults\":3}'\n2. For each message with a PDF attachment:\n   a. Download the PDF to /tmp/paystub-<message_id>.pdf\n   b. Read the PDF and extract ALL these fields (current period only, not YTD): pay_date, period_start, period_end, pay_type ('regular' or 'bonus'), gross_pay, net_pay, regular_pay, bonus, deductions_total, federal_tax, state_tax, social_security_tax, medicare_tax, retirement_401k, retirement_401k_er, hsa_employee, hsa_employer, benefits_pretax, other_deductions\n   c. Generate id as 'adp-<pay_date>-<period_end>' (collision-safe)\n   d. Write JSON: {\"paystubs\": [{\"id\": \"...\", ...all fields...}]}\n3. Write to ~/repos/financial-dashboard/paystubs_data.json\n4. Run: cd ~/repos/financial-dashboard && ./venv/bin/python3 update_data.py import-json-paystubs\n5. Clean up: rm /tmp/paystub-*.pdf\n6. Send Julia a summary of what was imported.\n\nIf no new paystubs found, do nothing (no message needed)."
+    "message": "Check Julia's Gmail for recent paystub PDFs and import them to the financial dashboard.\n\n1. Search: gws gmail users messages list --account julia.joy.jennings@gmail.com --params '{\"userId\":\"me\",\"q\":\"subject:(pay stub OR earnings statement) newer_than:16d has:attachment\",\"maxResults\":3}'\n2. For each message with a PDF attachment:\n   a. Download the PDF to /tmp/paystub-<message_id>.pdf\n   b. Read the PDF and extract ALL these fields (current period only, not YTD): pay_date, period_start, period_end, pay_type ('regular' or 'bonus'), gross_pay, net_pay, regular_pay, bonus, deductions_total, federal_tax, state_tax, social_security_tax, medicare_tax, retirement_401k, retirement_401k_er, hsa_employee, hsa_employer, benefits_pretax, other_deductions\n   c. Generate id as 'adp-<pay_date>-<period_end>' (collision-safe)\n   d. Write JSON: {\"paystubs\": [{\"id\": \"...\", ...all fields...}]}\n3. Write to ~/repos/financial-dashboard/paystubs_data.json\n4. Run: cd ~/repos/financial-dashboard && ./venv/bin/python3 update_data.py import-json-paystubs\n5. Clean up: rm /tmp/paystub-*.pdf\n6. If any new paystubs were imported, send Julia a summary via the `message` tool (DM to her iMessage at +15084234853). If no new paystubs were found, do nothing — do NOT send a 'nothing to import' message."
   },
   "delivery": {
-    "mode": "announce",
-    "channel": "bluebubbles",
-    "to": "+1XXXXXXXXXX"
+    "mode": "none"
   }
 }
 ```
@@ -413,7 +411,7 @@ All imports are idempotent. Re-running on unchanged data produces no duplicates.
 | Job | Schedule | Providers | Delivery |
 |-----|----------|-----------|----------|
 | `financial-scrape-0001` | Weekly, Sun 4:05 AM ET | Tesla + utilities + mortgages + Plaid | Silent (alert on failure only) |
-| `paystub-import-0001` | 1st & 15th, 10 AM ET | Julia's Gmail → vision → DB | Announce to Julia |
+| `paystub-import-0001` | 1st & 15th, 10 AM ET | Julia's Gmail → vision → DB | Agent self-messages Julia on imports; silent on empty runs |
 
 ---
 
