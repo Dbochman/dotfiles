@@ -1,3 +1,7 @@
+# Machine-local overrides (not tracked in dotfiles). First-match-wins,
+# so anything in config.local takes precedence over blocks below.
+Include ~/.ssh/config.local
+
 # Dylan's Mac (via Tailscale)
 Host dylans-mac
   HostName dylans-mac.tail3e55f9.ts.net
