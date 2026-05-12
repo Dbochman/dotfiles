@@ -252,6 +252,7 @@ jobs (Jun-Dec) to `delivery.mode: "none"` + idempotency-check prompts.
 | `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | announce to Julia via BB | Julia's morning briefing: calendar preview, inbox triage (label, draft replies, cleanup), 8sleep summary |
 | `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `exec` | announce to Dylan via BB | Dylan's morning briefing: calendar (7-day) + inbox summary (24h) + 8sleep summary. Read-only, no email actions |
 | `weekly-report-0001` | Sundays 3 PM ET | `exec` | announce to Dylan via BB | Combined weekly activity report, security check (gateway, BB, auth, disk, services), and CrisisMode health scan |
+| `financial-scrape-0001` | Sundays 4:05 AM ET | `exec` | silent (no announce) | Weekly financial dashboard refresh: Tesla Solar (API), Eversource / NG Electric / BWSC (Tier 2 self-healing via Pinchtab cookie re-auth), NG Gas / BoA / PennyMac mortgages (Tier 3 headless, alert on failure), then SQLite imports + optional Plaid sync. Re-add procedure: see plan at `openclaw/plans/financial-dashboard-scraping.md` |
 
 ### Tool allowlists (added 2026-04-04, requires OpenClaw v2026.4.1+)
 
