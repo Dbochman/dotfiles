@@ -3,8 +3,8 @@
 ## People
 
 **Family:**
-- Dylan Bochman (primary contact, 781-354-4611)
-- Julia (fiancée, 508-423-4853)
+- Dylan Bochman (primary contact, ${DYLAN_PHONE})
+- Julia (fiancée, ${JULIA_PHONE})
 - Pets: dogs (Potato, Coconut), cats (Sopapilla, Burrito)
 
 ## Places
@@ -27,6 +27,9 @@
 - Nest thermostats
 - Google Nest cameras
 - Google smart speakers
+- August Wi-Fi Smart Lock 4th gen (Crosstown front door, serial L5V82000F7)
+- Cielo minisplits (Crosstown: bedroom, office, living room)
+- Eight Sleep Pod 3 (Crosstown, Dylan=left, Julia=right)
 
 ## Timeline
 
@@ -104,6 +107,11 @@
 
 ## Infrastructure Changes
 
+**2026-04-05:**
+- August smart lock skill deployed and verified working (Crosstown front door: locked, 96% battery, WiFi -47dBm)
+- Lock integrated into vacancy-actions.sh — auto-locks when Crosstown becomes confirmed_vacant
+- crosstown-routines skill updated with note not to duplicate vacancy automation
+
 **2026-03-06:**
 - Base model upgraded to **claude-opus-4-6** (from claude-sonnet-4-6)
 - Cron jobs: 3 qd-booking payloads migrated from `gog calendar create` → `gws calendar events insert` (synced to Mini)
@@ -146,6 +154,21 @@
 **Crosstown Roombas** (`crosstown-roomba` skill):
 - Roomba Combo 10 Max + Scoomba J5 via dorita980 MQTT through MacBook Pro SSH
 
+**August Lock** (`august-lock` skill, deployed 2026-04-05):
+- August Wi-Fi Smart Lock 4th gen at Crosstown front door
+- CLI: `august status|lock|unlock|locks|details`
+- Architecture: Mini → SSH → MBP → august-api npm → August Cloud
+- Auth: dylanbochman@gmail.com, JWT token (~120 day expiry), installId cached on MBP
+- Config: `~/.openclaw/august/config.json` on MBP
+
+**Vacancy Automation** (`vacancy-actions.sh`, WatchPaths on presence state.json):
+- Crosstown vacant → lights off, eco mode, Cielo off, Eight Sleep off, **front door locked**, Roombas start, iMessage notification to Dylan
+- Crosstown occupied → Eight Sleep restored, vacancy marker cleared
+- Cabin vacant → lights off, eco mode, Roombas start
+- Cabin occupied → marker cleared
+- Lock logic: checks if already locked first, sends different iMessage for already-locked vs newly-locked vs failed
+- Marker files in `~/.openclaw/presence/vacancy-dispatched/` prevent duplicate runs
+
 ## Presence Detection Fix (2026-03-24)
 - Fixed stale ARP entries causing false presence at Crosstown
 - Crosstown scan now: delete tracked ARP entries → re-ping (layer 2) → read fresh ARP table
@@ -181,4 +204,5 @@
 
 ## Key Contacts
 
+- **Cameron (Cam) Bochman** (${CAM_PHONE}): Dylan's brother. Trusted contact (full actions, keep Dylan informed). First interaction 2026-05-12 — messaged asking about birthday ideas for Dylan, got stonewalled by untrusted-contact protocol before Dylan confirmed identity. Now fully trusted.
 - **Hamed Silatani** (hamed@uptimelabs.io): Security/incident response simulation workshops; draft reply pending in Gmail

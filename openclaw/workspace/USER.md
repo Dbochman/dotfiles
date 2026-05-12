@@ -18,8 +18,8 @@
 ## The Family
 
 **Dogs:**
-- Potato
-- Coconut
+- Potato (boy)
+- Coconut (girl, blue eyes, white pit bull)
 
 **Cats:**
 - Sopapilla
@@ -32,6 +32,11 @@
 
 **West Roxbury House:**
 - ${CROSSTOWN_ADDRESS}
+
+## Known Contacts (Friends/Others)
+
+- **Ned** (${NED_PHONE}) — Dylan's friend, NOT a trusted contact (chat only, no actions)
+- **Cameron (Cam) Bochman** (${CAM_PHONE}) — Dylan's brother, TRUSTED contact (full actions, keep Dylan informed)
 
 ## Context
 

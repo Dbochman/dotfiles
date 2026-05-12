@@ -167,6 +167,7 @@ All restarts share a 15-min cooldown. Gateway restarts are **deferred while cron
 
 ### Key Gotchas
 
+- **Chat history search: always query by handle, not just chat GUID** — BB sometimes stores DM messages with empty `chats[]` arrays (orphaned from any chat object). The `/api/v1/chat/query` endpoint won't find these. Use `/api/v1/message/query` with `handle.id = :value` filter to search by phone number/email instead. This is especially common for DMs initiated by the bot to new contacts.
 - **NEVER use soft restart for recovery** — `/server/restart/soft` reconnects the Private API helper but does NOT restart the chat.db file system observer, leaving BB blind to new messages
 - **BB + gateway restarts must be sequenced** — watchdog waits 15s after BB relaunch before restarting gateway to re-register webhook
 - **Cloudflare daemon crash-loop** — BB runs it even with `lan-url` proxy; can corrupt event loop
