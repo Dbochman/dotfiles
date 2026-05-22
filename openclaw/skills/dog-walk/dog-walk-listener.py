@@ -1774,7 +1774,6 @@ async def _return_poll_loop(location: str) -> None:
 
     try:
         log(f"RETURN MONITOR: Starting for {location}")
-        await _send_imessage_async(f"\U0001f4cd Tracking your walk at {location} — will dock Roombas when you're back")
 
         # Wait 2 minutes then detect who left
         await asyncio.sleep(120)
@@ -1942,13 +1941,7 @@ async def _return_poll_loop(location: str) -> None:
                         except Exception as e:
                             log(f"RETURN MONITOR: Car trip marking failed (non-fatal): {e}")
 
-                    # Notify + finalize state — best effort
-                    signal_labels = {"ring_motion": "Ring doorbell motion", "network_wifi": "WiFi reconnect", "fi_gps": "Fi GPS", "fi_gps_interhome": "Fi GPS (inter-home transit)"}
-                    try:
-                        await _send_imessage_async(f"\U0001f3e0 Welcome back! Docking Roombas at {location} ({elapsed_min}min walk, signal: {signal_labels.get(return_signal, return_signal)})")
-                    except Exception as e:
-                        log(f"RETURN MONITOR: iMessage failed (non-fatal): {e}")
-
+                    # Finalize state — best effort
                     try:
                         await _update_state_dog_walk_async(location, "dock", return_signal=return_signal, roomba_result=roomba_result)
                         await _update_state_return_monitor_async(location, "stop")
@@ -2141,9 +2134,6 @@ async def _fi_departure_poll_loop() -> None:
                             now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
                             await _set_fi_collar_mode_async("LOST_DOG")
-                            await _send_imessage_async(
-                                f"\U0001f9f9 Potato left {combo_location} (Ring + Fi combo: base disconnected) — starting Roombas!"
-                            )
                             roomba_result = await _run_roomba_command_async(combo_location, "start")
                             await _update_state_dog_walk_async(
                                 combo_location,
@@ -2176,9 +2166,6 @@ async def _fi_departure_poll_loop() -> None:
                 now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
                 await _set_fi_collar_mode_async("LOST_DOG")
-                await _send_imessage_async(
-                    f"\U0001f9f9 Potato left {combo_location} (Fi activity: Rest→Walk + base disconnected) — starting Roombas!"
-                )
                 roomba_result = await _run_roomba_command_async(combo_location, "start")
                 await _update_state_dog_walk_async(
                     combo_location,
@@ -2281,9 +2268,6 @@ async def _fi_departure_poll_loop() -> None:
             # Enable high-frequency GPS for route tracking
             await _set_fi_collar_mode_async("LOST_DOG")
 
-            await _send_imessage_async(
-                f"\U0001f9f9 Potato left {candidate_location} (GPS: {dist}m away) — starting Roombas!"
-            )
             roomba_result = await _run_roomba_command_async(candidate_location, "start")
             await _update_state_dog_walk_async(
                 candidate_location,
