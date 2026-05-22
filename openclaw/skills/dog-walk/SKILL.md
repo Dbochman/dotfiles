@@ -93,10 +93,9 @@ After departure, the return monitor uses three signals — any one triggers Room
 - On return, the full Fi `OngoingWalk` path is fetched (dense polyline) and merged into the route file
 - **Fi walk enrichment** queries `activityFeed` for authoritative timestamps and distance, then **merges all Walk segments that overlap our outing window** (`[our_started_at - 5min, our_ended_at + 5min]`). Fi splits a single outing into multiple Walks when the dog pauses for Play/Rest (sniffing, yard time); the merge takes the earliest start, latest end, sum of distances, and records `fi_walk_count` for transparency. A background thread retries at 5 / 10 / 20 min after return to catch Walks Fi finalizes late — retries are idempotent and always scheduled so late segments can be merged in.
 - A final Fi GPS point is captured before docking (for route completeness)
-- An iMessage notification is sent on return with walk duration and which signal triggered it
-- Safety fallback: auto-docks after 2 hours if no return detected
-- **Resilient finalization:** once a return signal is confirmed, the loop always exits. Walk path capture, dock, iMessage, and state updates are each wrapped in individual try/except blocks so a failure in any step cannot cause the monitor to loop back and re-trigger
-- **Dock sends stop first:** the `crosstown-roomba dock` command sends `stop` before `dock` because iRobot's MQTT `dock` is silently ignored during active cleaning
+- Safety fallback: auto-docks after 2 hours if no return detected (sends iMessage)
+- **Resilient finalization:** once a return signal is confirmed, the loop always exits. Walk path capture, dock, and state updates are each wrapped in individual try/except blocks so a failure in any step cannot cause the monitor to loop back and re-trigger
+- **Dock sends stop first:** the `crosstown-roomba dock` command sends `stop` before `dock` because iRobot's MQTT `dock` is silently ignored during active cleaning. The CLI now skips stop+dock for any robot whose `phase` is `charge` (already on dock), so the verify-retry path doesn't re-stop a docked robot when only one needs a re-dock.
 - **Post-dock verification:** 3 minutes after the dock command, a background thread checks if roombas are actually on the dock (`Charging (on dock)` in status). If not, it retries the dock command up to 2 times (3min between each). If still not docked after all retries, sends an iMessage warning. State is updated with `dock_verified: true/false` and `dock_retry_count`.
 
 ### GPS Tracking Mode (Lost Dog)

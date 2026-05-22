@@ -46,6 +46,8 @@ crosstown-roomba dock all
 ```
 The `dock` command automatically sends `stop` first, then `dock`. This is necessary because iRobot's MQTT `dock` command alone does not interrupt an active cleaning cycle — the robot ignores it while in `run` phase.
 
+If a robot is already on the dock charging (`cleanMissionStatus.phase == "charge"`), the CLI skips the stop+dock sequence for that robot and prints `Already on dock — skipping.`. With `dock all`, the other robot is still processed normally. This avoids redundant commands on the verify-retry path when only one robot needs a re-dock.
+
 ### Locate (play sound)
 ```bash
 crosstown-roomba find roomba

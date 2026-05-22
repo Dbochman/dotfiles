@@ -60,6 +60,22 @@ run_one() {
   ssh -o ConnectTimeout=5 "$MACBOOK" "PATH=/opt/homebrew/bin:\$PATH $NODE $CMD_SCRIPT $env_file $cmd" 2>&1
 }
 
+# Return 0 if robot is currently on the dock charging, else 1.
+# Used to skip redundant stop+dock commands when the robot is already parked.
+robot_is_charging() {
+  local robot="$1"
+  local phase
+  phase=$(run_one "$robot" "status" 2>/dev/null | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    print(d.get('cleanMissionStatus', {}).get('phase', ''))
+except Exception:
+    pass
+" 2>/dev/null || true)
+  [[ "$phase" == "charge" ]]
+}
+
 # Parse status JSON into human-readable output
 parse_status() {
   local label="$1"
@@ -166,6 +182,10 @@ cmd_action() {
     for r in 10max j5; do
       # dock needs stop first — dock alone doesn't interrupt an active cleaning cycle
       if [[ "$action" == "dock" ]]; then
+        if robot_is_charging "$r"; then
+          echo "$(label_for_robot "$r"): Already on dock — skipping."
+          continue
+        fi
         run_one "$r" "stop" >/dev/null 2>&1 || true
         sleep 2
       fi
@@ -180,6 +200,10 @@ cmd_action() {
   else
     # dock needs stop first — dock alone doesn't interrupt an active cleaning cycle
     if [[ "$action" == "dock" ]]; then
+      if robot_is_charging "$robot"; then
+        echo "$(label_for_robot "$robot"): Already on dock — skipping."
+        return 0
+      fi
       run_one "$robot" "stop" >/dev/null 2>&1 || true
       sleep 2
     fi
