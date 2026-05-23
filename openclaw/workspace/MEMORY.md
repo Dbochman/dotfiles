@@ -107,6 +107,11 @@
 
 ## Infrastructure Changes
 
+**2026-05-23:**
+- Vacancy script upgraded: Eight Sleep now uses `away start`/`end` (proper away mode) instead of `off`/`on` (simple thermal pause). Better for extended absences.
+- 8sleep CLI refactored with `--location <crosstown|cabin>` flag for future second Pod support
+- BB routing improvements deployed to SOUL.md and TOOLS.md — always use `any;-;` chat GUIDs as send targets to avoid 30-90s lookup timeouts
+
 **2026-04-05:**
 - August smart lock skill deployed and verified working (Crosstown front door: locked, 96% battery, WiFi -47dBm)
 - Lock integrated into vacancy-actions.sh — auto-locks when Crosstown becomes confirmed_vacant
