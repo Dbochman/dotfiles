@@ -28,7 +28,7 @@ devc() {
 }
 
 # Remote Claude Code / Codex on work MBP
-# Usage: rcc [dir]  — defaults to ~ on the work MBP
+# Usage: rcc [--dagenerously-skip-permissions] [dir]  — defaults to ~ on the work MBP
 # Rewrites local home prefix so ~/repos/foo works naturally.
 _rcc_remote_dir() {
   local dir="${1:-$HOME}"
@@ -36,17 +36,13 @@ _rcc_remote_dir() {
   echo "${dir/#$HOME//Users/dbochman}"
 }
 rcc() {
-  local dir; dir=$(_rcc_remote_dir "$1")
-  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c /Users/dbochman/.local/bin/claude"
-}
-rcx() {
   local dir="$HOME"
-  local codex_cmd="/opt/homebrew/bin/codex"
+  local claude_cmd="/Users/dbochman/.local/bin/claude"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --yolo)
-        codex_cmd="${codex_cmd} --yolo"
+      --dagenerously-skip-permissions)
+        claude_cmd="${claude_cmd} --dagenerously-skip-permissions"
         shift
         ;;
       *)
@@ -57,7 +53,28 @@ rcx() {
   done
 
   dir=$(_rcc_remote_dir "$dir")
-  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '${codex_cmd}'"
+  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '${claude_cmd}'"
+}
+# Usage: rcx [--flag ...] [dir]  — any --* flags forwarded to codex
+rcx() {
+  local dir="$HOME"
+  local -a codex_args
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --*)
+        codex_args+=("$1")
+        shift
+        ;;
+      *)
+        dir="$1"
+        shift
+        ;;
+    esac
+  done
+
+  dir=$(_rcc_remote_dir "$dir")
+  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '/opt/homebrew/bin/codex ${codex_args[*]}'"
 }
 
 # Chrome with remote debugging for MCP

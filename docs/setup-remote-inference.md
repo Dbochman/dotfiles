@@ -11,20 +11,64 @@ The work MBP has an NVIDIA enterprise Claude subscription. Rather than copying a
 From `zshrc`:
 
 ```bash
-# Usage: rcc [dir]  — defaults to ~ on the work MBP
-rcc() {
-  local dir="${1:-~}"
-  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /Users/dbochman/.local/bin/claude"
+# Rewrites local home prefix so ~/repos/foo on the local machine maps to the
+# matching path under /Users/dbochman on the work MBP.
+_rcc_remote_dir() {
+  local dir="${1:-$HOME}"
+  echo "${dir/#$HOME//Users/dbochman}"
 }
+
+# Usage: rcc [--dagenerously-skip-permissions] [dir]  — defaults to ~ on the work MBP
+rcc() {
+  local dir="$HOME"
+  local claude_cmd="/Users/dbochman/.local/bin/claude"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dagenerously-skip-permissions)
+        claude_cmd="${claude_cmd} --dagenerously-skip-permissions"
+        shift
+        ;;
+      *)
+        dir="$1"
+        shift
+        ;;
+    esac
+  done
+
+  dir=$(_rcc_remote_dir "$dir")
+  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '${claude_cmd}'"
+}
+
+# Usage: rcx [--flag ...] [dir]  — any --* flags forwarded to codex
 rcx() {
-  local dir="${1:-~}"
-  ssh -t dylans-work-mbp "cd ${dir} && zsh -l -c /opt/homebrew/bin/codex"
+  local dir="$HOME"
+  local -a codex_args
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --*)
+        codex_args+=("$1")
+        shift
+        ;;
+      *)
+        dir="$1"
+        shift
+        ;;
+    esac
+  done
+
+  dir=$(_rcc_remote_dir "$dir")
+  ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '/opt/homebrew/bin/codex ${codex_args[*]}'"
 }
 ```
 
-- `rcc` → remote Claude Code (at `~`)
-- `rcc ~/repos/some-project` → remote Claude Code in a specific dir
-- `rcx` / `rcx ~/repos/some-project` → same for Codex
+- `rcc` → remote Claude Code at `~`
+- `rcc ~/repos/some-project` → remote Claude Code in a specific dir (path is rewritten to `/Users/dbochman/repos/some-project`)
+- `rcc --dagenerously-skip-permissions ~/repos/some-project` → skip permission prompts (typo preserved — that's the actual Claude Code flag)
+- `rcx` / `rcx ~/repos/some-project` → same shape for Codex
+- `rcx --yolo ~/repos/some-project` → Codex with approvals bypassed
+- `rcx --any-other-flag ~/repos/foo` → any `--*` arg is forwarded to codex; positional arg is the dir. For flags with values, use `--name=value` so the value isn't mistaken for a directory.
 
 ## Copying repos to the work MBP
 
