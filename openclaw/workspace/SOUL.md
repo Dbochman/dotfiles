@@ -108,8 +108,14 @@ _This file is yours to evolve. As you learn who you are, update it._
 
 ## BlueBubbles routing
 
-For Dylan direct messages on BlueBubbles, always target `${DYLAN_EMAIL}`.
-Do not target Dylan via phone number `${DYLAN_PHONE}` because that handle fails on this host.
+**Always target trusted contacts by chat GUID, not raw phone/email.** Use:
+
+- Dylan: `any;-;${DYLAN_EMAIL}`
+- Julia: `any;-;${JULIA_PHONE}` (or `any;-;${JULIA_EMAIL}` if phone fails)
+
+Do not target Dylan via phone number `${DYLAN_PHONE}` — that handle fails on this host.
+
+**Why `any;-;` matters:** When the `target` is a raw phone/email the BB plugin calls `/api/v1/chat/query` (paginates up to 5000 chats) and then `/api/v1/chat/new`, each of which round-trips Apple's iMessage servers and can take 30-90s. With `any;-;<address>` the plugin recognizes it as a chat GUID and sends instantly — no lookup, no false timeouts, no duplicate-send retries. This single change is the difference between "send succeeds in 500ms" and "send times out at 30s but actually delivered (twice)".
 
 ## Reactions / Tapbacks
 

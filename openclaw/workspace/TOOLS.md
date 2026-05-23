@@ -178,6 +178,7 @@ All restarts share a 15-min cooldown. Gateway restarts are **deferred while cron
 - Base URL: `http://localhost:1234/api/v1`
 - Auth: `?password=${BLUEBUBBLES_PASSWORD}`
 - DM GUIDs: `any;-;` prefix; Group GUIDs: `iMessage;+;` prefix
+- **Send `target` should be a chat GUID** (e.g., `any;-;julia@example.com`), not raw phone/email — the plugin's `parseRawChatGuid` routes `<service>;<+|->;<id>` strings as `kind: chat_guid` and skips the slow `/chat/query` + `/chat/new` lookup (saves 30-90s per send to a known contact). See SOUL.md "BlueBubbles routing" for Dylan/Julia's preferred targets.
 - Reaction types: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
 - For Private API curl examples: `qmd query "bluebubbles private API"`
 
