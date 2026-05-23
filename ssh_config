@@ -40,6 +40,16 @@ Host work-mac
   ServerAliveInterval 20
   ServerAliveCountMax 3
 
+# Friendly name matching the Tailscale hostname (resolves via MagicDNS).
+Host work-mbp
+  HostName work-mbp.tail3e55f9.ts.net
+  User dbochman
+  IdentityFile ~/.ssh/id_work_mbp
+  IdentitiesOnly yes
+  IdentityAgent none
+  ServerAliveInterval 20
+  ServerAliveCountMax 3
+
 # Devcontainer on mydevvm, reached through the work laptop's existing GCP/IAP config.
 Host devcontainer-devvm devc
   HostName 127.0.0.1
