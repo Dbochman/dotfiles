@@ -2,14 +2,19 @@
 """Eight Sleep Pod API wrapper for OpenClaw.
 
 Usage:
-    8sleep-api.py status                  Current temperature, power for both sides
-    8sleep-api.py temp <side> <level>     Set temperature (-100 to +100) for dylan|julia
-    8sleep-api.py off <side>              Turn off side (stop thermal unit)
-    8sleep-api.py on <side>               Turn on side (resume smart schedule)
-    8sleep-api.py away <side> start|end   Start/end away mode for a side
-    8sleep-api.py device                  Device info (model, firmware, water, connectivity)
-    8sleep-api.py sleep <side> [date]     Sleep data for dylan|julia (default: last night)
-    8sleep-api.py raw <path>              Raw API GET (e.g., "users/me")
+    8sleep-api.py [--location <name>] status                  Current temperature, power for both sides
+    8sleep-api.py [--location <name>] temp <side> <level>     Set temperature (-100 to +100) for dylan|julia
+    8sleep-api.py [--location <name>] off <side>              Turn off side (stop thermal unit)
+    8sleep-api.py [--location <name>] on <side>               Turn on side (resume smart schedule)
+    8sleep-api.py [--location <name>] away <side> start|end   Start/end away mode for a side
+    8sleep-api.py [--location <name>] device                  Device info (model, firmware, water, connectivity)
+    8sleep-api.py [--location <name>] sleep <side> [date]     Sleep data for dylan|julia (default: last night)
+    8sleep-api.py raw <path>                                  Raw API GET (e.g., "users/me")
+
+Location selects which Pod to target on multi-Pod accounts. Default: crosstown.
+Resolved via EIGHTSLEEP_<LOC>_DEVICE_ID env (optional — falls back to
+the account's "current device" if not set, which is the only Pod for
+single-Pod accounts).
 """
 
 import json
@@ -39,6 +44,15 @@ USERS = {
     "julia": {"id": os.environ["EIGHTSLEEP_JULIA_USER_ID"], "side": "right"},
 }
 
+# Per-location Pod device IDs. Both optional — unset locations fall back to
+# the account's "current device" (correct for single-Pod accounts). Set
+# EIGHTSLEEP_CABIN_DEVICE_ID when the Cabin Pod arrives.
+LOCATIONS = {
+    "crosstown": os.environ.get("EIGHTSLEEP_CROSSTOWN_DEVICE_ID"),
+    "cabin": os.environ.get("EIGHTSLEEP_CABIN_DEVICE_ID"),
+}
+DEFAULT_LOCATION = "crosstown"
+
 
 def resolve_side(name):
     """Resolve a side name to user info."""
@@ -49,6 +63,52 @@ def resolve_side(name):
         if name in key or name == info["side"]:
             return info
     return None
+
+
+def resolve_device_id(token_data, location):
+    """Get the Eight Sleep device ID for a location.
+
+    If EIGHTSLEEP_<LOC>_DEVICE_ID is set, use it directly (multi-Pod accounts).
+    Otherwise fall back to users/<uid>/current-device (correct for single-Pod
+    accounts and for whichever Pod the user most recently used).
+    """
+    configured = LOCATIONS.get(location)
+    if configured:
+        return configured
+    uid = token_data["userId"]
+    current = api_get(f"users/{uid}/current-device", token_data)
+    return current.get("id", "")
+
+
+def pop_location_arg(args):
+    """Pop --location/-l from a list of args, return (location, remaining).
+
+    Accepts: --location <name>, --location=<name>, -l <name>.
+    Returns DEFAULT_LOCATION if none specified.
+    """
+    location = DEFAULT_LOCATION
+    out = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-l", "--location"):
+            if i + 1 >= len(args):
+                print(json.dumps({"error": "missing_arg",
+                                  "message": "--location requires a value"}))
+                sys.exit(1)
+            location = args[i + 1].lower()
+            i += 2
+        elif a.startswith("--location="):
+            location = a.split("=", 1)[1].lower()
+            i += 1
+        else:
+            out.append(a)
+            i += 1
+    if location not in LOCATIONS:
+        print(json.dumps({"error": "unknown_location",
+                          "message": f"Unknown location: {location}. Known: {sorted(LOCATIONS.keys())}"}))
+        sys.exit(1)
+    return location, out
 
 
 def load_config():
@@ -197,15 +257,13 @@ def api_put(path, body, token_data=None, use_app_api=False):
         return {"error": "network", "message": str(e)}
 
 
-def cmd_status():
+def cmd_status(location=DEFAULT_LOCATION):
     """Show current status for both sides."""
     token_data = get_token()
     uid = token_data["userId"]
 
-    # Get device info
-    current = api_get(f"users/{uid}/current-device", token_data)
-    dev_id = current.get("id", "")
-    my_side = current.get("side", "unknown")
+    # Get device info — location selects which Pod on multi-Pod accounts
+    dev_id = resolve_device_id(token_data, location)
 
     device = api_get(f"devices/{dev_id}", token_data)
     d = device.get("result", device)
@@ -217,6 +275,8 @@ def cmd_status():
 
     output = {
         "device": {
+            "location": location,
+            "deviceId": dev_id,
             "model": sensor.get("skuName", "?") + " " + sensor.get("model", "?"),
             "connected": sensor.get("connected", False),
             "hasWater": d.get("hasWater", None),
@@ -242,8 +302,14 @@ def cmd_status():
     print(json.dumps(output, indent=2))
 
 
-def cmd_temp(side_name, level):
-    """Set temperature for a specific side."""
+def cmd_temp(side_name, level, location=DEFAULT_LOCATION):
+    """Set temperature for a specific side.
+
+    NOTE: user-scoped endpoint — Eight Sleep routes by user, so on multi-Pod
+    accounts the request hits whichever Pod is the user's "current device".
+    The location arg is recorded in the response for observability; if/when
+    Eight Sleep exposes per-device targeting on user endpoints, wire it here.
+    """
     user = resolve_side(side_name)
     if not user:
         print(json.dumps({"error": "invalid_side",
@@ -260,20 +326,20 @@ def cmd_temp(side_name, level):
     result = api_put(f"users/{user['id']}/temperature", {
         "currentLevel": level,
     }, token_data)
-    print(json.dumps({"success": True, "side": side_name, "level": level, "response": result}))
+    print(json.dumps({"success": True, "location": location, "side": side_name, "level": level, "response": result}))
 
 
-def cmd_device():
+def cmd_device(location=DEFAULT_LOCATION):
     """Show device info."""
     token_data = get_token()
-    uid = token_data["userId"]
-    current = api_get(f"users/{uid}/current-device", token_data)
-    dev_id = current.get("id", "")
+    dev_id = resolve_device_id(token_data, location)
     device = api_get(f"devices/{dev_id}", token_data)
     d = device.get("result", device)
 
     sensor = d.get("sensorInfo", {})
     output = {
+        "location": location,
+        "deviceId": dev_id,
         "model": sensor.get("model", "?"),
         "size": sensor.get("skuName", "?"),
         "serial": sensor.get("serialNumber", "?"),
@@ -290,8 +356,11 @@ def cmd_device():
     print(json.dumps(output, indent=2))
 
 
-def cmd_sleep(side_name, date=None):
-    """Get sleep data for a specific side."""
+def cmd_sleep(side_name, date=None, location=DEFAULT_LOCATION):
+    """Get sleep data for a specific side.
+
+    User-scoped endpoint — see note in cmd_temp. Location is informational.
+    """
     user = resolve_side(side_name)
     if not user:
         print(json.dumps({"error": "invalid_side",
@@ -311,11 +380,12 @@ def cmd_sleep(side_name, date=None):
 
     result = api_get(path, token_data)
     result["side"] = side_name
+    result["location"] = location
     print(json.dumps(result, indent=2, default=str))
 
 
-def cmd_off(side_name):
-    """Turn off a side (stop thermal unit)."""
+def cmd_off(side_name, location=DEFAULT_LOCATION):
+    """Turn off a side (stop thermal unit). User-scoped — see note in cmd_temp."""
     user = resolve_side(side_name)
     if not user:
         print(json.dumps({"error": "invalid_side",
@@ -331,11 +401,11 @@ def cmd_off(side_name):
         result = api_put(f"users/{user['id']}/temperature",
                          {"currentState": {"type": "off"}},
                          token_data, use_app_api=False)
-    print(json.dumps({"success": True, "side": side_name, "state": "off", "response": result}))
+    print(json.dumps({"success": True, "location": location, "side": side_name, "state": "off", "response": result}))
 
 
-def cmd_on(side_name):
-    """Turn on a side (resume smart schedule)."""
+def cmd_on(side_name, location=DEFAULT_LOCATION):
+    """Turn on a side (resume smart schedule). User-scoped — see note in cmd_temp."""
     user = resolve_side(side_name)
     if not user:
         print(json.dumps({"error": "invalid_side",
@@ -350,11 +420,11 @@ def cmd_on(side_name):
         result = api_put(f"users/{user['id']}/temperature",
                          {"currentState": {"type": "smart"}},
                          token_data, use_app_api=False)
-    print(json.dumps({"success": True, "side": side_name, "state": "on", "response": result}))
+    print(json.dumps({"success": True, "location": location, "side": side_name, "state": "on", "response": result}))
 
 
-def cmd_away(side_name, action):
-    """Start or end away mode for a side."""
+def cmd_away(side_name, action, location=DEFAULT_LOCATION):
+    """Start or end away mode for a side. User-scoped — see note in cmd_temp."""
     user = resolve_side(side_name)
     if not user:
         print(json.dumps({"error": "invalid_side",
@@ -380,7 +450,7 @@ def cmd_away(side_name, action):
     result = api_put(f"users/{user['id']}/away-mode", body, token_data, use_app_api=True)
     if isinstance(result, dict) and result.get("error"):
         result = api_put(f"users/{user['id']}/away-mode", body, token_data, use_app_api=False)
-    print(json.dumps({"success": True, "side": side_name, "away": action, "response": result}))
+    print(json.dumps({"success": True, "location": location, "side": side_name, "away": action, "response": result}))
 
 
 def cmd_raw(path):
@@ -394,46 +464,51 @@ def main():
         print(__doc__.strip())
         sys.exit(1)
 
-    cmd = sys.argv[1]
+    location, rest = pop_location_arg(sys.argv[1:])
+    if not rest:
+        print(__doc__.strip())
+        sys.exit(1)
+
+    cmd = rest[0]
     if cmd == "status":
-        cmd_status()
+        cmd_status(location)
     elif cmd == "temp":
-        if len(sys.argv) < 4:
+        if len(rest) < 3:
             print(json.dumps({"error": "missing_arg",
                               "message": "Usage: 8sleep-api.py temp <dylan|julia> <level>"}))
             sys.exit(1)
-        cmd_temp(sys.argv[2], sys.argv[3])
+        cmd_temp(rest[1], rest[2], location)
     elif cmd == "off":
-        if len(sys.argv) < 3:
+        if len(rest) < 2:
             print(json.dumps({"error": "missing_arg",
                               "message": "Usage: 8sleep-api.py off <dylan|julia>"}))
             sys.exit(1)
-        cmd_off(sys.argv[2])
+        cmd_off(rest[1], location)
     elif cmd == "on":
-        if len(sys.argv) < 3:
+        if len(rest) < 2:
             print(json.dumps({"error": "missing_arg",
                               "message": "Usage: 8sleep-api.py on <dylan|julia>"}))
             sys.exit(1)
-        cmd_on(sys.argv[2])
+        cmd_on(rest[1], location)
     elif cmd == "away":
-        if len(sys.argv) < 4:
+        if len(rest) < 3:
             print(json.dumps({"error": "missing_arg",
                               "message": "Usage: 8sleep-api.py away <dylan|julia> start|end"}))
             sys.exit(1)
-        cmd_away(sys.argv[2], sys.argv[3])
+        cmd_away(rest[1], rest[2], location)
     elif cmd == "device":
-        cmd_device()
+        cmd_device(location)
     elif cmd == "sleep":
-        if len(sys.argv) < 3:
+        if len(rest) < 2:
             print(json.dumps({"error": "missing_arg",
                               "message": "Usage: 8sleep-api.py sleep <dylan|julia> [date]"}))
             sys.exit(1)
-        cmd_sleep(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
+        cmd_sleep(rest[1], rest[2] if len(rest) > 2 else None, location)
     elif cmd == "raw":
-        if len(sys.argv) < 3:
+        if len(rest) < 2:
             print(json.dumps({"error": "missing_arg", "message": "Usage: 8sleep-api.py raw <path>"}))
             sys.exit(1)
-        cmd_raw(sys.argv[2])
+        cmd_raw(rest[1])
     else:
         print(json.dumps({"error": "unknown_command", "message": f"Unknown: {cmd}"}))
         sys.exit(1)

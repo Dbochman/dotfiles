@@ -1,7 +1,8 @@
 #!/bin/bash
-# 8sleep — control Eight Sleep Pod at Crosstown (West Roxbury)
+# 8sleep — control Eight Sleep Pod(s)
 # Talks to Eight Sleep cloud API via 8sleep-api.py
 # Supports both sides: Dylan (left) and Julia (right)
+# Supports multi-Pod accounts via --location <crosstown|cabin> (default: crosstown)
 
 set -euo pipefail
 
@@ -9,8 +10,36 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 API_SCRIPT="$SCRIPT_DIR/8sleep-api.py"
 PYTHON="/usr/bin/python3"
 
+# Pop --location/-l from argv (accepted anywhere) and stash for run_api.
+LOCATION_ARGS=()
+REMAINING=()
+i=1
+while [[ $i -le $# ]]; do
+  arg="${!i}"
+  case "$arg" in
+    -l|--location)
+      next=$((i + 1))
+      if [[ $next -gt $# ]]; then
+        echo "Error: --location requires a value" >&2
+        exit 1
+      fi
+      LOCATION_ARGS=(--location "${!next}")
+      i=$((i + 2))
+      ;;
+    --location=*)
+      LOCATION_ARGS=(--location "${arg#--location=}")
+      i=$((i + 1))
+      ;;
+    *)
+      REMAINING+=("$arg")
+      i=$((i + 1))
+      ;;
+  esac
+done
+set -- "${REMAINING[@]}"
+
 run_api() {
-  "$PYTHON" "$API_SCRIPT" "$@" 2>&1
+  "$PYTHON" "$API_SCRIPT" "${LOCATION_ARGS[@]}" "$@" 2>&1
 }
 
 parse_status() {
@@ -219,7 +248,7 @@ else:
     run_api raw "$2" | python3 -m json.tool
     ;;
   *)
-    echo "Usage: 8sleep <command>"
+    echo "Usage: 8sleep [--location <name>] <command>"
     echo ""
     echo "Commands:"
     echo "  status                          Pod status (both sides: temp, heating, water)"
@@ -231,6 +260,7 @@ else:
     echo "  sleep <dylan|julia> [date]      Sleep data (default: last night)"
     echo "  raw <path>                      Raw API GET"
     echo ""
+    echo "Locations: crosstown (default), cabin"
     echo "Sides: dylan (left), julia (right)"
     echo ""
     echo "Temperature scale:"

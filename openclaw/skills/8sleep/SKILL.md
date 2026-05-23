@@ -1,13 +1,24 @@
 ---
 name: 8sleep
-description: Control the Eight Sleep Pod 3 at Crosstown (West Roxbury). Use when asked about bed temperature, sleep tracking, sleep score, Eight Sleep, Pod, bed cooling/heating, or anything about the smart bed. Supports both sides — Dylan (left) and Julia (right). NOT for room thermostat (use nest-thermostat for that).
+description: Control Eight Sleep Pod(s). Defaults to Crosstown (West Roxbury); pass `--location cabin` once the Cabin Pod is online. Use when asked about bed temperature, sleep tracking, sleep score, Eight Sleep, Pod, bed cooling/heating, or anything about the smart bed. Supports both sides — Dylan (left) and Julia (right). NOT for room thermostat (use nest-thermostat for that).
 allowed-tools: Bash(8sleep:*)
 metadata: {"openclaw":{"emoji":"S","requires":{"bins":["8sleep"]}}}
 ---
 
-# Eight Sleep Pod Control (Crosstown)
+# Eight Sleep Pod Control
 
-Control the **Eight Sleep Pod 3** (King) at Crosstown via the Eight Sleep cloud API.
+Control Eight Sleep Pod(s) via the Eight Sleep cloud API. Currently one Pod: **Pod 3** (King) at Crosstown. A second Pod will be added at the Cabin.
+
+## Locations
+
+| Location | Pod | Env var (optional) |
+|----------|-----|--------------------|
+| **crosstown** (default) | Pod 3 (King) at Crosstown | `EIGHTSLEEP_CROSSTOWN_DEVICE_ID` |
+| **cabin** | (TBD — to be added) | `EIGHTSLEEP_CABIN_DEVICE_ID` |
+
+Pass `--location <name>` (or `-l <name>`) before any subcommand to target a specific Pod. If unset, defaults to `crosstown`. Env vars are optional — when unset, the CLI falls back to whichever Pod is the account's "current device" (correct for single-Pod accounts).
+
+**Note:** Eight Sleep's per-side endpoints (`temp`, `off`, `on`, `away`) are user-scoped and route to the user's "current device", not by explicit device ID. Once the Cabin Pod is online, verify these actually target the intended Pod — may need additional plumbing.
 
 ## Pod Sides
 
