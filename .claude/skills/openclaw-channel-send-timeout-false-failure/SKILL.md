@@ -124,7 +124,22 @@ launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 - The same pattern likely applies to *any* OpenClaw fetch that crosses a slow boundary. Search the plugin source for `*Timeout*` constants and check `config-schema-*.js` for the override field.
 - **Do NOT** try to fix this by making the agent more aggressive about not retrying — the agent has no way to know whether "request timed out" means "abort" or "actually it worked, just be patient." The right fix is at the timeout layer.
 - The 30002 ms (vs exactly 30000) is the AbortController firing a tick after the deadline. Any `elapsedMs` within ~5ms of `timeoutMs` is a timeout, not a real failure.
-- BB's `/api/v1/chat/new` is the most common slow endpoint because it has to verify iMessage capability with Apple. Once a chat GUID is established, subsequent sends to that GUID via `/api/v1/message/text` are typically <1s. A long-term optimization is to cache chat GUIDs locally and skip `/chat/new`, but that's an OpenClaw-side change, not a user-side fix.
+- BB's `/api/v1/chat/new` is the most common slow endpoint because it has to verify iMessage capability with Apple. Once a chat GUID is established, subsequent sends to that GUID via `/api/v1/message/text` are typically <1s.
+
+## Better fix: target by chat GUID (skip the lookup entirely)
+
+The timeout bump is a backstop, not the right structural fix. The real fix is to pass a chat GUID as the `target` instead of a raw phone/email — this skips both `/chat/query` and `/chat/new` entirely.
+
+OpenClaw's BB plugin parses `target` strings via `parseBlueBubblesTarget` (`probe-B4I0cEVm.js:365`) and `parseRawChatGuid` (`probe-B4I0cEVm.js:219`). Any string matching `<service>;<+|->;<id>` is recognized as `kind: chat_guid` and `resolveChatGuidForTarget` returns immediately at line 181 with no API calls.
+
+**Accepted target formats:**
+- `any;-;<address>` — DM by handle (e.g., `any;-;julia@example.com`, `any;-;+15551234567`). `any` matches either iMessage or SMS service.
+- `iMessage;-;<address>` — DM forced to iMessage
+- `iMessage;+;<group-id>` — group chat
+- `chat_guid:<guid>` / `guid:<guid>` — explicit prefix form
+- `chat_id:<numeric-id>` — by BB's internal chat ID
+
+For trusted contacts you message often, encode their preferred target as `any;-;<address>` in the agent's bootstrap context (`SOUL.md`, `MEMORY.md`, or whatever the local convention is) and instruct the agent to use that form instead of raw phone/email. Sends to known contacts then go from ~30s timeout-then-retry-then-deliver to sub-second clean success.
 
 ## Diagnostic recipe
 
