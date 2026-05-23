@@ -36,10 +36,13 @@ while [[ $i -le $# ]]; do
       ;;
   esac
 done
-set -- "${REMAINING[@]}"
+# bash 3.x (macOS default): expanding empty arrays under `set -u` is an error;
+# `${arr[@]+"${arr[@]}"}` expands to nothing when arr is empty and to the
+# array's elements otherwise.
+set -- ${REMAINING[@]+"${REMAINING[@]}"}
 
 run_api() {
-  "$PYTHON" "$API_SCRIPT" "${LOCATION_ARGS[@]}" "$@" 2>&1
+  "$PYTHON" "$API_SCRIPT" ${LOCATION_ARGS[@]+"${LOCATION_ARGS[@]}"} "$@" 2>&1
 }
 
 parse_status() {
