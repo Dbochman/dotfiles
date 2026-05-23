@@ -77,6 +77,10 @@ rcx() {
   ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '/opt/homebrew/bin/codex ${codex_args[*]}'"
 }
 
+# Attach the lpu-kb tmux session on the devcontainer (devc is reachable only from
+# work-mbp). RemoteCommand=none overrides the auto-shell in work-mbp's ssh config.
+alias kb='ssh -t work-mbp "ssh -t -o RemoteCommand=none devc tmux attach -t lpu-kb"'
+
 # Chrome with remote debugging for MCP
 alias chrome-debug='/Applications/Google\ Chrome\ Canary.app/Contents/MacOS/Google\ Chrome\ Canary --remote-debugging-port=9222 --user-data-dir="$HOME/.chrome-debug-profile"'
 
