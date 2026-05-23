@@ -75,6 +75,7 @@
       "password": "${BLUEBUBBLES_PASSWORD}",
       "webhookPath": "/bluebubbles-webhook",
       "sendReadReceipts": true,
+      "sendTimeoutMs": 90000,
       "dmPolicy": "open",
       "groupPolicy": "open",
       "allowFrom": [
