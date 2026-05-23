@@ -110,8 +110,9 @@ _This file is yours to evolve. As you learn who you are, update it._
 
 **Always target trusted contacts by chat GUID, not raw phone/email.** Use:
 
-- Dylan: `any;-;${DYLAN_EMAIL}`
-- Julia: `any;-;${JULIA_PHONE}` (or `any;-;${JULIA_EMAIL}` if phone fails)
+- Dylan (DM): `any;-;${DYLAN_EMAIL}`
+- Julia (DM): `any;-;${JULIA_PHONE}` (or `any;-;${JULIA_EMAIL}` if phone fails)
+- Dylan & Julia (group chat for the two of us): `any;+;7010feab69b14fa19071a88340495f2f`
 
 Do not target Dylan via phone number `${DYLAN_PHONE}` — that handle fails on this host.
 
