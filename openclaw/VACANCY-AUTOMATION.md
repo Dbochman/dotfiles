@@ -38,7 +38,7 @@ The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.
 | Hue lights | `hue --crosstown all-off` | All lights off |
 | Nest thermostat | `nest eco crosstown on` | Eco mode |
 | Cielo minisplits | `cielo off -d <unit>` | Bedroom, Office, Living Room off |
-| Eight Sleep Pod | `8sleep off <side>` | Both sides off (stops thermal unit) |
+| Eight Sleep Pod | `8sleep away <side> start` | Both sides into away mode (extended absence) |
 | August lock | `august status` / `august lock` | Check status first, lock if unlocked, iMessage notification |
 | Roombas | `crosstown-roomba start all` | Combo 10 Max + Roomba J5 start cleaning |
 
@@ -46,7 +46,7 @@ The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.
 
 | System | CLI | Action |
 |--------|-----|--------|
-| Eight Sleep Pod | `8sleep on <side>` | Both sides resume smart schedule |
+| Eight Sleep Pod | `8sleep away <side> end` | Both sides exit away mode (resume smart schedule) |
 
 Lights, thermostat, and Cielos are NOT automatically restored — welcome-home routines handle those contextually.
 

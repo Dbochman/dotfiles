@@ -6,11 +6,11 @@
 #   - Turn off all lights
 #   - Set thermostat to eco
 #   - Turn off Cielo minisplits (Crosstown)
-#   - Turn off Eight Sleep Pod (Crosstown)
+#   - Enable Eight Sleep away mode (Crosstown)
 #   - Start Roombas
 #
 # When occupied again:
-#   - Restore Eight Sleep Pod (resume smart schedule)
+#   - End Eight Sleep away mode (resume smart schedule)
 #   - Clear markers (reset for next vacancy)
 #   - (Welcome home actions handled by crosstown-routines/cabin-routines skills)
 
@@ -102,12 +102,12 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
     fi
   done
 
-  # Eight Sleep Pod off
+  # Eight Sleep Pod — enable away mode (extended absence)
   for side in dylan julia; do
-    if 8sleep off "$side" >> "$LOG_FILE" 2>&1; then
-      log "  Eight Sleep $side: OFF"
+    if 8sleep away "$side" start >> "$LOG_FILE" 2>&1; then
+      log "  Eight Sleep $side: AWAY MODE ON"
     else
-      log "  ERROR: Failed to turn off Eight Sleep $side"
+      log "  ERROR: Failed to enable Eight Sleep $side away mode"
     fi
   done
 
@@ -144,14 +144,14 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
   log "Crosstown vacancy actions complete"
 
 elif [[ "$crosstown_occupancy" == "occupied" ]] && [[ -f "$MARKER_DIR/crosstown" ]]; then
-  log "Crosstown occupied again — restoring Eight Sleep and clearing vacancy marker"
+  log "Crosstown occupied again — ending Eight Sleep away mode and clearing vacancy marker"
 
-  # Eight Sleep Pod back on (resume smart schedule)
+  # End Eight Sleep away mode (resume smart schedule)
   for side in dylan julia; do
-    if 8sleep on "$side" >> "$LOG_FILE" 2>&1; then
-      log "  Eight Sleep $side: ON"
+    if 8sleep away "$side" end >> "$LOG_FILE" 2>&1; then
+      log "  Eight Sleep $side: AWAY MODE OFF"
     else
-      log "  ERROR: Failed to turn on Eight Sleep $side"
+      log "  ERROR: Failed to end Eight Sleep $side away mode"
     fi
   done
 
