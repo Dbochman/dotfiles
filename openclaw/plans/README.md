@@ -6,6 +6,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 
 | Plan | Summary |
 |------|---------|
+| [cabin-8sleep-onboarding](cabin-8sleep-onboarding.md) | Flip on the Cabin Eight Sleep Pod once installed — secrets, vacancy wiring, verification |
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [dog-walk-listener-hardening](dog-walk-listener-hardening.md) | Thread-safety and async hot-path hardening for `dog-walk-listener.py` |
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
