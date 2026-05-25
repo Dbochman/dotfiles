@@ -1,6 +1,9 @@
-# OpenClaw LaunchAgents
+# LaunchAgents
 
-Reference for all LaunchAgents across machines. Plist source files live in [`openclaw/launchagents/`](launchagents/).
+Reference for all LaunchAgents across machines. Plist source files live in two locations:
+
+- **OpenClaw agents** (`ai.openclaw.*` / `com.openclaw.*` prefix): [`openclaw/launchagents/`](launchagents/)
+- **Personal agents** (`com.dylanbochman.*` prefix): [`launchagents/`](../launchagents/) at the dotfiles repo root
 
 ## Mac Mini — Long-Running Services (KeepAlive)
 
@@ -59,6 +62,7 @@ Reference for all LaunchAgents across machines. Plist source files live in [`ope
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
 | `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects Claude Code token usage and pushes daily JSON to Mini |
+| `com.dylanbochman.claude-session-backup` | Weekly Sun 5:00 AM | `bin/claude-session-backup` | Rsyncs `~/.claude/projects/` (335MB) to Mini at `~/Backups/claude-sessions/<hostname>/projects/` via Tailscale SSH. Preserves Claude session transcripts past the default ~30-day local retention. Stays on Tailscale (no cloud); namespaces by `hostname -s` so other machines can co-exist. |
 
 ## Disabled
 
@@ -80,8 +84,8 @@ Every new LaunchAgent script MUST follow these rules:
 
 ## Notes
 
-- **Plist source**: All plist files tracked in `openclaw/launchagents/` in the dotfiles repo.
-- **Deployment**: Most plists are deployed via `scp` to `~/Library/LaunchAgents/` on the target machine. Only `ai.openclaw.gateway` is symlinked via `install.sh`.
+- **Plist source**: OpenClaw-prefix plists in `openclaw/launchagents/`; personal `com.dylanbochman.*` plists in top-level `launchagents/`.
+- **Deployment**: Most plists are deployed via `scp` to `~/Library/LaunchAgents/` on the target machine. Only `ai.openclaw.gateway` is symlinked via `install.sh`. Personal plists are typically copied to `~/Library/LaunchAgents/` once and registered via `launchctl bootstrap gui/$(id -u) <plist>`.
 - **Logs**: Most services log to `~/.openclaw/logs/` or `/tmp/`. Check `StandardErrorPath`/`StandardOutPath` in plists.
 - **Gateway wrapper**: Uses cache-only secrets pattern (`~/.openclaw/.secrets-cache`), no `op read` at startup (hangs under launchd).
 - **OAuth refresh**: `oauth-refresh.sh` hides `/usr/bin` from PATH during `claude auth login` so that `security` (macOS keychain CLI) is not found. This forces Claude Code to write credentials to `~/.claude/.credentials.json` instead of the keychain, which is unreadable over SSH. The refresh token rotates on each login, so the flow is self-sustaining. If the refresh token chain breaks (e.g., manual `claude auth login` rotates it outside the script), re-seed by pushing a fresh token from a machine with keychain access: `security find-generic-password -s "Claude Code-credentials" -w | ssh dylans-mac-mini 'cat > ~/.openclaw/.anthropic-oauth-cache'`.
