@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Weekly off-machine backup of Claude Code session transcripts to the
+  Mac mini (preserves them beyond Claude's default ~30-day retention).
+  Wrapper: ~/repos/dotfiles/bin/claude-session-backup
+  Logs:    ~/Library/Logs/claude-session-backup.log
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dylanbochman.claude-session-backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/dylanbochman/repos/dotfiles/bin/claude-session-backup</string>
+    </array>
+
+    <!-- Sundays at 05:00 local time (after the financial-scrape cron on
+         the Mini at 04:05 ET, but otherwise unrelated). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Don't fire on load — only on schedule. Smoke-test manually via
+         `launchctl kickstart gui/$UID/com.dylanbochman.claude-session-backup`. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- If the machine is asleep at 5am, run as soon as it wakes. -->
+    <key>StartCalendarIntervalRunWhenIdle</key>
+    <true/>
+
+    <!-- launchd-only PATH (no shell init) — wrapper is self-contained. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/dylanbochman/Library/Logs/claude-session-backup.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dylanbochman/Library/Logs/claude-session-backup.launchd.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

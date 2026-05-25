@@ -1,0 +1,84 @@
+#!/bin/bash
+#
+# claude-session-backup — rsync ~/.claude/projects/ to dylans-mac-mini for
+# off-machine preservation beyond Claude Code's default ~30-day retention.
+#
+# Runs weekly under launchd (see ~/Library/LaunchAgents/
+# com.dylanbochman.claude-session-backup.plist). Designed to be safe under
+# launchd: explicit SSH key + IdentityAgent=none to bypass 1Password agent,
+# which hangs in non-interactive contexts.
+#
+# Destination namespaces by hostname so multiple machines can back up to
+# the same Mini without colliding.
+#
+# All logs go to ~/Library/Logs/claude-session-backup.log (rotated weekly
+# by a simple size guard at end-of-script).
+#
+set -euo pipefail
+
+LOG="$HOME/Library/Logs/claude-session-backup.log"
+mkdir -p "$(dirname "$LOG")"
+
+# Rotate if log exceeds 5 MB
+if [[ -f "$LOG" ]] && [[ $(stat -f%z "$LOG" 2>/dev/null || echo 0) -gt 5242880 ]]; then
+    mv "$LOG" "${LOG}.1"
+fi
+
+exec >>"$LOG" 2>&1
+
+echo
+echo "════════════════════════════════════════════════════════════════"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] claude-session-backup starting"
+echo "════════════════════════════════════════════════════════════════"
+
+SRC="$HOME/.claude/projects/"
+HOST="$(hostname -s | tr '[:upper:]' '[:lower:]')"
+REMOTE_HOST="dylans-mac-mini"
+# Use ~ (tilde) for the remote home — Mini's shell expands it.
+# DON'T use $HOME or \$HOME here: local shell would either substitute
+# THIS machine's $HOME (wrong) or pass the literal string "$HOME" through
+# to the remote shell which then can't expand it inside single quotes.
+REMOTE_BASE="~/Backups/claude-sessions/${HOST}"
+SSH_OPTS=(-i "$HOME/.ssh/id_launchd"
+          -o IdentityAgent=none
+          -o StrictHostKeyChecking=accept-new
+          -o ConnectTimeout=20
+          -o ServerAliveInterval=30
+          -o ServerAliveCountMax=3)
+
+# Source must exist (might be empty on a brand-new machine — that's fine)
+if [[ ! -d "$SRC" ]]; then
+    echo "ERROR: source $SRC does not exist; nothing to back up"
+    exit 1
+fi
+
+echo "Source:      $SRC"
+echo "Destination: ${REMOTE_HOST}:${REMOTE_BASE}/projects/"
+echo "Source size: $(du -sh "$SRC" 2>/dev/null | cut -f1)"
+
+# Ensure remote dir exists. Note: NO quotes around ${REMOTE_BASE} in the
+# remote command — the Mini's shell needs to expand ~. Local shell has
+# already filled in ${HOST}.
+echo "Ensuring remote directory exists..."
+if ! ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "mkdir -p ${REMOTE_BASE}/projects"; then
+    echo "ERROR: failed to create remote directory"
+    exit 1
+fi
+
+# rsync. -a = archive (preserves perms/times/symlinks), -z = compress over
+# the wire (~80% of size in JSON), --delete = drop files no longer present
+# locally, --stats = print summary at the end.
+# NOTE: macOS ships openrsync (rsync 2.6.9 compat) which doesn't support
+# --info=stats2 or other GNU rsync 3.x flags. Stick to the portable subset.
+echo "Starting rsync..."
+START_S=$(date +%s)
+rsync -az --delete --stats \
+    -e "ssh ${SSH_OPTS[*]}" \
+    "$SRC" \
+    "${REMOTE_HOST}:${REMOTE_BASE}/projects/" \
+    2>&1 | tail -20
+END_S=$(date +%s)
+ELAPSED=$((END_S - START_S))
+
+echo
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup complete in ${ELAPSED}s"
