@@ -2,6 +2,8 @@
 
 Quick reference for accessing machines remotely via tmux + Tailscale.
 
+For cmux-managed remote workspaces, see [cmux-remote-sessions.md](cmux-remote-sessions.md).
+
 ## Tailnet Devices
 
 | Device | Tailscale IP | Hostname | User | OS | Role |
@@ -9,10 +11,11 @@ Quick reference for accessing machines remotely via tmux + Tailscale.
 | Mac (primary) | `100.94.69.122` | `dylans-mac` | `dylanbochman` | macOS | Development machine |
 | Mac Mini | `100.93.66.71` | `dylans-mac-mini` | `dbochman` | macOS | OpenClaw gateway, cabin server |
 | MacBook Pro | `100.107.209.85` | `dylans-macbook-pro` | `dbochman` | macOS | Crosstown presence scanner |
+| Work MBP | `100.73.15.5` | `work-mbp` / `work-mac` | `dbochman` | macOS | Work laptop, devcontainer proxy |
 | Andre droplet | `100.92.192.62` | `andre` | `deploy` | Linux | Personal website hosting |
 | iPhone | `100.93.90.122` | `iphone171` | — | iOS | Mobile access |
 
-SSH from any tailnet device: `ssh dylans-mac`, `ssh dylans-mac-mini`, or `ssh dylans-macbook-pro`
+SSH from any tailnet device: `ssh dylans-mac`, `ssh dylans-mac-mini`, `ssh dylans-macbook-pro`, or `ssh work-mac`
 
 ## tmux Quick Reference
 

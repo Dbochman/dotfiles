@@ -11,17 +11,31 @@ export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agen
 alias codex-quick='codex -c model_reasoning_effort="medium"'
 alias cq='codex-quick review'
 
+_cmux_ensure_running() {
+  if ! command -v cmux >/dev/null 2>&1; then
+    echo "cmux not found. Install cmux.app or add its CLI to PATH." >&2
+    return 127
+  fi
+
+  if cmux ping >/dev/null 2>&1; then
+    return 0
+  fi
+
+  open /Applications/cmux.app >/dev/null 2>&1
+
+  local i
+  for i in {1..100}; do
+    cmux ping >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+
+  echo "cmux did not become ready." >&2
+  return 1
+}
+
 # Open the devcontainer SSH target in cmux.
 devc() {
-  if ! cmux ping >/dev/null 2>&1; then
-    open /Applications/cmux.app >/dev/null 2>&1
-
-    local i
-    for i in {1..100}; do
-      cmux ping >/dev/null 2>&1 && break
-      sleep 0.1
-    done
-  fi
+  _cmux_ensure_running || return
 
   cmux ssh devc --name devc "$@" || \
     cmux new-workspace --name devc --command "ssh devc"
@@ -77,9 +91,33 @@ rcx() {
   ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '/opt/homebrew/bin/codex ${codex_args[*]}'"
 }
 
-# Attach the lpu-kb tmux session on the devcontainer (devc is reachable only from
-# work-mbp). RemoteCommand=none overrides the auto-shell in work-mbp's ssh config.
-alias kb='ssh -t work-mbp "ssh -t -o RemoteCommand=none devc tmux attach -t lpu-kb"'
+# Attach the lpu-kb tmux session on the devcontainer, inside a cmux workspace.
+kb() {
+  _cmux_ensure_running || return
+
+  cmux ssh devc --name lpu-kb --ssh-option RequestTTY=force "$@" -- tmux attach -t lpu-kb || \
+    cmux new-workspace --name lpu-kb --command "ssh -t devc tmux attach -t lpu-kb"
+}
+
+# Attach (or create) the 'work' tmux session on the Work MBP, inside a cmux workspace.
+opwork() {
+  _cmux_ensure_running || return
+
+  cmux ssh work-mac --name "op-research work" --ssh-option RequestTTY=force "$@" -- \
+    tmux new-session -A -s work || \
+    cmux new-workspace --name "op-research work" \
+      --command "ssh -t work-mac tmux new-session -A -s work"
+}
+
+# Attach (or create) the 'home' tmux session on the Mac Mini, inside a cmux workspace.
+home() {
+  _cmux_ensure_running || return
+
+  cmux ssh dylans-mac-mini --name home --ssh-option RequestTTY=force "$@" -- \
+    /opt/homebrew/bin/tmux new-session -A -s home || \
+    cmux new-workspace --name home \
+      --command "ssh -t dylans-mac-mini /opt/homebrew/bin/tmux new-session -A -s home"
+}
 
 # Chrome with remote debugging for MCP
 alias chrome-debug='/Applications/Google\ Chrome\ Canary.app/Contents/MacOS/Google\ Chrome\ Canary --remote-debugging-port=9222 --user-data-dir="$HOME/.chrome-debug-profile"'
