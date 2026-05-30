@@ -197,6 +197,16 @@ Script at `~/.openclaw/workspace/scripts/presence-detect.sh`. Sticky/arrival-bas
 - States: **occupied** / **confirmed_vacant** / **possibly_vacant**
 - For device fingerprints, output files, and gotchas: `qmd query "presence detection"`
 
+**Read presence data with Bash, not node tools.** The presence files live locally on the Mac Mini gateway — just `cat ~/.openclaw/presence/state.json`. Never use `dir_list` or `file_fetch` for this; those are node tools for remote paired devices and will always fail here (zero nodes paired).
+
+## Node Tools (dir_list, file_fetch, dir_fetch, file_write)
+
+These tools are part of the `file-transfer` plugin (added v2026.5.3) and operate **exclusively on remote paired nodes** — think iPhones or Macs running the OpenClaw node app. They require a valid node handle from the registry.
+
+**This setup has zero paired nodes.** `openclaw nodes status` returns `Known: 0 · Paired: 0 · Connected: 0`. The file-transfer plugin is also not configured in `openclaw.json`. Every node handle you try — `auto`, `host`, `localhost`, `mini`, `gateway`, anything — will return `error: unknown node`.
+
+**Never use node tools to access local gateway files.** For any file under `~/.openclaw/`, use `Bash` directly or the skill's documented commands. Node tools are only relevant if a node device is explicitly paired in the future via `openclaw nodes` or the `node-connect` skill.
+
 ## Crosstown Network
 
 Mac Mini → MacBook Pro SSH via Tailscale (`ssh dylans-macbook-pro`), dedicated key `~/.ssh/id_mini_to_mbp` (bypasses 1Password agent — hangs under launchd). Configured via `Match originalhost` in `~/.ssh/config`.
