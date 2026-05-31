@@ -1,7 +1,7 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.5.7",
-    "lastTouchedAt": "2026-05-10T13:06:17.072Z"
+    "lastTouchedAt": "2026-05-30T13:44:02.452Z"
   },
   "auth": {
     "profiles": {
@@ -18,12 +18,16 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-opus-4-6",
-        "fallbacks": ["anthropic/claude-sonnet-4-6"]
+        "primary": "openai/gpt-4.1",
+        "fallbacks": [
+          "anthropic/claude-opus-4-6",
+          "anthropic/claude-sonnet-4-6"
+        ]
       },
       "models": {
         "anthropic/claude-opus-4-6": {},
-        "anthropic/claude-sonnet-4-6": {}
+        "anthropic/claude-sonnet-4-6": {},
+        "openai/gpt-4.1": {}
       },
       "workspace": "/Users/dbochman/.openclaw/workspace",
       "compaction": {
@@ -132,7 +136,10 @@
     },
     "channelHealthCheckMinutes": 0,
     "controlUi": {
-      "allowedOrigins": ["https://docs.openclaw.ai", "https://dylans-mac-mini.tail3e55f9.ts.net"]
+      "allowedOrigins": [
+        "https://docs.openclaw.ai",
+        "https://dylans-mac-mini.tail3e55f9.ts.net"
+      ]
     }
   },
   "plugins": {
@@ -144,6 +151,9 @@
         "enabled": true
       },
       "anthropic": {
+        "enabled": true
+      },
+      "openai": {
         "enabled": true
       }
     }

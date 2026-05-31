@@ -8,7 +8,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1770516801882,
-      "updatedAtMs": 1770516801882,
       "schedule": {
         "kind": "at",
         "at": "2026-06-01T12:00:00.000Z"
@@ -21,9 +20,6 @@
       },
       "delivery": {
         "mode": "none"
-      },
-      "state": {
-        "nextRunAtMs": 1780315200000
       }
     },
     {
@@ -33,7 +29,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1770516806667,
-      "updatedAtMs": 1770516806667,
       "schedule": {
         "kind": "at",
         "at": "2026-07-01T12:00:00.000Z"
@@ -46,9 +41,6 @@
       },
       "delivery": {
         "mode": "none"
-      },
-      "state": {
-        "nextRunAtMs": 1782907200000
       }
     },
     {
@@ -58,7 +50,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1770516810483,
-      "updatedAtMs": 1770516810483,
       "schedule": {
         "kind": "at",
         "at": "2026-08-01T12:00:00.000Z"
@@ -71,9 +62,6 @@
       },
       "delivery": {
         "mode": "none"
-      },
-      "state": {
-        "nextRunAtMs": 1785585600000
       }
     },
     {
@@ -83,7 +71,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1770516814700,
-      "updatedAtMs": 1770516814700,
       "schedule": {
         "kind": "at",
         "at": "2026-09-01T12:00:00.000Z"
@@ -96,9 +83,6 @@
       },
       "delivery": {
         "mode": "none"
-      },
-      "state": {
-        "nextRunAtMs": 1788264000000
       }
     },
     {
@@ -108,7 +92,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1770516818355,
-      "updatedAtMs": 1770516818355,
       "schedule": {
         "kind": "at",
         "at": "2026-10-01T12:00:00.000Z"
@@ -121,9 +104,6 @@
       },
       "delivery": {
         "mode": "none"
-      },
-      "state": {
-        "nextRunAtMs": 1790856000000
       }
     },
     {
@@ -133,7 +113,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1770516822506,
-      "updatedAtMs": 1770516822506,
       "schedule": {
         "kind": "at",
         "at": "2026-11-01T12:00:00.000Z"
@@ -146,9 +125,6 @@
       },
       "delivery": {
         "mode": "none"
-      },
-      "state": {
-        "nextRunAtMs": 1793534400000
       }
     },
     {
@@ -158,7 +134,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1770516826341,
-      "updatedAtMs": 1770516826341,
       "schedule": {
         "kind": "at",
         "at": "2026-12-01T12:00:00.000Z"
@@ -171,9 +146,6 @@
       },
       "delivery": {
         "mode": "none"
-      },
-      "state": {
-        "nextRunAtMs": 1796126400000
       }
     },
     {
@@ -183,7 +155,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1772412431651,
-      "updatedAtMs": 1772412431651,
       "schedule": {
         "kind": "at",
         "at": "2026-07-01T14:00:00.000Z"
@@ -198,9 +169,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1782914400000
       }
     },
     {
@@ -210,7 +178,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1772412431651,
-      "updatedAtMs": 1772412431651,
       "schedule": {
         "kind": "at",
         "at": "2026-10-01T14:00:00.000Z"
@@ -225,9 +192,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1790863200000
       }
     },
     {
@@ -237,7 +201,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1772412431651,
-      "updatedAtMs": 1772412431651,
       "schedule": {
         "kind": "at",
         "at": "2027-01-02T12:00:00.000Z"
@@ -252,9 +215,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1798891200000
       }
     },
     {
@@ -263,7 +223,6 @@
       "name": "Julia Morning Briefing (Gmail + Calendar)",
       "enabled": true,
       "createdAtMs": 1772880000000,
-      "updatedAtMs": 1774436706531,
       "schedule": {
         "kind": "cron",
         "expr": "0 7 * * *",
@@ -288,7 +247,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1750000000000,
-      "updatedAtMs": 1750000000000,
       "schedule": {
         "kind": "at",
         "at": "2026-06-15T14:00:00.000Z"
@@ -303,9 +261,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1781532000000
       }
     },
     {
@@ -315,7 +270,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1750000000001,
-      "updatedAtMs": 1750000000001,
       "schedule": {
         "kind": "at",
         "at": "2026-09-15T14:00:00.000Z"
@@ -330,9 +284,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1789480800000
       }
     },
     {
@@ -342,7 +293,6 @@
       "enabled": true,
       "deleteAfterRun": true,
       "createdAtMs": 1750000000002,
-      "updatedAtMs": 1750000000002,
       "schedule": {
         "kind": "at",
         "at": "2026-12-15T15:00:00.000Z"
@@ -357,9 +307,6 @@
         "mode": "announce",
         "channel": "bluebubbles",
         "to": "7010feab69b14fa19071a88340495f2f"
-      },
-      "state": {
-        "nextRunAtMs": 1797346800000
       }
     },
     {
@@ -368,7 +315,6 @@
       "name": "Dylan Morning Briefing (Calendar + Inbox Summary)",
       "enabled": true,
       "createdAtMs": 1773023122921,
-      "updatedAtMs": 1774443314694,
       "schedule": {
         "kind": "cron",
         "expr": "0 8 * * *",
@@ -378,12 +324,12 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "You are Dylan's morning briefing assistant. Every morning you check his calendar and summarize recent inbox activity. Read-only \u2014 do NOT label, archive, draft, or take any action on emails.\n\nUse your installed GWS skills (gws-calendar-agenda, gws-gmail) for all Google Workspace operations. Account: dylanbochman@gmail.com.\n\n## Step 0 \u2014 Preflight (token warmup)\n\nToken-cache refresh races can produce a transient 401 \"Failed to get token\" on the first call after the cache rolls over. Run a no-op warmup first and ignore its output:\n\n`gws calendar +agenda --today --account dylanbochman 2>&1 >/dev/null; sleep 2`\n\nIf any subsequent gws call returns `\"Failed to get token\"`, sleep 5 seconds and retry ONCE before reporting auth failure. Do not give up on the first 401.\n\n## Step 1 \u2014 Calendar This Week\n\nUse the gws-calendar-agenda skill to fetch Dylan's calendar events for the next 7 days. Summarize each day's events (time, title, location if any). Flag anything happening today.\n\n## Step 2 \u2014 Inbox Activity (Past 24h)\n\nUse the gws-gmail skill to search for emails received in the last 24 hours (query: newer_than:1d, maxResults: 25).\n\nFor each message, fetch metadata using `format: \"metadata\"` with `metadataHeaders: [\"From\",\"Subject\",\"Date\"]`. Headers live nested at `.payload.headers[]` as `{name, value}` objects \u2014 extract them with: `jq '.payload.headers | map({(.name): .value}) | add'`. Do NOT fall back to `format: \"full\"` snippets unless metadata extraction genuinely fails.\n\nSummarize what came in: group by category (people, newsletters, receipts/orders, notifications). Just report \u2014 do NOT label, archive, draft replies, or take any action on emails.\n\n## Step 3 \u2014 Compose Briefing\n\nFormat a concise iMessage-friendly summary:\n\n\ud83d\udcc5 **This Week**\n- Today: [events]\n- Tomorrow: [events]\n- [rest of week]\n\n\ud83d\udcec **Inbox (last 24h)**\n- [count] new emails\n- Notable: [any emails from real people or important subjects]\n- Other: [newsletters, notifications, etc. \u2014 just counts]\n\nKeep it brief and scannable. No emoji overload. No action items unless something is clearly urgent.\n\nIMPORTANT: Your output IS the briefing that gets delivered. Do not include delivery status messages like \"Briefing delivered\" in your output \u2014 just the briefing content itself."
+        "message": "You are Dylan's morning briefing assistant. Every morning you check his calendar and summarize recent inbox activity. Read-only \u2014 do NOT label, archive, draft, or take any action on emails.\n\nUse your installed GWS skills (gws-calendar-agenda, gws-gmail) for all Google Workspace operations. Account: dylanbochman@gmail.com.\n\n## Step 0 \u2014 Preflight (token warmup)\n\nToken-cache refresh races can produce a transient 401 \"Failed to get token\" on the first call after the cache rolls over. Run a no-op warmup first and ignore its output:\n\n`gws calendar +agenda --today --account dylanbochman 2>&1 >/dev/null; sleep 2`\n\nIf any subsequent gws call returns `\"Failed to get token\"`, sleep 5 seconds and retry ONCE before reporting auth failure. Do not give up on the first 401.\n\n## Step 1 \u2014 Calendar This Week\n\nUse the gws-calendar-agenda skill to fetch Dylan's calendar events for the next 7 days. Summarize each day's events (time, title, location if any). Flag anything happening today.\n\n## Step 2 \u2014 Inbox Activity (Past 24h)\n\nUse the gws-gmail skill to search for emails received in the last 24 hours (query: newer_than:1d, maxResults: 25).\n\nFor each message, fetch metadata using `format: \"metadata\"` with `metadataHeaders: [\"From\",\"Subject\",\"Date\"]`. Headers live nested at `.payload.headers[]` as `{name, value}` objects \u2014 extract them with: `jq '.payload.headers | map({(.name): .value}) | add'`. Do NOT fall back to `format: \"full\"` snippets unless metadata extraction genuinely fails.\n\nSummarize what came in: group by category (people, newsletters, receipts/orders, notifications). Just report \u2014 do NOT label, archive, draft replies, or take any action on emails.\n\n## Step 3 \u2014 Compose Briefing\n\nFormat a concise iMessage-friendly summary:\n\n\ud83d\udcc5 **This Week**\n- Today: [events]\n- Tomorrow: [events]\n- [rest of week]\n\n\ud83d\udcec **Inbox (last 24h)**\n- [count] new emails\n- Notable: [any emails from real people or important subjects]\n- Other: [newsletters, notifications, etc. \u2014 just counts]\n\nKeep it brief and scannable. No emoji overload. No action items unless something is clearly urgent.\n\nIMPORTANT: Your output IS the briefing that gets delivered. Do not include delivery status messages like \"Briefing delivered\" in your output \u2014 just the briefing content itself.\n\nCRITICAL: Do NOT use sessions_spawn, sessions_send, or sessions_yield. Run all gws commands directly in this session using your bash/exec tools. Sub-agent patterns do not work in cron context and will cause the briefing to not be delivered."
       },
       "delivery": {
         "mode": "announce",
         "channel": "bluebubbles",
-        "to": "dylanbochman@gmail.com"
+        "to": "+17813544611"
       }
     },
     {
@@ -392,7 +338,6 @@
       "name": "Weekly Activity Report, Security Check & Health Scan",
       "enabled": true,
       "createdAtMs": 1774404519383,
-      "updatedAtMs": 1774404519383,
       "schedule": {
         "kind": "cron",
         "expr": "0 15 * * 0",
@@ -402,12 +347,12 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Generate a combined weekly report for Dylan covering activity, security, and system health.\n\n## Part 1: Weekly Activity Report\n\nAnalyze the past 7 days of your own activity. Note: We run on Dylan's Claude Max subscription (not pay-per-token API), so focus on volume and health, not cost.\n\nParse the structured runtime logs at /tmp/openclaw/openclaw-*.log. Each line is JSON with a \"time\" field. Filter to the last 7 days only.\n\nExtract:\n- Count of \"embedded run start\" entries (= API calls)\n- Breakdown by day\n- Per-call duration from \"embedded run prompt end\" durationMs\n- Unique sessionIds (= conversations)\n- Count of tool-related log lines (tool executions)\n- Count of \"delivered reply\" lines (= messages sent)\n- Any ERROR-level log entries (logLevelName=ERROR)\n\nUse python3 to parse. Handle malformed lines gracefully.\n\nAlso parse for:\n- Any lines containing \"error\", \"fail\", \"timeout\", \"rate.limit\", \"429\", \"503\" (case-insensitive)\n- Calls with durationMs > 60000 (slow responses over 1 min)\n- Gateway restarts (\"listening on ws://\")\n\nIf logs from 8-14 days ago exist, calculate the same metrics for comparison.\n\n## Part 2: Security Check\n\n- Verify gateway is running and healthy\n- Check for any unusual auth failures or token issues\n- Confirm BlueBubbles Private API is connected\n- Check disk usage\n- Verify LaunchAgent services are running (launchctl list | grep openclaw)\n- Note any services that need attention\n\n## Part 3: CrisisMode Health Scan\n\nRun a CrisisMode health scan using the crisismode CLI. Report the overall score and any checks that failed or need attention. Apply standard exclusion rules (no PostgreSQL on this machine, dual-stack DNS is benign).\n\n## Compose Report\n\nFormat a concise iMessage-friendly summary (no markdown, plain text only):\n\nOpenClaw Weekly Report (Mon-Sun)\n\nActivity:\n- API calls: X (prev week: Y)\n- Messages sent: X\n- Sessions: X\n- Tool executions: X\n- Busiest day: [day] (X calls)\n\nPerformance:\n- Avg response: Xs\n- Slowest response: Xs\n- Calls over 60s: X\n\nHealth & Security:\n- Errors: X (list briefly if any)\n- Gateway restarts: X\n- Rate limits hit: X\n- BlueBubbles: [status]\n- Disk: [usage]\n- Services: [any issues]\n- CrisisMode score: X/100\n\nModel: [current model name]\nPlan: Claude Max (included)\n\nIf there were errors, briefly describe the top 2-3. If usage was very low (<10 calls), note it. If there were rate limit hits, flag it prominently. Only alert on CrisisMode findings that actually need attention."
+        "message": "Generate a combined weekly report for Dylan covering activity, security, and system health.\n\n## Part 1: Weekly Activity Report\n\nAnalyze the past 7 days of your own activity. Note: We run on Dylan's Claude Max subscription (not pay-per-token API), so focus on volume and health, not cost.\n\nParse the structured runtime logs at /tmp/openclaw/openclaw-*.log. Each line is JSON with a \"time\" field. Filter to the last 7 days only.\n\nExtract:\n- Count of \"embedded run start\" entries (= API calls)\n- Breakdown by day\n- Per-call duration from \"embedded run prompt end\" durationMs\n- Unique sessionIds (= conversations)\n- Count of tool-related log lines (tool executions)\n- Count of \"delivered reply\" lines (= messages sent)\n- Any ERROR-level log entries (logLevelName=ERROR)\n\nUse python3 to parse. Handle malformed lines gracefully.\n\nAlso parse for:\n- Any lines containing \"error\", \"fail\", \"timeout\", \"rate.limit\", \"429\", \"503\" (case-insensitive)\n- Calls with durationMs > 60000 (slow responses over 1 min)\n- Gateway restarts (\"listening on ws://\")\n\nIf logs from 8-14 days ago exist, calculate the same metrics for comparison.\n\n## Part 2: Security Check\n\n- Verify gateway is running and healthy\n- Check for any unusual auth failures or token issues\n- Confirm BlueBubbles Private API is connected\n- Check disk usage\n- Verify LaunchAgent services are running (launchctl list | grep openclaw)\n- Note any services that need attention\n\n## Part 3: CrisisMode Health Scan\n\nRun a CrisisMode health scan using the crisismode CLI. Report the overall score and any checks that failed or need attention. Apply standard exclusion rules (no PostgreSQL on this machine, dual-stack DNS is benign).\n\n## Compose Report\n\nFormat a concise iMessage-friendly summary (no markdown, plain text only):\n\nOpenClaw Weekly Report (Mon-Sun)\n\nActivity:\n- API calls: X (prev week: Y)\n- Messages sent: X\n- Sessions: X\n- Tool executions: X\n- Busiest day: [day] (X calls)\n\nPerformance:\n- Avg response: Xs\n- Slowest response: Xs\n- Calls over 60s: X\n\nHealth & Security:\n- Errors: X (list briefly if any)\n- Gateway restarts: X\n- Rate limits hit: X\n- BlueBubbles: [status]\n- Disk: [usage]\n- Services: [any issues]\n- CrisisMode score: X/100\n\nModel: [current model name]\nPlan: Claude Max (included)\n\nIf there were errors, briefly describe the top 2-3. If usage was very low (<10 calls), note it. If there were rate limit hits, flag it prominently. Only alert on CrisisMode findings that actually need attention.\n\nCRITICAL: Do NOT use sessions_spawn, sessions_send, or sessions_yield. Run all commands directly in this session using your bash/exec tools. Sub-agent patterns do not work in cron context and will cause the report to not be delivered."
       },
       "delivery": {
         "mode": "announce",
         "channel": "bluebubbles",
-        "to": "dylanbochman@gmail.com"
+        "to": "+17813544611"
       }
     },
     {
@@ -416,7 +361,6 @@
       "name": "Weekly Financial Data Scrape",
       "enabled": true,
       "createdAtMs": 1778612000000,
-      "updatedAtMs": 1778612000000,
       "schedule": {
         "kind": "cron",
         "expr": "5 4 * * 0",
