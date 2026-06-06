@@ -2,27 +2,6 @@
   "version": 1,
   "jobs": [
     {
-      "id": "datenight-jun-tapas",
-      "agentId": "main",
-      "name": "Monthly Date Night Booking - June (Spanish/Tapas)",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1770516801882,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-06-01T12:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in June 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY June 2026 booking exists, send chat-id 170 a status message (\"June date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any June booking, the agent's job is done.\n\nIf no June 2026 booking exists, proceed:\n\nBook monthly date night. Search for Spanish/Tapas restaurants in Newton/Brookline on Resy. Friday in June 2026 (try June 12-20) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any June booking already exists, even if the existing one is at a different restaurant or on a different date."
-      },
-      "delivery": {
-        "mode": "none"
-      }
-    },
-    {
       "id": "datenight-jul-japanese",
       "agentId": "main",
       "name": "Monthly Date Night Booking - July (Japanese/Asian)",
@@ -324,7 +303,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "You are Dylan's morning briefing assistant. Every morning you check his calendar and summarize recent inbox activity. Read-only \u2014 do NOT label, archive, draft, or take any action on emails.\n\nUse your installed GWS skills (gws-calendar-agenda, gws-gmail) for all Google Workspace operations. Account: dylanbochman@gmail.com.\n\n## Step 0 \u2014 Preflight (token warmup)\n\nToken-cache refresh races can produce a transient 401 \"Failed to get token\" on the first call after the cache rolls over. Run a no-op warmup first and ignore its output:\n\n`gws calendar +agenda --today --account dylanbochman 2>&1 >/dev/null; sleep 2`\n\nIf any subsequent gws call returns `\"Failed to get token\"`, sleep 5 seconds and retry ONCE before reporting auth failure. Do not give up on the first 401.\n\n## Step 1 \u2014 Calendar This Week\n\nUse the gws-calendar-agenda skill to fetch Dylan's calendar events for the next 7 days. Summarize each day's events (time, title, location if any). Flag anything happening today.\n\n## Step 2 \u2014 Inbox Activity (Past 24h)\n\nUse the gws-gmail skill to search for emails received in the last 24 hours (query: newer_than:1d, maxResults: 25).\n\nFor each message, fetch metadata using `format: \"metadata\"` with `metadataHeaders: [\"From\",\"Subject\",\"Date\"]`. Headers live nested at `.payload.headers[]` as `{name, value}` objects \u2014 extract them with: `jq '.payload.headers | map({(.name): .value}) | add'`. Do NOT fall back to `format: \"full\"` snippets unless metadata extraction genuinely fails.\n\nSummarize what came in: group by category (people, newsletters, receipts/orders, notifications). Just report \u2014 do NOT label, archive, draft replies, or take any action on emails.\n\n## Step 3 \u2014 Compose Briefing\n\nFormat a concise iMessage-friendly summary:\n\n\ud83d\udcc5 **This Week**\n- Today: [events]\n- Tomorrow: [events]\n- [rest of week]\n\n\ud83d\udcec **Inbox (last 24h)**\n- [count] new emails\n- Notable: [any emails from real people or important subjects]\n- Other: [newsletters, notifications, etc. \u2014 just counts]\n\nKeep it brief and scannable. No emoji overload. No action items unless something is clearly urgent.\n\nIMPORTANT: Your output IS the briefing that gets delivered. Do not include delivery status messages like \"Briefing delivered\" in your output \u2014 just the briefing content itself.\n\nCRITICAL: Do NOT use sessions_spawn, sessions_send, or sessions_yield. Run all gws commands directly in this session using your bash/exec tools. Sub-agent patterns do not work in cron context and will cause the briefing to not be delivered."
+        "message": "You are Dylan's morning briefing assistant. Every morning you check his calendar and summarize recent inbox activity. Read-only \u2014 do NOT label, archive, draft, or take any action on emails.\n\nUse your installed GWS skills (gws-calendar-agenda, gws-gmail) for all Google Workspace operations. Account: dylanbochman@gmail.com.\n\n## Step 0 \u2014 Preflight (token warmup)\n\nToken-cache refresh races can produce a transient 401 \"Failed to get token\" on the first call after the cache rolls over. Run a no-op warmup first and ignore its output:\n\n`gws calendar +agenda --today --account dylanbochman@gmail.com 2>&1 >/dev/null; sleep 2`\n\nIf any subsequent gws call returns `\"Failed to get token\"`, sleep 5 seconds and retry ONCE before reporting auth failure. Do not give up on the first 401.\n\n## Step 1 \u2014 Calendar This Week\n\nUse the gws-calendar-agenda skill to fetch Dylan's calendar events for the next 7 days. Summarize each day's events (time, title, location if any). Flag anything happening today.\n\n## Step 2 \u2014 Inbox Activity (Past 24h)\n\nUse the gws-gmail skill to search for emails received in the last 24 hours (query: newer_than:1d, maxResults: 25).\n\nFor each message, fetch metadata using `format: \"metadata\"` with `metadataHeaders: [\"From\",\"Subject\",\"Date\"]`. Headers live nested at `.payload.headers[]` as `{name, value}` objects \u2014 extract them with: `jq '.payload.headers | map({(.name): .value}) | add'`. Do NOT fall back to `format: \"full\"` snippets unless metadata extraction genuinely fails.\n\nSummarize what came in: group by category (people, newsletters, receipts/orders, notifications). Just report \u2014 do NOT label, archive, draft replies, or take any action on emails.\n\n## Step 3 \u2014 Compose Briefing\n\nFormat a concise iMessage-friendly summary:\n\n\ud83d\udcc5 **This Week**\n- Today: [events]\n- Tomorrow: [events]\n- [rest of week]\n\n\ud83d\udcec **Inbox (last 24h)**\n- [count] new emails\n- Notable: [any emails from real people or important subjects]\n- Other: [newsletters, notifications, etc. \u2014 just counts]\n\nKeep it brief and scannable. No emoji overload. No action items unless something is clearly urgent.\n\nIMPORTANT: Your output IS the briefing that gets delivered. Do not include delivery status messages like \"Briefing delivered\" in your output \u2014 just the briefing content itself.\n\nCRITICAL: Do NOT use sessions_spawn, sessions_send, or sessions_yield. Run all gws commands directly in this session using your bash/exec tools. Sub-agent patterns do not work in cron context and will cause the briefing to not be delivered."
       },
       "delivery": {
         "mode": "announce",
