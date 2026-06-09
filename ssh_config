@@ -37,6 +37,9 @@ Host work-mac
   IdentityFile ~/.ssh/id_work_mbp
   IdentitiesOnly yes
   IdentityAgent none
+  ControlMaster auto
+  ControlPersist 10m
+  ControlPath ~/.ssh/cm-%C
   ServerAliveInterval 20
   ServerAliveCountMax 3
 
@@ -50,13 +53,29 @@ Host work-mbp
   ServerAliveInterval 20
   ServerAliveCountMax 3
 
+# Attach directly to the lpu-knowledge-base tmux session.
+Host lpu-kb-container
+  RequestTTY yes
+  RemoteCommand exec tmux new-session -A -s lpu-kb -c /workspace/repos/lpu-knowledge-base
+
 # Devcontainer on mydevvm, reached through the work laptop's existing GCP/IAP config.
-Host devcontainer-devvm devc
+# Port 22390 is published only on the VM's loopback interface.
+Host lpu-kb-container devcontainer-devvm devc
   HostName 127.0.0.1
   User root
   Port 22390
   HostKeyAlias devcontainer-devvm
   ProxyCommand ssh work-mac "ssh -W %h:%p mydevvm"
+  IdentityFile ~/.ssh/id_github
+  IdentitiesOnly yes
+  IdentityAgent none
+  ControlMaster auto
+  ControlPersist 10m
+  ControlPath ~/.ssh/cm-%C
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+  Compression no
+  IPQoS none
 
 # On the local MBP, id_launchd bypasses 1Password Touch ID prompts for Mini SSH.
 Match originalhost dylans-mac-mini exec "test -f ~/.ssh/id_launchd"

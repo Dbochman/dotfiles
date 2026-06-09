@@ -91,12 +91,12 @@ rcx() {
   ssh -t dylans-work-mbp "cd '${dir}' && zsh -l -c '/opt/homebrew/bin/codex ${codex_args[*]}'"
 }
 
-# Attach the lpu-kb tmux session on the devcontainer, inside a cmux workspace.
+# Attach the lpu-kb tmux session using the dedicated SSH alias.
 kb() {
   _cmux_ensure_running || return
 
-  cmux ssh devc --name lpu-kb --ssh-option RequestTTY=force "$@" -- tmux attach -t lpu-kb || \
-    cmux new-workspace --name lpu-kb --command "ssh -t devc tmux attach -t lpu-kb"
+  cmux ssh lpu-kb-container --name lpu-kb "$@" || \
+    cmux new-workspace --name lpu-kb --command "ssh lpu-kb-container"
 }
 
 # Attach (or create) the 'work' tmux session on the Work MBP, inside a cmux workspace.

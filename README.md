@@ -30,10 +30,20 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 ### SSH & Secrets (via 1Password)
 - `ssh_config` - Uses 1Password SSH Agent by default, with dedicated on-disk keys for a few Tailscale hosts
 - `setup-1password.md` - Guide for SSH keys and environment variables
+- `docs/setup-devcontainer-ssh.md` - Devcontainer aliases, connection path, and latency checks
 
 ## SSH Keys
 
 SSH keys are usually stored in 1Password and served via the SSH Agent. A few host-to-host Tailscale paths use dedicated on-disk keys such as `~/.ssh/id_work_mbp` to bypass agent/keychain issues.
+
+The devcontainer aliases are:
+
+```bash
+ssh devc              # Plain container shell
+ssh lpu-kb-container  # Attach directly to the lpu-kb tmux session
+```
+
+See `docs/setup-devcontainer-ssh.md` for the connection path and troubleshooting notes.
 
 **Setup:**
 1. Install 1Password desktop app
