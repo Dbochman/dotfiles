@@ -18,6 +18,42 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
 | `com.openclaw.presence-receive` | `presence-receive.sh` | — | Receives Tailscale file pushes from Crosstown presence scans |
 
+### Financial Dashboard LaunchAgents
+
+The financial dashboard services are Mac Mini services, not laptop services. Before installing, bootstrapping, stopping, or starting these plists, confirm the target host:
+
+```bash
+ssh dylans-mac-mini 'hostname -s; whoami; echo HOME=$HOME'
+```
+
+Expected target context is the Mac Mini user `dbochman` with `HOME=/Users/dbochman`. Do not bootstrap `ai.openclaw.financial-dashboard` or `ai.openclaw.forecast-dashboard` on Dylan's laptop just because the dotfiles checkout is local there.
+
+`ai.openclaw.financial-dashboard` depends on the Python environment at:
+
+```bash
+/Users/dbochman/repos/financial-dashboard/venv/bin/python3
+```
+
+The venv should be built from Homebrew Python, not the Command Line Tools Python shim. The expected baseline as of 2026-06-17 is Python 3.14.x with OpenSSL 3.x and the dependencies from `~/repos/financial-dashboard/requirements.txt` installed. Verify it on the Mini with:
+
+```bash
+ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 -c "import sys, ssl, yaml, requests; print(sys.version.split()[0]); print(ssl.OPENSSL_VERSION); print(yaml.__version__); print(requests.__version__)"'
+```
+
+The paired forecast dashboard service should run from `~/repos/Financial Advisor` and read the financial dashboard through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as a fallback.
+
+Minimum post-change verification:
+
+```bash
+ssh dylans-mac-mini 'launchctl list | grep -E "ai.openclaw.(financial|forecast)-dashboard"'
+ssh dylans-mac-mini 'lsof -nP -iTCP:8585 -sTCP:LISTEN; lsof -nP -iTCP:8586 -sTCP:LISTEN'
+curl -fsS http://dylans-mac-mini:8585/api/mortgage/summary
+curl -fsS http://dylans-mac-mini:8586/api/health
+curl -fsS http://dylans-mac-mini:8586/api/current-snapshot
+```
+
+Known-empty financial dashboard APIs (`/api/paystubs`, `/api/income`, `/api/spending`, `/api/net-worth`, `/api/savings-rate`) are allowed to appear as forecast-dashboard warnings. Mortgage summary and task feed availability are the baseline health checks.
+
 ## Mac Mini — Interval-Based (StartInterval)
 
 | Label | Interval | Program | Description |

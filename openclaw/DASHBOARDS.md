@@ -220,9 +220,20 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 |------|------|
 | Server | `~/repos/financial-dashboard/serve_dashboard.py` (separate repo) |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.financial-dashboard.plist` |
+| Runtime | `~/repos/financial-dashboard/venv/bin/python3` |
 | Database | `~/repos/financial-dashboard/finance.db` (gitignored) |
 | Config | `~/repos/financial-dashboard/config.yaml` |
 | Logs | `~/.openclaw/logs/financial-dashboard.{log,err.log}` |
+
+### Runtime Notes
+
+This service runs only on the Mac Mini as user `dbochman`. The venv should be built from Homebrew Python, not the Command Line Tools Python shim. Baseline verified on 2026-06-17: Python 3.14.x, OpenSSL 3.x, and dependencies from `~/repos/financial-dashboard/requirements.txt`.
+
+The mortgage API is the primary integration check for downstream forecast work:
+
+```bash
+ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8585/api/mortgage/summary'
+```
 
 ---
 
@@ -256,6 +267,18 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-dashboard.plist` |
 | Cache | `~/.openclaw/forecast-dashboard/current-snapshot.json` |
 | Logs | `~/.openclaw/logs/forecast-dashboard.{log,err.log}` |
+
+### Runtime Notes
+
+This service also runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback. Keep `~/repos/Financial Advisor` current on the Mini before restarting this service so task feeds and preset docs match the pushed repo state.
+
+Known-empty financial dashboard APIs for payroll, income, spending, net worth, and savings rate are expected to appear as warnings in `/api/health`. Treat the dashboard as healthy when `/api/health` is `ok`, the monthly task feed is available, and mortgage data flows through `/api/current-snapshot`.
+
+```bash
+ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/health'
+ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/current-snapshot'
+ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/monthly-operating-tasks'
+```
 
 ---
 
@@ -419,6 +442,14 @@ All dashboards follow the same single-file Python server pattern:
 
 The financial dashboard differs in two expected ways: it uses SQLite instead of JSONL (relational data with complex queries), and serves separate HTML files instead of an embedded SPA (5 distinct dashboard pages). These are justified by its data model. The operational patterns (ThreadingMixIn, SIGTERM handling, `0.0.0.0` binding, KeepAlive LaunchAgent) are aligned with the other three dashboards.
 
+Operational changes to dashboard LaunchAgents should be made on the Mac Mini, not on Dylan's laptop:
+
+```bash
+ssh dylans-mac-mini 'hostname -s; whoami; echo HOME=$HOME'
+```
+
+Expected target context is user `dbochman` with `HOME=/Users/dbochman`.
+
 ---
 
 ## Troubleshooting
@@ -452,4 +483,14 @@ curl -s http://dylans-mac-mini:8552/ | head -5   # Dog Walk
 curl -s http://dylans-mac-mini:8553/ | head -5   # Roomba
 curl -s http://dylans-mac-mini:8558/ | head -5   # Home Control Plane
 curl -s http://dylans-mac-mini:8585/ | head -5   # Financial
+curl -s http://dylans-mac-mini:8586/ | head -5   # Forecast
+```
+
+### Verify financial and forecast integration
+
+```bash
+curl -fsS http://dylans-mac-mini:8585/api/mortgage/summary
+curl -fsS http://dylans-mac-mini:8586/api/health
+curl -fsS http://dylans-mac-mini:8586/api/current-snapshot
+curl -fsS http://dylans-mac-mini:8586/api/monthly-operating-tasks
 ```
