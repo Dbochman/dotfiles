@@ -239,40 +239,20 @@ ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8585/api/mortgage/summary'
 
 ## Forecast Dashboard
 
-**Port 8586**
+**Port 8586** · [Full spec](FORECAST-DASHBOARD.md)
 
-Financial Advisor forecast dashboard for Dylan and Julia's household reallocation scenarios. Root page links to forecast presets; the Balanced preset is the default cross-link from the financial dashboard.
+Financial Advisor forecast dashboard for Dylan and Julia's household reallocation scenarios. Root now redirects to the Balanced interactive dashboard, while `/presets` serves the preset index page.
 
 ### What It Shows
 
-- **Preset index** — links to Balanced, tax reserve, loss-bank deployment, liquidity, cabin payoff, NVDA stress, conservative, and growth scenarios
-- **Forecast model** — interactive Financial Advisor reallocation dashboard
-- **Current snapshot** — local finance dashboard data, mortgage balances, ETH price, and tracked ticker prices where available
+- **Interactive forecast model** — full reallocation dashboard with presets, controls, and projections
+- **Current snapshot overlay** — local finance dashboard data, mortgage balances, ETH price, and tracked ticker prices where available
+- **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
-
-### Data Sources
-
-| Source | Frequency | Data |
-|--------|-----------|------|
-| Financial dashboard API | 5 min cache | Mortgage, payroll, income, spending, net-worth endpoints where populated |
-| Public price APIs | 5 min cache | ETH and tracked ticker prices |
-| Financial Advisor model | Static / git pull | Preset assumptions and forecast logic |
-
-### Files
-
-| File | Path |
-|------|------|
-| Server | `~/repos/Financial Advisor/dashboard/serve_forecast_dashboard.py` |
-| Dashboard | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.html` |
-| LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-dashboard.plist` |
-| Cache | `~/.openclaw/forecast-dashboard/current-snapshot.json` |
-| Logs | `~/.openclaw/logs/forecast-dashboard.{log,err.log}` |
 
 ### Runtime Notes
 
-This service also runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback. Keep `~/repos/Financial Advisor` current on the Mini before restarting this service so task feeds and preset docs match the pushed repo state.
-
-Known-empty financial dashboard APIs for payroll, income, spending, net worth, and savings rate are expected to appear as warnings in `/api/health`. Treat the dashboard as healthy when `/api/health` is `ok`, the monthly task feed is available, and mortgage data flows through `/api/current-snapshot`.
+This service runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback.
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/health'

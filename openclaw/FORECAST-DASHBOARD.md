@@ -1,0 +1,321 @@
+# Forecast Dashboard — Deployment Spec
+
+## Status: v1.1 (2026-06-17)
+
+Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, and the monthly operating checklist overlay. Runs at port `8586` on Mac Mini, Tailscale-only access.
+
+---
+
+## System Overview
+
+The forecast dashboard is the planning surface that sits next to the financial dashboard on `8585`. It keeps the full interactive reallocation model in the Financial Advisor repo, but layers in live household facts and mutable checklist state from local runtime storage.
+
+Primary URLs:
+
+| URL | Purpose |
+|-----|---------|
+| `http://dylans-mac-mini:8586/` | Root entrypoint; redirects to the Balanced interactive dashboard |
+| `http://dylans-mac-mini:8586/presets` | Preset index page |
+| `http://dylans-mac-mini:8586/balanced` | Balanced preset redirect |
+| `http://dylans-mac-mini:8586/reallocation-dashboard.html?preset=balanced` | Canonical Balanced dashboard URL |
+
+What it is for:
+
+- Interactive scenario modeling for Dylan and Julia's household allocation plan
+- Live overlay of current mortgage balances and selected market prices
+- Current-source health/warning surface for upstream `8585` data gaps
+- Monthly operating checklist with mutable dashboard-only state (`done`, `skipped`, `snoozed`) that does not rewrite the planning feed
+
+---
+
+## Architecture
+
+```text
+Mac Mini (dylans-mac-mini)
+├── Repo: ~/repos/Financial Advisor/
+│   ├── dashboard/reallocation-dashboard.html
+│   ├── dashboard/reallocation-dashboard.js
+│   ├── dashboard/reallocation-dashboard.css
+│   ├── dashboard/serve_forecast_dashboard.py
+│   └── data/dashboard/monthly-operating-tasks.json
+├── Runtime cache: ~/.openclaw/forecast-dashboard/
+│   ├── current-snapshot.json
+│   └── monthly-operating-task-status.json
+├── Upstream finance dashboard: http://127.0.0.1:8585
+└── Logs: ~/.openclaw/logs/forecast-dashboard.{log,err.log}
+```
+
+### LaunchAgent
+
+| Label | Type | Command | Logs |
+|-------|------|---------|------|
+| `ai.openclaw.forecast-dashboard` | KeepAlive | `python3 dashboard/serve_forecast_dashboard.py` | `~/.openclaw/logs/forecast-dashboard.{log,err.log}` |
+
+This service runs only on the Mac Mini as user `dbochman`.
+
+---
+
+## Service Shape
+
+The service is intentionally repo-owned and small. It serves only the forecast dashboard assets and APIs, not the full Financial Advisor repository tree.
+
+### Routes
+
+| Route | Purpose |
+|-------|---------|
+| `/` | Redirect to Balanced preset |
+| `/presets` | Preset index page |
+| `/balanced` | Redirect to Balanced preset |
+| `/tax-reserve` | Redirect to Tax reserve preset |
+| `/loss-bank` | Redirect to Loss-bank deployment preset |
+| `/liquidity` | Redirect to Liquidity preset |
+| `/cabin5` | Redirect to 5-year cabin payoff preset |
+| `/nvda-stress` | Redirect to NVDA stress preset |
+| `/conservative` | Redirect to Conservative preset |
+| `/growth` | Redirect to Growth preset |
+| `/reallocation-dashboard.html` | Interactive forecast dashboard shell |
+| `/reallocation-dashboard.js` | Forecast model and checklist UI logic |
+| `/reallocation-dashboard.css` | Dashboard styles |
+| `/api/current-snapshot` | Current household facts derived from local finance APIs |
+| `/api/prices` | ETH and configured ticker prices |
+| `/api/monthly-operating-tasks` | Read-only planning feed enriched with local mutable UI state |
+| `/api/monthly-operating-task-status` | Mutable local status overlay write/read endpoint |
+| `/api/health` | Service health, source warnings, task-feed availability |
+
+### Presets
+
+The preset index and redirect routes currently expose:
+
+- Balanced
+- Tax reserve
+- Loss-bank deployment
+- Liquidity
+- Cabin 5yr
+- NVDA stress
+- Conservative
+- Growth
+
+---
+
+## Data Sources
+
+| Source | Frequency | Data |
+|--------|-----------|------|
+| Financial dashboard API (`8585`) | 5 min cache | Mortgage, payroll, income, spending, net-worth, savings-rate endpoints where populated |
+| Public price APIs | 5 min cache | ETH and tracked tickers such as `NVDA` |
+| Financial Advisor repo | Static / git pull | Forecast assumptions, preset logic, dashboard UI, monthly task feed |
+| Local runtime overlay | On write | Mutable checklist status state outside source control |
+
+The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-mac-mini:8585` as fallback.
+
+---
+
+## Current Snapshot Model
+
+`/api/current-snapshot` merges current facts used to annotate the forecast:
+
+- Mortgage balances and payment data from `/api/mortgage/summary`
+- ETH price from CoinGecko
+- Tracked public tickers from Nasdaq where available
+- Source warnings when upstream financial APIs are empty or degraded
+
+Known-empty upstream APIs for payroll, income, spending, net worth, and savings rate are expected to surface as warnings rather than fatal errors. Treat the service as healthy when:
+
+- `/api/health` returns `ok`
+- the monthly task feed is available
+- mortgage data flows through `/api/current-snapshot`
+
+---
+
+## Monthly Checklist Overlay
+
+The planning feed lives in the Financial Advisor repo and remains read-only:
+
+- `~/repos/Financial Advisor/data/dashboard/monthly-operating-tasks.json`
+
+Mutable UI state lives outside the repo:
+
+- `~/.openclaw/forecast-dashboard/monthly-operating-task-status.json`
+
+That overlay stores dashboard-only state such as:
+
+- status
+- completion / skipped metadata
+- snooze metadata
+- note / updated-at / updated-by fields
+
+### Status Cycle
+
+The dashboard cycles each task through:
+
+1. Base planning status (`open` or `blocked`)
+2. `done`
+3. `skipped`
+4. `snoozed`
+5. Back to base planning status
+
+The dashboard UI renders explicit state glyphs so the control reads as stateful rather than as an empty square.
+
+### API Contract
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/monthly-operating-tasks` | `GET` | Planning feed with overlay merged in |
+| `/api/monthly-operating-task-status` | `GET` | Raw mutable overlay |
+| `/api/monthly-operating-task-status` | `POST` | Cycle or set task state |
+
+Expected write shape:
+
+```json
+{
+  "taskId": "2026-06-combined-source-balance-sheet",
+  "action": "cycle"
+}
+```
+
+---
+
+## Browser / Client Behavior
+
+There are three useful ways to load the dashboard:
+
+1. Load it directly from `8586`
+2. Open the static HTML file from the Financial Advisor repo
+3. Host the static dashboard elsewhere and point it at the forecast API
+
+Client behavior:
+
+- When hosted from `8586`, it uses same-origin forecast APIs
+- When hosted from the financial dashboard on `8585`, it automatically targets `http://<same-host>:8586`
+- Other clients can set `?apiBase=http://dylans-mac-mini:8586` or `?forecastApiBase=http://dylans-mac-mini:8586`
+- The chosen forecast API base is persisted in browser local storage
+
+Cross-origin writes are allowed only when the origin hostname matches the forecast server hostname, or when the origin is explicitly listed in `FORECAST_ALLOWED_ORIGINS`.
+
+---
+
+## Files
+
+| File | Path | Purpose |
+|------|------|---------|
+| Server | `~/repos/Financial Advisor/dashboard/serve_forecast_dashboard.py` | HTTP server, redirects, APIs |
+| Dashboard HTML | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.html` | Interactive UI shell |
+| Dashboard JS | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.js` | Model, rendering, checklist behavior |
+| Dashboard CSS | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.css` | Layout and state styling |
+| Task feed | `~/repos/Financial Advisor/data/dashboard/monthly-operating-tasks.json` | Read-only planning feed |
+| LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-dashboard.plist` | KeepAlive service |
+| Runtime cache | `~/.openclaw/forecast-dashboard/current-snapshot.json` | Cached snapshot payload |
+| Runtime overlay | `~/.openclaw/forecast-dashboard/monthly-operating-task-status.json` | Mutable task state |
+
+Related reference:
+
+- `~/repos/Financial Advisor/docs/plans/Forecast_Dashboard_Mac_Mini_Hosting_Plan.md`
+
+---
+
+## Update Workflow
+
+### Dashboard code changes
+
+```bash
+ssh dylans-mac-mini
+cd ~/repos/Financial\ Advisor
+git pull
+launchctl stop ai.openclaw.forecast-dashboard
+launchctl start ai.openclaw.forecast-dashboard
+```
+
+### LaunchAgent changes
+
+```bash
+cd ~/dotfiles
+git pull
+plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-dashboard.plist
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-dashboard.plist ~/Library/LaunchAgents/
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-dashboard.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-dashboard.plist
+```
+
+Ownership split:
+
+- Financial Advisor repo owns the dashboard server, assets, and task feed
+- Dotfiles owns the LaunchAgent and OpenClaw-side dashboard documentation
+
+---
+
+## Validation
+
+### Service checks
+
+```bash
+ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.forecast-dashboard'
+ssh dylans-mac-mini 'tail -50 ~/.openclaw/logs/forecast-dashboard.log'
+ssh dylans-mac-mini 'tail -50 ~/.openclaw/logs/forecast-dashboard.err.log'
+```
+
+### HTTP checks
+
+```bash
+curl -I http://dylans-mac-mini:8586/
+curl -I http://dylans-mac-mini:8586/presets
+curl -I http://dylans-mac-mini:8586/balanced
+curl -fsS http://dylans-mac-mini:8586/api/health
+curl -fsS http://dylans-mac-mini:8586/api/current-snapshot
+curl -fsS http://dylans-mac-mini:8586/api/monthly-operating-tasks
+curl -fsS http://dylans-mac-mini:8586/api/monthly-operating-task-status
+```
+
+### Browser checks
+
+- Root URL redirects to the Balanced interactive dashboard
+- `/presets` loads the preset index page
+- Balanced preset loads the full interactive forecast dashboard
+- Monthly operating checklist renders for the current month
+- Checklist state cycles and persists across refreshes
+- Current-snapshot warnings render without blocking the page
+
+---
+
+## Troubleshooting
+
+### Root URL shows preset cards instead of the interactive dashboard
+
+The server route for `/` regressed. Root should redirect to:
+
+```text
+/reallocation-dashboard.html?preset=balanced
+```
+
+`/presets` is the only route that should render the preset index page directly.
+
+### Checklist toggles do not persist
+
+Check:
+
+- `~/.openclaw/forecast-dashboard/monthly-operating-task-status.json` exists and is writable
+- `/api/monthly-operating-task-status` returns `200`
+- the browser is loading from `8586` directly or has the correct `apiBase`
+
+### Snapshot looks degraded
+
+Check upstream integrations first:
+
+```bash
+curl -fsS http://127.0.0.1:8585/api/mortgage/summary
+curl -fsS http://127.0.0.1:8586/api/health
+```
+
+The known-empty financial APIs are expected warnings, not necessarily breakages.
+
+### Browser shows a CSP / eval issue
+
+The forecast dashboard does not intentionally use `eval` or `new Function` in repo-owned code. If DevTools reports a CSP/eval issue while the dashboard still loads, treat it as browser-side noise unless the server is actually sending a CSP header or script execution is failing.
+
+---
+
+## Security Notes
+
+- Tailscale-only access is the intended exposure model
+- The dashboard contains sensitive planning assumptions, household balances, allocation targets, and compensation-related planning inputs
+- Do not expose `source-documents/`, raw research exports, PDFs, or other repo contents through the forecast server
+- Bind-on-all-interfaces is acceptable only because the Mac Mini is not publicly forwarded and this matches the other dashboard services
