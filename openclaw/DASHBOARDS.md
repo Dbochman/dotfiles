@@ -12,6 +12,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | On demand |
+| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min cache · current snapshot |
 
 ---
 
@@ -222,6 +223,39 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 | Database | `~/repos/financial-dashboard/finance.db` (gitignored) |
 | Config | `~/repos/financial-dashboard/config.yaml` |
 | Logs | `~/.openclaw/logs/financial-dashboard.{log,err.log}` |
+
+---
+
+## Forecast Dashboard
+
+**Port 8586**
+
+Financial Advisor forecast dashboard for Dylan and Julia's household reallocation scenarios. Root page links to forecast presets; the Balanced preset is the default cross-link from the financial dashboard.
+
+### What It Shows
+
+- **Preset index** — links to Balanced, tax reserve, loss-bank deployment, liquidity, cabin payoff, NVDA stress, conservative, and growth scenarios
+- **Forecast model** — interactive Financial Advisor reallocation dashboard
+- **Current snapshot** — local finance dashboard data, mortgage balances, ETH price, and tracked ticker prices where available
+- **Stale-data warnings** — source status for current snapshot inputs
+
+### Data Sources
+
+| Source | Frequency | Data |
+|--------|-----------|------|
+| Financial dashboard API | 5 min cache | Mortgage, payroll, income, spending, net-worth endpoints where populated |
+| Public price APIs | 5 min cache | ETH and tracked ticker prices |
+| Financial Advisor model | Static / git pull | Preset assumptions and forecast logic |
+
+### Files
+
+| File | Path |
+|------|------|
+| Server | `~/repos/Financial Advisor/dashboard/serve_forecast_dashboard.py` |
+| Dashboard | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.html` |
+| LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-dashboard.plist` |
+| Cache | `~/.openclaw/forecast-dashboard/current-snapshot.json` |
+| Logs | `~/.openclaw/logs/forecast-dashboard.{log,err.log}` |
 
 ---
 

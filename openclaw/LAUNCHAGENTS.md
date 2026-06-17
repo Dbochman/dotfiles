@@ -14,6 +14,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.usage-dashboard` | `usage-dashboard.py` | 8551 | Anthropic usage tracking dashboard |
 | `ai.openclaw.dog-walk-dashboard` | `dog-walk-dashboard.py` | 8552 | Dog walk & Roomba dashboard (walk history, Fi GPS, return signals) |
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Financial dashboard |
+| `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Financial forecast dashboard |
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
 | `com.openclaw.presence-receive` | `presence-receive.sh` | — | Receives Tailscale file pushes from Crosstown presence scans |
 
