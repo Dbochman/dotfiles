@@ -6,6 +6,7 @@ brew "steipete/tap/imsg"
 brew "steipete/tap/spogo"
 cask "1password-cli"
 cask "android-platform-tools"
+cask "gcloud-cli"
 cask "steipete/tap/codexbar"
 
 # Installed via pipx (not brew):

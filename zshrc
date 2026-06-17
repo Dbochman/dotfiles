@@ -132,3 +132,6 @@ unset ANTHROPIC_API_KEY
 unset ANTHROPIC_BASE_URL
 unset ANTHROPIC_MODEL
 unset ANTHROPIC_SMALL_FAST_MODEL
+
+# Machine-local shell customizations. Keep host-specific paths out of dotfiles.
+[[ -f "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
