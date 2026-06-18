@@ -249,7 +249,7 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 
 - **Interactive forecast model** — full reallocation dashboard with presets, controls, and projections
 - **Live projection baseline** — source-backed starting portfolio, allocation, trailing-full-month cash flow, and mortgage balances when coverage is ready
-- **Current snapshot overlay** — household net worth across reconciled financial accounts, live crypto/NFT-art, estimated property equity, and documented physical assets; current-month context and market prices
+- **Current snapshot overlay** — compact live cards for household net worth, income, mortgage debt, and crypto; supporting source detail appears on hover or keyboard focus
 - **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
 
