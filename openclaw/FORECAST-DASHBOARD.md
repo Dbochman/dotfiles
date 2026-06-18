@@ -111,7 +111,7 @@ The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-m
 
 ### Crypto Coverage Fallback
 
-Crypto owner coverage normally requires a fresh synced exchange or wallet source. If a known credential is mismatched or temporarily unavailable, add a reviewed, dated entry to `~/.openclaw/forecast-dashboard/crypto-manual-values.json` with `model_coverage: true`. That value can satisfy the affected owner's coverage until the correct live source is restored; the dashboard labels it as manual with its as-of date. Set `coinbase_enabled: false` in the local `crypto-sync-config.json` during the repair so the mismatched account is not counted or allowed to overwrite the statement fallback.
+Crypto owner coverage normally requires a fresh synced exchange or wallet source. If a known credential is mismatched or temporarily unavailable, add reviewed, dated `symbol` and `quantity` entries to `~/.openclaw/forecast-dashboard/crypto-manual-values.json` with `model_coverage: true`. Their quantities are live-priced while the dashboard preserves the statement as-of date; static `value_usd` entries remain manual valuations for assets without a live price. Set `coinbase_enabled: false` in the local `crypto-sync-config.json` during the repair so the mismatched account is not counted or allowed to overwrite the statement fallback.
 
 ---
 
