@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Atomically add Plaid credentials to the OpenClaw cache from standard input.
+# Atomically add Plaid credentials for both environments from standard input.
 # This script never invokes op and must not be run by a LaunchAgent.
 set -euo pipefail
 
@@ -25,11 +25,12 @@ cat > "$INPUT_FILE"
 
 if ! awk '
   /^PLAID_CLIENT_ID=.+$/ { client_id += 1; next }
-  /^PLAID_SECRET=.+$/ { secret += 1; next }
+  /^PLAID_SECRET_SANDBOX=.+$/ { sandbox_secret += 1; next }
+  /^PLAID_SECRET_PRODUCTION=.+$/ { production_secret += 1; next }
   { invalid = 1 }
-  END { exit !(client_id == 1 && secret == 1 && !invalid) }
+  END { exit !(client_id == 1 && sandbox_secret == 1 && production_secret == 1 && !invalid) }
 ' "$INPUT_FILE"; then
-  echo "Expected exactly PLAID_CLIENT_ID=<value> and PLAID_SECRET=<value> on standard input." >&2
+  echo "Expected PLAID_CLIENT_ID, PLAID_SECRET_SANDBOX, and PLAID_SECRET_PRODUCTION on standard input." >&2
   exit 1
 fi
 
@@ -39,7 +40,7 @@ if [[ -L "$CACHE" || ( -e "$CACHE" && ! -f "$CACHE" ) ]]; then
 fi
 
 if [[ -f "$CACHE" ]]; then
-  grep -vE '^(PLAID_CLIENT_ID|PLAID_SECRET)=' "$CACHE" > "$NEW_CACHE" || {
+  grep -vE '^(PLAID_CLIENT_ID|PLAID_SECRET|PLAID_SECRET_SANDBOX|PLAID_SECRET_PRODUCTION)=' "$CACHE" > "$NEW_CACHE" || {
     status=$?
     [[ "$status" -eq 1 ]] || exit "$status"
   }
