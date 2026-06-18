@@ -1,6 +1,6 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.5 (2026-06-18)
+## Status: v1.6 (2026-06-18)
 
 Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path plus an active browser-session durability experiment; an interactive login is only the recovery path when both have expired.
 
@@ -20,6 +20,37 @@ Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API en
 - If the same physical account appears through separate Plaid Items, record a verified `plaid_account_aliases` mapping with `update_data.py reconcile-alias-account`. Alias raw rows remain auditable, but their balances, holdings, and transactions are excluded from every canonical aggregate; ownership labels alone do not prevent double-counting.
 
 The Forecast Dashboard composes these source scopes with any still-unlinked owner profile. For the current deployment, an unavailable owner source remains a model supplement instead of being treated as zero. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for client-side application and override behavior.
+
+---
+
+## Payroll Income Detail
+
+Plaid Payroll Income is an optional, manual detail source for gross pay, taxes,
+deductions, and benefits. It is deliberately separate from the daily Plaid
+Transactions sync: reconciled bank transactions remain the canonical source
+for dashboard income and Forecast cash flow.
+
+- `update_data.py payroll-preflight` creates or verifies the protected Plaid
+  Income User state at `~/.openclaw/financial-dashboard/plaid-payroll-income.json`
+  (mode `0600`); it never invokes `op`.
+- `payroll-link --tailscale-funnel --no-browser` is a one-time ADP-capable
+  Link flow. It exposes only a random, signed-webhook route through a temporary
+  Tailscale Funnel on `8443`, never the existing OpenClaw `443` service.
+- The route verifies Plaid's `Plaid-Verification` JWT and raw-body hash, then
+  is removed after the session. `payroll-funnel-cleanup` removes a stale route
+  after an interrupted flow.
+- `payroll-sync` retrieves already-complete data only. Payroll Income Refresh
+  is not scheduled because it is a separately enabled paid feature that may
+  require user presence.
+- Parsed ADP PDFs retain priority when their pay period overlaps a Payroll
+  Income row, preventing duplicate payroll charts while preserving both source
+  records for audit.
+
+Production Payroll Income Link requires the `income_verification` product to
+be enabled for the Plaid client. A successful local preflight only confirms
+credentials and protected user state; if Link reports `INVALID_PRODUCT`, enable
+Payroll Income in Plaid's Launch Center or request production access before
+retrying.
 
 ---
 
@@ -108,6 +139,7 @@ Mac Mini (dylans-mac-mini)
 ├── Repo: ~/repos/financial-dashboard/
 │   ├── serve_dashboard.py          (HTTP server, port 8585)
 │   ├── update_data.py              (Plaid sync CLI)
+│   ├── payroll_income.py            (Payroll Income Link + signed webhook)
 │   ├── db.py                       (SQLite schema + helpers)
 │   ├── config.yaml                 (category overrides, FIRE settings)
 │   ├── finance.db                  (SQLite database, gitignored)
@@ -249,7 +281,7 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 - **Forecast refresh boundary.** Plaid data becomes a new forecast starting point after a successful source sync. `8586` refreshes its current snapshot cache every five minutes; this is a current-day planning baseline, not an intraday balance stream.
 - **Cross-Item shared accounts.** When each owner links the same joint account through separate logins, verify the account identity and map the newer record to the existing canonical Plaid account: `./venv/bin/python3 update_data.py reconcile-alias-account ALIAS_ACCOUNT_ID CANONICAL_ACCOUNT_ID "same physical joint account"`. Both inputs must be Plaid accounts from different Items. The alias is intentionally retained for audit and can be restored with `reconcile-clear-alias`; do not solve the duplicate by assigning both copies to `household`.
 - **Bind address**: `0.0.0.0:8585` — same pattern as nest-dashboard (`:8550`) and usage-dashboard (`:8551`). Mac Mini is behind NAT, no port forwarding.
-- **Venv required**: external deps (`pyyaml`, `plaid-python`, `playwright`, `beautifulsoup4` for Redfin). The plist points at the venv Python, not `/usr/bin/python3`.
+- **Venv required**: external deps (`pyyaml`, `plaid-python`, `PyJWT[crypto]`, `playwright`, `beautifulsoup4` for Redfin). The plist points at the venv Python, not `/usr/bin/python3`.
 - **WorkingDirectory is critical**: `SimpleHTTPRequestHandler` serves HTML files relative to CWD. The plist sets this to the repo root.
 - **Home values via Redfin**: `mortgage_accounts.redfin_url` (set in `<lender>_mortgage_data.json`) triggers `_fetch_redfin_estimate` in `update_data.py` at end-of-import. Currently set for both Crosstown (BoA) and Cabin (PennyMac).
 - **Per-property cron job ownership**: bootstrap any new Tier 2 scraper by adding (a) the 1P item to the OpenClaw vault, (b) the LENDERS / config entry in the scraper, (c) the scraper line to the cron prompt, (d) the import line. Tier 2b BoA-pattern adds a `browser.connect_cdp: True` flag.
