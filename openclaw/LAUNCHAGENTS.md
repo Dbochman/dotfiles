@@ -26,7 +26,7 @@ The financial dashboard services are Mac Mini services, not laptop services. Bef
 ssh dylans-mac-mini 'hostname -s; whoami; echo HOME=$HOME'
 ```
 
-Expected target context is the Mac Mini user `dbochman` with `HOME=/Users/dbochman`. Do not bootstrap `ai.openclaw.financial-dashboard` or `ai.openclaw.forecast-dashboard` on Dylan's laptop just because the dotfiles checkout is local there.
+Expected target context is the Mac Mini user `dbochman` with `HOME=/Users/dbochman`. Do not bootstrap `ai.openclaw.financial-dashboard`, `ai.openclaw.financial-dashboard-plaid-sync`, or `ai.openclaw.forecast-dashboard` on Dylan's laptop just because the dotfiles checkout is local there.
 
 `ai.openclaw.financial-dashboard` depends on the Python environment at:
 
@@ -42,17 +42,20 @@ ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 -c "im
 
 The paired forecast dashboard service should run from `~/repos/Financial Advisor` and read the financial dashboard through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as a fallback.
 
+`ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`.
+
 Minimum post-change verification:
 
 ```bash
 ssh dylans-mac-mini 'launchctl list | grep -E "ai.openclaw.(financial|forecast)-dashboard"'
+ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.financial-dashboard-plaid-sync'
 ssh dylans-mac-mini 'lsof -nP -iTCP:8585 -sTCP:LISTEN; lsof -nP -iTCP:8586 -sTCP:LISTEN'
 curl -fsS http://dylans-mac-mini:8585/api/mortgage/summary
 curl -fsS http://dylans-mac-mini:8586/api/health
 curl -fsS http://dylans-mac-mini:8586/api/current-snapshot
 ```
 
-Known-empty financial dashboard APIs (`/api/paystubs`, `/api/income`, `/api/spending`, `/api/net-worth`, `/api/savings-rate`) are allowed to appear as forecast-dashboard warnings. Mortgage summary and task feed availability are the baseline health checks.
+Payroll data may still be unavailable, but the linked Plaid sources should populate the canonical income, spending, net-worth, and savings-rate APIs after a successful daily sync. Source reconciliation must be ready before Forecast treats those values as live financial context.
 
 ## Mac Mini — Interval-Based (StartInterval)
 
@@ -108,6 +111,7 @@ Do not add quiet hours or jitter the cadence while the initial soak is being mea
 | Label | Schedule | Program | Description |
 |-------|----------|---------|-------------|
 | `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles repo, deploys skills/wrappers to Mini |
+| `ai.openclaw.financial-dashboard-plaid-sync` | Daily 7:15 AM | `financial-dashboard-plaid-sync.py` | Cache-only production Plaid sync; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
 | `com.openclaw.bb-lag-summary` | Daily 8:05 AM | `bb-lag-summary.sh` | BlueBubbles message lag summary |
 | `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM | `opentable-refresh-token.sh` | Refreshes OpenTable CLI auth token (~14d TTL) via Pinchtab + GWS Gmail 2FA. Scheduled at 4 AM to avoid Pinchtab collision with 8/10 AM booking jobs. |

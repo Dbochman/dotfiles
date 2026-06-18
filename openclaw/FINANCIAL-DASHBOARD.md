@@ -1,8 +1,8 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.2 (2026-06-18)
+## Status: v1.3 (2026-06-18)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 29 JSON API endpoints backed by SQLite. Runs at port 8585 on Mac Mini, LAN access via `http://dylans-mac-mini:8585/`. **Weekly self-healing scrape pipeline** (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path plus an active browser-session durability experiment; an interactive login is only the recovery path when both have expired.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 29 JSON API endpoints backed by SQLite. Runs at port 8585 on Mac Mini, LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path plus an active browser-session durability experiment; an interactive login is only the recovery path when both have expired.
 
 ---
 
@@ -101,6 +101,7 @@ Mac Mini (dylans-mac-mini)
 │   ├── water_dashboard.html        (water)
 │   ├── mortgage_dashboard.html     (mortgage)
 │   └── expenses_dashboard.html     (expenses)
+├── Sync status: ~/.openclaw/financial-dashboard/plaid-sync-status.json
 └── Logs: ~/.openclaw/logs/financial-dashboard.{log,err.log}
 ```
 
@@ -109,6 +110,7 @@ Mac Mini (dylans-mac-mini)
 | Label | Type | Command | Logs |
 |-------|------|---------|------|
 | `ai.openclaw.financial-dashboard` | KeepAlive | `venv/bin/python3 serve_dashboard.py` | `~/.openclaw/logs/financial-dashboard.{log,err.log}` |
+| `ai.openclaw.financial-dashboard-plaid-sync` | StartCalendarInterval, daily 7:15 AM | `financial-dashboard-plaid-sync.py` | `~/.openclaw/logs/financial-dashboard-plaid-sync.{log,err.log}` |
 | `ai.openclaw.boa-keepalive` | StartInterval (5 min) | `scrape_mortgage.py --lender boa --keep-alive` | `~/Library/Logs/boa-keepalive.log` |
 | `ai.openclaw.boa-browser-heartbeat` | StartInterval (1 min) | `scrape_mortgage.py --lender boa --browser-heartbeat` | `~/Library/Logs/boa-browser-heartbeat.log` |
 
@@ -165,6 +167,8 @@ mkdir -p ~/.openclaw/logs
 cd ~/dotfiles && git pull
 plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist
 cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
+plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard-plaid-sync.plist
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard-plaid-sync.plist ~/Library/LaunchAgents/
 ln -sf ~/dotfiles/bin/finance /opt/homebrew/bin/finance
 ```
 
@@ -201,6 +205,7 @@ finance dashboard restart
 ```bash
 cd ~/dotfiles && git pull
 cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard-plaid-sync.plist ~/Library/LaunchAgents/
 finance dashboard restart
 ```
 
@@ -220,7 +225,7 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 
 ## Notes
 
-- **Plaid sync is not configured.** Personal-account aggregation goes via the per-provider scrapers above; no automated daily Plaid pull. If a `PLAID_CLIENT_ID` ever appears in `.env`, the cron's `update_data.py sync` step will start running.
+- **Plaid sync is cache-only and independent of the scraper cron.** `ai.openclaw.financial-dashboard-plaid-sync` invokes `update_data.py sync` with `PLAID_ENV=production`; application code reads only the mode-`0600` OpenClaw secrets cache and protected Item token cache. It never invokes `op`, and the LaunchAgent status file records only timestamps, result, and exit code.
 - **Bind address**: `0.0.0.0:8585` — same pattern as nest-dashboard (`:8550`) and usage-dashboard (`:8551`). Mac Mini is behind NAT, no port forwarding.
 - **Venv required**: external deps (`pyyaml`, `plaid-python`, `playwright`, `beautifulsoup4` for Redfin). The plist points at the venv Python, not `/usr/bin/python3`.
 - **WorkingDirectory is critical**: `SimpleHTTPRequestHandler` serves HTML files relative to CWD. The plist sets this to the repo root.

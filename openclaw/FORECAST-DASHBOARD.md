@@ -22,6 +22,7 @@ Primary URLs:
 What it is for:
 
 - Interactive scenario modeling for Dylan and Julia's household allocation plan
+- Reconciled live context for current net worth and monthly cash flow
 - Live overlay of current mortgage balances and selected market prices
 - Current-source health/warning surface for upstream `8585` data gaps
 - Monthly operating checklist with mutable dashboard-only state (`done`, `skipped`, `snoozed`) that does not rewrite the planning feed
@@ -101,7 +102,7 @@ The preset index and redirect routes currently expose:
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Financial dashboard API (`8585`) | 5 min cache | Mortgage, payroll, income, spending, net-worth, savings-rate endpoints where populated |
+| Financial dashboard API (`8585`) | 5 min cache | Mortgage, payroll, income, spending, net-worth, and savings-rate endpoints; live financial totals require reconciliation readiness |
 | Public price APIs | 5 min cache | ETH and tracked tickers such as `NVDA` |
 | Financial Advisor repo | Static / git pull | Forecast assumptions, preset logic, dashboard UI, monthly task feed |
 | Local runtime overlay | On write | Mutable checklist status state outside source control |
@@ -115,15 +116,20 @@ The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-m
 `/api/current-snapshot` merges current facts used to annotate the forecast:
 
 - Mortgage balances and payment data from `/api/mortgage/summary`
+- Latest reconciled net worth from `/api/net-worth`
+- Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
 - ETH price from CoinGecko
 - Tracked public tickers from Nasdaq where available
 - Source warnings when upstream financial APIs are empty or degraded
 
-Known-empty upstream APIs for payroll, income, spending, net worth, and savings rate are expected to surface as warnings rather than fatal errors. Treat the service as healthy when:
+Payroll data may remain unavailable and surface as a warning. Treat the service as healthy when:
 
 - `/api/health` returns `ok`
 - the monthly task feed is available
 - mortgage data flows through `/api/current-snapshot`
+- reconciled financial totals appear in `/api/current-snapshot` when their upstream APIs are populated
+
+The live net-worth and cash-flow values are read-only forecast context. They do not overwrite salary, spending, allocation, or other scenario assumptions.
 
 ---
 
