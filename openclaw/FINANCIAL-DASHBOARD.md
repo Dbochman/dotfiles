@@ -1,6 +1,6 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.4 (2026-06-18)
+## Status: v1.5 (2026-06-18)
 
 Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path plus an active browser-session durability experiment; an interactive login is only the recovery path when both have expired.
 
@@ -17,6 +17,7 @@ Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API en
 - The contract reports `combined`, `dylan`, `julia`, and `household` scopes. Household accounts are separate so the forecast can count them once in Combined rather than twice across individual views.
 - Trailing three complete canonical months supply annualized cash-flow inputs. The current partial month is display context, not an annualization input.
 - Reconciliation, ownership, holdings, and classification coverage are explicit. A `review`, `partial`, or `unavailable` status must not be promoted as a complete live baseline.
+- If the same physical account appears through separate Plaid Items, record a verified `plaid_account_aliases` mapping with `update_data.py reconcile-alias-account`. Alias raw rows remain auditable, but their balances, holdings, and transactions are excluded from every canonical aggregate; ownership labels alone do not prevent double-counting.
 
 The Forecast Dashboard composes these source scopes with any still-unlinked owner profile. For the current deployment, an unavailable owner source remains a model supplement instead of being treated as zero. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for client-side application and override behavior.
 
@@ -246,6 +247,7 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 - **Plaid sync is cache-only and independent of the scraper cron.** `ai.openclaw.financial-dashboard-plaid-sync` invokes `update_data.py sync` with `PLAID_ENV=production`; application code reads only the mode-`0600` OpenClaw secrets cache and protected Item token cache. It never invokes `op`, and the LaunchAgent status file records only timestamps, result, and exit code.
 - **Scheduled does not mean continuously running.** `ai.openclaw.financial-dashboard-plaid-sync` is expected to show `not running` between its daily 07:15 local executions. Use its status JSON and logs to diagnose a failed run rather than assuming the inactive state is an error.
 - **Forecast refresh boundary.** Plaid data becomes a new forecast starting point after a successful source sync. `8586` refreshes its current snapshot cache every five minutes; this is a current-day planning baseline, not an intraday balance stream.
+- **Cross-Item shared accounts.** When each owner links the same joint account through separate logins, verify the account identity and map the newer record to the existing canonical Plaid account: `./venv/bin/python3 update_data.py reconcile-alias-account ALIAS_ACCOUNT_ID CANONICAL_ACCOUNT_ID "same physical joint account"`. Both inputs must be Plaid accounts from different Items. The alias is intentionally retained for audit and can be restored with `reconcile-clear-alias`; do not solve the duplicate by assigning both copies to `household`.
 - **Bind address**: `0.0.0.0:8585` — same pattern as nest-dashboard (`:8550`) and usage-dashboard (`:8551`). Mac Mini is behind NAT, no port forwarding.
 - **Venv required**: external deps (`pyyaml`, `plaid-python`, `playwright`, `beautifulsoup4` for Redfin). The plist points at the venv Python, not `/usr/bin/python3`.
 - **WorkingDirectory is critical**: `SimpleHTTPRequestHandler` serves HTML files relative to CWD. The plist sets this to the repo root.

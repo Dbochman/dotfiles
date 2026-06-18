@@ -223,6 +223,8 @@ Cron prompt at `openclaw cron list --json` (id `financial-scrape-0001`) is the c
 
 Plaid production sync is deliberately separate from that cron: `ai.openclaw.financial-dashboard-plaid-sync` runs daily at 07:15 local time, invokes the cache-only `financial-dashboard-plaid-sync.py` wrapper, and never invokes `op`. It writes status-only metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`; `not running` is normal between scheduled executions. The canonical Forecast source is `http://127.0.0.1:8585/api/forecast-baseline`, which exposes reconciled aggregate scopes only.
 
+If the same joint account is visible through separate owner logins, treat it as a cross-Item Plaid alias, not two household balances. After verifying the identity, run `./venv/bin/python3 update_data.py reconcile-alias-account ALIAS_ACCOUNT_ID CANONICAL_ACCOUNT_ID "same physical joint account"`. The alias remains raw/auditable but is excluded from canonical transactions, balances, holdings, and Forecast inputs. Ownership tags do not deduplicate sources.
+
 ## Forecast Dashboard
 
 Repo `~/repos/Financial Advisor/` on Mini; interactive forecast dashboard on port 8586. It reads `8585` first through localhost, validates the reconciliation and source-coverage gate, then caches `/api/current-snapshot` for five minutes.
