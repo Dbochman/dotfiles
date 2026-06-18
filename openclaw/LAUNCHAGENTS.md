@@ -58,7 +58,7 @@ daily cache-only crypto holdings sync -> local non-secret holdings cache -> 8586
 
 `ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. Each successful run also refreshes local `INCOME_*` source candidates; candidates are not sync failures, but they keep the forecast baseline in `review` until resolved. `not running` is normal between scheduled executions.
 
-`ai.openclaw.forecast-crypto-sync` runs daily at 7:25 AM local time, after Plaid. It uses a dedicated Python 3.11+ venv and protected local Coinbase/Etherscan credentials to refresh `~/.openclaw/forecast-dashboard/crypto-holdings.json`; the cache and status file are mode `0600`. It never invokes `op`, never writes credentials to the cache, and preserves the last known-good cache when a source fails. The forecast server applies a cache only when it is complete and fresh; it otherwise retains the dashboard's fixed crypto/art baseline.
+`ai.openclaw.forecast-crypto-sync` runs daily at 7:25 AM local time, after Plaid. It uses a dedicated Python 3.11+ venv and protected local Coinbase/Etherscan credentials to refresh `~/.openclaw/forecast-dashboard/crypto-holdings.json`; the cache and status file are mode `0600`. It never invokes `op`, never writes credentials to the cache, and preserves the last known-good cache when a source fails. The forecast server applies a cache only when it is complete and fresh; it otherwise retains the dashboard's fixed crypto/art baseline. The separate local `household-manual-assets.json` is not scheduled because property and physical-asset values require explicit review.
 
 Minimum post-change verification:
 
@@ -72,6 +72,7 @@ curl -fsS -o /dev/null -w 'forecast baseline HTTP %{http_code}\n' http://dylans-
 curl -fsS -o /dev/null -w 'forecast health HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/health
 curl -fsS -o /dev/null -w 'forecast snapshot HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/current-snapshot
 curl -fsS -o /dev/null -w 'forecast crypto HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/crypto/positions
+curl -fsS -o /dev/null -w 'forecast household net worth HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/household-net-worth
 ```
 
 Restart `8585` before `8586` after a paired deployment so Forecast builds a fresh snapshot from the updated source contract:

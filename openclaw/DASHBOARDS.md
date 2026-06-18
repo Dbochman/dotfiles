@@ -249,7 +249,7 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 
 - **Interactive forecast model** — full reallocation dashboard with presets, controls, and projections
 - **Live projection baseline** — source-backed starting portfolio, allocation, trailing-full-month cash flow, and mortgage balances when coverage is ready
-- **Current snapshot overlay** — reconciled net worth, current-month context, market prices, fresh fungible crypto holdings, and clearly labeled manual NFT/art values where available
+- **Current snapshot overlay** — household net worth across reconciled financial accounts, live crypto/NFT-art, estimated property equity, and documented physical assets; current-month context and market prices
 - **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
 
@@ -259,12 +259,15 @@ This service runs only on the Mac Mini as user `dbochman`. It reads current hous
 
 The paired `ai.openclaw.forecast-crypto-sync` LaunchAgent refreshes the non-secret crypto holdings cache daily at 07:25. It writes `~/.openclaw/forecast-dashboard/crypto-holdings.json` from protected local Coinbase and Etherscan credentials, then the forecast service values those quantities with public market prices. The forecast applies the crypto input only when both owners are present, all tracked positions are priceable, and every source is no more than 36 hours old. Otherwise it retains the fixed model baseline. NFT/art remains a separately dated manual value, not a live quote. The scheduled job never calls `op`.
 
+`Household net worth` is a Forecast-owned aggregate, not a replacement for the canonical Plaid `8585 /api/net-worth` contract. It adds eligible live crypto, estimated property equity from local property values and current mortgage balances, and documented manual physical assets from `~/.openclaw/forecast-dashboard/household-manual-assets.json`. A pending manual entry, including the initial precious-metals inventory placeholder, produces a `+` known subtotal rather than silently adding zero.
+
 Combined uses each household source once. An owner with incomplete or unavailable source coverage retains the existing model supplement rather than being silently zeroed. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for input, coverage, and override rules.
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/health'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/current-snapshot'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/crypto/positions'
+ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/household-net-worth'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/monthly-operating-tasks'
 ```
 
