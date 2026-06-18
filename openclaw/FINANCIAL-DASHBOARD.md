@@ -127,7 +127,7 @@ Mac Mini (dylans-mac-mini)
 | `/mortgage` | Mortgage | Amortization, payment history |
 | `/expenses` | Expenses | Category breakdown, trends, top merchants |
 
-29 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
+30 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
 
 ---
 
