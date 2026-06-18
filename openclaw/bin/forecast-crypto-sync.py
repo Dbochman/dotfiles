@@ -23,6 +23,7 @@ SYNC_SCRIPT = REPO_DIR / "dashboard" / "sync_crypto_holdings.py"
 COINBASE_KEY = SECRETS_DIR / "coinbase-cdp-api-key.json"
 ETHERSCAN_ENV = SECRETS_DIR / "etherscan.env"
 MANUAL_VALUES = STATE_DIR / "crypto-manual-values.json"
+SYNC_CONFIG = STATE_DIR / "crypto-sync-config.json"
 LOCK_PATH = STATE_DIR / ".crypto-sync.lock"
 STATUS_PATH = STATE_DIR / "crypto-sync-status.json"
 
@@ -66,6 +67,18 @@ def write_status(status: str, started_at: str, exit_code: int, reason: str | Non
         raise
 
 
+def load_sync_config() -> dict[str, bool]:
+    if not SYNC_CONFIG.exists():
+        return {"coinbase_enabled": True}
+    payload = json.loads(SYNC_CONFIG.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("crypto sync config must be a JSON object")
+    coinbase_enabled = payload.get("coinbase_enabled", True)
+    if not isinstance(coinbase_enabled, bool):
+        raise ValueError("crypto sync config coinbase_enabled must be boolean")
+    return {"coinbase_enabled": coinbase_enabled}
+
+
 def main() -> int:
     started_at = now_iso()
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -80,13 +93,21 @@ def main() -> int:
             print("Forecast crypto sync skipped: another run is already active.", flush=True)
             return 0
 
+        try:
+            sync_config = load_sync_config()
+        except (OSError, ValueError):
+            write_status("error", started_at, 1, "crypto_sync_config_invalid")
+            print("Forecast crypto sync failed: crypto_sync_config_invalid.", flush=True)
+            return 1
+
         required_paths = {
             "crypto_sync_venv_missing": PYTHON,
             "forecast_crypto_sync_script_missing": SYNC_SCRIPT,
-            "coinbase_key_missing": COINBASE_KEY,
             "etherscan_env_missing": ETHERSCAN_ENV,
             "manual_crypto_values_missing": MANUAL_VALUES,
         }
+        if sync_config["coinbase_enabled"]:
+            required_paths["coinbase_key_missing"] = COINBASE_KEY
         for reason, path in required_paths.items():
             if not path.is_file():
                 write_status("error", started_at, 1, reason)
@@ -95,18 +116,21 @@ def main() -> int:
 
         environment = os.environ.copy()
         environment["HOME"] = str(HOME)
+        command = [
+            str(PYTHON),
+            str(SYNC_SCRIPT),
+            "--etherscan-env",
+            str(ETHERSCAN_ENV),
+            "--manual-values",
+            str(MANUAL_VALUES),
+        ]
+        if sync_config["coinbase_enabled"]:
+            command.extend(["--coinbase-key", str(COINBASE_KEY)])
+        else:
+            command.append("--skip-coinbase")
         try:
             result = subprocess.run(
-                [
-                    str(PYTHON),
-                    str(SYNC_SCRIPT),
-                    "--coinbase-key",
-                    str(COINBASE_KEY),
-                    "--etherscan-env",
-                    str(ETHERSCAN_ENV),
-                    "--manual-values",
-                    str(MANUAL_VALUES),
-                ],
+                command,
                 cwd=REPO_DIR,
                 env=environment,
                 check=False,

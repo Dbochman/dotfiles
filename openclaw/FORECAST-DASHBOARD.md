@@ -109,6 +109,10 @@ The preset index and redirect routes currently expose:
 
 The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-mac-mini:8585` as fallback.
 
+### Crypto Coverage Fallback
+
+Crypto owner coverage normally requires a fresh synced exchange or wallet source. If a known credential is mismatched or temporarily unavailable, add a reviewed, dated entry to `~/.openclaw/forecast-dashboard/crypto-manual-values.json` with `model_coverage: true`. That value can satisfy the affected owner's coverage until the correct live source is restored; the dashboard labels it as manual with its as-of date. Set `coinbase_enabled: false` in the local `crypto-sync-config.json` during the repair so the mismatched account is not counted or allowed to overwrite the statement fallback.
+
 ---
 
 ## Current Snapshot Model
