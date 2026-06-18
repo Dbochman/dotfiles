@@ -102,7 +102,7 @@ The preset index and redirect routes currently expose:
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Financial dashboard API (`8585`) | Daily source sync + 5 min forecast cache | Mortgage, payroll detail when available, recognized income, spending, net worth, savings rate, and `/api/forecast-baseline`; live projection inputs require reconciliation, income-review, ownership, and coverage readiness |
+| Financial dashboard API (`8585`) | Daily source sync + 5 min forecast cache | Mortgage, payroll detail when available, recognized income, spending, net worth, savings rate, and `/api/forecast-baseline`; live projection inputs require reconciliation, income-review, ownership, coverage readiness, and a cash split that reconciles to total portfolio cash |
 | Public price APIs | 5 min cache | Supported crypto, USD/troy-ounce gold and silver spot quotes, and tracked tickers such as `NVDA` |
 | Financial Advisor repo | Static / git pull | Forecast assumptions, preset logic, dashboard UI, monthly task feed |
 | Local runtime overlay | On write | Mutable checklist status state outside source control |
@@ -143,7 +143,7 @@ The server converts grams with `31.1034768` grams per troy ounce and uses its fi
 - Mortgage balances and payment data from `/api/mortgage/summary`
 - Latest reconciled net worth from `/api/net-worth`
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
-- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, U.S./international equity geography, trailing-full-month recognized cash flow, and source-review blockers
+- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, a reconciled spendable/depository/taxable-brokerage versus retirement/restricted cash split, U.S./international equity geography, trailing-full-month recognized cash flow, and source-review blockers
 - ETH price from CoinGecko
 - Gold and silver spot prices from GoldPrice.org, returned as USD per troy ounce
 - Tracked public tickers from Nasdaq where available
@@ -161,6 +161,7 @@ Payroll data may remain unavailable and surface as a warning. Treat the service 
 The browser applies only the parts of the model that have a complete, reconciled source contract:
 
 - Source-backed equity, fixed-income, and cash sleeves seed the starting portfolio and its initial allocation.
+- The live cash split is decision support, not a new allocation sleeve: the model retains total portfolio cash, while the live strip and Target Mix Details expose only reconciled `spendable` cash for tax-reserve, emergency, or mortgage decisions.
 - Target Mix Details uses the baseline's live U.S./international equity geography;
   it does not apply a static 70/30 split. An `ok` geography enables actual
   Buy/Trim gaps. A `partial`, `review`, or unavailable geography displays a

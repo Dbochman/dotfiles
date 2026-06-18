@@ -205,7 +205,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 - **Utilities — Water** — BWSC bills, year-over-year comparison
 - **Mortgage** — amortization schedule, payment history
 - **Expenses** — category breakdown, trends, top merchants
-- **Forecast baseline** — owner-aware canonical portfolio, live equity geography, and trailing-full-month cash-flow aggregates for `8586`
+- **Forecast baseline** — owner-aware canonical portfolio, spendable-versus-retirement/restricted cash split, live equity geography, and trailing-full-month cash-flow aggregates for `8586`
 
 ### Data Sources
 
@@ -231,7 +231,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 
 This service runs only on the Mac Mini as user `dbochman`. The venv should be built from Homebrew Python, not the Command Line Tools Python shim. Verified on 2026-06-18 with Python 3.13.12, OpenSSL 3.x, and the dependencies from `~/repos/financial-dashboard/requirements.txt`.
 
-The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness, aggregate owner scopes, broad allocation, and U.S./international equity geography without requiring the forecast service to query SQLite directly. A pending income-source candidate is a readiness blocker: it is held out of cash-flow totals until reviewed, rather than silently changing the Forecast input. A partial geography similarly withholds equity trade guidance. The detailed policy and local review commands live in [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality).
+The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness, aggregate owner scopes, broad allocation, a cash split, and U.S./international equity geography without requiring the forecast service to query SQLite directly. `cash_breakdown.spendable` is depository plus taxable brokerage cash; retirement and restricted cash stay visible but must not be treated as tax, emergency, or mortgage liquidity. A pending income-source candidate is a readiness blocker: it is held out of cash-flow totals until reviewed, rather than silently changing the Forecast input. A partial geography similarly withholds equity trade guidance. The detailed policy and local review commands live in [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality).
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS -o /dev/null -w "forecast-baseline HTTP %{http_code}\n" http://127.0.0.1:8585/api/forecast-baseline'
@@ -249,8 +249,8 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 
 - **Interactive forecast model** — full reallocation dashboard with presets, controls, and projections
 - **Live projection baseline** — source-backed starting portfolio, allocation, trailing-full-month cash flow, and mortgage balances when coverage is ready
-- **Target Mix Details** — current broad mix plus live U.S./international equity geography; partial coverage is visibly review-only rather than an inferred trade instruction
-- **Current snapshot overlay** — compact live cards for household net worth, income, mortgage debt, and crypto; supporting source detail appears on hover or keyboard focus
+- **Target Mix Details** — current broad mix plus live spendable-cash, retirement/restricted-cash, and U.S./international equity geography; partial coverage is visibly review-only rather than an inferred trade instruction
+- **Current snapshot overlay** — compact live cards for household net worth, income, spendable cash, mortgage debt, and crypto; supporting source detail appears on hover or keyboard focus
 - **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
 

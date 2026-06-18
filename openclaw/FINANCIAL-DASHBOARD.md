@@ -26,12 +26,17 @@ The Forecast Dashboard composes these source scopes with any still-unlinked owne
 
 ## Portfolio Allocation And Geography
 
-`/api/forecast-baseline` version `2` reports both the broad live allocation
+`/api/forecast-baseline` version `3` reports both the broad live allocation
 (`equity`, `bond`, `cash`) and an `equity_geography` allocation for each owner
 scope (`us_equity`, `international_equity`, `unclassified_equity`). It is the
 sole source of current allocation inputs for Forecast; the forecast service
 does not query `finance.db` directly.
 
+- `cash_breakdown` separately reports depository, taxable brokerage,
+  retirement, and restricted cash. `spendable` is only depository plus taxable
+  brokerage cash; retirement and restricted cash must not fund tax reserves,
+  emergencies, or mortgage decisions. Its `total` must reconcile to the broad
+  `cash` allocation before Forecast displays it.
 - Direct securities are classified through `config.yaml` ticker overrides.
   `SWVXX`, for example, is explicitly cash rather than generic ETF equity.
 - Target-date holdings use reviewed broad and within-equity look-throughs in
