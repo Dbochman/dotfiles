@@ -65,6 +65,17 @@ trade instruction.
 
 `ai.openclaw.forecast-crypto-sync` runs daily at 7:25 AM local time, after Plaid. It uses a dedicated Python 3.11+ venv and protected local Coinbase/Etherscan credentials to refresh `~/.openclaw/forecast-dashboard/crypto-holdings.json`; the cache and status file are mode `0600`. It never invokes `op`, never writes credentials to the cache, and preserves the last known-good cache when a source fails. A local `~/.openclaw/forecast-dashboard/crypto-sync-config.json` may set `coinbase_enabled: false` while a mismatched Coinbase key is being replaced; the wallet refresh continues. The forecast server accepts a reviewed manual statement as owner coverage only when the manual entry explicitly sets `model_coverage: true`. The separate local `household-manual-assets.json` is not scheduled because property and physical-asset values require explicit review; documented `gold`/`silver` gram holdings are live-valued by `8586` with public XAU/XAG prices and require no secret or `op` access.
 
+### Dashboard Health Semantics
+
+The `financial-dashboard` and `forecast-dashboard` agents are `KeepAlive` services and should report `running`. The two daily sync agents should normally report `not running` between their calendar triggers; use their last exit code and status files instead:
+
+```text
+~/.openclaw/financial-dashboard/plaid-sync-status.json
+~/.openclaw/forecast-dashboard/crypto-sync-status.json
+```
+
+`launchctl kickstart -k` intentionally terminates and replaces a running `KeepAlive` process. A historical `Killed: 9` entry immediately after that operation is not a failure by itself; require the replacement process to return to `running` and its health endpoint to succeed. The Financial Dashboard writes normal HTTP access records to its stderr log, so `HTTP 200` lines in `financial-dashboard.err.log` are request records, not application errors. Assess older log lines against the installed plist, current status file, and current endpoint health before treating them as an incident.
+
 Minimum post-change verification:
 
 ```bash

@@ -466,6 +466,17 @@ ssh dbochman@dylans-mac-mini "tail -20 ~/.openclaw/logs/<name>-dashboard.log"
 ssh dbochman@dylans-mac-mini "tail -20 ~/.openclaw/logs/<name>-dashboard.err.log"
 ```
 
+For the Financial Dashboard, normal HTTP access records are written to the
+stderr log. Treat a `200` line as an access record, not an error. The daily
+Plaid and crypto sync agents are expected to be idle between runs; check their
+last exit code and status files rather than expecting `launchctl` to show them
+as running:
+
+```bash
+ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/financial-dashboard/plaid-sync-status.json'
+ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/forecast-dashboard/crypto-sync-status.json'
+```
+
 ### Verify from local machine
 
 ```bash
