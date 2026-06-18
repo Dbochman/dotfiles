@@ -213,13 +213,24 @@ Mac Mini → MacBook Pro SSH via Tailscale (`ssh dylans-macbook-pro`), dedicated
 
 ## Financial Dashboard
 
-Repo `~/repos/financial-dashboard/` on Mini; SPA on port 8585; weekly cron `financial-scrape-0001` (Sundays 4:05 ET) runs 7 scrapers, all self-healing:
+Repo `~/repos/financial-dashboard/` on Mini; canonical finance API and SPA on port 8585. The weekly cron `financial-scrape-0001` (Sundays 4:05 ET) runs 7 scrapers, all self-healing:
 
 - **Tier 1** — Tesla Solar (API only).
 - **Tier 2** — Eversource, NG Electric, NG Gas, BWSC, PennyMac. Playwright with `--re-auth` flag; each saves `storage_state.json` in its `.NAME_session/` dir. PennyMac auto-fetches email-MFA codes from Julia's Gmail via `gws`. Creds at `op://OpenClaw/<url-style-title>/...`.
 - **Tier 2b** — BoA. Bot detection defeats every Playwright-launched approach; instead the scraper does `playwright.chromium.connect_over_cdp(...)` to Pinchtab's already-running Chrome (port discovered by `ps`-grep for `--user-data-dir=~/.pinchtab/profiles`). Bootstrap rare (weeks-months) — user Screen Shares + manually logs in once. Never `page.goto()` or `context.close()` in CDP mode.
 
 Cron prompt at `openclaw cron list --json` (id `financial-scrape-0001`) is the canonical operational spec. Dev architecture: `~/repos/financial-dashboard/CLAUDE.md`. Reusable patterns: skills `playwright-email-mfa-flow`, `playwright-device-trust-bootstrap`, `web-auth-check-by-title-not-url`.
+
+Plaid production sync is deliberately separate from that cron: `ai.openclaw.financial-dashboard-plaid-sync` runs daily at 07:15 local time, invokes the cache-only `financial-dashboard-plaid-sync.py` wrapper, and never invokes `op`. It writes status-only metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`; `not running` is normal between scheduled executions. The canonical Forecast source is `http://127.0.0.1:8585/api/forecast-baseline`, which exposes reconciled aggregate scopes only.
+
+## Forecast Dashboard
+
+Repo `~/repos/Financial Advisor/` on Mini; interactive forecast dashboard on port 8586. It reads `8585` first through localhost, validates the reconciliation and source-coverage gate, then caches `/api/current-snapshot` for five minutes.
+
+- Live inputs: source-backed starting equity/bond/cash allocation, trailing-three-complete-month cash flow, and mortgage balances.
+- Model supplements: crypto/art, compensation, salaries, home equity, and any owner scope without a complete linked source.
+- Ownership rule: Combined adds the household scope once. Never infer a missing owner scope as a zero balance.
+- Operational reference: `~/dotfiles/openclaw/FORECAST-DASHBOARD.md`.
 
 ## Dashboards
 
@@ -228,6 +239,7 @@ Cron prompt at `openclaw cron list --json` (id `financial-scrape-0001`) is the c
 | Nest Climate | 8550 | Thermostat + weather + presence |
 | Usage | 8551 | Token consumption + agent activity |
 | Dog Walk | 8552 | Walk history, Fi GPS, Roomba status, route maps |
-| Financial | 8585 | Utilities, mortgage, solar, water |
+| Financial | 8585 | Canonical finance, utilities, mortgage, source reconciliation, and forecast baseline |
+| Forecast | 8586 | Interactive projections seeded from the reconciled current-day baseline |
 
 For API endpoints and UI features: `qmd query "nest dashboard API"` etc.

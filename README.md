@@ -27,6 +27,12 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `.claude/commands/` - Custom slash commands (rams, ui-skills, etc.)
 - `.claude/hooks/` - Pre-tool hooks (no-rm safety, continuous learning)
 
+### OpenClaw Operations
+- `openclaw/DASHBOARDS.md` - Dashboard catalog, ports, data cadence, and service ownership
+- `openclaw/FINANCIAL-DASHBOARD.md` - Financial source, cache-only Plaid sync, and forecast-baseline contract
+- `openclaw/FORECAST-DASHBOARD.md` - Forecast service, current-day baseline application, and override rules
+- `openclaw/LAUNCHAGENTS.md` - Mac Mini service lifecycle, validation, and deployment ordering
+
 ### SSH & Secrets (via 1Password)
 - `ssh_config` - Uses 1Password SSH Agent by default, with dedicated on-disk keys for a few Tailscale hosts
 - `setup-1password.md` - Guide for SSH keys and environment variables

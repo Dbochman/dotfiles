@@ -13,8 +13,8 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.nest-dashboard` | `nest-dashboard.py` | 8550 | Nest thermostat history dashboard |
 | `ai.openclaw.usage-dashboard` | `usage-dashboard.py` | 8551 | Anthropic usage tracking dashboard |
 | `ai.openclaw.dog-walk-dashboard` | `dog-walk-dashboard.py` | 8552 | Dog walk & Roomba dashboard (walk history, Fi GPS, return signals) |
-| `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Financial dashboard |
-| `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Financial forecast dashboard |
+| `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
+| `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
 | `com.openclaw.presence-receive` | `presence-receive.sh` | — | Receives Tailscale file pushes from Crosstown presence scans |
 
@@ -40,9 +40,19 @@ The venv should be built from Homebrew Python, not the Command Line Tools Python
 ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 -c "import sys, ssl, yaml, requests; print(sys.version.split()[0]); print(ssl.OPENSSL_VERSION); print(yaml.__version__); print(requests.__version__)"'
 ```
 
-The paired forecast dashboard service should run from `~/repos/Financial Advisor` and read the financial dashboard through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as a fallback.
+The paired forecast dashboard service runs from `~/repos/Financial Advisor` with `/usr/bin/python3` and reads the financial dashboard through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as a fallback.
 
-`ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`.
+The data flow is intentionally one-way:
+
+```text
+daily cache-only Plaid sync -> finance.db -> 8585 /api/forecast-baseline
+                                      -> 8586 current snapshot (5 min cache)
+                                      -> browser projection inputs
+```
+
+`8586` never reads `finance.db`, Plaid tokens, or the OpenClaw secrets cache directly. It promotes only the reconciled, owner-aware aggregate contract returned by `8585`.
+
+`ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. `not running` is normal between scheduled executions.
 
 Minimum post-change verification:
 
@@ -50,12 +60,20 @@ Minimum post-change verification:
 ssh dylans-mac-mini 'launchctl list | grep -E "ai.openclaw.(financial|forecast)-dashboard"'
 ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.financial-dashboard-plaid-sync'
 ssh dylans-mac-mini 'lsof -nP -iTCP:8585 -sTCP:LISTEN; lsof -nP -iTCP:8586 -sTCP:LISTEN'
-curl -fsS http://dylans-mac-mini:8585/api/mortgage/summary
-curl -fsS http://dylans-mac-mini:8586/api/health
-curl -fsS http://dylans-mac-mini:8586/api/current-snapshot
+curl -fsS -o /dev/null -w 'mortgage HTTP %{http_code}\n' http://dylans-mac-mini:8585/api/mortgage/summary
+curl -fsS -o /dev/null -w 'forecast baseline HTTP %{http_code}\n' http://dylans-mac-mini:8585/api/forecast-baseline
+curl -fsS -o /dev/null -w 'forecast health HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/health
+curl -fsS -o /dev/null -w 'forecast snapshot HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/current-snapshot
 ```
 
-Payroll data may still be unavailable, but the linked Plaid sources should populate the canonical income, spending, net-worth, and savings-rate APIs after a successful daily sync. Source reconciliation must be ready before Forecast treats those values as live financial context.
+Restart `8585` before `8586` after a paired deployment so Forecast builds a fresh snapshot from the updated source contract:
+
+```bash
+ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.financial-dashboard"'
+ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.forecast-dashboard"'
+```
+
+Payroll data may still be unavailable, but the linked Plaid sources should populate the canonical income, spending, net-worth, savings-rate, and forecast-baseline APIs after a successful daily sync. Source reconciliation and portfolio coverage must be ready before Forecast promotes a value into live model inputs.
 
 ## Mac Mini — Interval-Based (StartInterval)
 

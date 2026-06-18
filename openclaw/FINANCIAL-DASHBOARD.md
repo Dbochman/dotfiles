@@ -1,8 +1,24 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.3 (2026-06-18)
+## Status: v1.4 (2026-06-18)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 29 JSON API endpoints backed by SQLite. Runs at port 8585 on Mac Mini, LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path plus an active browser-session durability experiment; an interactive login is only the recovery path when both have expired.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path plus an active browser-session durability experiment; an interactive login is only the recovery path when both have expired.
+
+`8585` is also the canonical data source for the Forecast Dashboard on `8586`. Its owner-aware forecast baseline lets the forecast begin from the latest reconciled source snapshot rather than a wholly fixed portfolio assumption.
+
+---
+
+## Forecast Baseline Contract
+
+`/api/forecast-baseline` is the source contract consumed by the Forecast Dashboard. It returns safe aggregates only, never account names, identifiers, or Plaid tokens.
+
+- Portfolio inputs use canonical depository balances and classified investment holdings from the latest matching snapshot.
+- Credit and loan balances remain liabilities; they are not promoted into investable assets and reduce net worth with Plaid's documented balance convention.
+- The contract reports `combined`, `dylan`, `julia`, and `household` scopes. Household accounts are separate so the forecast can count them once in Combined rather than twice across individual views.
+- Trailing three complete canonical months supply annualized cash-flow inputs. The current partial month is display context, not an annualization input.
+- Reconciliation, ownership, holdings, and classification coverage are explicit. A `review`, `partial`, or `unavailable` status must not be promoted as a complete live baseline.
+
+The Forecast Dashboard composes these source scopes with any still-unlinked owner profile. For the current deployment, an unavailable owner source remains a model supplement instead of being treated as zero. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for client-side application and override behavior.
 
 ---
 
@@ -129,6 +145,8 @@ Mac Mini (dylans-mac-mini)
 
 30 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
 
+The Forecast integration contract is available at `http://dylans-mac-mini:8585/api/forecast-baseline`. Validate its status and owner-scope coverage after source or forecast changes; avoid copying raw payloads into logs or chat.
+
 ---
 
 ## Setup (First Time)
@@ -197,8 +215,8 @@ finance help                      Show help
 
 **Dashboard code changes:**
 ```bash
-cd ~/repos/financial-dashboard && git pull
-finance dashboard restart
+ssh dylans-mac-mini 'git -C "$HOME/repos/financial-dashboard" pull --ff-only'
+ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.financial-dashboard"'
 ```
 
 **Plist or CLI changes:**
@@ -226,6 +244,8 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 ## Notes
 
 - **Plaid sync is cache-only and independent of the scraper cron.** `ai.openclaw.financial-dashboard-plaid-sync` invokes `update_data.py sync` with `PLAID_ENV=production`; application code reads only the mode-`0600` OpenClaw secrets cache and protected Item token cache. It never invokes `op`, and the LaunchAgent status file records only timestamps, result, and exit code.
+- **Scheduled does not mean continuously running.** `ai.openclaw.financial-dashboard-plaid-sync` is expected to show `not running` between its daily 07:15 local executions. Use its status JSON and logs to diagnose a failed run rather than assuming the inactive state is an error.
+- **Forecast refresh boundary.** Plaid data becomes a new forecast starting point after a successful source sync. `8586` refreshes its current snapshot cache every five minutes; this is a current-day planning baseline, not an intraday balance stream.
 - **Bind address**: `0.0.0.0:8585` — same pattern as nest-dashboard (`:8550`) and usage-dashboard (`:8551`). Mac Mini is behind NAT, no port forwarding.
 - **Venv required**: external deps (`pyyaml`, `plaid-python`, `playwright`, `beautifulsoup4` for Redfin). The plist points at the venv Python, not `/usr/bin/python3`.
 - **WorkingDirectory is critical**: `SimpleHTTPRequestHandler` serves HTML files relative to CWD. The plist sets this to the repo root.

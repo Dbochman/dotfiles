@@ -26,6 +26,7 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 |--------|------|-------------|
 | `nest-dashboard.py` | 8550 | Nest climate dashboard — Chart.js UI over JSONL history. Serves thermostat temps, humidity, weather, and presence data. Tailscale-only. |
 | `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, API utilization gauges, agent activity metrics. Chart.js UI over JSONL history. Tailscale-only. |
+| `financial-dashboard-plaid-sync.py` | — | Daily cache-only Plaid sync wrapper for the separate financial-dashboard repo. Reads protected local caches, never calls `op`, serializes runs with a lock, and writes status-only metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. |
 
 ### Nest Integration
 

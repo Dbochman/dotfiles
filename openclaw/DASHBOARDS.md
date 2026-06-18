@@ -11,8 +11,8 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
-| 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | On demand |
-| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min cache · current snapshot |
+| 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily Plaid sync at 07:15 + weekly scrapes · API on demand |
+| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min current snapshot cache · live projection baseline |
 
 ---
 
@@ -193,9 +193,9 @@ Roomba status, snooze controls, and run history calendar heatmap for both locati
 
 ## Financial Dashboard
 
-**Port 8585**
+**Port 8585** · [Full spec](FINANCIAL-DASHBOARD.md)
 
-Julia's financial dashboard tracking spending, income, net worth, and utilities across multiple views.
+Household financial dashboard tracking spending, income, net worth, utilities, reconciled Plaid sources, and the canonical source baseline consumed by Forecast.
 
 ### What It Shows
 
@@ -205,13 +205,15 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 - **Utilities — Water** — BWSC bills, year-over-year comparison
 - **Mortgage** — amortization schedule, payment history
 - **Expenses** — category breakdown, trends, top merchants
+- **Forecast baseline** — owner-aware canonical portfolio and trailing-full-month cash-flow aggregates for `8586`
 
 ### Data Sources
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| SQLite database | On demand | Transactions, categories, balances |
-| Plaid API | Manual import | Bank/credit card transactions |
+| SQLite database | On demand | Canonical transactions, categories, balances, holdings, and reconciliation state |
+| Plaid API | Daily 07:15 cache-only sync | Bank/credit-card transactions, depository balances, investment holdings, and source status |
+| Weekly scraper cron | Sundays 04:05 ET | Utilities, mortgage, solar, and other statement-shaped data |
 | Config YAML | Static | Category overrides, FIRE settings, utility accounts |
 
 ### Files
@@ -227,12 +229,12 @@ Julia's financial dashboard tracking spending, income, net worth, and utilities 
 
 ### Runtime Notes
 
-This service runs only on the Mac Mini as user `dbochman`. The venv should be built from Homebrew Python, not the Command Line Tools Python shim. Baseline verified on 2026-06-17: Python 3.14.x, OpenSSL 3.x, and dependencies from `~/repos/financial-dashboard/requirements.txt`.
+This service runs only on the Mac Mini as user `dbochman`. The venv should be built from Homebrew Python, not the Command Line Tools Python shim. Verified on 2026-06-18 with Python 3.13.12, OpenSSL 3.x, and the dependencies from `~/repos/financial-dashboard/requirements.txt`.
 
-The mortgage API is the primary integration check for downstream forecast work:
+The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness and aggregate owner scopes without requiring the forecast service to query SQLite directly:
 
 ```bash
-ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8585/api/mortgage/summary'
+ssh dylans-mac-mini 'curl -fsS -o /dev/null -w "forecast-baseline HTTP %{http_code}\n" http://127.0.0.1:8585/api/forecast-baseline'
 ```
 
 ---
@@ -246,13 +248,16 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 ### What It Shows
 
 - **Interactive forecast model** — full reallocation dashboard with presets, controls, and projections
-- **Current snapshot overlay** — local finance dashboard data, mortgage balances, ETH price, and tracked ticker prices where available
+- **Live projection baseline** — source-backed starting portfolio, allocation, trailing-full-month cash flow, and mortgage balances when coverage is ready
+- **Current snapshot overlay** — reconciled net worth, current-month context, ETH price, and tracked ticker prices where available
 - **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
 
 ### Runtime Notes
 
-This service runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback.
+This service runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback. It refreshes its snapshot every five minutes; the underlying Plaid source sync is daily, so the projection is current-day planning data rather than an intraday balance stream.
+
+Combined uses each household source once. An owner with incomplete or unavailable source coverage retains the existing model supplement rather than being silently zeroed. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for input, coverage, and override rules.
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/health'

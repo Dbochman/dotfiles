@@ -1,14 +1,14 @@
 # Forecast Dashboard — Deployment Spec
 
-## Status: v1.1 (2026-06-17)
+## Status: v1.2 (2026-06-18)
 
-Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, and the monthly operating checklist overlay. Runs at port `8586` on Mac Mini, Tailscale-only access.
+Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with Tailscale-only access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
 
 ---
 
 ## System Overview
 
-The forecast dashboard is the planning surface that sits next to the financial dashboard on `8585`. It keeps the full interactive reallocation model in the Financial Advisor repo, but layers in live household facts and mutable checklist state from local runtime storage.
+The forecast dashboard is the planning surface that sits next to the financial dashboard on `8585`. It keeps the full interactive reallocation model in the Financial Advisor repo, layers in live household facts and mutable checklist state from local runtime storage, and starts eligible scenarios from the latest reconciled source baseline.
 
 Primary URLs:
 
@@ -22,8 +22,8 @@ Primary URLs:
 What it is for:
 
 - Interactive scenario modeling for Dylan and Julia's household allocation plan
-- Reconciled live context for current net worth and monthly cash flow
-- Live overlay of current mortgage balances and selected market prices
+- Reconciled live portfolio, cash-flow, and mortgage inputs when source coverage is complete
+- Reconciled display context for current net worth, monthly cash flow, and selected market prices
 - Current-source health/warning surface for upstream `8585` data gaps
 - Monthly operating checklist with mutable dashboard-only state (`done`, `skipped`, `snoozed`) that does not rewrite the planning feed
 
@@ -102,7 +102,7 @@ The preset index and redirect routes currently expose:
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Financial dashboard API (`8585`) | 5 min cache | Mortgage, payroll, income, spending, net-worth, and savings-rate endpoints; live financial totals require reconciliation readiness |
+| Financial dashboard API (`8585`) | Daily source sync + 5 min forecast cache | Mortgage, payroll, income, spending, net worth, savings rate, and `/api/forecast-baseline`; live projection inputs require reconciliation and coverage readiness |
 | Public price APIs | 5 min cache | ETH and tracked tickers such as `NVDA` |
 | Financial Advisor repo | Static / git pull | Forecast assumptions, preset logic, dashboard UI, monthly task feed |
 | Local runtime overlay | On write | Mutable checklist status state outside source control |
@@ -113,11 +113,12 @@ The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-m
 
 ## Current Snapshot Model
 
-`/api/current-snapshot` merges current facts used to annotate the forecast:
+`/api/current-snapshot` merges current facts used to annotate and seed the forecast:
 
 - Mortgage balances and payment data from `/api/mortgage/summary`
 - Latest reconciled net worth from `/api/net-worth`
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
+- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, and trailing-full-month cash flow
 - ETH price from CoinGecko
 - Tracked public tickers from Nasdaq where available
 - Source warnings when upstream financial APIs are empty or degraded
@@ -129,7 +130,26 @@ Payroll data may remain unavailable and surface as a warning. Treat the service 
 - mortgage data flows through `/api/current-snapshot`
 - reconciled financial totals appear in `/api/current-snapshot` when their upstream APIs are populated
 
-The live net-worth and cash-flow values are read-only forecast context. They do not overwrite salary, spending, allocation, or other scenario assumptions.
+### Live Projection Application
+
+The browser applies only the parts of the model that have a complete, reconciled source contract:
+
+- Source-backed equity, fixed-income, and cash sleeves seed the starting portfolio and its initial allocation.
+- Three trailing complete months of source cash flow seed annual savings and annual expenses. The current partial month remains display context.
+- Current mortgage balances seed the Combined scope; the existing individual-scope 50/50 mortgage convention is retained for Dylan and Julia views.
+- Crypto/art, unvested equity compensation, salaries, retirement years, home equity, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced.
+
+Ownership is intentional:
+
+- Combined composes direct owner source data with the household source once.
+- A source-unavailable owner keeps that owner's static model supplement. It is never silently converted to a zero balance or zero cash flow.
+- A reconciliation or coverage `review` blocks automatic promotion rather than guessing at a portfolio composition.
+
+Manual control remains available. A URL parameter or direct edit to a live-managed field pins that field; **Reset** clears those pins and re-applies the current source. A preset that explicitly defines a managed input takes precedence for that input.
+
+The baseline is refreshed from the `8586` current-snapshot cache every five minutes after `8585` has data. The Plaid source sync is scheduled daily, so this is a current-day planning baseline, not an intraday account-balance feed.
+
+The live net-worth card and current-month cash-flow card remain display context. Only the separate reconciled `projection_baseline` may change eligible starting portfolio, annual cash-flow, and mortgage inputs; it never overwrites salary, compensation, tax, or other unsourced scenario assumptions.
 
 ---
 
@@ -224,11 +244,8 @@ Related reference:
 ### Dashboard code changes
 
 ```bash
-ssh dylans-mac-mini
-cd ~/repos/Financial\ Advisor
-git pull
-launchctl stop ai.openclaw.forecast-dashboard
-launchctl start ai.openclaw.forecast-dashboard
+ssh dylans-mac-mini 'git -C "$HOME/repos/Financial Advisor" pull --ff-only'
+ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.forecast-dashboard"'
 ```
 
 ### LaunchAgent changes
@@ -265,10 +282,11 @@ ssh dylans-mac-mini 'tail -50 ~/.openclaw/logs/forecast-dashboard.err.log'
 curl -I http://dylans-mac-mini:8586/
 curl -I http://dylans-mac-mini:8586/presets
 curl -I http://dylans-mac-mini:8586/balanced
-curl -fsS http://dylans-mac-mini:8586/api/health
-curl -fsS http://dylans-mac-mini:8586/api/current-snapshot
-curl -fsS http://dylans-mac-mini:8586/api/monthly-operating-tasks
-curl -fsS http://dylans-mac-mini:8586/api/monthly-operating-task-status
+curl -fsS -o /dev/null -w 'health HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/health
+curl -fsS -o /dev/null -w 'snapshot HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/current-snapshot
+curl -fsS -o /dev/null -w 'task feed HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/monthly-operating-tasks
+curl -fsS -o /dev/null -w 'task status HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/monthly-operating-task-status
+curl -fsS -o /dev/null -w 'forecast baseline HTTP %{http_code}\n' http://dylans-mac-mini:8585/api/forecast-baseline
 ```
 
 ### Browser checks
@@ -276,6 +294,7 @@ curl -fsS http://dylans-mac-mini:8586/api/monthly-operating-task-status
 - Root URL redirects to the Balanced interactive dashboard
 - `/presets` loads the preset index page
 - Balanced preset loads the full interactive forecast dashboard
+- The Projection baseline card reports `Applied` only for source-backed inputs and describes any retained model supplement
 - Monthly operating checklist renders for the current month
 - Checklist state cycles and persists across refreshes
 - Current-snapshot warnings render without blocking the page
@@ -307,11 +326,12 @@ Check:
 Check upstream integrations first:
 
 ```bash
-curl -fsS http://127.0.0.1:8585/api/mortgage/summary
-curl -fsS http://127.0.0.1:8586/api/health
+curl -fsS -o /dev/null -w 'mortgage HTTP %{http_code}\n' http://127.0.0.1:8585/api/mortgage/summary
+curl -fsS -o /dev/null -w 'forecast baseline HTTP %{http_code}\n' http://127.0.0.1:8585/api/forecast-baseline
+curl -fsS -o /dev/null -w 'health HTTP %{http_code}\n' http://127.0.0.1:8586/api/health
 ```
 
-The known-empty financial APIs are expected warnings, not necessarily breakages.
+The known-empty financial APIs are expected warnings, not necessarily breakages. If `projection_baseline` is `review` or a scope is `unavailable`, the dashboard should retain its fixed model for that input and state why in the Projection baseline card; do not bypass the gate by copying raw source values into the forecast.
 
 ### Browser shows a CSP / eval issue
 
