@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/dbochman/repos/dotfiles/openclaw/bin/financial-dashboard-plaid-sync.py</string>
+        <string>/Users/dbochman/dotfiles/openclaw/bin/financial-dashboard-plaid-sync.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
