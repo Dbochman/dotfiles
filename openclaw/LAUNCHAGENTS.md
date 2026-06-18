@@ -45,14 +45,14 @@ The paired forecast dashboard service runs from `~/repos/Financial Advisor` with
 The data flow is intentionally one-way:
 
 ```text
-daily cache-only Plaid sync -> finance.db -> 8585 /api/forecast-baseline
+daily cache-only Plaid sync + income-source scan -> finance.db -> 8585 /api/forecast-baseline
                                       -> 8586 current snapshot (5 min cache)
                                       -> browser projection inputs
 ```
 
 `8586` never reads `finance.db`, Plaid tokens, or the OpenClaw secrets cache directly. It promotes only the reconciled, owner-aware aggregate contract returned by `8585`.
 
-`ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. `not running` is normal between scheduled executions.
+`ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. Each successful run also refreshes local `INCOME_*` source candidates; candidates are not sync failures, but they keep the forecast baseline in `review` until resolved. `not running` is normal between scheduled executions.
 
 Minimum post-change verification:
 
@@ -73,7 +73,7 @@ ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.financial-
 ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.forecast-dashboard"'
 ```
 
-Payroll data may still be unavailable, but the linked Plaid sources should populate the canonical income, spending, net-worth, savings-rate, and forecast-baseline APIs after a successful daily sync. Source reconciliation and portfolio coverage must be ready before Forecast promotes a value into live model inputs.
+Payroll data may still be unavailable, but the linked Plaid sources should populate canonical recognized income, spending, net-worth, savings-rate, and forecast-baseline APIs after a successful daily sync. Source reconciliation, income review, and portfolio coverage must be ready before Forecast promotes a value into live model inputs. See [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality) for the local review workflow.
 
 ## Mac Mini — Interval-Based (StartInterval)
 

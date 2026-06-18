@@ -1,6 +1,6 @@
 # Forecast Dashboard — Deployment Spec
 
-## Status: v1.2 (2026-06-18)
+## Status: v1.3 (2026-06-18)
 
 Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with Tailscale-only access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
 
@@ -102,7 +102,7 @@ The preset index and redirect routes currently expose:
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Financial dashboard API (`8585`) | Daily source sync + 5 min forecast cache | Mortgage, payroll, income, spending, net worth, savings rate, and `/api/forecast-baseline`; live projection inputs require reconciliation and coverage readiness |
+| Financial dashboard API (`8585`) | Daily source sync + 5 min forecast cache | Mortgage, payroll detail when available, recognized income, spending, net worth, savings rate, and `/api/forecast-baseline`; live projection inputs require reconciliation, income-review, ownership, and coverage readiness |
 | Public price APIs | 5 min cache | ETH and tracked tickers such as `NVDA` |
 | Financial Advisor repo | Static / git pull | Forecast assumptions, preset logic, dashboard UI, monthly task feed |
 | Local runtime overlay | On write | Mutable checklist status state outside source control |
@@ -118,7 +118,7 @@ The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-m
 - Mortgage balances and payment data from `/api/mortgage/summary`
 - Latest reconciled net worth from `/api/net-worth`
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
-- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, and trailing-full-month cash flow
+- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, trailing-full-month recognized cash flow, and source-review blockers
 - ETH price from CoinGecko
 - Tracked public tickers from Nasdaq where available
 - Source warnings when upstream financial APIs are empty or degraded
@@ -135,7 +135,7 @@ Payroll data may remain unavailable and surface as a warning. Treat the service 
 The browser applies only the parts of the model that have a complete, reconciled source contract:
 
 - Source-backed equity, fixed-income, and cash sleeves seed the starting portfolio and its initial allocation.
-- Three trailing complete months of source cash flow seed annual savings and annual expenses. The current partial month remains display context.
+- Three trailing complete months of recognized source cash flow seed annual savings and annual expenses. The current partial month remains display context. This is net bank cash flow, not gross payroll, withholding, benefits, or compensation-event detail.
 - Current mortgage balances seed the Combined scope; the existing individual-scope 50/50 mortgage convention is retained for Dylan and Julia views.
 - Crypto/art, unvested equity compensation, salaries, retirement years, home equity, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced.
 
@@ -143,7 +143,7 @@ Ownership is intentional:
 
 - Combined composes direct owner source data with the household source once.
 - A source-unavailable owner keeps that owner's static model supplement. It is never silently converted to a zero balance or zero cash flow.
-- A reconciliation or coverage `review` blocks automatic promotion rather than guessing at a portfolio composition.
+- A reconciliation, income-source, or coverage `review` blocks automatic promotion rather than guessing at a portfolio composition. Pending `INCOME_*` deposits are intentionally withheld until a local source rule classifies them.
 
 Manual control remains available. A URL parameter or direct edit to a live-managed field pins that field; **Reset** clears those pins and re-applies the current source. A preset that explicitly defines a managed input takes precedence for that input.
 

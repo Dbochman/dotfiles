@@ -199,7 +199,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 
 ### What It Shows
 
-- **Main dashboard** — spending trends, income streams, net worth, savings rate, FIRE progress
+- **Main dashboard** — spending trends, recognized income streams, net worth, savings rate, FIRE progress
 - **Utilities — Electricity** — Eversource bills, year-over-year comparison
 - **Utilities — Gas** — National Grid bills, year-over-year comparison
 - **Utilities — Water** — BWSC bills, year-over-year comparison
@@ -212,7 +212,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 | Source | Frequency | Data |
 |--------|-----------|------|
 | SQLite database | On demand | Canonical transactions, categories, balances, holdings, and reconciliation state |
-| Plaid API | Daily 07:15 cache-only sync | Bank/credit-card transactions, depository balances, investment holdings, and source status |
+| Plaid API | Daily 07:15 cache-only sync | Bank/credit-card transactions, depository balances, investment holdings, PFC income review, and source status |
 | Weekly scraper cron | Sundays 04:05 ET | Utilities, mortgage, solar, and other statement-shaped data |
 | Config YAML | Static | Category overrides, FIRE settings, utility accounts |
 
@@ -231,7 +231,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 
 This service runs only on the Mac Mini as user `dbochman`. The venv should be built from Homebrew Python, not the Command Line Tools Python shim. Verified on 2026-06-18 with Python 3.13.12, OpenSSL 3.x, and the dependencies from `~/repos/financial-dashboard/requirements.txt`.
 
-The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness and aggregate owner scopes without requiring the forecast service to query SQLite directly:
+The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness and aggregate owner scopes without requiring the forecast service to query SQLite directly. A pending income-source candidate is a readiness blocker: it is held out of cash-flow totals until reviewed, rather than silently changing the Forecast input. The detailed policy and local review commands live in [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality).
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS -o /dev/null -w "forecast-baseline HTTP %{http_code}\n" http://127.0.0.1:8585/api/forecast-baseline'
