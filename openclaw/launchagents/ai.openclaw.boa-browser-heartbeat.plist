@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.boa-browser-heartbeat</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/dbochman/repos/financial-dashboard/venv/bin/python3</string>
+        <string>/Users/dbochman/repos/financial-dashboard/scrape_mortgage.py</string>
+        <string>--lender</string>
+        <string>boa</string>
+        <string>--browser-heartbeat</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/dbochman</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>/Users/dbochman/repos/financial-dashboard</string>
+    <key>StartInterval</key>
+    <integer>60</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/dbochman/Library/Logs/boa-browser-heartbeat.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dbochman/Library/Logs/boa-browser-heartbeat.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
