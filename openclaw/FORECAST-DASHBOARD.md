@@ -1,6 +1,6 @@
 # Forecast Dashboard — Deployment Spec
 
-## Status: v1.3 (2026-06-18)
+## Status: v1.4 (2026-06-18)
 
 Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with Tailscale-only access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
 
@@ -143,7 +143,7 @@ The server converts grams with `31.1034768` grams per troy ounce and uses its fi
 - Mortgage balances and payment data from `/api/mortgage/summary`
 - Latest reconciled net worth from `/api/net-worth`
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
-- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, trailing-full-month recognized cash flow, and source-review blockers
+- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, U.S./international equity geography, trailing-full-month recognized cash flow, and source-review blockers
 - ETH price from CoinGecko
 - Gold and silver spot prices from GoldPrice.org, returned as USD per troy ounce
 - Tracked public tickers from Nasdaq where available
@@ -161,6 +161,10 @@ Payroll data may remain unavailable and surface as a warning. Treat the service 
 The browser applies only the parts of the model that have a complete, reconciled source contract:
 
 - Source-backed equity, fixed-income, and cash sleeves seed the starting portfolio and its initial allocation.
+- Target Mix Details uses the baseline's live U.S./international equity geography;
+  it does not apply a static 70/30 split. An `ok` geography enables actual
+  Buy/Trim gaps. A `partial`, `review`, or unavailable geography displays a
+  map-review state and withholds equity trade guidance.
 - Three trailing complete months of recognized source cash flow seed annual savings and annual expenses. The current partial month remains display context. This is net bank cash flow, not gross payroll, withholding, benefits, or compensation-event detail.
 - Current mortgage balances seed the Combined scope; the existing individual-scope 50/50 mortgage convention is retained for Dylan and Julia views.
 - Crypto/art, unvested equity compensation, salaries, retirement years, home equity, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced.
@@ -274,6 +278,18 @@ ssh dylans-mac-mini 'git -C "$HOME/repos/Financial Advisor" pull --ff-only'
 ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.forecast-dashboard"'
 ```
 
+### Paired financial-source changes
+
+When the `8585` forecast-baseline contract, holdings classification, or
+`config.yaml` allocation policy changes, restart the source service first and
+then Forecast so its five-minute snapshot cache is rebuilt from the new
+contract:
+
+```bash
+ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.financial-dashboard"'
+ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.forecast-dashboard"'
+```
+
 ### LaunchAgent changes
 
 ```bash
@@ -321,6 +337,7 @@ curl -fsS -o /dev/null -w 'forecast baseline HTTP %{http_code}\n' http://dylans-
 - `/presets` loads the preset index page
 - Balanced preset loads the full interactive forecast dashboard
 - The Projection baseline card reports `Applied` only for source-backed inputs and describes any retained model supplement
+- Target Mix Details uses live U.S./international values when geography is `ok`; it must show `Review map` rather than equity Buy/Trim guidance when coverage is partial
 - Monthly operating checklist renders for the current month
 - Checklist state cycles and persists across refreshes
 - Current-snapshot warnings render without blocking the page

@@ -56,6 +56,11 @@ daily cache-only crypto holdings sync -> local non-secret holdings cache -> 8586
 
 `8586` never reads `finance.db`, Plaid tokens, or the OpenClaw secrets cache directly. It promotes only the reconciled, owner-aware aggregate contract returned by `8585`.
 
+That contract includes the broad portfolio allocation and a separately gated
+U.S./international equity-geography map. If geography is incomplete, Forecast
+must expose a review state rather than infer a country split or issue an equity
+trade instruction.
+
 `ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. Each successful run also refreshes local `INCOME_*` source candidates; candidates are not sync failures, but they keep the forecast baseline in `review` until resolved. `not running` is normal between scheduled executions.
 
 `ai.openclaw.forecast-crypto-sync` runs daily at 7:25 AM local time, after Plaid. It uses a dedicated Python 3.11+ venv and protected local Coinbase/Etherscan credentials to refresh `~/.openclaw/forecast-dashboard/crypto-holdings.json`; the cache and status file are mode `0600`. It never invokes `op`, never writes credentials to the cache, and preserves the last known-good cache when a source fails. A local `~/.openclaw/forecast-dashboard/crypto-sync-config.json` may set `coinbase_enabled: false` while a mismatched Coinbase key is being replaced; the wallet refresh continues. The forecast server accepts a reviewed manual statement as owner coverage only when the manual entry explicitly sets `model_coverage: true`. The separate local `household-manual-assets.json` is not scheduled because property and physical-asset values require explicit review; documented `gold`/`silver` gram holdings are live-valued by `8586` with public XAU/XAG prices and require no secret or `op` access.
@@ -75,7 +80,9 @@ curl -fsS -o /dev/null -w 'forecast crypto HTTP %{http_code}\n' http://dylans-ma
 curl -fsS -o /dev/null -w 'forecast household net worth HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/household-net-worth
 ```
 
-Restart `8585` before `8586` after a paired deployment so Forecast builds a fresh snapshot from the updated source contract:
+Restart `8585` before `8586` after a paired deployment, including an `8585`
+holding-classification or allocation-policy change, so Forecast builds a fresh
+snapshot instead of serving its prior five-minute cache:
 
 ```bash
 ssh dylans-mac-mini 'launchctl kickstart -k "gui/$(id -u)/ai.openclaw.financial-dashboard"'

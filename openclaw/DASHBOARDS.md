@@ -205,7 +205,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 - **Utilities — Water** — BWSC bills, year-over-year comparison
 - **Mortgage** — amortization schedule, payment history
 - **Expenses** — category breakdown, trends, top merchants
-- **Forecast baseline** — owner-aware canonical portfolio and trailing-full-month cash-flow aggregates for `8586`
+- **Forecast baseline** — owner-aware canonical portfolio, live equity geography, and trailing-full-month cash-flow aggregates for `8586`
 
 ### Data Sources
 
@@ -231,7 +231,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 
 This service runs only on the Mac Mini as user `dbochman`. The venv should be built from Homebrew Python, not the Command Line Tools Python shim. Verified on 2026-06-18 with Python 3.13.12, OpenSSL 3.x, and the dependencies from `~/repos/financial-dashboard/requirements.txt`.
 
-The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness and aggregate owner scopes without requiring the forecast service to query SQLite directly. A pending income-source candidate is a readiness blocker: it is held out of cash-flow totals until reviewed, rather than silently changing the Forecast input. The detailed policy and local review commands live in [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality).
+The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness, aggregate owner scopes, broad allocation, and U.S./international equity geography without requiring the forecast service to query SQLite directly. A pending income-source candidate is a readiness blocker: it is held out of cash-flow totals until reviewed, rather than silently changing the Forecast input. A partial geography similarly withholds equity trade guidance. The detailed policy and local review commands live in [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality).
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS -o /dev/null -w "forecast-baseline HTTP %{http_code}\n" http://127.0.0.1:8585/api/forecast-baseline'
@@ -249,6 +249,7 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 
 - **Interactive forecast model** — full reallocation dashboard with presets, controls, and projections
 - **Live projection baseline** — source-backed starting portfolio, allocation, trailing-full-month cash flow, and mortgage balances when coverage is ready
+- **Target Mix Details** — current broad mix plus live U.S./international equity geography; partial coverage is visibly review-only rather than an inferred trade instruction
 - **Current snapshot overlay** — compact live cards for household net worth, income, mortgage debt, and crypto; supporting source detail appears on hover or keyboard focus
 - **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
@@ -261,7 +262,7 @@ The paired `ai.openclaw.forecast-crypto-sync` LaunchAgent refreshes the non-secr
 
 `Household net worth` is a Forecast-owned aggregate, not a replacement for the canonical Plaid `8585 /api/net-worth` contract. It adds eligible live crypto, estimated property equity from local property values and current mortgage balances, and documented manual physical assets from `~/.openclaw/forecast-dashboard/household-manual-assets.json`. Its compact hover ledger shows an exact USD value and source for cash, investments, any financial reconciliation adjustment, crypto, property equity, and Precious metals. Documented gold and silver grams are live-valued from a five-minute USD/troy-ounce quote and intentionally collapse into the Precious metals total. Only present balance-sheet assets appear in the ledger. A pending manual entry or unavailable required metal quote produces a `+` known subtotal rather than silently adding zero. The metal value is spot only and excludes dealer premiums and sale spreads.
 
-Combined uses each household source once. An owner with incomplete or unavailable source coverage retains the existing model supplement rather than being silently zeroed. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for input, coverage, and override rules.
+Combined uses each household source once. An owner with incomplete or unavailable source coverage retains the existing model supplement rather than being silently zeroed. The detailed target mix has no static geographic split: it uses the `8585` geography contract when available and suppresses equity Buy/Trim gaps when it is not. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for input, coverage, and override rules.
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/health'
