@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Atomically add Plaid credentials to the OpenClaw cache from standard input.
+# This script never invokes op and must not be run by a LaunchAgent.
+set -euo pipefail
+
+umask 077
+
+CACHE="${OPENCLAW_SECRETS_CACHE:-$HOME/.openclaw/.secrets-cache}"
+CACHE_DIR="$(dirname "$CACHE")"
+INPUT_FILE=""
+NEW_CACHE=""
+
+cleanup() {
+  [[ -n "$INPUT_FILE" ]] && rm -f "$INPUT_FILE"
+  [[ -n "$NEW_CACHE" ]] && rm -f "$NEW_CACHE"
+}
+trap cleanup EXIT
+
+mkdir -p "$CACHE_DIR"
+chmod 700 "$CACHE_DIR"
+
+INPUT_FILE="$(mktemp "$CACHE_DIR/.plaid-input.XXXXXX")"
+NEW_CACHE="$(mktemp "$CACHE_DIR/.secrets-cache.XXXXXX")"
+cat > "$INPUT_FILE"
+
+if ! awk '
+  /^PLAID_CLIENT_ID=.+$/ { client_id += 1; next }
+  /^PLAID_SECRET=.+$/ { secret += 1; next }
+  { invalid = 1 }
+  END { exit !(client_id == 1 && secret == 1 && !invalid) }
+' "$INPUT_FILE"; then
+  echo "Expected exactly PLAID_CLIENT_ID=<value> and PLAID_SECRET=<value> on standard input." >&2
+  exit 1
+fi
+
+if [[ -L "$CACHE" || ( -e "$CACHE" && ! -f "$CACHE" ) ]]; then
+  echo "Refusing to replace a non-regular cache file: $CACHE" >&2
+  exit 1
+fi
+
+if [[ -f "$CACHE" ]]; then
+  grep -vE '^(PLAID_CLIENT_ID|PLAID_SECRET)=' "$CACHE" > "$NEW_CACHE" || {
+    status=$?
+    [[ "$status" -eq 1 ]] || exit "$status"
+  }
+fi
+cat "$INPUT_FILE" >> "$NEW_CACHE"
+
+chmod 600 "$NEW_CACHE"
+mv -f "$NEW_CACHE" "$CACHE"
+NEW_CACHE=""
+
+echo "Plaid credentials updated in $CACHE."
