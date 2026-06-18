@@ -1,8 +1,8 @@
 # Forecast Dashboard — Deployment Spec
 
-## Status: v1.4 (2026-06-18)
+## Status: v1.5 (2026-06-18)
 
-Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with Tailscale-only access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
+Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, a forecast-history ledger, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with Tailscale-only access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
 
 ---
 
@@ -18,6 +18,7 @@ Primary URLs:
 | `http://dylans-mac-mini:8586/presets` | Preset index page |
 | `http://dylans-mac-mini:8586/balanced` | Balanced preset redirect |
 | `http://dylans-mac-mini:8586/reallocation-dashboard.html?preset=balanced` | Canonical Balanced dashboard URL |
+| `http://dylans-mac-mini:8586/forecast-history.html` | Aggregate daily observation and saved-forecast history |
 
 What it is for:
 
@@ -26,6 +27,7 @@ What it is for:
 - Reconciled display context for current net worth, monthly cash flow, and selected market prices
 - Current-source health/warning surface for upstream `8585` data gaps
 - Monthly operating checklist with mutable dashboard-only state (`done`, `skipped`, `snoozed`) that does not rewrite the planning feed
+- Explicit saved forecast runs and annual forecast-versus-actual checkpoints
 
 ---
 
@@ -37,11 +39,16 @@ Mac Mini (dylans-mac-mini)
 │   ├── dashboard/reallocation-dashboard.html
 │   ├── dashboard/reallocation-dashboard.js
 │   ├── dashboard/reallocation-dashboard.css
+│   ├── dashboard/forecast-history.html
+│   ├── dashboard/forecast-history.js
+│   ├── dashboard/forecast_ledger.py
 │   ├── dashboard/serve_forecast_dashboard.py
 │   └── data/dashboard/monthly-operating-tasks.json
 ├── Runtime cache: ~/.openclaw/forecast-dashboard/
 │   ├── current-snapshot.json
-│   └── monthly-operating-task-status.json
+│   ├── forecast-ledger.sqlite
+│   ├── monthly-operating-task-status.json
+│   └── forecast-ledger-capture-status.json
 ├── Upstream finance dashboard: http://127.0.0.1:8585
 └── Logs: ~/.openclaw/logs/forecast-dashboard.{log,err.log}
 ```
@@ -51,6 +58,7 @@ Mac Mini (dylans-mac-mini)
 | Label | Type | Command | Logs |
 |-------|------|---------|------|
 | `ai.openclaw.forecast-dashboard` | KeepAlive | `python3 dashboard/serve_forecast_dashboard.py` | `~/.openclaw/logs/forecast-dashboard.{log,err.log}` |
+| `ai.openclaw.forecast-ledger-capture` | Daily 07:35 | `forecast-ledger-capture.py` | `~/.openclaw/logs/forecast-ledger-capture.{log,err.log}` |
 
 This service runs only on the Mac Mini as user `dbochman`.
 
@@ -74,13 +82,20 @@ The service is intentionally repo-owned and small. It serves only the forecast d
 | `/nvda-stress` | Redirect to NVDA stress preset |
 | `/conservative` | Redirect to Conservative preset |
 | `/growth` | Redirect to Growth preset |
+| `/history` | Redirect to the forecast-history dashboard |
 | `/reallocation-dashboard.html` | Interactive forecast dashboard shell |
 | `/reallocation-dashboard.js` | Forecast model and checklist UI logic |
 | `/reallocation-dashboard.css` | Dashboard styles |
+| `/forecast-history.html` | Aggregate daily history and saved annual forecast checkpoints |
+| `/forecast-history.js` | Forecast-history UI logic |
 | `/api/current-snapshot` | Current household facts derived from local finance APIs |
 | `/api/prices` | Supported crypto prices, gold/silver spot quotes, and configured ticker prices |
 | `/api/monthly-operating-tasks` | Read-only planning feed enriched with local mutable UI state |
 | `/api/monthly-operating-task-status` | Mutable local status overlay write/read endpoint |
+| `/api/forecast-ledger/summary` | Aggregate counts, latest observation/run, and due annual-comparison status |
+| `/api/forecast-ledger/history` | Aggregate observations plus saved annual forecast rows and comparisons |
+| `POST /api/forecast-ledger/observations` | Record a current aggregate observation (`manual` or scheduled only) |
+| `POST /api/forecast-ledger/runs` | Save browser-produced annual model rows against the current observation |
 | `/api/health` | Service health, source warnings, task-feed availability |
 
 ### Presets
@@ -106,6 +121,7 @@ The preset index and redirect routes currently expose:
 | Public price APIs | 5 min cache | Supported crypto, USD/troy-ounce gold and silver spot quotes, and tracked tickers such as `NVDA` |
 | Financial Advisor repo | Static / git pull | Forecast assumptions, preset logic, dashboard UI, monthly task feed |
 | Local runtime overlay | On write | Mutable checklist status state outside source control |
+| Forecast ledger | Daily after sync and explicit save | Aggregate observations, saved browser model runs, annual comparison checkpoints; no raw source data |
 
 The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-mac-mini:8585` as fallback.
 
@@ -185,6 +201,31 @@ The baseline is refreshed from the `8586` current-snapshot cache every five minu
 
 The live net-worth card and current-month cash-flow card remain display context. Only the separate reconciled `projection_baseline` may change eligible starting portfolio, annual cash-flow, and mortgage inputs; it never overwrites salary, compensation, tax, or other unsourced scenario assumptions.
 
+### Forecast History
+
+The ledger at `~/.openclaw/forecast-dashboard/forecast-ledger.sqlite` is
+Forecast-owned and stores only aggregate, display-safe values: source dates and
+quality, financial net worth, broad allocation, liquidity split, eligible
+crypto, mortgages, trailing source cash flow, compact household components,
+saved browser scenario state/provenance, and annual result rows. It does not
+copy Plaid account IDs, raw transactions, source documents, or secrets from the
+financial-dashboard source system.
+
+The scheduled capture runs at 07:35 after Plaid (07:15) and crypto (07:25).
+It POSTs to the loopback `8586` endpoint, retains no response body beyond
+status metadata, retries short local-service failures, and never invokes
+`op`. An identical same-day source state is idempotent; a changed state is a
+new immutable revision.
+
+`Save forecast` is an explicit browser action. The server records the browser
+model revision hash and compact annual outputs rather than trying to recreate a
+Monte Carlo run on the server. Forecast-versus-actual comparison starts only at
+annual checkpoints: it compares the saved real-dollar investable value to a
+later observed financial portfolio plus eligible crypto value, deflated using
+that run's saved inflation assumption. Mortgage comparison is direct. Household
+net worth is intentionally not used for that variance because manual metals and
+other current balance-sheet components are outside the forecast model.
+
 ---
 
 ## Monthly Checklist Overlay
@@ -262,10 +303,15 @@ Cross-origin writes are allowed only when the origin hostname matches the foreca
 | Dashboard HTML | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.html` | Interactive UI shell |
 | Dashboard JS | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.js` | Model, rendering, checklist behavior |
 | Dashboard CSS | `~/repos/Financial Advisor/dashboard/reallocation-dashboard.css` | Layout and state styling |
+| History HTML | `~/repos/Financial Advisor/dashboard/forecast-history.html` | Aggregate historical view |
+| History JS | `~/repos/Financial Advisor/dashboard/forecast-history.js` | Historical-view rendering |
+| Ledger | `~/repos/Financial Advisor/dashboard/forecast_ledger.py` | Aggregate observation/run persistence and comparison policy |
 | Task feed | `~/repos/Financial Advisor/data/dashboard/monthly-operating-tasks.json` | Read-only planning feed |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-dashboard.plist` | KeepAlive service |
+| Capture LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-ledger-capture.plist` | Daily post-sync aggregate capture |
 | Runtime cache | `~/.openclaw/forecast-dashboard/current-snapshot.json` | Cached snapshot payload |
 | Runtime overlay | `~/.openclaw/forecast-dashboard/monthly-operating-task-status.json` | Mutable task state |
+| Runtime ledger | `~/.openclaw/forecast-dashboard/forecast-ledger.sqlite` | Local aggregate historical ledger |
 
 Related reference:
 
@@ -303,6 +349,11 @@ plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-dashboard.pli
 cp ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-dashboard.plist ~/Library/LaunchAgents/
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-dashboard.plist 2>/dev/null || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-dashboard.plist
+
+plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-ledger-capture.plist
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-ledger-capture.plist ~/Library/LaunchAgents/
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-ledger-capture.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-ledger-capture.plist
 ```
 
 Ownership split:
@@ -318,6 +369,8 @@ Ownership split:
 
 ```bash
 ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.forecast-dashboard'
+ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.forecast-ledger-capture'
+ssh dylans-mac-mini 'cat ~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json'
 ssh dylans-mac-mini 'tail -50 ~/.openclaw/logs/forecast-dashboard.log'
 ssh dylans-mac-mini 'tail -50 ~/.openclaw/logs/forecast-dashboard.err.log'
 ```
@@ -330,6 +383,8 @@ curl -I http://dylans-mac-mini:8586/presets
 curl -I http://dylans-mac-mini:8586/balanced
 curl -fsS -o /dev/null -w 'health HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/health
 curl -fsS -o /dev/null -w 'snapshot HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/current-snapshot
+curl -fsS -o /dev/null -w 'ledger summary HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/forecast-ledger/summary
+curl -fsS -o /dev/null -w 'ledger history HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/forecast-ledger/history
 curl -fsS -o /dev/null -w 'task feed HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/monthly-operating-tasks
 curl -fsS -o /dev/null -w 'task status HTTP %{http_code}\n' http://dylans-mac-mini:8586/api/monthly-operating-task-status
 curl -fsS -o /dev/null -w 'forecast baseline HTTP %{http_code}\n' http://dylans-mac-mini:8585/api/forecast-baseline
@@ -345,6 +400,8 @@ curl -fsS -o /dev/null -w 'forecast baseline HTTP %{http_code}\n' http://dylans-
 - Monthly operating checklist renders for the current month
 - Checklist state cycles and persists across refreshes
 - Current-snapshot warnings render without blocking the page
+- Save forecast creates or reuses a saved run and updates the Forecast Ledger card
+- `/forecast-history.html` renders aggregate observations and never displays a daily forecast comparison before an annual checkpoint
 
 ---
 
@@ -392,3 +449,4 @@ The forecast dashboard does not intentionally use `eval` or `new Function` in re
 - The dashboard contains sensitive planning assumptions, household balances, allocation targets, and compensation-related planning inputs
 - Do not expose `source-documents/`, raw research exports, PDFs, or other repo contents through the forecast server
 - Bind-on-all-interfaces is acceptable only because the Mac Mini is not publicly forwarded and this matches the other dashboard services
+- Keep the aggregate ledger and capture-status file local under the mode-restricted forecast runtime directory; the ledger APIs must remain aggregate-only

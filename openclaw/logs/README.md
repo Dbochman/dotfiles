@@ -38,6 +38,7 @@ Each service uses one of two patterns:
 | `financial-dashboard.log` / `.err.log` | `ai.openclaw.financial-dashboard` | Financial dashboard HTTP server |
 | `financial-dashboard-plaid-sync.log` / `.err.log` | `ai.openclaw.financial-dashboard-plaid-sync` | Daily cache-only Plaid sync wrapper; status metadata is also written outside the log directory |
 | `forecast-dashboard.log` / `.err.log` | `ai.openclaw.forecast-dashboard` | Forecast dashboard HTTP server and current-snapshot source integration |
+| `forecast-ledger-capture.log` / `.err.log` | `ai.openclaw.forecast-ledger-capture` | Daily aggregate Forecast observation capture; status metadata is stored beside the local ledger |
 | `dotfiles-pull.log` | `ai.openclaw.dotfiles-pull` | Daily dotfiles sync |
 | `home-state-snapshot.log` | `ai.openclaw.home-state-snapshot` | Daily home state snapshot (cat weights, sleep, doorbell) |
 | `poke-messages.log` | `com.openclaw.poke-messages` | AppleScript Messages.app keepalive |

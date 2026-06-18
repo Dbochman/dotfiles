@@ -12,7 +12,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily Plaid sync at 07:15 + weekly scrapes · API on demand |
-| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · daily crypto holdings cache at 07:25 |
+| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · crypto cache at 07:25 · aggregate ledger capture at 07:35 |
 
 ---
 
@@ -253,6 +253,7 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 - **Asset Location & Concentration** — reconciled tax/access location, institution exposure, and direct-stock review signals; Combined withholds mixed live/static scope data
 - **Rebalance Execution** — material live sleeve drift prioritized against the scenario target; direct-position signals are review items, not automatic orders
 - **Input provenance** — each control distinguishes live data, a manual override, or a planning assumption; cash-flow confidence keeps net Plaid flow separate from payroll-detail assumptions
+- **Forecast history** — aggregate daily observations plus explicit saved browser scenarios; annual checkpoint comparisons avoid invented daily forecast precision
 - **Current snapshot overlay** — compact live cards for household net worth, income, spendable cash, mortgage debt, and crypto; supporting source detail appears on hover or keyboard focus
 - **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
@@ -263,6 +264,8 @@ This service runs only on the Mac Mini as user `dbochman`. It reads current hous
 
 The paired `ai.openclaw.forecast-crypto-sync` LaunchAgent refreshes the non-secret crypto holdings cache daily at 07:25. It writes `~/.openclaw/forecast-dashboard/crypto-holdings.json` from protected local Coinbase and Etherscan credentials, then the forecast service values those quantities with public market prices. The forecast applies the crypto input only when both owners are covered, all tracked positions are priceable, and every synced source is no more than 36 hours old. A dated, reviewed manual statement can explicitly provide temporary owner coverage with `model_coverage: true` while a credential is repaired. Manual `symbol` and `quantity` entries are live-priced, with the statement date retained as the quantity source; static `value_usd` entries remain manual valuations. Otherwise the dashboard retains the fixed model baseline. The scheduled job never calls `op`.
 
+`ai.openclaw.forecast-ledger-capture` runs daily at 07:35 after the Plaid and crypto jobs. It asks `8586` to persist one immutable, aggregate observation in `~/.openclaw/forecast-dashboard/forecast-ledger.sqlite`; it never reads `finance.db`, calls `op`, or writes raw account/transaction data. Browser `Save forecast` actions persist the current annual model output, scenario state, provenance, seed, and model revision against that observation. The History view compares only due annual checkpoints: real-dollar investable value uses the saved inflation assumption, mortgage comparison is direct, and Household net worth remains display-only because manual physical assets are outside the model.
+
 `Household net worth` is a Forecast-owned aggregate, not a replacement for the canonical Plaid `8585 /api/net-worth` contract. It adds eligible live crypto, estimated property equity from local property values and current mortgage balances, and documented manual physical assets from `~/.openclaw/forecast-dashboard/household-manual-assets.json`. Its compact hover ledger shows an exact USD value and source for cash, investments, any financial reconciliation adjustment, crypto, property equity, and Precious metals. Documented gold and silver grams are live-valued from a five-minute USD/troy-ounce quote and intentionally collapse into the Precious metals total. Only present balance-sheet assets appear in the ledger. A pending manual entry or unavailable required metal quote produces a `+` known subtotal rather than silently adding zero. The metal value is spot only and excludes dealer premiums and sale spreads.
 
 Combined uses each household source once. An owner with incomplete or unavailable source coverage retains the existing model supplement rather than being silently zeroed. Account location, institution, concentration, and execution guidance are withheld if that supplement would make the live source total non-reconcilable. The detailed target mix has no static geographic split: it uses the `8585` geography contract when available and suppresses equity Buy/Trim gaps when it is not. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for input, coverage, and override rules.
@@ -272,6 +275,7 @@ ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/health'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/current-snapshot'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/crypto/positions'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/household-net-worth'
+ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/forecast-ledger/summary'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/monthly-operating-tasks'
 ```
 
