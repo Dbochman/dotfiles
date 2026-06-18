@@ -415,6 +415,36 @@ migrate_directory_symlink() {
   return 0
 }
 
+prune_stale_managed_symlinks() {
+  local target_dir="$1"
+  local repo_dir="$2"
+
+  [[ -d "$target_dir" && -d "$repo_dir" ]] || return 0
+
+  local expected_root
+  expected_root=$(resolve_path "$repo_dir")
+  for target_path in "$target_dir"/*; do
+    [[ -L "$target_path" && ! -e "$target_path" ]] || continue
+
+    local link_target resolved_target
+    link_target=$(get_symlink_target "$target_path")
+    # link_file creates absolute source links. Ignore unknown relative links rather
+    # than trying to canonicalize a path whose target was intentionally deleted.
+    [[ "$link_target" = /* ]] || continue
+    resolved_target="${link_target%/}"
+
+    # Only prune links to a deleted item inside this repository's managed directory.
+    if [[ "$resolved_target" = "$expected_root/"* ]]; then
+      if [[ "$DRY_RUN" = true ]]; then
+        log "  [dry-run] Would remove stale managed symlink: $target_path"
+      else
+        rm "$target_path"
+        log "  Removed stale managed symlink: $target_path"
+      fi
+    fi
+  done
+}
+
 # === Main Installation ===
 
 install_dotfiles() {
@@ -465,6 +495,7 @@ install_dotfiles() {
 
   if [[ -d "$skills_repo" ]]; then
     migrate_directory_symlink "$skills_target" "$skills_repo" || true
+    prune_stale_managed_symlinks "$skills_target" "$skills_repo"
 
     for skill_path in "$skills_repo"/*/; do
       [[ -d "$skill_path" ]] || continue

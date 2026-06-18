@@ -831,14 +831,14 @@ validate_skill() {
 
   # Check frontmatter delimiters
   local first_line
-  first_line=$(head -n1 "$skill_md")
+  first_line=$(head -n1 "$skill_md" | tr -d '\r')
   if [[ "$first_line" != "---" ]]; then
     errors+=("Missing opening frontmatter delimiter (---)")
   fi
 
   # Extract frontmatter
   local frontmatter
-  frontmatter=$(sed -n '/^---$/,/^---$/p' "$skill_md" | sed '1d;$d')
+  frontmatter=$(tr -d '\r' < "$skill_md" | sed -n '/^---$/,/^---$/p' | sed '1d;$d')
 
   if [[ -z "$frontmatter" ]]; then
     errors+=("Empty or missing frontmatter")
