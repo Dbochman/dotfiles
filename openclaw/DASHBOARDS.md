@@ -12,7 +12,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily Plaid sync at 07:15 + weekly scrapes · API on demand |
-| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min current snapshot cache · live projection baseline |
+| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · daily crypto holdings cache at 07:25 |
 
 ---
 
@@ -249,19 +249,22 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 
 - **Interactive forecast model** — full reallocation dashboard with presets, controls, and projections
 - **Live projection baseline** — source-backed starting portfolio, allocation, trailing-full-month cash flow, and mortgage balances when coverage is ready
-- **Current snapshot overlay** — reconciled net worth, current-month context, ETH price, and tracked ticker prices where available
+- **Current snapshot overlay** — reconciled net worth, current-month context, market prices, fresh fungible crypto holdings, and clearly labeled manual NFT/art values where available
 - **Monthly operating checklist** — current-month planning tasks with mutable `done` / `skipped` / `snoozed` dashboard state
 - **Stale-data warnings** — source status for current snapshot inputs
 
 ### Runtime Notes
 
-This service runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback. It refreshes its snapshot every five minutes; the underlying Plaid source sync is daily, so the projection is current-day planning data rather than an intraday balance stream.
+This service runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback. It refreshes its snapshot and public market prices every five minutes; the underlying Plaid source sync is daily, so the projection is current-day planning data rather than an intraday balance stream.
+
+The paired `ai.openclaw.forecast-crypto-sync` LaunchAgent refreshes the non-secret crypto holdings cache daily at 07:25. It writes `~/.openclaw/forecast-dashboard/crypto-holdings.json` from protected local Coinbase and Etherscan credentials, then the forecast service values those quantities with public market prices. The forecast applies the crypto input only when both owners are present, all tracked positions are priceable, and every source is no more than 36 hours old. Otherwise it retains the fixed model baseline. NFT/art remains a separately dated manual value, not a live quote. The scheduled job never calls `op`.
 
 Combined uses each household source once. An owner with incomplete or unavailable source coverage retains the existing model supplement rather than being silently zeroed. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for input, coverage, and override rules.
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/health'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/current-snapshot'
+ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/crypto/positions'
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/monthly-operating-tasks'
 ```
 
