@@ -1,8 +1,24 @@
 # Financial Dashboard — Scheduled Scraping Plan
 
-## Status: PLANNED (not yet implemented)
+> ## SUPERSEDED (2026-06-18)
+>
+> This is the original implementation plan, retained only for design history.
+> It does not describe the deployed scraper architecture.
+>
+> Current operational sources:
+> - Operator runbook: `~/dotfiles/openclaw/FINANCIAL-DASHBOARD.md`
+> - Developer behavior: `~/repos/financial-dashboard/CLAUDE.md`
+> - Weekly execution: cron job `financial-scrape-0001`
+>
+> BoA now uses a direct `requests` cookie-replay fast path, followed by a
+> raw-CDP attach to the existing Pinchtab Chrome tab when replay is rejected.
+> The active durability soak uses a 5-minute API keep-alive and a 1-minute
+> no-API browser heartbeat that dismisses the inactivity warning. It does not
+> use Playwright `connect_over_cdp` or unattended BoA credential login.
 
-## Overview
+## Status (historical): planned before implementation
+
+## Overview (historical)
 
 Set up automated scraping to keep Julia's financial dashboard data fresh. Currently all data imports are manual.
 

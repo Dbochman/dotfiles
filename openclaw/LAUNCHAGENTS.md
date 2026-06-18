@@ -34,7 +34,7 @@ Expected target context is the Mac Mini user `dbochman` with `HOME=/Users/dbochm
 /Users/dbochman/repos/financial-dashboard/venv/bin/python3
 ```
 
-The venv should be built from Homebrew Python, not the Command Line Tools Python shim. The expected baseline as of 2026-06-17 is Python 3.14.x with OpenSSL 3.x and the dependencies from `~/repos/financial-dashboard/requirements.txt` installed. Verify it on the Mini with:
+The venv should be built from Homebrew Python, not the Command Line Tools Python shim. The current Mini baseline as of 2026-06-18 is Python 3.13.12 with OpenSSL 3.x and the dependencies from `~/repos/financial-dashboard/requirements.txt` installed. Verify it on the Mini with:
 
 ```bash
 ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 -c "import sys, ssl, yaml, requests; print(sys.version.split()[0]); print(ssl.OPENSSL_VERSION); print(yaml.__version__); print(requests.__version__)"'
@@ -68,6 +68,40 @@ Known-empty financial dashboard APIs (`/api/paystubs`, `/api/income`, `/api/spen
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 | `ai.openclaw.boa-keepalive` | 5min | `scrape_mortgage.py --lender boa --keep-alive` | Temporary BoA browser-session durability experiment; verifies the live tab and atomically captures rotated cookies |
 | `ai.openclaw.boa-browser-heartbeat` | 1min | `scrape_mortgage.py --lender boa --browser-heartbeat` | Temporary BoA UI heartbeat; sends no API traffic and dynamically accepts the two-minute session warning when present |
+
+### BoA Session Durability Agents
+
+These agents are a paired 24-48 hour experiment, not a credential-login system. They require an already-authenticated BoA tab in Pinchtab Chrome. The normal weekly scrape uses the cookie-replay fast path and only attaches to Chrome if those cookies are rejected.
+
+- `ai.openclaw.boa-keepalive` runs every 5 minutes. It verifies the tab before and after a same-origin BoA API request, sends a trusted no-click mouse move, and atomically persists the current cookie jar at `~/.openclaw/.boa_cookies.json`; its logs contain metadata only.
+- `ai.openclaw.boa-browser-heartbeat` runs every minute. It does not call a BoA account API. It sends browser-level activity and uses the accessibility tree to accept the two-minute inactivity-warning dialog's `OK` button when it appears.
+- Neither agent logs cookie values, credentials, or account response bodies. A real browser-auth check is required because a successful API response alone is insufficient.
+
+Source plists are:
+
+```text
+openclaw/launchagents/ai.openclaw.boa-keepalive.plist
+openclaw/launchagents/ai.openclaw.boa-browser-heartbeat.plist
+```
+
+Check the installed jobs and force one run without changing their schedule:
+
+```bash
+ssh dylans-mac-mini 'launchctl print "gui/$(id -u)/ai.openclaw.boa-keepalive"'
+ssh dylans-mac-mini 'launchctl print "gui/$(id -u)/ai.openclaw.boa-browser-heartbeat"'
+ssh dylans-mac-mini 'launchctl kickstart -p "gui/$(id -u)/ai.openclaw.boa-keepalive"'
+ssh dylans-mac-mini 'launchctl kickstart -p "gui/$(id -u)/ai.openclaw.boa-browser-heartbeat"'
+```
+
+Healthy status is `ok` for the keep-alive and `ok` or `warning_dismissed` for the heartbeat. Treat `cdp_unavailable`, `not_authenticated`, `api_rejected`, `tab_lost_auth`, `warning_unhandled`, or any other status as a failure to investigate. Preserve the existing cookie file and inspect the logs first:
+
+```bash
+ssh dylans-mac-mini 'tail -n 40 ~/Library/Logs/boa-keepalive.log'
+ssh dylans-mac-mini 'tail -n 40 ~/Library/Logs/boa-browser-heartbeat.log'
+ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 scrape_mortgage.py --lender boa --verify-auth'
+```
+
+Do not add quiet hours or jitter the cadence while the initial soak is being measured. Do not run `--re-auth` for BoA from a LaunchAgent or the weekly cron. If the live tab and cookie replay both expire, recover with one interactive login in the Pinchtab Chrome window, then run the normal BoA scrape to recapture cookies.
 
 ## Mac Mini — Calendar-Based (StartCalendarInterval)
 
