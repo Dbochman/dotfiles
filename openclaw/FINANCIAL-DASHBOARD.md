@@ -77,7 +77,7 @@ candidate needs review:
 PLAID_ENV=production ./venv/bin/python update_data.py income-review-status
 PLAID_ENV=production ./venv/bin/python update_data.py income-review-confirm TRANSACTION_ID "recurring payroll"
 PLAID_ENV=production ./venv/bin/python update_data.py income-review-exclude TRANSACTION_ID "non-recurring transfer or payment"
-PLAID_ENV=production ./venv/bin/python update_data.py income-review-reset SOURCE_KEY
+PLAID_ENV=production ./venv/bin/python update_data.py income-review-reset "SOURCE_KEY"
 ```
 
 Each decision creates a local source rule in `finance.db`; matching future
