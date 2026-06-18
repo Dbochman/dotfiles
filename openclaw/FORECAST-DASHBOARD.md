@@ -78,7 +78,7 @@ The service is intentionally repo-owned and small. It serves only the forecast d
 | `/reallocation-dashboard.js` | Forecast model and checklist UI logic |
 | `/reallocation-dashboard.css` | Dashboard styles |
 | `/api/current-snapshot` | Current household facts derived from local finance APIs |
-| `/api/prices` | ETH and configured ticker prices |
+| `/api/prices` | Supported crypto prices, gold/silver spot quotes, and configured ticker prices |
 | `/api/monthly-operating-tasks` | Read-only planning feed enriched with local mutable UI state |
 | `/api/monthly-operating-task-status` | Mutable local status overlay write/read endpoint |
 | `/api/health` | Service health, source warnings, task-feed availability |
@@ -103,7 +103,7 @@ The preset index and redirect routes currently expose:
 | Source | Frequency | Data |
 |--------|-----------|------|
 | Financial dashboard API (`8585`) | Daily source sync + 5 min forecast cache | Mortgage, payroll detail when available, recognized income, spending, net worth, savings rate, and `/api/forecast-baseline`; live projection inputs require reconciliation, income-review, ownership, and coverage readiness |
-| Public price APIs | 5 min cache | ETH and tracked tickers such as `NVDA` |
+| Public price APIs | 5 min cache | Supported crypto, USD/troy-ounce gold and silver spot quotes, and tracked tickers such as `NVDA` |
 | Financial Advisor repo | Static / git pull | Forecast assumptions, preset logic, dashboard UI, monthly task feed |
 | Local runtime overlay | On write | Mutable checklist status state outside source control |
 
@@ -112,6 +112,27 @@ The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-m
 ### Crypto Coverage Fallback
 
 Crypto owner coverage normally requires a fresh synced exchange or wallet source. If a known credential is mismatched or temporarily unavailable, add reviewed, dated `symbol` and `quantity` entries to `~/.openclaw/forecast-dashboard/crypto-manual-values.json` with `model_coverage: true`. Their quantities are live-priced while the dashboard preserves the statement as-of date; static `value_usd` entries remain manual valuations for assets without a live price. Set `coinbase_enabled: false` in the local `crypto-sync-config.json` during the repair so the mismatched account is not counted or allowed to overwrite the statement fallback.
+
+---
+
+### Physical Precious Metals
+
+`~/.openclaw/forecast-dashboard/household-manual-assets.json` remains local and mode `0600`. A physical-metal asset uses documented weights rather than a stale manual dollar value:
+
+```json
+{
+  "kind": "physical",
+  "label": "Physical precious metals",
+  "metal_holdings": [
+    { "metal": "gold", "grams": 123.45 },
+    { "metal": "silver", "grams": 678.9 }
+  ],
+  "as_of": "YYYY-MM-DD",
+  "status": "documented"
+}
+```
+
+The server converts grams with `31.1034768` grams per troy ounce and uses its five-minute public XAU/XAG USD quote. It never calls `op` and needs no LaunchAgent secret. If a configured quote is unavailable, Household net worth stays partial instead of using zero or a stale price. This is a spot-value estimate: dealer premiums, bid/ask spreads, storage, tax, and liquidation constraints are excluded.
 
 ---
 
@@ -124,6 +145,7 @@ Crypto owner coverage normally requires a fresh synced exchange or wallet source
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
 - A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, trailing-full-month recognized cash flow, and source-review blockers
 - ETH price from CoinGecko
+- Gold and silver spot prices from GoldPrice.org, returned as USD per troy ounce
 - Tracked public tickers from Nasdaq where available
 - Source warnings when upstream financial APIs are empty or degraded
 
