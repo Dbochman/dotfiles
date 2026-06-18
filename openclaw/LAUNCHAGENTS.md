@@ -66,6 +66,7 @@ Known-empty financial dashboard APIs (`/api/paystubs`, `/api/income`, `/api/spen
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
+| `ai.openclaw.boa-keepalive` | 5min | `scrape_mortgage.py --lender boa --keep-alive` | Temporary BoA browser-session durability experiment; verifies the live tab and atomically captures rotated cookies |
 
 ## Mac Mini — Calendar-Based (StartCalendarInterval)
 
