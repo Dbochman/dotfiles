@@ -99,12 +99,42 @@ BoA from cron or a LaunchAgent. After the login reaches the account overview,
 run the normal BoA scrape once to capture a fresh cookie jar, then let the two
 interval agents resume.
 
+## Observed Outcome: 2026-06-18
+
+The initial soak did not reach 24 hours.
+
+| Time (EDT) | Observation |
+|---|---|
+| 10:18:28 | First known healthy keep-alive after the fresh login. |
+| 20:26:37 | Last healthy keep-alive; this was also the last cookie-store update. |
+| 20:31:10 | Heartbeat successfully dismissed the browser inactivity warning. |
+| 20:31:38 | Keep-alive received `api_rejected http_status=403`. |
+| 20:33:12 | Heartbeat first reported `not_authenticated`. |
+| 23:36:26 | Independent `--verify-auth` reported `not_authenticated`. |
+
+The agents ran continuously at their expected one- and five-minute cadences,
+and CDP remained available. The warning dialog was dismissed repeatedly,
+including just before the HTTP 403. The evidence therefore rules out a
+browser-inactivity failure and is consistent with a BoA server-side absolute
+or risk timeout after at least 10 hours and 13 minutes of authenticated use.
+
+The cookie file remains mode `0600` and was preserved. Its expiry metadata
+was later than the failure, so cookie expiry metadata is not a reliable proxy
+for server-side session validity.
+
+Leave the two agents loaded unless log noise becomes a problem. They make no
+browser activity change while the tab is unauthenticated and will resume on
+their next interval after a later interactive login. Do not use this result as
+evidence that the current design can run BoA autonomously.
+
 ## Decision After the Soak
 
-If the session remains healthy for 48 hours, retain the current cadence for a
-longer observation window before testing lower frequency or jitter. If it
-fails, classify the failure before changing the design. PDF statement parsing
-remains the non-browser backstop.
+Do not test lower frequency or jitter as a remedy for this failure. The
+current heartbeat handles the UI's inactivity prompt, but it does not prevent
+the server-side timeout. Any future design must plan for an interactive
+recovery at least this often or use the PDF statement parser as the reliable
+backstop. A second soak may characterize the timeout more precisely after the
+next manual login, but it should not be treated as an autonomous solution.
 
 ## Worktree Safety
 
