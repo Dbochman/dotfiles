@@ -58,7 +58,7 @@ daily post-sync aggregate capture -> 8586 forecast ledger -> annual forecast/act
 ```
 
 `8586` never reads `finance.db`, Plaid tokens, or the OpenClaw secrets cache directly. It promotes only the reconciled, owner-aware aggregate contract returned by `8585`.
-Version 6 of that contract adds `equity_geography_by_location`; Forecast uses only the deployable depository and taxable-brokerage rows for country-level implementation and withholds those instructions when reconciliation or direct-position treatment is incomplete.
+Version 7 adds `implementation_holdings`: a safe, account-free instrument aggregate that exactly reconciles to the deployable depository and taxable-brokerage allocation and geography rows. Forecast can show it above implementation candidates only when it is `ok`; country-level instructions still use `equity_geography_by_location` and remain withheld when reconciliation or direct-position treatment is incomplete.
 
 That contract includes the broad portfolio allocation and a separately gated
 U.S./international equity-geography map. If geography is incomplete, Forecast

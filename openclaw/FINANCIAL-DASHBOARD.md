@@ -27,7 +27,7 @@ The Forecast Dashboard composes these source scopes with any still-unlinked owne
 
 ## Portfolio Allocation, Location, And Geography
 
-`/api/forecast-baseline` version `6` reports both the broad live allocation
+`/api/forecast-baseline` version `7` reports both the broad live allocation
 (`equity`, `bond`, `cash`) and an `equity_geography` allocation for each owner
 scope (`us_equity`, `international_equity`, `unclassified_equity`). It is the
 sole source of current allocation inputs for Forecast; the forecast service
@@ -51,6 +51,12 @@ does not query `finance.db` directly.
   depository and taxable-brokerage geography rows for country-level
   implementation; a partial, review, unavailable, or invalid map retains a
   broad equity sleeve and withholds country trade guidance.
+- `implementation_holdings` is a deployable-only, cross-account aggregate of
+  ticker/name, broad bucket, optional equity geography, value, and
+  direct-position flag. It contains no account, institution, or raw holding
+  identifiers. The positions must recompose the depository and taxable
+  brokerage allocation and geography rows; Forecast withholds the
+  instrument-level current mix unless its status is `ok`.
 - `concentration` reports up to ten direct equity/stock positions and a 5%
   review threshold with location and institution context. `tracked_positions`
   preserves configured direct risk positions such as NVDA even outside the

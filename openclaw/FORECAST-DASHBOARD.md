@@ -163,7 +163,7 @@ The server converts grams with `31.1034768` grams per troy ounce and uses its fi
 - Mortgage balances and payment data from `/api/mortgage/summary`
 - Latest reconciled net worth from `/api/net-worth`
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
-- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, reconciled asset-class and equity-geography-by-location matrices separating deployable depository/taxable assets from retirement/restricted assets, institution and direct-position concentration, trailing-full-month recognized cash-flow calibration context, and source-review blockers
+- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, reconciled asset-class and equity-geography-by-location matrices separating deployable depository/taxable assets from retirement/restricted assets, a safe deployable-only instrument aggregate for the implementation map, institution and direct-position concentration, trailing-full-month recognized cash-flow calibration context, and source-review blockers
 - ETH price from CoinGecko
 - Gold and silver spot prices from GoldPrice.org, returned as USD per troy ounce
 - Tracked public tickers from Nasdaq where available
