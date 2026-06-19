@@ -1,14 +1,8 @@
 ---
 name: bluebubbles-attachment-send
-description: |
-  Send file attachments (audio, images, documents) via BlueBubbles iMessage API. Use when:
-  (1) Need to send an MP3, image, or file via iMessage through BlueBubbles,
-  (2) "Chat does not exist!" error when sending attachments via curl -F (semicolons in
-  chatGuid get mangled by curl multipart form parsing),
-  (3) /api/v1/message/text endpoint ignores the attachment field in multipart mode,
-  (4) Building TTS audio briefings or voice messages for iMessage delivery,
-  (5) Need to know the correct BB API endpoint for attachments (/api/v1/message/attachment).
-  Covers the correct endpoint, required fields, and the curl semicolon bug workaround.
+description: >-
+  Send BlueBubbles iMessage file attachments and fix multipart "Chat does not exist" failures caused
+  by semicolons in chat GUIDs.
 author: Claude Code
 version: 1.0.0
 date: 2026-03-22

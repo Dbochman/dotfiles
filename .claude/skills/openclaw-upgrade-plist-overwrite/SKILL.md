@@ -1,12 +1,7 @@
 ---
 name: openclaw-upgrade-plist-overwrite
-description: |
+description: >-
   Fix OpenClaw gateway crash-looping after npm upgrade overwrites LaunchAgent plist.
-  Use when: (1) Gateway exits with code 1 after `npm install -g openclaw`,
-  (2) gateway.err.log shows MissingEnvVarError for BLUEBUBBLES_PASSWORD or other
-  secrets, (3) LaunchAgent plist ProgramArguments changed from wrapper script to
-  direct node execution, (4) `openclaw install --service` ran as post-install hook
-  and replaced the plist. Covers diagnosis, fix, and safeguard for future upgrades.
 author: Claude Code
 version: 1.0.0
 date: 2026-03-06

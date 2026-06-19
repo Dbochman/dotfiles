@@ -1,6 +1,8 @@
 ---
 name: managing-navigator-customers
-description: Manage customers, initiatives, and capacity allocations in Navigator. Lists customers, service providers, initiatives, node allocations, contracts, and block deliverables. Use when checking who has capacity, viewing customer allocations, tracking initiatives, or managing supply contracts.
+description: >-
+  Manage customers, initiatives, and capacity allocations in Navigator. Lists customers, service
+  providers, initiatives, node allocations, contracts, and block deliverables.
 ---
 <!--
 Progressive Disclosure:

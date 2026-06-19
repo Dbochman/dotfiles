@@ -1,21 +1,8 @@
 ---
 name: playwright-post-login-interstitial
-description: |
-  Diagnose Playwright re-auth / scraper login flows that appear to fail at the
-  auth-check step even though credentials are correct and the form was submitted.
-  Use when: (1) a Playwright login fills username + password, clicks submit (or
-  presses Enter), and the form clearly submitted (network request fired, cookies
-  changed) yet `page.url` stays on the login URL and `page.title()` stays on the
-  login title, (2) `is_authenticated(page)` returns False indefinitely but
-  `page.content()` / a screenshot of the page shows the post-login site
-  navigation alongside a modal/dialog/interstitial like "Would you like to turn
-  on two-step verification?", "Accept updated Terms of Service", "Verify your
-  email address", "Welcome — take a tour", or "Your password expires in N days
-  — update now?", (3) auth state cookies ARE present in the browser but the
-  scraper still fails on the next request because the SPA is gated on
-  dismissing the interstitial. Solves the "login worked but post-login nag
-  screen blocks the scraper" problem common to utility-bill, banking, and SaaS
-  portals (Eversource, ConEd, many bank portals, Workday-style HR portals).
+description: >-
+  Diagnose Playwright re-auth / scraper login flows that appear to fail at the auth-check step even
+  though credentials are correct and the form was submitted.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-24

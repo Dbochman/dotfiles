@@ -1,15 +1,8 @@
 ---
 name: macos-tahoe-fda-headless-binary
-description: |
-  Grant Full Disk Access (FDA) to headless CLI binaries on macOS Tahoe (26.x) when they
-  need to access TCC-protected paths like ~/Library/Messages/chat.db. Use when:
-  (1) A Mach-O binary hangs or returns "authorization denied (code: 23)" accessing
-  ~/Library/Messages, ~/Library/Mail, or similar TCC-protected directories,
-  (2) `tccutil reset SystemPolicyAllFiles` was run and now nothing can access protected
-  paths, (3) The System Settings FDA picker won't show a bare CLI binary after clicking "+",
-  (4) A LaunchAgent-spawned process that previously had FDA stops working after a service
-  restart or npm/brew upgrade, (5) `ls ~/Library/Messages/` returns "Interrupted system call"
-  over SSH. Covers the .app wrapper trick to make bare binaries visible in the FDA picker.
+description: >-
+  Grant Full Disk Access (FDA) to headless CLI binaries on macOS Tahoe (26.x) when they need to access
+  TCC-protected paths like ~/Library/Messages/chat.db.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-22

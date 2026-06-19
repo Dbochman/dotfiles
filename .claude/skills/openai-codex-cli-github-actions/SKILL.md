@@ -1,11 +1,7 @@
 ---
 name: openai-codex-cli-github-actions
-description: |
+description: >-
   Configure OpenAI Codex CLI (@openai/codex) for automated PR reviews in GitHub Actions.
-  Use when: (1) Getting "401 Missing bearer or basic authentication" errors, (2) Error
-  "the argument '--base <BRANCH>' cannot be used with '[PROMPT]'", (3) Error "--commit
-  cannot be used with --base", (4) Codex review not authenticating despite OPENAI_API_KEY
-  secret being set. Covers the required login step and correct argument combinations.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-20

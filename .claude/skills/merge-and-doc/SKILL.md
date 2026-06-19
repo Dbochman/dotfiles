@@ -1,10 +1,8 @@
 ---
 name: merge-and-doc
-description: |
-  Merge a PR and update documentation in one workflow. Use when: (1) Ready to merge
-  a PR and want to update roadmap/changelog, (2) Need to verify merge success before
-  documenting, (3) Want atomic merge + doc commits. Handles gh pr merge, verification,
-  kanban updates, and session notes in sequence.
+description: >-
+  Merge a PR, verify the merge, and update roadmap, changelog, or session documentation in one
+  workflow.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-04

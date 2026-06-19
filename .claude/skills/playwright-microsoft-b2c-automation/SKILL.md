@@ -1,20 +1,8 @@
 ---
 name: playwright-microsoft-b2c-automation
-description: |
-  Automate Playwright login against Microsoft B2C / Azure AD B2C / Azure AD External
-  Identities tenants (any ASP.NET Core + OIDC `response_mode=form_post` stack — e.g.
-  customerportal.bwsc.org, government portals, many utility/banking portals). Use when:
-  (1) a Playwright login flow against b2clogin.com fills the form but the page never
-  navigates after `.click("#next")`, (2) a re-auth flow visibly succeeds (screenshot
-  shows the authenticated portal) but a subsequent Playwright run from the same
-  persistent context says "session expired" / not authenticated, (3) `page.url` stays
-  stuck at the initial `b2clogin.com/.../authorize` URL for tens of seconds (or
-  indefinitely) after a successful login, even though `page.title()` and
-  `page.content()` clearly show the authenticated portal, (4) auth cookies appear set
-  in DevTools during the run but vanish on `context.close()`, leaving only
-  `.AspNetCore.Correlation.*` / `.AspNetCore.OpenIdConnect.Nonce.*` pre-auth cookies
-  in the persistent user-data-dir's Cookies SQLite. Solves all three gotchas needed
-  together to make a B2C-protected scraper self-heal end-to-end with Playwright.
+description: >-
+  Automate Microsoft or Azure AD B2C OIDC form_post logins with Playwright, including Enter-vs-click
+  and persistent-session gotchas.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-24

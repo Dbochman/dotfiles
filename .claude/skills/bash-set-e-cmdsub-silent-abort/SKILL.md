@@ -1,21 +1,8 @@
 ---
 name: bash-set-e-cmdsub-silent-abort
-description: |
-  Diagnose bash scripts using `set -euo pipefail` that silently abort
-  mid-execution when a function called inside command substitution
-  returns a non-zero exit. Use when: (1) a `set -euo pipefail` script
-  logs the first half of its work but never reaches the second half,
-  with no error and no log line indicating why, (2) a "guard function"
-  pattern like `RUNNING_JOBS=$(cron_job_running); if [[ $? -eq 0 ]];
-  then ...` never enters either branch, (3) a watchdog/cron script
-  consistently logs "detected condition X" but never logs "took action
-  Y" despite no visible error, (4) you're debugging why a `case` arm
-  with multiple commands silently exits after the first command that
-  calls a function via `$(fn)` whose normal return convention includes
-  exit 1 for the "no" answer (e.g., "no jobs running", "no files
-  found", "no match"). The fix is `RUNNING_JOBS=$(fn || true)` plus
-  switching the branch check from `$?` to non-empty output, since the
-  function's stdout is what you actually want anyway.
+description: >-
+  Diagnose bash scripts using `set -euo pipefail` that silently abort mid-execution when a function
+  called inside command substitution returns a non-zero exit.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-11

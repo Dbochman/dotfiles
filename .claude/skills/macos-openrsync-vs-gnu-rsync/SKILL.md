@@ -1,19 +1,8 @@
 ---
 name: macos-openrsync-vs-gnu-rsync
-description: |
-  Fix "rsync: unrecognized option" errors when running rsync scripts on stock
-  macOS — particularly under launchd / cron / SSH-from-elsewhere — where
-  /usr/bin/rsync is Apple's openrsync (2.6.9 compat), NOT GNU rsync 3.x. Use
-  when: (1) `rsync: unrecognized option '--info=stats2'` (or any
-  `--info=...`, `--mkpath`, `--debug=...`, `--out-format`, `--outbuf`) on a
-  macOS host, (2) a backup/sync script that works fine in your interactive
-  shell silently fails under a LaunchAgent or cron, (3) a script ported from
-  Linux or a dev-box-with-Homebrew-rsync fails on a stock macOS LaunchAgent,
-  (4) `set -euo pipefail` wrapper aborts on rsync with no other diagnostic
-  in the log. Covers Apple's openrsync vs GNU rsync compatibility surface,
-  the launchd PATH gotcha that picks /usr/bin/rsync over /opt/homebrew/bin/
-  rsync, and the openrsync-compatible flag subset that's safe to assume on
-  any modern macOS.
+description: >-
+  Fix rsync option failures under macOS launchd, cron, or SSH when /usr/bin/rsync is openrsync rather
+  than GNU rsync.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-24

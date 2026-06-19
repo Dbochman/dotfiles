@@ -1,16 +1,8 @@
 ---
 name: 1password-cli-launchd-hang
-description: |
-  Fix 1Password CLI (op read) hanging indefinitely in macOS launchd/headless contexts,
-  and fix incessant TCC "op would like to access data" popups on macOS Tahoe.
-  Use when: (1) A LaunchAgent wrapper script calls `op read` and the service never starts,
-  (2) `op read` works over SSH but hangs when run by launchd, (3) Setting
-  OP_BIOMETRIC_UNLOCK_ENABLED=true or OP_SERVICE_ACCOUNT_TOKEN doesn't help under launchd,
-  (4) Wrapper script appears to "exit silently" because op read blocks forever,
-  (5) Repeated "op would like to access data from other apps" TCC popups on macOS Tahoe
-  that don't persist after clicking Allow.
-  Covers the cache-only pattern (recommended) and probe-timeout-cache pattern for
-  reliable secret loading in headless services.
+description: >-
+  Fix 1Password CLI (op read) hanging indefinitely in macOS launchd/headless contexts, and fix
+  incessant TCC "op would like to access data" popups on macOS Tahoe.
 author: Claude Code
 version: 1.1.0
 date: 2026-02-15

@@ -1,12 +1,7 @@
 ---
 name: pinchtab-react-click-fix
-description: |
+description: >-
   Fix Pinchtab/headless browser JavaScript .click() not triggering React event handlers.
-  Use when: (1) pinchtab eval element.click() runs but React app doesn't respond,
-  (2) clicking links/buttons on React SPAs via headless browser automation has no effect,
-  (3) OpenTable or other React sites ignore programmatic clicks but work with real user clicks.
-  Solution: use dispatchEvent with full MouseEvent sequence (mousedown/mouseup/click) with
-  real coordinates from getBoundingClientRect().
 author: Claude Code
 version: 1.0.0
 date: 2026-03-01

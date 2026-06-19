@@ -1,6 +1,8 @@
 ---
 name: managing-calendar
-description: Manage Microsoft Outlook calendar via CLI. View schedule, create events, open events, respond to invites, update meetings. Use when working with calendar, scheduling meetings, checking availability, or managing events.
+description: >-
+  Manage Microsoft Outlook calendar via CLI. View schedule, create events, open events, respond to
+  invites, update meetings.
 ---
 <!--
 Progressive Disclosure:

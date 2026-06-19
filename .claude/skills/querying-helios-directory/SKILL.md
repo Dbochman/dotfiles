@@ -1,6 +1,8 @@
 ---
 name: querying-helios-directory
-description: Query NVIDIA employee directory via Helios LDAP API. Retrieves user profiles, org charts, manager chains, group memberships, and team structures. Use when looking up employees, finding reporting relationships, checking group membership, or analyzing org structure at NVIDIA.
+description: >-
+  Query NVIDIA employee directory via Helios LDAP API. Retrieves user profiles, org charts, manager
+  chains, group memberships, and team structures.
 ---
 <!--
 Progressive Disclosure:

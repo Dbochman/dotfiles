@@ -1,24 +1,8 @@
 ---
 name: web-auth-check-by-title-not-url
-description: |
-  Detect whether a browser automation page (Playwright, Puppeteer, Selenium) is
-  on an authenticated view vs a login form when the portal uses "smart" URLs
-  that serve different content based on session state. Use when: (1) building
-  or debugging an is_authenticated() function for a scraper / self-heal flow,
-  (2) is_authenticated returns False despite the page clearly showing the
-  authenticated dashboard (account name, balance, etc.), (3) the URL contains
-  a substring like "signin" / "login" / "auth" but the rendered page is post-
-  authentication, (4) credential entry + MFA submission succeeds visibly but
-  the scraper reports "kicked back to sign-in" and falls into a retry loop
-  that burns MFA emails or causes account lockouts, (5) you're writing a check
-  that combines positive URL paths AND a negative "not 'login' in url" guard
-  and noticing it sometimes misfires. Covers the "smart landing URL" pattern
-  used by Bank of America (/myaccounts/signin/signIn.go serves dashboard when
-  authenticated, login form when not), and similar patterns at many consumer
-  banking, brokerage, insurance, and government portals. Solves the
-  "is_authenticated says False, retry loop runs, account gets fraud-flagged"
-  failure mode that's invisible in screenshots (looks like a failed login)
-  but is actually a misclassification of a SUCCESSFUL login.
+description: >-
+  Detect login versus authenticated views in browser automation when both states share a URL; check
+  page title or content instead.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-24

@@ -1,12 +1,8 @@
 ---
 name: openclaw-ssrf-localhost-plugins
-description: |
-  Fix OpenClaw SSRF guard blocking channel plugins (BlueBubbles, etc.) from reaching
-  localhost or private/LAN IP servers. Use when: (1) gateway.err.log shows "blocked URL
-  fetch (bluebubbles-api) reason=Blocked hostname or private/internal/special-use IP
-  address", (2) `openclaw health` reports BlueBubbles as "failed (unknown)", (3) after
-  upgrading OpenClaw to 2026.3.28+ or 2026.4.x. The SSRF guard doesn't distinguish
-  between agent-initiated web_fetch and plugin internal HTTP calls.
+description: >-
+  Fix OpenClaw SSRF guard blocking channel plugins (BlueBubbles, etc.) from reaching localhost or
+  private/LAN IP servers.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-05

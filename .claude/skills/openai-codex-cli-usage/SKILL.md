@@ -1,11 +1,8 @@
 ---
 name: openai-codex-cli-usage
-description: |
-  Correct usage patterns for OpenAI Codex CLI (@openai/codex). Use when: (1) Need to run
-  Codex for plan/doc review (use exec not review), (2) Getting "config profile not found"
-  errors from -p flag, (3) Want non-interactive Codex execution, (4) Need to understand
-  the difference between codex review and codex exec commands, (5) Need structured JSON
-  output from Codex, (6) Want web search in exec mode.
+description: >-
+  Use Codex CLI correctly for non-interactive exec, reviews, profiles, structured JSON, and web
+  search.
 author: Claude Code
 version: 2.0.0
 date: 2026-03-14

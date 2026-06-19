@@ -1,24 +1,8 @@
 ---
 name: playwright-email-mfa-flow
-description: |
-  Complete email-OTP / email-MFA self-heal flow for Playwright scrapers against
-  banking, mortgage, insurance, utility, and SaaS portals that email a one-time
-  code on every login. Use when: (1) building or fixing automated re-auth for a
-  portal that sends a numeric/alphanumeric code via email (e.g. PennyMac,
-  Wells Fargo, Chase, Fidelity, insurance carriers, Workday HR portals),
-  (2) Playwright `fill()` on the OTP field appears to work but the verify
-  button stays disabled and the form shows "This field is required" or
-  similar, (3) the OTP submit button is `type="button"` (not "submit") with a
-  JS onclick handler and pressing Enter on the OTP input does nothing,
-  (4) `.click()` on the verify button times out even though the button is
-  visibly enabled, (5) you're checking `page.url` for the post-MFA dashboard
-  URL and it stays stuck on `/users/mfa` or `/2fa` for 30+ seconds while
-  page.title() and page.content() clearly show the authenticated dashboard.
-  Covers the full pattern: timestamp-anchored Gmail polling via gws CLI,
-  Knockout-friendly keystroke typing, JS-click fallback for the verify button,
-  title-based auth detection for OIDC URL lag, and the digit-prefix gotcha
-  where portals show static prefixes (e.g. "PM-") as labels next to the
-  input rather than as part of the expected value.
+description: >-
+  Complete email-OTP / email-MFA self-heal flow for Playwright scrapers against banking, mortgage,
+  insurance, utility, and SaaS portals that email a one-time code on every login.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-24

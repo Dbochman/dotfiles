@@ -1,12 +1,7 @@
 ---
 name: gray-matter-date-gotchas
-description: |
-  Handle gray-matter's automatic Date parsing in YAML frontmatter. Use when:
-  (1) Zod validation fails with "expected string, received Date" on date fields,
-  (2) Building content collection systems with markdown frontmatter,
-  (3) Dates in frontmatter become Date objects instead of strings,
-  (4) Migration/precompile scripts process YAML with date fields.
-  Covers z.preprocess coercion and ensuring dates are written as strings.
+description: >-
+  Handle gray-matter's automatic Date parsing in YAML frontmatter.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-23

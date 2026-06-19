@@ -1,10 +1,8 @@
 ---
 name: coinbase-cdp-ed25519-auth
-description: |
-  Diagnose and implement Coinbase CDP JWT authentication for downloaded API key JSON files.
-  Use when a key has `id` plus a base64 `privateKey` instead of `name` plus a PEM key,
-  an existing ES256 signer raises `KeyError: name` or cannot deserialize the key, or direct
-  Coinbase App requests need Ed25519/EdDSA support without breaking legacy ECDSA keys.
+description: >-
+  Authenticate Coinbase CDP JSON keys using legacy name/PEM ES256 or id/base64 Ed25519; fix KeyError
+  name and direct REST JWT failures.
 ---
 
 # Coinbase CDP Ed25519 Authentication

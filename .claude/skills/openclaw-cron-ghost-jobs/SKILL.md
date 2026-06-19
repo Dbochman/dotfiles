@@ -1,12 +1,7 @@
 ---
 name: openclaw-cron-ghost-jobs
-description: |
-  Fix OpenClaw cron jobs running after being removed from jobs.json. Use when:
-  (1) A cron job keeps executing even though it was deleted from jobs.json,
-  (2) Duplicate deliveries (e.g., Julia gets morning briefing twice),
-  (3) Old/legacy jobs firing alongside their replacements after a migration.
-  Root cause is orphan run state files in ~/.openclaw/cron/runs/ that persist
-  nextRunAtMs independently of the job definition.
+description: >-
+  Fix OpenClaw cron jobs running after being removed from jobs.json.
 author: Claude Code
 version: 1.0.0
 date: 2026-03-06

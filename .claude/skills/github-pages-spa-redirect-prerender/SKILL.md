@@ -1,12 +1,7 @@
 ---
 name: github-pages-spa-redirect-prerender
-description: |
-  Fix broken redirects on GitHub Pages SPAs when renaming routes. Use when:
-  (1) Old URLs return 404 instead of redirecting after a route rename/rebrand,
-  (2) React Router <Navigate> redirects only work after clicking a link but not
-  on direct URL access, (3) GitHub Pages serves raw 404 for old routes because
-  no prerendered HTML exists. Covers prerendering redirect routes and handling
-  trailing-slash variants.
+description: >-
+  Fix broken redirects on GitHub Pages SPAs when renaming routes.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-11

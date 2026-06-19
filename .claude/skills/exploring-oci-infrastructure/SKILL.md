@@ -1,6 +1,8 @@
 ---
 name: exploring-oci-infrastructure
-description: Explore Oracle Cloud Infrastructure resources in Navigator. Lists HPC islands, regions, availability domains, compartments, shapes, and tenants. Use when investigating OCI infrastructure, finding HPC islands, checking regional capacity, or understanding OCI topology.
+description: >-
+  Explore Oracle Cloud Infrastructure resources in Navigator. Lists HPC islands, regions, availability
+  domains, compartments, shapes, and tenants.
 ---
 <!--
 Progressive Disclosure:

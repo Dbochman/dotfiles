@@ -1,6 +1,8 @@
 ---
 name: tracking-gpu-capacity
-description: Query GPU capacity across OCI, Azure, GCP, AWS, CoreWeave, and Forge via Navigator CLI. Lists reservations, clusters, GPU status, and availability by region. Use when checking GPU availability, viewing capacity reservations, monitoring cloud resources, or comparing capacity across providers.
+description: >-
+  Query GPU capacity across OCI, Azure, GCP, AWS, CoreWeave, and Forge via Navigator CLI. Lists
+  reservations, clusters, GPU status, and availability by region.
 ---
 <!--
 Progressive Disclosure:

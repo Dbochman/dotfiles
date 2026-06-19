@@ -1,11 +1,7 @@
 ---
 name: cloudflare-workers-subrequest-limit
-description: |
-  Fix "Too many subrequests" error in Cloudflare Workers. Use when: (1) Worker
-  returns 500 with message "Too many subrequests", (2) Making multiple fetch
-  calls in a loop (e.g., creating blobs for each file), (3) Processing batches
-  of items that each require an API call. Covers the 50 subrequest limit and
-  strategies to work around it.
+description: >-
+  Fix "Too many subrequests" error in Cloudflare Workers.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-23

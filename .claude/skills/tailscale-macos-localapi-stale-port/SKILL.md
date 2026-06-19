@@ -1,21 +1,8 @@
 ---
 name: tailscale-macos-localapi-stale-port
-description: |
-  Fix Tailscale CLI on macOS failing with "Failed to connect to local Tailscale daemon
-  for /localapi/v0/status... dial tcp 127.0.0.1:PORT: connect: can't assign requested
-  address" while Tailscale.app appears to be running normally. Use when:
-  (1) every `tailscale` CLI command (status, file cp, ip, set, etc.) fails with the
-  stale-port LocalAPI error, (2) Tailscale.app is in `pgrep` output and other nodes
-  can still see this host in `tailscale status` from elsewhere (control plane cache
-  is misleading), (3) a launchd/cron script that uses `tailscale file cp` or other
-  CLI calls has been silently failing for hours — especially when the script suppresses
-  stderr with `2>/dev/null` and downstream sticky-state consumers keep showing stale
-  values, (4) `lsof -nP -p $TAILSCALE_PID` shows almost no FDs (no listening sockets)
-  even though the process is alive. The standalone macOS GUI Tailscale.app exposes
-  its LocalAPI on a TCP loopback port that the bundled CLI discovers via the GUI's
-  in-process state. After certain Tailscale.app updates or partial-crash states, the
-  GUI keeps running but stops listening on the LocalAPI port the CLI cached, so every
-  CLI call fails. Fix is to restart Tailscale.app.
+description: >-
+  Fix Tailscale CLI LocalAPI connection errors on macOS when a stale port file points at the wrong app
+  daemon.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-29

@@ -1,13 +1,8 @@
 ---
 name: openclaw-skill-bins-path-mismatch
-description: |
-  Fix OpenClaw skills showing "needs setup" or "Missing requirements (bins)" even though
-  the CLI wrapper exists in ~/.openclaw/bin/. Use when: (1) `openclaw skills list` shows
-  skills as "needs setup" despite the binary being at ~/.openclaw/bin/<name>,
-  (2) `openclaw skills check` lists custom skills under "Missing requirements",
-  (3) the gateway runtime uses the skill fine but the CLI check fails. Root cause:
-  the skill `requires.bins` check uses the system PATH (not the gateway's configured
-  PATH), so binaries in ~/.openclaw/bin/ are invisible to it.
+description: >-
+  Fix OpenClaw skills showing "needs setup" or "Missing requirements (bins)" even though the CLI
+  wrapper exists in ~/.openclaw/bin/.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-05

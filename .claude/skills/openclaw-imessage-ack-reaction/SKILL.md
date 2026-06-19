@@ -1,13 +1,7 @@
 ---
 name: openclaw-imessage-ack-reaction
-description: |
-  Configure OpenClaw iMessage reactions/tapbacks. Use when: (1) want OpenClaw agent
-  to react to iMessage messages with a tapback (love, like, laugh, etc.),
-  (2) ackReaction config in openclaw.json doesn't produce iMessage tapbacks,
-  (3) need to understand which reaction types iMessage supports. As of v2026.3.2,
-  the agent can send native iMessage tapbacks via the `message` tool with
-  `action: "react"`. The `ackReactionScope` config remains a no-op for iMessage
-  (only wired for Slack/Discord/Telegram in the gateway).
+description: >-
+  Configure and debug OpenClaw native iMessage tapbacks and acknowledgment reactions.
 author: Claude Code
 version: 2.0.0
 date: 2026-03-06

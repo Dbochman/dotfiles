@@ -1,9 +1,8 @@
 ---
 name: codex-custom-model-provider
-description: |
-  Fix Codex custom-provider and profile config errors, including unsupported project-local keys
-  and legacy [profiles.*] failures. Use for Groq/OpenRouter routing, wire_api issues, or Codex
-  0.134+ profile migration.
+description: >-
+  Fix Codex Groq/OpenRouter providers and profiles, unsupported project-local keys, wire_api
+  mismatches, and Codex 0.134+ migrations.
 author: Claude Code
 version: 2.0.0
 date: 2026-06-18

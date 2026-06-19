@@ -1,13 +1,7 @@
 ---
 name: ci-analytics-pollution
-description: |
+description: >-
   Debug unexplained analytics traffic from CI/CD pipelines hitting production.
-  Use when: (1) Analytics show traffic to URLs that match test patterns like
-  /this-page-does-not-exist, /test-route, or 404 test paths, (2) Traffic has
-  near 1:1 session-to-user ratio suggesting automated hits, (3) Traffic
-  correlates with deploy frequency, (4) HeadlessChrome or Playwright appears
-  in user agents. Covers Playwright, Cypress, and other e2e test frameworks
-  running against production URLs.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-19

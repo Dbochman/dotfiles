@@ -1,9 +1,7 @@
 ---
 name: irobot-mqtt-dock-requires-stop
-description: |
+description: >-
   iRobot Roomba MQTT dock command is silently ignored during active cleaning (run phase).
-  Use when: (1) dock commands return ok but robot keeps cleaning, (2) repeated dock calls
-  have no effect, (3) dorita980 dock not working. Must send stop first, wait 2s, then dock.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-05

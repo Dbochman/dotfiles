@@ -1,10 +1,7 @@
 ---
 name: react-router-setsearchparams-gotcha
-description: |
-  Fix React Router setSearchParams overwriting existing query parameters. Use when:
-  (1) URL query params disappear after navigation, (2) deep links with ?card=X or
-  similar params stop working after board/page switch, (3) setSearchParams({ key: value })
-  is erasing other params. Covers the functional update pattern to preserve existing params.
+description: >-
+  Fix React Router setSearchParams overwriting existing query parameters.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-23

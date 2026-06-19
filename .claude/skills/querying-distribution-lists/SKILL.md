@@ -1,6 +1,8 @@
 ---
 name: querying-distribution-lists
-description: Query Microsoft 365 distribution lists and group memberships via CLI. Lists groups, views members, and checks user memberships. Use when checking group membership, finding distribution list members, listing groups a user belongs to, or querying Azure AD groups.
+description: >-
+  Query Microsoft 365 distribution lists and group memberships via CLI. Lists groups, views members,
+  and checks user memberships.
 ---
 <!--
 Progressive Disclosure:

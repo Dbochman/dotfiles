@@ -1,13 +1,7 @@
 ---
 name: polling-loop-finalization-escape
-description: |
+description: >-
   Fix polling loops that repeat finalization actions instead of exiting after a trigger.
-  Use when: (1) a return/completion signal is detected but the loop keeps running and
-  re-triggering the same action, (2) "resilient" try/except blocks inside a polling
-  loop cause the loop to continue after a finalization error, (3) repeated dock/stop/
-  cleanup commands are sent when only one was expected. The pattern: inner finalization
-  steps are individually try/excepted for resilience, but an outer except catches
-  unexpected errors and doesn't exit, causing the loop to re-detect the trigger.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-05

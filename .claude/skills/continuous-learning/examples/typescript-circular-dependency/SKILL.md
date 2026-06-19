@@ -1,11 +1,7 @@
 ---
 name: typescript-circular-dependency
-description: |
-  Detect and resolve TypeScript/JavaScript circular import dependencies. Use when:
-  (1) "Cannot access 'X' before initialization" at runtime, (2) Import returns 
-  undefined unexpectedly, (3) "ReferenceError: Cannot access X before initialization",
-  (4) Type errors that disappear when you change import order, (5) Jest/Vitest tests 
-  fail with undefined imports that work in browser.
+description: >-
+  Detect and resolve TypeScript/JavaScript circular import dependencies.
 author: Claude Code
 version: 1.0.0
 date: 2024-03-10

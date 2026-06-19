@@ -1,12 +1,7 @@
 ---
 name: openclaw-browser-cdp-crash
-description: |
+description: >-
   Fix OpenClaw browser service "Failed to start Chrome CDP on port 18800" error.
-  Use when: (1) OpenClaw agent can't use browser tool, (2) gateway logs show
-  "Failed to start Chrome CDP on port 18800 for profile openclaw", (3) browser
-  crashes with Trace/BPT trap or SIGTRAP, (4) Chrome exits within 1-2 seconds
-  of starting. Covers stale SingletonLock files, corrupted profiles with
-  encrypted Keychain tokens, and orphaned Chrome processes.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-09

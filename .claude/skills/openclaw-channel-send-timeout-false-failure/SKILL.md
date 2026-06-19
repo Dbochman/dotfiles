@@ -1,20 +1,8 @@
 ---
 name: openclaw-channel-send-timeout-false-failure
-description: |
-  Fix OpenClaw channel sends (BlueBubbles/iMessage, and likely Telegram/Slack/Discord)
-  that report "request timed out" or "message failed" but actually deliver — causing
-  the agent to retry and produce duplicate messages. Use when: (1) recipient confirms
-  they received a message that OpenClaw logged as failed, (2) duplicate messages
-  arrive after the agent says "let me retry", (3) `/tmp/openclaw/openclaw-*.log`
-  shows `[tools] message failed: request timed out` paired with a `subsystem:
-  fetch-timeout` entry whose `elapsedMs ≈ timeoutMs` and `operation:
-  fetchWithSsrFGuard`, (4) the timed-out URL is the channel's localhost server
-  (e.g., `http://localhost:1234/api/v1/chat/new` for BlueBubbles). Root cause: the
-  channel plugin's hardcoded 30s send timeout is too short for endpoints that
-  round-trip an external service (BB → Apple iMessage backend for new-chat
-  creation). The channel server queues the work before responding, so the send
-  succeeds despite OpenClaw aborting. Fix: bump the per-channel `sendTimeoutMs`
-  in openclaw.json (BB) or analogous config field on other channels.
+description: >-
+  Fix OpenClaw channel sends that time out but still deliver, causing retries and duplicate
+  BlueBubbles, iMessage, or other messages.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-23

@@ -1,14 +1,8 @@
 ---
 name: apfs-full-disk-unlink-trick
-description: |
-  Free space on a 100%-full APFS volume when `: > file`, `truncate -s 0`, and `rm`
-  all fail with ENOSPC. Use when: (1) macOS `df -h` shows 100% full and
-  `Avail=100Mi` on a multi-TB disk, (2) truncating a huge log file fails with
-  "No space left on device" even though you're trying to SHRINK it, (3)
-  `/usr/bin/truncate -s 0 <file>` returns ENOSPC, (4) `cp /dev/null <file>`
-  also fails. The fix is `/bin/unlink <file>` — a pure directory-entry removal
-  with no block allocation. `rm` may also fail because it tries to stat/check
-  perms first; `unlink` is the narrowest syscall path.
+description: >-
+  Free space on a 100%-full APFS volume when `: > file`, `truncate -s 0`, and `rm` all fail with
+  ENOSPC.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-18

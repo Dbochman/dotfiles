@@ -1,12 +1,7 @@
 ---
 name: openclaw-cron-job-creation
-description: |
-  Create and debug OpenClaw cron jobs by editing jobs.json directly. Use when:
-  (1) gateway/cron subsystem fails with "TypeError: Cannot read properties of undefined
-  (reading 'trim')" after adding jobs, (2) creating recurring cron schedule jobs (not
-  one-shot "at" jobs), (3) openclaw cron CLI commands fail with missing env vars,
-  (4) need to manually run/test a cron job. Covers the correct jobs.json schema,
-  schedule field naming (expr NOT cron), env var requirements, and gateway restart.
+description: >-
+  Create and debug OpenClaw cron jobs by editing jobs.json directly.
 author: Claude Code
 version: 2.0.0
 date: 2026-03-06

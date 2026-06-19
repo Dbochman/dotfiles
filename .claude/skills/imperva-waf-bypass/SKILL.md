@@ -1,14 +1,8 @@
 ---
 name: imperva-waf-python-requests
-description: |
-  Fix for Python requests returning 500 "Internal Server Error" when calling APIs
-  protected by Imperva/Incapsula WAF, while the same request works with curl.
-  Use when: (1) API call works with curl but fails with Python requests,
-  (2) response headers contain "X-CDN: Imperva" or Incapsula cookies,
-  (3) API returns 500 with no JSON body, just "Internal Server Error" plain text,
-  (4) response contains Set-Cookie with visid_incap_ or nlbi_ prefixes.
-  Solves bot detection issues with Imperva-protected APIs like Resy, and other
-  services using Imperva/Incapsula CDN.
+description: >-
+  Fix for Python requests returning 500 "Internal Server Error" when calling APIs protected by
+  Imperva/Incapsula WAF, while the same request works with curl.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-07

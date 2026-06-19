@@ -1,16 +1,8 @@
 ---
 name: polling-loop-phantom-transition-on-pause-exit
-description: |
-  Fix phantom event detection that fires moments after a legitimate trigger in
-  polling loops that use transition tracking + conditional observation pauses.
-  Use when: (1) a duplicate event (departure/arrival/alert/state-change) fires
-  seconds after the real one legitimately finalized, (2) the loop tracks state
-  transitions via local vars like `last_X` and does `if busy: continue` BEFORE
-  fetching fresh observations during a "busy/paused" phase, (3) logs show a
-  transition was "detected" immediately after the pause cleared, (4) the
-  upstream API has lag in reflecting the new state after the underlying
-  condition actually changed. Covers reseed-on-pause-exit pattern and
-  physical-state sanity guards on transition-triggered actions.
+description: >-
+  Fix phantom event detection that fires moments after a legitimate trigger in polling loops that use
+  transition tracking + conditional observation pauses.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-21

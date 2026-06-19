@@ -1,16 +1,8 @@
 ---
 name: python-stderr-dedup-via-dup2
-description: |
-  Contain runaway stderr spam in a Python daemon where a transitive library
-  (e.g. firebase_messaging, asyncio, a C extension) writes the same traceback
-  or error line thousands of times per second without exposing a knob to
-  disable it. Use when: (1) a long-running Python service fills its logfile
-  with gigabytes of duplicate tracebacks, (2) wrapping `sys.stderr` at the
-  Python level doesn't catch the spam because the library writes via a
-  logger/C-ext that goes directly to FD 2, (3) you need rate-limiting AND
-  dedup AND a force-exit escape hatch so launchd/systemd can restart the
-  process fresh. Pattern: pipe() + os.dup2(write_end, 2) + pump thread +
-  dedup filter + size-based self-exit.
+description: >-
+  Contain runaway duplicate stderr output from Python daemons when a transitive library or extension
+  repeatedly writes the same error.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-18

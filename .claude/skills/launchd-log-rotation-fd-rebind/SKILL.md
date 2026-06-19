@@ -1,16 +1,8 @@
 ---
 name: launchd-log-rotation-fd-rebind
-description: |
-  Rotate a LaunchAgent log file from within its own wrapper script without
-  losing post-rotation log output. Use when: (1) writing a wrapper script that
-  implements size-based log rotation for a service whose plist sets
-  StandardOutPath/StandardErrorPath, (2) after `mv $LOG $LOG.1` the rotated
-  file keeps growing instead of the new $LOG, (3) child processes inherit
-  FDs that still point at the renamed file, (4) building self-healing
-  services that must survive runaway log scenarios. The gotcha: launchd
-  opens StandardOutPath once at spawn and passes FD 1/2 to the wrapper.
-  After rename, the wrapper MUST `exec 1>>"$LOG" 2>&1` to rebind inherited
-  FDs to the new inode before exec'ing the child.
+description: >-
+  Rotate a LaunchAgent log file from within its own wrapper script without losing post-rotation log
+  output.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-18

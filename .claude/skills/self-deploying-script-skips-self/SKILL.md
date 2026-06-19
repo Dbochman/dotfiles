@@ -1,22 +1,8 @@
 ---
 name: self-deploying-script-skips-self
-description: |
-  Diagnose and fix self-deploying shell scripts (run by launchd/cron/systemd) that
-  appear to run cleanly every day but silently strand their own recent changes
-  because the deploy loop excludes the script's own file extension. Use when:
-  (1) a launchd/cron job logs successful runs daily, but a recently-committed
-  fix to its own logic (or to a new deploy block it added) never takes effect,
-  (2) the deployed copy of a deploy script differs in size/line-count from the
-  repo HEAD copy of the same script, (3) features added to a deploy script in
-  one commit work in subsequent commits' targets but not in older targets that
-  the same commit also touched, (4) `git log` shows the script was updated
-  weeks/months ago but the running copy still behaves like the old version,
-  (5) wrapper-deploy loops with case-statement filters like
-  `*.command|*.sh|*.py|*.md` that were intended to skip non-wrappers but also
-  skip the deploy script itself. The fix is a self-update block at the very
-  end of the script using cp-then-mv (rename is atomic; plain cp would
-  truncate the running file mid-execution and corrupt bash). Applies to
-  dotfiles-pull patterns, ansible-pull, any self-bootstrapping deploy job.
+description: >-
+  Fix scheduled self-deploying scripts that strand their own updates because the deploy loop excludes
+  that file extension.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-01

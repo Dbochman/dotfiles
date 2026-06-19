@@ -1,14 +1,8 @@
 ---
 name: samsung-frame-tv-ws-popup
-description: |
-  Fix Samsung Frame TV showing a connection notification on the panel every
-  time a samsungtvws WebSocket is opened, even with a saved token. Use when:
-  (1) polling a Samsung Frame TV for status from a dashboard/cron and the
-  panel briefly wakes or shows "[App] is connecting" each poll, (2) using
-  samsungtvws / SamsungTVWS.open() against a Frame TV, (3) art-mode or
-  app_list calls cause a visible popup. Solution: do REST-only polling
-  (rest_device_info, rest_app_status) and reserve WebSocket calls for
-  user-initiated commands.
+description: >-
+  Fix Samsung Frame TV showing a connection notification on the panel every time a samsungtvws
+  WebSocket is opened, even with a saved token.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-13

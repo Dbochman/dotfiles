@@ -1,6 +1,8 @@
 ---
 name: reading-meeting-transcripts
-description: Access Microsoft Teams meeting transcripts via CLI. Read transcripts from calendar events, extract speaker dialogue, summarize discussions. Use when reading meeting notes, reviewing what was said, extracting action items, or analyzing meeting participation.
+description: >-
+  Access Microsoft Teams meeting transcripts via CLI. Read transcripts from calendar events, extract
+  speaker dialogue, summarize discussions.
 ---
 <!--
 Progressive Disclosure:

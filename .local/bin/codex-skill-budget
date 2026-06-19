@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Fail when Codex shortens descriptions in the model-visible skills list."""
+
+from __future__ import annotations
+
+import ast
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+SKILL_LINE = re.compile(r"^- (?P<name>.+?): (?P<description>.*) \(file: (?P<locator>.+)\)$")
+ROOT_LINE = re.compile(r'- `(r\d+)` = `([^`]+)`')
+
+
+def normalize(value: str) -> str:
+    return re.sub(r"\s+", " ", value.strip())
+
+
+def skill_description(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        raise ValueError("missing YAML frontmatter")
+
+    lines = parts[1].splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("description:"):
+            value = line.split(":", 1)[1].strip()
+            break
+    else:
+        raise ValueError("missing description")
+
+    if value in {"|", "|-", ">", ">-", ">+"}:
+        content = []
+        for line in lines[index + 1 :]:
+            if line and not line[0].isspace():
+                break
+            content.append(line.strip())
+        return normalize(" ".join(content))
+
+    if value.startswith(('"', "'")):
+        try:
+            value = ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            value = value[1:-1]
+    return normalize(str(value))
+
+
+def find_skills_block(prompt: list[dict]) -> str:
+    for item in prompt:
+        for entry in item.get("content", []):
+            if not isinstance(entry, dict):
+                continue
+            text = entry.get("text", "")
+            if "<skills_instructions>" in text:
+                return text
+    raise ValueError("model-visible skills block not found")
+
+
+def resolve_locator(locator: str, roots: dict[str, Path]) -> Path:
+    if locator.startswith("/"):
+        return Path(locator)
+    alias, relative = locator.split("/", 1)
+    return roots[alias] / relative
+
+
+def main() -> int:
+    codex = shutil.which("codex")
+    if codex is None:
+        print("codex-skill-budget: codex is not installed", file=sys.stderr)
+        return 2
+
+    result = subprocess.run(
+        [codex, "debug", "prompt-input", "skill-budget-audit"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(result.stderr or result.stdout, file=sys.stderr, end="")
+        return result.returncode
+
+    try:
+        block = find_skills_block(json.loads(result.stdout))
+        roots = {alias: Path(path) for alias, path in ROOT_LINE.findall(block)}
+        skills = []
+        for line in block.splitlines():
+            match = SKILL_LINE.match(line)
+            if match is None:
+                continue
+            path = resolve_locator(match.group("locator"), roots)
+            full = skill_description(path)
+            skills.append((match.group("name"), full, match.group("description")))
+    except (KeyError, OSError, ValueError, json.JSONDecodeError) as error:
+        print(f"codex-skill-budget: could not inspect prompt: {error}", file=sys.stderr)
+        return 2
+
+    shortened = [skill for skill in skills if skill[1] != skill[2]]
+    print(
+        f"skills={len(skills)} skill_block_chars={len(block)} "
+        f"description_chars={sum(len(skill[1]) for skill in skills)} "
+        f"shortened={len(shortened)}"
+    )
+    if shortened:
+        for name, full, visible in shortened:
+            print(f"  {name}: {len(full)} -> {len(visible)} chars", file=sys.stderr)
+        return 1
+
+    print("PASS: Codex includes every full skill description without shortening.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

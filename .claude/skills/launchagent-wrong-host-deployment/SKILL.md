@@ -1,24 +1,8 @@
 ---
 name: launchagent-wrong-host-deployment
-description: |
-  Diagnose macOS LaunchAgents that are loaded on the "wrong" host —
-  the .plist file lives in ~/Library/LaunchAgents/ and is registered,
-  but its ProgramArguments / EnvironmentVariables / StandardOutPath /
-  StandardErrorPath / WorkingDirectory hardcode paths that only exist
-  on a different machine. Use when: (1) `launchctl list` shows a
-  LaunchAgent with `last exit code = 78` (EX_CONFIG) or `32256`
-  (wait-status for exit-126) that never produces any log output and
-  has no successful runs, (2) the .plist references paths like
-  `/Users/<somebody-else>/...` or hostnames in another machine's
-  namespace, (3) deployment docs say "should only be on machine X"
-  but the agent is loaded on machine Y, (4) the agent fires on
-  schedule and exits silently — no script-level log lines because
-  launchd dies at the stderr-bind step before exec, (5) a dotfiles
-  or ansible deploy step copies all `.plist` files indiscriminately
-  to every host without filtering by hostname/user. The fix is
-  three-step: bootout on the wrong host, remove the .plist from
-  ~/Library/LaunchAgents/, and either filter the deploy step or
-  delete the plist from the source repo if it's truly retired.
+description: >-
+  Diagnose LaunchAgents installed on the wrong Mac whose plist paths reference another host, causing
+  exit 78 or 126 before script logs.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-12

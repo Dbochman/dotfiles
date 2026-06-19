@@ -1,13 +1,7 @@
 ---
 name: chrome-remote-debugging-setup
-description: |
-  Fix Chrome --remote-debugging-port silently failing to open any port. Use when:
-  (1) Chrome launches with --remote-debugging-port=9222 but curl to 127.0.0.1:9222
-  returns "exit code 7" (connection refused), (2) lsof shows no LISTEN on the
-  debugging port despite Chrome having the flag in its process args, (3) Setting up
-  chrome-devtools-mcp or any CDP-based tool with a real Chrome instance. The root
-  cause is that Chrome requires --user-data-dir when --remote-debugging-port is used,
-  and silently ignores the port flag without it (error only visible on stderr).
+description: >-
+  Fix Chrome --remote-debugging-port silently failing to open any port.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-15

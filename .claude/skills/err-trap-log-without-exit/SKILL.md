@@ -1,24 +1,8 @@
 ---
 name: err-trap-log-without-exit
-description: |
-  Diagnose deploy/sync scripts that "fail loudly" in the log (FATAL
-  entries appear) but silently continue past the failure and produce
-  bad outputs — typically re-deploying stale local files after a
-  failed git pull, or running downstream steps on missing fetched
-  data. Use when: (1) a script's log file contains entries like "FATAL: <X>
-  failed at line N" but the script clearly kept running past that
-  point and exited 0, (2) a daily deploy job consistently writes "all
-  steps OK" output even though an upstream fetch step's stderr shows
-  errors, (3) recently-pushed upstream changes never appear on the
-  target host even though the deploy log shows "deployed N files",
-  (4) a wrapper uses `set -e` + an ERR trap that only echoes/logs and
-  doesn't `exit`, OR uses `set +e` around a "benign-failures" block
-  with the trap still armed (set +e does NOT disable the trap), (5)
-  the same script appears to "succeed" via exit code while important
-  middle steps obviously failed. The fix is two-part: the ERR trap
-  must `exit 1` (not just log), and the section-disabling-errexit
-  must also detach the trap (`trap - ERR`) for the duration of the
-  intentionally-non-strict block.
+description: >-
+  Fix Bash deploy or sync scripts whose ERR trap logs a failure but does not exit, especially stale
+  redeploys after a failed git pull.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-12

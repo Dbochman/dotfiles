@@ -1,13 +1,7 @@
 ---
 name: openclaw-cron-double-delivery
-description: |
+description: >-
   Fix OpenClaw cron jobs delivering messages multiple times (2x or 3x) to the recipient.
-  Use when: (1) recipient reports receiving the same cron job output multiple times,
-  (2) cron job shows status "error" with "Message failed" but delivery shows "delivered",
-  (3) agent prompt instructs the agent to send messages directly (via message tool, imsg,
-  or similar) AND the job has a delivery config — causing both the agent AND the cron
-  delivery system to send separately, (4) gateway logs show "Unknown channel: bluebubbles"
-  or "Unknown channel: imessage" errors from agent tool calls during cron execution.
 author: Claude Code
 version: 1.0.0
 date: 2026-03-09

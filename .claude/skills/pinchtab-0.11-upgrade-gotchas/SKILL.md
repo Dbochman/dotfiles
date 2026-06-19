@@ -1,19 +1,7 @@
 ---
 name: pinchtab-0.11-upgrade-gotchas
-description: |
-  Survive the upgrade from pinchtab v0.7.x/v0.8.x → v0.11.x without silent
-  breakage. Use when: (1) you ran `npm install -g pinchtab@latest` and every
-  CLI invocation errors with "Pinchtab binary not found at:
-  ~/.pinchtab/bin/pinchtab-darwin-arm64 ... To fix this, run: npm rebuild
-  pinchtab" (and `npm rebuild` doesn't actually fix it), (2) `pinchtab eval`
-  or curl POST to `/evaluate` returns "Error 403: evaluate endpoint is
-  disabled; enable security.allowEvaluate in config to use this endpoint",
-  (3) any downstream automation that hits `pinchtab eval` (e.g. grocery-reorder
-  with custom event-dispatch JS for Angular click) silently fails after a
-  pinchtab major-version bump, (4) you're auditing a pinchtab profile dir at
-  `~/.pinchtab/chrome-profile/` and wondering why the new version ignores it.
-  Covers the platform-specific Mach-O binary download, the new
-  `security.allowEvaluate` gate, and the profile path migration.
+description: >-
+  Survive the upgrade from pinchtab v0.7.x/v0.8.x → v0.11.x without silent breakage.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-10

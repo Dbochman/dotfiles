@@ -1,11 +1,7 @@
 ---
 name: git-pre-push-hook-ssh-timeout
-description: |
-  Debug "Connection to github.com closed by remote host" errors during git push. Use when:
-  (1) Push fails with SSH connection closed error, (2) Pre-push hooks run slow API calls
-  (Codex, OpenAI, external services), (3) Push works with --no-verify but fails normally.
-  The SSH connection times out (~60s) while hooks run synchronously. Fix by removing
-  redundant hooks (if CI covers it), making hooks async, or adding timeouts.
+description: >-
+  Debug "Connection to github.com closed by remote host" errors during git push.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-24

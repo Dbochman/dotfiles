@@ -1,6 +1,8 @@
 ---
 name: managing-outlook-email
-description: Manage Microsoft Outlook email via CLI. Search, read, open, triage, archive, flag, and organize inbox messages. Use when working with email, checking unread messages, searching mail, or organizing inbox.
+description: >-
+  Manage Microsoft Outlook email via CLI. Search, read, open, triage, archive, flag, and organize
+  inbox messages.
 ---
 <!--
 Progressive Disclosure:

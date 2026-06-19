@@ -1,19 +1,8 @@
 ---
 name: tailscale-taildrop-receiver-jam
-description: |
-  Diagnose Tailscale Taildrop (`tailscale file cp` / `tailscale file get`) pipelines
-  that silently jam after working for a while. Use when: (1) inter-node state sync via
-  `tailscale file cp` was working then stopped delivering, (2) the pusher's stderr
-  shows "500 Internal Server Error: too many retries trying to rename
-  ...stdin.txt.<random>.partial" to "stdin.txt", (3) the receiver logs show
-  "refusing to overwrite file: open .../stdin (N).txt: file exists", (4) downstream
-  consumers (vacancy automation, dashboards, evaluation jobs) are reading state files
-  whose mtime is days/weeks old but the LaunchAgent firing the pull-side script shows
-  no errors and is exiting 0, (5) a script using `tailscale file get --wait` only
-  processes one file per invocation and breaks out of its loop. Also covers the
-  Tailscale 1.56+ behavior change where stdin pushes (`echo X | tailscale file cp -
-  host:`) are renamed from `stdin` to `stdin.txt` on arrival, breaking legacy
-  `if [ -f stdin ]` consumers.
+description: >-
+  Diagnose Tailscale Taildrop (`tailscale file cp` / `tailscale file get`) pipelines that silently jam
+  after working for a while.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-10

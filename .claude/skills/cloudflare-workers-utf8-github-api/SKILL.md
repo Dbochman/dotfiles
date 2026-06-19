@@ -1,11 +1,7 @@
 ---
 name: cloudflare-workers-utf8-github-api
-description: |
+description: >-
   Fix UTF-8 encoding corruption when Cloudflare Workers send content to GitHub API.
-  Use when: (1) Non-ASCII characters like arrows (→), emojis, or accented letters
-  become corrupted (e.g., → becomes Ã¢ÂÂ or â), (2) YAML parsing fails with
-  "non-printable characters" error, (3) Content looks correct locally but corrupted
-  after GitHub commit. Covers charset header and YAML string quoting.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-23

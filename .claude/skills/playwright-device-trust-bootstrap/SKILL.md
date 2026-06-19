@@ -1,24 +1,8 @@
 ---
 name: playwright-device-trust-bootstrap
-description: |
-  Bootstrap a Playwright persistent-context session so that "remember this
-  device" / device-trust cookies issued by banking, brokerage, insurance, and
-  other MFA-protected portals (Bank of America, Chase, Wells Fargo, Fidelity,
-  Schwab, etc.) carry over into subsequent headless re-auth runs and skip MFA
-  on every login. Use when: (1) setting up a new Playwright scraper against a
-  portal that prompts "Yes, remember this device" during MFA and you want
-  subsequent automated logins to skip MFA, (2) a scraper's --re-auth flow
-  works (correct credentials, MFA code typed and submitted, post-MFA dashboard
-  visible) but EVERY automated re-run still hits the full MFA flow as if no
-  device-trust cookie was issued, (3) someone is about to "log in manually
-  first to establish device trust" via their everyday Chrome/Safari and you
-  need to redirect them to the right bootstrap method, (4) the headless host
-  is a remote server (Mac mini, Linux VPS) and the user is on a different
-  machine. Solves the non-obvious pitfall that device-trust cookies issued
-  during a manual browser login do NOT transfer to a Playwright persistent
-  context running on a different machine or in a different browser profile —
-  they must be captured INSIDE the exact persistent context the headless
-  re-auth will later use.
+description: >-
+  Bootstrap persistent Playwright device-trust sessions for MFA portals and identify
+  browser-fingerprint checks that prevent reuse.
 author: Claude Code
 version: 1.0.0
 date: 2026-05-24

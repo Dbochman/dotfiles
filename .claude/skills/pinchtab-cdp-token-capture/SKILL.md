@@ -1,14 +1,8 @@
 ---
 name: pinchtab-cdp-token-capture
-description: |
-  Capture authentication tokens from reCAPTCHA-protected websites using pinchtab + Chrome DevTools Protocol (CDP).
-  Use when: (1) need to automate token refresh for sites with reCAPTCHA login, (2) need to find Chrome's CDP port
-  when pinchtab uses --remote-debugging-port=0, (3) lsof not working in LaunchAgent context on macOS,
-  (4) need to click inside cross-origin iframes via CDP Input.dispatchMouseEvent,
-  (5) Chrome cookies not persisting between pinchtab restarts, (6) Network.getResponseBody returns empty
-  for fetch() API responses (use Fetch.enable + Fetch.getResponseBody instead), (7) need to capture tokens
-  from login responses by monitoring CDP network traffic passively during browser form submission,
-  (8) API response body structure nests tokens in unexpected locations (e.g., data.user.X not data.X).
+description: >-
+  Capture authentication tokens from reCAPTCHA-protected websites using pinchtab + Chrome DevTools
+  Protocol (CDP).
 author: Claude Code
 version: 1.2.0
 date: 2026-03-01

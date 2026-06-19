@@ -1,27 +1,8 @@
 ---
 name: homebrew-cellar-versioned-path-breakage
-description: |
-  Fix long-lived services (LaunchAgents, cron wrappers, systemd-on-Linuxbrew
-  units, PATH-prefixing scripts) that crash silently after a routine `brew
-  upgrade` because they hardcode a versioned Cellar path like
-  `/opt/homebrew/Cellar/node@22/22.22.0/bin/node`. Use when: (1) a service
-  that ran fine for months suddenly crash-loops with no code changes,
-  (2) `launchctl list <label>` shows `PID = "-"` and
-  `LastExitStatus = 32256` (or any multiple of 256 — that's a wait(2)
-  status word; divide by 256 for the actual exit code, here 126 =
-  "command found but not executable / No such file or directory"),
-  (3) the service's stderr log shows `bash: line N:
-  /opt/homebrew/Cellar/<formula>/<version>/bin/<binary>: No such file or
-  directory` repeating on every launchd respawn, (4) downstream symptoms
-  appear far from the cause (e.g., dashboards showing "cron overdue", a
-  webhook endpoint returning connection-refused, scheduled jobs not
-  firing) because the upstream service is silently dead. The fix is to
-  replace `/opt/homebrew/Cellar/<formula>/<version>/...` with
-  `/opt/homebrew/opt/<formula>/...` — Homebrew atomically repoints the
-  `opt/` symlink on every upgrade, so it survives version bumps. Applies
-  on both Apple Silicon (`/opt/homebrew`) and Intel/Linuxbrew
-  (`/usr/local`, `/home/linuxbrew/.linuxbrew`) — same Cellar/opt
-  convention.
+description: >-
+  Fix services and scripts that break after Homebrew upgrades because they hardcode versioned Cellar
+  paths.
 author: Claude Code
 version: 1.0.0
 date: 2026-04-30

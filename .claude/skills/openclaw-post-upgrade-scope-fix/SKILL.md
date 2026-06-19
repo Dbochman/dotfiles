@@ -1,14 +1,8 @@
 ---
 name: openclaw-post-upgrade-scope-fix
-description: |
-  Fix OpenClaw cron delivery failing with "gateway closed (1008): pairing required"
-  after an OpenClaw npm upgrade. Use when: (1) cron jobs complete their work but
-  "cron announce delivery failed" on the iMessage/delivery step, (2) gateway logs
-  show "pairing required" or code 1008 on WebSocket connections from cron subagents,
-  (3) security audit logs show "scope-upgrade requested" with reason=scope-upgrade,
-  (4) pending.json has an unresolved repair request. Root cause: new OpenClaw versions
-  may require additional device scopes (e.g., operator.write) not present in existing
-  paired device configs.
+description: >-
+  Fix OpenClaw cron delivery failing with "gateway closed (1008): pairing required" after an OpenClaw
+  npm upgrade.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-24

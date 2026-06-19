@@ -1,12 +1,8 @@
 ---
 name: openclaw-stale-session-and-identity-mismatch
-description: |
-  Fix OpenClaw agent repeatedly claiming a Google account "isn't authenticated" or failing
-  with auth errors even though GWS tokens are valid. Use when: (1) GWS CLI works
-  manually (`gws gmail users messages list --account X`) but OpenClaw agent says auth is missing,
-  (2) Agent uses wrong email format (e.g., missing dots in Gmail address), (3) Agent
-  keeps repeating stale beliefs about auth status despite fixes. Covers identity mismatch
-  across config files and stale session cache clearing.
+description: >-
+  Fix OpenClaw agent repeatedly claiming a Google account "isn't authenticated" or failing with auth
+  errors even though GWS tokens are valid.
 author: Claude Code
 version: 2.0.0
 date: 2026-03-05

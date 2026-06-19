@@ -1,6 +1,8 @@
 ---
 name: managing-confluence
-description: Manage Confluence pages, spaces, and content via CLI. Creates, reads, updates, searches, and exports documentation. Use when working with Confluence wiki pages, searching documentation, managing page content, or exporting pages to markdown.
+description: >-
+  Manage Confluence pages, spaces, and content via CLI. Creates, reads, updates, searches, and exports
+  documentation.
 ---
 <!--
 Progressive Disclosure:

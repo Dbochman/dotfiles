@@ -1,13 +1,7 @@
 ---
 name: cielo-home-api-reverse-engineering
-description: |
-  Cielo Home / Mr Cool minisplit smart AC API details and CLI tool. Use when:
-  (1) Controlling Mr Cool or Cielo Home minisplit AC units programmatically,
-  (2) Building integrations with Cielo Home API (api.smartcielo.com),
-  (3) Token expired and need to refresh credentials for cielo-cli,
-  (4) Need to understand Cielo Home WebSocket command format for device control.
-  Covers API endpoints, authentication flow, HAR-based token extraction, and
-  the Chrome CORS header stripping workaround.
+description: >-
+  Cielo Home / Mr Cool minisplit smart AC API details and CLI tool.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-08

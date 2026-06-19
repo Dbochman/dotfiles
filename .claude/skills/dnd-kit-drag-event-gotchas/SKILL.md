@@ -1,11 +1,7 @@
 ---
 name: dnd-kit-drag-event-gotchas
-description: |
-  Fix duplicate state updates when using dnd-kit for drag-and-drop. Use when:
-  (1) State changes fire multiple times during a single drag operation,
-  (2) History/audit entries are duplicated for intermediate positions,
-  (3) handleDragOver is updating state that should only change on drop.
-  Covers the difference between onDragOver (continuous) and onDragEnd (final).
+description: >-
+  Fix duplicate state updates when using dnd-kit for drag-and-drop.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-23

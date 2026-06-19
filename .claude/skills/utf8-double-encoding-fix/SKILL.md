@@ -1,12 +1,8 @@
 ---
 name: utf8-double-encoding-fix
-description: |
-  Fix UTF-8 double-encoding corruption where special characters like arrows (→, ↔)
-  become garbled sequences like "Ã¢ÂÂ" or "Ã¢Â†Â". Use when: (1) Non-ASCII
-  characters display as mojibake after migration/serialization, (2) Arrows, emojis,
-  or accented characters become Ã-prefixed garbage, (3) Content looks correct in
-  source but corrupted after processing through gray-matter, YAML, or text pipelines.
-  Covers detection via hex inspection and fix via latin-1 decode chain.
+description: >-
+  Fix UTF-8 double-encoding corruption where special characters like arrows (→, ↔) become garbled
+  sequences like "Ã¢ÂÂ" or "Ã¢Â†Â".
 author: Claude Code
 version: 1.0.0
 date: 2026-01-23

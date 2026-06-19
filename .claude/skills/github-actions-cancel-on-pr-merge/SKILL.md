@@ -1,11 +1,7 @@
 ---
 name: github-actions-cancel-on-pr-merge
-description: |
-  Cancel in-progress GitHub Actions workflows when a PR is merged or closed. Use when:
-  (1) Slow CI jobs (like Codex reviews) waste minutes after PR merges, (2) You have
-  `cancel-in-progress: true` but workflows still run after merge, (3) You want to
-  save CI minutes by stopping obsolete workflow runs. Covers the `closed` event type
-  pattern with concurrency groups.
+description: >-
+  Cancel in-progress GitHub Actions workflows when a PR is merged or closed.
 author: Claude Code
 version: 1.0.0
 date: 2026-01-23

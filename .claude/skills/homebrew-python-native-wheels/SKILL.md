@@ -1,13 +1,8 @@
 ---
 name: homebrew-python-native-wheels
-description: |
-  Fix Homebrew Python formula builds failing or taking 10+ minutes when dependencies
-  have native C extensions (pillow, pyobjc, pyyaml, charset-normalizer). Use when:
-  (1) `brew install` compiles cmake/pillow/pyobjc from source taking forever,
-  (2) "Directory is not installable. Neither setup.py nor pyproject.toml found" error
-  when using .whl resources, (3) `venv.pip_install` fails with platform-specific wheels
-  (cp312-macosx), (4) `system pip install` fails silently during brew build due to
-  network sandbox. Covers the split-resource pattern for Homebrew Python virtualenv formulas.
+description: >-
+  Fix Homebrew Python formula builds failing or taking 10+ minutes when dependencies have native C
+  extensions (pillow, pyobjc, pyyaml, charset-normalizer).
 author: Claude Code
 version: 1.0.0
 date: 2026-02-14

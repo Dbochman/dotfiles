@@ -1,14 +1,8 @@
 ---
 name: macos-applescript-tcc-hang
-description: |
-  Fix AppleScript hanging indefinitely when automating macOS apps (Messages, Mail, etc.)
-  due to stale TCC (Transparency, Consent, and Control) Automation entries. Use when:
-  (1) `osascript` hangs on `tell application "Messages"` operations like sending, counting
-  chats, or accessing accounts, (2) Simple AppleScript like `tell app "Messages" to name`
-  works but any operation touching accounts/chats/participants hangs forever, (3) AppleScript
-  returns "AppleEvent timed out (-1712)" after ~2 minutes, (4) Automation that previously
-  worked stops working after macOS update or system changes, (5) Rebooting doesn't fix the
-  hang. The fix is `tccutil reset AppleEvents` followed by re-approving permission popups.
+description: >-
+  Fix AppleScript hanging indefinitely when automating macOS apps (Messages, Mail, etc.) due to stale
+  TCC (Transparency, Consent, and Control) Automation entries.
 author: Claude Code
 version: 1.0.0
 date: 2026-02-08
