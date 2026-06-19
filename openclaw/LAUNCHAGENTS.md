@@ -122,42 +122,31 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
-| `ai.openclaw.boa-keepalive` | 5min | `scrape_mortgage.py --lender boa --keep-alive` | Temporary BoA browser-session durability experiment; verifies the live tab and atomically captures rotated cookies |
-| `ai.openclaw.boa-browser-heartbeat` | 1min | `scrape_mortgage.py --lender boa --browser-heartbeat` | Temporary BoA UI heartbeat; sends no API traffic and dynamically accepts the two-minute session warning when present |
+### Retired BoA Session-Durability Agents
 
-### BoA Session Durability Agents
+The paired five-minute keep-alive and one-minute UI heartbeat were tested on
+2026-06-18. They reliably dismissed the browser inactivity warning, but BoA
+still invalidated the server session after at least 10 hours and 13 minutes.
+Both labels are booted out and persistently disabled on the Mini:
 
-These agents are a paired 24-48 hour experiment, not a credential-login system. They require an already-authenticated BoA tab in Pinchtab Chrome. The normal weekly scrape uses the cookie-replay fast path and only attaches to Chrome if those cookies are rejected.
+```bash
+ssh dylans-mac-mini 'launchctl print-disabled "gui/$(id -u)" | grep -E "ai\.openclaw\.boa-(keepalive|browser-heartbeat)"'
+```
 
-- `ai.openclaw.boa-keepalive` runs every 5 minutes. It verifies the tab before and after a same-origin BoA API request, sends a trusted no-click mouse move, and atomically persists the current cookie jar at `~/.openclaw/.boa_cookies.json`; its logs contain metadata only.
-- `ai.openclaw.boa-browser-heartbeat` runs every minute. It does not call a BoA account API. It sends browser-level activity and uses the accessibility tree to accept the two-minute inactivity-warning dialog's `OK` button when it appears.
-- Neither agent logs cookie values, credentials, or account response bodies. A real browser-auth check is required because a successful API response alone is insufficient.
-
-Source plists are:
+Do not bootstrap or kickstart them during normal recovery. Their source plists
+are retained for incident history only:
 
 ```text
 openclaw/launchagents/ai.openclaw.boa-keepalive.plist
 openclaw/launchagents/ai.openclaw.boa-browser-heartbeat.plist
 ```
 
-Check the installed jobs and force one run without changing their schedule:
-
-```bash
-ssh dylans-mac-mini 'launchctl print "gui/$(id -u)/ai.openclaw.boa-keepalive"'
-ssh dylans-mac-mini 'launchctl print "gui/$(id -u)/ai.openclaw.boa-browser-heartbeat"'
-ssh dylans-mac-mini 'launchctl kickstart -p "gui/$(id -u)/ai.openclaw.boa-keepalive"'
-ssh dylans-mac-mini 'launchctl kickstart -p "gui/$(id -u)/ai.openclaw.boa-browser-heartbeat"'
-```
-
-Healthy status is `ok` for the keep-alive and `ok` or `warning_dismissed` for the heartbeat. Treat `cdp_unavailable`, `not_authenticated`, `api_rejected`, `tab_lost_auth`, `warning_unhandled`, or any other status as a failure to investigate. Preserve the existing cookie file and inspect the logs first:
-
-```bash
-ssh dylans-mac-mini 'tail -n 40 ~/Library/Logs/boa-keepalive.log'
-ssh dylans-mac-mini 'tail -n 40 ~/Library/Logs/boa-browser-heartbeat.log'
-ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 scrape_mortgage.py --lender boa --verify-auth'
-```
-
-Do not add quiet hours or jitter the cadence while the initial soak is being measured. Do not run `--re-auth` for BoA from a LaunchAgent or the weekly cron. If the live tab and cookie replay both expire, recover with one interactive login in the Pinchtab Chrome window, then run the normal BoA scrape to recapture cookies.
+A controlled raw-CDP credential-login trial succeeded once without MFA, but no
+automatic re-auth job is deployed. The replacement must be a one-attempt
+command invoked by the OpenClaw cron agent only after cookie replay and
+live-tab authentication both fail. It must use the existing Pinchtab Chrome
+tab, stop and alert on MFA or any challenge, and never invoke `op` from a
+LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 
 ## Mac Mini — Calendar-Based (StartCalendarInterval)
 
@@ -202,6 +191,8 @@ Do not add quiet hours or jitter the cadence while the initial soak is being mea
 |-------|------|--------|
 | `ai.openclaw.weekly-upgrade` | `.plist.disabled` | Weekly auto-upgrade removed 2026-03-12; upgrades now manual |
 | `ai.openclaw.usage-token-push` | `usage-token-push.plist.disabled` | Replaced by `oauth-refresh` — was pushing OAuth cache from laptop keychain to Mini, fragile (required laptop open + keychain readable). Lingered as `.plist` on Mini for weeks firing self-loop SSH every 30 min and exit-255'ing; renamed to `.disabled` and bootout'd on 2026-05-10 post-Tahoe-26.4.1 reboot. |
+| `ai.openclaw.boa-keepalive` | `ai.openclaw.boa-keepalive.plist` | Disabled 2026-06-18: UI heartbeat did not prevent BoA's server-side session cutoff. |
+| `ai.openclaw.boa-browser-heartbeat` | `ai.openclaw.boa-browser-heartbeat.plist` | Disabled 2026-06-18 with the keep-alive experiment; source retained for history only. |
 
 ## New LaunchAgent Checklist
 

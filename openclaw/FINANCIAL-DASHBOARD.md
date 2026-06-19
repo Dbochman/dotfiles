@@ -1,8 +1,8 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.8 (2026-06-18)
+## Status: v1.9 (2026-06-18)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path plus an active browser-session durability experiment; an interactive login is only the recovery path when both have expired.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path; its retired interval experiment found a server-side timeout, and a guarded raw-CDP re-auth fallback is not yet deployed.
 
 `8585` is also the canonical data source for the Forecast Dashboard on `8586`. Its owner-aware forecast baseline lets the forecast begin from the latest reconciled source snapshot rather than a wholly fixed portfolio assumption.
 
@@ -164,44 +164,36 @@ The whole loop is documented inline in the cron prompt — `openclaw cron list -
 3. **Auth verification.** The BoA sign-in URL can render either the account dashboard or the login form, and the title can remain "Accounts Overview" after sign-out. The scraper checks visible login controls before using the title heuristic. A JSON API response alone is not proof that the live tab remains authenticated.
 4. **Session safety.** Do not call `page.goto`, close the browser context, or kill Pinchtab Chrome after a fresh login. BoA session cookies are process-bound even though the captured cookie store can outlive Chrome for a limited time.
 
-The regular cron must never run `--re-auth` for BoA. A one-time interactive recovery may trigger MFA or device/risk checks; it is not a reliable unattended login mechanism.
+The regular cron currently must not run `--re-auth` for BoA. A controlled raw-CDP login from the signed-off Pinchtab tab succeeded once without MFA, but it has not yet been implemented as a guarded cron fallback. Do not substitute Playwright login or a LaunchAgent credential fetch.
 
-### BoA Session Durability Experiment
+### Retired BoA Session-Durability Experiment
 
-The current 24-48 hour experiment has no quiet-hours gap and uses two independent interval agents:
+The five-minute keep-alive and one-minute browser heartbeat remained healthy for
+at least 10 hours and 13 minutes, repeatedly dismissing the BoA UI warning.
+BoA then returned HTTP 403 and the live tab became unauthenticated despite
+continuous CDP availability. Both LaunchAgents are persistently disabled on the
+Mini. Their logs remain forensic evidence only:
 
-| Agent | Cadence | Responsibility | Log |
-|-------|---------|----------------|-----|
-| `ai.openclaw.boa-keepalive` | 5 minutes | Verifies live-tab authentication before and after a same-origin API ping, sends a trusted mouse move, and atomically saves the current cookie jar. Logs contain metadata only. | `~/Library/Logs/boa-keepalive.log` |
-| `ai.openclaw.boa-browser-heartbeat` | 1 minute | Sends no account API traffic. It sends browser-level activity and, if present, dynamically accepts BoA's two-minute inactivity-warning `OK` control. | `~/Library/Logs/boa-browser-heartbeat.log` |
+| Agent | Status | Log |
+|-------|--------|-----|
+| `ai.openclaw.boa-keepalive` | Disabled | `~/Library/Logs/boa-keepalive.log` |
+| `ai.openclaw.boa-browser-heartbeat` | Disabled | `~/Library/Logs/boa-browser-heartbeat.log` |
 
-Healthy log statuses are `ok` for the keep-alive and `ok` or `warning_dismissed` for the heartbeat. Any other status is a session-health failure to investigate, not a reason to overwrite or delete the existing cookie store. Logs intentionally contain only status, HTTP/content-type metadata, and cookie counts or expiry metadata; never print cookie values or account response bodies.
+Do not bootstrap or kickstart these labels during normal recovery. See
+`BOA-SESSION-DURABILITY-HANDOFF.md` for the measured timeline.
 
-Verify the browser independently during the soak:
+### Current BoA Recovery And Proposed Fallback
 
-```bash
-ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 scrape_mortgage.py --lender boa --verify-auth'
-ssh dylans-mac-mini 'tail -n 20 ~/Library/Logs/boa-keepalive.log'
-ssh dylans-mac-mini 'tail -n 20 ~/Library/Logs/boa-browser-heartbeat.log'
-```
-
-The initial measurement should keep both cadences fixed. Record the first non-healthy status, any 4xx/API rejection, or loss of browser authentication to distinguish an inactivity timeout from a server-side absolute or risk timeout.
-
-### Manual BoA Bootstrap (recovery only)
-
-Tier 2 sessions auto-renew via `--re-auth`. BoA needs a human only after both the replayed cookies and live Pinchtab tab are no longer usable:
-
-1. Screen Share or VNC into `dylans-mac-mini` and ensure the normal Pinchtab Chrome instance is running. If Pinchtab has evicted every target, restore its tab before logging in. Do not kill a still-authenticated Chrome process.
-2. In the Pinchtab Chrome window, sign in to BoA, complete any MFA or device-trust prompts, and leave the account overview tab open.
-3. Capture a fresh cookie store through the normal scrape:
-   ```bash
-   ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 scrape_mortgage.py --lender boa --headless --merge'
-   ```
-4. Confirm the two interval agents can see the recovered tab:
-   ```bash
-   ssh dylans-mac-mini 'launchctl kickstart -p "gui/$(id -u)/ai.openclaw.boa-keepalive"'
-   ssh dylans-mac-mini 'launchctl kickstart -p "gui/$(id -u)/ai.openclaw.boa-browser-heartbeat"'
-   ```
+1. The normal scrape first replays the protected cookie store and then uses raw
+   CDP if the live Pinchtab tab remains authenticated.
+2. If both paths fail, current production behavior is a human recovery in the
+   Pinchtab Chrome window, followed by the normal scrape to capture fresh
+   cookies. Do not kill a still-authenticated Chrome process.
+3. The next implementation should add a raw-CDP, one-attempt re-auth command
+   that receives credentials only from the authorized cron-agent context. It
+   must stop and alert on MFA, device/risk challenges, an unavailable form, or
+   any login error, then verify the real tab and run the normal scrape on
+   success. It is not deployed yet.
 
 For Tier 2 manual debugging (e.g. PennyMac credentials change): just run `--re-auth` with creds exported from `op read` — same as the cron does.
 
@@ -238,8 +230,8 @@ Mac Mini (dylans-mac-mini)
 |-------|------|---------|------|
 | `ai.openclaw.financial-dashboard` | KeepAlive | `venv/bin/python3 serve_dashboard.py` | `~/.openclaw/logs/financial-dashboard.{log,err.log}` |
 | `ai.openclaw.financial-dashboard-plaid-sync` | StartCalendarInterval, daily 7:15 AM | `financial-dashboard-plaid-sync.py` | `~/.openclaw/logs/financial-dashboard-plaid-sync.{log,err.log}` |
-| `ai.openclaw.boa-keepalive` | StartInterval (5 min) | `scrape_mortgage.py --lender boa --keep-alive` | `~/Library/Logs/boa-keepalive.log` |
-| `ai.openclaw.boa-browser-heartbeat` | StartInterval (1 min) | `scrape_mortgage.py --lender boa --browser-heartbeat` | `~/Library/Logs/boa-browser-heartbeat.log` |
+| `ai.openclaw.boa-keepalive` | Disabled | Retired five-minute browser session experiment | `~/Library/Logs/boa-keepalive.log` |
+| `ai.openclaw.boa-browser-heartbeat` | Disabled | Retired one-minute UI warning experiment | `~/Library/Logs/boa-browser-heartbeat.log` |
 
 ---
 

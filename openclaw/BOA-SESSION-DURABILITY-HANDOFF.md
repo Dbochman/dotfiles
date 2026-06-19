@@ -2,28 +2,28 @@
 
 **Started:** 2026-06-18
 
-This is the continuation checklist for the active Bank of America session
-durability experiment. Read this first, then use
-`FINANCIAL-DASHBOARD.md` and `LAUNCHAGENTS.md` for the full implementation
-and recovery details.
+**Status:** The interval-agent experiment is complete. Both BoA interval
+LaunchAgents are persistently disabled on the Mini. A one-shot raw-CDP
+credential-login trial succeeded without MFA, but a cron re-auth fallback has
+not yet been implemented or enabled.
+
+This is the continuation checklist for the Bank of America scrape path. Read
+this first, then use `FINANCIAL-DASHBOARD.md` and `LAUNCHAGENTS.md` for the
+full implementation and recovery details.
 
 ## Objective
 
-Determine whether the authenticated Pinchtab Chrome session can remain usable
-for at least 24-48 hours without human intervention. The experiment must
-distinguish a browser-inactivity timeout from a BoA server-side absolute or
-risk timeout.
-
-Do not change cadence, add jitter, introduce quiet hours, restart Chrome, or
-manually run the agents while the initial measurement is in progress. Those
-changes make the result difficult to interpret.
+The original objective was to determine whether trusted browser activity could
+keep the authenticated Pinchtab Chrome session usable for 24-48 hours. That
+experiment is complete: it ruled out browser inactivity but found a BoA
+server-side absolute or risk timeout after roughly ten hours.
 
 ## Deployed State
 
 | Component | Schedule | Purpose |
 |---|---:|---|
-| `ai.openclaw.boa-keepalive` | 5 minutes | Verifies the authenticated live tab before and after a same-origin account API request, sends trusted browser activity, and atomically stores the current cookie jar. |
-| `ai.openclaw.boa-browser-heartbeat` | 1 minute | Sends no account API request. It sends browser activity and dynamically accepts the BoA two-minute inactivity warning's `OK` control when needed. |
+| `ai.openclaw.boa-keepalive` | Disabled | Retired interval experiment. It verified the tab and persisted the cookie jar every five minutes. |
+| `ai.openclaw.boa-browser-heartbeat` | Disabled | Retired interval experiment. It dismissed the two-minute browser inactivity warning every minute. |
 | Weekly cron `financial-scrape-0001` | Sunday 04:05 ET | Uses direct cookie replay first, then raw-CDP fallback to the existing Pinchtab tab if replay is rejected. |
 
 The normal BoA scrape first uses `requests` with the mode-`0600` cookie
@@ -57,7 +57,7 @@ blindly from the tracked source because it can contain newer operational edits.
 - Logs contain status and safe cookie-count or expiry metadata only. Never
   print cookie values, credentials, or account response bodies.
 
-## Evaluation After 24-48 Hours
+## Historical Evaluation After 24-48 Hours
 
 Run these checks from a machine that can SSH to the Mini:
 
@@ -93,11 +93,18 @@ Before any recovery action:
 4. Do not kill or restart Pinchtab Chrome before collecting evidence. BoA
    session cookies are process-bound and a restart destroys useful evidence.
 
-If both replayed cookies and the live tab have expired, recovery is one
-interactive login in the Pinchtab Chrome window. Do not run `--re-auth` for
-BoA from cron or a LaunchAgent. After the login reaches the account overview,
-run the normal BoA scrape once to capture a fresh cookie jar, then let the two
-interval agents resume.
+If both replayed cookies and the live tab have expired, the current deployed
+recovery is one interactive login in the Pinchtab Chrome window, followed by
+the normal BoA scrape to capture a fresh cookie jar. The interval agents remain
+disabled.
+
+A controlled raw-CDP credential-login trial succeeded from the signed-off BoA
+page without MFA. That is evidence for a future on-demand fallback, not a
+license to run generic `--re-auth` from cron or a LaunchAgent. A future
+implementation must use the existing Pinchtab Chrome tab, make exactly one
+normal credential submission, and stop with an alert on MFA, a security
+challenge, an unavailable form, or any login error. It must not use `op`
+inside a LaunchAgent.
 
 ## Observed Outcome: 2026-06-18
 
@@ -111,6 +118,7 @@ The initial soak did not reach 24 hours.
 | 20:31:38 | Keep-alive received `api_rejected http_status=403`. |
 | 20:33:12 | Heartbeat first reported `not_authenticated`. |
 | 23:36:26 | Independent `--verify-auth` reported `not_authenticated`. |
+| About 23:44 | Controlled raw-CDP credential login completed without MFA; independent verification passed and the normal scrape captured a fresh cookie jar. |
 
 The agents ran continuously at their expected one- and five-minute cadences,
 and CDP remained available. The warning dialog was dismissed repeatedly,
@@ -122,19 +130,27 @@ The cookie file remains mode `0600` and was preserved. Its expiry metadata
 was later than the failure, so cookie expiry metadata is not a reliable proxy
 for server-side session validity.
 
-Leave the two agents loaded unless log noise becomes a problem. They make no
-browser activity change while the tab is unauthenticated and will resume on
-their next interval after a later interactive login. Do not use this result as
-evidence that the current design can run BoA autonomously.
+Both interval labels were booted out and persistently disabled after the
+recovery. Their source plists remain as reference material, but they must not
+be reloaded as part of normal BoA recovery. Do not use either the failed soak or
+the single successful credential-login trial as evidence of fully autonomous
+BoA operation.
 
 ## Decision After the Soak
 
 Do not test lower frequency or jitter as a remedy for this failure. The
-current heartbeat handles the UI's inactivity prompt, but it does not prevent
-the server-side timeout. Any future design must plan for an interactive
-recovery at least this often or use the PDF statement parser as the reliable
-backstop. A second soak may characterize the timeout more precisely after the
-next manual login, but it should not be treated as an autonomous solution.
+heartbeat handled the UI's inactivity prompt, but it did not prevent the
+server-side timeout.
+
+The next implementation should be a guarded raw-CDP re-auth command invoked
+only after the normal scrape reports both stale replayed cookies and an
+unauthenticated live tab. The OpenClaw cron agent may supply credentials from
+its authorized service-account context; a LaunchAgent must not. The command
+must attempt login once, never log values, verify the live tab, run the normal
+scrape to capture cookies, and alert rather than retry on MFA or failure.
+
+Until that implementation has passed repeat attempts across session expiries,
+the PDF statement parser remains the reliable backstop.
 
 ## Worktree Safety
 
