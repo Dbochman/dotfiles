@@ -214,8 +214,9 @@ financial-dashboard source system.
 The scheduled capture runs at 07:35 after Plaid (07:15) and crypto (07:25).
 It POSTs to the loopback `8586` endpoint, retains no response body beyond
 status metadata, retries short local-service failures, and never invokes
-`op`. An identical same-day source state is idempotent; a changed state is a
-new immutable revision.
+`op`. Its observation date follows the household's `America/New_York` calendar
+day rather than the UTC capture timestamp. An identical same-day source state
+is idempotent; a changed state is a new immutable revision.
 
 `Save forecast` is an explicit browser action. The server records the browser
 model revision hash and compact annual outputs rather than trying to recreate a
