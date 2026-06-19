@@ -15,7 +15,7 @@ Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API en
 - Portfolio inputs use canonical depository balances and classified investment holdings from the latest matching snapshot.
 - Credit and loan balances remain liabilities; they are not promoted into investable assets and reduce net worth with Plaid's documented balance convention.
 - The contract reports `combined`, `dylan`, `julia`, and `household` scopes. Household accounts are separate so the forecast can count them once in Combined rather than twice across individual views.
-- Trailing three complete canonical months supply annualized cash-flow inputs. The current partial month is display context, not an annualization input.
+- Trailing three complete canonical months supply annualized net cash-flow calibration context. The current partial month is display context, not an annualization input.
 - Cash-flow `confidence` explicitly identifies observed recognized Plaid deposits and canonical spending. It does not establish gross pay, withholding and payroll taxes, benefits, or retirement contributions.
 - Reconciliation, ownership, holdings, and classification coverage are explicit. A `review`, `partial`, or `unavailable` status must not be promoted as a complete live baseline.
 - Cash-flow income is quality-gated: salary/wage PFC deposits are recognized automatically; `TRANSFER_*` movements and tax refunds are excluded; other `INCOME_*` deposits wait for one local source-level review. The contract includes `source_status.income_review` so `8586` can expose any pending classification blocker.
@@ -27,7 +27,7 @@ The Forecast Dashboard composes these source scopes with any still-unlinked owne
 
 ## Portfolio Allocation, Location, And Geography
 
-`/api/forecast-baseline` version `4` reports both the broad live allocation
+`/api/forecast-baseline` version `5` reports both the broad live allocation
 (`equity`, `bond`, `cash`) and an `equity_geography` allocation for each owner
 scope (`us_equity`, `international_equity`, `unclassified_equity`). It is the
 sole source of current allocation inputs for Forecast; the forecast service
@@ -40,11 +40,16 @@ does not query `finance.db` directly.
   `cash` allocation before Forecast displays it.
 - `asset_location` reconciles each ready scope into depository, taxable
   brokerage, IRA, workplace retirement, stock plan, and restricted balances,
-  with institution aggregates that repeat the same split. It must not be mixed
+  with a complete `allocation_by_location` equity/bond/cash matrix and
+  institution aggregates that repeat the location split. Forecast uses only
+  depository and taxable-brokerage rows for funding and taxable rebalancing;
+  the remaining rows stay valued but are not spendable. It must not be mixed
   with a static Forecast owner supplement.
 - `concentration` reports up to ten direct equity/stock positions and a 5%
-  review threshold with location and institution context. Reviewed target-date
-  funds are excluded; this is a review signal, not a trade instruction.
+  review threshold with location and institution context. `tracked_positions`
+  preserves configured direct risk positions such as NVDA even outside the
+  display top ten. Reviewed target-date funds are excluded; this is a review
+  signal, not a trade instruction.
 - Direct securities are classified through `config.yaml` ticker overrides.
   `SWVXX`, for example, is explicitly cash rather than generic ETF equity.
 - Target-date holdings use reviewed broad and within-equity look-throughs in

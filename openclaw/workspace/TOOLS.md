@@ -229,7 +229,7 @@ If the same joint account is visible through separate owner logins, treat it as 
 
 Repo `~/repos/Financial Advisor/` on Mini; interactive forecast dashboard on port 8586. It reads `8585` first through localhost, validates the reconciliation and source-coverage gate, then caches `/api/current-snapshot` for five minutes.
 
-- Live inputs: source-backed starting equity/bond/cash allocation, trailing-three-complete-month cash flow, and mortgage balances.
+- Live inputs: source-backed starting equity/bond/cash allocation and mortgage balances; trailing-three-complete-month cash flow is calibration context, not a gross-model input.
 - Model supplements: crypto/art, compensation, salaries, home equity, and any owner scope without a complete linked source.
 - Ownership rule: Combined adds the household scope once. Never infer a missing owner scope as a zero balance.
 - Operational reference: `~/dotfiles/openclaw/FORECAST-DASHBOARD.md`.

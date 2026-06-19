@@ -23,7 +23,7 @@ Primary URLs:
 What it is for:
 
 - Interactive scenario modeling for Dylan and Julia's household allocation plan
-- Reconciled live portfolio, cash-flow, and mortgage inputs when source coverage is complete
+- Reconciled live portfolio and mortgage inputs, plus cash-flow calibration context, when source coverage is complete
 - Reconciled display context for current net worth, monthly cash flow, and selected market prices
 - Current-source health/warning surface for upstream `8585` data gaps
 - Monthly operating checklist with mutable dashboard-only state (`done`, `skipped`, `snoozed`) that does not rewrite the planning feed
@@ -127,7 +127,7 @@ The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-m
 
 ### Crypto Coverage Fallback
 
-Crypto owner coverage normally requires a fresh synced exchange or wallet source. If a known credential is mismatched or temporarily unavailable, add reviewed, dated `symbol` and `quantity` entries to `~/.openclaw/forecast-dashboard/crypto-manual-values.json` with `model_coverage: true`. Their quantities are live-priced while the dashboard preserves the statement as-of date; static `value_usd` entries remain manual valuations for assets without a live price. Set `coinbase_enabled: false` in the local `crypto-sync-config.json` during the repair so the mismatched account is not counted or allowed to overwrite the statement fallback.
+Crypto owner coverage normally requires a fresh synced exchange or wallet source. If a known credential is mismatched or temporarily unavailable, add reviewed, dated `symbol` and `quantity` entries to `~/.openclaw/forecast-dashboard/crypto-manual-values.json` with `model_coverage: true`. If a synced source for that owner remains in the cache, the manual token entry must set `replaces_source_id` to that source, or explicitly set `independent: true` for a separate asset; ambiguous overlap is omitted and blocks model eligibility. Their quantities are live-priced while the dashboard preserves the statement as-of date; static `value_usd` entries remain manual valuations for assets without a live price. Set `coinbase_enabled: false` in the local `crypto-sync-config.json` during the repair so the mismatched account is not counted or allowed to overwrite the statement fallback.
 
 ---
 
@@ -159,7 +159,7 @@ The server converts grams with `31.1034768` grams per troy ounce and uses its fi
 - Mortgage balances and payment data from `/api/mortgage/summary`
 - Latest reconciled net worth from `/api/net-worth`
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
-- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, a reconciled spendable/depository/taxable-brokerage versus retirement/restricted cash split, account location, institution and direct-position concentration, U.S./international equity geography, trailing-full-month recognized cash flow with confidence semantics, and source-review blockers
+- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, a reconciled asset-class location matrix separating deployable depository/taxable assets from retirement/restricted assets, institution and direct-position concentration, U.S./international equity geography, trailing-full-month recognized cash-flow calibration context, and source-review blockers
 - ETH price from CoinGecko
 - Gold and silver spot prices from GoldPrice.org, returned as USD per troy ounce
 - Tracked public tickers from Nasdaq where available
@@ -176,16 +176,16 @@ Payroll data may remain unavailable and surface as a warning. Treat the service 
 
 The browser applies only the parts of the model that have a complete, reconciled source contract:
 
-- Source-backed equity, fixed-income, and cash sleeves seed the starting portfolio and its initial allocation.
-- The live cash split is decision support, not a new allocation sleeve: the model retains total portfolio cash, while the live strip and Target Mix Details expose only reconciled `spendable` cash for tax-reserve, emergency, or mortgage decisions.
+- Source-backed equity, fixed-income, and cash sleeves seed the starting portfolio and its initial allocation. The reconciled location matrix places depository/taxable assets in the deployable sleeve and keeps IRA, workplace-retirement, stock-plan, and restricted assets valued but outside taxable funding and rebalancing.
+- The live cash split is decision support, not a new allocation sleeve: the live strip and Target Mix Details expose only reconciled `spendable` cash for tax-reserve, emergency, or mortgage decisions.
 - Asset Location & Concentration exposes live tax/access treatment, institution exposure, and direct-stock review items only when the selected source scope recomposes. Combined withholds the panel when a static owner supplement would otherwise be mixed in.
 - Rebalance Execution ranks material live sleeve drift against the selected scenario target. It can flag a direct position for review but does not generate an order; tax lots, account menus, trading restrictions, and transaction costs remain an execution check.
 - Target Mix Details uses the baseline's live U.S./international equity geography;
   it does not apply a static 70/30 split. An `ok` geography enables actual
   Buy/Trim gaps. A `partial`, `review`, or unavailable geography displays a
   map-review state and withholds equity trade guidance.
-- Three trailing complete months of recognized source cash flow seed annual savings and annual expenses. The current partial month remains display context. This is net bank cash flow, not gross payroll, withholding, benefits, or compensation-event detail.
-- Scenario controls carry `Live`, `Manual override`, or `Planning assumption` provenance. A manual edit or URL parameter pins the value against automatic refresh until Reset; a cash-flow input is `Live` only when the source reports observed trailing Plaid net flow.
+- Three trailing complete months of recognized source cash flow calibrate the scenario only; they do not seed annual non-salary inflow or annual expenses. The current partial month remains display context. This is net bank cash flow, not gross payroll, withholding, benefits, or compensation-event detail.
+- Scenario controls carry `Live`, `Manual override`, or `Planning assumption` provenance. A manual edit or URL parameter pins live-managed fields against automatic refresh until Reset; gross cash-flow controls remain planning assumptions even when Plaid net flow is observed.
 - Current mortgage balances seed the Combined scope; the existing individual-scope 50/50 mortgage convention is retained for Dylan and Julia views.
 - Crypto/art, unvested equity compensation, salaries, retirement years, home equity, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced.
 
@@ -199,7 +199,7 @@ Manual control remains available. A URL parameter or direct edit is labeled as a
 
 The baseline is refreshed from the `8586` current-snapshot cache every five minutes after `8585` has data. The Plaid source sync is scheduled daily, so this is a current-day planning baseline, not an intraday account-balance feed.
 
-The live net-worth card and current-month cash-flow card remain display context. Only the separate reconciled `projection_baseline` may change eligible starting portfolio, annual cash-flow, and mortgage inputs; it never overwrites salary, compensation, tax, or other unsourced scenario assumptions.
+The live net-worth card and current-month cash-flow card remain display context. Only the separate reconciled `projection_baseline` may change eligible starting portfolio, crypto, and mortgage inputs; observed cash flow remains calibration context and never overwrites salary, expenses, compensation, tax, or other unsourced scenario assumptions.
 
 ### Forecast History
 
