@@ -217,7 +217,7 @@ Repo `~/repos/financial-dashboard/` on Mini; canonical finance API and SPA on po
 
 - **Tier 1** — Tesla Solar (API only).
 - **Tier 2** — Eversource, NG Electric, NG Gas, BWSC, PennyMac. Playwright with `--re-auth` flag; each saves `storage_state.json` in its `.NAME_session/` dir. PennyMac auto-fetches email-MFA codes from Julia's Gmail via `gws`. Creds at `op://OpenClaw/<url-style-title>/...`.
-- **Tier 2b** — BoA. Bot detection defeats every Playwright-launched approach; instead the scraper does `playwright.chromium.connect_over_cdp(...)` to Pinchtab's already-running Chrome (port discovered by `ps`-grep for `--user-data-dir=~/.pinchtab/profiles`). Bootstrap rare (weeks-months) — user Screen Shares + manually logs in once. Never `page.goto()` or `context.close()` in CDP mode.
+- **Tier 2b** — BoA. Bot detection defeats every Playwright-launched approach, so the scraper uses a narrow raw-CDP WebSocket to Pinchtab's already-running Chrome (port discovered by `ps`-grep for `--user-data-dir=~/.pinchtab/profiles`). After stale cookie replay and an explicitly `not_authenticated` tab, cron may run one `--boa-re-auth` submission; it stops for MFA or any challenge. Never navigate or close Pinchtab Chrome in CDP mode.
 
 Cron prompt at `openclaw cron list --json` (id `financial-scrape-0001`) is the canonical operational spec. Dev architecture: `~/repos/financial-dashboard/CLAUDE.md`. Reusable patterns: skills `playwright-email-mfa-flow`, `playwright-device-trust-bootstrap`, `web-auth-check-by-title-not-url`.
 

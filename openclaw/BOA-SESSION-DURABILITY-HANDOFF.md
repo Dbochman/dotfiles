@@ -3,9 +3,9 @@
 **Started:** 2026-06-18
 
 **Status:** The interval-agent experiment is complete. Both BoA interval
-LaunchAgents are persistently disabled on the Mini. A one-shot raw-CDP
-credential-login trial succeeded without MFA, but a cron re-auth fallback has
-not yet been implemented or enabled.
+LaunchAgents are persistently disabled on the Mini. The weekly cron now has a
+guarded raw-CDP re-auth fallback: one credential submission only after stale
+cookie replay and an explicitly `not_authenticated` Pinchtab tab.
 
 This is the continuation checklist for the Bank of America scrape path. Read
 this first, then use `FINANCIAL-DASHBOARD.md` and `LAUNCHAGENTS.md` for the
@@ -24,7 +24,7 @@ server-side absolute or risk timeout after roughly ten hours.
 |---|---:|---|
 | `ai.openclaw.boa-keepalive` | Disabled | Retired interval experiment. It verified the tab and persisted the cookie jar every five minutes. |
 | `ai.openclaw.boa-browser-heartbeat` | Disabled | Retired interval experiment. It dismissed the two-minute browser inactivity warning every minute. |
-| Weekly cron `financial-scrape-0001` | Sunday 04:05 ET | Uses direct cookie replay first, then raw-CDP fallback to the existing Pinchtab tab if replay is rejected. |
+| Weekly cron `financial-scrape-0001` | Sunday 04:05 ET | Uses cookie replay, raw-CDP tab fallback, then one guarded raw-CDP re-auth only when the tab is explicitly signed out. |
 
 The normal BoA scrape first uses `requests` with the mode-`0600` cookie
 store at `~/.openclaw/.boa_cookies.json`. On authentication failure it uses
@@ -52,33 +52,18 @@ blindly from the tracked source because it can contain newer operational edits.
   `OK` handler returned `warning_dismissed`.
 - A title alone is not valid BoA authentication evidence. The scraper rejects
   a visible login form even if the title still says "Accounts Overview."
-- A successful API response alone is not sufficient either. Use
-  `--verify-auth` to confirm the real tab remains authenticated.
+- A successful API response alone is not sufficient either. `--verify-auth`
+  confirms the real tab state before the cron decides whether re-auth is safe.
+- The guarded `--boa-re-auth` command is tested against its raw-CDP control
+  flow and has one live successful no-MFA trial. It is not an MFA solver.
 - Logs contain status and safe cookie-count or expiry metadata only. Never
   print cookie values, credentials, or account response bodies.
 
-## Historical Evaluation After 24-48 Hours
+## Historical Evaluation
 
-Run these checks from a machine that can SSH to the Mini:
-
-```bash
-ssh dylans-mac-mini 'tail -n 80 ~/Library/Logs/boa-keepalive.log'
-ssh dylans-mac-mini 'tail -n 80 ~/Library/Logs/boa-browser-heartbeat.log'
-ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 scrape_mortgage.py --lender boa --verify-auth'
-ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 scrape_mortgage.py --lender boa --headless --merge'
-```
-
-The result is a success only when all of the following are true:
-
-- Keep-alive entries remain `ok`.
-- Heartbeat entries remain `ok` or `warning_dismissed`.
-- `--verify-auth` reports `authenticated`.
-- The normal BoA scrape succeeds, preferably through cookie replay without
-  needing the browser fallback.
-
-Record the earliest non-healthy timestamp, if any. Check for `api_rejected`
-or HTTP 4xx metadata as evidence of an API/session expiration, and compare it
-with the browser-auth result to identify whether the live tab also expired.
+The interval experiment was conclusive: it prevented the browser idle warning
+but did not prevent BoA's server-side cutoff. The two logs remain forensic
+evidence; they are no longer health signals for a running service.
 
 ## Failure Procedure
 
@@ -93,18 +78,21 @@ Before any recovery action:
 4. Do not kill or restart Pinchtab Chrome before collecting evidence. BoA
    session cookies are process-bound and a restart destroys useful evidence.
 
-If both replayed cookies and the live tab have expired, the current deployed
-recovery is one interactive login in the Pinchtab Chrome window, followed by
-the normal BoA scrape to capture a fresh cookie jar. The interval agents remain
-disabled.
+The weekly cron now runs the following guarded sequence after a normal BoA
+scrape failure:
 
-A controlled raw-CDP credential-login trial succeeded from the signed-off BoA
-page without MFA. That is evidence for a future on-demand fallback, not a
-license to run generic `--re-auth` from cron or a LaunchAgent. A future
-implementation must use the existing Pinchtab Chrome tab, make exactly one
-normal credential submission, and stop with an alert on MFA, a security
-challenge, an unavailable form, or any login error. It must not use `op`
-inside a LaunchAgent.
+1. Run `--verify-auth` against the existing Pinchtab tab.
+2. Proceed only when its status is exactly `not_authenticated`. A
+   `cdp_unavailable` result is an incident, not permission to submit creds.
+3. Supply `SCRAPER_USER` and `SCRAPER_PW` from the cron agent's authorized
+   context and run `--boa-re-auth` once.
+4. Retry the normal scrape once only after `authenticated` or a race-safe
+   `already_authenticated` result.
+
+`--boa-re-auth` does not launch or navigate Chrome, fetch credentials, solve
+MFA, or retry. It stops and alerts on MFA, a security challenge, unavailable
+form, rejected login, timeout, or CDP failure. Do not use generic
+`--re-auth` for BoA, and do not put credential lookup into a LaunchAgent.
 
 ## Observed Outcome: 2026-06-18
 
@@ -142,15 +130,11 @@ Do not test lower frequency or jitter as a remedy for this failure. The
 heartbeat handled the UI's inactivity prompt, but it did not prevent the
 server-side timeout.
 
-The next implementation should be a guarded raw-CDP re-auth command invoked
-only after the normal scrape reports both stale replayed cookies and an
-unauthenticated live tab. The OpenClaw cron agent may supply credentials from
-its authorized service-account context; a LaunchAgent must not. The command
-must attempt login once, never log values, verify the live tab, run the normal
-scrape to capture cookies, and alert rather than retry on MFA or failure.
-
-Until that implementation has passed repeat attempts across session expiries,
-the PDF statement parser remains the reliable backstop.
+The next validation is observational: record the first real cron-triggered
+re-auth result and whether the single normal-scrape retry succeeds. No retry
+loop, MFA automation, or interval agent should be added without new evidence.
+Until repeat expiries prove the fallback, the PDF statement parser remains the
+reliable backstop.
 
 ## Worktree Safety
 

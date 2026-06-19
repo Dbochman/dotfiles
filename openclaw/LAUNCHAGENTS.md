@@ -141,12 +141,11 @@ openclaw/launchagents/ai.openclaw.boa-keepalive.plist
 openclaw/launchagents/ai.openclaw.boa-browser-heartbeat.plist
 ```
 
-A controlled raw-CDP credential-login trial succeeded once without MFA, but no
-automatic re-auth job is deployed. The replacement must be a one-attempt
-command invoked by the OpenClaw cron agent only after cookie replay and
-live-tab authentication both fail. It must use the existing Pinchtab Chrome
-tab, stop and alert on MFA or any challenge, and never invoke `op` from a
-LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
+The interval agents are not replaced by another LaunchAgent. The weekly
+OpenClaw cron now invokes one guarded raw-CDP re-auth command only after cookie
+replay fails and `--verify-auth` reports `not_authenticated`. It uses the
+existing Pinchtab tab, stops on MFA or any challenge, and never invokes `op`
+from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 
 ## Mac Mini — Calendar-Based (StartCalendarInterval)
 

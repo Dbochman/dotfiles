@@ -1,8 +1,8 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.9 (2026-06-18)
+## Status: v1.10 (2026-06-18)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has a cookie-replay fast path; its retired interval experiment found a server-side timeout, and a guarded raw-CDP re-auth fallback is not yet deployed.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
 
 `8585` is also the canonical data source for the Forecast Dashboard on `8586`. Its owner-aware forecast baseline lets the forecast begin from the latest reconciled source snapshot rather than a wholly fixed portfolio assumption.
 
@@ -144,7 +144,7 @@ Seven scrapers run weekly via `financial-scrape-0001`. Each writes its own `<sou
 | 4 | `scrape_national_grid.py` (gas) | 2 self-heal | Playwright + `--re-auth` (shared NG session) | `login.nationalgridus.com` | Crosstown |
 | 5 | `scrape_bwsc.py` | 2 self-heal | Playwright + `--re-auth` (Microsoft B2C) | `umaxcustomerportalprod.b2clogin.com` | Crosstown |
 | 6 | `scrape_mortgage.py --lender pennymac` | 2 self-heal | Playwright + `--re-auth` + email-MFA via `gws` | `PennyMac` | Cabin |
-| 7 | `scrape_mortgage.py --lender boa` | **Cookie replay + 2b fallback** | Direct `requests` cookie replay; raw CDP attach to Pinchtab Chrome on expiry | Manual recovery only | Crosstown |
+| 7 | `scrape_mortgage.py --lender boa` | **Cookie replay + 2b fallback** | Direct `requests` cookie replay; raw CDP attach to Pinchtab Chrome; one guarded cron re-auth after explicit tab sign-out | `Bank of America` | Crosstown |
 
 **Why BoA is different.** BoA's bot detection defeats every Playwright-launched variant tried (headless old + new, channel=chrome, ignore-default-args, navigator.webdriver hidden, and force_visible). The browser fallback must attach to a Chrome that Pinchtab, not Playwright, launched. Chrome 149 also rejects Playwright's `connect_over_cdp` during `Browser.setDownloadBehavior`, so the scraper uses a narrow raw-CDP WebSocket shim instead.
 
@@ -164,7 +164,12 @@ The whole loop is documented inline in the cron prompt — `openclaw cron list -
 3. **Auth verification.** The BoA sign-in URL can render either the account dashboard or the login form, and the title can remain "Accounts Overview" after sign-out. The scraper checks visible login controls before using the title heuristic. A JSON API response alone is not proof that the live tab remains authenticated.
 4. **Session safety.** Do not call `page.goto`, close the browser context, or kill Pinchtab Chrome after a fresh login. BoA session cookies are process-bound even though the captured cookie store can outlive Chrome for a limited time.
 
-The regular cron currently must not run `--re-auth` for BoA. A controlled raw-CDP login from the signed-off Pinchtab tab succeeded once without MFA, but it has not yet been implemented as a guarded cron fallback. Do not substitute Playwright login or a LaunchAgent credential fetch.
+The regular cron must never run generic `--re-auth` for BoA. It uses the
+separate `--boa-re-auth` command only after the normal scrape failed and
+`--verify-auth` reports `not_authenticated`. The command uses the existing
+Pinchtab tab, submits once, saves fresh cookies on success, and stops on MFA,
+any challenge, form failure, rejection, timeout, or CDP failure. Do not
+substitute Playwright login or a LaunchAgent credential fetch.
 
 ### Retired BoA Session-Durability Experiment
 
@@ -182,18 +187,17 @@ Mini. Their logs remain forensic evidence only:
 Do not bootstrap or kickstart these labels during normal recovery. See
 `BOA-SESSION-DURABILITY-HANDOFF.md` for the measured timeline.
 
-### Current BoA Recovery And Proposed Fallback
+### Current BoA Recovery
 
 1. The normal scrape first replays the protected cookie store and then uses raw
    CDP if the live Pinchtab tab remains authenticated.
-2. If both paths fail, current production behavior is a human recovery in the
-   Pinchtab Chrome window, followed by the normal scrape to capture fresh
-   cookies. Do not kill a still-authenticated Chrome process.
-3. The next implementation should add a raw-CDP, one-attempt re-auth command
-   that receives credentials only from the authorized cron-agent context. It
-   must stop and alert on MFA, device/risk challenges, an unavailable form, or
-   any login error, then verify the real tab and run the normal scrape on
-   success. It is not deployed yet.
+2. When that fails, cron runs `--verify-auth`. It may invoke `--boa-re-auth`
+   only for `not_authenticated`, with credentials already supplied by the
+   authorized cron-agent context.
+3. `--boa-re-auth` makes one raw-CDP submission and returns without retrying.
+   After `authenticated`, cron retries the normal scrape once. All other
+   statuses alert for human recovery in the Pinchtab Chrome window. Do not kill
+   a still-authenticated Chrome process.
 
 For Tier 2 manual debugging (e.g. PennyMac credentials change): just run `--re-auth` with creds exported from `op read` — same as the cron does.
 
