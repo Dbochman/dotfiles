@@ -12,13 +12,17 @@
       "anthropic:clawdbotbochman": {
         "provider": "anthropic",
         "mode": "token"
+      },
+      "openai-codex:default": {
+        "provider": "openai-codex",
+        "mode": "oauth"
       }
     }
   },
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai/gpt-4.1",
+        "primary": "openai-codex/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-opus-4-6",
           "anthropic/claude-sonnet-4-6"
@@ -27,8 +31,9 @@
       "models": {
         "anthropic/claude-opus-4-6": {},
         "anthropic/claude-sonnet-4-6": {},
-        "openai/gpt-4.1": {}
+        "openai-codex/gpt-5.5": {}
       },
+      "thinkingDefault": "high",
       "workspace": "/Users/dbochman/.openclaw/workspace",
       "compaction": {
         "mode": "safeguard",
