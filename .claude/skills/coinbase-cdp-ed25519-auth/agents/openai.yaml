@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coinbase CDP Ed25519 Auth"
+  short_description: "Support new Coinbase Ed25519 API key exports"
+  default_prompt: "Use $coinbase-cdp-ed25519-auth to diagnose and implement Coinbase API authentication for an id/privateKey export."

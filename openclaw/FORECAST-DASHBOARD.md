@@ -129,6 +129,8 @@ The finance API base probes `http://127.0.0.1:8585` first, then `http://dylans-m
 
 Crypto owner coverage normally requires a fresh synced exchange or wallet source. If a known credential is mismatched or temporarily unavailable, add reviewed, dated `symbol` and `quantity` entries to `~/.openclaw/forecast-dashboard/crypto-manual-values.json` with `model_coverage: true`. If a synced source for that owner remains in the cache, the manual token entry must set `replaces_source_id` to that source, or explicitly set `independent: true` for a separate asset; ambiguous overlap is omitted and blocks model eligibility. Their quantities are live-priced while the dashboard preserves the statement as-of date; static `value_usd` entries remain manual valuations for assets without a live price. Set `coinbase_enabled: false` in the local `crypto-sync-config.json` during the repair so the mismatched account is not counted or allowed to overwrite the statement fallback.
 
+The Coinbase sync accepts legacy ECDSA PEM key exports (`name` plus `privateKey`) and Ed25519 key exports (`id` plus a base64 `privateKey`). Keep the active key at `~/.openclaw/forecast-dashboard/crypto-secrets/coinbase-cdp-api-key.json`, outside source control and mode `0600`.
+
 ---
 
 ### Physical Precious Metals
