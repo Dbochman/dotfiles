@@ -131,6 +131,8 @@ Crypto owner coverage normally requires a fresh synced exchange or wallet source
 
 The Coinbase sync accepts legacy ECDSA PEM key exports (`name` plus `privateKey`) and Ed25519 key exports (`id` plus a base64 `privateKey`). Keep the active key at `~/.openclaw/forecast-dashboard/crypto-secrets/coinbase-cdp-api-key.json`, outside source control and mode `0600`.
 
+Forecast exposes eligible crypto as separate fungible, manual-priced, and manual-value categories. The implementation map combines fungible and manual-priced tokens for the liquid current category, keeps manual crypto/art visible in the same total sleeve, and requires custody, basis, liquidity, and tax review before a manual value can inform a trade.
+
 ---
 
 ### Physical Precious Metals
@@ -161,7 +163,7 @@ The server converts grams with `31.1034768` grams per troy ounce and uses its fi
 - Mortgage balances and payment data from `/api/mortgage/summary`
 - Latest reconciled net worth from `/api/net-worth`
 - Latest reconciled monthly income, expenses, and savings rate from `/api/savings-rate`
-- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, a reconciled asset-class location matrix separating deployable depository/taxable assets from retirement/restricted assets, institution and direct-position concentration, U.S./international equity geography, trailing-full-month recognized cash-flow calibration context, and source-review blockers
+- A validated `projection_baseline` from `/api/forecast-baseline`, including source scope readiness, live equity/bond/cash buckets, reconciled asset-class and equity-geography-by-location matrices separating deployable depository/taxable assets from retirement/restricted assets, institution and direct-position concentration, trailing-full-month recognized cash-flow calibration context, and source-review blockers
 - ETH price from CoinGecko
 - Gold and silver spot prices from GoldPrice.org, returned as USD per troy ounce
 - Tracked public tickers from Nasdaq where available
