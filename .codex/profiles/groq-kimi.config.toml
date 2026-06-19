@@ -1,0 +1,8 @@
+model = "moonshotai/kimi-k2-instruct-0905"
+model_provider = "groq"
+
+[model_providers.groq]
+base_url = "https://api.groq.com/openai/v1"
+env_key = "GROQ_API_KEY"
+name = "Groq"
+wire_api = "responses"

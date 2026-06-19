@@ -16,7 +16,8 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `.gitconfig` - Git user info, LFS, sensible defaults
 
 ### Codex CLI
-- `.codex/config.toml` - Codex model and feature settings
+- `.codex/config.toml` - Project-scoped Codex feature and sandbox settings
+- `.codex/profiles/` - User-level Codex profiles linked by `install.sh`
 - `.local/bin/codex-quick` - Fast Codex CLI wrapper (medium reasoning)
 
 ### Claude Code

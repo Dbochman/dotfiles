@@ -1,23 +1,7 @@
-model = "gpt-5.4"
-
 [features]
 multi_agent = true
 shell_snapshot = true
 unified_exec = true
-
-[model_providers.groq]
-base_url = "https://api.groq.com/openai/v1"
-env_key = "GROQ_API_KEY"
-name = "Groq"
-wire_api = "responses"
-
-[profiles.groq-gpt]
-model = "openai/gpt-oss-120b"
-model_provider = "groq"
-
-[profiles.groq-kimi]
-model = "moonshotai/kimi-k2-instruct-0905"
-model_provider = "groq"
 
 [sandbox_workspace_write]
 network_access = true

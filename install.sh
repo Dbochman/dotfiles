@@ -469,7 +469,50 @@ install_dotfiles() {
   if [[ "$DRY_RUN" != true ]]; then
     mkdir -p "$HOME/.codex"
   fi
-  link_file "$DOTFILES_DIR/.codex/config.toml" "$HOME/.codex/config.toml"
+
+  # Project config is discovered in-place. Keep the user config mutable so
+  # Codex can store machine-local providers, plugins, and trusted projects.
+  if [[ -L "$HOME/.codex/config.toml" ]]; then
+    local codex_config_target
+    codex_config_target=$(get_symlink_target "$HOME/.codex/config.toml")
+    if [[ "$codex_config_target" != /* ]]; then
+      codex_config_target="$(dirname "$HOME/.codex/config.toml")/$codex_config_target"
+    fi
+    codex_config_target=$(resolve_path "$codex_config_target")
+
+    if [[ "$codex_config_target" = "$(resolve_path "$DOTFILES_DIR/.codex/config.toml")" ]]; then
+      if [[ "$DRY_RUN" = true ]]; then
+        log "  [dry-run] Would convert to local file: $HOME/.codex/config.toml"
+      else
+        rm "$HOME/.codex/config.toml"
+        cp "$DOTFILES_DIR/.codex/config.toml" "$HOME/.codex/config.toml"
+        log "  Converted to local file: $HOME/.codex/config.toml"
+      fi
+    fi
+  fi
+
+  local codex_profiles="$DOTFILES_DIR/.codex/profiles"
+  local profile_path profile_target
+  for profile_path in "$codex_profiles"/*.config.toml; do
+    [[ -f "$profile_path" ]] || continue
+    profile_target="$HOME/.codex/$(basename "$profile_path")"
+
+    # A profile may have been staged before this checkout reached the machine.
+    # Convert an identical copy without treating it as a user conflict.
+    if [[ ! -L "$profile_target" && -f "$profile_target" ]] && cmp -s "$profile_path" "$profile_target"; then
+      if [[ "$DRY_RUN" = true ]]; then
+        log "  [dry-run] Would replace identical profile with symlink: $profile_target"
+      else
+        rm "$profile_target"
+        ln -s "$profile_path" "$profile_target"
+        log "  Linked identical profile: $profile_target"
+      fi
+      ((ITEMS_LINKED++))
+      continue
+    fi
+
+    link_file "$profile_path" "$profile_target"
+  done
   link_file "$DOTFILES_DIR/.codex/rules" "$HOME/.codex/rules"
   log ""
 
