@@ -15,7 +15,7 @@ import json, asyncio, websockets, subprocess, time, os, sys
 CONFIG_FILE = os.path.expanduser("~/.config/cielo/config.json")
 
 async def grab(cdp_port, passive=False):
-    tabs_raw = subprocess.check_output(["curl", "-s", f"http://localhost:{cdp_port}/json"], text=True)
+    tabs_raw = subprocess.check_output(["curl", "-s", f"http://localhost:{cdp_port}/json/list"], text=True)
     tabs = json.loads(tabs_raw)
     requested_tab_id = os.environ.get("CIELO_TAB_ID")
     cielo_tab = next((t for t in tabs if t.get("id") == requested_tab_id), None) if requested_tab_id else None

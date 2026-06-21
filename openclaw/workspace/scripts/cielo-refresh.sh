@@ -116,7 +116,7 @@ except Exception:
     print('')
 " 2>/dev/null)
 
-CIELO_TAB_ID=$(curl -s "http://localhost:$CDP_PORT/json" 2>/dev/null | python3 -c "
+CIELO_TAB_ID=$(curl -s "http://localhost:$CDP_PORT/json/list" 2>/dev/null | python3 -c "
 import json, sys
 try:
     tabs = json.load(sys.stdin)
@@ -145,7 +145,7 @@ fi
 # ── Check if logged in (poll for URL to settle) ─────────────────────────────
 IS_LOGGED_IN="no"
 for check in $(seq 1 5); do
-  CURRENT_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
+  CURRENT_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
@@ -245,7 +245,7 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
       submitBtn.click();
       return 'SUBMITTED';
     })()
-  " --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
+  " --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
@@ -263,7 +263,7 @@ except:
   sleep 10
 
   # Check if we landed on dashboard
-  FINAL_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
+  FINAL_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
 try: d = json.loads(sys.stdin.read()); print(d.get('result',''))
 except: print('')
@@ -271,7 +271,7 @@ except: print('')
 
   if [[ "$FINAL_URL" == *"login"* ]] || [[ "$FINAL_URL" == *"auth"* ]]; then
     # Check if reCAPTCHA is blocking
-    HAS_CAPTCHA=$(/opt/homebrew/bin/pinchtab eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
+    HAS_CAPTCHA=$(/opt/homebrew/bin/pinchtab eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
 try: d = json.loads(sys.stdin.read()); print(d.get('result','none'))
 except: print('none')
