@@ -262,7 +262,7 @@ Mac Mini (dylans-mac-mini)
 | `/mortgage` | Mortgage | Amortization, payment history |
 | `/expenses` | Expenses | Category breakdown, trends, top merchants |
 
-30 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
+31 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
 
 The Forecast integration contract is available at `http://dylans-mac-mini:8585/api/forecast-baseline`. Validate its status and owner-scope coverage after source or forecast changes; avoid copying raw payloads into logs or chat.
 
