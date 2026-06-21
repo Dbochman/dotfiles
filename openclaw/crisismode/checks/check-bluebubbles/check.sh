@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # check-bluebubbles: Checks BlueBubbles iMessage server health
-# Requires BLUEBUBBLES_PASSWORD env var
+# Uses BLUEBUBBLES_PASSWORD from the environment or the managed secret cache.
 # Stdin: JSON with verb, target, context
 # Stdout: JSON result
 # Exit codes: 0=OK, 1=warning, 2=critical, 3=unknown
@@ -13,8 +13,38 @@ VERB=$(printf '%s' "$INPUT" | sed -n 's/.*"verb" *: *"\([^"]*\)".*/\1/p' | head 
 BB_URL="http://localhost:1234"
 BB_PASS="${BLUEBUBBLES_PASSWORD:-}"
 
+if [ -z "$BB_PASS" ] && [ -r "$HOME/.openclaw/.secrets-cache" ]; then
+  # The cache is shell-quoted. Parse just this assignment rather than source
+  # the entire file in a health-check process.
+  BB_PASS=$(python3 - "$HOME/.openclaw/.secrets-cache" <<'PY'
+import shlex
+import sys
+
+try:
+    lines = open(sys.argv[1]).read().splitlines()
+except OSError:
+    lines = []
+
+for raw_line in lines:
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    try:
+        tokens = shlex.split(line, posix=True, comments=True)
+    except ValueError:
+        continue
+    if len(tokens) != 1:
+        continue
+    key, separator, value = tokens[0].partition("=")
+    if separator and key == "BLUEBUBBLES_PASSWORD":
+        print(value)
+        break
+PY
+)
+fi
+
 if [ -z "$BB_PASS" ]; then
-  printf '{"status":"unknown","summary":"BLUEBUBBLES_PASSWORD not set","confidence":0.0,"signals":[],"recommendedActions":["Set BLUEBUBBLES_PASSWORD env var"]}\n'
+  printf '{"status":"unknown","summary":"BLUEBUBBLES_PASSWORD unavailable","confidence":0.0,"signals":[],"recommendedActions":["Refresh the managed OpenClaw secret cache"]}\n'
   exit 3
 fi
 

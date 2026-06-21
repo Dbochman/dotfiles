@@ -251,7 +251,7 @@ jobs (Jun-Dec) to `delivery.mode: "none"` + idempotency-check prompts.
 |----|----------|-------|----------|-------------|
 | `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | announce to Julia via BB | Julia's morning briefing: calendar preview, inbox triage (label, draft replies, cleanup), 8sleep summary |
 | `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `exec` | announce to Dylan via BB | Dylan's morning briefing: calendar (7-day) + inbox summary (24h) + 8sleep summary. Read-only, no email actions |
-| `weekly-report-0001` | Sundays 3 PM ET | `exec` | announce to Dylan via BB | Combined weekly activity report, security check (gateway, BB, auth, disk, services), and CrisisMode health scan |
+| `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via BB | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
 | `financial-scrape-0001` | Sundays 4:05 AM ET | `exec` | `none` (agent self-messages on failure only) | Weekly financial dashboard refresh: Tesla Solar (API), Tier 2 self-healing utilities and PennyMac, plus BoA cookie replay/raw-CDP with one guarded re-auth only after an explicitly signed-out tab, then SQLite imports. Production Plaid sync is a separate daily cache-only LaunchAgent. |
 
 `financial-scrape-0001` must not become the production Plaid sync path. `ai.openclaw.financial-dashboard-plaid-sync` owns that daily 07:15 local run, reads only protected local caches, and never invokes `op`. The cron's historical conditional fallback is intentionally unconfigured; do not add Plaid credentials to its environment.
