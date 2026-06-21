@@ -95,6 +95,15 @@ def _read_latest_jsonl_record(path):
     return {"data": data}
 
 
+def _parse_cli_json(output):
+    if not output:
+        return None
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        return None
+
+
 def _run_cli(args, parse_json=False):
     try:
         result = subprocess.run(
@@ -114,6 +123,17 @@ def _run_cli(args, parse_json=False):
     stderr = (result.stderr or "").strip()
 
     if result.returncode != 0:
+        if parse_json:
+            # Some status wrappers return a structured error on stderr while
+            # retaining a non-zero exit code for direct CLI callers.
+            for output in (stdout, stderr):
+                data = _parse_cli_json(output)
+                if data is None:
+                    continue
+                if isinstance(data, dict):
+                    data.setdefault("returncode", result.returncode)
+                    return data
+                return {"data": data, "returncode": result.returncode}
         return {
             "error": stderr or stdout or f"command exited with {result.returncode}",
             "returncode": result.returncode,
@@ -122,10 +142,9 @@ def _run_cli(args, parse_json=False):
     if parse_json:
         if not stdout:
             return {"error": "empty JSON output"}
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            return {"error": f"invalid JSON output: {exc}"}
+        data = _parse_cli_json(stdout)
+        if data is None:
+            return {"error": "invalid JSON output"}
         if isinstance(data, dict):
             return data
         return {"data": data}
@@ -151,11 +170,25 @@ def collect_nest():
 
 
 def collect_cielo():
-    return _run_cli(["cielo", "status", "--json"], parse_json=True)
+    result = _run_cli(["cielo", "status", "--json"], parse_json=True)
+    message = str(result.get("error", ""))
+    if "invalid or expired token" in message or '"code":498' in message:
+        return {
+            "error": "Cielo session expired. Reauthenticate Cielo Home on the Mac mini to restore controls.",
+            "error_kind": "authentication_required",
+        }
+    return result
 
 
 def collect_mysa():
-    return _run_cli(["mysa"], parse_json=True)
+    result = _run_cli(["mysa"], parse_json=True)
+    message = str(result.get("error", ""))
+    if result.get("error_kind") == "authentication_required" or "EOF when reading a line" in message:
+        return {
+            "error": "Mysa session expired. Reauthenticate Mysa on the Mac mini to restore thermostat status.",
+            "error_kind": "authentication_required",
+        }
+    return result
 
 
 def collect_lock():
@@ -1392,17 +1425,22 @@ function renderLock(result) {
 function renderTV(result) {
   if (!result) return '<div class="muted">No TV data</div>';
   if (isPending(result)) return renderPending();
+  const offlineState = `<div class="subcard">
+    <div style="color:var(--text-muted);margin-bottom:8px">TV is likely off or in standby</div>
+    <div style="font-size:0.85rem;color:var(--text-muted)">Samsung TV is unreachable when powered off. Use Power On to wake via WoL.</div>
+  </div>`;
   if (result.error) {
     const msg = result.error || '';
     if (msg.includes('timed out') || msg.includes('unreachable') || msg.includes('Unreachable') || msg.includes('ConnectTimeout')) {
-      return `<div class="subcard">
-        <div style="color:var(--text-muted);margin-bottom:8px">TV is likely off or in standby</div>
-        <div style="font-size:0.85rem;color:var(--text-muted)">Samsung TV is unreachable when powered off. Use Power On to wake via WoL.</div>
-      </div>`;
+      return offlineState;
     }
     return renderError(result);
   }
-  if (result.raw) return renderPre(result.raw);
+  if (result.raw) {
+    const raw = result.raw || '';
+    if (raw.includes('UNREACHABLE') || raw.includes('timed out')) return offlineState;
+    return renderPre(raw);
+  }
   return renderSimpleObject(result);
 }
 

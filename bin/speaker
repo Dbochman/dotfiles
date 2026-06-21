@@ -22,6 +22,7 @@ Speaker names are fuzzy-matched (e.g. "bed" for "Bedroom speaker").
 import argparse
 import json
 import os
+import socket
 import sys
 import time
 
@@ -33,6 +34,8 @@ DEFAULT_SPEAKERS = {
     "Bedroom speaker": "192.168.165.146",
     "Living Room speaker": "192.168.165.113",
 }
+CAST_PORT = 8009
+CONNECT_TIMEOUT_SECONDS = 2
 
 
 def load_speakers():
@@ -54,8 +57,21 @@ def resolve_speaker(query, speakers):
     sys.exit(1)
 
 
+def cast_port_reachable(ip):
+    """Avoid pychromecast's long discovery wait for offline devices."""
+    try:
+        with socket.create_connection((ip, CAST_PORT), timeout=CONNECT_TIMEOUT_SECONDS):
+            return True
+    except OSError:
+        return False
+
+
 def get_cast(ip, timeout=10):
     """Connect to a Cast device by IP."""
+    if not cast_port_reachable(ip):
+        print(f"Error connecting to {ip}: TCP port {CAST_PORT} is unavailable", file=sys.stderr)
+        sys.exit(1)
+
     try:
         import pychromecast
     except ImportError:
@@ -64,7 +80,7 @@ def get_cast(ip, timeout=10):
 
     try:
         # pychromecast v14+: use get_chromecast_from_host with (host, port, uuid, model, name) tuple
-        cast = pychromecast.get_chromecast_from_host((ip, 8009, None, None, None))
+        cast = pychromecast.get_chromecast_from_host((ip, CAST_PORT, None, None, None))
         cast.wait(timeout=timeout)
         return cast
     except Exception as e:
@@ -85,9 +101,12 @@ def cmd_status(args):
     import pychromecast
 
     for name, ip in speakers.items():
+        if not cast_port_reachable(ip):
+            print(f"  {name:25s}  UNREACHABLE (TCP port {CAST_PORT} unavailable)")
+            continue
         try:
-            cast = pychromecast.get_chromecast_from_host((ip, 8009, None, None, None))
-            cast.wait(timeout=5)
+            cast = pychromecast.get_chromecast_from_host((ip, CAST_PORT, None, None, None))
+            cast.wait(timeout=3)
             vol = round(cast.status.volume_level * 100)
             muted = "MUTED" if cast.status.volume_muted else ""
             app = cast.status.display_name or "Idle"

@@ -17,7 +17,10 @@ CONFIG_FILE = os.path.expanduser("~/.config/cielo/config.json")
 async def grab(cdp_port, passive=False):
     tabs_raw = subprocess.check_output(["curl", "-s", f"http://localhost:{cdp_port}/json"], text=True)
     tabs = json.loads(tabs_raw)
-    cielo_tab = next((t for t in tabs if "cielowigle" in t.get("url", "")), None)
+    requested_tab_id = os.environ.get("CIELO_TAB_ID")
+    cielo_tab = next((t for t in tabs if t.get("id") == requested_tab_id), None) if requested_tab_id else None
+    if cielo_tab is None:
+        cielo_tab = next((t for t in tabs if "cielowigle" in t.get("url", "")), None)
     if not cielo_tab:
         print("No Cielo tab found")
         sys.exit(1)
@@ -97,16 +100,16 @@ async def grab(cdp_port, passive=False):
                                 continue
                             if source.get("refreshToken") and not refresh_token:
                                 refresh_token = source["refreshToken"]
-                                print(f"  -> Got refreshToken from {source_name} ({len(refresh_token)} chars)")
+                                print(f"  -> Captured refresh token from {source_name}")
                             if source.get("accessToken") and not token:
                                 token = source["accessToken"]
-                                print(f"  -> Got accessToken from {source_name} ({len(token)} chars)")
+                                print(f"  -> Captured access token from {source_name}")
                             if source.get("sessionId") and not session_id:
                                 session_id = source["sessionId"]
-                                print(f"  -> Got sessionId from {source_name}")
+                                print(f"  -> Captured session metadata from {source_name}")
                             if source.get("userId") and not user_id:
                                 user_id = source["userId"]
-                                print(f"  -> Got userId from {source_name}: {user_id}")
+                                print(f"  -> Captured user metadata from {source_name}")
 
                         # Device list fallback for userId
                         if isinstance(inner, dict):
@@ -114,7 +117,7 @@ async def grab(cdp_port, passive=False):
                             if devs and not user_id:
                                 user_id = devs[0].get("userId", "")
                                 if user_id:
-                                    print(f"  -> Got userId from device list: {user_id}")
+                                    print("  -> Captured user metadata from device list")
                     except json.JSONDecodeError:
                         pass
 
@@ -137,7 +140,7 @@ async def grab(cdp_port, passive=False):
                 status = params.get("responseStatusCode", 0)
 
                 if "smartcielo.com" in req_url and status >= 200:
-                    print(f"  RESP: {req_url[:100]} (status={status})")
+                    print(f"  RESP: Cielo API status={status}")
 
                     # Get the response body while it's still paused
                     msg_id_counter += 1
@@ -166,18 +169,18 @@ async def grab(cdp_port, passive=False):
                 headers = req.get("headers", {})
 
                 if "smartcielo.com" in req_url:
-                    print(f"  REQ: {req_url[:100]}")
+                    print("  REQ: Cielo API request")
                     auth = headers.get("authorization", "") or headers.get("Authorization", "")
                     if auth and len(auth) > 20:
                         token = auth
-                        print(f"  -> Got accessToken from header ({len(auth)} chars)")
+                        print("  -> Captured access token from request header")
 
                     if "sessionId=" in req_url:
                         import urllib.parse as up
                         qs = up.parse_qs(up.urlparse(req_url).query)
                         if "sessionId" in qs:
                             session_id = qs["sessionId"][0]
-                            print(f"  -> Got sessionId: {session_id[:40]}...")
+                            print("  -> Captured session metadata from WebSocket URL")
 
             # Break conditions
             if passive:
@@ -219,11 +222,7 @@ async def grab(cdp_port, passive=False):
             json.dump(config, f, indent=2)
         os.chmod(CONFIG_FILE, 0o600)
 
-        print(f"\nSAVED to {CONFIG_FILE}")
-        print(f"accessToken: {token[:40]}...")
-        print(f"sessionId: {session_id or 'n/a'}")
-        print(f"userId: {user_id or 'n/a'}")
-        print(f"refreshToken: {refresh_token[:40] + '...' if refresh_token else 'not captured'}")
+        print(f"\nSaved refreshed Cielo session metadata to {CONFIG_FILE}")
 
 if __name__ == "__main__":
     args = sys.argv[1:]

@@ -106,3 +106,9 @@ with urllib.request.urlopen('http://127.0.0.1:8558/api/status', timeout=20) as r
 print(r.status, obj.get('meta', {}))
 PY"
 ```
+
+### Authentication and Offline Devices
+
+- Cielo and Mysa status collectors never prompt from the dashboard process. An expired provider session is shown as an actionable reauthentication state rather than raw CLI output.
+- Cielo's 30-minute refresher uses a dedicated PinchTab tab and restores the previously active tab. It refreshes an existing browser session, but does not repeatedly submit credentials through reCAPTCHA; a logged-out Cielo session requires a manual sign-in.
+- Samsung TV and Google Cast status polls treat an unreachable local port as an offline or standby device. Speaker checks fail fast before invoking Cast discovery, so an offline device does not hold up the dashboard refresh.

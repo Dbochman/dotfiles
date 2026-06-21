@@ -3,7 +3,7 @@
 #
 # Method 1: API refresh using stored refreshToken (fast, no browser)
 # Method 2: Browser CDP capture (pinchtab + persisted cookies)
-# Method 3: Headless login with username/password (if cookies expired)
+# Method 3: Explicitly opted-in headless login with username/password
 #
 # Runs as a LaunchAgent every 30 minutes.
 
@@ -56,6 +56,9 @@ fi
 
 # ── Start pinchtab ──────────────────────────────────────────────────────────
 STARTED_PINCHTAB=false
+CIELO_TAB_ID=""
+CIELO_TAB_CREATED=false
+ORIGINAL_TAB_ID=""
 if ! pgrep -f "pinchtab" >/dev/null 2>&1; then
   /opt/homebrew/bin/pinchtab --headless &
   STARTED_PINCHTAB=true
@@ -66,6 +69,12 @@ if ! pgrep -f "pinchtab" >/dev/null 2>&1; then
 fi
 
 cleanup() {
+  if [[ "$CIELO_TAB_CREATED" == true ]] && [[ -n "$CIELO_TAB_ID" ]]; then
+    /opt/homebrew/bin/pinchtab close "$CIELO_TAB_ID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$ORIGINAL_TAB_ID" ]]; then
+    /opt/homebrew/bin/pinchtab tab "$ORIGINAL_TAB_ID" >/dev/null 2>&1 || true
+  fi
   [[ "$STARTED_PINCHTAB" == true ]] && pkill -f pinchtab 2>/dev/null
 }
 
@@ -76,7 +85,7 @@ for attempt in $(seq 1 15); do
 import subprocess, re
 ps = subprocess.check_output(['ps', 'aux'], text=True)
 for line in ps.splitlines():
-    if 'chrome-profile' in line and 'remote-debugging' in line and 'Google Chrome' in line and '--type=' not in line:
+    if 'remote-debugging' in line and 'Google Chrome' in line and '--type=' not in line:
         pid = line.split()[1]
         try:
             lsof = subprocess.check_output(['/usr/sbin/lsof', '-anP', '-p', pid, '-i', 'TCP', '-sTCP:LISTEN'], text=True, stderr=subprocess.DEVNULL)
@@ -97,23 +106,40 @@ if [[ -z "$CDP_PORT" ]]; then
   cleanup; exit 1
 fi
 
-# ── Navigate to Cielo dashboard ─────────────────────────────────────────────
-HAS_CIELO=$(curl -s "http://localhost:$CDP_PORT/json" 2>/dev/null | python3 -c "
+# ── Navigate to Cielo dashboard in an isolated tab ──────────────────────────
+ORIGINAL_TAB_ID=$(/opt/homebrew/bin/pinchtab tab --json 2>/dev/null | python3 -c "
 import json, sys
-tabs = json.load(sys.stdin)
-print('yes' if any('cielowigle' in t.get('url','') and 'login' not in t.get('url','') for t in tabs) else 'no')
-" 2>/dev/null || echo "no")
+try:
+    tabs = json.load(sys.stdin).get('tabs', [])
+    print(next((tab.get('id', '') for tab in tabs if tab.get('status') == 'active'), ''))
+except Exception:
+    print('')
+" 2>/dev/null)
 
-if [[ "$HAS_CIELO" != "yes" ]]; then
-  /opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/" 2>/dev/null
-  # Wait for Angular SPA to fully load and settle (may redirect to login)
+CIELO_TAB_ID=$(curl -s "http://localhost:$CDP_PORT/json" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    tabs = json.load(sys.stdin)
+    print(next((tab.get('id', '') for tab in tabs if 'cielowigle' in tab.get('url', '')), ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+
+if [[ -z "$CIELO_TAB_ID" ]]; then
+  CIELO_TAB_ID=$(/opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/" --new-tab --print-tab-id 2>/dev/null | tail -n 1)
+  if [[ -z "$CIELO_TAB_ID" ]]; then
+    echo '{"success":false,"error":"Could not open an isolated Cielo browser tab"}'
+    cleanup; exit 1
+  fi
+  CIELO_TAB_CREATED=true
+  # Wait for Angular SPA to fully load and settle (may redirect to login).
   sleep 12
 fi
 
 # ── Check if logged in (poll for URL to settle) ─────────────────────────────
 IS_LOGGED_IN="no"
 for check in $(seq 1 5); do
-  CURRENT_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" 2>/dev/null | python3 -c "
+  CURRENT_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
@@ -131,6 +157,10 @@ done
 
 # ── Method 3: Headless login with credentials ───────────────────────────────
 if [[ "$IS_LOGGED_IN" != "yes" ]]; then
+  if [[ "${CIELO_ALLOW_HEADLESS_LOGIN:-false}" != "true" ]]; then
+    echo '{"success":false,"error":"Cielo browser session expired; manual reauthentication required."}'
+    cleanup; exit 1
+  fi
   if [[ -z "${CIELO_USERNAME:-}" ]] || [[ -z "${CIELO_PASSWORD:-}" ]]; then
     echo '{"success":false,"error":"Cookies expired and no CIELO_USERNAME/CIELO_PASSWORD available"}'
     cleanup; exit 1
@@ -139,16 +169,18 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
   echo '{"info":"Cookies expired, attempting headless login..."}'
 
   # Navigate to login page
-  /opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/auth/login" 2>/dev/null
+  /opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/auth/login" --tab "$CIELO_TAB_ID" 2>/dev/null
   sleep 8
 
   # Start passive CDP listener BEFORE login to capture the auth response (refreshToken)
   if [[ -n "$CDP_PORT" ]] && [[ -f "$GRAB_SCRIPT" ]]; then
-    python3 "$GRAB_SCRIPT" "$CDP_PORT" --passive > /tmp/cielo-passive-grab.log 2>&1 &
+    CIELO_TAB_ID="$CIELO_TAB_ID" python3 "$GRAB_SCRIPT" "$CDP_PORT" --passive > /tmp/cielo-passive-grab.log 2>&1 &
     PASSIVE_GRAB_PID=$!
   fi
 
   # Fill login form and submit
+  CIELO_USERNAME_JS=$(python3 -c 'import json, os; print(json.dumps(os.environ["CIELO_USERNAME"]))')
+  CIELO_PASSWORD_JS=$(python3 -c 'import json, os; print(json.dumps(os.environ["CIELO_PASSWORD"]))')
   LOGIN_RESULT=$(/opt/homebrew/bin/pinchtab eval "
     (async () => {
       // Wait for Angular form to render
@@ -180,8 +212,8 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
         el.blur();
       }
 
-      setNgValue(emailInput, '${CIELO_USERNAME}');
-      setNgValue(passInput, '${CIELO_PASSWORD}');
+      setNgValue(emailInput, $CIELO_USERNAME_JS);
+      setNgValue(passInput, $CIELO_PASSWORD_JS);
 
       await new Promise(r => setTimeout(r, 500));
 
@@ -207,7 +239,7 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
       submitBtn.click();
       return 'SUBMITTED';
     })()
-  " 2>/dev/null | python3 -c "
+  " --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
@@ -225,7 +257,7 @@ except:
   sleep 10
 
   # Check if we landed on dashboard
-  FINAL_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" 2>/dev/null | python3 -c "
+  FINAL_URL=$(/opt/homebrew/bin/pinchtab eval "window.location.href" --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
 import json, sys
 try: d = json.loads(sys.stdin.read()); print(d.get('result',''))
 except: print('')
@@ -233,7 +265,7 @@ except: print('')
 
   if [[ "$FINAL_URL" == *"login"* ]] || [[ "$FINAL_URL" == *"auth"* ]]; then
     # Check if reCAPTCHA is blocking
-    HAS_CAPTCHA=$(/opt/homebrew/bin/pinchtab eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" 2>/dev/null | python3 -c "
+    HAS_CAPTCHA=$(/opt/homebrew/bin/pinchtab eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" --tab "$CIELO_TAB_ID" 2>/dev/null | python3 -c "
 import json, sys
 try: d = json.loads(sys.stdin.read()); print(d.get('result','none'))
 except: print('none')
@@ -265,7 +297,7 @@ except: print('none')
       kill "$PASSIVE_GRAB_PID" 2>/dev/null
       wait "$PASSIVE_GRAB_PID" 2>/dev/null
     fi
-    echo '{"info":"Passive grab log:","log":"'"$(cat /tmp/cielo-passive-grab.log 2>/dev/null | tr '\n' ' ')"'"}'
+    echo '{"info":"Passive Cielo token capture completed"}'
 
     # If passive grab captured tokens, we may be able to skip the normal Method 2 grab
     PASSIVE_REFRESH=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('refreshToken',''))" 2>/dev/null)
@@ -281,7 +313,7 @@ if [[ ! -f "$GRAB_SCRIPT" ]]; then
   cleanup; exit 1
 fi
 
-GRAB_OUTPUT=$(python3 "$GRAB_SCRIPT" "$CDP_PORT" 2>&1)
+GRAB_OUTPUT=$(CIELO_TAB_ID="$CIELO_TAB_ID" python3 "$GRAB_SCRIPT" "$CDP_PORT" 2>&1)
 GRAB_EXIT=$?
 
 cleanup

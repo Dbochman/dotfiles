@@ -20,7 +20,7 @@ os.environ['AWS_EC2_METADATA_DISABLED'] = 'true'
 
 import boto3
 import requests
-from mysotherm.auth import authenticate, CONFIG_FILE
+from mysotherm.auth import load_credentials, CONFIG_FILE
 from mysotherm.mysa_stuff import BASE_URL, CLIENT_HEADERS, REGION
 from mysotherm.mysa_stuff import auther
 from mysotherm.util import slurpy
@@ -37,10 +37,16 @@ def get_val(entry):
     return entry
 
 
+def _error(kind, message):
+    print(json.dumps({"error": message, "error_kind": kind}), file=sys.stderr)
+
+
 def main():
     try:
         bsess = boto3.session.Session(region_name=REGION)
-        u = authenticate(user=None, cf=CONFIG_FILE, bsess=bsess)
+        # Do not call authenticate(): it prompts for credentials when a
+        # refresh token expires, which cannot work from a dashboard process.
+        u = load_credentials(user=None, cf=CONFIG_FILE, bsess=bsess)
 
         sess = requests.Session()
         sess.auth = auther(u)
@@ -95,11 +101,18 @@ def main():
             result["devices"].append(device_info)
 
         print(json.dumps(result, indent=2))
+        return 0
 
-    except Exception as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
-        sys.exit(1)
+    except NotImplementedError:
+        _error(
+            "authentication_required",
+            "Mysa authentication expired. Sign in again to restore thermostat status.",
+        )
+        return 1
+    except Exception:
+        _error("unavailable", "Unable to retrieve Mysa thermostat status.")
+        return 1
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
