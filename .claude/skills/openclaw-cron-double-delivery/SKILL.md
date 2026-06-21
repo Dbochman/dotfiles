@@ -3,8 +3,8 @@ name: openclaw-cron-double-delivery
 description: >-
   Fix OpenClaw cron jobs delivering messages multiple times (2x or 3x) to the recipient.
 author: Claude Code
-version: 1.0.0
-date: 2026-03-09
+version: 1.1.0
+date: 2026-06-21
 ---
 
 # OpenClaw Cron Double/Triple Delivery
@@ -42,8 +42,10 @@ This is why the job shows "error" but "delivered" simultaneously.
 
 ## Solution
 
-**The fix is simple: never have the agent send messages directly in cron job prompts.**
-Let the cron delivery system handle all message delivery.
+Choose exactly one delivery path.
+
+For ordinary reports and briefings, never have the agent send messages
+directly. Let the cron delivery system handle delivery.
 
 ### In the prompt, add a delivery directive:
 ```
@@ -61,6 +63,18 @@ Instead of having the agent send error messages to a different person, just have
 output the error text. The cron delivery will send it to the configured recipient.
 If you need errors routed to a different person, create a separate error-notification
 job or handle it at the gateway level.
+
+### Exception: one-shots with external side effects
+
+Booking, purchase, and other irreversible one-shots should use
+`delivery.mode: "none"` and have the agent send exactly one final status. A
+cron announce failure can otherwise turn an already successful side effect
+into an error/retry cycle. This exception requires all of the following:
+
+- An idempotency preflight against the external system and matching calendar.
+- `deleteAfterRun: true`.
+- A successful-run tombstone so repo sync cannot redeploy the completed job.
+- No cron-layer `channel` or `to` delivery fields.
 
 ### After fixing the prompt:
 1. Reset error state on Mini:
@@ -108,6 +122,7 @@ Keep it brief and scannable.
 
 ## Notes
 - The cron `delivery.mode: "announce"` sends the agent's final summary text as a message
+- Side-effecting one-shots use the inverse pattern: `delivery.mode: "none"`, one agent-managed status, and mandatory idempotency checks
 - `delivery.channel: "bluebubbles"` and `delivery.to` control where it goes
 - The agent's `message` tool and the cron delivery are completely independent — there is
   no deduplication between them

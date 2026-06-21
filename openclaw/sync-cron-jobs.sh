@@ -3,7 +3,7 @@
 #
 # Usage:
 #   sync-cron-jobs.sh save    — Strip state from live jobs.json, save definitions to dotfiles
-#   sync-cron-jobs.sh deploy  — Merge dotfiles definitions into live jobs.json, preserving state
+#   sync-cron-jobs.sh deploy  — Merge definitions, preserve state, skip completed one-shots
 #
 # Files:
 #   dotfiles/openclaw/cron/jobs.json  — Job definitions (no state), tracked in git
@@ -43,12 +43,56 @@ print(f'Saved {len(data[\"jobs\"])} job definitions to {\"$DOTFILES_JOBS\"} (sta
     [ -f "$DOTFILES_JOBS" ] || { echo "Error: $DOTFILES_JOBS not found" >&2; exit 1; }
     python3 -c "
 import json, os, tempfile
+from datetime import datetime
 
 dotfiles_path = '$DOTFILES_JOBS'
 live_path = '$LIVE_JOBS'
+runs_dir = os.path.join(os.path.dirname(live_path), 'runs')
 
 with open(dotfiles_path) as f:
     new_defs = json.load(f)
+
+
+def completed_one_shot(job):
+    schedule = job.get('schedule', {})
+    if schedule.get('kind') != 'at' or not job.get('deleteAfterRun'):
+        return False
+
+    scheduled_at = schedule.get('at')
+    if not isinstance(scheduled_at, str):
+        return False
+    try:
+        scheduled_ms = int(
+            datetime.fromisoformat(scheduled_at.replace('Z', '+00:00')).timestamp() * 1000
+        )
+    except ValueError:
+        return False
+
+    run_path = os.path.join(runs_dir, job['id'] + '.jsonl')
+    if not os.path.isfile(run_path):
+        return False
+
+    with open(run_path) as run_file:
+        for line in run_file:
+            try:
+                record = json.loads(line)
+                run_at_ms = int(record.get('runAtMs', 0))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if record.get('status') == 'ok' and run_at_ms >= scheduled_ms:
+                return True
+    return False
+
+
+# A successful deleteAfterRun job is absent from the live file by design. Keep
+# its append-only run history as a tombstone so a later repo deploy cannot
+# resurrect the completed definition and execute its side effects again.
+completed_ids = [
+    job['id'] for job in new_defs['jobs'] if completed_one_shot(job)
+]
+new_defs['jobs'] = [
+    job for job in new_defs['jobs'] if job['id'] not in completed_ids
+]
 
 # Load existing state from live file (if it exists)
 state_by_id = {}
@@ -83,7 +127,11 @@ except Exception:
     raise
 
 preserved = sum(1 for j in new_defs['jobs'] if 'state' in j)
-print(f'Deployed {len(new_defs[\"jobs\"])} jobs to {live_path} ({preserved} with preserved state)')
+completed_summary = ', '.join(completed_ids) if completed_ids else 'none'
+print(
+    f'Deployed {len(new_defs[\"jobs\"])} jobs to {live_path} '
+    f'({preserved} with preserved state; completed one-shots skipped: {completed_summary})'
+)
 "
     ;;
 

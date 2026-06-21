@@ -3,8 +3,8 @@ name: openclaw-cron-job-creation
 description: >-
   Create and debug OpenClaw cron jobs by editing jobs.json directly.
 author: Claude Code
-version: 2.0.0
-date: 2026-03-06
+version: 2.1.0
+date: 2026-06-21
 ---
 
 # OpenClaw Cron Job Creation
@@ -74,21 +74,16 @@ schema doesn't match what the gateway expects.
 
 ### Adding/Editing Jobs Workflow
 
-**CRITICAL**: The gateway holds jobs.json in memory and writes its in-memory copy back to
-disk whenever it updates job state (lastStatus, lastRunAtMs, etc.). If you edit the file
-while the gateway is running, the gateway will overwrite your changes on the next state write.
+The repo file is canonical. Do not make a live-only edit and assume it is
+durable; the next scheduled or manual dotfiles deployment replaces it.
 
-1. **Stop gateway**: `launchctl bootout gui/$(id -u)/ai.openclaw.gateway`
-2. **Confirm stopped**: `pgrep -fl openclaw-gateway` (should return nothing)
-3. **Backup**: `cp ~/.openclaw/cron/jobs.json ~/.openclaw/cron/jobs.json.bak`
-4. **Edit**: Add/modify jobs in the `jobs` array (use Python script for complex prompts)
-5. **Start gateway**: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist`
-6. **Verify**: Check `/tmp/openclaw/openclaw-YYYY-MM-DD.log` for cron startup line:
-   - Success: `{'enabled': True, 'jobs': N, 'nextWakeAtMs': ...}`
-   - Failure: `failed to start: TypeError: Cannot read properties of undefined (reading 'trim')`
-
-**Do NOT use `launchctl kickstart -k`** for config changes — the restart is too fast and the
-gateway may read the old file from OS disk cache before the write flushes. Stop, edit, start.
+1. Edit `~/dotfiles/openclaw/cron/jobs.json`.
+2. Validate it: `python3 -m json.tool ~/dotfiles/openclaw/cron/jobs.json >/dev/null`.
+3. Deploy it: `~/dotfiles/openclaw/sync-cron-jobs.sh deploy`.
+4. For an immediate CLI edit, apply the same change with `openclaw cron edit`
+   and still commit the repo copy.
+5. Verify both `openclaw cron list --json` and
+   `~/.openclaw/cron/jobs.json`; a gateway restart is normally unnecessary.
 
 ### Running Jobs Manually
 
@@ -115,14 +110,18 @@ retried.
 
 ### Removing Jobs
 
-When removing a job from `jobs.json`, **also delete its run state file**:
+Remove the job from both gateway state and the canonical repo definition:
+
 ```bash
-trash ~/.openclaw/cron/runs/<jobId>.jsonl
+openclaw cron rm <jobId>
+# Delete the matching object from ~/dotfiles/openclaw/cron/jobs.json and commit it.
+~/dotfiles/openclaw/sync-cron-jobs.sh deploy
 ```
 
-The cron subsystem persists `nextRunAtMs` in these JSONL files. If a run file exists with
-a future `nextRunAtMs`, the job will keep executing even after its definition is removed
-from `jobs.json`. See the `openclaw-cron-ghost-jobs` skill for diagnosis and cleanup.
+Keep `~/.openclaw/cron/runs/<jobId>.jsonl` as append-only audit history. For
+successful `deleteAfterRun` one-shots, `sync-cron-jobs.sh deploy` uses that
+record as a tombstone and refuses to restore the completed repo definition.
+See the `openclaw-cron-ghost-jobs` skill for diagnosis.
 
 ### Fields NOT to Include
 
@@ -185,16 +184,15 @@ with open("/Users/dbochman/.openclaw/cron/jobs.json", "w") as f:
 
 ## Notes
 
-- **Gateway in-memory clobbering**: The gateway loads jobs.json into memory at startup
-  and writes its copy back to disk on every state update. Edits made while the gateway is
-  running WILL be overwritten. Always stop → edit → start. Error `"Unsupported channel: X"`
-  after a channel migration is a telltale sign the gateway wrote back stale config.
+- **Repo/live drift**: CLI edits can be correct in gateway memory and the live
+  file yet still be reverted by the next repo deployment. Make the repo change
+  in the same operation.
 - **Channel name**: Delivery channel is `bluebubbles` (NOT `imessage`). All cron jobs use
   `"delivery": {"channel": "bluebubbles", ...}`. The dotfiles source copy is at
-  `~/repos/dotfiles/openclaw/cron/jobs.json` — keep it in sync with Mini's
+  `~/dotfiles/openclaw/cron/jobs.json` — keep it in sync with Mini's
   `~/.openclaw/cron/jobs.json`.
 - The gateway wrapper (`~/Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway`) sources secrets from `~/.openclaw/.secrets-cache` (KEY=VALUE format, chmod 600)
 - Python f-strings with `j["name"]` inside SSH-piped python one-liners cause `NameError` due to shell escaping — use script files (`scp` + run) for complex JSON manipulation
 - The `delivery.to` field accepts both E.164 phone numbers and OpenClaw contact UUIDs
 - Gateway auto-adds `deleteAfterRun: true` for `"at"` schedule jobs during normalization
-- Source code reference: `loader-n6BPnYom.js` lines 9183-9470 contain cron normalization logic
+- Side-effecting one-shots must also use `delivery.mode: none` and an external-system plus calendar idempotency check. `deleteAfterRun` alone is not a duplicate-prevention strategy.

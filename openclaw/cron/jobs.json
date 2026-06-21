@@ -142,12 +142,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Korean restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around July 16-18, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on July 16-18, 2026. If either a reservation or matching calendar event exists, send its details to chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Korean restaurants in Brookline on OpenTable or Resy. Find availability for Thursday or Friday, July 16-17, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       }
     },
     {
@@ -165,12 +163,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Mexican restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around October 15-17, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on October 15-17, 2026. If either a reservation or matching calendar event exists, send its details to chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Mexican restaurants in Brookline on OpenTable or Resy. Find availability for Thursday or Friday, October 15-16, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       }
     },
     {
@@ -188,12 +184,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for French restaurants in Brookline on OpenTable or Resy. Find availability for a Thursday or Friday around January 15-17, 2027 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on January 14-15, 2027. If either a reservation or matching calendar event exists, send its details to chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for French restaurants in Brookline on OpenTable or Resy. Find availability for Thursday or Friday, January 14-15, 2027 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       }
     },
     {
@@ -220,29 +214,6 @@
       }
     },
     {
-      "id": "qd-booking-2026-07-june15",
-      "agentId": "main",
-      "name": "Quarterly Group Dinner - Book July Reservation (run June 15)",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1750000000000,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-06-15T14:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Book the Q3 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. The April dinner was at La Morra (Italian, Brookline), so pick a DIFFERENT restaurant this time.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in July 2026.\nTry these Fridays in order: July 10, July 17, July 24, July 31.\n\nRESTAURANTS TO TRY (in priority order \u2014 avoid La Morra):\n1. Washington Square Tavern [77292] - Gastropub, Brookline\n2. Iru [88311] - Korean, Brookline\n3. Barlette [70725] - Cocktail Bar, Brookline\n4. Tres Gatos [82739] - Tapas, Jamaica Plain\n5. Tonino [73777] - Italian, Jamaica Plain\n6. La Morra [4757] - Italian, Brookline (last resort only)\n7. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Create calendar event on Julia's calendar inviting Dylan:\n   gws calendar events insert --params '{\"calendarId\": \"primary\", \"sendUpdates\": \"all\"}' --json '{\"summary\": \"Quarterly Dinner @ RESTAURANT_NAME\", \"start\": {\"dateTime\": \"DATEThh:mm:00-04:00\", \"timeZone\": \"America/New_York\"}, \"end\": {\"dateTime\": \"DATEThh+2:mm:00-04:00\", \"timeZone\": \"America/New_York\"}, \"location\": \"RESTAURANT_ADDRESS\", \"description\": \"Quarterly group dinner for 4. Booked via Resy under Dylan account. Forward to other attendees.\", \"attendees\": [{\"email\": \"dylanbochman@gmail.com\"}]}' --account julia.joy.jennings@gmail.com\n5. Report the booking details: restaurant name, date, time, address.\n\nThe result will be announced to the group chat automatically."
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
-      }
-    },
-    {
       "id": "qd-booking-2026-10-sep15",
       "agentId": "main",
       "name": "Quarterly Group Dinner - Book October Reservation (run Sep 15)",
@@ -257,12 +228,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book the Q4 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. The April dinner was at La Morra (Italian, Brookline). The July dinner was at a different Brookline/JP restaurant. Pick something different again.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in October 2026.\nTry these Fridays in order: October 9, October 16, October 23, October 30.\n\nRESTAURANTS TO TRY (in priority order \u2014 vary from previous quarters):\n1. Tres Gatos [82739] - Tapas, Jamaica Plain\n2. Tonino [73777] - Italian, Jamaica Plain\n3. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n4. Ssaanjh [91854] - Indian, Brookline\n5. Maguro [82623] - Japanese, Brookline\n6. Washington Square Tavern [77292] - Gastropub, Brookline\n7. La Morra [4757] - Italian, Brookline (last resort only)\n8. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Create calendar event on Julia's calendar inviting Dylan:\n   gws calendar events insert --params '{\"calendarId\": \"primary\", \"sendUpdates\": \"all\"}' --json '{\"summary\": \"Quarterly Dinner @ RESTAURANT_NAME\", \"start\": {\"dateTime\": \"DATEThh:mm:00-04:00\", \"timeZone\": \"America/New_York\"}, \"end\": {\"dateTime\": \"DATEThh+2:mm:00-04:00\", \"timeZone\": \"America/New_York\"}, \"location\": \"RESTAURANT_ADDRESS\", \"description\": \"Quarterly group dinner for 4. Booked via Resy under Dylan account. Forward to other attendees.\", \"attendees\": [{\"email\": \"dylanbochman@gmail.com\"}]}' --account julia.joy.jennings@gmail.com\n5. Report the booking details: restaurant name, date, time, address.\n\nThe result will be announced to the group chat automatically."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and inspect Julia's Google Calendar for any existing party-of-4 quarterly group dinner in October 2026. If either a reservation or matching calendar event exists, send its details to group chat chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book the Q4 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. The April dinner was at La Morra (Italian, Brookline). The July dinner was at a different Brookline/JP restaurant. Pick something different again.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in October 2026.\nTry these Fridays in order: October 9, October 16, October 23, October 30.\n\nRESTAURANTS TO TRY (in priority order \u2014 vary from previous quarters):\n1. Tres Gatos [82739] - Tapas, Jamaica Plain\n2. Tonino [73777] - Italian, Jamaica Plain\n3. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n4. Ssaanjh [91854] - Indian, Brookline\n5. Maguro [82623] - Japanese, Brookline\n6. Washington Square Tavern [77292] - Gastropub, Brookline\n7. La Morra [4757] - Italian, Brookline (last resort only)\n8. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Before creating a calendar event, repeat the calendar check and reuse any matching event. Otherwise create the event on Julia's calendar inviting Dylan.\n5. Send the booking details (restaurant name, date, time, and address) to group chat chat-id 170.\n\nIMPORTANT: Cron delivery is disabled. You must send exactly one final status message yourself after the idempotency check or booking attempt."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       }
     },
     {
@@ -280,12 +249,10 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Book the Q1 2027 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. Previous quarters covered Brookline/Jamaica Plain. Pick a fresh restaurant for the new year.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in January 2027.\nTry these Fridays in order: January 9, January 16, January 23, January 30.\n\nRESTAURANTS TO TRY (in priority order \u2014 try to vary from previous quarters):\n1. Akami Omakase [94662] - Japanese, Brookline\n2. Maguro [82623] - Japanese, Brookline\n3. Ssaanjh [91854] - Indian, Brookline\n4. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n5. Tonino [73777] - Italian, Jamaica Plain\n6. La Morra [4757] - Italian, Brookline\n7. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Create calendar event on Julia's calendar inviting Dylan:\n   gws calendar events insert --params '{\"calendarId\": \"primary\", \"sendUpdates\": \"all\"}' --json '{\"summary\": \"Quarterly Dinner @ RESTAURANT_NAME\", \"start\": {\"dateTime\": \"DATEThh:mm:00-05:00\", \"timeZone\": \"America/New_York\"}, \"end\": {\"dateTime\": \"DATEThh+2:mm:00-05:00\", \"timeZone\": \"America/New_York\"}, \"location\": \"RESTAURANT_ADDRESS\", \"description\": \"Quarterly group dinner for 4. Booked via Resy under Dylan account. Forward to other attendees.\", \"attendees\": [{\"email\": \"dylanbochman@gmail.com\"}]}' --account julia.joy.jennings@gmail.com\n5. Report the booking details: restaurant name, date, time, address.\n\nNOTE: January is EST (UTC-5), so use -05:00 for timezone offset.\n\nThe result will be announced to the group chat automatically."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and inspect Julia's Google Calendar for any existing party-of-4 quarterly group dinner in January 2027. If either a reservation or matching calendar event exists, send its details to group chat chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book the Q1 2027 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. Previous quarters covered Brookline/Jamaica Plain. Pick a fresh restaurant for the new year.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in January 2027.\nTry these Fridays in order: January 8, January 15, January 22, January 29.\n\nRESTAURANTS TO TRY (in priority order \u2014 try to vary from previous quarters):\n1. Akami Omakase [94662] - Japanese, Brookline\n2. Maguro [82623] - Japanese, Brookline\n3. Ssaanjh [91854] - Indian, Brookline\n4. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n5. Tonino [73777] - Italian, Jamaica Plain\n6. La Morra [4757] - Italian, Brookline\n7. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Before creating a calendar event, repeat the calendar check and reuse any matching event. Otherwise create the event on Julia's calendar inviting Dylan.\n5. Send the booking details (restaurant name, date, time, and address) to group chat chat-id 170.\n\nNOTE: January is EST (UTC-5), so use -05:00 for timezone offset.\n\nIMPORTANT: Cron delivery is disabled. You must send exactly one final status message yourself after the idempotency check or booking attempt."
       },
       "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "7010feab69b14fa19071a88340495f2f"
+        "mode": "none"
       }
     },
     {
