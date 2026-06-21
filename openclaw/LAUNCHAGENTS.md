@@ -158,7 +158,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
 | `com.openclaw.bb-lag-summary` | Daily 8:05 AM | `bb-lag-summary.sh` | BlueBubbles message lag summary |
-| `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM | `opentable-refresh-token.sh` | Refreshes OpenTable CLI auth token (~14d TTL) via Pinchtab + GWS Gmail 2FA. Scheduled at 4 AM to avoid Pinchtab collision with 8/10 AM booking jobs. |
+| `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM | `opentable-refresh-token.sh` | Refreshes the OpenTable CLI token from the persisted Pinchtab session, with GWS email 2FA only as fallback. Uses the cache-only secret environment and preserves unrelated browser tabs. Scheduled at 4 AM to avoid Pinchtab collision with 8/10 AM booking jobs. |
 
 ## Mac Mini — Event-Driven (WatchPaths)
 

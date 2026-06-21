@@ -114,17 +114,16 @@ Auth tokens (~14 days) are stored at `~/.cache/openclaw-gateway/opentable_auth_t
 ```bash
 bash ~/.openclaw/bin/opentable-refresh-token.sh
 ```
-Fully automated: Pinchtab navigates to OT login, enters `bochmanspam@gmail.com`, reads the 2FA code from Gmail via GWS, enters it, extracts the `authCke` cookie, and updates the CLI token cache. No manual steps.
+The refresh first reuses the persisted Pinchtab browser session and validates the extracted `authCke` token with the read-only OpenTable CLI. Only when that session is no longer usable does it enter the email address, read the 2FA code from Gmail via GWS, and complete the login. It writes the protected local CLI cache without printing either the verification code or token.
 
 **How it works:**
-1. Pinchtab opens `opentable.com/authenticate/start` (headless)
-2. Clicks "Use email instead", enters `bochmanspam@gmail.com`
-3. Reads verification code from Gmail (`gws gmail users messages list --account bochmanspam@gmail.com`)
-4. Enters code — auto-redirected to logged-in state
-5. Extracts `authCke` cookie `atk` value from `document.cookie`
-6. Writes token to `~/.cache/openclaw-gateway/opentable_auth_token`
+1. Reuses the existing Pinchtab browser and opens a dedicated OpenTable tab through Chrome DevTools Protocol, preserving unrelated browser tabs.
+2. Extracts and validates the persisted `authCke` cookie `atk` value when available.
+3. Otherwise, uses native Pinchtab click/fill controls for the email login flow.
+4. Reads the verification code from Gmail (`gws gmail users messages list --account bochmanspam@gmail.com`) and completes the login.
+5. Writes the validated token atomically to `~/.cache/openclaw-gateway/opentable_auth_token` with mode `0600`.
 
-**Requirements:** Pinchtab, GWS with `bochmanspam@gmail.com` authenticated, secrets-cache sourced.
+**Requirements:** Pinchtab 0.11+, GWS with `bochmanspam@gmail.com` authenticated, and the cache-only OpenClaw secret environment. The LaunchAgent never invokes `op`.
 
 ### Manual refresh (fallback)
 1. Open Chrome on Mini -> navigate to opentable.com
