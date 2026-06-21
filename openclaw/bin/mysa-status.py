@@ -20,7 +20,7 @@ os.environ['AWS_EC2_METADATA_DISABLED'] = 'true'
 
 import boto3
 import requests
-from mysotherm.auth import authenticate, load_credentials, CONFIG_FILE
+from mysotherm.auth import authenticate, load_credentials, login as mysa_login, CONFIG_FILE
 from mysotherm.mysa_stuff import BASE_URL, CLIENT_HEADERS, REGION
 from mysotherm.mysa_stuff import auther
 from mysotherm.util import slurpy
@@ -48,7 +48,18 @@ def _protect_credentials_file():
         pass
 
 
-def login():
+def _refresh_from_environment(bsess):
+    username = os.environ.get("MYSA_USERNAME", "").strip()
+    password = os.environ.get("MYSA_PASSWORD", "")
+    if not username or not password:
+        return None
+
+    user = mysa_login(username, password, bsess=bsess, cf=CONFIG_FILE)
+    _protect_credentials_file()
+    return user
+
+
+def interactive_login():
     """Run an interactive credential renewal outside dashboard collection."""
     try:
         bsess = boto3.session.Session(region_name=REGION)
@@ -66,7 +77,16 @@ def main():
         bsess = boto3.session.Session(region_name=REGION)
         # Do not call authenticate(): it prompts for credentials when a
         # refresh token expires, which cannot work from a dashboard process.
-        u = load_credentials(user=None, cf=CONFIG_FILE, bsess=bsess)
+        try:
+            u = load_credentials(user=None, cf=CONFIG_FILE, bsess=bsess)
+        except NotImplementedError:
+            try:
+                u = _refresh_from_environment(bsess)
+            except Exception:
+                _error("authentication_failed", "Managed Mysa credentials could not refresh the session.")
+                return 1
+            if u is None:
+                raise
         _protect_credentials_file()
 
         sess = requests.Session()
@@ -137,5 +157,5 @@ def main():
 
 if __name__ == '__main__':
     if sys.argv[1:] == ["--login"]:
-        raise SystemExit(login())
+        raise SystemExit(interactive_login())
     raise SystemExit(main())

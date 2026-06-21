@@ -1,3 +1,8 @@
 #!/bin/bash
 # mysa — Mysa thermostat status
+if [[ -f "$HOME/.openclaw/.secrets-cache" ]]; then
+  set -a
+  source "$HOME/.openclaw/.secrets-cache"
+  set +a
+fi
 exec "$HOME/.openclaw/mysa/venv/bin/python3" "$HOME/.openclaw/bin/mysa-status.py" "$@"
