@@ -70,7 +70,7 @@ fi
 
 cleanup() {
   if [[ "$CIELO_TAB_CREATED" == true ]] && [[ -n "$CIELO_TAB_ID" ]]; then
-    /opt/homebrew/bin/pinchtab close "$CIELO_TAB_ID" >/dev/null 2>&1 || true
+    curl -sS --max-time 5 "http://localhost:$CDP_PORT/json/close/$CIELO_TAB_ID" >/dev/null 2>&1 || true
   fi
   if [[ -n "$ORIGINAL_TAB_ID" ]]; then
     /opt/homebrew/bin/pinchtab tab "$ORIGINAL_TAB_ID" >/dev/null 2>&1 || true
@@ -126,7 +126,13 @@ except Exception:
 " 2>/dev/null)
 
 if [[ -z "$CIELO_TAB_ID" ]]; then
-  CIELO_TAB_ID=$(/opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/" --new-tab --print-tab-id 2>/dev/null | tail -n 1)
+  CIELO_TAB_ID=$(curl -sS --max-time 10 -X PUT "http://localhost:$CDP_PORT/json/new?https%3A%2F%2Fhome.cielowigle.com%2F" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    print(json.load(sys.stdin).get('id', ''))
+except Exception:
+    print('')
+" 2>/dev/null)
   if [[ -z "$CIELO_TAB_ID" ]]; then
     echo '{"success":false,"error":"Could not open an isolated Cielo browser tab"}'
     cleanup; exit 1
@@ -169,7 +175,7 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
   echo '{"info":"Cookies expired, attempting headless login..."}'
 
   # Navigate to login page
-  /opt/homebrew/bin/pinchtab nav "https://home.cielowigle.com/auth/login" --tab "$CIELO_TAB_ID" 2>/dev/null
+  /opt/homebrew/bin/pinchtab eval "window.location.assign('https://home.cielowigle.com/auth/login'); 'navigating'" --tab "$CIELO_TAB_ID" >/dev/null 2>&1
   sleep 8
 
   # Start passive CDP listener BEFORE login to capture the auth response (refreshToken)

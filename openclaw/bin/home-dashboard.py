@@ -208,7 +208,14 @@ def collect_roombas_cabin():
 
 
 def collect_tv():
-    return _run_cli(["samsung-tv", "status"])
+    result = _run_cli(["samsung-tv", "status"])
+    message = str(result.get("error", ""))
+    if any(marker in message for marker in ("ConnectTimeout", "TV unreachable", "timed out")):
+        return {
+            "error": "TV is unreachable and is likely off or in standby.",
+            "error_kind": "offline",
+        }
+    return result
 
 
 def collect_speakers():
