@@ -112,3 +112,14 @@ PY"
 - Cielo and Mysa status collectors never prompt from the dashboard process. An expired provider session is shown as an actionable reauthentication state rather than raw CLI output.
 - Cielo's 30-minute refresher uses a dedicated PinchTab tab and restores the previously active tab. It refreshes an existing browser session, but does not repeatedly submit credentials through reCAPTCHA; a logged-out Cielo session requires a manual sign-in.
 - Samsung TV and Google Cast status polls treat an unreachable local port as an offline or standby device. Speaker checks fail fast before invoking Cast discovery, so an offline device does not hold up the dashboard refresh.
+
+To restore an expired provider session from an interactive Mac mini terminal:
+
+```bash
+# Prompts only in an interactive terminal and updates ~/.config/mysotherm.
+mysa --login
+
+# After signing in at https://home.cielowigle.com/, export a HAR with content
+# and import the WebSocket token from it.
+cielo load-har ~/Downloads/home.cielowigle.com.har
+```

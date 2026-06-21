@@ -84,4 +84,4 @@ qmd mcp                                       # start MCP server for AI agents
 
 | Script | Description |
 |--------|-------------|
-| `mysa-status.py` | Queries Mysa baseboard heater API for device status (temp, setpoint, mode). Outputs JSON. Uses Cognito auth cached at `~/.config/mysotherm`. |
+| `mysa-status.py` | Queries Mysa baseboard heater API for device status (temp, setpoint, mode). Outputs JSON. Uses Cognito auth cached at `~/.config/mysotherm`; run `mysa --login` interactively to renew an expired session. |

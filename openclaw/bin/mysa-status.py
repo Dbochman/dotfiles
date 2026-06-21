@@ -20,7 +20,7 @@ os.environ['AWS_EC2_METADATA_DISABLED'] = 'true'
 
 import boto3
 import requests
-from mysotherm.auth import load_credentials, CONFIG_FILE
+from mysotherm.auth import authenticate, load_credentials, CONFIG_FILE
 from mysotherm.mysa_stuff import BASE_URL, CLIENT_HEADERS, REGION
 from mysotherm.mysa_stuff import auther
 from mysotherm.util import slurpy
@@ -39,6 +39,18 @@ def get_val(entry):
 
 def _error(kind, message):
     print(json.dumps({"error": message, "error_kind": kind}), file=sys.stderr)
+
+
+def login():
+    """Run an interactive credential renewal outside dashboard collection."""
+    try:
+        bsess = boto3.session.Session(region_name=REGION)
+        authenticate(user=None, cf=CONFIG_FILE, bsess=bsess)
+        print(json.dumps({"success": True, "message": "Mysa credentials refreshed."}))
+        return 0
+    except Exception:
+        _error("authentication_failed", "Mysa sign-in was not completed.")
+        return 1
 
 
 def main():
@@ -115,4 +127,6 @@ def main():
 
 
 if __name__ == '__main__':
+    if sys.argv[1:] == ["--login"]:
+        raise SystemExit(login())
     raise SystemExit(main())
