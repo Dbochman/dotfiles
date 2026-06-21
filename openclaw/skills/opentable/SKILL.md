@@ -51,7 +51,7 @@ bash ~/.openclaw/workspace/scripts/opentable-book.sh "sushi south end boston" 20
 
 ## Method 2: OpenTable CLI (Fallback)
 
-Use the `opentable` CLI when you already have a specific restaurant ID (from an OpenTable URL). Auth uses a bearer token from browser cookies stored in 1Password.
+Use the `opentable` CLI when you already have a specific restaurant ID (from an OpenTable URL). Auth uses a bearer token extracted from the browser session and stored in the protected local cache; 1Password is a manually maintained fallback.
 
 ### Get restaurant info by ID
 ```bash
@@ -123,7 +123,7 @@ The refresh first reuses the persisted Pinchtab browser session and validates th
 4. Reads the verification code from Gmail (`gws gmail users messages list --account bochmanspam@gmail.com`) and completes the login.
 5. Writes the validated token atomically to `~/.cache/openclaw-gateway/opentable_auth_token` with mode `0600`.
 
-**Requirements:** Pinchtab 0.11+, GWS with `bochmanspam@gmail.com` authenticated, and the cache-only OpenClaw secret environment. The LaunchAgent never invokes `op`.
+**Requirements:** Pinchtab 0.11+, GWS with `bochmanspam@gmail.com` authenticated, and the cache-only OpenClaw secret environment. The LaunchAgent never invokes or writes through `op`; update the vault fallback manually when needed.
 
 ### Manual refresh (fallback)
 1. Open Chrome on Mini -> navigate to opentable.com
