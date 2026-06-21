@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.ccusage-push</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/dylanbochman/repos/dotfiles/openclaw/bin/ccusage-push.sh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/dylanbochman</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>SSH_AUTH_SOCK</key>
+        <string></string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>StandardOutPath</key>
+    <string>/tmp/ccusage-push.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ccusage-push.err.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

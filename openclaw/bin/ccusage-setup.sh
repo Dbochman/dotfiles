@@ -50,7 +50,11 @@ cat > "$PLIST" <<EOF
         <string>$HOME</string>
         <key>PATH</key>
         <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>SSH_AUTH_SOCK</key>
+        <string></string>
     </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
 </dict>
 </plist>
 EOF

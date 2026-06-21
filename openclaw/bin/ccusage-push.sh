@@ -20,9 +20,9 @@ REMOTE_DIR="${CCUSAGE_REMOTE_DIR:-~/.openclaw/usage-history}"
 MACHINE=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "unknown")
 LOCAL_TMP="/tmp/ccusage-daily-${MACHINE}.json"
 
-# Find npx — check common locations
+# Find npx — prefer the managed Node 22 keg used by the rest of the tooling.
 NPX=""
-for p in /usr/local/bin/npx /opt/homebrew/bin/npx; do
+for p in /opt/homebrew/opt/node@22/bin/npx /opt/homebrew/bin/npx /usr/local/bin/npx; do
   [[ -x "$p" ]] && NPX="$p" && break
 done
 if [[ -z "$NPX" ]]; then
