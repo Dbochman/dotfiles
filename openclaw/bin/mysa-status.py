@@ -41,11 +41,19 @@ def _error(kind, message):
     print(json.dumps({"error": message, "error_kind": kind}), file=sys.stderr)
 
 
+def _protect_credentials_file():
+    try:
+        os.chmod(os.path.expanduser(CONFIG_FILE), 0o600)
+    except OSError:
+        pass
+
+
 def login():
     """Run an interactive credential renewal outside dashboard collection."""
     try:
         bsess = boto3.session.Session(region_name=REGION)
         authenticate(user=None, cf=CONFIG_FILE, bsess=bsess)
+        _protect_credentials_file()
         print(json.dumps({"success": True, "message": "Mysa credentials refreshed."}))
         return 0
     except Exception:
@@ -59,6 +67,7 @@ def main():
         # Do not call authenticate(): it prompts for credentials when a
         # refresh token expires, which cannot work from a dashboard process.
         u = load_credentials(user=None, cf=CONFIG_FILE, bsess=bsess)
+        _protect_credentials_file()
 
         sess = requests.Session()
         sess.auth = auther(u)
