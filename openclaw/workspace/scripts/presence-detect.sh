@@ -38,7 +38,7 @@ STATE_DIR="${HOME}/.openclaw/presence"
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
 
 rotate_log_if_needed() {
-  local max_bytes=$((25 * 1024 * 1024))
+  local max_bytes=${PRESENCE_LOG_MAX_BYTES:-$((100 * 1024 * 1024))}
   local keep=3
   local size lock i previous
 

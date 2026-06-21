@@ -50,7 +50,7 @@ Each service uses one of two patterns:
 | `gateway.log` / `gateway.err.log` | Truncate to last 1000 lines when >5MB | Gateway wrapper on startup/restart |
 | `bb-watchdog.log` | Daily rotation, keep 7 days (`bb-watchdog.log.YYYY-MM-DD`) | Script checks on each run |
 | `nest-cron.log` | Truncate to last 50 lines when >100KB | Nest snapshot plist inline bash |
-| `presence-detect.log` | Rotate at 25MB, keep 3 prior files | Presence script startup, with a directory lock shared by scan and receive paths |
+| `presence-detect.log` | Rotate at 100MiB, keep 3 prior files | Presence script startup, with a directory lock shared by scan and receive paths |
 | `dog-walk-listener.log` | Rotate at 100MB, keep 3 prior files; stderr duplicate/rate guard forces restart on sustained spam | Listener restart wrapper |
 | All others | No automatic rotation | Low-volume scheduled output; monitor size periodically |
 

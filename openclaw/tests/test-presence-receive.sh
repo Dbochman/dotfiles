@@ -46,13 +46,13 @@ grep -q "Recovered queued presence transfer" \
 
 dd if=/dev/zero \
   of="$TEST_HOME/.openclaw/logs/presence-detect.log" \
-  bs=1048576 count=26 2>/dev/null
-HOME="$TEST_HOME" \
+  bs=1024 count=2 2>/dev/null
+HOME="$TEST_HOME" PRESENCE_LOG_MAX_BYTES=1024 \
   bash "$REPO_ROOT/openclaw/workspace/scripts/presence-detect.sh" invalid \
   >/dev/null 2>&1 || true
 
 rotated="$TEST_HOME/.openclaw/logs/presence-detect.log.1"
 test -f "$rotated"
-test "$(stat -f%z "$rotated")" -eq $((26 * 1024 * 1024))
+test "$(stat -f%z "$rotated")" -eq 2048
 
 echo "test-presence-receive: PASS"
