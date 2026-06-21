@@ -13,12 +13,12 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.nest-dashboard` | `nest-dashboard.py` | 8550 | Nest thermostat history dashboard |
 | `ai.openclaw.usage-dashboard` | `usage-dashboard.py` | 8551 | Anthropic usage tracking dashboard |
 | `ai.openclaw.dog-walk-dashboard` | `dog-walk-dashboard.py` | 8552 | Dog walk & Roomba dashboard (walk history, Fi GPS, return signals) |
+| `ai.openclaw.roomba-dashboard` | `roomba-dashboard.py` | 8553 | Roomba state and command dashboard |
+| `ai.openclaw.home-dashboard` | `home-dashboard.py` | 8558 | Home Control Plane dashboard and provider status API |
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
 | `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
-| `ai.openclaw.forecast-crypto-sync` | `forecast-crypto-sync.py` | — | Daily cache-only crypto holdings refresh for Forecast |
-| `ai.openclaw.forecast-ledger-capture` | `forecast-ledger-capture.py` | — | Daily aggregate observation capture after source refreshes |
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
-| `com.openclaw.presence-receive` | `presence-receive.sh` | — | Receives Tailscale file pushes from Crosstown presence scans |
+| `com.openclaw.presence-receive` | `presence-receive.sh` | — | Receives Tailscale file pushes from Crosstown, drains stale inbound files before waiting, and logs through `presence-detect.log` |
 
 ### Financial Dashboard LaunchAgents
 
@@ -119,7 +119,6 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.poke-messages` | 60s | `poke-messages.scpt` | AppleScript to keep Messages.app responsive for BB Private API |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
-| `ai.openclaw.8sleep-snapshot` | 15min | `8sleep-snapshot.sh` | Eight Sleep status snapshot to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
@@ -153,6 +152,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | Label | Schedule | Program | Description |
 |-------|----------|---------|-------------|
 | `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles repo, deploys skills/wrappers to Mini |
+| `ai.openclaw.8sleep-snapshot` | Daily 6:50 AM | `8sleep-snapshot.sh` | Pre-captures last-night summaries to `/tmp/8sleep-{dylan,julia}-latest.txt` before morning briefings |
 | `ai.openclaw.financial-dashboard-plaid-sync` | Daily 7:15 AM | `financial-dashboard-plaid-sync.py` | Cache-only production Plaid sync; no `op` invocation |
 | `ai.openclaw.forecast-crypto-sync` | Daily 7:25 AM | `forecast-crypto-sync.py` | Cache-only Coinbase/Etherscan holdings sync for Forecast; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
@@ -202,7 +202,7 @@ Every new LaunchAgent script MUST follow these rules:
 2. **Set `OP_SERVICE_ACCOUNT_TOKEN`** in any script that calls `op` (directly or via a CLI that calls `op` internally like `opentable`, `resy`, `nest`). Without it, `op` tries the 1Password desktop app's Mach bootstrap service, which triggers a GUI permission popup on every run — impossible to approve without VNC. Use: `export OP_SERVICE_ACCOUNT_TOKEN=$(cat "$HOME/.openclaw/.env-token")`
 3. **Source `.secrets-cache`** for environment secrets: `set -a && source ~/.openclaw/.secrets-cache && set +a`
 4. **Use `IdentityAgent none`** for any SSH/scp to known hosts — the default 1Password SSH agent also triggers GUI popups under launchd
-5. **Set `StandardOutPath` and `StandardErrorPath`** in the plist to `~/.openclaw/logs/`
+5. **Choose one log owner**: plist-owned services write stdout/stderr to `~/.openclaw/logs/`; scripts with their own bounded `log()` function send plist stdout/stderr to `/dev/null` so third-party CLI noise cannot create an unbounded duplicate log
 6. **Track the plist** in `openclaw/launchagents/` in the dotfiles repo (deploy via scp)
 
 ## Notes
@@ -212,5 +212,7 @@ Every new LaunchAgent script MUST follow these rules:
 - **Logs**: Most services log to `~/.openclaw/logs/` or `/tmp/`. Check `StandardErrorPath`/`StandardOutPath` in plists.
 - **Gateway wrapper**: Uses cache-only secrets pattern (`~/.openclaw/.secrets-cache`), no `op read` at startup (hangs under launchd).
 - **OAuth refresh**: `oauth-refresh.sh` hides `/usr/bin` from PATH during `claude auth login` so that `security` (macOS keychain CLI) is not found. This forces Claude Code to write credentials to `~/.claude/.credentials.json` instead of the keychain, which is unreadable over SSH. The refresh token rotates on each login, so the flow is self-sustaining. If the refresh token chain breaks (e.g., manual `claude auth login` rotates it outside the script), re-seed by pushing a fresh token from a machine with keychain access: `security find-generic-password -s "Claude Code-credentials" -w | ssh dylans-mac-mini 'cat > ~/.openclaw/.anthropic-oauth-cache'`.
+- **OAuth verification**: after enabling or repairing `ai.openclaw.oauth-refresh`, require exit 0, mode `0600` on `~/.openclaw/.anthropic-oauth-cache`, and non-null `utilization` from `http://127.0.0.1:8551/api/current`.
+- **Cielo verification**: a zero LaunchAgent exit is necessary but not sufficient. Refresh `http://127.0.0.1:8558/api/status?refresh=true` and require the `cielo` object to have no `error`.
 - **Pre-upgrade backup**: `ai.openclaw.gateway.plist.pre-upgrade` exists as safety backup — `npm install -g openclaw` may overwrite the plist via post-install hook.
 - **Prefix convention**: Newer agents use `ai.openclaw.*`, older ones use `com.openclaw.*`. Both are functionally equivalent.

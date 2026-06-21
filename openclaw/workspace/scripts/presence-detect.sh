@@ -35,7 +35,37 @@ TAILSCALE="/usr/local/bin/tailscale"
 [ -x "$TAILSCALE" ] || TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 STATE_DIR="${HOME}/.openclaw/presence"
 
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
+
+rotate_log_if_needed() {
+  local max_bytes=$((25 * 1024 * 1024))
+  local keep=3
+  local size lock i previous
+
+  [ -f "$LOG_FILE" ] || return 0
+  size=$(stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+  [ "$size" -gt "$max_bytes" ] || return 0
+
+  lock="${LOG_FILE}.rotate.lock"
+  mkdir "$lock" 2>/dev/null || return 0
+
+  # Recheck after acquiring the lock because cabin and receive paths share it.
+  size=$(stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+  if [ "$size" -gt "$max_bytes" ]; then
+    i=$keep
+    while [ "$i" -gt 1 ]; do
+      previous=$((i - 1))
+      [ -f "$LOG_FILE.$previous" ] && mv -f "$LOG_FILE.$previous" "$LOG_FILE.$i"
+      i=$previous
+    done
+    mv -f "$LOG_FILE" "$LOG_FILE.1"
+    : > "$LOG_FILE"
+  fi
+
+  rmdir "$lock" 2>/dev/null || true
+}
+
+rotate_log_if_needed
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"

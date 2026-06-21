@@ -4,8 +4,8 @@ description: >-
   Diagnose Tailscale Taildrop (`tailscale file cp` / `tailscale file get`) pipelines that silently jam
   after working for a while.
 author: Claude Code
-version: 1.0.0
-date: 2026-05-10
+version: 1.1.0
+date: 2026-06-21
 ---
 
 # Tailscale Taildrop Receiver-Jam
@@ -38,56 +38,63 @@ patterns leave N-1 stragglers per fire.
 - Downstream state file (e.g. `crosstown-scan.json`) mtime is days/weeks
   stale even though the pusher's LaunchAgent is firing on schedule
 - The receiver script processes exactly one file per invocation and `break`s
+- A receiver that drains only *after* `file get` can still jam: an existing
+  collision may make `file get` fail before post-receive cleanup runs
 
 ## Solution
 
-Rewrite the receiver to drain the entire `RECV_DIR` after `tailscale file get --wait`
-returns, picking the newest file as canonical and unconditionally deleting every
-straggler:
+Use one queue-drain function both before and after `tailscale file get --wait`.
+The pre-drain recovers a file left by a crash before Tailscale tries to create
+another `stdin.txt`; the post-drain handles the new arrival. Pick the newest
+file as canonical and unconditionally remove every straggler:
 
 ```bash
+process_queue() {
+  shopt -s nullglob
+  local files=("${RECV_DIR}"/*)
+  shopt -u nullglob
+  [ "${#files[@]}" -gt 0 ] || return 1
+
+  local newest="" f
+  for f in "${files[@]}"; do
+    [ -f "$f" ] || continue
+    if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then
+      newest="$f"
+    fi
+  done
+  [ -n "$newest" ] || return 1
+
+  mv -f "$newest" "${STATE_DIR}/<canonical-name>.json"
+  for f in "${files[@]}"; do
+    [ -f "$f" ] && rm -f "$f"
+  done
+}
+
+# Recover a prior arrival before asking Tailscale to write stdin.txt again.
+process_queue || true
+
 log "Waiting for Tailscale file transfer..."
-tailscale file get --wait "$RECV_DIR/" 2>/dev/null
-
-shopt -s nullglob
-files=("${RECV_DIR}"/*)
-shopt -u nullglob
-
-if [ "${#files[@]}" -eq 0 ]; then
-  log "WARN: tailscale file get returned but RECV_DIR is empty"
-  exit 0
+if ! output=$(tailscale file get --wait "$RECV_DIR/" 2>&1); then
+  log "ERROR: tailscale file get failed: $(printf '%s' "$output" | tr '\n' ' ' | cut -c1-300)"
+  sleep 30
+  exit 1
 fi
 
-# Newest by mtime wins the canonical slot
-newest=""
-for f in "${files[@]}"; do
-  [ -f "$f" ] || continue
-  if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then
-    newest="$f"
-  fi
-done
-
-mv "$newest" "${STATE_DIR}/<canonical-name>.json"
-log "Received via Tailscale (from $(basename "$newest"); ${#files[@]} file(s) in queue)"
-
-# Drop every straggler so the next push doesn't hit name collisions
-for f in "${files[@]}"; do
-  [ -f "$f" ] && rm -f "$f"
-done
+process_queue || log "WARN: tailscale file get returned but queue is empty"
 ```
 
 Drop the legacy `if [ -f stdin ]` check entirely — Tailscale 1.56+ won't
 produce that filename. The unified loop handles `stdin.txt`, `stdin (N).txt`,
 and any other arrival name.
 
-After deploying, manually drain the existing backlog:
-```bash
-rm -v <RECV_DIR>/stdin*.txt   # or whatever pattern exists
-```
+Capture CLI output and add a retry delay. Sending raw stdout/stderr directly
+to a plist-owned log can otherwise turn one collision into a tight KeepAlive
+loop and tens of megabytes of duplicate lines. Prefer a script-owned bounded
+log and `/dev/null` for plist stdout/stderr.
 
 ## Verification
 
-1. Confirm the receiver dir is empty: `ls <RECV_DIR>/`
+1. Confirm startup pre-drained the receiver dir: `ls <RECV_DIR>/`
 2. Trigger a fresh push from the peer:
    `ssh <peer> 'launchctl kickstart -k gui/$(id -u)/<pusher-label>'`
 3. Wait ~30s, then verify:
@@ -95,6 +102,8 @@ rm -v <RECV_DIR>/stdin*.txt   # or whatever pattern exists
    - Receiver dir is still empty (no stragglers)
    - Receiver log shows "Received via Tailscale (from stdin.txt; 1 file(s) in queue)"
 4. Trigger 2-3 more pushes back-to-back to confirm no jam recurs.
+5. Confirm the raw plist log is not growing and the script-owned log contains
+   one summarized receive record per transfer.
 
 ## Example
 

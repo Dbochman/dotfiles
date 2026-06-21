@@ -20,7 +20,7 @@ Each service uses one of two patterns:
 | `bb-watchdog.log` | `com.openclaw.bb-watchdog` | BlueBubbles health checks, restart actions |
 | `bb-ingest-lag.log` | `com.openclaw.bb-watchdog` | Ingest lag metrics (written by watchdog) |
 | `bb-lag-summary.log` | `com.openclaw.bb-lag-summary` | Daily lag summaries |
-| `presence-detect.log` | `com.openclaw.presence-cabin` / `presence-crosstown` | Presence scan results and evaluations |
+| `presence-detect.log` | `com.openclaw.presence-cabin` / `presence-crosstown` / `presence-receive` | Presence scan, receive, and evaluation summaries |
 | `vacancy-actions.log` | `com.openclaw.vacancy-actions` | Vacancy trigger actions (lights, thermostat, 8sleep, Roombas) |
 
 ### Plist-Owned (stdout capture)
@@ -50,7 +50,20 @@ Each service uses one of two patterns:
 | `gateway.log` / `gateway.err.log` | Truncate to last 1000 lines when >5MB | Gateway wrapper on startup/restart |
 | `bb-watchdog.log` | Daily rotation, keep 7 days (`bb-watchdog.log.YYYY-MM-DD`) | Script checks on each run |
 | `nest-cron.log` | Truncate to last 50 lines when >100KB | Nest snapshot plist inline bash |
-| All others | No automatic rotation | Monitor size periodically |
+| `presence-detect.log` | Rotate at 25MB, keep 3 prior files | Presence script startup, with a directory lock shared by scan and receive paths |
+| `dog-walk-listener.log` | Rotate at 100MB, keep 3 prior files; stderr duplicate/rate guard forces restart on sustained spam | Listener restart wrapper |
+| All others | No automatic rotation | Low-volume scheduled output; monitor size periodically |
+
+`presence-receive` is script-owned. Its plist sends raw stdout/stderr to
+`/dev/null`, while actionable receive failures are summarized in
+`presence-detect.log`. This avoids a third-party CLI retry loop duplicating the
+same line into a launchd-owned log. The historical `presence-receive.log` is
+retained in place but is no longer written.
+
+The strategy is intentionally selective: bound high-volume persistent logs,
+deduplicate repeated errors at the producer, and avoid per-service rotation
+machinery for small daily logs. Rotation is a backstop; a rapidly growing log
+still indicates a retry-loop or verbosity bug that should be fixed at source.
 
 To check log sizes: `ls -lhS ~/.openclaw/logs/*.log`
 

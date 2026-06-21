@@ -19,9 +19,11 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/dbochman/.openclaw/logs/presence-receive.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>/Users/dbochman/.openclaw/logs/presence-receive.log</string>
+    <string>/dev/null</string>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
     <key>ProcessType</key>
     <string>Background</string>
 </dict>
