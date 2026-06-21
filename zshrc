@@ -1,3 +1,7 @@
+if [[ -x /opt/homebrew/bin/brew ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+fi
+
 alias python=/usr/bin/python3
 export PATH="$HOME/.local/bin:$PATH"
 
