@@ -110,7 +110,7 @@ PY"
 ### Authentication and Offline Devices
 
 - Cielo and Mysa status collectors never prompt from the dashboard process. An expired provider session is shown as an actionable reauthentication state rather than raw CLI output.
-- A `Mysa Login` item in the `OpenClaw` 1Password vault, with `username` and `password` fields, is cached as `MYSA_USERNAME` and `MYSA_PASSWORD` by `openclaw-refresh-secrets`. When present, those values renew an expired Mysa token without an interactive prompt.
+- The `Mysa` item in the `OpenClaw` 1Password vault, with `username` and `password` fields, is cached as `MYSA_USERNAME` and `MYSA_PASSWORD` by `openclaw-refresh-secrets`. When present, those values renew an expired Mysa token without an interactive prompt.
 - Cielo's 30-minute refresher uses a dedicated PinchTab tab and restores the previously active tab. It refreshes an existing browser session, but does not repeatedly submit credentials through reCAPTCHA; a logged-out Cielo session requires a manual sign-in.
 - Samsung TV and Google Cast status polls treat an unreachable local port as an offline or standby device. Speaker checks fail fast before invoking Cast discovery, so an offline device does not hold up the dashboard refresh.
 
