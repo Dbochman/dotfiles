@@ -25,6 +25,14 @@ Host dylans-macbook-pro
   HostName 100.107.209.85
   User dbochman
 
+# Direct Crosstown access with a machine-specific key.
+Host crosstown-mac
+  HostName 100.107.209.85
+  User dbochman
+  IdentityFile ~/.ssh/id_crosstown
+  IdentitiesOnly yes
+  IdentityAgent none
+
 # Work MacBook Pro (via Tailscale)
 Host dylans-work-mbp
   HostName 100.73.15.5
@@ -95,6 +103,12 @@ Match originalhost dylans-work-mbp exec "test -f ~/.ssh/id_work_mbp"
 # On the Mini, id_mini_to_mbp bypasses 1Password agent (hangs under launchd).
 Match originalhost dylans-macbook-pro exec "test -f ~/.ssh/id_mini_to_mbp"
   IdentityFile ~/.ssh/id_mini_to_mbp
+  IdentityAgent none
+
+# Dylan's laptop uses a dedicated key for direct Crosstown access.
+Match originalhost dylans-macbook-pro exec "test -f ~/.ssh/id_crosstown"
+  IdentityFile ~/.ssh/id_crosstown
+  IdentitiesOnly yes
   IdentityAgent none
 
 # 1Password SSH Agent (default for all other hosts)
