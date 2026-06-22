@@ -115,7 +115,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `com.openclaw.bb-watchdog` | 60s | `bb-watchdog.sh` | Monitors BlueBubbles health, cross-checks gateway BB plugin activity |
+| `com.openclaw.bb-watchdog` | 60s | `bb-watchdog.sh` | Monitors BlueBubbles health, cross-checks gateway BB plugin activity, and launches recovery instances hidden |
 | `com.openclaw.poke-messages` | 60s | `poke-messages.scpt` | AppleScript to keep Messages.app responsive for BB Private API |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
@@ -123,35 +123,21 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback uses an isolated managed headless PinchTab instance |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
-### Viewing Snooze
+### Headless Browser Policy
 
-Use `launchagent-snooze` when the Mac Mini is being used for a show, movie, or
-presentation and browser-based authentication must not interrupt the screen:
+PinchTab defaults to headless mode on the Mini. Cielo fallback, OpenTable token
+refresh and booking, and Star Market grocery automation acquire isolated tabs
+through `~/.openclaw/bin/pinchtab-headless-instance`. OpenTable uses the
+`opentable` profile, grocery uses `grocery`, and Cielo retains `default` for its
+attended reauthentication path. The helper refuses to navigate a visible
+PinchTab instance and stops only instances that it created.
+BlueBubbles watchdog recovery uses `open -gj` so restarts do not activate or
+show the app.
 
-```bash
-launchagent-snooze pause
-launchagent-snooze pause --for 2h
-launchagent-snooze pause --manual
-launchagent-snooze status
-launchagent-snooze resume
-```
-
-The snooze persistently disables and unloads only jobs that were loaded when
-`pause` began. Its restore set is stored at
-`~/.openclaw/state/mac-mini-automation-snooze.tsv`; repeated pauses do not
-overwrite it. `resume` restores only that set. The retired BoA keepalive and
-heartbeat jobs therefore remain disabled during normal use, while Cielo is
-typically restored. Cielo has `RunAtLoad`, so resume it only after viewing ends.
-Timed snoozes accept `30m`, `2h`, and `1h30m`; they use the transient
-`com.openclaw.launchagent-snooze-resume` user LaunchAgent. A later timed pause
-moves the deadline, while `pause --manual` cancels the timer without ending the
-snooze.
-
-Cielo refresh first tries the API refresh token. Its browser fallback uses the
-PinchTab 0.11 `default` profile headlessly and refuses to navigate a visible
-PinchTab instance. An expired Cielo browser session still requires one manual
-headed login because reCAPTCHA cannot be completed by the scheduled job; see
-`openclaw/skills/cielo-ac/SKILL.md` for the recovery sequence.
+The former viewing snooze is retired because scheduled browser work no longer
+needs the display. A visible browser is allowed only for an explicit,
+user-attended authentication flow such as Cielo reCAPTCHA recovery; see the
+service skill for that recovery sequence.
 
 ### Retired BoA Session-Durability Agents
 
@@ -189,7 +175,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
 | `com.openclaw.bb-lag-summary` | Daily 8:05 AM | `bb-lag-summary.sh` | BlueBubbles message lag summary |
-| `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM | `opentable-refresh-token.sh` | Refreshes the OpenTable CLI token from the persisted Pinchtab session, with GWS email 2FA only as fallback. Uses the cache-only secret environment and preserves unrelated browser tabs. Scheduled at 4 AM to avoid Pinchtab collision with 8/10 AM booking jobs. |
+| `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM | `opentable-refresh-token.sh` | Refreshes the OpenTable CLI token in a managed headless PinchTab instance, with GWS email 2FA only as fallback. Uses the cache-only secret environment and does not touch visible browser tabs. |
 
 ## Mac Mini — Event-Driven (WatchPaths)
 

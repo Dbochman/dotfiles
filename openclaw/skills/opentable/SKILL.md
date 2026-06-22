@@ -34,14 +34,14 @@ bash ~/.openclaw/workspace/scripts/opentable-book.sh "sushi south end boston" 20
 ```
 
 ### How it works
-1. Starts a Pinchtab browser session
+1. Acquires the persistent `opentable` profile as a managed headless Pinchtab instance and opens an isolated tab
 2. Navigates to OpenTable search with cuisine, date, time, party size
 3. Dismisses cookie consent overlay
 4. Finds available timeslots, picks the closest to requested time
 5. Clicks through to booking details page
 6. Clicks "Complete reservation" (uses card on file)
 7. Verifies confirmation page
-8. Cleans up Pinchtab process
+8. Closes its tab and stops the instance only when the script created it
 
 ### Tips
 - If no slots found, retry with a different search term (just the cuisine, or a different neighborhood)
@@ -114,16 +114,16 @@ Auth tokens (~14 days) are stored at `~/.cache/openclaw-gateway/opentable_auth_t
 ```bash
 bash ~/.openclaw/bin/opentable-refresh-token.sh
 ```
-The refresh first reuses the persisted Pinchtab browser session and validates the extracted `authCke` token with the read-only OpenTable CLI. Only when that session is no longer usable does it enter the email address, read the 2FA code from Gmail via GWS, and complete the login. It writes the protected local CLI cache without printing either the verification code or token.
+The refresh uses the persisted OpenTable session in a managed headless Pinchtab profile and validates the extracted `authCke` token with the read-only OpenTable CLI. Only when that session is no longer usable does it enter the email address, read the 2FA code from Gmail via GWS, and complete the login. It writes the protected local CLI cache without printing either the verification code or token.
 
 **How it works:**
-1. Reuses the existing Pinchtab browser and opens a dedicated OpenTable tab through Chrome DevTools Protocol, preserving unrelated browser tabs.
+1. Acquires the persistent `opentable` profile as a managed headless Pinchtab instance and opens a dedicated tab without navigating a visible browser.
 2. Extracts and validates the persisted `authCke` cookie `atk` value when available.
 3. Otherwise, uses native Pinchtab click/fill controls for the email login flow.
 4. Reads the verification code from Gmail (`gws gmail users messages list --account bochmanspam@gmail.com`) and completes the login.
 5. Writes the validated token atomically to `~/.cache/openclaw-gateway/opentable_auth_token` with mode `0600`.
 
-**Requirements:** Pinchtab 0.11+, GWS with `bochmanspam@gmail.com` authenticated, and the cache-only OpenClaw secret environment. The LaunchAgent never invokes or writes through `op`; update the vault fallback manually when needed.
+**Requirements:** Pinchtab 0.11+, `~/.openclaw/bin/pinchtab-headless-instance`, GWS with `bochmanspam@gmail.com` authenticated, and the cache-only OpenClaw secret environment. The LaunchAgent never invokes or writes through `op`; update the vault fallback manually when needed.
 
 ### Manual refresh (fallback)
 1. Open Chrome on Mini -> navigate to opentable.com

@@ -20,11 +20,13 @@ import base64
 import os
 import sys
 import argparse
+import atexit
 
 # ============================================================
 # Configuration
 # ============================================================
-PT_BASE = "http://127.0.0.1:9867"
+PINCHTAB = "/opt/homebrew/bin/pinchtab"
+PINCHTAB_INSTANCE_HELPER = os.path.expanduser("~/.openclaw/bin/pinchtab-headless-instance")
 GWS = "/opt/homebrew/bin/gws"
 JULIA_EMAIL = os.environ.get("STARMARKET_GMAIL", "")
 SM_USER = os.environ.get("STARMARKET_USERNAME", "")
@@ -33,31 +35,82 @@ SUB_KEY = "9e38e3f1d32a4279a49a264e0831ea46"
 USER_HASH = os.environ.get("STARMARKET_USER_HASH", "")
 DEVICE_TOKEN = os.environ.get("STARMARKET_DEVICE_TOKEN", "")
 SM_BASE = "https://www.starmarket.com"
+PT_INSTANCE_ID = ""
+PT_INSTANCE_STARTED = "0"
+PT_TAB_ID = ""
 
 # ============================================================
 # Helpers
 # ============================================================
 def pt_eval(js):
     """Evaluate JavaScript in pinchtab browser."""
-    payload = json.dumps({"expression": js})
     r = subprocess.run(
-        ["curl", "-s", "-m", "30", "-X", "POST", f"{PT_BASE}/evaluate",
-         "-H", "Content-Type: application/json", "-d", payload],
-        capture_output=True, text=True
+        [PINCHTAB, "eval", js, "--tab", PT_TAB_ID, "--json"],
+        capture_output=True,
+        text=True,
     )
-    if not r.stdout:
+    if r.returncode != 0 or not r.stdout:
         return ""
     d = json.loads(r.stdout)
     return d.get("result", d.get("error", ""))
 
 def pt_nav(url):
     """Navigate pinchtab to a URL."""
-    subprocess.run(
-        ["curl", "-s", "-m", "30", "-X", "POST", f"{PT_BASE}/navigate",
-         "-H", "Content-Type: application/json",
-         "-d", json.dumps({"url": url})],
-        capture_output=True, text=True
+    r = subprocess.run(
+        [PINCHTAB, "nav", url, "--tab", PT_TAB_ID, "--json"],
+        capture_output=True,
+        text=True,
     )
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or f"PinchTab navigation failed: {url}")
+
+
+def start_browser():
+    """Acquire a managed headless instance and open an isolated Star Market tab."""
+    global PT_INSTANCE_ID, PT_INSTANCE_STARTED, PT_TAB_ID
+
+    if not os.path.isfile(PINCHTAB_INSTANCE_HELPER) or not os.access(PINCHTAB_INSTANCE_HELPER, os.X_OK):
+        raise RuntimeError(f"Managed PinchTab helper is unavailable: {PINCHTAB_INSTANCE_HELPER}")
+
+    acquired = subprocess.run(
+        [PINCHTAB_INSTANCE_HELPER, "acquire", "grocery"],
+        capture_output=True,
+        text=True,
+    )
+    if acquired.returncode != 0:
+        raise RuntimeError(acquired.stderr.strip() or "Could not acquire headless PinchTab")
+
+    fields = acquired.stdout.strip().split("\t")
+    if len(fields) != 2 or not fields[0]:
+        raise RuntimeError("Managed PinchTab helper returned invalid instance metadata")
+    PT_INSTANCE_ID, PT_INSTANCE_STARTED = fields
+
+    opened = subprocess.run(
+        [PINCHTAB_INSTANCE_HELPER, "open", PT_INSTANCE_ID, SM_BASE],
+        capture_output=True,
+        text=True,
+    )
+    if opened.returncode != 0 or not opened.stdout.strip():
+        stop_browser()
+        raise RuntimeError(opened.stderr.strip() or "Could not open Star Market browser tab")
+    PT_TAB_ID = opened.stdout.strip()
+
+
+def stop_browser():
+    """Close only this script's tab and release an instance it created."""
+    global PT_INSTANCE_ID, PT_INSTANCE_STARTED, PT_TAB_ID
+
+    if PT_TAB_ID:
+        subprocess.run([PINCHTAB, "close", PT_TAB_ID], capture_output=True, text=True)
+        PT_TAB_ID = ""
+    if PT_INSTANCE_ID:
+        subprocess.run(
+            [PINCHTAB_INSTANCE_HELPER, "release", PT_INSTANCE_ID, PT_INSTANCE_STARTED],
+            capture_output=True,
+            text=True,
+        )
+        PT_INSTANCE_ID = ""
+        PT_INSTANCE_STARTED = "0"
 
 def browser_xhr(path, body_dict, result_var="__r"):
     """Make an XHR call from within the browser (inherits cookies/session)."""
@@ -392,6 +445,16 @@ def main():
     ] if not v]
     if missing:
         fail(f"Missing env vars: {', '.join(missing)}. Source ~/.openclaw/.secrets-cache first.")
+
+    try:
+        start_browser()
+    except RuntimeError as exc:
+        fail(str(exc))
+    atexit.register(stop_browser)
+
+    if os.environ.get("GROCERY_BROWSER_SMOKE_TEST") == "1":
+        print(json.dumps({"status": "browser-smoke-test", "mode": "headless"}))
+        return
 
     # Step 1: Login
     if not login():

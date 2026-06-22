@@ -7,7 +7,7 @@ metadata: {"openclaw":{"emoji":"G","requires":{"bins":["pinchtab","gws"]}}}
 
 # Star Market Grocery Reorder
 
-Automates weekly grocery reordering from Star Market (Albertsons family) using Pinchtab browser automation + CSMS API. Logs in as Julia, finds the most recent order, clicks Reorder to add all items to the cart, then verifies. Does NOT checkout.
+Automates grocery reordering from Star Market (Albertsons family) using a managed headless Pinchtab instance plus the CSMS API. Logs in as Julia, finds the most recent order, clicks Reorder to add all items to the cart, then verifies. Does NOT checkout.
 
 ## Usage
 
@@ -49,14 +49,15 @@ python3 ~/.openclaw/workspace/scripts/grocery-reorder.py
 
 ## How It Works
 
-1. **Login**: Navigates to Star Market sign-in page. If already logged in (Julia Joy visible), skips login. Otherwise:
+1. **Browser**: Acquires the persistent `grocery` profile as a managed headless Pinchtab instance, opens an isolated Star Market tab, and cleans up only its own resources.
+2. **Login**: Navigates to Star Market sign-in page. If already logged in (Julia Joy visible), skips login. Otherwise:
    - CSMS API auth (`/abs/pub/cnc/csmsservice/api/csms/authn`) with device token
    - Password verify via API
    - MFA via email if needed: sends code via API, reads from Julia's Gmail via `gws`, verifies via API
    - Establishes browser session via `SWY.OKTA.autoSignInWithSessionToken(sessionToken)`
-2. **Get Orders**: Navigates to `/order-account/orders`, extracts order IDs from `a[href*="/order-account/orders/"]` links
-3. **Reorder**: Navigates to order detail page, clicks Reorder button via full Angular-compatible event dispatch (PointerEvent + MouseEvent sequence with real coordinates)
-4. **Verify**: Navigates to `/erums/cart`, confirms items were added and reads cart total
+3. **Get Orders**: Navigates to `/order-account/orders`, extracts order IDs from `a[href*="/order-account/orders/"]` links
+4. **Reorder**: Navigates to order detail page, clicks Reorder button via full Angular-compatible event dispatch (PointerEvent + MouseEvent sequence with real coordinates)
+5. **Verify**: Navigates to `/erums/cart`, confirms items were added and reads cart total
 
 ## Key Technical Details
 
@@ -66,19 +67,18 @@ python3 ~/.openclaw/workspace/scripts/grocery-reorder.py
 - **Device remembered**: After first MFA, the device token is remembered and subsequent logins skip MFA
 - **Cart URL**: `/erums/cart` (not `/shop/cart`)
 
-## Cron Job
+## Scheduling
 
-Weekly reorder runs on Sunday mornings. The cron job:
-1. Runs the script
-2. Reports results via iMessage to Dylan
-3. Does NOT checkout — Julia reviews the cart and completes pickup scheduling
+No recurring grocery reorder job is currently installed. Run it on demand; any
+future scheduled job must retain the no-checkout rule and report results so
+Julia can review the cart and complete pickup scheduling.
 
 ## Safety
 
 - **NEVER checks out** — only adds items to cart
 - Requires all `STARMARKET_*` env vars (see Environment section above)
 - MFA codes read from Julia's Gmail via `gws` (requires auth for the account in `STARMARKET_GMAIL`)
-- Pinchtab must be running with a Chrome profile that has Star Market cookies
+- Requires `~/.openclaw/bin/pinchtab-headless-instance`; the script starts and scopes the browser instance itself
 
 ## Troubleshooting
 

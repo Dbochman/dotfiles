@@ -1,4 +1,0 @@
-interface:
-  display_name: "Snooze Mac Mini Automation"
-  short_description: "Time Mac Mini browser-automation snoozes"
-  default_prompt: "Use $snooze-mac-mini-automation to snooze Mac Mini browser automation for two hours."

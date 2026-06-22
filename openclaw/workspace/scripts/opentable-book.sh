@@ -21,25 +21,43 @@ fi
 
 DATETIME="${DATE}T${TIME}:00"
 ENCODED_SEARCH=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$SEARCH'))")
-
-# Start pinchtab
-pkill -f "pinchtab" 2>/dev/null || true
-sleep 1
-pinchtab &
-PINCH_PID=$!
-sleep 5
+PINCHTAB_INSTANCE_HELPER="$HOME/.openclaw/bin/pinchtab-headless-instance"
+PINCHTAB_INSTANCE_ID=""
+PINCHTAB_INSTANCE_STARTED=0
+TAB_ID=""
 
 cleanup() {
-  kill $PINCH_PID 2>/dev/null || true
-  pkill -f pinchtab 2>/dev/null || true
+  if [[ -n "$TAB_ID" ]]; then
+    pinchtab close "$TAB_ID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$PINCHTAB_INSTANCE_ID" ]]; then
+    "$PINCHTAB_INSTANCE_HELPER" release "$PINCHTAB_INSTANCE_ID" "$PINCHTAB_INSTANCE_STARTED"
+  fi
 }
 trap cleanup EXIT
 
-pt() { pinchtab eval "$1" 2>/dev/null; }
+if [[ ! -x "$PINCHTAB_INSTANCE_HELPER" ]]; then
+  echo '{"success":false,"error":"Managed PinchTab helper is unavailable"}'
+  exit 1
+fi
+
+if ! IFS=$'\t' read -r PINCHTAB_INSTANCE_ID PINCHTAB_INSTANCE_STARTED \
+  < <("$PINCHTAB_INSTANCE_HELPER" acquire opentable); then
+  echo '{"success":false,"error":"Could not acquire a managed headless PinchTab instance"}'
+  exit 1
+fi
+
+pt() { pinchtab eval "$1" --tab "$TAB_ID" --json 2>/dev/null; }
 
 # Navigate to search results
-pinchtab nav "https://www.opentable.com/s?covers=${PARTY}&dateTime=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${DATETIME}'))")&metroId=7&term=${ENCODED_SEARCH}" 2>/dev/null
+SEARCH_URL="https://www.opentable.com/s?covers=${PARTY}&dateTime=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${DATETIME}'))")&metroId=7&term=${ENCODED_SEARCH}"
+TAB_ID=$("$PINCHTAB_INSTANCE_HELPER" open "$PINCHTAB_INSTANCE_ID" "$SEARCH_URL")
 sleep 8
+
+if [[ "${OPENTABLE_BROWSER_SMOKE_TEST:-0}" == "1" ]]; then
+  echo '{"success":true,"mode":"browser-smoke-test"}'
+  exit 0
+fi
 
 # Dismiss cookie consent
 pt "(function(){

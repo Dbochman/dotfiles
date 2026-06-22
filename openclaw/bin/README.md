@@ -17,8 +17,8 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 | Script | Location on Mini | Description |
 |--------|-----------------|-------------|
 | `openclaw-refresh-secrets` | `~/bin/` | Refreshes `~/.openclaw/.secrets-cache` from 1Password. Run over SSH after key rotation. |
-| `launchagent-snooze` | `~/.openclaw/bin/` | Pauses and restores browser-based BoA/Cielo LaunchAgents without changing jobs that were already disabled. |
-| `opentable-refresh-token.sh` | `~/.openclaw/bin/` | Refreshes and validates the OpenTable CLI token from the persisted Pinchtab session; uses Gmail verification only when reauthentication is required and never logs token material. |
+| `pinchtab-headless-instance` | `~/.openclaw/bin/` | Acquires, scopes, and releases managed headless PinchTab instances without navigating a visible browser. |
+| `opentable-refresh-token.sh` | `~/.openclaw/bin/` | Refreshes and validates the OpenTable CLI token in a managed headless PinchTab instance; uses Gmail verification only when reauthentication is required and never logs token material. |
 | `openclaw-weekly-report.py` | `~/.openclaw/bin/` | Generates the weekly cron report from durable session/cron records and live service checks; avoids obsolete transient gateway-log parsing. |
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
 | `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as iMessage attachment via BlueBubbles API, plus optional summary text. Used by Julia's morning briefing cron job. |

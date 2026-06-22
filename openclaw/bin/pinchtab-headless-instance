@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+PINCHTAB="${PINCHTAB_BIN:-/opt/homebrew/bin/pinchtab}"
+PROFILE="${PINCHTAB_PROFILE:-default}"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  pinchtab-headless-instance acquire [profile]
+  pinchtab-headless-instance open INSTANCE_ID URL
+  pinchtab-headless-instance release INSTANCE_ID STARTED
+
+acquire prints: INSTANCE_ID<TAB>STARTED
+STARTED is 1 only when this invocation created the instance.
+Missing named profiles are created through the local PinchTab API.
+EOF
+}
+
+ensure_server() {
+  if "$PINCHTAB" health >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local uid
+  uid="$(id -u)"
+  if launchctl print "gui/$uid/com.pinchtab.pinchtab" >/dev/null 2>&1; then
+    launchctl kickstart -k "gui/$uid/com.pinchtab.pinchtab" >/dev/null 2>&1 || true
+  else
+    "$PINCHTAB" server --background >/dev/null 2>&1 || true
+  fi
+
+  for _ in $(seq 1 20); do
+    "$PINCHTAB" health >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+
+  echo "PinchTab server is unavailable" >&2
+  return 1
+}
+
+profile_exists() {
+  local profile="$1"
+  "$PINCHTAB" profiles --json | python3 -c '
+import json
+import sys
+
+profile = sys.argv[1]
+raise SystemExit(0 if any(item.get("name") == profile for item in json.load(sys.stdin)) else 1)
+' "$profile"
+}
+
+ensure_profile() {
+  local profile="$1"
+
+  profile_exists "$profile" && return 0
+
+  python3 - "$profile" <<'PY'
+import json
+import os
+import pathlib
+import sys
+import urllib.error
+import urllib.request
+
+profile = sys.argv[1]
+home = pathlib.Path.home()
+paths = (
+    home / ".pinchtab" / "config.json",
+    home / ".config" / "pinchtab" / "config.json",
+    home / "Library" / "Application Support" / "pinchtab" / "config.json",
+)
+config = {}
+for path in paths:
+    try:
+        config = json.loads(path.read_text())
+        break
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        continue
+
+server = config.get("server", {})
+port = server.get("port") or "9867"
+token = server.get("token") or os.environ.get("PINCHTAB_TOKEN", "")
+headers = {"Content-Type": "application/json"}
+if token:
+    headers["Authorization"] = f"Bearer {token}"
+request = urllib.request.Request(
+    f"http://127.0.0.1:{port}/profiles",
+    data=json.dumps({"name": profile}).encode(),
+    headers=headers,
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(request, timeout=10):
+        pass
+except urllib.error.HTTPError as exc:
+    if exc.code != 409:
+        raise
+PY
+
+  if ! profile_exists "$profile"; then
+    echo "Could not create PinchTab profile '$profile'" >&2
+    return 1
+  fi
+}
+
+find_instance() {
+  local profile="$1"
+  "$PINCHTAB" instances --json | python3 -c '
+import json
+import sys
+
+profile = sys.argv[1]
+instances = json.load(sys.stdin)
+instance = next(
+    (
+        item
+        for item in instances
+        if item.get("profileName") == profile
+        and item.get("status") in ("starting", "running")
+    ),
+    {},
+)
+print(
+    "\t".join(
+        (
+            instance.get("id", ""),
+            instance.get("mode", ""),
+            instance.get("status", ""),
+        )
+    )
+)
+' "$profile"
+}
+
+wait_until_running() {
+  local instance_id="$1"
+  local status=""
+
+  for _ in $(seq 1 20); do
+    status=$("$PINCHTAB" instances --json | python3 -c '
+import json
+import sys
+
+instance_id = sys.argv[1]
+instances = json.load(sys.stdin)
+print(next((item.get("status", "") for item in instances if item.get("id") == instance_id), ""))
+' "$instance_id")
+    [[ "$status" == "running" ]] && return 0
+    sleep 1
+  done
+
+  echo "PinchTab instance did not become ready: $instance_id" >&2
+  return 1
+}
+
+acquire() {
+  local profile="${1:-$PROFILE}"
+  local instance_id=""
+  local mode=""
+  local status=""
+  local started=0
+  local output=""
+
+  ensure_server
+  ensure_profile "$profile"
+  IFS=$'\t' read -r instance_id mode status <<< "$(find_instance "$profile")"
+
+  if [[ -n "$instance_id" && "$mode" != "headless" ]]; then
+    echo "Refusing to use visible PinchTab profile '$profile' ($instance_id)" >&2
+    return 1
+  fi
+
+  if [[ -z "$instance_id" ]]; then
+    output=$("$PINCHTAB" instance start --profile "$profile" --mode headless 2>/dev/null || true)
+    instance_id=$(printf '%s' "$output" | python3 -c '
+import json
+import sys
+
+try:
+    print(json.load(sys.stdin).get("id", ""))
+except Exception:
+    print("")
+')
+    if [[ -n "$instance_id" ]]; then
+      started=1
+    else
+      sleep 1
+      IFS=$'\t' read -r instance_id mode status <<< "$(find_instance "$profile")"
+      if [[ -z "$instance_id" || "$mode" != "headless" ]]; then
+        echo "Could not start headless PinchTab profile '$profile'" >&2
+        return 1
+      fi
+    fi
+  fi
+
+  wait_until_running "$instance_id"
+  printf '%s\t%s\n' "$instance_id" "$started"
+}
+
+open_tab() {
+  local instance_id="$1"
+  local url="$2"
+  local output
+  local tab_id
+
+  output=$("$PINCHTAB" instance navigate "$instance_id" "$url")
+  tab_id=$(printf '%s' "$output" | python3 -c '
+import re
+import sys
+
+match = re.search(r"\"tabId\"\s*:\s*\"([^\"]+)\"", sys.stdin.read())
+print(match.group(1) if match else "")
+')
+  if [[ -z "$tab_id" ]]; then
+    echo "PinchTab did not return a tab id" >&2
+    return 1
+  fi
+  printf '%s\n' "$tab_id"
+}
+
+release() {
+  local instance_id="$1"
+  local started="$2"
+
+  if [[ "$started" == "1" ]]; then
+    "$PINCHTAB" instance stop "$instance_id" >/dev/null 2>&1 || true
+  fi
+}
+
+action="${1:-}"
+case "$action" in
+  acquire)
+    shift
+    [[ $# -le 1 ]] || { usage >&2; exit 2; }
+    acquire "${1:-$PROFILE}"
+    ;;
+  open)
+    shift
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    open_tab "$1" "$2"
+    ;;
+  release)
+    shift
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    release "$1" "$2"
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

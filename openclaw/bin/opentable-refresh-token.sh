@@ -14,8 +14,12 @@ OT_EMAIL="bochmanspam@gmail.com"
 GWS_ACCOUNT="bochmanspam@gmail.com"
 OT_DASHBOARD_URL="https://www.opentable.com/user/dining-dashboard"
 OT_LOGIN_URL="https://www.opentable.com/authenticate/start?isPopup=false"
+PINCHTAB_INSTANCE_HELPER="$HOME/.openclaw/bin/pinchtab-headless-instance"
+PINCHTAB_INSTANCE_ID=""
+PINCHTAB_INSTANCE_STARTED=0
 TAB_ID=""
 PREVIOUS_TOKEN=""
+LOCK_HELD=0
 
 umask 077
 
@@ -25,20 +29,28 @@ log() {
 
 close_tab() {
   if [[ -n "$TAB_ID" ]]; then
-    pinchtab tab close "$TAB_ID" >/dev/null 2>&1 || true
+    pinchtab close "$TAB_ID" >/dev/null 2>&1 || true
     TAB_ID=""
   fi
 }
 
 cleanup() {
   close_tab
-  rm -rf "$LOCK_DIR"
+  if [[ -n "$PINCHTAB_INSTANCE_ID" ]]; then
+    "$PINCHTAB_INSTANCE_HELPER" release "$PINCHTAB_INSTANCE_ID" "$PINCHTAB_INSTANCE_STARTED"
+    PINCHTAB_INSTANCE_ID=""
+  fi
+  if [[ "$LOCK_HELD" == "1" ]]; then
+    rm -rf "$LOCK_DIR"
+    LOCK_HELD=0
+  fi
 }
 
 acquire_lock() {
   mkdir -p "$RUNTIME_DIR"
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$LOCK_DIR/pid"
+    LOCK_HELD=1
     return
   fi
 
@@ -52,6 +64,7 @@ acquire_lock() {
   rm -rf "$LOCK_DIR"
   mkdir "$LOCK_DIR"
   printf '%s\n' "$$" > "$LOCK_DIR/pid"
+  LOCK_HELD=1
 }
 
 trap cleanup EXIT
@@ -98,78 +111,32 @@ install_and_validate_token() {
   return 1
 }
 
-ensure_pinchtab() {
-  if pinchtab health >/dev/null 2>&1; then
-    return 0
+acquire_pinchtab_instance() {
+  if [[ ! -x "$PINCHTAB_INSTANCE_HELPER" ]]; then
+    log "ERROR: Missing managed PinchTab helper: $PINCHTAB_INSTANCE_HELPER"
+    return 1
   fi
 
-  log "Starting Pinchtab server"
-  pinchtab server --background >/dev/null 2>&1 || true
-  for _ in $(seq 1 15); do
-    if pinchtab health >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
+  if ! IFS=$'\t' read -r PINCHTAB_INSTANCE_ID PINCHTAB_INSTANCE_STARTED \
+    < <("$PINCHTAB_INSTANCE_HELPER" acquire opentable); then
+    log "ERROR: Could not acquire a managed headless PinchTab instance"
+    return 1
+  fi
 
-  log "ERROR: Pinchtab did not become healthy"
-  return 1
-}
-
-find_cdp_port() {
-  python3 - <<'PY'
-import re
-import subprocess
-
-try:
-    output = subprocess.check_output(["ps", "ax", "-o", "pid=,command="], text=True)
-except OSError:
-    raise SystemExit
-
-for line in output.splitlines():
-    if ".pinchtab/profiles/" not in line or "--type=" in line:
-        continue
-    match = re.search(r"--remote-debugging-port=(\d+)", line)
-    if match:
-        print(match.group(1))
-        break
-PY
-}
-
-wait_for_cdp_port() {
-  local port=""
-  for _ in $(seq 1 15); do
-    port=$(find_cdp_port)
-    if [[ -n "$port" ]]; then
-      printf '%s\n' "$port"
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
+  if [[ -z "$PINCHTAB_INSTANCE_ID" ]]; then
+    log "ERROR: Managed PinchTab helper returned no instance id"
+    return 1
+  fi
 }
 
 open_tab() {
   local url="$1"
-  local port encoded response
-  port=$(wait_for_cdp_port) || {
-    log "ERROR: Could not discover Pinchtab Chrome's CDP port"
+  TAB_ID=$("$PINCHTAB_INSTANCE_HELPER" open "$PINCHTAB_INSTANCE_ID" "$url") || {
+    log "ERROR: Could not create an isolated OpenTable browser tab"
     return 1
   }
-  encoded=$(python3 - "$url" <<'PY'
-import sys
-from urllib.parse import quote
-
-print(quote(sys.argv[1], safe=""))
-PY
-)
-  response=$(curl -fsS --max-time 15 -X PUT "http://127.0.0.1:${port}/json/new?${encoded}") || {
-    log "ERROR: Could not create an OpenTable browser tab"
-    return 1
-  }
-  TAB_ID=$(printf '%s' "$response" | python3 -c 'import json, sys; print(json.load(sys.stdin).get("id", ""))')
   if [[ -z "$TAB_ID" ]]; then
-    log "ERROR: Chrome did not return a tab id"
+    log "ERROR: Managed PinchTab helper returned no tab id"
     return 1
   fi
   sleep 3
@@ -387,7 +354,7 @@ main() {
     PREVIOUS_TOKEN=$(cat "$TOKEN_CACHE" 2>/dev/null || true)
   fi
 
-  ensure_pinchtab || exit 1
+  acquire_pinchtab_instance || exit 1
   refresh_from_persisted_session && return
   refresh_with_email_login && return
   exit 1

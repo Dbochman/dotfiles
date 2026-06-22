@@ -101,7 +101,7 @@ fi
 # Check if BB is running (API port)
 if ! curl -s --max-time 5 "${BB_URL}/api/v1/ping?password=${BB_PW}" > /dev/null 2>&1; then
   log "WARN: BB not reachable, attempting to start"
-  open -a BlueBubbles
+  open -gj -a BlueBubbles
   exit 0
 fi
 
@@ -137,7 +137,7 @@ if [[ "$HELPER_CONNECTED" == "false" ]]; then
       pkill -x "BlueBubbles" 2>/dev/null || true
       sleep 2
     fi
-    open -a BlueBubbles
+    open -gj -a BlueBubbles
     log "ACTION: BlueBubbles full-restarted, waiting 15s for init..."
     sleep 15
 
@@ -527,7 +527,7 @@ fs.writeFileSync(stateFile, JSON.stringify(prev, null, 2));
       sleep 2
     fi
 
-    open -a BlueBubbles
+    open -gj -a BlueBubbles
     log "ACTION: BlueBubbles restarted"
 
     # Wait for BB to initialize, then restart gateway to re-register webhook.
