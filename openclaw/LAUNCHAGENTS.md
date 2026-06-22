@@ -130,6 +130,8 @@ presentation and browser-based authentication must not interrupt the screen:
 
 ```bash
 launchagent-snooze pause
+launchagent-snooze pause --for 2h
+launchagent-snooze pause --manual
 launchagent-snooze status
 launchagent-snooze resume
 ```
@@ -140,6 +142,10 @@ The snooze persistently disables and unloads only jobs that were loaded when
 overwrite it. `resume` restores only that set. The retired BoA keepalive and
 heartbeat jobs therefore remain disabled during normal use, while Cielo is
 typically restored. Cielo has `RunAtLoad`, so resume it only after viewing ends.
+Timed snoozes accept `30m`, `2h`, and `1h30m`; they use the transient
+`com.openclaw.launchagent-snooze-resume` user LaunchAgent. A later timed pause
+moves the deadline, while `pause --manual` cancels the timer without ending the
+snooze.
 
 ### Retired BoA Session-Durability Agents
 
