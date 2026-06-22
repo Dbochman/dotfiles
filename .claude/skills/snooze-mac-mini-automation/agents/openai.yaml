@@ -1,0 +1,4 @@
+interface:
+  display_name: "Snooze Mac Mini Automation"
+  short_description: "Pause browser jobs during Mac Mini viewing"
+  default_prompt: "Use $snooze-mac-mini-automation to pause browser-based LaunchAgents while Julia watches a show."
