@@ -92,6 +92,19 @@ Find Google/Nest speakers:
 ssh dylans-macbook-pro "dns-sd -B _googlecast._tcp local. & PID=\$!; sleep 5; kill \$PID 2>/dev/null"
 ```
 
+## Remote Maintenance Safety
+
+Do not run `diskutil verifyVolume /System/Volumes/Data` or another full APFS check over the
+MacBook Pro's only SSH/Tailscale management path. A live verification of the 648 GiB Data
+volume made the host stop answering Tailscale traffic on 2026-06-22, which also interrupted
+presence scans and Crosstown device bridges.
+
+For unattended remote checks, limit storage inspection to SMART status, free space, panic
+reports, and service health. Run startup/Data-volume First Aid only while physically on site
+or when a second independent management path is available. Keep and wait on the original
+command session; never start a second filesystem verification because streamed output ended
+before the final status arrived.
+
 ## Limitations
 
 - **SSH required** — all commands must be wrapped in `ssh dylans-macbook-pro "..."`
