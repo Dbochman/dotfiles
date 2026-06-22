@@ -122,6 +122,25 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
+
+### Viewing Snooze
+
+Use `launchagent-snooze` when the Mac Mini is being used for a show, movie, or
+presentation and browser-based authentication must not interrupt the screen:
+
+```bash
+launchagent-snooze pause
+launchagent-snooze status
+launchagent-snooze resume
+```
+
+The snooze persistently disables and unloads only jobs that were loaded when
+`pause` began. Its restore set is stored at
+`~/.openclaw/state/mac-mini-automation-snooze.tsv`; repeated pauses do not
+overwrite it. `resume` restores only that set. The retired BoA keepalive and
+heartbeat jobs therefore remain disabled during normal use, while Cielo is
+typically restored. Cielo has `RunAtLoad`, so resume it only after viewing ends.
+
 ### Retired BoA Session-Durability Agents
 
 The paired five-minute keep-alive and one-minute UI heartbeat were tested on

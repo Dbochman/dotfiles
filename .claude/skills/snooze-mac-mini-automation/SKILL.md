@@ -5,7 +5,8 @@ description: Temporarily pause, inspect, and restore browser-based BoA and Cielo
 
 # Snooze Mac Mini Automation
 
-Use the bundled stateful helper rather than issuing ad hoc `launchctl` commands:
+Use the bundled wrapper around OpenClaw's stateful CLI rather than issuing ad hoc `launchctl`
+commands:
 
 ```bash
 scripts/launchagent-snooze.sh pause
@@ -13,7 +14,7 @@ scripts/launchagent-snooze.sh status
 scripts/launchagent-snooze.sh resume
 ```
 
-The helper connects through the `mac-mini` SSH alias. Set `MAC_MINI_HOST` only when a
+The wrapper connects through the `mac-mini` SSH alias. Set `MAC_MINI_HOST` only when a
 different configured SSH alias is required.
 
 ## Workflow
