@@ -97,21 +97,22 @@ cielo devices --json
 
 ## Token Management
 
-Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes to automatically refresh tokens via CDP browser capture. This should keep tokens fresh indefinitely as long as the Cielo session cookies haven't expired.
+Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes. It first uses the stored refresh token, then falls back to CDP capture in an isolated PinchTab tab when the API refresh is unavailable.
 
 ### Automated refresh (default)
-The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` starts pinchtab, auto-logs in via persisted cookies in `~/.pinchtab/chrome-profile/`, captures a fresh token via Chrome DevTools Protocol, and verifies it works. Logs at `~/.openclaw/logs/cielo-refresh.log`.
+The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` uses the PinchTab 0.11 `default` profile at `~/.pinchtab/profiles/default/`. Browser fallback starts or reuses a managed headless instance, opens an isolated Cielo tab, captures a fresh token through Chrome DevTools Protocol, verifies it, and cleans up only the tab and instance it created. It refuses to navigate a visible PinchTab instance. Logs are at `~/.openclaw/logs/cielo-refresh.log`.
 
 ### If automated refresh fails (session expired)
-Cookies persist for weeks/months. If they expire, a one-time manual re-login is needed:
+If the persistent browser session expires, reCAPTCHA prevents a fully headless login. Wait until the Mac Mini is not being used for viewing, keep the Cielo LaunchAgent unloaded, and perform a one-time visible login:
 ```bash
-BRIDGE_HEADLESS=false pinchtab &
-sleep 5
-pinchtab nav "https://home.cielowigle.com/"
-# Sign in manually in the visible browser window, solve CAPTCHA
-# Then kill pinchtab — cookies are now persisted
-pkill -f pinchtab
+INSTANCE_ID=$(pinchtab instance start --profile default --mode headed \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+pinchtab instance navigate "$INSTANCE_ID" "https://home.cielowigle.com/"
+# Sign in manually in the visible browser and solve reCAPTCHA.
+pinchtab instance stop "$INSTANCE_ID"
+~/.openclaw/workspace/scripts/cielo-refresh.sh
 ```
+The final command restarts the profile headlessly, captures and verifies a token, then stops its temporary browser instance. Do not enable repeated headless credential login after a CAPTCHA failure; it will not solve the challenge and may trigger rate limiting.
 
 ### Manual token refresh (fallback)
 ```bash

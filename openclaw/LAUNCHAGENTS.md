@@ -120,7 +120,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
-| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token |
+| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback uses an isolated managed headless PinchTab instance |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
 ### Viewing Snooze
@@ -146,6 +146,12 @@ Timed snoozes accept `30m`, `2h`, and `1h30m`; they use the transient
 `com.openclaw.launchagent-snooze-resume` user LaunchAgent. A later timed pause
 moves the deadline, while `pause --manual` cancels the timer without ending the
 snooze.
+
+Cielo refresh first tries the API refresh token. Its browser fallback uses the
+PinchTab 0.11 `default` profile headlessly and refuses to navigate a visible
+PinchTab instance. An expired Cielo browser session still requires one manual
+headed login because reCAPTCHA cannot be completed by the scheduled job; see
+`openclaw/skills/cielo-ac/SKILL.md` for the recovery sequence.
 
 ### Retired BoA Session-Durability Agents
 
