@@ -6,6 +6,9 @@ Usage:
   grab-cielo-tokens.py [CDP_PORT] --passive    # Watch live traffic without reloading
                                                 # (use during login to capture refreshToken)
 
+Set CIELO_CAPTURE_TIMEOUT_SECONDS to extend the passive login window. Values are
+bounded to 5-900 seconds; passive mode defaults to 45 seconds.
+
 Uses CDP Fetch domain to intercept response bodies before the page consumes them.
 This is necessary because Network.getResponseBody returns empty for fetch() API responses.
 Cielo's /auth/login nests tokens inside data.user (not directly under data).
@@ -52,7 +55,13 @@ async def grab(cdp_port, passive=False):
 
         print("Waiting for smartcielo.com requests...")
 
-        deadline = time.time() + (45 if passive else 25)
+        default_timeout = 45 if passive else 25
+        try:
+            capture_timeout = int(os.environ.get("CIELO_CAPTURE_TIMEOUT_SECONDS", default_timeout))
+        except ValueError:
+            capture_timeout = default_timeout
+        capture_timeout = min(max(capture_timeout, 5), 900)
+        deadline = time.time() + capture_timeout
         token = None
         session_id = None
         user_id = None

@@ -114,6 +114,8 @@ pinchtab instance stop "$INSTANCE_ID"
 ```
 The final command restarts the profile headlessly, captures and verifies a token, then stops its temporary browser instance. Do not enable repeated headless credential login after a CAPTCHA failure; it will not solve the challenge and may trigger rate limiting.
 
+When an agent coordinates the visible login, it must start `grab-cielo-tokens.py --passive` before the form is submitted. Set `CIELO_CAPTURE_TIMEOUT_SECONDS=600` to keep that listener armed while the user completes reCAPTCHA. The login response contains the new refresh token; a capture started only after login can recover an access token but misses that refresh token.
+
 ### Manual token refresh (fallback)
 ```bash
 cielo setup
