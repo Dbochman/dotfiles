@@ -36,7 +36,7 @@ Each service uses one of two patterns:
 | `usage-dashboard.log` / `.err.log` | `ai.openclaw.usage-dashboard` | Usage dashboard HTTP server |
 | `usage-snapshot.log` / `.err.log` | `ai.openclaw.usage-snapshot` | Usage metrics snapshot |
 | `financial-dashboard.log` / `.err.log` | `ai.openclaw.financial-dashboard` | Financial dashboard HTTP server |
-| `finance-refresh.log` / `.err.log` | `ai.openclaw.finance-refresh` | Daily cache-only Plaid -> crypto -> home-equity refresh; combined and component status metadata is stored outside the log directory |
+| `finance-refresh.log` / `.err.log` | `ai.openclaw.finance-refresh` | Daily cache-only Plaid → crypto source refresh; combined and component status metadata is stored outside the log directory |
 | `forecast-dashboard.log` / `.err.log` | `ai.openclaw.forecast-dashboard` | Forecast dashboard HTTP server and current-snapshot source integration |
 | `forecast-ledger-capture.log` / `.err.log` | `ai.openclaw.forecast-ledger-capture` | Daily aggregate Forecast observation capture; status metadata is stored beside the local ledger |
 | `dotfiles-pull.log` | `ai.openclaw.dotfiles-pull` | Daily dotfiles sync |

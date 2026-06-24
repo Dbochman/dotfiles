@@ -11,8 +11,8 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
-| 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily Plaid + crypto + home-equity refresh at 06:15; weekly utility/mortgage scrapes |
-| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices; sourced home equity; aggregate ledger capture at 07:35 |
+| 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily unified finance refresh at 06:15 + weekly scrapes · API on demand |
+| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · crypto in 06:15 finance refresh · aggregate ledger capture at 07:35 |
 
 ---
 
@@ -262,11 +262,11 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 
 This service runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback. It refreshes its snapshot and public market prices every five minutes; the underlying Plaid source sync is daily, so the projection is current-day planning data rather than an intraday balance stream.
 
-The unified `ai.openclaw.finance-refresh` LaunchAgent runs Plaid, crypto, and home equity in the same daily 06:15 run. Crypto writes `~/.openclaw/forecast-dashboard/crypto-holdings.json` from protected local Coinbase and Etherscan credentials, then the forecast service values those quantities with public market prices. Home equity calls RentCast only for properties whose prior successful AVM is at least seven days old; 8585 stores normalized provenance and 8586 subtracts current lender mortgage balances. The scheduled job never calls `op`, log addresses, or retain raw AVM responses.
+The unified `ai.openclaw.finance-refresh` LaunchAgent refreshes the non-secret crypto holdings cache after Plaid in the same daily 06:15 run. It writes `~/.openclaw/forecast-dashboard/crypto-holdings.json` from protected local Coinbase and Etherscan credentials, then the forecast service values those quantities with public market prices. The forecast applies the crypto input only when both owners are covered, all tracked positions are priceable, and every synced source is no more than 36 hours old. A dated, reviewed manual statement can explicitly provide temporary owner coverage with `model_coverage: true` while a credential is repaired. If a synced source for that owner remains present, the manual token quantity must declare `replaces_source_id`; use `independent: true` only for a separate asset. Manual `symbol` and `quantity` entries are live-priced, with the statement date retained as the quantity source; static `value_usd` entries remain manual valuations. Otherwise the dashboard retains the fixed model baseline. The scheduled job never calls `op`.
 
-`ai.openclaw.forecast-ledger-capture` runs daily at 07:35 after the Plaid, crypto, and home-equity components. It asks `8586` to persist one immutable, aggregate observation in `~/.openclaw/forecast-dashboard/forecast-ledger.sqlite`; it never reads `finance.db`, calls `op`, or writes raw account/transaction data. Browser `Save forecast` actions persist the current annual model output, scenario state, provenance, seed, and model revision against that observation. The History view compares only due annual checkpoints: real-dollar investable value uses the saved inflation assumption, mortgage comparison is direct, and Household net worth remains display-only because manual physical assets are outside the model.
+`ai.openclaw.forecast-ledger-capture` runs daily at 07:35 after the Plaid and crypto jobs. It asks `8586` to persist one immutable, aggregate observation in `~/.openclaw/forecast-dashboard/forecast-ledger.sqlite`; it never reads `finance.db`, calls `op`, or writes raw account/transaction data. Browser `Save forecast` actions persist the current annual model output, scenario state, provenance, seed, and model revision against that observation. The History view compares only due annual checkpoints: real-dollar investable value uses the saved inflation assumption, mortgage comparison is direct, and Household net worth remains display-only because manual physical assets are outside the model.
 
-`Household net worth` is a Forecast-owned aggregate, not a replacement for the canonical Plaid `8585 /api/net-worth` contract. It adds eligible live crypto, property equity from a provenance-marked RentCast AVM less current mortgage balances, and documented manual physical assets from `~/.openclaw/forecast-dashboard/household-manual-assets.json`. A reviewed manual property value remains the fallback until the first licensed refresh succeeds. Its compact hover ledger shows exact USD categories and calls out each live AVM's date and 85% range. Documented gold and silver grams are live-valued from a five-minute USD/troy-ounce quote and intentionally collapse into the Precious metals total. A pending manual entry or unavailable required metal quote produces a `+` known subtotal rather than silently adding zero.
+`Household net worth` is a Forecast-owned aggregate, not a replacement for the canonical Plaid `8585 /api/net-worth` contract. It adds eligible live crypto, reviewed manual property values less current mortgage balances, and documented manual physical assets from `~/.openclaw/forecast-dashboard/household-manual-assets.json`. Property values record their human-reviewed source, as-of date, and `review_after_days`; an overdue review retains the known value but makes the aggregate partial. Update them with `dashboard/update_manual_property_value.py` in the Financial Advisor repo. The compact hover ledger shows an exact USD value and source for cash, investments, any financial reconciliation adjustment, crypto, property equity, and Precious metals. Documented gold and silver grams are live-valued from a five-minute USD/troy-ounce quote and intentionally collapse into the Precious metals total. Only present balance-sheet assets appear in the ledger. A pending manual entry or unavailable required metal quote produces a `+` known subtotal rather than silently adding zero. The metal value is spot only and excludes dealer premiums and sale spreads.
 
 Combined uses each household source once. An owner with incomplete or unavailable source coverage retains the existing model supplement rather than being silently zeroed. Account location, institution, concentration, and execution guidance are withheld if that supplement would make the live source total non-reconcilable. The detailed target mix uses only the `8585` deployable geography rows for country allocation, retains a broad equity sleeve when they are unavailable, and exposes live fungible versus manual crypto/art without manufacturing a category target split. See [FORECAST-DASHBOARD.md](FORECAST-DASHBOARD.md) for input, coverage, and override rules.
 
@@ -475,14 +475,13 @@ ssh dbochman@dylans-mac-mini "tail -20 ~/.openclaw/logs/<name>-dashboard.err.log
 
 For the Financial Dashboard, normal HTTP access records are written to the
 stderr log. Treat a `200` line as an access record, not an error. The daily
-Plaid, crypto, and home-equity components are expected to be idle between runs; check their
+Plaid and crypto sync agents are expected to be idle between runs; check their
 last exit code and status files rather than expecting `launchctl` to show them
 as running:
 
 ```bash
 ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/financial-dashboard/plaid-sync-status.json'
 ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/forecast-dashboard/crypto-sync-status.json'
-ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/financial-dashboard/property-value-sync-status.json'
 ```
 
 ### Verify from local machine
