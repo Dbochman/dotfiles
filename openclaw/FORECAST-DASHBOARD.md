@@ -139,11 +139,11 @@ Forecast exposes eligible crypto as separate fungible, manual-priced, and manual
 
 ---
 
-### Reviewed Property Values
+### Property Values
 
-`~/.openclaw/forecast-dashboard/household-manual-assets.json` is authoritative for current property market values. Each property records a source, `as_of` date, mortgage mapping, and `review_after_days`. Use `dashboard/update_manual_property_value.py` from `~/repos/Financial Advisor` after manually reviewing Redfin, an appraisal, or comparable sales. Forecast subtracts the current lender mortgage balance and marks the household result partial once a review is overdue.
+Forecast prefers a positive 8585 property value only when `home_value_source` is explicitly `redfin`. The authorized Redfin estimate is refreshed by the weekly mortgage imports, and Forecast subtracts the current lender mortgage balance to derive equity. Retired RentCast and unmarked legacy values are not promoted.
 
-Historical provider rows may remain in the financial-dashboard database for audit, but no scheduled job queries or promotes them.
+`~/.openclaw/forecast-dashboard/household-manual-assets.json` remains the fallback. Each property records a source, `as_of` date, mortgage mapping, and `review_after_days`. Use `dashboard/update_manual_property_value.py` from `~/repos/Financial Advisor` after manually reviewing an appraisal or comparable sales. When Redfin is unavailable, Forecast retains that known fallback and marks the household result partial once its review is overdue.
 
 ### Physical Precious Metals
 
@@ -201,7 +201,7 @@ The browser applies only the parts of the model that have a complete, reconciled
 - Three trailing complete months of recognized source cash flow calibrate the scenario only; they do not seed annual non-salary inflow or annual expenses. The current partial month remains display context. This is net bank cash flow, not gross payroll, withholding, benefits, or compensation-event detail.
 - Scenario controls carry `Live`, `Manual override`, or `Planning assumption` provenance. A manual edit or URL parameter pins live-managed fields against automatic refresh until Reset; gross cash-flow controls remain planning assumptions even when Plaid net flow is observed.
 - Current mortgage balances seed the Combined scope; the existing individual-scope 50/50 mortgage convention is retained for Dylan and Julia views.
-- Crypto/art, unvested equity compensation, salaries, retirement years, home equity, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced.
+- Crypto/art, unvested equity compensation, salaries, retirement years, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced. Current home equity is source-backed when 8585 publishes a provenance-marked Redfin estimate and otherwise uses the reviewed manual fallback.
 
 Ownership is intentional:
 

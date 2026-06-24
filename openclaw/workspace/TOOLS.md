@@ -219,7 +219,7 @@ Repo `~/repos/financial-dashboard/` on Mini; canonical finance API and SPA on po
 - **Tier 2** — Eversource, NG Electric, NG Gas, BWSC, PennyMac. Playwright with `--re-auth` flag; each saves `storage_state.json` in its `.NAME_session/` dir. PennyMac auto-fetches email-MFA codes from Julia's Gmail via `gws`. Creds at `op://OpenClaw/<url-style-title>/...`.
 - **Tier 2b** — BoA. Bot detection defeats every Playwright-launched approach, so the scraper uses a narrow raw-CDP WebSocket to Pinchtab's already-running Chrome (port discovered by `ps`-grep for `--user-data-dir=~/.pinchtab/profiles`). After stale cookie replay and an explicitly `not_authenticated` tab, cron may run one `--boa-re-auth` submission; it stops for MFA or any challenge. Never navigate or close Pinchtab Chrome in CDP mode.
 
-Cron prompt at `openclaw cron list --json` (id `financial-scrape-0001`) is the canonical operational spec. Dev architecture: `~/repos/financial-dashboard/CLAUDE.md`. Reusable patterns: skills `playwright-email-mfa-flow`, `playwright-device-trust-bootstrap`, `web-auth-check-by-title-not-url`.
+Cron prompt at `openclaw cron list --json` (id `financial-scrape-0001`) is the canonical operational spec. Its BoA and PennyMac import commands also run the weekly-gated Redfin estimate refresh under the household's existing written permission; a provider failure preserves the prior value. Dev architecture: `~/repos/financial-dashboard/CLAUDE.md`. Reusable patterns: skills `playwright-email-mfa-flow`, `playwright-device-trust-bootstrap`, `web-auth-check-by-title-not-url`.
 
 Production source sync is deliberately separate from that cron: `ai.openclaw.finance-refresh` runs daily at 06:15 local time, invokes the cache-only Plaid wrapper before the crypto wrapper, and never invokes `op`. It writes combined status-only metadata to `~/.openclaw/finance-refresh/status.json` while preserving each component status; `not running` is normal between scheduled executions. The canonical Forecast financial source is `http://127.0.0.1:8585/api/forecast-baseline`, which exposes reconciled aggregate scopes only.
 
@@ -229,8 +229,8 @@ If the same joint account is visible through separate owner logins, treat it as 
 
 Repo `~/repos/Financial Advisor/` on Mini; interactive forecast dashboard on port 8586. It reads `8585` first through localhost, validates the reconciliation and source-coverage gate, then caches `/api/current-snapshot` for five minutes.
 
-- Live inputs: source-backed starting equity/bond/cash allocation and mortgage balances; trailing-three-complete-month cash flow is calibration context, not a gross-model input.
-- Model supplements: crypto/art, compensation, salaries, home equity, and any owner scope without a complete linked source.
+- Live inputs: source-backed starting equity/bond/cash allocation, mortgage balances, and provenance-marked Redfin property values; trailing-three-complete-month cash flow is calibration context, not a gross-model input.
+- Model supplements: crypto/art, compensation, salaries, reviewed property fallback values, and any owner scope without a complete linked source.
 - Ownership rule: Combined adds the household scope once. Never infer a missing owner scope as a zero balance.
 - Operational reference: `~/dotfiles/openclaw/FORECAST-DASHBOARD.md`.
 

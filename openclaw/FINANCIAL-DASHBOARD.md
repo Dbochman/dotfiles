@@ -1,8 +1,8 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.10 (2026-06-18)
+## Status: v1.11 (2026-06-24)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A unified cache-only finance LaunchAgent starts daily at 6:15 AM, syncing production Plaid Items before the Forecast crypto cache without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A unified cache-only finance LaunchAgent starts daily at 6:15 AM, syncing production Plaid Items before the Forecast crypto cache without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, solar, and authorized Redfin property values fresh. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
 
 `8585` is also the canonical data source for the Forecast Dashboard on `8586`. Its owner-aware forecast baseline lets the forecast begin from the latest reconciled source snapshot rather than a wholly fixed portfolio assumption.
 
@@ -382,5 +382,5 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 - **Bind address**: `0.0.0.0:8585` — same pattern as nest-dashboard (`:8550`) and usage-dashboard (`:8551`). Mac Mini is behind NAT, no port forwarding.
 - **Venv required**: external deps (`pyyaml`, `plaid-python`, `PyJWT[crypto]`, `playwright`, `beautifulsoup4` for Redfin). The plist points at the venv Python, not `/usr/bin/python3`.
 - **WorkingDirectory is critical**: `SimpleHTTPRequestHandler` serves HTML files relative to CWD. The plist sets this to the repo root.
-- **Home values via Redfin**: `mortgage_accounts.redfin_url` (set in `<lender>_mortgage_data.json`) triggers `_fetch_redfin_estimate` in `update_data.py` at end-of-import. Currently set for both Crosstown (BoA) and Cabin (PennyMac).
+- **Home values via authorized Redfin access**: `mortgage_accounts.redfin_url` (set in `<lender>_mortgage_data.json`) is checked after each mortgage import. `property_values.py` requests a page only when the last successful Redfin valuation is at least seven days old, promotes normalized source/date/property-ID metadata, and keeps URL-free history. A failure preserves the last known-good value and does not fail the lender-data import. The household has prior express written permission for this automation; do not reuse it elsewhere without equivalent permission.
 - **Per-property cron job ownership**: bootstrap any new Tier 2 scraper by adding (a) the 1P item to the OpenClaw vault, (b) the LENDERS / config entry in the scraper, (c) the scraper line to the cron prompt, (d) the import line. Tier 2b BoA-pattern adds a `browser.connect_cdp: True` flag.
