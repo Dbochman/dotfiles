@@ -28,6 +28,23 @@ finance_refresh = load_script("finance_refresh", "finance-refresh.py")
 
 
 class PropertyValueWrapperTests(unittest.TestCase):
+    def test_command_result_promotes_only_safe_error_codes(self):
+        metrics, reason = property_sync.parse_result(
+            json.dumps(
+                {
+                    "configured": 2,
+                    "missing_address": 0,
+                    "due": 2,
+                    "current": 0,
+                    "refreshed": 0,
+                    "failed": 2,
+                    "errors": ["provider_subscription_inactive", "unsafe reason!"],
+                }
+            )
+        )
+        self.assertEqual(metrics["failed"], 2)
+        self.assertEqual(reason, "provider_subscription_inactive")
+
     def test_secret_cache_parser_supports_shell_escaped_values(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             cache = Path(temporary_directory) / ".secrets-cache"

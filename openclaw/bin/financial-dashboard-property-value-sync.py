@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import stat
 import subprocess
@@ -30,6 +31,7 @@ SAFE_METRICS = (
     "refreshed",
     "failed",
 )
+SAFE_REASON = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
 def now_iso() -> str:
@@ -100,7 +102,7 @@ def read_cached_secret(name: str) -> str:
     return ""
 
 
-def parse_metrics(output: str) -> dict[str, int]:
+def parse_result(output: str) -> tuple[dict[str, int], str | None]:
     lines = [line for line in output.splitlines() if line.strip()]
     if not lines:
         raise ValueError("missing command output")
@@ -113,7 +115,18 @@ def parse_metrics(output: str) -> dict[str, int]:
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError("invalid command metrics")
         metrics[key] = value
-    return metrics
+    errors = payload.get("errors")
+    reason = None
+    if isinstance(errors, list):
+        reason = next(
+            (
+                error
+                for error in errors
+                if isinstance(error, str) and SAFE_REASON.fullmatch(error)
+            ),
+            None,
+        )
+    return metrics, reason
 
 
 def main() -> int:
@@ -169,9 +182,10 @@ def main() -> int:
             return 1
 
         try:
-            metrics = parse_metrics(result.stdout)
+            metrics, command_reason = parse_result(result.stdout)
         except (ValueError, json.JSONDecodeError):
             metrics = None
+            command_reason = None
         if result.returncode == 0 and metrics is not None:
             write_status("ok", started_at, 0, metrics=metrics)
             print(
@@ -181,7 +195,13 @@ def main() -> int:
             )
             return 0
 
-        write_status("error", started_at, result.returncode or 1, "sync_command_failed", metrics)
+        write_status(
+            "error",
+            started_at,
+            result.returncode or 1,
+            command_reason or "sync_command_failed",
+            metrics,
+        )
         print("Property value sync failed; last-known-good values were preserved.", flush=True)
         return result.returncode or 1
 
