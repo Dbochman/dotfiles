@@ -120,6 +120,16 @@ for wrapper in "$BIN_SRC"/*; do
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BIN_DST" >> "$LOG"
 
+# Preserve the documented maintenance path while ~/.openclaw/bin remains the
+# canonical wrapper directory. This must be a real copy because ~/bin predates
+# the current deployment layout and is still used by operator runbooks.
+if [ -x "$BIN_SRC/openclaw-refresh-secrets" ]; then
+  mkdir -p "$HOME/bin"
+  cp "$BIN_SRC/openclaw-refresh-secrets" "$HOME/bin/openclaw-refresh-secrets"
+  chmod +x "$HOME/bin/openclaw-refresh-secrets"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: refreshed ~/bin/openclaw-refresh-secrets compatibility copy" >> "$LOG"
+fi
+
 # Deploy dashboard and utility scripts to ~/.openclaw/bin/
 SCRIPTS_DEPLOYED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
