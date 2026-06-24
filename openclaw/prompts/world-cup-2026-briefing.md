@@ -40,9 +40,9 @@ Include only useful sections:
    notable upset and qualification, elimination, table, or bracket consequences
    when verified. Omit this section when there is nothing material to report.
 2. `Today:` Every match on the briefing date in chronological order with teams,
-   Eastern kickoff time, and group or knockout round. Add the US television or
-   streaming outlet only when verified. On a rest day, say there are no matches
-   and give the next match day's schedule instead.
+   unambiguous `h:mm AM/PM ET` kickoff time, and group or knockout round. Add the
+   US television or streaming outlet only when verified. On a rest day, say
+   there are no matches and give the next match day's schedule instead.
 3. `USA tracker:` The USMNT's current status and next match. Omit only after the
    USA is eliminated and there is no material follow-up.
 4. `Watch:` One or two high-signal storylines, stakes, or matches worth
