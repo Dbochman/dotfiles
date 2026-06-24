@@ -29,9 +29,10 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 |--------|------|-------------|
 | `nest-dashboard.py` | 8550 | Nest climate dashboard — Chart.js UI over JSONL history. Serves thermostat temps, humidity, weather, and presence data. Tailscale-only. |
 | `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, API utilization gauges, agent activity metrics. Chart.js UI over JSONL history. Tailscale-only. |
-| `finance-refresh.py` | — | Daily 06:15 orchestrator that runs the cache-only Plaid and crypto wrappers sequentially, retries each once, and writes combined protected status without reading source credentials or data. |
+| `finance-refresh.py` | — | Daily 06:15 orchestrator that runs Plaid, crypto, and home-equity wrappers sequentially, retries each once, and writes combined protected status without reading source credentials or data. |
 | `financial-dashboard-plaid-sync.py` | — | Daily cache-only Plaid sync wrapper for the separate financial-dashboard repo. Reads protected local caches, never calls `op`, serializes runs with a lock, refreshes local income-source review candidates through `update_data.py sync`, and writes status-only metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. |
 | `forecast-crypto-sync.py` | — | Cache-only Coinbase/Etherscan holdings component used by the unified finance refresh; preserves the last known-good holdings cache and writes protected component status. |
+| `financial-dashboard-property-value-sync.py` | — | Cache-only RentCast component used by the unified finance refresh. It calls the 8585 refresh command, makes provider requests only for weekly-due properties, preserves last-known-good values, and writes aggregate-only protected status. |
 | `forecast-ledger-capture.py` | — | Daily post-sync Forecast wrapper. Calls only the loopback aggregate-observation endpoint, retries short service outages, and writes status-only metadata to `~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json`; never calls `op` or reads Plaid data directly. |
 
 ### Nest Integration

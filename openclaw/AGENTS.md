@@ -3,7 +3,7 @@
 Scope: this directory and its descendants unless a deeper `AGENTS.md` or `agents.md` overrides it.
 
 - Treat the Financial Dashboard (`8585`) and Forecast Dashboard (`8586`) as separate services. `8585` publishes reconciled safe aggregates through `/api/forecast-baseline`; `8586` owns forecast state and the aggregate historical ledger.
-- Preserve the daily dependency order: the cache-only finance refresh starts at 06:15 local time and runs Plaid before crypto, then Forecast ledger capture runs at 07:35. Do not move or add a capture job that can run before its source refresh without an explicit recovery design.
+- Preserve the daily dependency order: the cache-only finance refresh starts at 06:15 local time and runs Plaid, crypto, then home equity; Forecast ledger capture runs at 07:35. Do not move or add a capture job that can run before its source refresh without an explicit recovery design.
 - The daily source-sync and ledger-capture paths must not invoke `op`, read Plaid secrets, or log raw account, transaction, token, or source-document data. Logs and status files may contain only operational metadata and aggregate identifiers.
 - Deploy these Financial Dashboard and Forecast Dashboard LaunchAgents only to the Mac Mini. Do not bootstrap them on a local laptop merely because this checkout is present there.
 - Keep wrapper scripts idempotent, lock concurrent work where needed, write protected runtime state atomically, and treat a transient service failure as retryable rather than a reason to erase cached data.

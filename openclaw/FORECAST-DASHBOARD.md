@@ -1,6 +1,6 @@
 # Forecast Dashboard — Deployment Spec
 
-## Status: v1.5 (2026-06-18)
+## Status: v1.6 (2026-06-23)
 
 Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, a forecast-history ledger, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with Tailscale-only access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
 
@@ -52,6 +52,7 @@ Mac Mini (dylans-mac-mini)
 │   ├── monthly-operating-task-status.json
 │   └── forecast-ledger-capture-status.json
 ├── Combined source status: ~/.openclaw/finance-refresh/status.json
+├── Property source status: ~/.openclaw/financial-dashboard/property-value-sync-status.json
 ├── Upstream finance dashboard: http://127.0.0.1:8585
 └── Logs: ~/.openclaw/logs/forecast-dashboard.{log,err.log}
 ```
@@ -61,7 +62,7 @@ Mac Mini (dylans-mac-mini)
 | Label | Type | Command | Logs |
 |-------|------|---------|------|
 | `ai.openclaw.forecast-dashboard` | KeepAlive | `python3 dashboard/serve_forecast_dashboard.py` | `~/.openclaw/logs/forecast-dashboard.{log,err.log}` |
-| `ai.openclaw.finance-refresh` | Daily 06:15 | `finance-refresh.py` → Plaid, then crypto | `~/.openclaw/logs/finance-refresh.{log,err.log}` |
+| `ai.openclaw.finance-refresh` | Daily 06:15 | `finance-refresh.py` -> Plaid, crypto, then home equity | `~/.openclaw/logs/finance-refresh.{log,err.log}` |
 | `ai.openclaw.forecast-ledger-capture` | Daily 07:35 | `forecast-ledger-capture.py` | `~/.openclaw/logs/forecast-ledger-capture.{log,err.log}` |
 
 This service runs only on the Mac Mini as user `dbochman`.
@@ -195,7 +196,7 @@ The browser applies only the parts of the model that have a complete, reconciled
 - Three trailing complete months of recognized source cash flow calibrate the scenario only; they do not seed annual non-salary inflow or annual expenses. The current partial month remains display context. This is net bank cash flow, not gross payroll, withholding, benefits, or compensation-event detail.
 - Scenario controls carry `Live`, `Manual override`, or `Planning assumption` provenance. A manual edit or URL parameter pins live-managed fields against automatic refresh until Reset; gross cash-flow controls remain planning assumptions even when Plaid net flow is observed.
 - Current mortgage balances seed the Combined scope; the existing individual-scope 50/50 mortgage convention is retained for Dylan and Julia views.
-- Crypto/art, unvested equity compensation, salaries, retirement years, home equity, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced.
+- Crypto/art, unvested equity compensation, salaries, retirement years, property appreciation, tax assumptions, and other planning inputs remain explicit model assumptions unless separately sourced. Current home equity is source-backed when 8585 publishes a provenance-marked RentCast AVM; the reviewed manual property value remains its fallback.
 
 Ownership is intentional:
 
@@ -219,7 +220,7 @@ saved browser scenario state/provenance, and annual result rows. It does not
 copy Plaid account IDs, raw transactions, source documents, or secrets from the
 financial-dashboard source system.
 
-The scheduled capture runs at 07:35 after the unified 06:15 finance refresh has run Plaid and then crypto.
+The scheduled capture runs at 07:35 after the unified 06:15 finance refresh has run Plaid, crypto, and home equity.
 It POSTs to the loopback `8586` endpoint, retains no response body beyond
 status metadata, retries short local-service failures, and never invokes
 `op`. Its observation date follows the household's `America/New_York` calendar
@@ -317,7 +318,7 @@ Cross-origin writes are allowed only when the origin hostname matches the foreca
 | Ledger | `~/repos/Financial Advisor/dashboard/forecast_ledger.py` | Aggregate observation/run persistence and comparison policy |
 | Task feed | `~/repos/Financial Advisor/data/dashboard/monthly-operating-tasks.json` | Read-only planning feed |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-dashboard.plist` | KeepAlive service |
-| Source refresh LaunchAgent | `openclaw/launchagents/ai.openclaw.finance-refresh.plist` | Daily Plaid → crypto refresh before morning briefings |
+| Source refresh LaunchAgent | `openclaw/launchagents/ai.openclaw.finance-refresh.plist` | Daily Plaid -> crypto -> home-equity refresh before morning briefings |
 | Capture LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-ledger-capture.plist` | Daily post-sync aggregate capture |
 | Runtime cache | `~/.openclaw/forecast-dashboard/current-snapshot.json` | Cached snapshot payload |
 | Runtime overlay | `~/.openclaw/forecast-dashboard/monthly-operating-task-status.json` | Mutable task state |

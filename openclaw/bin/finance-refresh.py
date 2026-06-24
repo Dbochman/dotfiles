@@ -37,6 +37,11 @@ COMPONENTS = (
         "script": DOTFILES_DIR / "openclaw" / "bin" / "forecast-crypto-sync.py",
         "status": HOME / ".openclaw" / "forecast-dashboard" / "crypto-sync-status.json",
     },
+    {
+        "name": "home_equity",
+        "script": DOTFILES_DIR / "openclaw" / "bin" / "financial-dashboard-property-value-sync.py",
+        "status": HOME / ".openclaw" / "financial-dashboard" / "property-value-sync-status.json",
+    },
 )
 
 

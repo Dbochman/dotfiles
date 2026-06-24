@@ -258,7 +258,7 @@ and perform reservation plus calendar idempotency checks before acting.
 | `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via BB | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
 | `financial-scrape-0001` | Sundays 4:05 AM ET | `exec` | `none` (agent self-messages on failure only) | Weekly financial dashboard refresh: Tesla Solar (API), Tier 2 self-healing utilities and PennyMac, plus BoA cookie replay/raw-CDP with one guarded re-auth only after an explicitly signed-out tab, then SQLite imports. Production Plaid sync is a separate daily cache-only LaunchAgent. |
 
-`financial-scrape-0001` must not become the production Plaid or crypto sync path. `ai.openclaw.finance-refresh` owns the daily 06:15 local source refresh, runs the cache-only Plaid component before crypto, and never invokes `op`. The cron's historical conditional fallback is intentionally unconfigured; do not add Plaid or crypto credentials to its environment.
+`financial-scrape-0001` must not become the production Plaid, crypto, or property-value sync path. `ai.openclaw.finance-refresh` owns the daily 06:15 local source refresh, runs cache-only Plaid, crypto, and home-equity components in that order, and never invokes `op`. The cron's historical conditional fallback is intentionally unconfigured; do not add these credentials to its environment.
 
 ### Tool allowlists (added 2026-04-04, requires OpenClaw v2026.4.1+)
 
