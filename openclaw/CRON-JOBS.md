@@ -252,7 +252,8 @@ and perform reservation plus calendar idempotency checks before acting.
 
 | ID | Schedule | Tools | Delivery | Description |
 |----|----------|-------|----------|-------------|
-| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | announce to Julia via BB | Julia's morning briefing: calendar preview, inbox triage (label, draft replies, cleanup), 8sleep summary |
+| `gws-julia-morning-triage-0001` | Daily 6:45 AM ET | `exec` | `none` | Silent, fully paginated Gmail triage: labels, thread-aware reply drafts, read-state cleanup, archiving, and conservative spam trashing |
+| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | announce to Julia via BB | Read-only, high-signal briefing from the triage handoff, today's calendar, and the cached Eight Sleep snapshot |
 | `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `exec` | announce to Dylan via BB | Dylan's morning briefing: calendar (7-day) + inbox summary (24h) + 8sleep summary. Read-only, no email actions |
 | `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via BB | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
 | `financial-scrape-0001` | Sundays 4:05 AM ET | `exec` | `none` (agent self-messages on failure only) | Weekly financial dashboard refresh: Tesla Solar (API), Tier 2 self-healing utilities and PennyMac, plus BoA cookie replay/raw-CDP with one guarded re-auth only after an explicitly signed-out tab, then SQLite imports. Production Plaid sync is a separate daily cache-only LaunchAgent. |
