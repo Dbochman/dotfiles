@@ -2,7 +2,7 @@
 
 ## Status: v1.10 (2026-06-18)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A cache-only Plaid LaunchAgent syncs production Items daily at 7:15 AM local time without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A unified cache-only finance LaunchAgent starts daily at 6:15 AM, syncing production Plaid Items before the Forecast crypto cache without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, and solar data fresh across 7 providers. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
 
 `8585` is also the canonical data source for the Forecast Dashboard on `8586`. Its owner-aware forecast baseline lets the forecast begin from the latest reconciled source snapshot rather than a wholly fixed portfolio assumption.
 
@@ -236,7 +236,8 @@ Mac Mini (dylans-mac-mini)
 │   ├── water_dashboard.html        (water)
 │   ├── mortgage_dashboard.html     (mortgage)
 │   └── expenses_dashboard.html     (expenses)
-├── Sync status: ~/.openclaw/financial-dashboard/plaid-sync-status.json
+├── Combined refresh status: ~/.openclaw/finance-refresh/status.json
+├── Plaid component status: ~/.openclaw/financial-dashboard/plaid-sync-status.json
 └── Logs: ~/.openclaw/logs/financial-dashboard.{log,err.log}
 ```
 
@@ -245,7 +246,7 @@ Mac Mini (dylans-mac-mini)
 | Label | Type | Command | Logs |
 |-------|------|---------|------|
 | `ai.openclaw.financial-dashboard` | KeepAlive | `venv/bin/python3 serve_dashboard.py` | `~/.openclaw/logs/financial-dashboard.{log,err.log}` |
-| `ai.openclaw.financial-dashboard-plaid-sync` | StartCalendarInterval, daily 7:15 AM | `financial-dashboard-plaid-sync.py` | `~/.openclaw/logs/financial-dashboard-plaid-sync.{log,err.log}` |
+| `ai.openclaw.finance-refresh` | StartCalendarInterval, daily 6:15 AM | `finance-refresh.py` → Plaid, then crypto | `~/.openclaw/logs/finance-refresh.{log,err.log}` |
 | `ai.openclaw.boa-keepalive` | Disabled | Retired five-minute browser session experiment | `~/Library/Logs/boa-keepalive.log` |
 | `ai.openclaw.boa-browser-heartbeat` | Disabled | Retired one-minute UI warning experiment | `~/Library/Logs/boa-browser-heartbeat.log` |
 
@@ -304,8 +305,8 @@ mkdir -p ~/.openclaw/logs
 cd ~/dotfiles && git pull
 plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist
 cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
-plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard-plaid-sync.plist
-cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard-plaid-sync.plist ~/Library/LaunchAgents/
+plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.finance-refresh.plist
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.finance-refresh.plist ~/Library/LaunchAgents/
 ln -sf ~/dotfiles/bin/finance /opt/homebrew/bin/finance
 ```
 
@@ -353,7 +354,7 @@ policy change.
 ```bash
 cd ~/dotfiles && git pull
 cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard.plist ~/Library/LaunchAgents/
-cp ~/dotfiles/openclaw/launchagents/ai.openclaw.financial-dashboard-plaid-sync.plist ~/Library/LaunchAgents/
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.finance-refresh.plist ~/Library/LaunchAgents/
 finance dashboard restart
 ```
 
@@ -367,14 +368,15 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 |------|----------|---------|
 | `bin/finance` | Dotfiles repo + `/opt/homebrew/bin/finance` (symlink) | CLI (dashboard management) |
 | `openclaw/launchagents/ai.openclaw.financial-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
+| `openclaw/launchagents/ai.openclaw.finance-refresh.plist` | `~/Library/LaunchAgents/` on Mini | Daily Plaid → crypto source refresh |
 | `~/repos/financial-dashboard/` | Cloned repo on Mini | Dashboard server + all source files |
 
 ---
 
 ## Notes
 
-- **Plaid sync is cache-only and independent of the scraper cron.** `ai.openclaw.financial-dashboard-plaid-sync` invokes `update_data.py sync` with `PLAID_ENV=production`; application code reads only the mode-`0600` OpenClaw secrets cache and protected Item token cache. It never invokes `op`, and the LaunchAgent status file records only timestamps, result, and exit code. The separately invoked `openclaw-refresh-secrets` command restores `PLAID_CLIENT_ID`, `PLAID_SECRET_PRODUCTION`, and `PLAID_SECRET_SANDBOX` from the managed Plaid item so a general cache refresh cannot silently disable the daily sync.
-- **Scheduled does not mean continuously running.** `ai.openclaw.financial-dashboard-plaid-sync` is expected to show `not running` between its daily 07:15 local executions. Use its status JSON and logs to diagnose a failed run rather than assuming the inactive state is an error.
+- **Plaid sync is cache-only and independent of the scraper cron.** `ai.openclaw.finance-refresh` invokes the existing `financial-dashboard-plaid-sync.py` wrapper before the crypto wrapper. The Plaid component runs `update_data.py sync` with `PLAID_ENV=production`; application code reads only the mode-`0600` OpenClaw secrets cache and protected Item token cache. Neither the orchestrator nor its source wrappers invokes `op`. The separately invoked `openclaw-refresh-secrets` command restores `PLAID_CLIENT_ID`, `PLAID_SECRET_PRODUCTION`, and `PLAID_SECRET_SANDBOX` from the managed Plaid item so a general cache refresh cannot silently disable the daily sync.
+- **Scheduled does not mean continuously running.** `ai.openclaw.finance-refresh` is expected to show `not running` between its daily 06:15 local executions. Use `~/.openclaw/finance-refresh/status.json`, the component status files, and logs to diagnose a failed run rather than assuming the inactive state is an error.
 - **Forecast refresh boundary.** Plaid data becomes a new forecast starting point after a successful source sync and completed income-source review. `8586` refreshes its current snapshot cache every five minutes; restart it after an `8585` baseline or configuration deployment to invalidate that cache. This is a current-day planning baseline, not an intraday balance stream.
 - **Cross-Item shared accounts.** When each owner links the same joint account through separate logins, verify the account identity and map the newer record to the existing canonical Plaid account: `./venv/bin/python3 update_data.py reconcile-alias-account ALIAS_ACCOUNT_ID CANONICAL_ACCOUNT_ID "same physical joint account"`. Both inputs must be Plaid accounts from different Items. The alias is intentionally retained for audit and can be restored with `reconcile-clear-alias`; do not solve the duplicate by assigning both copies to `household`.
 - **Bind address**: `0.0.0.0:8585` — same pattern as nest-dashboard (`:8550`) and usage-dashboard (`:8551`). Mac Mini is behind NAT, no port forwarding.

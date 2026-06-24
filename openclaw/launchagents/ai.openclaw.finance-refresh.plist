@@ -3,23 +3,23 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ai.openclaw.forecast-crypto-sync</string>
+    <string>ai.openclaw.finance-refresh</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/dbochman/dotfiles/openclaw/bin/forecast-crypto-sync.py</string>
+        <string>/Users/dbochman/dotfiles/openclaw/bin/finance-refresh.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>7</integer>
+        <integer>6</integer>
         <key>Minute</key>
-        <integer>25</integer>
+        <integer>15</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/dbochman/.openclaw/logs/forecast-crypto-sync.log</string>
+    <string>/Users/dbochman/.openclaw/logs/finance-refresh.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/dbochman/.openclaw/logs/forecast-crypto-sync.err.log</string>
+    <string>/Users/dbochman/.openclaw/logs/finance-refresh.err.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
@@ -30,6 +30,6 @@
     <key>ProcessType</key>
     <string>Background</string>
     <key>WorkingDirectory</key>
-    <string>/Users/dbochman/repos/Financial Advisor</string>
+    <string>/Users/dbochman/dotfiles</string>
 </dict>
 </plist>

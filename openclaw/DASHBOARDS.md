@@ -11,8 +11,8 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Ac
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
-| 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily Plaid sync at 07:15 + weekly scrapes · API on demand |
-| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · crypto cache at 07:25 · aggregate ledger capture at 07:35 |
+| 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily unified finance refresh at 06:15 + weekly scrapes · API on demand |
+| 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · crypto in 06:15 finance refresh · aggregate ledger capture at 07:35 |
 
 ---
 
@@ -212,7 +212,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 | Source | Frequency | Data |
 |--------|-----------|------|
 | SQLite database | On demand | Canonical transactions, categories, balances, holdings, and reconciliation state |
-| Plaid API | Daily 07:15 cache-only sync | Bank/credit-card transactions, depository balances, investment holdings, PFC income review, and source status |
+| Plaid API | Daily 06:15 cache-only finance refresh | Bank/credit-card transactions, depository balances, investment holdings, PFC income review, and source status |
 | Weekly scraper cron | Sundays 04:05 ET | Utilities, mortgage, solar, and other statement-shaped data |
 | Config YAML | Static | Category overrides, FIRE settings, utility accounts |
 
@@ -262,7 +262,7 @@ Financial Advisor forecast dashboard for Dylan and Julia's household reallocatio
 
 This service runs only on the Mac Mini as user `dbochman`. It reads current household data from the financial dashboard API through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as fallback. It refreshes its snapshot and public market prices every five minutes; the underlying Plaid source sync is daily, so the projection is current-day planning data rather than an intraday balance stream.
 
-The paired `ai.openclaw.forecast-crypto-sync` LaunchAgent refreshes the non-secret crypto holdings cache daily at 07:25. It writes `~/.openclaw/forecast-dashboard/crypto-holdings.json` from protected local Coinbase and Etherscan credentials, then the forecast service values those quantities with public market prices. The forecast applies the crypto input only when both owners are covered, all tracked positions are priceable, and every synced source is no more than 36 hours old. A dated, reviewed manual statement can explicitly provide temporary owner coverage with `model_coverage: true` while a credential is repaired. If a synced source for that owner remains present, the manual token quantity must declare `replaces_source_id`; use `independent: true` only for a separate asset. Manual `symbol` and `quantity` entries are live-priced, with the statement date retained as the quantity source; static `value_usd` entries remain manual valuations. Otherwise the dashboard retains the fixed model baseline. The scheduled job never calls `op`.
+The unified `ai.openclaw.finance-refresh` LaunchAgent refreshes the non-secret crypto holdings cache after Plaid in the same daily 06:15 run. It writes `~/.openclaw/forecast-dashboard/crypto-holdings.json` from protected local Coinbase and Etherscan credentials, then the forecast service values those quantities with public market prices. The forecast applies the crypto input only when both owners are covered, all tracked positions are priceable, and every synced source is no more than 36 hours old. A dated, reviewed manual statement can explicitly provide temporary owner coverage with `model_coverage: true` while a credential is repaired. If a synced source for that owner remains present, the manual token quantity must declare `replaces_source_id`; use `independent: true` only for a separate asset. Manual `symbol` and `quantity` entries are live-priced, with the statement date retained as the quantity source; static `value_usd` entries remain manual valuations. Otherwise the dashboard retains the fixed model baseline. The scheduled job never calls `op`.
 
 `ai.openclaw.forecast-ledger-capture` runs daily at 07:35 after the Plaid and crypto jobs. It asks `8586` to persist one immutable, aggregate observation in `~/.openclaw/forecast-dashboard/forecast-ledger.sqlite`; it never reads `finance.db`, calls `op`, or writes raw account/transaction data. Browser `Save forecast` actions persist the current annual model output, scenario state, provenance, seed, and model revision against that observation. The History view compares only due annual checkpoints: real-dollar investable value uses the saved inflation assumption, mortgage comparison is direct, and Household net worth remains display-only because manual physical assets are outside the model.
 

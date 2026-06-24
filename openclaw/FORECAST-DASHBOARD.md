@@ -46,9 +46,12 @@ Mac Mini (dylans-mac-mini)
 │   └── data/dashboard/monthly-operating-tasks.json
 ├── Runtime cache: ~/.openclaw/forecast-dashboard/
 │   ├── current-snapshot.json
+│   ├── crypto-holdings.json
+│   ├── crypto-sync-status.json
 │   ├── forecast-ledger.sqlite
 │   ├── monthly-operating-task-status.json
 │   └── forecast-ledger-capture-status.json
+├── Combined source status: ~/.openclaw/finance-refresh/status.json
 ├── Upstream finance dashboard: http://127.0.0.1:8585
 └── Logs: ~/.openclaw/logs/forecast-dashboard.{log,err.log}
 ```
@@ -58,6 +61,7 @@ Mac Mini (dylans-mac-mini)
 | Label | Type | Command | Logs |
 |-------|------|---------|------|
 | `ai.openclaw.forecast-dashboard` | KeepAlive | `python3 dashboard/serve_forecast_dashboard.py` | `~/.openclaw/logs/forecast-dashboard.{log,err.log}` |
+| `ai.openclaw.finance-refresh` | Daily 06:15 | `finance-refresh.py` → Plaid, then crypto | `~/.openclaw/logs/finance-refresh.{log,err.log}` |
 | `ai.openclaw.forecast-ledger-capture` | Daily 07:35 | `forecast-ledger-capture.py` | `~/.openclaw/logs/forecast-ledger-capture.{log,err.log}` |
 
 This service runs only on the Mac Mini as user `dbochman`.
@@ -215,7 +219,7 @@ saved browser scenario state/provenance, and annual result rows. It does not
 copy Plaid account IDs, raw transactions, source documents, or secrets from the
 financial-dashboard source system.
 
-The scheduled capture runs at 07:35 after Plaid (07:15) and crypto (07:25).
+The scheduled capture runs at 07:35 after the unified 06:15 finance refresh has run Plaid and then crypto.
 It POSTs to the loopback `8586` endpoint, retains no response body beyond
 status metadata, retries short local-service failures, and never invokes
 `op`. Its observation date follows the household's `America/New_York` calendar
@@ -313,6 +317,7 @@ Cross-origin writes are allowed only when the origin hostname matches the foreca
 | Ledger | `~/repos/Financial Advisor/dashboard/forecast_ledger.py` | Aggregate observation/run persistence and comparison policy |
 | Task feed | `~/repos/Financial Advisor/data/dashboard/monthly-operating-tasks.json` | Read-only planning feed |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-dashboard.plist` | KeepAlive service |
+| Source refresh LaunchAgent | `openclaw/launchagents/ai.openclaw.finance-refresh.plist` | Daily Plaid → crypto refresh before morning briefings |
 | Capture LaunchAgent | `openclaw/launchagents/ai.openclaw.forecast-ledger-capture.plist` | Daily post-sync aggregate capture |
 | Runtime cache | `~/.openclaw/forecast-dashboard/current-snapshot.json` | Cached snapshot payload |
 | Runtime overlay | `~/.openclaw/forecast-dashboard/monthly-operating-task-status.json` | Mutable task state |
@@ -355,6 +360,11 @@ cp ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-dashboard.plist ~/Libra
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-dashboard.plist 2>/dev/null || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-dashboard.plist
 
+plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.finance-refresh.plist
+cp ~/dotfiles/openclaw/launchagents/ai.openclaw.finance-refresh.plist ~/Library/LaunchAgents/
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.finance-refresh.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.finance-refresh.plist
+
 plutil -lint ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-ledger-capture.plist
 cp ~/dotfiles/openclaw/launchagents/ai.openclaw.forecast-ledger-capture.plist ~/Library/LaunchAgents/
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.forecast-ledger-capture.plist 2>/dev/null || true
@@ -374,6 +384,8 @@ Ownership split:
 
 ```bash
 ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.forecast-dashboard'
+ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.finance-refresh'
+ssh dylans-mac-mini 'cat ~/.openclaw/finance-refresh/status.json'
 ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.forecast-ledger-capture'
 ssh dylans-mac-mini 'cat ~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json'
 ssh dylans-mac-mini 'tail -50 ~/.openclaw/logs/forecast-dashboard.log'

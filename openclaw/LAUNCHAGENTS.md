@@ -28,7 +28,7 @@ The financial dashboard services are Mac Mini services, not laptop services. Bef
 ssh dylans-mac-mini 'hostname -s; whoami; echo HOME=$HOME'
 ```
 
-Expected target context is the Mac Mini user `dbochman` with `HOME=/Users/dbochman`. Do not bootstrap `ai.openclaw.financial-dashboard`, `ai.openclaw.financial-dashboard-plaid-sync`, `ai.openclaw.forecast-dashboard`, `ai.openclaw.forecast-crypto-sync`, or `ai.openclaw.forecast-ledger-capture` on Dylan's laptop just because the dotfiles checkout is local there.
+Expected target context is the Mac Mini user `dbochman` with `HOME=/Users/dbochman`. Do not bootstrap `ai.openclaw.financial-dashboard`, `ai.openclaw.finance-refresh`, `ai.openclaw.forecast-dashboard`, or `ai.openclaw.forecast-ledger-capture` on Dylan's laptop just because the dotfiles checkout is local there.
 
 `ai.openclaw.financial-dashboard` depends on the Python environment at:
 
@@ -47,12 +47,9 @@ The paired forecast dashboard service runs from `~/repos/Financial Advisor` with
 The data flow is intentionally one-way:
 
 ```text
-daily cache-only Plaid sync + income-source scan -> finance.db -> 8585 /api/forecast-baseline
-                                      -> 8586 current snapshot (5 min cache)
-                                      -> browser projection inputs
-
-daily cache-only crypto holdings sync -> local non-secret holdings cache -> 8586 public-price valuation
-                                                                       -> browser projection inputs
+daily 06:15 finance refresh -> Plaid sync + income-source scan -> finance.db -> 8585 /api/forecast-baseline
+                           -> crypto holdings sync -> local non-secret cache -> 8586 public-price valuation
+                           -> 8586 current snapshot (5 min cache) -> browser projection inputs
 
 daily post-sync aggregate capture -> 8586 forecast ledger -> annual forecast/actual checkpoints
 ```
@@ -65,17 +62,18 @@ U.S./international equity-geography map. If geography is incomplete, Forecast
 must expose a review state rather than infer a country split or issue an equity
 trade instruction.
 
-`ai.openclaw.financial-dashboard-plaid-sync` runs daily at 7:15 AM local time. It uses the protected Plaid credential and Item-token caches directly, never invokes `op`, exits nonzero when any Item fails, and writes only result metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. Each successful run also refreshes local `INCOME_*` source candidates; candidates are not sync failures, but they keep the forecast baseline in `review` until resolved. `not running` is normal between scheduled executions.
+`ai.openclaw.finance-refresh` runs daily at 6:15 AM local time and invokes the existing cache-only source wrappers sequentially: Plaid first, then crypto. Each component gets one retry, retains its own lock and protected status file, and contributes only operational metadata to the combined mode-`0600` status at `~/.openclaw/finance-refresh/status.json`. The LaunchAgent never invokes `op`; a partial source failure does not prevent the other source from refreshing, but the combined job exits nonzero so monitoring sees the degradation.
 
-`ai.openclaw.forecast-crypto-sync` runs daily at 7:25 AM local time, after Plaid. It uses a dedicated Python 3.11+ venv and protected local Coinbase/Etherscan credentials to refresh `~/.openclaw/forecast-dashboard/crypto-holdings.json`; the cache and status file are mode `0600`. The Coinbase helper accepts legacy ECDSA PEM exports and Ed25519 base64 key exports. It never invokes `op`, never writes credentials to the cache, and preserves the last known-good cache when a source fails. A local `~/.openclaw/forecast-dashboard/crypto-sync-config.json` may set `coinbase_enabled: false` while a mismatched Coinbase key is being replaced; the wallet refresh continues. The forecast server accepts a reviewed manual statement as owner coverage only when the manual entry explicitly sets `model_coverage: true`; a statement quantity next to an active source must also declare `replaces_source_id`, or `independent: true` for a separate asset. The separate local `household-manual-assets.json` is not scheduled because property and physical-asset values require explicit review; documented `gold`/`silver` gram holdings are live-valued by `8586` with public XAU/XAG prices and require no secret or `op` access.
+The Plaid component uses the protected credential and Item-token caches directly, exits nonzero when any Item fails, and writes `~/.openclaw/financial-dashboard/plaid-sync-status.json`. Each successful run also refreshes local `INCOME_*` source candidates; candidates are not sync failures, but they keep the forecast baseline in `review` until resolved. The crypto component uses a dedicated Python 3.11+ venv and protected local Coinbase/Etherscan credentials to refresh `~/.openclaw/forecast-dashboard/crypto-holdings.json`; its status file and cache are mode `0600`. It preserves the last known-good cache when a source fails. A local `~/.openclaw/forecast-dashboard/crypto-sync-config.json` may set `coinbase_enabled: false` while a mismatched Coinbase key is being replaced; the wallet refresh continues. The separate local `household-manual-assets.json` is not scheduled because property and physical-asset values require explicit review; documented `gold`/`silver` gram holdings are live-valued by `8586` with public XAU/XAG prices and require no secret or `op` access.
 
 `ai.openclaw.forecast-ledger-capture` runs daily at 7:35 AM local time after the source jobs. It calls only `http://127.0.0.1:8586/api/forecast-ledger/observations`, captures aggregate facts, retries short service outages, and writes result metadata to `~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json`. It never calls `op`, touches Plaid secrets, or copies raw account/transaction data. Identical same-day source facts are idempotent; changed facts are retained as immutable revisions in the local Forecast ledger.
 
 ### Dashboard Health Semantics
 
-The `financial-dashboard` and `forecast-dashboard` agents are `KeepAlive` services and should report `running`. The three daily agents should normally report `not running` between their calendar triggers; use their last exit code and status files instead:
+The `financial-dashboard` and `forecast-dashboard` agents are `KeepAlive` services and should report `running`. The two daily agents should normally report `not running` between their calendar triggers; use their last exit code and status files instead:
 
 ```text
+~/.openclaw/finance-refresh/status.json
 ~/.openclaw/financial-dashboard/plaid-sync-status.json
 ~/.openclaw/forecast-dashboard/crypto-sync-status.json
 ~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json
@@ -87,8 +85,7 @@ Minimum post-change verification:
 
 ```bash
 ssh dylans-mac-mini 'launchctl list | grep -E "ai.openclaw.(financial|forecast)-dashboard"'
-ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.financial-dashboard-plaid-sync'
-ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.forecast-crypto-sync'
+ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.finance-refresh'
 ssh dylans-mac-mini 'launchctl print gui/$(id -u)/ai.openclaw.forecast-ledger-capture'
 ssh dylans-mac-mini 'lsof -nP -iTCP:8585 -sTCP:LISTEN; lsof -nP -iTCP:8586 -sTCP:LISTEN'
 curl -fsS -o /dev/null -w 'mortgage HTTP %{http_code}\n' http://dylans-mac-mini:8585/api/mortgage/summary
@@ -170,8 +167,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 |-------|----------|---------|-------------|
 | `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles repo, deploys skills/wrappers to Mini |
 | `ai.openclaw.8sleep-snapshot` | Daily 6:50 AM | `8sleep-snapshot.sh` | Pre-captures last-night summaries to `/tmp/8sleep-{dylan,julia}-latest.txt` before morning briefings |
-| `ai.openclaw.financial-dashboard-plaid-sync` | Daily 7:15 AM | `financial-dashboard-plaid-sync.py` | Cache-only production Plaid sync; no `op` invocation |
-| `ai.openclaw.forecast-crypto-sync` | Daily 7:25 AM | `forecast-crypto-sync.py` | Cache-only Coinbase/Etherscan holdings sync for Forecast; no `op` invocation |
+| `ai.openclaw.finance-refresh` | Daily 6:15 AM | `finance-refresh.py` | Sequential cache-only Plaid and crypto refresh with retries and combined health; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
 | `com.openclaw.bb-lag-summary` | Daily 8:05 AM | `bb-lag-summary.sh` | BlueBubbles message lag summary |
