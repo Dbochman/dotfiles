@@ -260,6 +260,14 @@ and perform reservation plus calendar idempotency checks before acting.
 
 `financial-scrape-0001` must not become the production Plaid, crypto, or property-value sync path. `ai.openclaw.finance-refresh` owns the daily 06:15 local source refresh, runs cache-only Plaid, crypto, and home-equity components in that order, and never invokes `op`. The cron's historical conditional fallback is intentionally unconfigured; do not add these credentials to its environment.
 
+## Temporary World Cup Briefings
+
+The 26 jobs named `world-cup-briefing-2026-*` run at 9:00 AM ET from June 24
+through the July 19 final. Each is a date-specific `at` job with
+`deleteAfterRun: true`, announces one read-only briefing to Dylan, and follows
+`openclaw/prompts/world-cup-2026-briefing.md`. Successful run history acts as a
+tombstone, so daily cron deployment cannot restore a consumed briefing.
+
 ### Tool allowlists (added 2026-04-04, requires OpenClaw v2026.4.1+)
 
 Jobs with `tools: exec` can invoke shell commands via the exec tool. Isolated cron sessions do NOT have `~/.openclaw/bin` on PATH — all custom CLI commands must use **full absolute paths** (e.g. `/Users/dbochman/.openclaw/bin/8sleep sleep dylan`).

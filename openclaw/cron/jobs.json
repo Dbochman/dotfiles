@@ -302,6 +302,630 @@
       }
     },
     {
+      "id": "world-cup-briefing-2026-06-24",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-06-24",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398000,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-24T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-24` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-06-25",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-06-25",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398001,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-25T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-25` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-06-26",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-06-26",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398002,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-26T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-26` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-06-27",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-06-27",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398003,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-27T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-27` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-06-28",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-06-28",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398004,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-28T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-28` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-06-29",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-06-29",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398005,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-29T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-29` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-06-30",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-06-30",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398006,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-06-30T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-30` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-01",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-01",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398007,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-01T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-01` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-02",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-02",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398008,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-02T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-02` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-03",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-03",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398009,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-03T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-03` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-04",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-04",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398010,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-04T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-04` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-05",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-05",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398011,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-05T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-05` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-06",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-06",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398012,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-06T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-06` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-07",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-07",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398013,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-07T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-07` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-08",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-08",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398014,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-08T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-08` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-09",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-09",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398015,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-09T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-09` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-10",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-10",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398016,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-10T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-10` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-11",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-11",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398017,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-11T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-11` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-12",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-12",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398018,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-12T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-12` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-13",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-13",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398019,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-13T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-13` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-14",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-14",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398020,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-14T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-14` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-15",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-15",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398021,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-15T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-15` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-16",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-16",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398022,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-16T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-16` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-17",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-17",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398023,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-17T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-17` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-18",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-18",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398024,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-18T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-18` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
+      "id": "world-cup-briefing-2026-07-19",
+      "agentId": "main",
+      "name": "World Cup Briefing - 2026-07-19",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1782268398025,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-07-19T13:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-19` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "timeoutSeconds": 300
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "bluebubbles",
+        "to": "+17813544611"
+      }
+    },
+    {
       "id": "weekly-report-0001",
       "agentId": "main",
       "name": "Weekly Activity Report, Security Check & Health Scan",
