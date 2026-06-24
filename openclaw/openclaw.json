@@ -13,7 +13,7 @@
         "provider": "anthropic",
         "mode": "token"
       },
-      "openai-codex:default": {
+      "openai-codex:dbochman@nvidia.com": {
         "provider": "openai-codex",
         "mode": "oauth"
       }

@@ -262,11 +262,27 @@ and perform reservation plus calendar idempotency checks before acting.
 
 ## Temporary World Cup Briefings
 
-The 26 jobs named `world-cup-briefing-2026-*` run at 9:00 AM ET from June 24
-through the July 19 final. Each is a date-specific `at` job with
+The 25 remaining jobs named `world-cup-briefing-2026-*` run at 9:00 AM ET from
+June 25 through the July 19 final. Each is a date-specific `at` job with
 `deleteAfterRun: true`, announces one read-only briefing to Dylan, and follows
 `openclaw/prompts/world-cup-2026-briefing.md`. Successful run history acts as a
 tombstone, so daily cron deployment cannot restore a consumed briefing.
+
+The jobs use lightweight context, minimal thinking, `openai-codex/gpt-5.5`,
+and a direct Sonnet fallback. Their normal data path is
+`openclaw/bin/world-cup-briefing-data.py`, which concurrently fetches ESPN's
+date-scoped World Cup scoreboards and standings with six-second deadlines,
+normalizes kickoff times and US broadcasts, and keeps a date-specific cache.
+FIFA's official fixtures page is authoritative but browser-rendered, so the
+agent consults it only to resolve missing or conflicting material facts rather
+than making it part of every run's critical path.
+
+The June 24 first run reached its 300-second deadline before any tool call. Its
+primary `openai-codex/gpt-5.5` request failed immediately because the OAuth
+token had been invalidated, then the Opus fallback stalled for the remainder of
+the deadline. The OpenAI profile was reauthenticated and pinned first in the
+Mini's auth order. The failed past-due definition was removed from the repo and
+live state while its run log remains as audit history.
 
 ### Tool allowlists (added 2026-04-04, requires OpenClaw v2026.4.1+)
 

@@ -302,30 +302,6 @@
       }
     },
     {
-      "id": "world-cup-briefing-2026-06-24",
-      "agentId": "main",
-      "name": "World Cup Briefing - 2026-06-24",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1782268398000,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-06-24T13:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-24` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "timeoutSeconds": 300
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
-      }
-    },
-    {
       "id": "world-cup-briefing-2026-06-25",
       "agentId": "main",
       "name": "World Cup Briefing - 2026-06-25",
@@ -341,6 +317,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-25` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -365,6 +347,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-26` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -389,6 +377,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-27` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -413,6 +407,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-28` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -437,6 +437,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-29` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -461,6 +467,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-30` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -485,6 +497,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-01` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -509,6 +527,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-02` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -533,6 +557,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-03` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -557,6 +587,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-04` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -581,6 +617,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-05` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -605,6 +647,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-06` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -629,6 +677,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-07` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -653,6 +707,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-08` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -677,6 +737,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-09` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -701,6 +767,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-10` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -725,6 +797,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-11` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -749,6 +827,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-12` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -773,6 +857,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-13` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -797,6 +887,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-14` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -821,6 +917,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-15` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -845,6 +947,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-16` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -869,6 +977,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-17` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -893,6 +1007,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-18` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -917,6 +1037,12 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-19` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
+        "model": "openai-codex/gpt-5.5",
+        "fallbacks": [
+          "anthropic/claude-sonnet-4-6"
+        ],
+        "thinking": "minimal",
+        "lightContext": true,
         "timeoutSeconds": 300
       },
       "delivery": {
