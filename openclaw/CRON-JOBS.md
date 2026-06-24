@@ -262,11 +262,12 @@ and perform reservation plus calendar idempotency checks before acting.
 
 ## Temporary World Cup Briefings
 
-The 25 remaining jobs named `world-cup-briefing-2026-*` run at 9:00 AM ET from
-June 25 through the July 19 final. Each is a date-specific `at` job with
+The date-specific jobs named `world-cup-briefing-2026-*` cover 9:00 AM ET from
+June 25 through the July 19 final. Each is an `at` job with
 `deleteAfterRun: true`, announces one read-only briefing to Dylan, and follows
 `openclaw/prompts/world-cup-2026-briefing.md`. Successful run history acts as a
-tombstone, so daily cron deployment cannot restore a consumed briefing.
+tombstone, so daily cron deployment skips consumed definitions even before
+they are removed from the repo.
 
 The jobs use lightweight context, minimal thinking, `openai-codex/gpt-5.5`,
 and a direct Sonnet fallback. Their normal data path is
@@ -282,7 +283,9 @@ primary `openai-codex/gpt-5.5` request failed immediately because the OAuth
 token had been invalidated, then the Opus fallback stalled for the remainder of
 the deadline. The OpenAI profile was reauthenticated and pinned first in the
 Mini's auth order. The failed past-due definition was removed from the repo and
-live state while its run log remains as audit history.
+live state while its run log remains as audit history. A delivery-enabled
+June 24 one-off then completed on `openai-codex/gpt-5.5` in 22.6 seconds,
+delivered through BlueBubbles, and consumed its temporary definition.
 
 ### Tool allowlists (added 2026-04-04, requires OpenClaw v2026.4.1+)
 
