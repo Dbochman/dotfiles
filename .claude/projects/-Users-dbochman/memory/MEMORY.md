@@ -24,7 +24,7 @@
 - Session: per-channel-peer isolation, daily reset at 4am
 - iMessage: native bundled `imessage` channel via `/opt/homebrew/bin/imsg` JSON-RPC
 - Stable targets: `chat_id:171` (Dylan), `chat_id:1` (Julia), `chat_id:170` (group)
-- Gateway hot-reloads config changes without restart
+- Gateway detects config changes, but channel-scoped runtime snapshots such as `session.typingMode` require an iMessage channel or gateway restart
 - Gateway health monitor: enabled (`channelHealthCheckMinutes: 5`)
 - Heartbeat interval: 12h with no routine transport action
 - The native bridge supports typing and advanced actions; `typingMode: "instant"` is enabled while automatic read receipts remain disabled
