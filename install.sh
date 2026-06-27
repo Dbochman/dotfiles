@@ -672,11 +672,15 @@ install_dotfiles() {
       mkdir -p "$HOME/.openclaw"
     fi
 
-    # Detect if this is the gateway host (dylans-mac-mini) or a remote client
+    # Detect if this is the gateway host or a remote client.
+    # macOS may append Bonjour conflict suffixes (for example, -2 or -3), and
+    # this machine may also be intentionally named mac-mini.
     local hostname
     hostname=$(hostname -s 2>/dev/null || echo "unknown")
+    local hostname_key
+    hostname_key=$(printf '%s' "$hostname" | tr '[:upper:]' '[:lower:]')
 
-    if [[ "$hostname" = "Dylans-Mac-mini" ]]; then
+    if [[ "$hostname_key" = "mac-mini" || "$hostname_key" == mac-mini-[0-9]* || "$hostname_key" = "dylans-mac-mini" || "$hostname_key" == dylans-mac-mini-[0-9]* ]]; then
       log "  Detected gateway host: $hostname"
       if [[ "$DRY_RUN" != true ]]; then
         mkdir -p "$HOME/Applications"

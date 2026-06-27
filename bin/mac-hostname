@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# Manage this Mac's local host naming and optional boot-time enforcement.
+
+set -o pipefail
+
+LABEL="com.dylanbochman.mac-hostname"
+DAEMON_PLIST="/Library/LaunchDaemons/${LABEL}.plist"
+
+COMPUTER_NAME="${MAC_HOSTNAME_COMPUTER_NAME:-mac-mini}"
+LOCAL_HOST_NAME="${MAC_HOSTNAME_LOCAL_HOST_NAME:-mac-mini}"
+HOST_NAME="${MAC_HOSTNAME_HOST_NAME:-mac-mini}"
+NETBIOS_NAME="${MAC_HOSTNAME_NETBIOS_NAME:-MAC-MINI}"
+START_INTERVAL="${MAC_HOSTNAME_START_INTERVAL:-300}"
+
+usage() {
+  cat <<EOF
+Usage: mac-hostname <command>
+
+Commands:
+  status          Show current macOS host names
+  apply           Set ComputerName, LocalHostName, HostName, and NetBIOSName
+  install-daemon  Install a LaunchDaemon that reapplies the names at boot and every ${START_INTERVAL}s
+  uninstall-daemon
+
+Environment overrides:
+  MAC_HOSTNAME_COMPUTER_NAME   default: ${COMPUTER_NAME}
+  MAC_HOSTNAME_LOCAL_HOST_NAME default: ${LOCAL_HOST_NAME}
+  MAC_HOSTNAME_HOST_NAME       default: ${HOST_NAME}
+  MAC_HOSTNAME_NETBIOS_NAME    default: ${NETBIOS_NAME}
+  MAC_HOSTNAME_START_INTERVAL  default: ${START_INTERVAL}
+EOF
+}
+
+script_path() {
+  local source="${BASH_SOURCE[0]}"
+  local dir
+
+  while [[ -L "$source" ]]; do
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" != /* ]] && source="$dir/$source"
+  done
+
+  dir="$(cd -P "$(dirname "$source")" && pwd)"
+  printf '%s/%s\n' "$dir" "$(basename "$source")"
+}
+
+require_root() {
+  if [[ "$(id -u)" -ne 0 ]]; then
+    echo "This command must run as root. Re-run with sudo." >&2
+    exit 1
+  fi
+}
+
+validate_names() {
+  if [[ -z "$LOCAL_HOST_NAME" || "$LOCAL_HOST_NAME" == *[!A-Za-z0-9-]* ]]; then
+    echo "Invalid LocalHostName: $LOCAL_HOST_NAME" >&2
+    echo "Use only letters, numbers, and hyphens." >&2
+    exit 1
+  fi
+
+  if [[ -z "$HOST_NAME" || "$HOST_NAME" == *[!A-Za-z0-9.-]* ]]; then
+    echo "Invalid HostName: $HOST_NAME" >&2
+    echo "Use only letters, numbers, dots, and hyphens." >&2
+    exit 1
+  fi
+
+  if [[ -z "$NETBIOS_NAME" || "${#NETBIOS_NAME}" -gt 15 ]]; then
+    echo "Invalid NetBIOSName: $NETBIOS_NAME" >&2
+    echo "NetBIOSName must be 1-15 characters." >&2
+    exit 1
+  fi
+
+  if ! [[ "$START_INTERVAL" =~ ^[0-9]+$ ]] || [[ "$START_INTERVAL" -lt 60 ]]; then
+    echo "Invalid MAC_HOSTNAME_START_INTERVAL: $START_INTERVAL" >&2
+    echo "Use an integer >= 60 seconds." >&2
+    exit 1
+  fi
+}
+
+status() {
+  printf 'hostname:       %s\n' "$(hostname 2>/dev/null || true)"
+  printf 'HostName:       %s\n' "$(scutil --get HostName 2>/dev/null || true)"
+  printf 'LocalHostName:  %s\n' "$(scutil --get LocalHostName 2>/dev/null || true)"
+  printf 'ComputerName:   %s\n' "$(scutil --get ComputerName 2>/dev/null || true)"
+  printf 'NetBIOSName:    %s\n' "$(defaults read /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName 2>/dev/null || true)"
+}
+
+apply_names() {
+  require_root
+  validate_names
+
+  scutil --set ComputerName "$COMPUTER_NAME"
+  scutil --set LocalHostName "$LOCAL_HOST_NAME"
+  scutil --set HostName "$HOST_NAME"
+  defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "$NETBIOS_NAME"
+
+  dscacheutil -flushcache 2>/dev/null || true
+  killall -HUP mDNSResponder 2>/dev/null || true
+
+  status
+}
+
+install_daemon() {
+  require_root
+  validate_names
+
+  local path
+  path="$(script_path)"
+
+  cat > "$DAEMON_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${path}</string>
+    <string>apply</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MAC_HOSTNAME_COMPUTER_NAME</key>
+    <string>${COMPUTER_NAME}</string>
+    <key>MAC_HOSTNAME_LOCAL_HOST_NAME</key>
+    <string>${LOCAL_HOST_NAME}</string>
+    <key>MAC_HOSTNAME_HOST_NAME</key>
+    <string>${HOST_NAME}</string>
+    <key>MAC_HOSTNAME_NETBIOS_NAME</key>
+    <string>${NETBIOS_NAME}</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>${START_INTERVAL}</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/${LABEL}.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/${LABEL}.err.log</string>
+</dict>
+</plist>
+EOF
+
+  chown root:wheel "$DAEMON_PLIST"
+  chmod 644 "$DAEMON_PLIST"
+  plutil -lint "$DAEMON_PLIST"
+
+  launchctl bootout system "$DAEMON_PLIST" >/dev/null 2>&1 || true
+  launchctl bootstrap system "$DAEMON_PLIST"
+  launchctl enable "system/${LABEL}"
+  launchctl kickstart -k "system/${LABEL}"
+
+  echo "Installed ${DAEMON_PLIST}"
+}
+
+uninstall_daemon() {
+  require_root
+
+  launchctl bootout system "$DAEMON_PLIST" >/dev/null 2>&1 || true
+  rm -f "$DAEMON_PLIST"
+  echo "Removed ${DAEMON_PLIST}"
+}
+
+main() {
+  case "${1:-}" in
+    status)
+      status
+      ;;
+    apply)
+      apply_names
+      ;;
+    install-daemon)
+      install_daemon
+      ;;
+    uninstall-daemon)
+      uninstall_daemon
+      ;;
+    -h|--help|help|"")
+      usage
+      ;;
+    *)
+      echo "Unknown command: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
