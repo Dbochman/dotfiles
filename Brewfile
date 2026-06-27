@@ -1,6 +1,7 @@
 tap "steipete/tap"
 brew "ffmpeg"
 brew "gh"
+brew "steipete/tap/imsg"
 brew "pipx"
 brew "steipete/tap/spogo"
 cask "1password-cli"

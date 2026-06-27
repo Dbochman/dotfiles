@@ -1,8 +1,8 @@
 ---
 name: restaurant-snipe
 description: Set up background reservation sniping for hard-to-book restaurants on OpenTable or Resy. Use when asked to monitor for cancellations, auto-book when a slot opens, snipe a reservation, or set up a recurring availability check for a specific restaurant.
-allowed-tools: Bash(opentable:*),Bash(resy:*),Bash(launchctl:*),Bash(cat:*),Bash(tee:*),Bash(chmod:*),Bash(rm:*),Bash(ls:*),Bash(tail:*),Bash(pgrep:*),Bash(pkill:*),Bash(curl:*)
-metadata: {"openclaw":{"emoji":"🎯","requires":{"bins":["opentable"]}}}
+allowed-tools: Bash(opentable:*),Bash(resy:*),Bash(imsg:*),Bash(launchctl:*),Bash(cat:*),Bash(tee:*),Bash(chmod:*),Bash(rm:*),Bash(ls:*),Bash(tail:*),Bash(pgrep:*),Bash(pkill:*)
+metadata: {"openclaw":{"emoji":"🎯","requires":{"bins":["opentable","imsg"]}}}
 ---
 
 # Restaurant Snipe
@@ -78,13 +78,9 @@ for date in $DATES; do
         log "$output"
 
         # Notify via iMessage (group chat or DM)
-        curl -s -X POST "http://localhost:1234/api/v1/message/text?password=$BLUEBUBBLES_PASSWORD" \
-            -H "Content-Type: application/json" \
-            -d "{
-                \"chatGuid\": \"<chat_guid>\",
-                \"message\": \"<Restaurant> booked! $date around <time> for <n> people. Check OpenTable for confirmation.\",
-                \"tempGuid\": \"snipe-$(date +%s)\"
-            }" >> "$LOG" 2>&1
+        imsg send --chat-id "<chat_id>" \
+            --text "<Restaurant> booked! $date around <time> for <n> people. Check OpenTable for confirmation." \
+            --json >> "$LOG" 2>&1
 
         # Self-remove after successful booking
         launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/ai.openclaw.<name>-snipe.plist 2>/dev/null

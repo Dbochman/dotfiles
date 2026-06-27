@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""send-audio-briefing — Generate TTS audio from text and send via iMessage (BlueBubbles).
+"""send-audio-briefing — Generate TTS audio from text and send via iMessage.
 
 Usage:
-  send-audio-briefing <chatGuid> "text to speak"
-  send-audio-briefing <chatGuid> "text" --message "Short summary"
-  send-audio-briefing <chatGuid> "text" --voice Jessica --message "Summary"
-  echo "text" | send-audio-briefing <chatGuid>
+  send-audio-briefing <target> "text to speak"
+  send-audio-briefing <target> "text" --message "Short summary"
+  send-audio-briefing <target> "text" --voice Jessica --message "Summary"
+  echo "text" | send-audio-briefing <target>
 
-Requires: sag-wrapper, BLUEBUBBLES_PASSWORD in env or .secrets-cache
+Requires: sag-wrapper and imsg.
 """
 
 import argparse
@@ -16,26 +16,9 @@ import os
 import subprocess
 import sys
 import tempfile
-import uuid
 
-SECRETS_FILE = os.path.expanduser("~/.openclaw/.secrets-cache")
 SAG_WRAPPER = "/opt/homebrew/bin/sag-wrapper"
-BB_BASE = "http://localhost:1234/api/v1"
-
-
-def load_secrets():
-    """Load secrets from .secrets-cache if not already in env."""
-    if os.environ.get("BLUEBUBBLES_PASSWORD"):
-        return
-    if not os.path.exists(SECRETS_FILE):
-        print("Error: no BLUEBUBBLES_PASSWORD and no .secrets-cache", file=sys.stderr)
-        sys.exit(1)
-    with open(SECRETS_FILE) as f:
-        for line in f:
-            line = line.strip()
-            if "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                os.environ[k] = v
+IMSG_BIN = "/opt/homebrew/bin/imsg"
 
 
 def generate_audio(text: str, voice: str, output_path: str) -> bool:
@@ -53,50 +36,85 @@ def generate_audio(text: str, voice: str, output_path: str) -> bool:
     return True
 
 
-def send_attachment(chat_guid: str, audio_path: str, pw: str) -> bool:
-    """Send audio file via BB attachment API."""
-    import requests
+def run_imsg(args: list[str], timeout: int) -> dict:
+    """Run imsg and return its JSON response."""
+    result = subprocess.run(
+        [IMSG_BIN, *args, "--json"],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+    return json.loads(result.stdout)
 
-    url = f"{BB_BASE}/message/attachment?password={pw}"
-    files = {"attachment": ("morning-briefing.mp3", open(audio_path, "rb"), "audio/mpeg")}
-    data = {
-        "chatGuid": chat_guid,
-        "tempGuid": str(uuid.uuid4()).upper(),
-        "name": "morning-briefing.mp3",
-        "method": "private-api",
-    }
-    r = requests.post(url, data=data, files=files, timeout=60)
-    resp = r.json()
-    if resp.get("status") != 200:
-        print(f"Attachment send failed: {resp}", file=sys.stderr)
+
+def target_send_args(target: str) -> list[str]:
+    """Map OpenClaw-style iMessage targets to imsg send arguments."""
+    if target.startswith("chat_id:"):
+        return ["--chat-id", target.removeprefix("chat_id:")]
+    if target.startswith("chat_guid:"):
+        return ["--chat-guid", target.removeprefix("chat_guid:")]
+    if target.startswith("chat_identifier:"):
+        return ["--chat-identifier", target.removeprefix("chat_identifier:")]
+    if ";-;" in target or ";+;" in target:
+        return ["--chat-guid", target]
+    return ["--to", target]
+
+
+def target_attachment_chat(target: str) -> str | None:
+    """Resolve a target to the chat GUID required by imsg send-attachment."""
+    if target.startswith("chat_id:"):
+        resp = run_imsg(["group", "--chat-id", target.removeprefix("chat_id:")], timeout=10)
+        return resp.get("guid")
+    if target.startswith("chat_guid:"):
+        return target.removeprefix("chat_guid:")
+    if ";-;" in target or ";+;" in target:
+        return target
+    return None
+
+
+def send_attachment(target: str, audio_path: str) -> bool:
+    """Send audio file via imsg."""
+    try:
+        chat_guid = target_attachment_chat(target)
+        if chat_guid:
+            resp = run_imsg(
+                ["send-attachment", "--chat", chat_guid, "--file", audio_path, "--audio"],
+                timeout=60,
+            )
+        else:
+            resp = run_imsg(
+                ["send", *target_send_args(target), "--file", audio_path],
+                timeout=60,
+            )
+    except (subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
+        print(f"Attachment send failed: {exc}", file=sys.stderr)
         return False
-    print(f"Audio sent to {chat_guid}", file=sys.stderr)
-    return True
+    print(f"Audio sent to {target}", file=sys.stderr)
+    return resp.get("status") in {"sent", "ok", "success"} or bool(resp.get("guid") or resp.get("message_id"))
 
 
-def send_text(chat_guid: str, message: str, pw: str) -> bool:
-    """Send summary text via BB text API."""
-    import requests
-
-    url = f"{BB_BASE}/message/text?password={pw}"
-    body = {
-        "chatGuid": chat_guid,
-        "tempGuid": str(uuid.uuid4()).upper(),
-        "message": message,
-        "method": "private-api",
-    }
-    r = requests.post(url, json=body, timeout=15)
-    resp = r.json()
-    if resp.get("status") != 200:
-        print(f"Text send failed: {resp}", file=sys.stderr)
+def send_text(target: str, message: str) -> bool:
+    """Send summary text via imsg."""
+    try:
+        resp = run_imsg(
+            ["send", *target_send_args(target), "--text", message],
+            timeout=20,
+        )
+    except (subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
+        print(f"Text send failed: {exc}", file=sys.stderr)
         return False
     print("Summary text sent", file=sys.stderr)
-    return True
+    return resp.get("status") == "sent"
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate TTS audio and send via iMessage")
-    parser.add_argument("chat_guid", help="BB chat GUID (e.g. any;-;+1XXXXXXXXXX)")
+    parser.add_argument(
+        "target",
+        help="iMessage target, preferably chat_id:<id>; also accepts chat_guid:<guid>, a raw chat GUID, phone, or email",
+    )
     parser.add_argument("text", nargs="?", default="", help="Text to speak (or pipe via stdin)")
     parser.add_argument("-m", "--message", default="", help="Short summary text to send after audio")
     parser.add_argument("-v", "--voice", default="Sarah", help="ElevenLabs voice (default: Sarah)")
@@ -110,12 +128,6 @@ def main():
         print("Error: no text provided", file=sys.stderr)
         sys.exit(1)
 
-    load_secrets()
-    pw = os.environ.get("BLUEBUBBLES_PASSWORD", "")
-    if not pw:
-        print("Error: BLUEBUBBLES_PASSWORD not set", file=sys.stderr)
-        sys.exit(1)
-
     # Generate audio
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
         audio_path = tmp.name
@@ -125,12 +137,12 @@ def main():
             sys.exit(1)
 
         # Send audio attachment
-        if not send_attachment(args.chat_guid, audio_path, pw):
+        if not send_attachment(args.target, audio_path):
             sys.exit(1)
 
         # Send summary text if provided
         if args.message:
-            send_text(args.chat_guid, args.message, pw)
+            send_text(args.target, args.message)
 
         print(json.dumps({"ok": True}))
     finally:

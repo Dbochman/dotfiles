@@ -232,8 +232,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+15084234853"
+        "channel": "imessage",
+        "to": "chat_id:1"
       }
     },
     {
@@ -297,8 +297,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -317,7 +317,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-25` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -327,8 +327,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -347,7 +347,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-26` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -357,8 +357,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -377,7 +377,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-27` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -387,8 +387,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -407,7 +407,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-28` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -417,8 +417,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -437,7 +437,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-29` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -447,8 +447,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -467,7 +467,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-30` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -477,8 +477,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -497,7 +497,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-01` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -507,8 +507,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -527,7 +527,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-02` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -537,8 +537,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -557,7 +557,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-03` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -567,8 +567,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -587,7 +587,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-04` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -597,8 +597,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -617,7 +617,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-05` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -627,8 +627,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -647,7 +647,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-06` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -657,8 +657,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -677,7 +677,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-07` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -687,8 +687,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -707,7 +707,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-08` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -717,8 +717,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -737,7 +737,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-09` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -747,8 +747,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -767,7 +767,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-10` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -777,8 +777,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -797,7 +797,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-11` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -807,8 +807,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -827,7 +827,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-12` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -837,8 +837,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -857,7 +857,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-13` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -867,8 +867,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -887,7 +887,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-14` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -897,8 +897,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -917,7 +917,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-15` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -927,8 +927,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -947,7 +947,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-16` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -957,8 +957,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -977,7 +977,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-17` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -987,8 +987,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -1007,7 +1007,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-18` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -1017,8 +1017,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -1037,7 +1037,7 @@
       "payload": {
         "kind": "agentTurn",
         "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-07-19` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai-codex/gpt-5.5",
+        "model": "openai/gpt-5.5",
         "fallbacks": [
           "anthropic/claude-sonnet-4-6"
         ],
@@ -1047,8 +1047,8 @@
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {
@@ -1066,12 +1066,12 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "Generate the weekly report using the deterministic helper. Run exactly:\n\n`python3 ~/.openclaw/bin/openclaw-weekly-report.py`\n\nReturn the helper's stdout verbatim as the complete report. Do not independently parse gateway logs, infer metrics, add a model/subscription line, or reinterpret its health findings. The helper reads durable session and cron records, live BlueBubbles status, and CrisisMode with the documented exclusions.\n\nIf the helper itself fails, return only a concise failure notice naming the failed command; do not fall back to stale `/tmp/openclaw` log parsing.\n\nCRITICAL: Do NOT use sessions_spawn, sessions_send, or sessions_yield. Run the helper directly in this session using bash/exec."
+        "message": "Generate the weekly report using the deterministic helper. Run exactly:\n\n`python3 ~/.openclaw/bin/openclaw-weekly-report.py`\n\nReturn the helper's stdout verbatim as the complete report. Do not independently parse gateway logs, infer metrics, add a model/subscription line, or reinterpret its health findings. The helper reads durable session and cron records, live iMessage status, and CrisisMode with the documented exclusions.\n\nIf the helper itself fails, return only a concise failure notice naming the failed command; do not fall back to stale `/tmp/openclaw` log parsing.\n\nCRITICAL: Do NOT use sessions_spawn, sessions_send, or sessions_yield. Run the helper directly in this session using bash/exec."
       },
       "delivery": {
         "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+17813544611"
+        "channel": "imessage",
+        "to": "chat_id:171"
       }
     },
     {

@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """Generate the OpenClaw weekly activity and health report.
 
-The report intentionally uses durable session, cron, and BlueBubbles records
+The report intentionally uses durable session, cron, and local Messages records
 instead of transient gateway logs. It is designed to be called by the weekly
 cron agent, which should return its stdout verbatim.
 """
 
 import json
 import re
-import shlex
+import sqlite3
 import subprocess
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 
@@ -24,10 +23,11 @@ LOCAL_TZ = ZoneInfo("America/New_York")
 UTC = timezone.utc
 SESSIONS_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
 CRON_RUNS_DIR = HOME / ".openclaw" / "cron" / "runs"
-SECRETS_CACHE = HOME / ".openclaw" / ".secrets-cache"
-BLUEBUBBLES_URL = "http://127.0.0.1:1234"
+MESSAGES_DB = HOME / "Library" / "Messages" / "chat.db"
+IMSG_BIN = "/opt/homebrew/bin/imsg"
 GATEWAY_URL = "http://127.0.0.1:18789/health"
 CRISISMODE_EXCLUSIONS = {"PG-001", "DNS-002"}
+APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=UTC)
 
 
 def parse_timestamp(value):
@@ -157,87 +157,65 @@ def collect_cron_runs(start, end):
     return runs
 
 
-def cached_secret(name):
-    """Read one shell-quoted cache value without evaluating the cache as code."""
-    try:
-        lines = SECRETS_CACHE.read_text().splitlines()
-    except OSError:
-        return ""
-
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        try:
-            parts = shlex.split(line, posix=True, comments=True)
-        except ValueError:
-            continue
-        if len(parts) != 1:
-            continue
-        key, separator, value = parts[0].partition("=")
-        if separator and key == name:
-            return value
-    return ""
+def message_db_timestamp(value):
+    return int((value - APPLE_EPOCH).total_seconds() * 1_000_000_000)
 
 
-def bluebubbles_messages(start, end):
-    password = cached_secret("BLUEBUBBLES_PASSWORD")
-    if not password:
+def imessage_messages(start, end):
+    if not MESSAGES_DB.exists():
         return None
 
-    body = json.dumps(
-        {
-            "limit": 1000,
-            "sort": "DESC",
-            "after": int(start.timestamp() * 1000),
-        }
-    ).encode()
-    request = Request(
-        f"{BLUEBUBBLES_URL}/api/v1/message/query?{urlencode({'password': password})}",
-        data=body,
-        headers={"Content-Type": "application/json"},
-    )
+    query = """
+        SELECT
+            COALESCE(SUM(CASE WHEN is_from_me = 1 THEN 1 ELSE 0 END), 0) AS sent,
+            COALESCE(SUM(CASE WHEN is_from_me = 0 THEN 1 ELSE 0 END), 0) AS received,
+            COUNT(*) AS total
+        FROM message
+        WHERE date >= ?
+          AND date < ?
+          AND COALESCE(is_system_message, 0) = 0
+          AND COALESCE(item_type, 0) = 0
+          AND COALESCE(is_empty, 0) = 0
+    """
     try:
-        with urlopen(request, timeout=10) as response:
-            records = json.loads(response.read()).get("data", [])
-    except (HTTPError, URLError, OSError, ValueError, json.JSONDecodeError):
+        with sqlite3.connect(f"file:{MESSAGES_DB}?mode=ro", uri=True, timeout=5) as conn:
+            row = conn.execute(
+                query,
+                (message_db_timestamp(start), message_db_timestamp(end)),
+            ).fetchone()
+    except sqlite3.Error:
         return None
 
-    sent = received = 0
-    for record in records:
-        if not isinstance(record, dict):
-            continue
-        timestamp = parse_epoch_ms(record.get("dateCreated"))
-        if timestamp is None or not start <= timestamp < end:
-            continue
-        if record.get("isFromMe"):
-            sent += 1
-        else:
-            received += 1
-    return {"sent": sent, "received": received, "truncated": len(records) >= 1000}
+    if row is None:
+        return None
+    return {"sent": int(row[0]), "received": int(row[1]), "truncated": False}
 
 
-def bluebubbles_health():
-    password = cached_secret("BLUEBUBBLES_PASSWORD")
-    if not password:
-        return "unavailable (managed credential cache missing)"
-
+def imessage_health():
     try:
-        with urlopen(
-            f"{BLUEBUBBLES_URL}/api/v1/server/info?{urlencode({'password': password})}",
-            timeout=5,
-        ) as response:
-            info = json.loads(response.read()).get("data") or {}
-    except (HTTPError, URLError, OSError, ValueError, json.JSONDecodeError):
-        return "unreachable"
+        result = subprocess.run(
+            [IMSG_BIN, "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        status = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        return "unavailable (imsg status failed)"
 
-    private_api = info.get("private_api") is True
-    helper = info.get("helper_connected") is True
-    if private_api and helper:
-        return "healthy (Private API and helper connected)"
-    if private_api:
-        return "reachable (Private API enabled; helper disconnected)"
-    return "reachable (Private API disabled)"
+    if result.returncode != 0:
+        return "unreachable (imsg status failed)"
+
+    version = status.get("version") or "unknown"
+    sip = status.get("sip") or "unknown"
+    basic = status.get("basic_features") is True
+    advanced = status.get("advanced_features") is True
+    if advanced:
+        return f"healthy (imsg {version}; advanced bridge connected; SIP {sip})"
+    if basic:
+        return f"reachable (imsg {version}; database access only; SIP {sip})"
+    return f"unavailable (imsg {version}; basic features unavailable; SIP {sip})"
 
 
 def gateway_health():
@@ -380,8 +358,8 @@ def report(now):
     current = collect_session_activity(current_start, current_end)
     previous = collect_session_activity(previous_start, previous_end)
     current_runs = collect_cron_runs(current_start, current_end)
-    current_messages = bluebubbles_messages(current_start, current_end)
-    previous_messages = bluebubbles_messages(previous_start, previous_end)
+    current_messages = imessage_messages(current_start, current_end)
+    previous_messages = imessage_messages(previous_start, previous_end)
     crisis_score, crisis_findings = crisismode_summary()
 
     period = (
@@ -406,7 +384,7 @@ def report(now):
         "",
         "Health:",
         f"- Gateway: {gateway_health()}",
-        f"- BlueBubbles: {bluebubbles_health()}",
+        f"- iMessage: {imessage_health()}",
         f"- Disk: {apfs_disk_usage()}",
     ]
 

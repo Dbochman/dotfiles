@@ -191,8 +191,8 @@ CONFIG_DIR = Path.home() / ".config" / "ring"
 TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 FCM_CREDS_FILE = Path.home() / ".openclaw/dog-walk/fcm-credentials.json"
 
-BB_URL = "http://localhost:1234"
-DYLAN_CHAT = "any;-;dylanbochman@gmail.com"
+IMSG_BIN = "/opt/homebrew/bin/imsg"
+DYLAN_IMESSAGE_TARGET = os.environ.get("OPENCLAW_DYLAN_IMESSAGE_TARGET", "chat_id:171")
 USER_AGENT = "OpenClaw/1.0"
 
 # Doorbell ID → location mapping
@@ -1143,34 +1143,36 @@ def save_fcm_credentials(creds: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# iMessage via BlueBubbles
+# iMessage via imsg
 # ---------------------------------------------------------------------------
 
-def bb_password() -> str:
-    return os.environ.get("BLUEBUBBLES_PASSWORD", "")
-
-
 def send_imessage(text: str) -> bool:
-    pw = bb_password()
-    if not pw:
-        log("ERROR: BLUEBUBBLES_PASSWORD not set")
-        return False
+    if DYLAN_IMESSAGE_TARGET.startswith("chat_id:"):
+        target_args = ["--chat-id", DYLAN_IMESSAGE_TARGET.removeprefix("chat_id:")]
+    elif DYLAN_IMESSAGE_TARGET.startswith("chat_guid:"):
+        target_args = ["--chat-guid", DYLAN_IMESSAGE_TARGET.removeprefix("chat_guid:")]
+    elif DYLAN_IMESSAGE_TARGET.startswith("chat_identifier:"):
+        target_args = [
+            "--chat-identifier",
+            DYLAN_IMESSAGE_TARGET.removeprefix("chat_identifier:"),
+        ]
+    elif ";-;" in DYLAN_IMESSAGE_TARGET or ";+;" in DYLAN_IMESSAGE_TARGET:
+        target_args = ["--chat-guid", DYLAN_IMESSAGE_TARGET]
+    else:
+        target_args = ["--to", DYLAN_IMESSAGE_TARGET]
+
     try:
-        data = json.dumps({
-            "chatGuid": DYLAN_CHAT,
-            "tempGuid": str(uuid.uuid4()).upper(),
-            "message": text,
-            "method": "private-api",
-        }).encode()
-        req = urllib.request.Request(
-            f"{BB_URL}/api/v1/message/text?password={pw}",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        result = subprocess.run(
+            [IMSG_BIN, "send", *target_args, "--text", text, "--json"],
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read().decode())
-        return result.get("status") == 200
+        if result.returncode != 0:
+            log(f"ERROR sending iMessage: {result.stderr.strip() or result.stdout.strip()}")
+            return False
+        payload = json.loads(result.stdout)
+        return payload.get("status") == "sent"
     except Exception as e:
         log(f"ERROR sending iMessage: {e}")
         return False

@@ -21,7 +21,7 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 | `opentable-refresh-token.sh` | `~/.openclaw/bin/` | Refreshes and validates the OpenTable CLI token in a managed headless PinchTab instance; uses Gmail verification only when reauthentication is required and never logs token material. |
 | `openclaw-weekly-report.py` | `~/.openclaw/bin/` | Generates the weekly cron report from durable session/cron records and live service checks; avoids obsolete transient gateway-log parsing. |
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
-| `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as iMessage attachment via BlueBubbles API, plus optional summary text. Used by Julia's morning briefing cron job. |
+| `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as an iMessage attachment via `imsg`, plus optional summary text. Used by Julia's morning briefing cron job. |
 
 ### Dashboards
 

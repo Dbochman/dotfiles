@@ -165,7 +165,7 @@ done
 
 ### Snipe monitor with iMessage notification
 
-To get notified when a snipe succeeds or expires, run a monitor script that checks logs and sends an iMessage via BlueBubbles:
+To get notified when a snipe succeeds or expires, run a monitor script that checks logs and sends an iMessage via `imsg`:
 
 ```bash
 # Checks every 60s, sends iMessage on success or expiry

@@ -9,6 +9,7 @@ exec python3 - "$@" <<'PYTHON_SCRIPT'
 import json
 import os
 import re
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,8 @@ STATE_FILE = HISTORY_DIR / ".snapshot-state"
 OAUTH_CACHE = Path.home() / ".openclaw" / ".anthropic-oauth-cache"
 CRON_RUNS_DIR = Path.home() / ".openclaw" / "cron" / "runs"
 LOG_DIR = Path("/tmp/openclaw")
+MESSAGES_DB = Path.home() / "Library" / "Messages" / "chat.db"
+APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 
 HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -270,57 +273,46 @@ def parse_cron_runs(last_offsets):
     return result
 
 
-# ── 4. Query BlueBubbles message counts ───────────────────────────────
+# ── 4. Query local Messages counts ─────────────────────────────────────
 
-SECRETS_CACHE = Path.home() / ".openclaw" / ".secrets-cache"
-BB_BASE = "http://localhost:1234/api/v1"
-
-
-def get_bb_password():
-    if not SECRETS_CACHE.exists():
-        return None
-    try:
-        for line in SECRETS_CACHE.read_text().splitlines():
-            if line.startswith("BLUEBUBBLES_PASSWORD="):
-                return line.split("=", 1)[1].strip().strip("'\"")
-    except OSError:
-        pass
-    return None
+def message_db_timestamp(value):
+    return int((value - APPLE_EPOCH).total_seconds() * 1_000_000_000)
 
 
-def fetch_bb_messages(last_ts):
-    """Count sent/received iMessages since last snapshot via BlueBubbles API."""
+def fetch_imessage_messages(last_ts):
+    """Count sent/received iMessages since last snapshot via chat.db."""
     result = {"messages_sent": 0, "messages_received": 0}
-    pw = get_bb_password()
-    if not pw:
+    if not last_ts or not MESSAGES_DB.exists():
         return result
 
-    # Convert last_ts ISO string to epoch ms for BB 'after' param
-    after_ms = 0
-    if last_ts:
-        try:
-            dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
-            after_ms = int(dt.timestamp() * 1000)
-        except (ValueError, AttributeError):
-            pass
-
     try:
-        url = f"{BB_BASE}/message/query?password={pw}"
-        body = json.dumps({
-            "limit": 500,
-            "sort": "DESC",
-            "after": after_ms,
-        }).encode()
-        req = Request(url, data=body, headers={"Content-Type": "application/json"})
-        with urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        for m in data.get("data", []):
-            if m.get("isFromMe"):
-                result["messages_sent"] += 1
-            else:
-                result["messages_received"] += 1
-    except (URLError, json.JSONDecodeError, OSError):
-        pass
+        start = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return result
+
+    query = """
+        SELECT
+            COALESCE(SUM(CASE WHEN is_from_me = 1 THEN 1 ELSE 0 END), 0) AS sent,
+            COALESCE(SUM(CASE WHEN is_from_me = 0 THEN 1 ELSE 0 END), 0) AS received
+        FROM message
+        WHERE date >= ?
+          AND date < ?
+          AND COALESCE(is_system_message, 0) = 0
+          AND COALESCE(item_type, 0) = 0
+          AND COALESCE(is_empty, 0) = 0
+    """
+    try:
+        with sqlite3.connect(f"file:{MESSAGES_DB}?mode=ro", uri=True, timeout=5) as conn:
+            row = conn.execute(
+                query,
+                (message_db_timestamp(start), message_db_timestamp(now)),
+            ).fetchone()
+    except sqlite3.Error:
+        return result
+
+    if row:
+        result["messages_sent"] = int(row[0])
+        result["messages_received"] = int(row[1])
 
     return result
 
@@ -332,7 +324,7 @@ state = load_state()
 utilization = fetch_utilization()
 log_data = parse_runtime_log(state["log_offset"])
 cron_data = parse_cron_runs(state["cron_offsets"])
-bb_data = fetch_bb_messages(state["last_ts"])
+imessage_data = fetch_imessage_messages(state["last_ts"])
 
 snapshot = {
     "timestamp": now_iso,
@@ -344,8 +336,8 @@ snapshot = {
     },
     "activity": {
         "agent_runs": log_data["agent_runs"],
-        "messages_sent": bb_data["messages_sent"],
-        "messages_received": bb_data["messages_received"],
+        "messages_sent": imessage_data["messages_sent"],
+        "messages_received": imessage_data["messages_received"],
         "cron_runs": cron_data["cron_runs"],
         "errors": log_data["errors"],
         "gateway_restarts": log_data["gateway_restarts"],

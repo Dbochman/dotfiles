@@ -1,7 +1,7 @@
 {
   "meta": {
-    "lastTouchedVersion": "2026.5.7",
-    "lastTouchedAt": "2026-05-30T13:44:02.452Z"
+    "lastTouchedVersion": "2026.6.10",
+    "lastTouchedAt": "2026-06-27T13:33:46.931Z"
   },
   "auth": {
     "profiles": {
@@ -13,8 +13,12 @@
         "provider": "anthropic",
         "mode": "token"
       },
-      "openai-codex:dbochman@nvidia.com": {
-        "provider": "openai-codex",
+      "openai:chatgpt-default": {
+        "provider": "openai",
+        "mode": "oauth"
+      },
+      "openai:dbochman@nvidia.com": {
+        "provider": "openai",
         "mode": "oauth"
       }
     }
@@ -22,8 +26,9 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai-codex/gpt-5.5",
+        "primary": "openai/gpt-5.6-sol",
         "fallbacks": [
+          "openai/gpt-5.5",
           "anthropic/claude-opus-4-6",
           "anthropic/claude-sonnet-4-6"
         ]
@@ -31,7 +36,19 @@
       "models": {
         "anthropic/claude-opus-4-6": {},
         "anthropic/claude-sonnet-4-6": {},
-        "openai-codex/gpt-5.5": {}
+        "openai/gpt-5.5": {
+          "agentRuntime": {
+            "id": "codex"
+          }
+        },
+        "openai/gpt-5.6-sol": {
+          "params": {
+            "fastMode": true
+          },
+          "agentRuntime": {
+            "id": "codex"
+          }
+        }
       },
       "thinkingDefault": "high",
       "workspace": "/Users/dbochman/.openclaw/workspace",
@@ -52,6 +69,32 @@
       "maxConcurrent": 4,
       "subagents": {
         "maxConcurrent": 8
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "openai": {
+        "models": [
+          {
+            "id": "gpt-5.6-sol",
+            "name": "GPT-5.6-Sol",
+            "reasoning": true,
+            "input": [
+              "text",
+              "image"
+            ],
+            "contextWindow": 372000,
+            "maxTokens": 128000,
+            "agentRuntime": {
+              "id": "codex"
+            },
+            "compat": {
+              "supportsReasoningEffort": true,
+              "supportsUsageInStreaming": true
+            }
+          }
+        ]
       }
     }
   },
@@ -78,24 +121,22 @@
     }
   },
   "channels": {
-    "bluebubbles": {
+    "imessage": {
       "enabled": true,
-      "serverUrl": "http://localhost:1234",
-      "password": "${BLUEBUBBLES_PASSWORD}",
-      "webhookPath": "/bluebubbles-webhook",
-      "sendReadReceipts": true,
-      "sendTimeoutMs": 90000,
+      "cliPath": "/opt/homebrew/bin/imsg",
+      "dbPath": "/Users/dbochman/Library/Messages/chat.db",
       "dmPolicy": "open",
       "groupPolicy": "open",
       "allowFrom": [
         "*"
       ],
-      "network": {
-        "dangerouslyAllowPrivateNetwork": true
-      },
       "groups": {
         "*": {}
       },
+      "service": "auto",
+      "sendTransport": "auto",
+      "region": "US",
+      "sendReadReceipts": true,
       "actions": {
         "reactions": true,
         "edit": true,
@@ -108,7 +149,10 @@
         "removeParticipant": true,
         "leaveGroup": true,
         "sendAttachment": true
-      }
+      },
+      "groupAllowFrom": [
+        "*"
+      ]
     }
   },
   "browser": {
@@ -149,9 +193,6 @@
   },
   "plugins": {
     "entries": {
-      "bluebubbles": {
-        "enabled": true
-      },
       "browser": {
         "enabled": true
       },
@@ -159,6 +200,18 @@
         "enabled": true
       },
       "openai": {
+        "enabled": true
+      },
+      "codex": {
+        "enabled": true,
+        "config": {
+          "appServer": {
+            "command": "/opt/homebrew/bin/codex",
+            "serviceTier": "priority"
+          }
+        }
+      },
+      "elevenlabs": {
         "enabled": true
       }
     }
@@ -173,13 +226,100 @@
       },
       "sag": {
         "apiKey": "${ELEVENLABS_API_KEY}"
+      },
+      "<skill-name>": {
+        "enabled": false
+      },
+      "bear-notes": {
+        "enabled": false
+      },
+      "blogwatcher": {
+        "enabled": false
+      },
+      "blucli": {
+        "enabled": false
+      },
+      "camsnap": {
+        "enabled": false
+      },
+      "clawhub": {
+        "enabled": false
+      },
+      "coding-agent": {
+        "enabled": false
+      },
+      "discord": {
+        "enabled": false
+      },
+      "eightctl": {
+        "enabled": false
+      },
+      "gemini": {
+        "enabled": false
+      },
+      "gifgrep": {
+        "enabled": false
+      },
+      "gog": {
+        "enabled": false
+      },
+      "goplaces": {
+        "enabled": false
+      },
+      "himalaya": {
+        "enabled": false
+      },
+      "mcporter": {
+        "enabled": false
+      },
+      "model-usage": {
+        "enabled": false
+      },
+      "obsidian": {
+        "enabled": false
+      },
+      "openhue": {
+        "enabled": false
+      },
+      "oracle": {
+        "enabled": false
+      },
+      "ordercli": {
+        "enabled": false
+      },
+      "sherpa-onnx-tts": {
+        "enabled": false
+      },
+      "slack": {
+        "enabled": false
+      },
+      "songsee": {
+        "enabled": false
+      },
+      "sonoscli": {
+        "enabled": false
+      },
+      "things-mac": {
+        "enabled": false
+      },
+      "trello": {
+        "enabled": false
+      },
+      "voice-call": {
+        "enabled": false
+      },
+      "wacli": {
+        "enabled": false
+      },
+      "xurl": {
+        "enabled": false
       }
     }
   },
   "wizard": {
-    "lastRunAt": "2026-02-07T00:37:06.166Z",
-    "lastRunVersion": "2026.2.3-1",
-    "lastRunCommand": "onboard",
+    "lastRunAt": "2026-06-27T13:33:46.851Z",
+    "lastRunVersion": "2026.6.10",
+    "lastRunCommand": "doctor",
     "lastRunMode": "local"
   }
 }
