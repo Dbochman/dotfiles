@@ -36,7 +36,7 @@ OpenClaw agent
 | `openclaw/bin/crisismode` | CLI wrapper (deployed to Mini by dotfiles-pull) |
 | `openclaw/skills/crisismode/SKILL.md` | OpenClaw skill definition |
 | `openclaw/crisismode/crisismode.yaml` | Site config (deployed to `~/.crisismode/`) |
-| `openclaw/crisismode/checks/` | Custom check plugins (BB, gateway, launchd) |
+| `openclaw/crisismode/checks/` | Custom check plugins (gateway and launchd) |
 | `openclaw/cron/jobs.json` | Includes `crisismode-health-scan-0001` cron job |
 | `openclaw/bin/dotfiles-pull.command` | Updated: deploys wrapper, skill, config, and check plugins |
 
@@ -51,13 +51,12 @@ The `dotfiles-pull.command` script handles:
 
 ## Custom Check Plugins
 
-Three custom plugins deployed to `~/.crisismode/checks/`:
+Two custom plugins are deployed to `~/.crisismode/checks/`:
 
 | Plugin | What It Checks |
 |--------|---------------|
-| check-bluebubbles | BB server health, Private API status, proxy mode (needs `BLUEBUBBLES_PASSWORD`) |
 | check-openclaw-gateway | HTTP `/health` endpoint + launchctl process status (PID, exit code) |
-| check-launchd-services | 6 critical LaunchAgents: gateway, nest-dashboard, usage-dashboard, nest-snapshot, bb-watchdog, presence-receive |
+| check-launchd-services | Critical gateway, dashboard, snapshot, and presence LaunchAgents |
 
 ## Health Scan Cron Job
 
@@ -67,18 +66,17 @@ Three custom plugins deployed to `~/.crisismode/checks/`:
 
 ## Current Health Scan
 
-Running `crisismode scan` on the Mini produces 6 findings (3 built-in + 3 custom plugins):
+Running `crisismode scan` on the Mini combines built-in findings with the two custom service checks:
 
 | ID | Service | Status | Notes |
 |----|---------|--------|-------|
 | PG-001 | PostgreSQL | unknown | Auto-probe on port 5432, no PG running (expected) |
 | DNS-002 | DNS | recovering/healthy | Dual-stack resolvers (IPv4 + IPv6) sometimes trigger split-brain warning — benign on home network |
 | DISK-003 | Disk | healthy | ~63% used, 684GB free |
-| PLUG-001 | check-bluebubbles | healthy | Private API active, proxy=lan-url |
-| PLUG-002 | check-launchd-services | healthy | All 6 services running |
-| PLUG-003 | check-openclaw-gateway | healthy | HTTP 200, gateway PID active |
+| PLUG-001 | check-launchd-services | healthy | Critical services running |
+| PLUG-002 | check-openclaw-gateway | healthy | HTTP 200, gateway PID active |
 
-**Score: 82/100** (PG auto-probe + DNS dual-stack are the only drags)
+The retired BlueBubbles check was removed when native iMessage became the sole Messages transport on 2026-06-27.
 
 ## MCP Server Status
 
@@ -152,7 +150,7 @@ The entry point (`mcp-entry.mjs`) is already tested and deployed.
 ### Recovery Playbooks
 
 Write CrisisMode markdown playbooks for common Mini recovery scenarios:
-- BB restart (soft restart via API, then hard restart via launchctl)
+- Native iMessage recovery (`imsg status --json`, gateway channel probe, then gateway kickstart if the attached RPC worker is unhealthy)
 - Gateway restart with secrets reload
 - Stale secrets refresh (`openclaw-refresh-secrets`)
 - Full service restart sequence after reboot

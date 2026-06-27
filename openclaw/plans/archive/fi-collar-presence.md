@@ -52,7 +52,7 @@ Password reset completed for `dylanbochman@gmail.com`. Fi API is fully operation
 - Auth: `TRYFI_EMAIL` + `TRYFI_PASSWORD` in `~/.openclaw/.secrets-cache`
 - Session cached at `~/.config/fi-collar/session.json` (12hr TTL, auto-re-login on 401)
 - GPS coordinates available at both Crosstown and Cabin (collar has built-in GNSS + cellular)
-- Integrated into ring-listener return monitor as Phase 1 of [fi-gps-dog-walk-integration](archive/fi-gps-dog-walk-integration.md)
+- Integrated into ring-listener return monitor as Phase 1 of [fi-gps-dog-walk-integration](../fi-gps-dog-walk-integration.md)
 
 ## Potato re-added to presence scan via Fi GPS — 2026-05-01
 

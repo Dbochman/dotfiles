@@ -1,6 +1,6 @@
 # OpenClaw Dashboards
 
-All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Access via Tailscale only.
+All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. They bind to all local interfaces and are reachable from the home LAN and the Tailscale tailnet; no public-internet exposure or router port forwarding is intended.
 
 ## Quick Reference
 
@@ -62,26 +62,21 @@ Monitors thermostats and weather across two locations via three heating/cooling 
 
 ## OpenClaw Usage Dashboard
 
-**Port 8551**
+**Port 8551** · [Full spec](USAGE-DASHBOARD.md)
 
-Tracks token consumption, costs, and agent activity for OpenClaw's Claude API usage.
+Tracks OpenClaw session activity, token consumption and costs alongside Anthropic utilization and Claude Code usage.
 
 ### What It Shows
 
 - **Utilization gauges** — 5-hour and 7-day token usage rings (green/amber/red thresholds)
 - **Stat cards** — total cost, total tokens, cron runs, messages sent/received, sessions, errors, gateway restarts
-- **Token Usage Over Time** — stacked bar chart (hourly or daily adaptive) by model
+- **Native iMessage Health** — live OpenClaw channel and `imsg` bridge readiness, capability state, and latest outbound delivery metadata
+- **Token Usage Over Time** — stacked OpenClaw/Claude Code bars with adaptive hourly or daily buckets
 - **Activity chart** — sent/received/cron messages over time
 - **Cost Over Time** — cache write/read/output/input cost breakdown
-- **Model Split** — doughnut chart (Opus / Sonnet / Haiku usage)
+- **Model Split** — doughnut chart of per-model token usage from gateway sessions
 - **Tool Usage** — horizontal bar of most-used tools
 - **Recent Cron Runs** — table with status badges, duration, token counts
-- **BlueBubbles Health** — service + watchdog observability section:
-  - Summary banner (green/amber/red): online state, helper-connected, proxy mode, last-msg age, last-restart age
-  - 4-column stats: server (version, helper, drift, account), watchdog (last msg + guid, pending stall checks), restarts (today / 7d / last), lag events (today / 7d / 30d / max+avg)
-  - Recent watchdog activity table (last 25 log lines color-coded by level — OK / STALL / ACTION / WARN)
-  - Recent restarts table with parsed reason from "STALL DETECTED:" lines
-  - 60s background refresh, 30s server-side cache on the BB API call
 
 ### Data Sources
 
@@ -89,14 +84,11 @@ Tracks token consumption, costs, and agent activity for OpenClaw's Claude API us
 |--------|-----------|------|
 | Anthropic Usage API | 15 min | 5h/7d utilization percentages |
 | Usage snapshots | 15 min | Per-model token counts, costs, cache stats |
-| Gateway RPC | 15 min | Session data (tool calls, costs, latency) |
-| Cron run logs | Event-driven | Job ID, status, duration, tokens |
-| BlueBubbles API | 15 min | Message send/receive counts |
+| Gateway RPC | 5 min cache/UI refresh | Session data (tool calls, costs, latency) |
+| SQLite `cron_run_logs` | 15 min cursor | Job ID, status, duration, model, delivery, and tokens |
+| Local Messages database | 15 min | Native iMessage send/receive counts |
+| Native iMessage health probes | 60 sec | Gateway health, attached `imsg rpc` worker, basic/advanced/v2 readiness, optional latest outbound delivery result |
 | ccusage push | 30 min | Claude Code daily token usage (from MacBook) |
-| BB API `/server/info` | 30s (cached) | Server version, helper_connected, private_api, proxy, clock drift, detected iMessage |
-| `~/.openclaw/bb-watchdog/state.json` | per request | allGuid (last msg seen), allSeenAt, lastRestart, pendingChecks |
-| `~/.openclaw/logs/bb-watchdog.log` | per request | Tailed + parsed for OK/STALL/ACTION events, restart history |
-| `~/.openclaw/logs/bb-ingest-lag.log` | per request | CSV of lag events; aggregated to today/7d/30d counts + max/avg |
 
 ### Files
 
@@ -105,7 +97,7 @@ Tracks token consumption, costs, and agent activity for OpenClaw's Claude API us
 | Server | `openclaw/bin/usage-dashboard.py` → `~/.openclaw/bin/usage-dashboard.py` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.usage-dashboard.plist` |
 | Data | `~/.openclaw/usage-history/YYYY-MM-DD.jsonl` |
-| Claude Code data | `~/.openclaw/usage-history/ccusage-daily.json` |
+| Claude Code data | `~/.openclaw/usage-history/ccusage-<hostname>.json` |
 | Logs | `~/.openclaw/logs/usage-dashboard.{log,err.log}` |
 
 ---
@@ -118,10 +110,10 @@ Visualizes dog walk departures, return signal detection, route maps, and the Fi 
 
 ### What It Shows
 
-- **Status cards** — current walk, last walk summary, return monitor state
+- **Status cards** — today's distance/duration, departure candidate, return monitor, and selected-route summary
 - **Potato (Fi collar) cards** — battery %, activity (Rest/Walk), GPS location, connection type, Fi base station status
 - **Walk map** — three layer modes: Routes (single-walk selection), Coverage (all walks at full weight with date range picker), Heatmap (density)
-- **Recent Walks table** — date, location, duration, return signal badge, walkers
+- **Recent Walks table** — date, location, distance, duration, return signal badge, walkers
 - **Walk Duration** — scatter chart by location over time
 - **Return Signal Distribution** — doughnut (WiFi / Ring Motion / Fi GPS / Timeout)
 - **Departure Pipeline** — horizontal bar showing first outside reads, candidate resets, Fi departures, manual starts, and completed walks
@@ -133,7 +125,7 @@ Visualizes dog walk departures, return signal detection, route maps, and the Fi 
 |--------|-----------|------|
 | Dog Walk Listener | Event-driven | Fi GPS departure detection, return monitoring, dock lifecycle |
 | Fi GPS Collar | 2 min cache | Potato GPS, battery, activity, connection, geofence |
-| Network presence | Per walk + 60s polling | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
+| Network presence | Per walk + 30s return polling | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
 | `dog-walk-start` CLI | Manual trigger | Inbox IPC to dog-walk listener |
 
 ### Files
@@ -229,7 +221,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 
 ### Runtime Notes
 
-This service runs only on the Mac Mini as user `dbochman`. The venv should be built from Homebrew Python, not the Command Line Tools Python shim. Verified on 2026-06-18 with Python 3.13.12, OpenSSL 3.x, and the dependencies from `~/repos/financial-dashboard/requirements.txt`.
+This service runs only on the Mac Mini as user `dbochman`. The venv must be built from an installed Homebrew Python, not the Command Line Tools Python shim. Because Homebrew removes versioned formula paths during upgrades, verify that `~/repos/financial-dashboard/venv/bin/python3` resolves before restarting the LaunchAgent; rebuild the venv from `/opt/homebrew/bin/python3` if its interpreter symlink is stale. The environment was rebuilt and verified on 2026-06-27 with Python 3.14.3, OpenSSL 3.6.2, declared Playwright support, and a working Chromium runtime.
 
 The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness, aggregate owner scopes, broad allocation, a cash split, account location/institution totals, direct-position concentration, location-scoped U.S./international equity geography, a safe deployable-only instrument aggregate, and cash-flow confidence without requiring the forecast service to query SQLite directly. `cash_breakdown.spendable` is depository plus taxable brokerage cash; retirement and restricted cash stay visible but must not be treated as tax, emergency, or mortgage liquidity. `implementation_holdings` contains only grouped ticker/name, bucket, geography, value, and direct-position fields; it excludes account and institution details and is withheld unless it exactly reconciles to the deployable matrices. Location and concentration are withheld if they do not reconcile to the covered scope. A pending income-source candidate is a readiness blocker: it is held out of cash-flow totals until reviewed, rather than silently changing the Forecast input. A partial, invalid, or direct-position-excluded deployable geography withholds country equity trade guidance. The detailed policy and local review commands live in [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality).
 
@@ -285,7 +277,7 @@ ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/monthly-operating-tasks
 
 **Port 8558** · [Full spec](HOME-CONTROL-PLANE-DASHBOARD.md)
 
-Unified control plane for all smart home devices across both locations. Single-pane-of-glass for monitoring status and issuing commands to 18 device categories, organized into five collapsible sections.
+Unified control plane for smart home devices across both locations. Seventeen status collectors provide a single pane of glass for monitoring and control, organized into five collapsible sections.
 
 ### Layout
 
@@ -323,7 +315,7 @@ Command feedback (Running/Success/Error) appears inline below the section header
 Browser → home-dashboard.py (port 8558)
             ├── GET /                        → embedded HTML dashboard
             ├── GET /api/status              → cached results (instant, non-blocking)
-            ├── GET /api/status?refresh=true → force re-poll all 18 CLIs
+            ├── GET /api/status?refresh=true → force re-poll all collectors
             ├── GET /api/status/<device>     → refresh single device
             ├── POST /api/command            → execute device command
             ├── GET /api/camera-snap/<name>  → serve JPEG snapshot (nest/ring)
@@ -428,18 +420,15 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 
 ## Common Architecture
 
-All dashboards follow the same single-file Python server pattern:
+All seven dashboards share a small operational baseline:
 
-- **Server:** `ThreadingMixIn` + `HTTPServer` (stdlib only, zero pip dependencies)
-- **UI:** Embedded HTML SPA with Chart.js 4.x + Luxon time adapter
-- **Theme:** Dark default (`#0f1117`), light via `prefers-color-scheme`
-- **Fonts:** System font stack (-apple-system, BlinkMacSystemFont, Segoe UI)
-- **Data:** JSONL daily files, loaded on-demand with time range filtering
-- **Refresh:** 5-minute auto-refresh via `setInterval`
-- **Access:** Tailscale-only (Mac Mini firewall blocks external ports)
-- **Process:** KeepAlive LaunchAgent (auto-restarts on crash)
+- **Server:** threaded Python HTTP service on the Mac Mini
+- **Binding:** `0.0.0.0:<port>`, reachable on the home LAN and through Tailscale MagicDNS
+- **Remote access:** Tailscale is the supported away-from-home path; these ports are not intentionally published to the public internet
+- **Process:** KeepAlive LaunchAgent that restarts after a crash
+- **Theme:** dark-first browser UI with system fonts and responsive layouts
 
-The financial dashboard differs in two expected ways: it uses SQLite instead of JSONL (relational data with complex queries), and serves separate HTML files instead of an embedded SPA (5 distinct dashboard pages). These are justified by its data model. The operational patterns (ThreadingMixIn, SIGTERM handling, `0.0.0.0` binding, KeepAlive LaunchAgent) are aligned with the other three dashboards.
+The implementations intentionally differ by workload. Nest, Usage, Dog Walk, Roomba, and Home Control Plane are dotfiles-owned single-file servers. Financial serves six repo-owned HTML pages backed by SQLite and a Homebrew-Python virtual environment. Forecast is also repo-owned and combines static assets, JSON caches, and a local SQLite forecast ledger. Chart libraries, storage formats, cache TTLs, and browser refresh intervals are documented per dashboard rather than assumed to be universal.
 
 Operational changes to dashboard LaunchAgents should be made on the Mac Mini, not on Dylan's laptop:
 

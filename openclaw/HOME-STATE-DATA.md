@@ -249,7 +249,6 @@ The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials befo
 | Eight Sleep API | Sleep data | Token at `~/.config/eightctl/token-cache.json` |
 | Ring venv | Doorbell dings + return-motion signal | OAuth at `~/.config/ring/token-cache.json` |
 | Fi collar session | Dog walk GPS + geofence checks | `~/.config/fi-collar/session.json` |
-| `BLUEBUBBLES_PASSWORD` | Dog walk notifications | `~/.openclaw/.secrets-cache` |
 
 ## Future Extensions
 

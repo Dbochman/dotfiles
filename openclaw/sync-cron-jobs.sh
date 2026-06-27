@@ -2,12 +2,13 @@
 # sync-cron-jobs.sh — Sync OpenClaw cron job definitions between dotfiles and live config.
 #
 # Usage:
-#   sync-cron-jobs.sh save    — Strip state from live jobs.json, save definitions to dotfiles
-#   sync-cron-jobs.sh deploy  — Merge definitions, preserve state, skip completed one-shots
+#   sync-cron-jobs.sh save    — Save SQLite definitions to dotfiles (legacy JSON fallback)
+#   sync-cron-jobs.sh deploy  — Stage definitions, preserve state, repair schedules, skip completed one-shots
 #
 # Files:
 #   dotfiles/openclaw/cron/jobs.json  — Job definitions (no state), tracked in git
-#   ~/.openclaw/cron/jobs.json        — Live file with runtime state, NOT tracked
+#   ~/.openclaw/state/openclaw.sqlite — Live definitions, runtime state, and run history
+#   ~/.openclaw/cron/jobs.json        — Temporary legacy import bridge, archived by doctor
 
 set -euo pipefail
 
@@ -111,8 +112,11 @@ PY
     ;;
 
   deploy)
-    # Merge definitions from dotfiles into live file, preserving existing state
+    # Stage definitions for the SQLite migration bridge, preserving safe state.
     [ -f "$DOTFILES_JOBS" ] || { echo "Error: $DOTFILES_JOBS not found" >&2; exit 1; }
+    SCHEDULE_REPAIR_PLAN=$(mktemp "${TMPDIR:-/tmp}/openclaw-cron-schedule-repair.XXXXXX")
+    export SCHEDULE_REPAIR_PLAN
+    trap 'rm -f "$SCHEDULE_REPAIR_PLAN"' EXIT
     python3 <<'PY'
 import json
 import os
@@ -207,10 +211,39 @@ new_defs['jobs'] = [
 
 # Load existing state from live file (if it exists)
 state_by_id = {}
+scheduling_inputs_by_id = {}
+next_run_by_id = {}
+last_run_by_id = {}
+
+
+def scheduling_inputs(job):
+    return {
+        'enabled': job.get('enabled', True),
+        'schedule': job.get('schedule'),
+    }
+
+
+def scheduled_at_ms(schedule):
+    if not isinstance(schedule, dict) or schedule.get('kind') != 'at':
+        return None
+    value = schedule.get('at')
+    if not isinstance(value, str):
+        return None
+    try:
+        return int(datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
 if os.path.exists(live_path):
     with open(live_path) as f:
         live_data = json.load(f)
     for job in live_data.get('jobs', []):
+        if not isinstance(job, dict) or not isinstance(job.get('id'), str):
+            continue
+        scheduling_inputs_by_id[job['id']] = scheduling_inputs(job)
+        next_run_by_id[job['id']] = job.get('state', {}).get('nextRunAtMs')
+        last_run_by_id[job['id']] = job.get('state', {}).get('lastRunAtMs')
         if 'state' in job:
             state_by_id[job['id']] = job['state']
 if os.path.isfile(sqlite_path):
@@ -218,7 +251,7 @@ if os.path.isfile(sqlite_path):
         with sqlite3.connect(sqlite_path) as conn:
             rows = conn.execute(
                 """
-                SELECT job_id, state_json
+                SELECT job_id, state_json, job_json, next_run_at_ms, last_run_at_ms
                   FROM cron_jobs
                  WHERE store_key = ?
                 """,
@@ -227,24 +260,67 @@ if os.path.isfile(sqlite_path):
             if not rows:
                 rows = conn.execute(
                     """
-                    SELECT job_id, state_json
+                    SELECT job_id, state_json, job_json, next_run_at_ms, last_run_at_ms
                       FROM cron_jobs
                     """
                 ).fetchall()
     except sqlite3.Error:
         rows = []
-    for job_id, raw_state in rows:
+    for job_id, raw_state, raw_job, next_run_at_ms, last_run_at_ms in rows:
         try:
             state = json.loads(raw_state or '{}')
         except json.JSONDecodeError:
-            continue
+            state = {}
         if isinstance(state, dict):
             state_by_id[job_id] = state
+        try:
+            live_job = json.loads(raw_job or '{}')
+        except json.JSONDecodeError:
+            live_job = {}
+        if isinstance(live_job, dict):
+            scheduling_inputs_by_id[job_id] = scheduling_inputs(live_job)
+        next_run_by_id[job_id] = next_run_at_ms
+        last_run_by_id[job_id] = last_run_at_ms
 
-# Merge: definitions from dotfiles + state from live
+# Merge definitions from dotfiles with non-scheduling runtime state. A changed
+# schedule or enabled flag must never retain nextRunAtMs/runningAtMs from the
+# previous schedule. On SQLite, also ask the live gateway to apply the schedule
+# patch so its in-memory timer and flattened runtime columns are recalculated.
+schedule_repairs = []
 for job in new_defs['jobs']:
-    if job['id'] in state_by_id:
-        job['state'] = state_by_id[job['id']]
+    job_id = job['id']
+    live_inputs = scheduling_inputs_by_id.get(job_id)
+    desired_inputs = scheduling_inputs(job)
+    scheduling_changed = live_inputs is not None and live_inputs != desired_inputs
+    expected_at_ms = scheduled_at_ms(job.get('schedule'))
+    stale_at_runtime = (
+        live_inputs is not None
+        and job.get('enabled', True)
+        and expected_at_ms is not None
+        and next_run_by_id.get(job_id) != expected_at_ms
+        # A failed one-shot legitimately moves nextRunAtMs to retry backoff.
+        # Repair only never-run jobs; explicit schedule changes always repair.
+        and last_run_by_id.get(job_id) is None
+    )
+
+    if job_id in state_by_id:
+        state = dict(state_by_id[job_id])
+        if scheduling_changed or stale_at_runtime:
+            state.pop('nextRunAtMs', None)
+            state.pop('runningAtMs', None)
+        job['state'] = state
+
+    if scheduling_changed or stale_at_runtime:
+        schedule_repairs.append({
+            'id': job_id,
+            'patch': desired_inputs,
+        })
+
+with open(os.environ['SCHEDULE_REPAIR_PLAN'], 'w') as repair_file:
+    for params in schedule_repairs:
+        repair_file.write(
+            params['id'] + '\t' + json.dumps(params, separators=(',', ':')) + '\n'
+        )
 
 # Atomic write: write to sibling tmp, fsync, rename. os.replace is a directory
 # entry swap and doesn't need extra filesystem space, so tight-disk conditions
@@ -266,11 +342,30 @@ except Exception:
 
 preserved = sum(1 for j in new_defs['jobs'] if 'state' in j)
 completed_summary = ', '.join(completed_ids) if completed_ids else 'none'
+schedule_summary = ', '.join(item['id'] for item in schedule_repairs) if schedule_repairs else 'none'
 print(
     f'Deployed {len(new_defs["jobs"])} jobs to {live_path} '
-    f'({preserved} with preserved state; completed one-shots skipped: {completed_summary})'
+    f'({preserved} with preserved state; completed one-shots skipped: {completed_summary}; '
+    f'schedule repairs planned: {schedule_summary})'
 )
 PY
+    if [ -s "$SCHEDULE_REPAIR_PLAN" ] && [ -f "$SQLITE_DB" ]; then
+      command -v openclaw >/dev/null 2>&1 || {
+        echo "Error: schedule repair required but openclaw is not on PATH" >&2
+        exit 1
+      }
+      source_openclaw_secrets
+      while IFS=$'\t' read -r JOB_ID UPDATE_PARAMS; do
+        if UPDATE_OUT=$(openclaw gateway call cron.update --json --timeout 30000 \
+          --params "$UPDATE_PARAMS" 2>&1); then
+          echo "Recalculated cron schedule state through gateway: $JOB_ID"
+        else
+          echo "Error: could not recalculate cron schedule state for $JOB_ID:" >&2
+          printf '%s\n' "$UPDATE_OUT" >&2
+          exit 1
+        fi
+      done < "$SCHEDULE_REPAIR_PLAN"
+    fi
     if [ -f "$SQLITE_DB" ] && command -v openclaw >/dev/null 2>&1; then
       source_openclaw_secrets
       if DOCTOR_OUT=$(openclaw doctor --fix --non-interactive --yes 2>&1); then

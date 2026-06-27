@@ -1,6 +1,6 @@
 # OpenClaw 2026.6 Native iMessage Migration Plan
 
-**Status:** Cutover complete; archived as historical reference
+**Status:** Completed 2026-06-27; BlueBubbles retired and purged; archived
 **Owner:** Dylan
 **Created:** 2026-06-27
 **Last updated:** 2026-06-27
@@ -15,18 +15,40 @@ OpenClaw `2026.6.10` removes the BlueBubbles channel. The supported iMessage
 path is now `channels.imessage`, backed by the `imsg` CLI over JSON-RPC. The
 package upgrade and transport migration were completed on 2026-06-27.
 
-Do not treat SIP re-enable as an automatic cleanup step. Basic iMessage
-send/receive works with SIP enabled, but private API parity with the current
-BlueBubbles setup still requires SIP disabled plus library validation relaxed.
-That private API surface includes reactions, threaded replies, edit/unsend,
+The production decision is to keep SIP disabled and library validation relaxed
+for advanced native `imsg` features: reactions, threaded replies, edit/unsend,
 message effects, typing indicators, read receipts, and group management.
 
-BlueBubbles remains installed and running during the iMessage soak period so
-rollback to `2026.5.7` remains available. OpenClaw itself no longer loads the
-BlueBubbles plugin or delivers cron jobs through BlueBubbles.
+The migration and retirement are complete. The final native delivery completed
+end to end in about three seconds and the Messages database confirmed it as
+delivered. The BlueBubbles OpenClaw plugin package, dependency, lock entry,
+install record, app, services, app-owned data, local credentials, helpers, and
+caches were removed. A post-removal gateway restart loaded the bundled
+`imessage` plugin and no BlueBubbles plugin.
 
-The migration cutover is complete. BlueBubbles retirement remains a follow-up
-cleanup step after the native iMessage path has soaked successfully.
+Historical Messages attachments whose directory names contain `BlueBubbles`
+were deliberately preserved because they belong to chat history, not the
+retired application.
+
+## Final Outcome
+
+- OpenClaw `2026.6.10` and `imsg 0.11.1` are the production stack.
+- `imsg` reports basic, advanced, and v2 readiness with bridge version 2.
+- The gateway starts with 12 plugins including `imessage` and excluding
+  BlueBubbles; plugin doctor reports no issues.
+- The live SQLite cron store has 25 enabled iMessage deliveries and zero
+  BlueBubbles deliveries.
+- `vacancy-actions.sh` sends front-door lock alerts through native `imsg` to
+  `chat_id:171`; no production caller requires the retired HTTP API.
+- The usage dashboard now reports the supported native path through a passive
+  iMessage health card and `/api/imessage-health`; the live state is healthy.
+- Inbound iMessage attachments are enabled globally, constrained to the local
+  Messages attachment root with a 16 MB media cap.
+- Tailscale Serve exposes the loopback-only gateway through tailnet-only HTTPS
+  and WSS at `dylans-mac-mini.tail3e55f9.ts.net`.
+- The old rollback window is closed. Reintroducing BlueBubbles would be a fresh,
+  explicit installation from archived documentation rather than an operational
+  rollback.
 
 ## Current State
 
@@ -55,18 +77,25 @@ cleanup step after the native iMessage path has soaked successfully.
   `reconnectAttempts: 0`.
 - Gateway default-model smoke test with `--thinking medium` used
   `openai/gpt-5.6-sol`, returned fallback `false`, and completed successfully.
-- Gateway log after the final restart at `2026-06-27 09:27:25 EDT` has no new
-  `imsg rpc not ready` errors.
+- Gateway log after the final secret-clearing restart at `2026-06-27 17:04:09 EDT`
+  shows 12 loaded plugins including `imessage`, no BlueBubbles plugin, and no
+  new `imsg rpc not ready` errors.
+- The source-controlled gateway launcher includes system `sbin` paths so the
+  Tailscale CLI selects the logged-in macOS GUI/network-extension backend rather
+  than the unused Homebrew `tailscaled` backend.
+- Tailscale Serve maps tailnet-only HTTPS/WSS on
+  `dylans-mac-mini.tail3e55f9.ts.net` to `127.0.0.1:18789`; post-repair gateway
+  startup logged `serve enabled` and both local and HTTPS health checks passed.
 - OpenClaw cron storage migrated to SQLite at
   `~/.openclaw/state/openclaw.sqlite`.
 - `openclaw cron status --json`: `storage: "sqlite"`, `jobs: 38`.
 - SQLite cron store: 25 live iMessage delivery jobs and 0 BlueBubbles delivery
   jobs.
-- BlueBubbles is still live through `com.bluebubbles.server`.
-- BlueBubbles support jobs are loaded:
-  - `com.openclaw.bb-watchdog`
-  - `com.openclaw.poke-messages`
-  - `com.openclaw.bb-lag-summary`
+- The BlueBubbles Homebrew cask and `/Applications/BlueBubbles.app` are absent.
+- No BlueBubbles process, port `1234` listener, launchd service, OpenClaw plugin
+  record, pairing credential, watchdog, or local cached secret remains.
+- Homebrew and npm BlueBubbles caches were removed. Historical Messages
+  attachments and previews were preserved.
 
 ### Current OpenClaw config dependencies
 
@@ -80,25 +109,30 @@ cleanup step after the native iMessage path has soaked successfully.
 - `channels.imessage.dmPolicy: "open"`
 - `channels.imessage.groupPolicy: "open"`
 - `channels.imessage.allowFrom: ["*"]`
+- `channels.imessage.groupAllowFrom: ["*"]`
 - `channels.imessage.groups: { "*": {} }`
-- `channels.imessage.sendReadReceipts: true`
+- `channels.imessage.sendReadReceipts: false`
+- `channels.imessage.includeAttachments: true`
+- `channels.imessage.attachmentRoots: ["/Users/dbochman/Library/Messages/Attachments"]`
+- `channels.imessage.mediaMaxMb: 16`
 - `channels.imessage.actions`: reactions, edit, unsend, reply, effects, group
-  management, and attachments enabled for BlueBubbles parity.
+  management, and outbound attachment sending enabled for advanced native
+  operation.
 - `plugins.entries.bluebubbles`: removed.
 - `plugins.entries.codex`: enabled with `/opt/homebrew/bin/codex`,
   `serviceTier: "priority"`, and default model `openai/gpt-5.6-sol`.
 
-`openclaw/cron/jobs.json` now has 41 tracked definitions:
+`openclaw/cron/jobs.json` now has 38 tracked definitions:
 
-- 28 definitions with `delivery.channel: "imessage"`.
+- 25 definitions with `delivery.channel: "imessage"`.
 - 0 definitions with `delivery.channel: "bluebubbles"`.
-- The live SQLite store has 38 jobs because the June 25, June 26, and June 27
-  one-shot World Cup jobs already completed and were correctly skipped during
-  deploy.
+- The live SQLite store has the same 38 job IDs. The completed June 25, June
+  26, and June 27 World Cup definitions were removed from the repo while their
+  run-history tombstones remain in SQLite.
 
 Known delivery targets from `jobs.json`:
 
-| Jobs | Current target | Proposed iMessage target |
+| Jobs | Legacy pre-cutover target | Current native iMessage target |
 |------|----------------|--------------------------|
 | Julia morning briefing | `+15084234853` | `chat_id:1` |
 | Dylan briefings and World Cup jobs | `+17813544611` | `chat_id:171` |
@@ -110,7 +144,7 @@ Native `imsg chats` currently maps:
 - `chat_id:1` -> `+15084234853`
 - `chat_id:170` -> group identifier `7010feab69b14fa19071a88340495f2f`
 
-Prefer `chat_id:*` delivery targets after cutover. The OpenClaw `2026.6.10`
+Production jobs use `chat_id:*` delivery targets. The OpenClaw `2026.6.10`
 iMessage docs recommend explicit chat targets for stable routing.
 
 ## Scope
@@ -124,9 +158,9 @@ In scope:
 - Upgrade OpenClaw from `2026.5.7` to `2026.6.10`.
 - Verify direct messages, group messages, attachments if enabled, private API
   actions, cron delivery, dashboards, and gateway health.
-- Retire BlueBubbles only after a successful soak.
-- Decide whether to keep SIP disabled for private API parity or accept basic
-  iMessage mode and re-enable SIP.
+- Retire and purge BlueBubbles after successful live validation.
+- Record the production decision to keep SIP disabled for advanced native
+  iMessage features.
 
 Out of scope for the first cutover:
 
@@ -136,7 +170,8 @@ Out of scope for the first cutover:
 
 ## Stop Conditions
 
-Stop and roll back if any of these happen during the maintenance window:
+All stop conditions passed; none were triggered. The maintenance-window gates
+were:
 
 - `imsg` cannot read chats from the same process context that will run the
   gateway.
@@ -160,11 +195,10 @@ Completed notes:
 - Runtime backup created at
   `~/.openclaw/backups/openclaw-2026-6-migration-20260627T132011Z`.
 - Backup includes live `openclaw.json`, cron jobs, and runtime helper copies.
-- `~/.openclaw/openclaw.json` is now a symlink to
-  `/Users/dbochman/dotfiles/openclaw/openclaw.json`.
-- OpenClaw Doctor briefly replaced the symlink during atomic config rewrite.
-  The live, validated `2026.6.10` config was copied back into the repo and the
-  symlink was restored.
+- OpenClaw Doctor replaced the original config symlink during an atomic rewrite.
+  The live config remains a regular file because it contains machine-local
+  memory-secret provider settings; its native iMessage and plugin policy match
+  the dotfiles source.
 - SIP was intentionally left disabled for private API parity.
 
 Schedule outside the morning automation cluster. Avoid at least:
@@ -233,9 +267,9 @@ Completed notes:
 - Direct sends to `chat_id:171` and `chat_id:1` succeeded.
 - `imsg rpc` responded to `chats.list`.
 
-The installed `imsg 0.5.0` is too old for the target OpenClaw private API
-probing path. It lacks the documented `status` and `launch` commands. Upgrade
-it before changing OpenClaw.
+Pre-migration note: the installed `imsg 0.5.0` was too old for the target
+OpenClaw private API probing path and lacked the documented `status` and
+`launch` commands. It was upgraded before changing OpenClaw.
 
 ```bash
 brew update
@@ -342,7 +376,7 @@ git switch -c feat/openclaw-native-imessage-migration
 Replace `channels.bluebubbles` with `channels.imessage` in
 `openclaw/openclaw.json`.
 
-Initial cutover block:
+Final production block:
 
 ```json
 {
@@ -354,13 +388,19 @@ Initial cutover block:
       "dmPolicy": "open",
       "groupPolicy": "open",
       "allowFrom": ["*"],
+      "groupAllowFrom": ["*"],
       "groups": {
         "*": {}
       },
       "service": "auto",
       "sendTransport": "auto",
       "region": "US",
-      "sendReadReceipts": true,
+      "sendReadReceipts": false,
+      "includeAttachments": true,
+      "attachmentRoots": [
+        "/Users/dbochman/Library/Messages/Attachments"
+      ],
+      "mediaMaxMb": 16,
       "actions": {
         "reactions": true,
         "edit": true,
@@ -381,15 +421,15 @@ Initial cutover block:
 
 Notes:
 
-- This intentionally preserves the current broad `dmPolicy: "open"` and
-  `allowFrom: ["*"]` behavior for the first cutover. Harden this after the
-  migration by replacing wildcard access with explicit Dylan and Julia handles.
+- Broad direct-message and group admission is retained by operator decision:
+  both policies remain `open`, and both sender allowlists remain `["*"]`.
 - Keep `groups: { "*": {} }`. With iMessage `groupPolicy: "allowlist"` this
   block becomes load-bearing. Even with `groupPolicy: "open"`, keeping it avoids
   future footguns if policy is tightened.
-- Set `includeAttachments: true` only after confirming attachment handling and
-  privacy expectations. Inbound attachments are off by default in the target
-  iMessage plugin.
+- `includeAttachments` is account-wide in OpenClaw `2026.6.10`; there is no
+  per-sender attachment allowlist. Global ingestion was explicitly accepted,
+  with the local Messages attachment root and a 16 MB cap. The
+  `actions.sendAttachment` switch controls outbound sending separately.
 - Remove `serverUrl`, `password`, `webhookPath`, and BlueBubbles network config.
 - Remove `plugins.entries.bluebubbles`.
 - Do not add a plugin entry for iMessage unless `openclaw doctor` or target docs
@@ -444,11 +484,11 @@ For the cutover commit, divide them into:
   that send production notifications through BlueBubbles HTTP.
 - **Can degrade temporarily:** dashboards and weekly report BlueBubbles message
   counts/health cards.
-- **Can retire after soak:** watchdog scripts, launchagent docs, historical
-  notes.
+- **Retired at conclusion:** watchdog scripts, LaunchAgents, and active
+  BlueBubbles operational guidance.
 
-Do not delete BlueBubbles LaunchAgents in the first commit. Disable them after
-the iMessage path has soaked and rollback is no longer needed.
+BlueBubbles LaunchAgents were kept through the initial cutover validation, then
+removed when the operator closed the rollback window.
 
 ### Local Validation Before Runtime Install
 
@@ -507,7 +547,8 @@ sleep 3
 pgrep -fl 'openclaw.*gateway' && echo "Gateway still running" || echo "Gateway stopped"
 ```
 
-Keep BlueBubbles running for rollback until after the soak.
+BlueBubbles remained available during the initial cutover and was stopped before
+the final native-only restart and retirement verification.
 
 ### Apply Migrated Runtime Files
 
@@ -567,8 +608,7 @@ tail -80 "$HOME/.openclaw/logs/gateway.err.log"
 
 ## Phase 4: Verification Matrix
 
-**Status:** Initial cutover verification completed 2026-06-27; soak remains in
-Phase 5.
+**Status:** Completed 2026-06-27.
 
 Completed notes:
 
@@ -602,6 +642,12 @@ Completed notes:
   BlueBubbles delivery jobs.
 - `openclaw cron list --json`: 0 live jobs still use
   `openai-codex/gpt-5.5`; 22 live model-pinned jobs use `openai/gpt-5.5`.
+- After uninstalling the retired plugin package, a full gateway restart loaded
+  exactly 12 plugins including `imessage` and excluding BlueBubbles.
+- The final end-to-end native delivery completed in about three seconds; the
+  Messages database recorded it as sent and delivered.
+- The active vacancy LaunchAgent context reports `imsg` basic, advanced, and v2
+  readiness, validating the direct native lock-notification path.
 
 ### Package and Config
 
@@ -724,83 +770,64 @@ curl -fsS http://127.0.0.1:8558/ >/dev/null
 python3 -m py_compile openclaw/bin/usage-dashboard.py openclaw/bin/openclaw-weekly-report.py
 ```
 
-Expected for first cutover:
+Final result:
 
-- Dashboards still serve.
-- BlueBubbles-specific health/message-count panels may show unavailable until
-  replaced with iMessage metrics.
-- No script hard-fails solely because `BLUEBUBBLES_PASSWORD` is absent.
+- Dashboards still serve and compile.
+- The retired BlueBubbles health/watchdog panel and API were removed from the
+  usage dashboard. A separate native iMessage health card and normalized API
+  were added after retirement to monitor the supported OpenClaw channel and
+  `imsg` bridge without restoring any BlueBubbles dependency.
+- Active scripts no longer read or require `BLUEBUBBLES_PASSWORD`.
 
 ## Phase 5: Soak
 
-**Status:** In progress.
+**Status:** Closed 2026-06-27 by operator decision.
 
-Soak for at least 48 hours before removing BlueBubbles. Prefer 7 days if the
-weekly report and multiple recurring jobs are important validation signals.
-
-During soak:
-
-- Check `openclaw health` daily.
-- Review `~/.openclaw/logs/gateway.log` for iMessage bridge restarts.
-- Confirm daily briefings deliver exactly once.
-- Confirm inbound recovery after a manual gateway restart.
-- Confirm no job still says `channel: "bluebubbles"`.
-- Leave BlueBubbles LaunchAgents installed but unused for rollback.
-
-Manual restart recovery test:
-
-```bash
-launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway"
-sleep 15
-openclaw channels status --probe --channel imessage
-```
-
-Then send a DM while the gateway is down briefly and verify the target release
-recovers missed messages without duplicate replies.
+The original plan proposed a 48-hour to 7-day soak. It was not used as a
+blocking gate. The operator closed the rollback window after repeated direct,
+gateway, inbound, reaction, restart, cron-route, and Messages-database
+validation all passed. Ongoing native iMessage monitoring is normal operations,
+not an unfinished migration phase.
 
 ## Phase 6: Retire BlueBubbles
 
-**Status:** Not started.
+**Status:** Completed 2026-06-27.
 
-Only after soak passes:
+Completed retirement and purge:
 
-```bash
-launchctl unload "$HOME/Library/LaunchAgents/com.openclaw.bb-watchdog.plist" 2>/dev/null || true
-launchctl unload "$HOME/Library/LaunchAgents/com.openclaw.bb-lag-summary.plist" 2>/dev/null || true
-launchctl unload "$HOME/Library/LaunchAgents/com.openclaw.poke-messages.plist" 2>/dev/null || true
-launchctl unload "$HOME/Library/LaunchAgents/com.bluebubbles.server.plist" 2>/dev/null || true
-```
+- Stopped and removed the BlueBubbles server, watchdog, lag-summary, and
+  poke-messages LaunchAgents.
+- Uninstalled `@openclaw/bluebubbles`; removed its npm dependency, lock entry,
+  current install record, package directory, and registry entry.
+- Refreshed the plugin registry and restarted the gateway. The native-only
+  startup loaded `imessage` and no BlueBubbles plugin; plugin doctor was clean.
+- Migrated `vacancy-actions.sh` lock alerts to
+  `/opt/homebrew/bin/imsg send --chat-id 171` and verified `imsg` readiness from
+  a launchd job context.
+- Removed the BlueBubbles Homebrew cask with its zap stanza, app-owned
+  Application Support, preferences, logs, saved state, login item, and local
+  launch metadata.
+- Removed OpenClaw BlueBubbles state, pairing credentials, watchdog state,
+  helper scripts, logs, disabled plists, CrisisMode check, stale migrated
+  plugin metadata, and local cached password.
+- Removed BlueBubbles Homebrew/npm download caches, temporary caches, and
+  app-specific Trash entries.
+- Reset the retired bundle's user and system TCC grants, including Accessibility
+  and Full Disk Access, and garbage-collected its LaunchServices registration.
+- Removed the weekly-upgrade patch, secret refresh requirement, 1Password skill
+  reference, dashboard health panel/API, obsolete attachment-send skill, and
+  active cron-creation instructions that could recreate BlueBubbles routes.
+- Preserved `~/Library/Messages/Attachments/BlueBubbles` and the corresponding
+  Messages preview cache because they contain historical chat assets.
 
-Repo cleanup:
-
-- Remove BlueBubbles LaunchAgent installation from `install.sh`.
-- Move BlueBubbles LaunchAgent plists to `.disabled` or archive them.
-- Retire `bb-watchdog.sh`, `bb-lag-summary.sh`, and `poke-messages.scpt` from
-  active install paths.
-- Remove `BLUEBUBBLES_PASSWORD` from `openclaw/bin/openclaw-refresh-secrets`.
-- Replace dashboard BlueBubbles health cards with iMessage bridge health.
-- Replace usage snapshot message counts with an iMessage source or remove the
-  card.
-- Update `openclaw/LAUNCHAGENTS.md`, `openclaw/DASHBOARDS.md`,
-  `openclaw/USAGE-DASHBOARD.md`, `openclaw/workspace/TOOLS.md`, and
-  `.claude/projects/-Users-dbochman/memory/*`.
-- Archive the BlueBubbles implementation docs as historical references, not
-  active runbooks.
-
-Validation:
-
-```bash
-rg -n '"bluebubbles"|BlueBubbles|bb-watchdog|BLUEBUBBLES_PASSWORD|/bluebubbles-webhook' \
-  openclaw bin .claude docs install.sh sync.sh
-```
-
-Any remaining matches should be either historical archive references or
-intentional migration notes.
+Remaining references are limited to archived plans and backups, historical
+logs and memory, generated upstream completions/docs, and intentional migration
+notes. No runtime caller or startup path uses them.
 
 ## SIP Decision
 
-**Current decision:** Option A. Keep SIP disabled and keep library validation
-relaxed for BlueBubbles parity during the native iMessage soak.
+**Production decision:** Option A. Keep SIP disabled and keep library validation
+relaxed for advanced native iMessage features.
 
 There are two viable end states.
 
@@ -818,8 +845,9 @@ Use this if we require:
 - Typing indicators.
 - Group management.
 
-Document the accepted risk in `openclaw/plans/system-hardening-2026-04.md` or a
-new hardening note. This is closest to the current BlueBubbles capability set.
+The operator accepted the SIP-disabled/library-validation-relaxed risk on
+2026-06-27. No separate hardening record or scheduled review is required. This
+preserves the advanced feature set used in production.
 
 ### Option B: Re-enable SIP And Run Basic iMessage
 
@@ -865,65 +893,46 @@ Expected under Option B:
 
 ## Rollback
 
-Rollback is only straightforward before Phase 6 removes BlueBubbles.
+The routine rollback window closed on 2026-06-27 when Phase 6 removed the
+BlueBubbles package, app, services, credentials, and active configuration.
 
-```bash
-export PATH="/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$HOME/.openclaw/bin:$PATH"
+Recovery now means repairing the supported native path: validate `imsg`, repair
+macOS permissions if needed, restart the gateway, and restore the current
+OpenClaw config or SQLite state from backup. Restoring BlueBubbles would require
+a fresh, explicit cask, plugin, credential, webhook, LaunchAgent, and channel
+configuration installation from the archived pre-migration backup. It is not a
+supported operational rollback.
 
-launchctl unload "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist" 2>/dev/null || true
+## Completed Post-Migration Improvements
 
-npm install -g openclaw@2026.5.7 --prefix /opt/homebrew
+- Added the native iMessage health card and `/api/imessage-health` endpoint on
+  2026-06-27. The passive, cached checks cover gateway health, its attached
+  `imsg rpc` delivery worker, native bridge readiness, advanced/v2 capability,
+  and privacy-safe latest-delivery metadata when readable; they do not send a
+  synthetic message.
+- Enabled global inbound attachment ingestion with an explicit local Messages
+  root and 16 MB cap; the iMessage provider hot-reloaded and probed healthy.
+- Repaired Tailscale Serve by upgrading the Homebrew CLI, correcting the
+  source/live gateway launcher PATH so it selects the logged-in macOS backend,
+  and reapplying the tailnet-only HTTPS/WSS route. A clean gateway restart
+  logged `serve enabled`, and the HTTPS Control UI plus `/health` returned 200.
+- Audited the SQLite cron cutover, recalculated the Q3 and Q4 double-date jobs
+  to their intended 14:00 UTC schedules, removed three consumed World Cup
+  definitions, and hardened deployment so stale one-shot runtime timestamps
+  trigger a gateway-side schedule recalculation instead of being preserved.
 
-cp "$backup/openclaw.json" "$HOME/.openclaw/openclaw.json"
-cp "$backup/jobs.json" "$HOME/.openclaw/cron/jobs.json"
-cp "$backup/paired.json" "$HOME/.openclaw/devices/paired.json" 2>/dev/null || true
-cp "$backup/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+## Resolved Post-Migration Decisions
 
-launchctl load "$HOME/Library/LaunchAgents/com.bluebubbles.server.plist" 2>/dev/null || true
-launchctl load "$HOME/Library/LaunchAgents/com.openclaw.bb-watchdog.plist" 2>/dev/null || true
-launchctl load "$HOME/Library/LaunchAgents/com.openclaw.poke-messages.plist" 2>/dev/null || true
-launchctl load "$HOME/Library/LaunchAgents/com.openclaw.bb-lag-summary.plist" 2>/dev/null || true
-launchctl load "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
-
-sleep 10
-openclaw --version
-launchctl list | grep -E 'ai.openclaw.gateway|com.bluebubbles.server|com.openclaw.bb'
-```
-
-Post-rollback checks:
-
-```bash
-set -a
-source "$HOME/.openclaw/.secrets-cache"
-set +a
-
-openclaw channels status --probe
-openclaw message send --channel bluebubbles --target 'any;-;dylanbochman@gmail.com' --message "BlueBubbles rollback test" --json
-```
-
-If rollback succeeds, do not reattempt the migration until the failed gate has a
-specific fix.
-
-## Open Questions
-
-- After soak, do we keep private API parity long-term or downgrade to basic
-  iMessage mode and re-enable SIP?
-- Should wildcard `allowFrom: ["*"]` be tightened to explicit Dylan and Julia
-  handles after the migration settles?
-- Should `includeAttachments` be enabled after a separate privacy and
-  media-handling test?
-- What replaces BlueBubbles message counts in the usage dashboard? The weekly
-  report and usage snapshot scripts now read the local Messages DB directly.
-- Should direct notification scripts call `imsg` directly or go through
-  `openclaw message send --channel imessage` for consistent routing and logs?
-
-## Known Follow-Ups
-
-- Replace the usage dashboard's BlueBubbles health/watchdog cards with native
-  iMessage bridge health.
-- Decide when to unload the BlueBubbles app and support LaunchAgents after soak.
-- Review Tailscale gateway serve warnings separately; the migration logs still
-  show `tailscale serve failed` because Tailscale is logged out.
+- Explicit-handle tightening was rejected. Open direct-message and group
+  admission, wildcard sender lists, and the wildcard group registry remain in
+  production by operator choice.
+- Global inbound attachments were approved. This covers trusted contacts and
+  family, and—because admission remains open—also covers every other admitted
+  sender. OpenClaw `2026.6.10` has no per-sender attachment switch.
+- The SIP-disabled/library-validation-relaxed risk is accepted. No separate
+  risk record or review cadence is required.
+- Tailscale Serve was repaired and retained for private tailnet HTTPS/WSS access
+  to the loopback-only gateway.
 
 ## Target Documentation Snapshot
 
@@ -933,7 +942,8 @@ The `openclaw@2026.6.10` package docs state:
 - `channels.bluebubbles` is not a supported runtime config surface.
 - Migrate old configs to `channels.imessage`.
 - iMessage uses `imsg rpc` over stdio.
-- `channels.imessage.includeAttachments` is off by default.
+- `channels.imessage.includeAttachments` is off by default; this deployment
+  explicitly enables it globally.
 - Private API actions require `imsg launch` and a successful private API probe.
 - Basic text/media send and receive can work without SIP changes.
 - Advanced private API mode requires SIP disabled and library validation relaxed.

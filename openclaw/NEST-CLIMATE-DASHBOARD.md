@@ -2,7 +2,7 @@
 
 ## Status: v2.1 (2026-03-09)
 
-Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats and weather across two locations via three heating/cooling systems. Serves at port 8550 on Mac Mini, Tailscale-only access.
+Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats and weather across two locations via three heating/cooling systems. Serves at port 8550 on the Mac Mini with home-LAN and Tailscale-tailnet access.
 
 ---
 
@@ -335,7 +335,7 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 - **Auth:** AWS Cognito tokens cached at `~/.config/mysotherm` (INI format)
 - **API base:** `https://app-prod.mysa.cloud` — endpoints: `/devices`, `/devices/state`, `/devices/firmware`
 - **Auth header:** bare JWT `id_token` (no "Bearer" prefix)
-- **Token expiry:** ~30 days without use; re-auth requires interactive `mysotherm --no-watch` on Mini
+- **Token expiry:** ~30 days without use. The wrapper first renews from managed `MYSA_USERNAME`/`MYSA_PASSWORD` values loaded from `~/.openclaw/.secrets-cache`; `mysa --login` from an interactive Mini terminal remains the fallback when those values are unavailable or rejected
 
 **Key fields from Mysa:**
 - `CorrectedTemp` → `temp_f` (thermostat-corrected ambient reading, used in snapshots)
@@ -440,7 +440,7 @@ ssh dbochman@dylans-mac-mini "/opt/homebrew/bin/nest snapshot"
 ## Known Issues
 
 - **OAuth consent screen:** If GCP project is in "Testing" mode, refresh tokens expire after 7 days. Must be set to "In production" for long-lived tokens.
-- **Mysa token expiry:** Cognito tokens expire ~30 days without use. Re-auth requires interactive `mysotherm --no-watch` on Mini screen.
+- **Mysa token expiry:** Cognito tokens expire after extended inactivity. Managed credentials in `~/.openclaw/.secrets-cache` normally renew the session automatically; use interactive `mysa --login` on the Mini if managed renewal fails.
 - **Cielo token staleness:** Token refresh depends on `com.openclaw.cielo-refresh` LaunchAgent running.
 - **1Password over SSH:** `op read` hangs under launchd. Credentials are pre-cached to `~/.cache/nest-sdm/` files with 1-year TTL.
 - **Camera snap timing:** WebRTC handshake takes 5–10 seconds; camera must be online with streaming enabled.

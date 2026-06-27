@@ -1,7 +1,7 @@
 {
   "meta": {
     "lastTouchedVersion": "2026.6.10",
-    "lastTouchedAt": "2026-06-27T13:33:46.931Z"
+    "lastTouchedAt": "2026-06-27T20:41:49.610Z"
   },
   "auth": {
     "profiles": {
@@ -69,6 +69,15 @@
       "maxConcurrent": 4,
       "subagents": {
         "maxConcurrent": 8
+      },
+      "memorySearch": {
+        "remote": {
+          "apiKey": {
+            "source": "exec",
+            "provider": "openai_memory_profile",
+            "id": "value"
+          }
+        }
       }
     }
   },
@@ -112,7 +121,7 @@
     "ownerDisplay": "raw"
   },
   "session": {
-    "typingMode": "thinking",
+    "typingMode": "never",
     "dmScope": "per-channel-peer",
     "reset": {
       "mode": "daily",
@@ -136,7 +145,12 @@
       "service": "auto",
       "sendTransport": "auto",
       "region": "US",
-      "sendReadReceipts": true,
+      "sendReadReceipts": false,
+      "includeAttachments": true,
+      "attachmentRoots": [
+        "/Users/dbochman/Library/Messages/Attachments"
+      ],
+      "mediaMaxMb": 16,
       "actions": {
         "reactions": true,
         "edit": true,
@@ -183,7 +197,7 @@
       "mode": "serve",
       "resetOnExit": false
     },
-    "channelHealthCheckMinutes": 0,
+    "channelHealthCheckMinutes": 5,
     "controlUi": {
       "allowedOrigins": [
         "https://docs.openclaw.ai",
@@ -321,5 +335,16 @@
     "lastRunVersion": "2026.6.10",
     "lastRunCommand": "doctor",
     "lastRunMode": "local"
+  },
+  "secrets": {
+    "providers": {
+      "openai_memory_profile": {
+        "source": "exec",
+        "command": "/Users/dbochman/.openclaw/bin/openai-memory-key",
+        "timeoutMs": 5000,
+        "maxOutputBytes": 16384,
+        "jsonOnly": false
+      }
+    }
   }
 }

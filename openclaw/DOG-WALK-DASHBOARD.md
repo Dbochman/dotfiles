@@ -1,8 +1,8 @@
-# Dog Walk & Roomba Dashboard — Implementation Spec
+# Dog Walk Dashboard — Implementation Spec
 
 ## Status: v2.1 (2026-04-04)
 
-Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk departures, Roomba operations, return signal detection, and the Fi departure pipeline. Serves at port 8552 on Mac Mini, Tailscale-only access.
+Single-file Python HTTP server with embedded Chart.js and Leaflet UI. Visualizes dog walk departures, Fi routes, coverage and heatmaps, return signal detection, and the Fi departure pipeline. Serves at port 8552 on the Mac Mini with home-LAN and Tailscale-tailnet access. Live Roomba status and snooze controls are a separate dashboard on port 8553.
 
 ---
 
@@ -11,9 +11,7 @@ Single-file Python HTTP server with embedded Chart.js UI. Visualizes dog walk de
 | Component | Source | Data |
 |-----------|--------|------|
 | Dog Walk Listener | `dog-walk-listener.py` (LaunchAgent) | Fi GPS departure detection, return monitoring, dock lifecycle |
-| Roomba CLIs | `roomba` (cabin), `crosstown-roomba` (crosstown) | Start/dock commands and results |
-| Crosstown Roomba Status | dorita980 MQTT via SSH to MBP | Real-time battery, phase, bin, tank |
-| Cabin Roomba Status | iRobot Cloud API (`irobot-cloud.py`) | Last mission outcome, duration, area |
+| Walk and route history | JSONL events + per-walk route files | Lifecycle, return signals, distance, walkers, and Fi points |
 | Fi GPS Collar | `fi-collar status` | Potato's GPS, battery, activity, connection |
 | Network Presence | `presence-detect.sh` | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
 | Fi GPS Departure | `fi-collar status` (3min poll) | Departure detection anchored to the collar's own nearest-home geofence |
@@ -39,20 +37,17 @@ Mac Mini (dylans-mac-mini)
 │   ├── GET / → embedded HTML SPA
 │   ├── GET /api/events?days=N → JSONL event history
 │   ├── GET /api/current → current state.json
+│   ├── GET /api/homes → configured home-map metadata
 │   ├── GET /api/routes?days=N&location=all|cabin|crosstown → per-walk route summaries
+│   ├── GET /api/route?id=<walk_id> → one route with Fi points
+│   ├── GET /api/heatmap?days=N&location=<home> → map heat points
 │   ├── GET /api/fi → Fi collar GPS/battery/activity (2min cache)
-│   ├── GET /api/roombas → Crosstown Roomba status via dorita980 (5min cache)
-│   └── GET /api/cabin-roombas → Cabin Roomba last mission via iRobot Cloud (10min cache)
+│   └── GET /api/presence → current household presence state
 │
 ├── Fi Collar: ~/.openclaw/skills/fi-collar/fi-api.py
 │   └── GraphQL → api.tryfi.com (GPS, battery, connection, geofence)
 │
-├── Roomba CLIs:
-│   ├── ~/.openclaw/bin/roomba (cabin — Google Assistant for start/stop/dock)
-│   ├── ~/.openclaw/bin/crosstown-roomba (crosstown — dorita980 MQTT via SSH to MBP)
-│   └── ~/.openclaw/skills/cabin-roomba/irobot-cloud.py (cabin — cloud mission history)
-│
-└── Presence: ~/.openclaw/workspace/scripts/presence-detect.sh
+└── Presence state: ~/.openclaw/presence/state.json
 ```
 
 ### LaunchAgents
@@ -99,7 +94,7 @@ The listener also persists a Fi-derived home anchor in `state.json`:
 
 One JSON file per walk. These are written by the listener on departure, appended during return monitoring, and finalized on dock or timeout.
 
-Inter-home transits are marked at the route-file level and excluded from `GET /api/routes`, so future map views only see walks that start and end at the same house.
+Inter-home transits and car trips are marked at the route-file level and excluded from `GET /api/routes`, `/api/route`, and `/api/heatmap`, so the live map views show only walks associated with one house.
 
 Top-level fields:
 
@@ -140,7 +135,7 @@ Top-level fields:
 | Field | Type | Set on | Description |
 |-------|------|--------|-------------|
 | `active` | bool | departure/dock | True while walk in progress |
-| `walk_id` | string | departure | Immutable ID for route files and future map views |
+| `walk_id` | string | departure | Immutable ID shared by route files and map views |
 | `location` | string | departure | "cabin" or "crosstown" |
 | `origin_location` | string | departure | House the walk started from; stable even if Fi later reports a different nearest home |
 | `departed_at` | ISO 8601 | departure | Walk start time |
@@ -270,35 +265,17 @@ Returns Potato's GPS location, battery, activity, and connection status. Cached 
 }
 ```
 
-### `GET /api/roombas` — Crosstown Roombas (Real-Time)
+### Map and Presence APIs
 
-Returns live status for Crosstown Roombas via dorita980 MQTT (SSH to MBP). Cached for 5 minutes. Each robot query takes ~5-15s (SSH + MQTT handshake).
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/homes` | Cabin/Crosstown labels, colors, map centers, and geofence radii |
+| `GET /api/routes?days=N&location=all\|cabin\|crosstown` | Filtered route summaries for the selected window (default 30 days, max 365) |
+| `GET /api/route?id=<walk_id>` | Full point list for one selected route |
+| `GET /api/heatmap?days=N&location=cabin\|crosstown` | Heatmap points and walk/point counts for one home |
+| `GET /api/presence` | Current presence state used for dashboard context |
 
-```json
-{
-  "location": "crosstown",
-  "robots": {
-    "10max": { "label": "Roomba Combo 10 Max", "phase": "charge", "status": "Charging", "battery": 100, "binFull": false, "binPresent": true, "tank": 42, "error": 0, "missions": 615 },
-    "j5": { "label": "Roomba J5 (Scoomba)", "phase": "charge", "status": "Charging", "battery": 100, "binFull": false, "binPresent": true, "error": 0, "missions": 291 }
-  }
-}
-```
-
-### `GET /api/cabin-roombas` — Cabin Roombas (Last Mission)
-
-Returns last mission data for cabin Roombas via iRobot Cloud API. Cached for 10 minutes. Uses Gigya + iRobot OAuth → AWS SigV4 signed mission history endpoint.
-
-```json
-{
-  "location": "cabin",
-  "robots": {
-    "floomba": { "name": "Floomba", "lastMission": "stuck", "durationMin": 30, "sqft": 210, "startTime": 1774796428, "missions": 24 },
-    "philly": { "name": "philly", "lastMission": "ok", "durationMin": 45, "sqft": 380, "startTime": 1774803184, "missions": 27 }
-  }
-}
-```
-
-Note: Real-time cabin Roomba status (battery, phase) is not available — the cabin Roombas (Y354020 firmware ver 4) don't expose local MQTT (port 8883 closed), and the iRobot cloud temp credentials don't grant `iot:GetThingShadow`. Mission history is the best available via REST.
+The route endpoints reject inter-home transits and car trips. The UI offers three map layers: a selected route, full-weight route coverage over a chosen date range, and point-density heatmaps.
 
 ---
 
@@ -308,15 +285,15 @@ Note: Real-time cabin Roomba status (battery, phase) is not available — the ca
 
 | Card | Source | Display |
 |------|--------|---------|
-| **Current Walk** | `dog_walk.active` | Elapsed time (green) or "None" (gray) with last return time |
-| **Last Walk** | `dog_walk.walk_duration_minutes` | Duration + return signal badge |
+| **Today's Distance** | Route summaries | Total distance and walk count for the local-day window |
+| **Today's Duration** | Route summaries + active state | Total duration and active-walk elapsed time |
 | **Departure Candidate** | `event_type=departure_candidate` | Pending first outside reading awaiting confirmation |
 | **Return Monitor** | `return_monitoring.active` | Poll count + Potato GPS distance |
 | **Potato Battery** | `/api/fi` | Battery % (green/amber/red), connection type, last report age |
 | **Potato Location** | `/api/fi` | Activity (Rest/Walk), distance from home, geofence status |
 | **Fi Base** | `/api/fi` | Base station online/offline |
-| **Crosstown Roombas** | `/api/roombas` | Per-robot: phase, battery %, bin status, tank level |
-| **Cabin Roombas** | `/api/cabin-roombas` | Per-robot: last mission outcome, duration, area, time ago |
+| **Tracked Distance / Average Walk** | `/api/routes` | Aggregate distance for the selected range and location |
+| **Selected Walk** | `/api/routes` + `/api/route` | Distance, origin, start time, return signal, and point count |
 
 ### Location Filter
 
@@ -334,10 +311,10 @@ Note: Real-time cabin Roomba status (battery, phase) is not available — the ca
 |--------|--------|
 | Date | `dog_walk.departed_at` |
 | Location | `dog_walk.location` (+ "manual" tag if `roombas.<loc>.last_command_result.source == "dog-walk-start"`) |
+| Distance | Per-walk route summary |
 | Duration | `dog_walk.walk_duration_minutes` |
 | Return Signal | `dog_walk.return_signal` (color-coded badge) |
 | Walkers | `dog_walk.walkers` |
-| Roombas | `roombas.<loc>.last_command_result.success` (OK/Failed badge) |
 
 Pairs departure events with their matching dock events by location + departure timestamp.
 
@@ -352,7 +329,7 @@ Pairs departure events with their matching dock events by location + departure t
 
 ### Visual Style
 
-Matches nest-dashboard exactly:
+Follows the nest-dashboard visual system while adding Leaflet map controls:
 - Dark theme default (`#0f1117` background, `#1a1d27` surface)
 - Light theme via `prefers-color-scheme: light`
 - System fonts (-apple-system stack)
@@ -401,7 +378,6 @@ Matches nest-dashboard exactly:
 |-------------------|--------------------|
 | `openclaw/bin/dog-walk-dashboard.py` | `~/.openclaw/bin/dog-walk-dashboard.py` |
 | `openclaw/skills/fi-collar/fi-api.py` | `~/.openclaw/skills/fi-collar/fi-api.py` |
-| `openclaw/skills/cabin-roomba/irobot-cloud.py` | `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
 | LaunchAgent plist (see below) | `~/Library/LaunchAgents/ai.openclaw.dog-walk-dashboard.plist` |
 
 ### LaunchAgent Plist
@@ -442,7 +418,7 @@ curl -s http://localhost:8552/api/current | python3 -m json.tool
 curl -s http://localhost:8552/api/events?days=1 | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{d[\"meta\"][\"count\"]} events')"
 kill %1
 
-# Tailscale access
+# Tailnet access
 curl -s http://dylans-mac-mini:8552/ | head -5
 ```
 
@@ -454,12 +430,12 @@ curl -s http://dylans-mac-mini:8552/ | head -5
 |----------|----------------|-----------|
 | Is a walk happening now? | Status card | `dog_walk.active` |
 | Which house is the next departure anchored to? | Current state API | `home_location` |
-| How long was the last walk? | Status card + table | `walk_duration_minutes` |
+| How long was the last walk? | Recent-walk table + duration chart | Route/event duration |
 | How does the system detect returns? | Doughnut chart | `return_signal` distribution |
 | How often does the Fi pipeline need a second reading? | Pipeline chart | `departure_candidate` count |
 | Why do candidates fail to confirm? | Pipeline chart | `departure_candidate_reset` grouped by `candidate_reset_reason` |
 | What time of day do walks happen? | Walk table | `departed_at` timestamps |
-| Are Roomba commands reliable? | Walk table | `last_command_result.success` |
+| Where did recent walks go? | Route, coverage, and heatmap layers | Per-walk Fi route files |
 | How many walks per day/week? | Walks per day chart | `departure` events grouped by date |
 | Who usually walks the dogs? | Walk table | `walkers` field |
 | How long are walks at cabin vs crosstown? | Duration scatter | Points colored by location |

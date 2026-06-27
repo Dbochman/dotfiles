@@ -42,9 +42,10 @@ Runtime locations on the Mini:
 | Cookie store | `~/.openclaw/.boa_cookies.json` |
 | Scraper | `~/repos/financial-dashboard/scrape_mortgage.py` |
 
-Source plists and source cron prompt are under `~/dotfiles/openclaw/`.
-The runtime cron file is `~/.openclaw/cron/jobs.json`; do not overwrite it
-blindly from the tracked source because it can contain newer operational edits.
+Source plists and canonical cron definitions are under `~/dotfiles/openclaw/`.
+Live cron state is SQLite-backed. Use `openclaw cron list --all --json` to read
+it and supported `openclaw cron` commands to mutate it; do not copy a legacy
+`~/.openclaw/cron/jobs.json` artifact over runtime state.
 
 ## Known Validation
 

@@ -7,7 +7,8 @@ and a calendar heatmap of Roomba runs per location per day.
 Reads JSONL events from ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
 for calendar data, Roomba status via SSH (Crosstown) and iRobot Cloud (Cabin).
 
-Same architecture as nest-dashboard.py. Intended for Tailscale-only access.
+Same architecture as nest-dashboard.py. Intended for home-LAN and
+Tailscale-tailnet access; not public internet.
 """
 
 import calendar

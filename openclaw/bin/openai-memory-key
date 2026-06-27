@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+
+readonly auth_db="/Users/dbochman/.openclaw/agents/main/agent/openclaw-agent.sqlite"
+
+/usr/bin/sqlite3 "$auth_db" <<'SQL'
+SELECT json_extract(store_json, '$.profiles."openai:default".token')
+FROM auth_profile_store
+WHERE store_key = 'primary';
+SQL

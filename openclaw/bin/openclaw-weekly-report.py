@@ -22,7 +22,8 @@ HOME = Path.home()
 LOCAL_TZ = ZoneInfo("America/New_York")
 UTC = timezone.utc
 SESSIONS_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
-CRON_RUNS_DIR = HOME / ".openclaw" / "cron" / "runs"
+CRON_DB = HOME / ".openclaw" / "state" / "openclaw.sqlite"
+CRON_STORE_KEY = str(HOME / ".openclaw" / "cron" / "jobs.json")
 MESSAGES_DB = HOME / "Library" / "Messages" / "chat.db"
 IMSG_BIN = "/opt/homebrew/bin/imsg"
 GATEWAY_URL = "http://127.0.0.1:18789/health"
@@ -41,15 +42,6 @@ def parse_timestamp(value):
     if parsed.tzinfo is None:
         return None
     return parsed.astimezone(UTC)
-
-
-def parse_epoch_ms(value):
-    if not isinstance(value, (int, float)):
-        return None
-    try:
-        return datetime.fromtimestamp(value / 1000, UTC)
-    except (OverflowError, OSError, ValueError):
-        return None
 
 
 def json_lines(path):
@@ -138,22 +130,31 @@ def collect_session_activity(start, end):
 
 def collect_cron_runs(start, end):
     runs = {"completed": 0, "failed": 0, "delivered": 0}
-    if not CRON_RUNS_DIR.is_dir():
+    if not CRON_DB.is_file():
         return runs
 
-    for path in CRON_RUNS_DIR.glob("*.jsonl"):
-        for record in json_lines(path):
-            if record.get("action") != "finished":
-                continue
-            timestamp = parse_epoch_ms(record.get("ts") or record.get("runAtMs"))
-            if timestamp is None or not start <= timestamp < end:
-                continue
-            if record.get("status") == "ok":
-                runs["completed"] += 1
-            else:
-                runs["failed"] += 1
-            if record.get("delivered"):
-                runs["delivered"] += 1
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+    try:
+        with sqlite3.connect(f"file:{CRON_DB}?mode=ro", uri=True, timeout=5) as conn:
+            rows = conn.execute(
+                """
+                SELECT status, delivered
+                  FROM cron_run_logs
+                 WHERE store_key = ? AND ts >= ? AND ts < ?
+                """,
+                (CRON_STORE_KEY, start_ms, end_ms),
+            ).fetchall()
+    except sqlite3.Error:
+        return runs
+
+    for status, delivered in rows:
+        if status == "ok":
+            runs["completed"] += 1
+        else:
+            runs["failed"] += 1
+        if delivered:
+            runs["delivered"] += 1
     return runs
 
 
@@ -176,6 +177,7 @@ def imessage_messages(start, end):
           AND COALESCE(is_system_message, 0) = 0
           AND COALESCE(item_type, 0) = 0
           AND COALESCE(is_empty, 0) = 0
+          AND service = 'iMessage'
     """
     try:
         with sqlite3.connect(f"file:{MESSAGES_DB}?mode=ro", uri=True, timeout=5) as conn:

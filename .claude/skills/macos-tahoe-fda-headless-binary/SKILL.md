@@ -3,9 +3,6 @@ name: macos-tahoe-fda-headless-binary
 description: >-
   Grant Full Disk Access (FDA) to headless CLI binaries on macOS Tahoe (26.x) when they need to access
   TCC-protected paths like ~/Library/Messages/chat.db.
-author: Claude Code
-version: 1.0.0
-date: 2026-02-22
 ---
 
 # macOS Tahoe: Grant FDA to Headless CLI Binaries
@@ -122,7 +119,7 @@ ls ~/Library/Messages/
 osascript -e 'do shell script "/opt/homebrew/bin/imsg chats list 2>&1 | head -3"'
 
 # The LaunchAgent process should stay running (no restart loop)
-tail -f ~/.openclaw/logs/gateway.log
+tail -f ~/Library/Logs/openclaw/gateway.log
 # Should NOT see: "imsg rpc not ready after Xms" or "auto-restart attempt"
 ```
 

@@ -2,7 +2,7 @@
 
 ## Status: v1.11 (2026-06-24)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 30 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with Tailscale/LAN access via `http://dylans-mac-mini:8585/`. A unified cache-only finance LaunchAgent starts daily at 6:15 AM, syncing production Plaid Items before the Forecast crypto cache without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, solar, and authorized Redfin property values fresh. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 33 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with home-LAN and Tailscale-tailnet access via `http://dylans-mac-mini:8585/`. A unified cache-only finance LaunchAgent starts daily at 6:15 AM, syncing production Plaid Items before the Forecast crypto cache without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, solar, and authorized Redfin property values fresh. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
 
 `8585` is also the canonical data source for the Forecast Dashboard on `8586`. Its owner-aware forecast baseline lets the forecast begin from the latest reconciled source snapshot rather than a wholly fixed portfolio assumption.
 
@@ -263,7 +263,7 @@ Mac Mini (dylans-mac-mini)
 | `/mortgage` | Mortgage | Amortization, payment history |
 | `/expenses` | Expenses | Category breakdown, trends, top merchants |
 
-31 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
+33 JSON API endpoints under `/api/` — see `SCHEMA.md` in the financial-dashboard repo for the full catalog, or `serve_dashboard.py` for the canonical source.
 
 The Forecast integration contract is available at `http://dylans-mac-mini:8585/api/forecast-baseline`. Validate its status and owner-scope coverage after source or forecast changes; avoid copying raw payloads into logs or chat.
 
@@ -283,14 +283,15 @@ git clone <url> ~/repos/financial-dashboard
 
 ```bash
 cd ~/repos/financial-dashboard
-/usr/bin/python3 -m venv venv
+/opt/homebrew/bin/python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
+./venv/bin/playwright install chromium
 ```
 
 ### 3. Verify imports and initialize DB
 
 ```bash
-./venv/bin/python -c "import yaml; from db import init_db; init_db(); print('OK')"
+./venv/bin/python -c "import yaml, requests; from playwright.sync_api import sync_playwright; from db import init_db; init_db(); print('OK')"
 ```
 
 ### 4. Ensure log directory exists

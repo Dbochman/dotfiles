@@ -1,6 +1,6 @@
 ---
 name: crisismode
-description: Infrastructure health monitoring and recovery for the Mac Mini. Use when asked about system health, disk usage, memory, DNS, service status, infrastructure diagnostics, or "is everything running okay". Also use proactively when troubleshooting service outages (BlueBubbles, gateway, cron failures).
+description: Infrastructure health monitoring and recovery for the Mac Mini. Use when asked about system health, disk usage, memory, DNS, service status, infrastructure diagnostics, or "is everything running okay". Also use proactively when troubleshooting service outages (gateway, native iMessage, or cron failures).
 allowed-tools: Bash(crisismode:*)
 metadata: {"openclaw":{"emoji":"🏥","requires":{"bins":["crisismode"]}}}
 ---

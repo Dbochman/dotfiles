@@ -4,7 +4,8 @@
 Serves a JSON API and Chart.js dashboard for dog walk history, Fi GPS tracking,
 and route visualization. Roomba status and snooze controls moved to roomba-dashboard.py.
 
-Same architecture as nest-dashboard.py. Intended for Tailscale-only access.
+Same architecture as nest-dashboard.py. Intended for home-LAN and
+Tailscale-tailnet access; not public internet.
 """
 
 import json

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 export HOME="/Users/dbochman"
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 CACHE="$HOME/.openclaw/.secrets-cache"
 
@@ -17,9 +17,14 @@ else
   exit 1
 fi
 
-# Truncate logs if over 5MB (keep last 1000 lines)
+# Truncate logs if over 5MB (keep last 1000 lines). The generated OpenClaw
+# service plist writes to ~/Library/Logs/openclaw/gateway.log, while the tracked
+# recovery plist uses ~/.openclaw/logs/gateway.{log,err.log}; cover both.
 LOGS_DIR="$HOME/.openclaw/logs"
-for f in "$LOGS_DIR/gateway.log" "$LOGS_DIR/gateway.err.log"; do
+for f in \
+  "$HOME/Library/Logs/openclaw/gateway.log" \
+  "$LOGS_DIR/gateway.log" \
+  "$LOGS_DIR/gateway.err.log"; do
   if [[ -f "$f" ]] && [[ "$(stat -f%z "$f" 2>/dev/null || echo 0)" -gt 5242880 ]]; then
     tail -1000 "$f" > "$f.tmp" && mv "$f.tmp" "$f"
   fi

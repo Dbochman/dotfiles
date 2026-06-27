@@ -1,111 +1,80 @@
 ---
 name: openclaw-cron-ghost-jobs
-description: >-
-  Diagnose and fix OpenClaw jobs that reappear or run again after removal,
-  especially completed deleteAfterRun one-shots restored by dotfiles cron sync.
-author: Codex
-version: 2.0.0
-date: 2026-06-21
+description: Diagnose and remove OpenClaw cron jobs that reappear, remain scheduled after removal, or rerun after a completed one-shot. Use when gateway state, the canonical dotfiles definitions, and SQLite cron state disagree, especially around dotfiles deployment or deleteAfterRun tombstones.
 ---
 
-# OpenClaw Cron Ghost Jobs
+# Fix OpenClaw Cron Ghost Jobs
 
-## Problem
+## State model
 
-A removed or completed OpenClaw cron job reappears and executes again. For
-booking jobs, this can create duplicate reservations and calendar events.
+Treat these as separate planes:
 
-## Trigger Conditions
+- Canonical intent: `~/dotfiles/openclaw/cron/jobs.json`
+- Live definitions and timers: gateway plus `cron_jobs` in
+  `~/.openclaw/state/openclaw.sqlite`
+- Durable run history/tombstones: `cron_run_logs` in the same SQLite database
 
-- A `deleteAfterRun: true` job runs again after a successful execution.
-- `openclaw cron rm` succeeds, but the job later returns.
-- The live `~/.openclaw/cron/jobs.json` omits a job while the dotfiles copy
-  still contains it.
-- Runs cluster around daily or manual `dotfiles-pull` deployments.
+Legacy `~/.openclaw/cron/jobs.json*` and `cron/runs/*.jsonl*` files are migration
+artifacts, not executable state. Never restore or delete them as a ghost-job
+repair. Never edit the SQLite database directly.
 
-## Root Cause
+## Diagnose
 
-The repo file `~/dotfiles/openclaw/cron/jobs.json` is the canonical definition
-source. `dotfiles-pull.command` invokes `sync-cron-jobs.sh deploy` daily at 6 AM
-and whenever it is run manually. Before the 2026-06-21 hardening, deploy copied
-every repo definition into the live file, including completed one-shots that
-OpenClaw had removed from live state. A past-due `at` job then fired immediately.
-
-Run files under `~/.openclaw/cron/runs/` are append-only history. Current
-`sync-cron-jobs.sh deploy` also uses a successful one-shot record at or after
-the scheduled timestamp as a tombstone and skips that completed definition.
-Do not delete this history while the matching definition remains in the repo.
-
-## Diagnosis
-
-1. Compare repo and live job IDs:
+Source the cached gateway token, then inspect the supported live view:
 
 ```bash
-ssh dylans-mac-mini 'python3 - <<"PY"
-import json
-from pathlib import Path
+set -a
+source ~/.openclaw/.secrets-cache
+set +a
 
-home = Path.home()
-repo = json.loads((home / "dotfiles/openclaw/cron/jobs.json").read_text())
-live = json.loads((home / ".openclaw/cron/jobs.json").read_text())
-repo_ids = {job["id"] for job in repo["jobs"]}
-live_ids = {job["id"] for job in live["jobs"]}
-print("repo_only", sorted(repo_ids - live_ids))
-print("live_only", sorted(live_ids - repo_ids))
-PY'
+openclaw cron list --all --json
+openclaw cron runs --id <job-id> --limit 20
+jq '.jobs[] | select(.id == "<job-id>")' \
+  ~/dotfiles/openclaw/cron/jobs.json
 ```
 
-2. Inspect the suspect history without deleting it:
+Use SQLite only for read-only confirmation:
 
 ```bash
-ssh dylans-mac-mini 'tail -20 ~/.openclaw/cron/runs/<job-id>.jsonl'
+sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
+  "SELECT job_id, enabled, next_run_at_ms, last_run_status
+     FROM cron_jobs WHERE job_id = '<job-id>';"
+
+sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
+  "SELECT seq, ts, status, delivered, run_id
+     FROM cron_run_logs WHERE job_id = '<job-id>' ORDER BY ts DESC LIMIT 20;"
 ```
 
-3. Check whether execution times follow `dotfiles-pull`:
+Correlate an unexpected reappearance with
+`~/.openclaw/logs/dotfiles-pull.log` and the relevant gateway log. A retained
+`cron_run_logs` row is audit history and may be the tombstone preventing a
+completed one-shot from being recreated; it is not evidence that the job is
+still scheduled.
 
-```bash
-ssh dylans-mac-mini 'tail -50 ~/.openclaw/logs/dotfiles-pull.log'
-```
+## Remove a live ghost
 
-## Solution
+1. Remove the definition through the supported gateway:
 
-1. Remove the completed definition from the repo and commit it.
-2. Remove it from gateway state for immediate effect:
+   ```bash
+   openclaw cron rm <job-id>
+   ```
 
-```bash
-openclaw cron rm <job-id>
-```
+2. Remove the matching object from the canonical repo JSON and commit it.
+3. Run `~/dotfiles/openclaw/sync-cron-jobs.sh deploy`.
+4. Verify the ID is absent from `openclaw cron list --all --json`, read-only
+   `cron_jobs`, and the repo definition.
+5. Preserve `cron_run_logs` history.
 
-3. Deploy the canonical file:
+If all three definition views are clean but the current gateway still appears
+to hold a timer, preserve the database and logs, restart the gateway once, and
+verify again. Do not quarantine or delete history. Escalate a reproducible
+post-restart execution as a scheduler defect with the retained evidence.
 
-```bash
-~/dotfiles/openclaw/sync-cron-jobs.sh deploy
-```
+## Prevent recurrence
 
-4. Keep `runs/<job-id>.jsonl` as audit history and a tombstone.
-
-If the repo and live files are both clean but a current-version gateway still
-executes the job, stop the gateway and move the run file to a quarantine name
-before restarting. Do this only after reproducing independent scheduling from
-the orphan file; an orphan history file alone is not evidence of an active job.
-
-## Prevention
-
-- Give every side-effecting one-shot an idempotency preflight against both the
-  external system and its matching calendar event.
-- Use `delivery.mode: none`; have the agent send exactly one final status so a
-  delivery failure cannot turn a successful booking into a cron retry.
-- Keep `deleteAfterRun: true` and preserve successful run history.
-- Remove completed definitions from the repo promptly for inventory clarity.
-
-## Verification
-
-```bash
-openclaw cron list --json | grep <job-id>            # empty
-grep <job-id> ~/.openclaw/cron/jobs.json             # empty
-grep <job-id> ~/dotfiles/openclaw/cron/jobs.json     # empty
-~/dotfiles/openclaw/sync-cron-jobs.sh deploy         # does not restore it
-```
-
-The historical run file may remain. Verify that no new line appears after a
-scheduled or manual deployment.
+- Keep repo and live gateway edits in the same change.
+- Remove completed one-shot definitions promptly; retain their SQLite history.
+- Give side-effecting jobs external-system and calendar idempotency checks.
+- Use `delivery.mode: "none"` for side-effecting one-shots and send one
+  agent-managed status so a delivery failure cannot rerun the action.
+- Keep `deleteAfterRun: true`; it is cleanup behavior, not idempotency.

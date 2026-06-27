@@ -1,17 +1,18 @@
-# OpenClaw iMessage Setup Notes
+# OpenClaw Native iMessage Setup Notes
 
-## Current Setup (Updated 2026-03-06)
-- OpenClaw installed at `/opt/homebrew/bin/openclaw` (v2026.3.2)
-- iMessage channel via **BlueBubbles** (webhook-only, Private API enabled)
-- Gateway runs as LaunchAgent `ai.openclaw.gateway` via .app wrapper
-- Model: `anthropic/claude-opus-4-6` (fallback: `anthropic/claude-sonnet-4-6`)
+## Current Setup (Updated 2026-06-27)
+- OpenClaw installed at `/opt/homebrew/bin/openclaw` (`2026.6.10`)
+- Bundled `imessage` channel backed by `/opt/homebrew/bin/imsg` (`0.11.1`)
+- Gateway runs as LaunchAgent `ai.openclaw.gateway` via its FDA .app wrapper
+- `imsg` basic, advanced, and v2 features are ready with bridge version 2
+- BlueBubbles is fully retired and is not a rollback path
 
-## BlueBubbles Architecture
-- BB POSTs webhook events to `http://localhost:18789/bluebubbles-webhook`
-- Gateway registers webhook in BB on startup
-- Private API at `http://localhost:1234/api/v1` (reactions, typing, edit/unsend)
-- SIP disabled on Mac Mini (required for BB Private API)
-- BB proxy: `lan-url` (Cloudflare disabled — was causing rate-limit loops)
+## Native Architecture
+- OpenClaw launches `imsg rpc` over stdio and reads `~/Library/Messages/chat.db`
+- SIP is disabled and library validation relaxed for advanced actions
+- Stable routes: `chat_id:171` (Dylan), `chat_id:1` (Julia), `chat_id:170` (group)
+- Cron jobs use `delivery.channel: "imessage"` and explicit `chat_id:*` targets
+- `vacancy-actions.sh` sends lock notifications directly through `imsg` to `chat_id:171`
 
 ## The FDA Solution
 macOS won't grant FDA to bare binaries via System Settings UI. The fix:
@@ -25,14 +26,12 @@ macOS won't grant FDA to bare binaries via System Settings UI. The fix:
 - Gateway LaunchAgent: `~/Library/LaunchAgents/ai.openclaw.gateway.plist`
 - FDA .app wrapper: `~/Applications/OpenClawGateway.app`
 - Gateway wrapper: `~/Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway`
-- Gateway logs: `~/.openclaw/logs/gateway.log` and `gateway.err.log`
+- Current generated-service gateway log: `~/Library/Logs/openclaw/gateway.log` (the tracked recovery plist uses `~/.openclaw/logs/gateway.{log,err.log}`)
 - Secrets cache: `~/.openclaw/.secrets-cache` (sourced by wrapper, cache-only pattern)
-- BB server log: `~/Library/Logs/bluebubbles-server/main.log`
-- BB watchdog log: `/tmp/bb-watchdog.log`
 
 ## Messaging Details
-- Dylan DM target: `dylanbochman@gmail.com` (not phone number — phone handle fails on this host)
-- Julia DM target: `+1XXXXXXXXXX`
-- Chat GUIDs: DMs use `any;-;` prefix, groups use `iMessage;+;`
+- Dylan DM target: `chat_id:171`
+- Julia DM target: `chat_id:1`
+- Dylan and Julia group target: `chat_id:170`
 - Reactions: native via `message` tool `action: "react"` (love, like, dislike, laugh, emphasize, question)
-- Typing: native via `typingMode: "thinking"` in config
+- Troubleshooting: run `imsg status --json` and `openclaw channels status --probe --channel imessage`

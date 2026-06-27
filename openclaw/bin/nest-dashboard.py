@@ -4,7 +4,7 @@
 Serves a JSON API and Chart.js dashboard for Nest thermostat history.
 Reads JSONL snapshots from ~/.openclaw/nest-history/YYYY-MM-DD.jsonl
 
-Intended for Tailscale-only access (Mac Mini firewall blocks external).
+Intended for home-LAN and Tailscale-tailnet access; not public internet.
 """
 
 import json

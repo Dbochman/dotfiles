@@ -17,6 +17,7 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 | Script | Location on Mini | Description |
 |--------|-----------------|-------------|
 | `openclaw-refresh-secrets` | `~/bin/` | Refreshes `~/.openclaw/.secrets-cache` from 1Password. Run over SSH after key rotation. |
+| `openai-memory-key` | `~/.openclaw/bin/` | Mode-restricted exec secret-provider helper for memory search. Emits the existing `openai:default` token from the agent auth database; never log or call it for diagnostics. |
 | `pinchtab-headless-instance` | `~/.openclaw/bin/` | Acquires, scopes, and releases managed headless PinchTab instances without navigating a visible browser. |
 | `opentable-refresh-token.sh` | `~/.openclaw/bin/` | Refreshes and validates the OpenTable CLI token in a managed headless PinchTab instance; uses Gmail verification only when reauthentication is required and never logs token material. |
 | `openclaw-weekly-report.py` | `~/.openclaw/bin/` | Generates the weekly cron report from durable session/cron records and live service checks; avoids obsolete transient gateway-log parsing. |
@@ -27,8 +28,11 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 
 | Script | Port | Description |
 |--------|------|-------------|
-| `nest-dashboard.py` | 8550 | Nest climate dashboard — Chart.js UI over JSONL history. Serves thermostat temps, humidity, weather, and presence data. Tailscale-only. |
-| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, API utilization gauges, agent activity metrics. Chart.js UI over JSONL history. Tailscale-only. |
+| `nest-dashboard.py` | 8550 | Nest climate dashboard — Chart.js UI over JSONL history. Serves thermostat temperatures, humidity, weather, and presence data over the home LAN and Tailscale tailnet. |
+| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, cron, and native iMessage health over the home LAN and Tailscale tailnet. |
+| `dog-walk-dashboard.py` | 8552 | Dog walk history, Fi route maps, coverage/heatmaps, and return-signal telemetry over the home LAN and Tailscale tailnet. |
+| `roomba-dashboard.py` | 8553 | Crosstown/Cabin Roomba status, command, snooze, and run-history dashboard. |
+| `home-dashboard.py` | 8558 | Home Control Plane status and command dashboard across both locations. |
 | `finance-refresh.py` | — | Daily 06:15 orchestrator that runs the cache-only Plaid and crypto wrappers sequentially, retries each once, and writes combined protected status without reading source credentials or data. |
 | `financial-dashboard-plaid-sync.py` | — | Daily cache-only Plaid sync wrapper for the separate financial-dashboard repo. Reads protected local caches, never calls `op`, serializes runs with a lock, refreshes local income-source review candidates through `update_data.py sync`, and writes status-only metadata to `~/.openclaw/financial-dashboard/plaid-sync-status.json`. |
 | `forecast-crypto-sync.py` | — | Cache-only Coinbase/Etherscan holdings component used by the unified finance refresh; preserves the last known-good holdings cache and writes protected component status. |
@@ -45,7 +49,7 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 
 | Script | Description |
 |--------|-------------|
-| `usage-snapshot.sh` | Collects OpenClaw usage metrics every 15min via LaunchAgent. Fetches Anthropic utilization API, parses runtime + cron logs, writes JSONL snapshots to `~/.openclaw/usage-history/`. Auto-prunes data older than 90 days. |
+| `usage-snapshot.sh` | Collects OpenClaw usage metrics every 15 minutes via LaunchAgent. Fetches Anthropic utilization, reads runtime logs plus SQLite `cron_run_logs`, counts native iMessage rows, and writes 90-day JSONL history. |
 
 ### Bluetooth
 
@@ -74,12 +78,12 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 |------|------|----------|
 | `workspace` | `~/.openclaw/workspace/` | SOUL.md, TOOLS.md, HEARTBEAT.md |
 | `skills` | `~/.openclaw/skills/` | All SKILL.md files |
-| `plans` | `~/dotfiles/openclaw/plans/` | BB implementation, Private API ref, workspace state |
+| `plans` | `~/dotfiles/openclaw/plans/` | Current plans plus archived architecture and migration records |
 | `bin-scripts` | `~/dotfiles/openclaw/bin/` | README.md |
 
 **Usage**:
 ```bash
-qmd query "how does the BB watchdog work"    # hybrid search (recommended)
+qmd query "how does native iMessage health work"  # hybrid search (recommended)
 qmd search "cart URL"                         # BM25 keyword search
 qmd update --pull                             # re-index after dotfiles pull
 qmd mcp                                       # start MCP server for AI agents

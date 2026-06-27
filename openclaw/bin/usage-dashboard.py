@@ -5,12 +5,14 @@ Serves a JSON API and Chart.js dashboard for OpenClaw token consumption,
 API utilization, and agent activity metrics.
 Reads JSONL snapshots from ~/.openclaw/usage-history/YYYY-MM-DD.jsonl
 
-Intended for Tailscale-only access (Mac Mini firewall blocks external).
+Intended for home-LAN and Tailscale-tailnet access; not public internet.
 """
 
 import json
 import os
+import re
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -18,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
+from urllib.request import urlopen
 
 HISTORY_DIR = os.path.expanduser("~/.openclaw/usage-history")
 PORT = 8551
@@ -272,7 +275,9 @@ def get_launchagent_status():
 
 
 SECRETS_CACHE = os.path.expanduser("~/.openclaw/.secrets-cache")
-OPENCLAW_BIN = "/opt/homebrew/opt/node@22/bin/openclaw"
+OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
+IMSG_BIN = "/opt/homebrew/bin/imsg"
+MESSAGES_DB = os.path.expanduser("~/Library/Messages/chat.db")
 
 # Gateway usage RPC cache (5-minute TTL)
 _gw_usage_cache = {"data": None, "ts": 0}
@@ -302,7 +307,7 @@ def fetch_gateway_usage():
 
     try:
         result = subprocess.run(
-            ["openclaw", "gateway", "call", "sessions.usage", "--json", "--timeout", "30000"],
+            [OPENCLAW_BIN, "gateway", "call", "sessions.usage", "--json", "--timeout", "30000"],
             capture_output=True, text=True, timeout=35, env=env,
         )
         if result.returncode != 0:
@@ -319,235 +324,304 @@ def fetch_gateway_usage():
     return data
 
 
-CRON_JOBS_PATH = os.path.expanduser("~/.openclaw/cron/jobs.json")
-
-# ── BlueBubbles health ────────────────────────────────────────────────────
-BB_API_BASE = "http://localhost:1234/api/v1"
-BB_STATE_FILE = os.path.expanduser("~/.openclaw/bb-watchdog/state.json")
-BB_WATCHDOG_LOG = os.path.expanduser("~/.openclaw/logs/bb-watchdog.log")
-BB_LAG_LOG = os.path.expanduser("~/.openclaw/logs/bb-ingest-lag.log")
-BB_CACHE_TTL = 30  # seconds
-_bb_cache = {"data": None, "ts": 0}
-_bb_lock = threading.Lock()
+# Native iMessage health cache (60-second TTL). All probes are read-only, and
+# all dashboard clients share one normalized result.
+_imessage_health_cache = {"data": None, "ts": 0}
+_imessage_health_lock = threading.Lock()
+IMESSAGE_HEALTH_CACHE_TTL = 60
 
 
-def _bb_password():
-    """Read BLUEBUBBLES_PASSWORD from secrets cache."""
-    if not os.path.exists(SECRETS_CACHE):
-        return ""
+def _run_json_probe(command, timeout, env=None):
+    """Run a local read-only probe and return parsed JSON, without raw errors."""
     try:
-        for line in open(SECRETS_CACHE):
-            line = line.strip()
-            if line.startswith("BLUEBUBBLES_PASSWORD="):
-                return line.split("=", 1)[1]
-    except OSError:
-        pass
-    return ""
-
-
-def _bb_server_info():
-    """GET /api/v1/server/info — returns dict or None on failure."""
-    pw = _bb_password()
-    if not pw:
-        return None
-    try:
-        import urllib.request
-        url = f"{BB_API_BASE}/server/info?password={pw}"
-        with urllib.request.urlopen(url, timeout=3) as r:
-            return json.loads(r.read().decode("utf-8", "ignore")).get("data")
-    except Exception:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout, env=env,
+        )
+        if result.returncode != 0:
+            return None
+        data = json.loads(result.stdout)
+        return data if isinstance(data, dict) else None
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
         return None
 
 
-def _tail_bb_log(n=50):
-    """Return last n parsed log lines: [{ts, level, message}, ...]."""
-    if not os.path.exists(BB_WATCHDOG_LOG):
-        return []
+def _gateway_is_live():
+    """Check the local gateway health endpoint without credentials."""
     try:
-        with open(BB_WATCHDOG_LOG) as f:
-            lines = f.readlines()[-n:]
-    except OSError:
-        return []
-    out = []
-    for line in lines:
-        line = line.rstrip("\n")
-        # Format: [YYYY-MM-DD HH:MM:SS] LEVEL: message
-        if not line.startswith("[") or "] " not in line:
-            continue
-        ts, _, rest = line[1:].partition("] ")
-        # Determine level from message keywords
-        if rest.startswith("OK") or rest.startswith("ok"):
-            level = "ok"
-        elif "STALL" in rest or "ERROR" in rest:
-            level = "stall"
-        elif rest.startswith("ACTION") or "Restart" in rest:
-            level = "action"
-        elif rest.startswith("WARN") or rest.startswith("LAG"):
-            level = "warn"
-        else:
-            level = "info"
-        out.append({"ts": ts, "level": level, "message": rest})
-    return out
+        with urlopen("http://127.0.0.1:18789/health", timeout=2) as response:
+            if response.status != 200:
+                return False
+            data = json.loads(response.read(4096))
+        return isinstance(data, dict) and data.get("ok") is True and data.get("status") == "live"
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
 
 
-def _lag_stats():
-    """Aggregate ~/.openclaw/logs/bb-ingest-lag.log (CSV: ts,age_sec,thresh,guid)."""
-    if not os.path.exists(BB_LAG_LOG):
-        return {"today": 0, "week": 0, "month": 0, "max_sec": 0, "avg_sec": 0, "recent": []}
-    today = datetime.now().strftime("%Y-%m-%d")
-    week_cutoff = datetime.now() - timedelta(days=7)
-    month_cutoff = datetime.now() - timedelta(days=30)
-    today_n = week_n = month_n = 0
-    max_sec = 0
-    sum_sec = 0
-    recent = []
+def _gateway_launchd_pid():
+    """Return the current gateway LaunchAgent PID, if it is running."""
     try:
-        with open(BB_LAG_LOG) as f:
-            lines = f.readlines()
-    except OSError:
-        return {"today": 0, "week": 0, "month": 0, "max_sec": 0, "avg_sec": 0, "recent": []}
-    for line in lines:
-        parts = line.strip().split(",")
-        if len(parts) < 4:
+        result = subprocess.run(
+            ["launchctl", "list", "ai.openclaw.gateway"],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(r'"PID"\s*=\s*(\d+)', result.stdout)
+    if not match:
+        match = re.search(r"\bpid\s*=\s*(\d+)", result.stdout, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _gateway_imsg_worker_count(gateway_pid):
+    """Count native imsg RPC workers descended from the live gateway process."""
+    if not gateway_pid:
+        return 0
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,command="],
+            capture_output=True, text=True, timeout=2,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return 0
+    if result.returncode != 0:
+        return 0
+
+    processes = {}
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3:
             continue
-        ts_str, age_str = parts[0], parts[1]
         try:
-            age = int(age_str)
-            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
+            pid, parent_pid = int(parts[0]), int(parts[1])
+        except ValueError:
             continue
-        if ts_str.startswith(today):
-            today_n += 1
-        if ts >= week_cutoff:
-            week_n += 1
-        if ts >= month_cutoff:
-            month_n += 1
-            sum_sec += age
-            if age > max_sec:
-                max_sec = age
-        recent.append({"ts": ts_str, "age_sec": age, "guid": parts[3][:8]})
-    avg_sec = int(sum_sec / month_n) if month_n else 0
-    return {
-        "today": today_n, "week": week_n, "month": month_n,
-        "max_sec": max_sec, "avg_sec": avg_sec,
-        "recent": recent[-10:][::-1],  # last 10, newest first
-    }
+        processes[pid] = (parent_pid, parts[2])
+
+    def is_gateway_descendant(pid):
+        seen = set()
+        while pid in processes and pid not in seen:
+            if pid == gateway_pid:
+                return True
+            seen.add(pid)
+            pid = processes[pid][0]
+        return pid == gateway_pid
+
+    return sum(
+        1
+        for pid, (_, command) in processes.items()
+        if re.search(r"(?:^|/)imsg\s+rpc(?:\s|$)", command)
+        and is_gateway_descendant(pid)
+    )
 
 
-def _restart_history():
-    """Parse 'Restarting BlueBubbles...' lines from watchdog log to count restarts."""
-    if not os.path.exists(BB_WATCHDOG_LOG):
-        return {"today": 0, "week": 0, "recent": []}
-    today = datetime.now().strftime("%Y-%m-%d")
-    week_cutoff = datetime.now() - timedelta(days=7)
-    today_n = week_n = 0
-    recent = []
-    pending_reason = None
+def _health_bool(value):
+    """Keep only real JSON booleans in the public health response."""
+    return value if isinstance(value, bool) else None
+
+
+def _health_int(value):
+    """Keep only real JSON integers in the public health response."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _health_text(value, max_length=64):
+    """Return a bounded diagnostic label, never command output or stderr."""
+    return value[:max_length] if isinstance(value, str) else None
+
+
+def _apple_message_time(value):
+    """Convert a Messages database timestamp to UTC ISO format."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        return None
+    scale = 1_000_000_000 if abs(value) > 1_000_000_000_000 else 1
+    apple_epoch = datetime(2001, 1, 1, tzinfo=timezone.utc)
     try:
-        with open(BB_WATCHDOG_LOG) as f:
-            for line in f:
-                line = line.rstrip("\n")
-                if not line.startswith("["):
-                    continue
-                ts_str = line[1:20]
-                try:
-                    ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    continue
-                if "STALL DETECTED" in line:
-                    pending_reason = line.split("STALL DETECTED:", 1)[1].strip().rstrip(",")[:100]
-                elif "Restarting BlueBubbles" in line or "BlueBubbles restarted" in line:
-                    if "BlueBubbles restarted" in line:
-                        if ts_str.startswith(today):
-                            today_n += 1
-                        if ts >= week_cutoff:
-                            week_n += 1
-                        recent.append({"ts": ts_str, "reason": pending_reason or "unknown"})
-                        pending_reason = None
-    except OSError:
-        return {"today": 0, "week": 0, "recent": []}
-    return {"today": today_n, "week": week_n, "recent": recent[-10:][::-1]}
+        return (apple_epoch + timedelta(seconds=value / scale)).isoformat()
+    except (OverflowError, ValueError):
+        return None
 
 
-def fetch_bluebubbles_health():
-    """Aggregate BB service info, watchdog state, recent events, lag, restarts."""
+def _latest_imessage_delivery():
+    """Read the latest outbound iMessage result without message or recipient data."""
+    delivery = {
+        "available": False,
+        "sent_at": None,
+        "delivered_at": None,
+        "delivered": None,
+        "sent": None,
+        "has_error": None,
+        "latency_ms": None,
+    }
+    try:
+        connection = sqlite3.connect(
+            f"file:{MESSAGES_DB}?mode=ro", uri=True, timeout=1,
+        )
+        try:
+            row = connection.execute(
+                """
+                SELECT date, date_delivered, is_delivered, is_sent, error
+                FROM message
+                WHERE is_from_me = 1
+                  AND service = 'iMessage'
+                  AND COALESCE(item_type, 0) = 0
+                  AND COALESCE(is_empty, 0) = 0
+                ORDER BY date DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error):
+        return delivery
+
+    delivery["available"] = True
+    if not row:
+        return delivery
+
+    sent_raw, delivered_raw, is_delivered, is_sent, error = row
+    delivery["sent_at"] = _apple_message_time(sent_raw)
+    delivery["delivered_at"] = _apple_message_time(delivered_raw)
+    delivery["delivered"] = bool(is_delivered)
+    delivery["sent"] = bool(is_sent)
+    delivery["has_error"] = bool(error)
+    if (
+        isinstance(sent_raw, (int, float))
+        and isinstance(delivered_raw, (int, float))
+        and delivered_raw > sent_raw > 0
+    ):
+        scale = 1_000_000_000 if abs(sent_raw) > 1_000_000_000_000 else 1
+        delivery["latency_ms"] = round((delivered_raw - sent_raw) * 1000 / scale, 1)
+    return delivery
+
+
+def fetch_imessage_health():
+    """Probe the live OpenClaw iMessage channel and native imsg bridge."""
     now = datetime.now(timezone.utc).timestamp()
-    with _bb_lock:
-        if _bb_cache["data"] and (now - _bb_cache["ts"]) < BB_CACHE_TTL:
-            return _bb_cache["data"]
+    with _imessage_health_lock:
+        cached = _imessage_health_cache["data"]
+        if cached is not None and (now - _imessage_health_cache["ts"]) < IMESSAGE_HEALTH_CACHE_TTL:
+            return cached
 
-    server = _bb_server_info()
-    state = {}
-    if os.path.exists(BB_STATE_FILE):
-        try:
-            with open(BB_STATE_FILE) as f:
-                state = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            state = {}
+        imsg_status = _run_json_probe([IMSG_BIN, "status", "--json"], timeout=5)
+        delivery = _latest_imessage_delivery()
+        gateway_live = _gateway_is_live()
+        gateway_pid = _gateway_launchd_pid()
+        worker_count = _gateway_imsg_worker_count(gateway_pid)
+        gateway = {
+            "available": gateway_live or gateway_pid is not None,
+            "enabled": gateway_pid is not None,
+            "configured": gateway_pid is not None,
+            "running": gateway_live,
+            "probe_ok": worker_count > 0,
+            "private_api": _health_bool(imsg_status.get("advanced_features")) if imsg_status else None,
+            "v2_ready": _health_bool(imsg_status.get("v2_ready")) if imsg_status else None,
+            "restart_pending": None,
+            "reconnect_attempts": None,
+            "has_error": not gateway_live or worker_count == 0,
+            "worker_count": worker_count,
+            "last_start_at": None,
+            "last_probe_at": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
 
-    now_ms = int(now * 1000)
-    all_seen_age_min = (now_ms - state["allSeenAt"]) // 60000 if state.get("allSeenAt") else None
-    last_restart_age_min = (now_ms - state["lastRestart"]) // 60000 if state.get("lastRestart") else None
+        imsg = {
+            "available": imsg_status is not None,
+            "version": _health_text(imsg_status.get("version")) if imsg_status else None,
+            "basic_features": _health_bool(imsg_status.get("basic_features")) if imsg_status else None,
+            "advanced_features": _health_bool(imsg_status.get("advanced_features")) if imsg_status else None,
+            "v2_ready": _health_bool(imsg_status.get("v2_ready")) if imsg_status else None,
+            "bridge_version": _health_int(imsg_status.get("bridge_version")) if imsg_status else None,
+            "sip": _health_text(imsg_status.get("sip"), 24) if imsg_status else None,
+            "typing_indicators": _health_bool(imsg_status.get("typing_indicators")) if imsg_status else None,
+            "read_receipts": _health_bool(imsg_status.get("read_receipts")) if imsg_status else None,
+        }
 
-    data = {
-        "server": {
-            "online": server is not None,
-            "version": server.get("server_version") if server else None,
-            "helper_connected": server.get("helper_connected") if server else False,
-            "private_api": server.get("private_api") if server else False,
-            "proxy_service": server.get("proxy_service") if server else None,
-            "macos_time_sync": server.get("macos_time_sync") if server else None,
-            "detected_imessage": server.get("detected_imessage") if server else None,
-        },
-        "watchdog": {
-            "all_guid": state.get("allGuid"),
-            "all_seen_at_ms": state.get("allSeenAt"),
-            "all_seen_age_min": all_seen_age_min,
-            "last_restart_ms": state.get("lastRestart"),
-            "last_restart_age_min": last_restart_age_min,
-            "pending_guid": state.get("pendingGuid", ""),
-            "pending_checks": state.get("pendingChecks", 0),
-        },
-        "events": _tail_bb_log(50),
-        "lag": _lag_stats(),
-        "restarts": _restart_history(),
-    }
+        gateway_down = gateway["running"] is False or gateway["probe_ok"] is False
+        gateway_healthy = (
+            gateway["available"]
+            and gateway["enabled"] is not False
+            and gateway["configured"] is True
+            and gateway["running"] is True
+            and gateway["probe_ok"] is True
+            and gateway["private_api"] is True
+            and gateway["v2_ready"] is True
+            and not gateway["has_error"]
+            and gateway["restart_pending"] is not True
+        )
+        imsg_down = imsg["available"] and imsg["basic_features"] is False
+        imsg_healthy = (
+            imsg["available"]
+            and imsg["basic_features"] is True
+            and imsg["advanced_features"] is True
+            and imsg["v2_ready"] is True
+        )
 
-    with _bb_lock:
-        _bb_cache["data"] = data
-        _bb_cache["ts"] = now
-    return data
+        if gateway_down or imsg_down:
+            status = "down"
+        elif gateway_healthy and imsg_healthy:
+            status = "healthy"
+        elif gateway["available"] or imsg["available"]:
+            status = "degraded"
+        else:
+            status = "unknown"
 
+        data = {
+            "status": status,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "gateway": gateway,
+            "imsg": imsg,
+            "last_delivery": delivery,
+        }
+        _imessage_health_cache["data"] = data
+        _imessage_health_cache["ts"] = now
+        return data
+
+
+CRON_DB_PATH = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
+CRON_STORE_KEY = os.path.expanduser("~/.openclaw/cron/jobs.json")
 
 def get_upcoming_cron_jobs():
-    """Read cron jobs.json and return upcoming scheduled runs."""
+    """Read the live SQLite cron store and return upcoming scheduled runs."""
     try:
-        with open(CRON_JOBS_PATH) as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+        connection = sqlite3.connect(
+            f"file:{CRON_DB_PATH}?mode=ro", uri=True, timeout=1,
+        )
+        try:
+            rows = connection.execute(
+                """
+                SELECT job_id, name, schedule_kind, schedule_expr, at, every_ms,
+                       next_run_at_ms, last_run_status, consecutive_errors,
+                       delete_after_run
+                  FROM cron_jobs
+                 WHERE store_key = ? AND enabled = 1
+                 ORDER BY next_run_at_ms IS NULL, next_run_at_ms, sort_order, job_id
+                """,
+                (CRON_STORE_KEY,),
+            ).fetchall()
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error):
         return []
 
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     jobs = []
-    for j in data.get("jobs", []):
-        if not j.get("enabled", True):
-            continue
-        state = j.get("state", {})
-        next_ms = state.get("nextRunAtMs")
-        sched = j.get("schedule", {})
+    for (
+        job_id, name, schedule_kind, schedule_expr, at, every_ms,
+        next_run_ms, last_status, consecutive_errors, delete_after_run,
+    ) in rows:
+        schedule_value = schedule_expr or at or (
+            f"every {every_ms}ms" if every_ms is not None else ""
+        )
         jobs.append({
-            "id": j.get("id", ""),
-            "name": j.get("name", ""),
-            "schedule_kind": sched.get("kind", ""),
-            "schedule_expr": sched.get("expr", sched.get("at", "")),
-            "next_run_ms": next_ms,
-            "last_status": state.get("lastStatus"),
-            "consecutive_errors": state.get("consecutiveErrors", 0),
-            "delete_after_run": j.get("deleteAfterRun", False),
+            "id": job_id or "",
+            "name": name or "",
+            "schedule_kind": schedule_kind or "",
+            "schedule_expr": schedule_value,
+            "next_run_ms": next_run_ms,
+            "last_status": last_status,
+            "consecutive_errors": consecutive_errors or 0,
+            "delete_after_run": bool(delete_after_run),
         })
-
-    # Sort by next run time (soonest first), nulls last
-    jobs.sort(key=lambda j: j["next_run_ms"] if j["next_run_ms"] else float("inf"))
     return jobs
 
 
@@ -575,8 +649,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._respond(200, {"services": get_launchagent_status()})
         elif path == "/api/cron":
             self._respond(200, {"jobs": get_upcoming_cron_jobs()})
-        elif path == "/api/bluebubbles":
-            self._respond(200, fetch_bluebubbles_health())
+        elif path == "/api/imessage-health":
+            self._respond(200, fetch_imessage_health())
         elif path == "/api/gateway-usage":
             data = fetch_gateway_usage()
             if data:
@@ -704,6 +778,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .stat-value{font-size:1.5rem;font-weight:700}
 .stat-sub{font-size:0.75rem;color:var(--muted);margin-top:0.15rem}
 
+/* Native iMessage health */
+.health-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0.9rem 1rem;margin-bottom:1rem}
+.health-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:0.8rem}
+.health-title{font-size:0.85rem;font-weight:600;margin-bottom:0.15rem}
+.health-summary{font-size:0.75rem;color:var(--muted)}
+.health-state{display:inline-flex;align-items:center;padding:0.2rem 0.55rem;border-radius:999px;font-size:0.7rem;font-weight:600;white-space:nowrap}
+.health-state-healthy{background:rgba(34,197,94,0.15);color:var(--green)}
+.health-state-degraded{background:rgba(245,158,11,0.15);color:var(--amber)}
+.health-state-down{background:rgba(239,68,68,0.15);color:var(--red)}
+.health-state-unknown{background:rgba(156,163,175,0.12);color:var(--muted)}
+.health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:0.65rem}
+.health-metric{background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.04);border-radius:7px;padding:0.65rem}
+.health-label{display:block;font-size:0.62rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:0.2rem}
+.health-value{display:block;font-size:0.76rem;font-weight:500;line-height:1.35}
+.health-value-good{color:var(--green)}
+.health-value-warn{color:var(--amber)}
+.health-value-bad{color:var(--red)}
+.health-foot{font-size:0.68rem;color:var(--muted);margin-top:0.6rem}
+@media(max-width:800px){.health-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:480px){.health-grid{grid-template-columns:1fr}.health-head{align-items:center}}
+
 /* Charts */
 .charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:1rem}
 @media(max-width:800px){.charts-grid{grid-template-columns:1fr}}
@@ -752,6 +847,25 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 <!-- Stat cards -->
 <div class="stats" id="stats"></div>
 
+<!-- Native iMessage health -->
+<section class="health-card" id="imessageHealthCard" aria-labelledby="imessageHealthTitle">
+  <div class="health-head">
+    <div>
+      <h2 class="health-title" id="imessageHealthTitle">Native iMessage Health</h2>
+      <div class="health-summary" id="imessageHealthSummary">Checking the delivery path...</div>
+    </div>
+    <span class="health-state health-state-unknown" id="imessageHealthState" role="status" aria-live="polite">Checking</span>
+  </div>
+  <div class="health-grid">
+    <div class="health-metric"><span class="health-label">OpenClaw channel</span><span class="health-value" id="imessageChannel">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Native bridge</span><span class="health-value" id="imessageBridge">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Features</span><span class="health-value" id="imessageFeatures">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Last outbound</span><span class="health-value" id="imessageDelivery">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Runtime</span><span class="health-value" id="imessageRuntime">Checking...</span></div>
+  </div>
+  <div class="health-foot" id="imessageHealthFoot">Waiting for the first probe</div>
+</section>
+
 <!-- Charts -->
 <div class="charts-grid">
   <div class="chart-box full" id="utilBox"><h2>Utilization Over Time</h2><div class="chart-wrap"><canvas id="utilChart"></canvas></div></div>
@@ -787,26 +901,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   <table class="cron-table" id="upcomingTable">
     <thead><tr><th>Job</th><th>Next Run</th><th>Last</th><th>Type</th></tr></thead>
     <tbody id="upcomingBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
-  </table>
-</div>
-
-<!-- BlueBubbles health -->
-<div class="cron-section">
-  <h2>BlueBubbles</h2>
-  <div id="bbHealthSummary" class="loading" style="margin-bottom:0.75rem">Loading...</div>
-  <table class="cron-table" id="bbStatsTable" style="margin-bottom:1rem">
-    <thead><tr><th>Server</th><th>Watchdog</th><th>Restarts</th><th>Lag Events</th></tr></thead>
-    <tbody id="bbStatsBody"><tr><td colspan="4" class="loading">Loading...</td></tr></tbody>
-  </table>
-  <h2 style="font-size:0.8rem">Recent Watchdog Activity</h2>
-  <table class="cron-table" id="bbEventsTable" style="margin-bottom:1rem">
-    <thead><tr><th style="width:11rem">Time</th><th style="width:5rem">Level</th><th>Message</th></tr></thead>
-    <tbody id="bbEventsBody"><tr><td colspan="3" class="loading">Loading...</td></tr></tbody>
-  </table>
-  <h2 style="font-size:0.8rem">Recent Restarts</h2>
-  <table class="cron-table" id="bbRestartsTable">
-    <thead><tr><th style="width:11rem">Time</th><th>Reason</th></tr></thead>
-    <tbody id="bbRestartsBody"><tr><td colspan="2" class="loading">Loading...</td></tr></tbody>
   </table>
 </div>
 
@@ -868,6 +962,102 @@ function shortJobId(id) {
   // Trim UUID-style prefixes, keep readable part
   return id.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, id.slice(0,8))
             .replace(/-0001$/, '');
+}
+
+function setImessageMetric(id, text, tone) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'health-value' + (tone ? ' health-value-' + tone : '');
+}
+
+async function refreshImessageHealth() {
+  const stateEl = document.getElementById('imessageHealthState');
+  const summaryEl = document.getElementById('imessageHealthSummary');
+  const footEl = document.getElementById('imessageHealthFoot');
+  try {
+    const r = await fetch('/api/imessage-health');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    const allowedStates = ['healthy', 'degraded', 'down', 'unknown'];
+    const state = allowedStates.includes(d.status) ? d.status : 'unknown';
+    const stateMeta = {
+      healthy: ['Healthy', 'Channel, delivery worker, and native bridge probes passed.'],
+      degraded: ['Degraded', 'The native path is available, but one capability is unverified.'],
+      down: ['Down', 'The OpenClaw channel or native iMessage bridge is not ready.'],
+      unknown: ['Unknown', 'Native iMessage health could not be fully verified.'],
+    }[state];
+    stateEl.textContent = stateMeta[0];
+    stateEl.className = 'health-state health-state-' + state;
+    summaryEl.textContent = stateMeta[1];
+
+    const g = d.gateway || {};
+    if (!g.available) {
+      setImessageMetric('imessageChannel', 'Unavailable', 'warn');
+    } else if (g.running === false || g.enabled === false || g.configured === false) {
+      setImessageMetric('imessageChannel', 'Stopped or disabled', 'bad');
+    } else if (g.probe_ok === true) {
+      const needsAttention = g.has_error || g.restart_pending === true;
+      setImessageMetric('imessageChannel', 'Running · RPC worker attached', needsAttention ? 'warn' : 'good');
+    } else {
+      setImessageMetric('imessageChannel', 'Running · probe unverified', 'warn');
+    }
+
+    const i = d.imsg || {};
+    if (!i.available) {
+      setImessageMetric('imessageBridge', 'Unavailable', 'warn');
+    } else if (i.basic_features === false) {
+      setImessageMetric('imessageBridge', 'Basic bridge not ready', 'bad');
+    } else if (i.advanced_features === true && i.v2_ready === true) {
+      const bridge = i.bridge_version != null ? 'Bridge v' + i.bridge_version : 'Bridge';
+      setImessageMetric('imessageBridge', bridge + ' · advanced', 'good');
+    } else {
+      setImessageMetric('imessageBridge', 'Basic mode only', 'warn');
+    }
+
+    if (!i.available) {
+      setImessageMetric('imessageFeatures', 'Not reported', '');
+    } else {
+      const typing = i.typing_indicators === true ? 'Typing on' : i.typing_indicators === false ? 'Typing off' : 'Typing unknown';
+      const receipts = i.read_receipts === true ? 'receipts on' : i.read_receipts === false ? 'receipts off' : 'receipts unknown';
+      const featureTone = i.typing_indicators === true && i.read_receipts === true ? 'good' : 'warn';
+      setImessageMetric('imessageFeatures', typing + ' · ' + receipts, featureTone);
+    }
+
+    const delivery = d.last_delivery || {};
+    if (!delivery.available) {
+      setImessageMetric('imessageDelivery', 'History unavailable', '');
+    } else if (delivery.delivered === true) {
+      const latency = delivery.latency_ms != null ? ' · ' + fmtDuration(delivery.latency_ms) : '';
+      setImessageMetric('imessageDelivery', 'Delivered ' + fmtAgo(delivery.delivered_at || delivery.sent_at) + latency, 'good');
+    } else if (delivery.has_error === true) {
+      setImessageMetric('imessageDelivery', 'Failed ' + fmtAgo(delivery.sent_at), 'bad');
+    } else if (delivery.sent === true) {
+      setImessageMetric('imessageDelivery', 'Sent ' + fmtAgo(delivery.sent_at) + ' · awaiting receipt', 'warn');
+    } else if (delivery.sent_at) {
+      setImessageMetric('imessageDelivery', 'Queued ' + fmtAgo(delivery.sent_at), 'warn');
+    } else {
+      setImessageMetric('imessageDelivery', 'No outbound history', '');
+    }
+
+    if (i.available) {
+      const version = i.version || 'unknown';
+      const sip = i.sip || 'unknown';
+      setImessageMetric('imessageRuntime', 'imsg ' + version + ' · SIP ' + sip, 'good');
+    } else {
+      setImessageMetric('imessageRuntime', 'imsg unavailable', 'warn');
+    }
+
+    let timing = 'Checked ' + fmtAgo(d.checked_at);
+    if (g.last_probe_at) timing += ' · channel probe ' + fmtAgo(g.last_probe_at);
+    footEl.textContent = timing;
+  } catch (e) {
+    stateEl.textContent = 'Unknown';
+    stateEl.className = 'health-state health-state-unknown';
+    summaryEl.textContent = 'The native iMessage health endpoint is unavailable.';
+    ['imessageChannel', 'imessageBridge', 'imessageFeatures', 'imessageDelivery', 'imessageRuntime']
+      .forEach(id => setImessageMetric(id, 'Unavailable', ''));
+    footEl.textContent = 'Probe request failed';
+  }
 }
 
 async function fetchData(hours) {
@@ -1550,88 +1740,12 @@ document.getElementById('timeControls').addEventListener('click', e => {
   refresh();
 });
 
-async function refreshBluebubbles() {
-  try {
-    const r = await fetch('/api/bluebubbles');
-    if (!r.ok) return;
-    const d = await r.json();
-
-    // Summary banner
-    const s = d.server || {};
-    const w = d.watchdog || {};
-    const summaryEl = document.getElementById('bbHealthSummary');
-    const overallOk = s.online && s.helper_connected;
-    const dot = overallOk ? '<span style="color:' + C.green + '">●</span>' :
-                s.online ? '<span style="color:' + C.amber + '">●</span>' :
-                           '<span style="color:' + C.red + '">●</span>';
-    const msg = !s.online ? 'BB API unreachable' :
-                !s.helper_connected ? 'BB up but Private API helper disconnected — sending limited' :
-                'Healthy — server v' + (s.version || '?') + ', helper connected, ' + (s.proxy_service || '?') + ' proxy';
-    summaryEl.classList.remove('loading');
-    summaryEl.innerHTML = dot + ' ' + msg + ' · last msg ' +
-      (w.all_seen_age_min == null ? 'never' : w.all_seen_age_min + 'm ago') +
-      ' · last restart ' + (w.last_restart_age_min == null ? 'never' :
-        (w.last_restart_age_min < 60 ? w.last_restart_age_min + 'm ago' :
-         w.last_restart_age_min < 1440 ? Math.floor(w.last_restart_age_min/60) + 'h ago' :
-         Math.floor(w.last_restart_age_min/1440) + 'd ago'));
-
-    // Stats row
-    const statsEl = document.getElementById('bbStatsBody');
-    const drift = s.macos_time_sync == null ? '?' : (Math.abs(s.macos_time_sync) < 1 ? 'OK' : s.macos_time_sync.toFixed(2) + 's');
-    const lag = d.lag || {};
-    const restarts = d.restarts || {};
-    statsEl.innerHTML = `<tr>
-      <td>v${s.version || '?'}<br>
-        <span style="font-size:0.75rem;color:${C.muted}">helper: ${s.helper_connected ? '<span style="color:'+C.green+'">on</span>' : '<span style="color:'+C.red+'">off</span>'} · drift: ${drift}</span><br>
-        <span style="font-size:0.7rem;color:${C.muted}">${s.detected_imessage || ''}</span>
-      </td>
-      <td>last msg: ${w.all_seen_age_min == null ? '-' : w.all_seen_age_min + 'm ago'}<br>
-        <span style="font-size:0.75rem;color:${C.muted}">guid: ${(w.all_guid || '-').slice(0, 8)}</span><br>
-        <span style="font-size:0.7rem;color:${w.pending_checks > 0 ? C.amber : C.muted}">pending: ${w.pending_checks || 0}</span>
-      </td>
-      <td>today: <strong>${restarts.today || 0}</strong> · 7d: ${restarts.week || 0}<br>
-        <span style="font-size:0.75rem;color:${C.muted}">last: ${w.last_restart_age_min == null ? 'never' : w.last_restart_age_min + 'm ago'}</span>
-      </td>
-      <td>today: <strong>${lag.today || 0}</strong> · 7d: ${lag.week || 0} · 30d: ${lag.month || 0}<br>
-        <span style="font-size:0.75rem;color:${C.muted}">max: ${lag.max_sec || 0}s · avg: ${lag.avg_sec || 0}s</span>
-      </td>
-    </tr>`;
-
-    // Events table
-    const events = d.events || [];
-    const evEl = document.getElementById('bbEventsBody');
-    if (!events.length) {
-      evEl.innerHTML = '<tr><td colspan="3" style="color:'+C.muted+';text-align:center;padding:1rem">No events</td></tr>';
-    } else {
-      const colorFor = lvl => lvl === 'ok' ? C.green : lvl === 'stall' ? C.red :
-                              lvl === 'action' ? C.amber : lvl === 'warn' ? C.orange : C.muted;
-      evEl.innerHTML = events.slice(-25).reverse().map(e => `<tr>
-        <td style="color:${C.muted};font-size:0.78rem">${e.ts}</td>
-        <td><span style="color:${colorFor(e.level)};text-transform:uppercase;font-size:0.75rem">${e.level}</span></td>
-        <td style="font-size:0.85rem">${e.message.replace(/</g,'&lt;')}</td>
-      </tr>`).join('');
-    }
-
-    // Restarts table
-    const rEl = document.getElementById('bbRestartsBody');
-    const rs = restarts.recent || [];
-    if (!rs.length) {
-      rEl.innerHTML = '<tr><td colspan="2" style="color:'+C.muted+';text-align:center;padding:1rem">No restarts logged</td></tr>';
-    } else {
-      rEl.innerHTML = rs.map(r => `<tr>
-        <td style="color:${C.muted};font-size:0.78rem">${r.ts}</td>
-        <td style="font-size:0.85rem">${(r.reason || '').replace(/</g,'&lt;')}</td>
-      </tr>`).join('');
-    }
-  } catch(e) {}
-}
-
 refresh();
+refreshImessageHealth();
 refreshServices();
 refreshUpcoming();
-refreshBluebubbles();
-setInterval(refreshBluebubbles, 60 * 1000);
 setInterval(refresh, 5 * 60 * 1000);
+setInterval(refreshImessageHealth, 60 * 1000);
 setInterval(refreshServices, 60 * 1000);
 setInterval(refreshUpcoming, 5 * 60 * 1000);
 </script>

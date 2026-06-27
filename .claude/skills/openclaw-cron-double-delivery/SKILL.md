@@ -1,132 +1,160 @@
 ---
 name: openclaw-cron-double-delivery
-description: >-
-  Fix OpenClaw cron jobs delivering messages multiple times (2x or 3x) to the recipient.
-author: Claude Code
-version: 1.1.0
-date: 2026-06-21
+description: Diagnose and fix OpenClaw cron jobs that deliver the same message two or more times, report a message failure despite successful delivery, or retry side effects after a delivery error. Use when prompts and cron delivery may both send, retired channel targets remain, or run history shows conflicting execution and delivery outcomes.
 ---
 
-# OpenClaw Cron Double/Triple Delivery
+# Fix OpenClaw Cron Double Delivery
 
 ## Problem
-A cron job delivers its output to the recipient multiple times per run. The job may also
-report `status: error` with `"Message failed"` even though delivery succeeds, and
-`consecutiveErrors` increments causing backoff delays.
 
-## Context / Trigger Conditions
-- Recipient reports receiving the same briefing/message 2-3 times
-- Run history (JSONL) shows: `"status":"error"`, `"error":"Message failed"`, but
-  `"delivered":true`, `"deliveryStatus":"delivered"`
-- Gateway logs show: `[tools] message failed: Unknown channel: bluebubbles` or
-  `[tools] message failed: Unknown target "X" for imessage`
-- The job prompt tells the agent to send messages directly (e.g., `imsg send --to`,
-  or instructs it to use the `message` tool)
-- The job also has a `delivery` config block in jobs.json
+A cron job delivers the same output multiple times, or reports an execution
+error even though cron delivery succeeded. Repeated failures can increase
+`consecutiveErrors`, apply backoff, and rerun external side effects.
 
-## Root Cause
-OpenClaw cron jobs have **two independent delivery paths**:
+Inspect current state through the gateway and SQLite-backed run history:
 
-1. **Agent tool calls**: The agent can use the `message` tool or `imsg` CLI during
-   execution to send messages directly
-2. **Cron delivery system**: After the job finishes, the cron system reads the job's
-   `delivery` config and sends the agent's final summary text to the specified target
-
-When the prompt instructs the agent to send messages AND the job has a delivery config,
-both paths fire. If the agent's message tool call also fails (e.g., channel mismatch),
-the agent may retry, creating additional deliveries. Meanwhile the cron delivery system
-still sends successfully, marking `delivered: true`.
-
-The `status: error` comes from the agent's failed tool call, not from the cron delivery.
-This is why the job shows "error" but "delivered" simultaneously.
-
-## Solution
-
-Choose exactly one delivery path.
-
-For ordinary reports and briefings, never have the agent send messages
-directly. Let the cron delivery system handle delivery.
-
-### In the prompt, add a delivery directive:
-```
-DELIVERY: Do NOT use the message tool or imsg. Your final text output IS the briefing
--- the cron system delivers it automatically.
+```bash
+openclaw cron list --all --json
+openclaw cron runs --id <job-id> --limit 10
 ```
 
-### Remove any direct send instructions:
-- Remove `imsg send --to ...` commands
-- Remove instructions to "send a message to Julia/Dylan"
-- Change "Send error to Dylan" to "Output: [error message]" (cron delivery handles it)
+Do not inspect or edit `~/.openclaw/cron/jobs.json` or run JSONL files as live
+state. OpenClaw 2026.6 stores live jobs in `cron_jobs` and history in
+`cron_run_logs` inside `~/.openclaw/state/openclaw.sqlite`.
 
-### For error notifications:
-Instead of having the agent send error messages to a different person, just have it
-output the error text. The cron delivery will send it to the configured recipient.
-If you need errors routed to a different person, create a separate error-notification
-job or handle it at the gateway level.
+## Root cause
 
-### Exception: one-shots with external side effects
+Cron jobs can have two independent delivery paths:
 
-Booking, purchase, and other irreversible one-shots should use
-`delivery.mode: "none"` and have the agent send exactly one final status. A
-cron announce failure can otherwise turn an already successful side effect
-into an error/retry cycle. This exception requires all of the following:
+1. The agent sends during execution with the message tool or `imsg`.
+2. The cron runner sends the final output using the job's `delivery` block.
 
-- An idempotency preflight against the external system and matching calendar.
-- `deleteAfterRun: true`.
-- A successful-run tombstone so repo sync cannot redeploy the completed job.
-- No cron-layer `channel` or `to` delivery fields.
+If the prompt instructs a send and the job also uses
+`delivery.mode: "announce"`, both paths fire. A failed agent-side send can mark
+the execution as an error while cron still records successful final delivery.
+Retries may then create a third message or repeat the task.
 
-### After fixing the prompt:
-1. Reset error state on Mini:
-   ```python
-   j["state"]["consecutiveErrors"] = 0
-   j["state"]["lastRunStatus"] = "ok"
-   j["state"]["lastStatus"] = "ok"
-   del j["state"]["lastError"]  # if present
-   ```
-2. Bump `updatedAtMs` to `int(time.time() * 1000)` for gateway hot-reload
-3. Verify `nextRunAtMs` is correct (scp from dotfiles may overwrite Mini's live value)
+Common evidence:
 
-### Reference pattern (Dylan's working briefing job):
+- The prompt says to send or invoke `imsg`, while delivery mode is `announce`.
+- Run history has `status: error` with `deliveryStatus: delivered`.
+- Gateway logs show a message-tool failure for a retired channel or invalid
+  iMessage target.
+- The recipient receives the direct send and the cron summary.
+
+## Choose exactly one path
+
+### Ordinary reports and briefings
+
+Use cron-managed delivery. Remove all direct-send instructions and make the
+prompt return only the content to deliver:
+
+```text
+DELIVERY: Do not use the message tool or imsg. Your final text output is the
+briefing; the cron runner delivers it automatically.
 ```
-"message": "You are Dylan's morning briefing assistant...
-  ...Compose Briefing\n\nFormat a concise iMessage-friendly summary:..."
-```
-No mention of sending, messaging, or delivery. The agent just outputs text, and the
-cron delivery config handles the rest.
 
-## Verification
-- Next cron run should show `"status":"ok"` in the JSONL run history
-- Recipient receives exactly one message
-- No `[tools] message failed` errors in gateway log for that job's session
+Keep the job delivery configuration:
+
+```json
+{
+  "mode": "announce",
+  "channel": "imessage",
+  "to": "chat_id:171"
+}
+```
+
+### One-shots with external side effects
+
+Bookings, purchases, and other irreversible jobs use the inverse pattern:
+
+- `delivery.mode: "none"` and no cron-layer `channel` or `to`.
+- The agent sends exactly one final status.
+- The prompt first checks the external system and matching calendar for an
+  existing result.
+- The job uses `deleteAfterRun: true`.
+- The successful `cron_run_logs` row remains as the deployment tombstone until
+  the canonical repo definition is removed.
+
+A cron announce failure must not convert a successful purchase or booking into
+a retryable task.
+
+## Apply the fix
+
+Live mutations must use the supported cron API, then be mirrored in the
+canonical repo at `~/dotfiles/openclaw/cron/jobs.json`.
+
+For a cron-managed report:
+
+```bash
+openclaw cron edit <job-id> \
+  --message "<prompt with all direct-send instructions removed>" \
+  --announce --channel imessage --to 'chat_id:171'
+```
+
+For an agent-managed side-effecting one-shot:
+
+```bash
+openclaw cron edit <job-id> --no-deliver --delete-after-run \
+  --message "<idempotency preflight, task, and exactly one final status send>"
+```
+
+Mirror the resulting prompt and delivery block in the repo, validate, and run
+the deploy consistency check:
+
+```bash
+python3 -m json.tool ~/dotfiles/openclaw/cron/jobs.json >/dev/null
+~/dotfiles/openclaw/sync-cron-jobs.sh deploy
+```
+
+Do not reset error counters or runtime state by editing SQLite or a legacy JSON
+file. A successful subsequent run updates status normally. If a schedule is
+also wrong, reapply it with `openclaw cron edit --cron`, `--at`, or `--every`
+so the gateway recomputes `nextRunAtMs`.
+
+## Verify
+
+Before running anything manually, remember that a debug run can repeat both
+delivery and side effects. Obtain explicit authorization for a side-effecting
+job.
+
+After the next scheduled run, verify:
+
+- `status` is `ok`.
+- `deliveryStatus` is `delivered` for cron-managed jobs or `not-requested` for
+  agent-managed jobs.
+- The recipient received exactly one message.
+- Gateway logs contain no message-tool failure for that session.
+- `consecutiveErrors` returned to zero.
+
+Use a read-only SQLite query when field-level evidence is needed:
+
+```bash
+sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
+  "SELECT job_id, last_run_status, last_delivery_status, consecutive_errors, last_error FROM cron_jobs WHERE job_id = '<job-id>';"
+```
 
 ## Example
-Before (broken):
-```
-If this fails with any auth error:
-- Send error to Dylan via iMessage: imsg send --to dylanbochman@gmail.com "AUTH ERROR..."
-...
-The briefing will be delivered to Julia via iMessage automatically.
+
+Broken prompt:
+
+```text
+If authentication fails, send Dylan an iMessage.
+Then produce Julia's briefing.
 ```
 
-After (fixed):
-```
-DELIVERY: Do NOT use the message tool or imsg. Your final text output IS the briefing
--- the cron system delivers it automatically.
+with `delivery.mode: "announce"` can send both the direct error/status and the
+cron final output.
 
-If this fails with any auth error:
-- Output: "Morning briefing skipped -- auth error. Dylan: re-auth and scp credentials."
-...
-Keep it brief and scannable.
+Fixed prompt:
+
+```text
+DELIVERY: Do not use the message tool or imsg. Your final text output is the
+briefing; the cron runner delivers it automatically.
+
+If authentication fails, output a concise authentication error as the final
+text. Otherwise output the briefing.
 ```
 
-## Notes
-- The cron `delivery.mode: "announce"` sends the agent's final summary text as a message
-- Side-effecting one-shots use the inverse pattern: `delivery.mode: "none"`, one agent-managed status, and mandatory idempotency checks
-- `delivery.channel: "bluebubbles"` and `delivery.to` control where it goes
-- The agent's `message` tool and the cron delivery are completely independent — there is
-  no deduplication between them
-- This pattern applies to ALL cron jobs, not just briefings — any job whose prompt tells
-  the agent to send messages while also having a delivery config will double-deliver
-- Related skill: `openclaw-cron-job-creation` covers jobs.json schema and creation
-- Related skill: `openclaw-cron-ghost-jobs` covers jobs running after removal
+The agent's message tool and cron delivery have no shared deduplication. Apply
+this rule to every cron job, not only briefings.
