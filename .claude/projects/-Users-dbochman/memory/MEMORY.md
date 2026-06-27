@@ -27,7 +27,7 @@
 - Gateway hot-reloads config changes without restart
 - Gateway health monitor: enabled (`channelHealthCheckMinutes: 5`)
 - Heartbeat interval: 12h with no routine transport action
-- The native bridge supports typing and advanced actions; `typingMode: "never"` and automatic read receipts remain disabled in runtime config
+- The native bridge supports typing and advanced actions; `typingMode: "thinking"` is enabled while automatic read receipts remain disabled
 - Reactions/tapbacks: native `message` tool `action: "react"` (love, like, dislike, laugh, emphasize, question)
 
 ## Secrets & Auth

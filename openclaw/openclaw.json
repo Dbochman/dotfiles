@@ -121,7 +121,7 @@
     "ownerDisplay": "raw"
   },
   "session": {
-    "typingMode": "never",
+    "typingMode": "thinking",
     "dmScope": "per-channel-peer",
     "reset": {
       "mode": "daily",
