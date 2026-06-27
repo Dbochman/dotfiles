@@ -99,11 +99,14 @@ Examples:
   fail. Recovery: re-auth on laptop, scp to Mini.
 - `1password-cli` — used in `~/.openclaw/.env-token` chain. Cache-only
   pattern reduces blast radius but version skew can break biometric.
-- `tailscale` (formula) — supplies the Mini's CLI for Serve/status while the
-  logged-in macOS GUI/network extension remains the active backend. Keep
-  `/usr/sbin` on the gateway PATH so backend discovery can use `lsof`; a CLI
-  upgrade or backend-selection regression can disable private Control UI/node
-  access. See `tailscale-macos-localapi-stale-port` skill.
+- Tailscale — the logged-in macOS app/network extension is the authoritative
+  backend. `/opt/homebrew/bin/tailscale` is a source-controlled wrapper that
+  executes the app-bundled CLI with `TAILSCALE_BE_CLI=1`, keeping the CLI and
+  daemon on the exact same build. Keep `/usr/sbin` on the gateway PATH so
+  backend discovery can use `lsof`; an app update or backend-selection
+  regression can disable private Control UI/node access. The Homebrew formula
+  is retained unlinked only as a recovery artifact; do not relink its CLI.
+  See `tailscale-macos-localapi-stale-port` skill.
 
 Recovery: SSH-recoverable but with a re-auth detour.
 

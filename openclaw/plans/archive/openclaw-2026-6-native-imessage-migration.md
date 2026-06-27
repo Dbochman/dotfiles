@@ -80,9 +80,11 @@ retired application.
 - Gateway log after the final secret-clearing restart at `2026-06-27 17:04:09 EDT`
   shows 12 loaded plugins including `imessage`, no BlueBubbles plugin, and no
   new `imsg rpc not ready` errors.
-- The source-controlled gateway launcher includes system `sbin` paths so the
-  Tailscale CLI selects the logged-in macOS GUI/network-extension backend rather
-  than the unused Homebrew `tailscaled` backend.
+- The source-controlled `/opt/homebrew/bin/tailscale` wrapper executes the CLI
+  bundled with the logged-in macOS app using `TAILSCALE_BE_CLI=1`, so CLI and
+  network-extension daemon builds match exactly. The gateway launcher retains
+  system `sbin` paths for backend discovery; the Homebrew `tailscaled` backend
+  remains a separate logged-out recovery install and is not selected.
 - Tailscale Serve maps tailnet-only HTTPS/WSS on
   `dylans-mac-mini.tail3e55f9.ts.net` to `127.0.0.1:18789`; post-repair gateway
   startup logged `serve enabled` and both local and HTTPS health checks passed.
@@ -912,10 +914,11 @@ supported operational rollback.
   synthetic message.
 - Enabled global inbound attachment ingestion with an explicit local Messages
   root and 16 MB cap; the iMessage provider hot-reloaded and probed healthy.
-- Repaired Tailscale Serve by upgrading the Homebrew CLI, correcting the
-  source/live gateway launcher PATH so it selects the logged-in macOS backend,
-  and reapplying the tailnet-only HTTPS/WSS route. A clean gateway restart
-  logged `serve enabled`, and the HTTPS Control UI plus `/health` returned 200.
+- Repaired Tailscale Serve, then aligned the CLI with the logged-in macOS
+  network-extension backend by installing a source-controlled wrapper around
+  the app-bundled CLI. The tailnet-only HTTPS/WSS route remains applied; a clean
+  gateway restart logged `serve enabled`, and the HTTPS Control UI plus
+  `/health` returned 200.
 - Audited the SQLite cron cutover, recalculated the Q3 and Q4 double-date jobs
   to their intended 14:00 UTC schedules, removed three consumed World Cup
   definitions, and hardened deployment so stale one-shot runtime timestamps

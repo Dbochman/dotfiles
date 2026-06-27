@@ -26,6 +26,7 @@
 - Stable targets: `chat_id:171` (Dylan), `chat_id:1` (Julia), `chat_id:170` (group)
 - Gateway detects config changes, but channel-scoped runtime snapshots such as `session.typingMode` require an iMessage channel or gateway restart
 - Gateway health monitor: enabled (`channelHealthCheckMinutes: 5`)
+- Tailscale CLI: `/opt/homebrew/bin/tailscale` is the managed app-bundle wrapper (`TAILSCALE_BE_CLI=1`); the Homebrew formula stays unlinked so CLI and active macOS network-extension builds match
 - Heartbeat interval: 12h with no routine transport action
 - The native bridge supports typing and advanced actions; `typingMode: "instant"` is enabled while automatic read receipts remain disabled
 - Reactions/tapbacks: native `message` tool `action: "react"` (love, like, dislike, laugh, emphasize, question)
