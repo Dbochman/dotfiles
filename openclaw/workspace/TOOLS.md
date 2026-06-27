@@ -12,7 +12,7 @@ qmd search "cart URL"                         # keyword-only search
 qmd get qmd://skills/grocery-reorder/skill.md # read a specific doc
 ```
 
-Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKILL.md files), `plans` (native iMessage migration, archived BB implementation, Private API, workspace state), `bin-scripts` (README, weekly upgrade doc).
+Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKILL.md files), `plans` (current plans plus archived architecture/migrations), and `bin-scripts` (helper-script documentation).
 
 ## Smart Home Devices
 
@@ -161,31 +161,20 @@ imsg chats --limit 10 --json
 - Dylan & Julia group: `chat_id:170`
 - Current cron deliveries use `channel: "imessage"` with `chat_id:*` targets.
 - Native iMessage accepts handles and explicit prefixes (`imessage:`, `sms:`, `auto:`, `chat_id:`, `chat_guid:`, `chat_identifier:`), but prefer `chat_id:*` for known stable chats.
-- Do **not** use BlueBubbles `any;-;` or `any;+;` targets during normal operation.
+- BlueBubbles `any;-;` and `any;+;` targets are retired and invalid.
 - Reaction types remain: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`.
 
-## BlueBubbles Rollback Only
+## Native iMessage Recovery
 
-BlueBubbles remains installed only as a rollback path during the native iMessage soak. OpenClaw runtime config uses `channels.imessage`, not `channels.bluebubbles`, and live cron jobs deliver through native iMessage.
-
-Do not troubleshoot routine iMessage delivery by restarting BlueBubbles. First check native iMessage with:
+BlueBubbles is fully retired and no longer provides a rollback path. Diagnose native iMessage with:
 
 ```bash
 openclaw channels status --probe --channel imessage
-tail -120 ~/.openclaw/logs/gateway.log | grep -i imessage
+tail -120 ~/Library/Logs/openclaw/gateway.log | grep -i imessage
 imsg status --json
 ```
 
-If Dylan explicitly asks for rollback testing:
-
-```bash
-set -a
-source ~/.openclaw/.secrets-cache
-set +a
-openclaw message send --channel bluebubbles --target "any;-;${DYLAN_EMAIL}" --message "BlueBubbles rollback test" --json
-```
-
-BB targets are historical and rollback-only: DM GUIDs use `any;-;<address>`, group GUIDs use `any;+;<chat-identifier-hex>`. Detailed BB internals live in archived plans; search `qmd query "bluebubbles rollback"` or `qmd query "bluebubbles private API"` if rollback is actually active.
+If native repair fails, restoring BlueBubbles would require an explicit fresh install and configuration from archived documentation; it is not an operational fallback.
 
 ## FindMy Locate
 

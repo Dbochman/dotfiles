@@ -2,14 +2,11 @@
 name: openclaw-imessage-ack-reaction
 description: >-
   Configure and debug OpenClaw native iMessage tapbacks and acknowledgment reactions.
-author: Claude Code
-version: 2.0.0
-date: 2026-03-06
 ---
 
 # OpenClaw iMessage Reactions / Tapbacks
 
-## Current Status (v2026.3.2+)
+## Current Status (OpenClaw 2026.6.10)
 
 Native iMessage reactions **work** as of v2026.3.2-beta.1. The agent can send tapbacks
 via the `message` tool with `action: "react"` and a `message_id` from inbound metadata.
@@ -22,7 +19,7 @@ via the `message` tool with `action: "react"` and a `message_id` from inbound me
 - **Supported tapback types**: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`
   (Apple limitation: no custom emoji reactions on iMessage)
 - **Requires `message_id`**: The inbound message metadata must include a `message_id`
-  for the agent to target. This is provided automatically by the BlueBubbles provider.
+  for the agent to target. This is provided automatically by the native `imessage` provider.
 
 ## What Does NOT Work
 
@@ -61,8 +58,7 @@ Cron jobs and skills can instruct the agent to react as part of their workflow.
 
 - Tapbacks are native Apple reactions — they appear as the small icon on the message
   bubble, not as a separate text message
-- The `imsg react` CLI still exists but is NOT used by the gateway; reactions go through
-  the BlueBubbles Private API (`POST /api/v1/message/react`)
+- The gateway routes reactions through the native `imsg` bridge.
 - Prior to v2026.3.2, reactions were broken (v2026.2.26) or unsupported (v2026.2.14).
   The old workaround of sending a "eyes" text message is no longer needed.
 - Mac Mini SSH user is `dbochman`, not `dylanbochman`

@@ -1,8 +1,8 @@
 # OpenClaw Usage Dashboard
 
-## Status: v7.2 (2026-05-01)
+## Status: v7.4 (2026-06-27)
 
-Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Mac Mini, Tailscale-only access.
+Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on the Mac Mini with home-LAN and Tailscale-tailnet access.
 
 ### Architecture
 
@@ -14,8 +14,8 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Ma
 | `ccusage-setup.sh` | Any machine: `dotfiles/openclaw/bin/` | Installs ccusage-push LaunchAgent with correct paths |
 | History JSONL | Mini: `~/.openclaw/usage-history/YYYY-MM-DD.jsonl` | One file per day, append-only OpenClaw snapshots |
 | ccusage JSON | Mini: `~/.openclaw/usage-history/ccusage-{hostname}.json` | Per-machine Claude Code daily token usage, merged by dashboard |
-| State file | Mini: `~/.openclaw/usage-history/.snapshot-state` | Tracks log/cron offsets between snapshots |
-| OAuth cache | Mini: `~/.openclaw/.anthropic-oauth-cache` | Pushed from MacBook every 30min |
+| State file | Mini: `~/.openclaw/usage-history/.snapshot-state` | Tracks the runtime-log offset and SQLite cron-run high-water cursor between snapshots |
+| OAuth cache | Mini: `~/.openclaw/.anthropic-oauth-cache` | Refreshed locally every 6 hours by `ai.openclaw.oauth-refresh` |
 
 ### Data Sources
 
@@ -23,9 +23,10 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Ma
 |--------|-----------------|--------------|
 | Anthropic Usage API | 5h/7d utilization %, per-model %, reset times | `fetch_utilization()` via OAuth token |
 | **Gateway sessions.usage RPC** | **Per-session tokens, costs, cache, latency, tool usage, model split, daily aggregates** | **`openclaw gateway call sessions.usage --json` via WebSocket** |
-| Cron run JSONL | Job ID, status, duration, model, token usage, delivered flag | `parse_cron_runs()` via offset tracking |
+| SQLite cron history | Job ID, status, duration, model, token usage, delivered flag | `parse_cron_runs()` reads `cron_run_logs` with a durable composite cursor |
 | Runtime log | Gateway restarts, errors (tslog format) | `parse_runtime_log()` via offset tracking |
-| BlueBubbles API | Messages sent/received counts per interval | `fetch_bb_messages()` via `message/query` endpoint |
+| Local Messages database | Native iMessage sent/received counts per interval | `fetch_imessage_messages()` via read-only `chat.db` query |
+| Native iMessage health probes | Live OpenClaw channel, bridge capabilities, and latest outbound delivery metadata | Cached gateway `/health`, attached `imsg rpc` worker check, `imsg status`, and optional read-only `chat.db` query |
 | ccusage (Claude Code) | Daily token totals, per-model breakdown, cache stats | `ccusage-push.sh` via `npx ccusage daily --json` on MacBook |
 
 ### Dashboard Features
@@ -33,6 +34,8 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on Ma
 **Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day. Sonnet 7d gauge only appears when there's active Sonnet usage. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns. Two additional gauges show OpenClaw (orange) and Claude Code (blue) token share of combined usage. Entire section auto-hides when utilization data is unavailable (e.g., stale OAuth token).
 
 **Stat cards** — All cards auto-hide when their value is zero for the selected time range. Available: Total Cost ($), Total Tokens (in/out with cache), Cron Runs (with failure count), Messages (sent/recv), Sessions (with tool calls), Errors, Gateway Restarts. Cost/sessions require gateway RPC data; falls back to "No Activity" when nothing to show.
+
+**Native iMessage Health card** — A 60-second cached, read-only check of the production OpenClaw gateway, its attached `imsg rpc` delivery worker, and the native `imsg` bridge. Shows healthy/degraded/down state, basic/advanced/v2 readiness, typing/read-receipt capability, `imsg`/SIP runtime details, and privacy-safe metadata for the latest outbound delivery when the database is readable. It never sends a synthetic message and does not expose message contents, recipients, command output, or credentials.
 
 **Charts** — all charts auto-hide when they have no data to display:
 - Utilization Over Time — line chart with 100% threshold line
@@ -64,15 +67,20 @@ Bar charts (Activity, Token Usage) use bucket sizes that scale with the time ran
 | 7d | 12-hour (AM/PM) | Keeps bars thick enough to read |
 | 30d | Daily | One bar per day, clear daily patterns |
 
-### BlueBubbles Message Integration
+### Native iMessage Message Integration
 
-Added in v3. The snapshot script queries BB's `POST /api/v1/message/query` endpoint with an `after` timestamp (from previous snapshot). Counts `isFromMe=true` as sent, `isFromMe=false` as received. Reads `BLUEBUBBLES_PASSWORD` from `~/.openclaw/.secrets-cache`.
+The snapshot script reads `~/Library/Messages/chat.db` directly with an `after`
+timestamp from the previous snapshot. It counts `is_from_me=1` as sent and
+`is_from_me=0` as received. No channel server or messaging credential is
+required.
 
-Historical data backfilled from BB for Feb 1 – Mar 7, 2026 (daily granularity). Backfill entries marked with `_backfill: true` and filtered from 6h/24h chart views to avoid false spikes.
+The retired Feb 1–Mar 7 BlueBubbles backfill has aged out under the 90-day
+history retention policy. The renderer still recognizes `_backfill: true` so a
+restored archive cannot create false spikes in 6h/24h views.
 
 ### Claude Code Usage Integration
 
-Added in v5. The `ccusage-push.sh` script runs on the MacBook (where Claude Code session logs live at `~/.claude/projects/`) every 30 minutes via `ai.openclaw.ccusage-push` LaunchAgent. It runs `npx ccusage daily --json --breakdown --offline --since <90 days ago>`, producing a JSON file with per-day per-model token breakdowns (input, output, cache creation, cache read, total, cost). The file is pushed to Mini via scp at `~/.openclaw/usage-history/ccusage-daily.json`.
+Added in v5. The `ccusage-push.sh` script runs on the MacBook (where Claude Code session logs live at `~/.claude/projects/`) every 30 minutes via the `ai.openclaw.ccusage-push` LaunchAgent. It runs `npx ccusage daily --json --breakdown --offline --since <90 days ago>`, producing a JSON file with per-day per-model token breakdowns (input, output, cache creation, cache read, total, cost). Each source machine pushes to `~/.openclaw/usage-history/ccusage-<hostname>.json`; the dashboard merges all matching `ccusage-*.json` files.
 
 The dashboard `/api/data` endpoint includes the ccusage data in its response. The Token Usage Over Time chart shows OpenClaw (orange) and Claude Code (blue) as stacked bars with daily granularity. Two gauges show each source's percentage of combined token usage.
 
@@ -87,11 +95,22 @@ Since ccusage data is daily granularity and the push runs on a laptop (not alway
 | `/api/current` | GET | Latest snapshot only |
 | `/api/services` | GET | LaunchAgent service status (label, status, last_run, next_run, schedule kind, last_exit) |
 | `/api/cron` | GET | Upcoming cron job schedule |
+| `/api/imessage-health` | GET | Normalized native iMessage channel, bridge, and latest-delivery health (60-sec cached; always returns a structured state) |
 | `/api/gateway-usage` | GET | Gateway sessions.usage RPC (5-min cached). Returns totals, sessions, daily, aggregates. |
 
 ---
 
 ## Changelog
+
+### v7.4 (2026-06-27)
+- **Native iMessage Health card** — added an always-visible, independently refreshed card for the live OpenClaw channel and `imsg` bridge, including advanced/v2 capability and privacy-safe last-delivery evidence.
+- **Normalized health API** — added `/api/imessage-health` with a 60-second shared cache and explicit healthy/degraded/down/unknown states. Probes are passive and response fields are whitelisted.
+- **SQLite cron cutover** — Upcoming Cron now reads `cron_jobs`, while the 15-minute collector reads `cron_run_logs` through a durable composite cursor; retired JSON/JSONL paths are no longer runtime inputs.
+- **Native-only activity counts** — interval message counts now filter `chat.db` to `service = 'iMessage'`, excluding SMS/RCS rows.
+
+### v7.3 (2026-06-27)
+- **Native Messages counts** — message activity is read from the local Messages database; the retired BlueBubbles credential/API is no longer used.
+- **Retired health panel removed** — removed the BlueBubbles server/watchdog backend, API route, HTML panel, and refresh loop after the native iMessage migration completed.
 
 ### v7.2 (2026-05-01)
 - **Next Run column on Services panel** — `/api/services` now returns `next_run` (ISO UTC) and `schedule` kind (`interval`, `calendar`, `keepalive`, `watch`, `runonce`) per service. Frontend renders absolute time + relative offset for scheduled jobs, and friendly labels for non-scheduled types.
@@ -117,7 +136,7 @@ Since ccusage data is daily granularity and the push runs on a laptop (not alway
 - **Removed stale root copy** — `openclaw/usage-dashboard.py` deleted; canonical source is `openclaw/bin/usage-dashboard.py`
 
 ### v5 (2026-03-08)
-- **Claude Code usage integration** — `ccusage-push.sh` runs on MacBook every 30 min, pushes daily token data to Mini via scp. Dashboard reads `ccusage-daily.json` alongside OpenClaw snapshot data.
+- **Claude Code usage integration** — `ccusage-push.sh` runs on MacBook every 30 min and pushes daily token data to the Mini via scp. Dashboard merges the per-host `ccusage-*.json` files alongside OpenClaw snapshot data.
 - **OpenClaw + Claude Code gauges** — replaced Extra Credits gauge with two separate gauges showing each source's share of combined token usage (OpenClaw orange, Claude Code blue)
 - **Token Usage Over Time rework** — chart now shows OpenClaw vs Claude Code stacked bars (daily buckets) instead of input/output split
 - **LaunchAgent** — `ai.openclaw.ccusage-push` on MacBook (30-min interval), uses `npx ccusage daily --json --breakdown --offline`
@@ -150,7 +169,7 @@ Since ccusage data is daily granularity and the push runs on a laptop (not alway
 
 ## Gateway sessions.usage RPC (v7 plan)
 
-Discovered 2026-03-09. The gateway exposes a WebSocket RPC method `sessions.usage` that returns rich per-session usage data — far more detailed than the cron JSONL + runtime log parsing we currently rely on.
+Discovered 2026-03-09. The gateway exposes a WebSocket RPC method `sessions.usage` that returns rich per-session usage data—far more detailed than the interval SQLite cron-run snapshots and runtime-log parsing used for the activity history.
 
 ### How to query
 
@@ -196,9 +215,9 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
 
 | Chart | Current Source | Gateway RPC Improvement |
 |-------|---------------|------------------------|
-| Token Usage Over Time | Cron JSONL (cron jobs only) | `aggregates.daily` — captures ALL sessions (cron + ad-hoc + DM conversations), includes cache tokens |
-| Tokens by Job | Cron JSONL `total_tokens` | `sessions[].usage.totalTokens` — per-session totals with cache breakdown, not just cron |
-| Stat cards (Total Tokens) | Cron JSONL sums | `totals` — accurate input/output/cacheRead/cacheWrite with cost |
+| Token Usage Over Time | SQLite cron-run snapshots (cron jobs only) | `aggregates.daily` — captures ALL sessions (cron + ad-hoc + DM conversations), includes cache tokens |
+| Tokens by Job | SQLite `cron_run_logs.total_tokens` | `sessions[].usage.totalTokens` — per-session totals with cache breakdown, not just cron |
+| Stat cards (Total Tokens) | SQLite cron-run interval sums | `totals` — accurate input/output/cacheRead/cacheWrite with cost |
 | Stat cards (Errors) | Runtime log grep | `aggregates.messages.errors` — structured error count |
 
 **New charts (implemented in v7):**
@@ -240,5 +259,5 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
 ## Known Issues / Future Work
 
 - **Midnight log gap** — Log entries between last snapshot of day and midnight are lost
-- **OAuth token staleness** — No fallback when token expires; gauges auto-hide (no longer shows error banner). Token refreshes when MacBook pushes via `usage-token-push` LaunchAgent
+- **OAuth refresh dependency** — Gauges auto-hide if the local refresh chain fails. `ai.openclaw.oauth-refresh` normally renews `~/.openclaw/.anthropic-oauth-cache` every 6 hours; `usage-token-push` is retired.
 - **Cron dedup** — If state file is reset, historical records are re-counted

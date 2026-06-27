@@ -118,7 +118,7 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 **Heartbeat** fires every 12h. Follow `HEARTBEAT.md` strictly — it's intentionally minimal to save tokens. If nothing needs attention, stay silent.
 
-**Cron jobs** handle scheduled tasks (email digests, health checks, bookings). They run in isolated sessions with precise timing. See `~/.openclaw/cron/jobs.json` for the full list.
+**Cron jobs** handle scheduled tasks (email digests, health checks, bookings). They run in isolated sessions with precise timing. Use `openclaw cron list --all --json` for live SQLite-backed state; the canonical definitions are in `~/dotfiles/openclaw/cron/jobs.json`.
 
 **Rule of thumb:** Heartbeat = lightweight "am I alive" check. Cron = real work on a schedule. Don't duplicate cron work during heartbeats.
 
@@ -128,7 +128,7 @@ Periodically (every few days), use a quiet heartbeat to review recent `memory/YY
 
 ## Reference
 
-For full system documentation (infrastructure, skills, cron jobs, LaunchAgents, operational notes), see `~/dotfiles/openclaw/plans/openclaw-workspace-state.md`. Don't load it every session — read it on-demand when you need to look something up about your own setup.
+For current system documentation, use `~/dotfiles/openclaw/LAUNCHAGENTS.md`, `CRON-JOBS.md`, and `DASHBOARDS.md`. The older workspace snapshot is archived at `~/dotfiles/openclaw/plans/archive/openclaw-workspace-state.md` and should be treated as history.
 
 ## Make It Yours
 

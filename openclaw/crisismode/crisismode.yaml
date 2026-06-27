@@ -15,7 +15,7 @@ targets:
   #   - Service probing: PostgreSQL (5432), Redis (6379), etcd (2379), Kafka (9092)
   #   - Bundled check plugins: disk, memory, DNS, HTTP, TLS
   #
-  # Custom check plugins for Mini-specific services (BlueBubbles, gateway,
+  # Custom check plugins for Mini-specific services (gateway, native iMessage,
   # Nest/Usage dashboards) can be added to ~/.crisismode/checks/ later.
   # See: crisismode init --plugin <name>
   []

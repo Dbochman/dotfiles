@@ -115,8 +115,8 @@ Plist: `~/Library/LaunchAgents/ai.openclaw.nest-dashboard.plist`
 | Key | Value | Why |
 |-----|-------|-----|
 | `RunAtLoad` | `true` | Start on login |
-| `KeepAlive.SuccessfulExit` | `false` | Restart on crash, not clean SIGTERM |
-| `Program` | `/usr/bin/python3` | System Python 3.9 (no dependencies needed) |
+| `KeepAlive` | `true` | Keep the dashboard continuously available until the job is unloaded |
+| `ProgramArguments` | `/usr/bin/python3`, `~/.openclaw/bin/nest-dashboard.py` | Standard-library server; no venv required |
 
 Logs: `~/.openclaw/logs/nest-dashboard.log` and `nest-dashboard.err.log`
 
@@ -137,9 +137,9 @@ Guards: if plist doesn't exist, prints install instructions.
 ## Access
 
 - **Binds to:** `0.0.0.0:8550`
-- **Intended access:** Tailscale network only (Mac Mini firewall is off but not exposed to public internet)
-- **Tailscale IP:** `100.93.66.71` (as of 2026-02-08)
-- **URL:** `http://100.93.66.71:8550/` or `http://localhost:8550/` on the Mac Mini
+- **Intended access:** Home LAN and Tailscale tailnet; no public-internet forwarding
+- **Preferred URL:** `http://dylans-mac-mini:8550/` through LAN DNS or Tailscale MagicDNS
+- **Loopback URL:** `http://localhost:8550/` on the Mac Mini
 
 ## Files (source repo)
 
@@ -147,16 +147,17 @@ All source files live in the dotfiles repo (`~/repos/dotfiles` on MBP, `~/dotfil
 
 | File | Purpose |
 |------|---------|
-| `openclaw/nest-dashboard.py` | Server + embedded dashboard |
+| `openclaw/bin/nest-dashboard.py` | Server + embedded dashboard |
 | `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` | LaunchAgent plist |
-| `openclaw/nest-dashboard.md` | This file |
+| `openclaw/NEST-CLIMATE-DASHBOARD.md` | Canonical dashboard implementation and operations spec |
+| `openclaw/skills/nest-thermostat/DASHBOARD.md` | Skill-local dashboard reference (this file) |
 | `bin/nest` | CLI wrapper (dashboard subcommand added) |
 
 ## Deployment
 
 ```bash
 # 1. Copy server script
-scp dotfiles/openclaw/nest-dashboard.py dylans-mac-mini:~/.openclaw/bin/nest-dashboard.py
+scp dotfiles/openclaw/bin/nest-dashboard.py dylans-mac-mini:~/.openclaw/bin/nest-dashboard.py
 
 # 2. Copy LaunchAgent plist
 scp dotfiles/openclaw/launchagents/ai.openclaw.nest-dashboard.plist \

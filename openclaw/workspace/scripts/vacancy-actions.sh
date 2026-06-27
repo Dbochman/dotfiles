@@ -27,7 +27,7 @@ log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
 }
 
-# Load secrets (BB password, etc.) — cache-only, no op read
+# Load cached credentials used by the device helper CLIs — no live op reads.
 SECRETS_FILE="$HOME/.openclaw/.secrets-cache"
 if [[ -f "$SECRETS_FILE" ]]; then
   set -a
@@ -36,19 +36,25 @@ if [[ -f "$SECRETS_FILE" ]]; then
   set +a
 fi
 
-BB_PASSWORD="${BLUEBUBBLES_PASSWORD:-}"
-DYLAN_CHAT="any;-;dylanbochman@gmail.com"
+IMSG_BIN="${IMSG_BIN:-/opt/homebrew/bin/imsg}"
+DYLAN_CHAT_ID="${DYLAN_CHAT_ID:-171}"
 
 _send_imessage() {
   local msg="$1"
-  if [[ -z "$BB_PASSWORD" ]]; then
-    log "  WARN: BLUEBUBBLES_PASSWORD not set, skipping iMessage"
-    return 1
+  if [[ ! -x "$IMSG_BIN" ]]; then
+    log "  WARN: imsg not executable at $IMSG_BIN, skipping iMessage"
+    return 0
   fi
-  curl -s -X POST "http://localhost:1234/api/v1/message/text?password=$BB_PASSWORD" \
-    -H "Content-Type: application/json" \
-    -d "{\"chatGuid\":\"$DYLAN_CHAT\",\"message\":\"$msg\",\"method\":\"private-api\"}" \
-    > /dev/null 2>&1 || log "  WARN: iMessage send failed"
+
+  if "$IMSG_BIN" send \
+    --chat-id "$DYLAN_CHAT_ID" \
+    --service imessage \
+    --text "$msg" \
+    --json >> "$LOG_FILE" 2>&1; then
+    log "  iMessage notification: SENT via native imsg"
+  else
+    log "  WARN: native imsg notification failed"
+  fi
 }
 
 mkdir -p "$MARKER_DIR"

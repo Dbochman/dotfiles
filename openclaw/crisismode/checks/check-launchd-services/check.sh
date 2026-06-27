@@ -13,7 +13,7 @@ VERB=$(printf '%s' "$INPUT" | sed -n 's/.*"verb" *: *"\([^"]*\)".*/\1/p' | head 
 PERSISTENT_SERVICES="ai.openclaw.gateway ai.openclaw.nest-dashboard ai.openclaw.usage-dashboard"
 
 # Run-and-exit services (PID "-" is normal, only check exit code)
-TRANSIENT_SERVICES="ai.openclaw.nest-snapshot com.openclaw.bb-watchdog com.openclaw.presence-receive"
+TRANSIENT_SERVICES="ai.openclaw.nest-snapshot com.openclaw.presence-receive"
 
 check_service() {
   local label="$1"

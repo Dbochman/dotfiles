@@ -19,7 +19,8 @@ from urllib.error import URLError
 HISTORY_DIR = Path.home() / ".openclaw" / "usage-history"
 STATE_FILE = HISTORY_DIR / ".snapshot-state"
 OAUTH_CACHE = Path.home() / ".openclaw" / ".anthropic-oauth-cache"
-CRON_RUNS_DIR = Path.home() / ".openclaw" / "cron" / "runs"
+CRON_DB = Path.home() / ".openclaw" / "state" / "openclaw.sqlite"
+CRON_STORE_KEY = str(Path.home() / ".openclaw" / "cron" / "jobs.json")
 LOG_DIR = Path("/tmp/openclaw")
 MESSAGES_DB = Path.home() / "Library" / "Messages" / "chat.db"
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
@@ -35,7 +36,11 @@ output_file = HISTORY_DIR / f"{today}.jsonl"
 # ── Load state ──────────────────────────────────────────────────────────
 
 def load_state():
-    state = {"log_offset": 0, "last_ts": "", "cron_offsets": {}}
+    state = {
+        "log_offset": 0,
+        "last_ts": "",
+        "cron_cursor": {"created_at": 0, "job_id": "", "seq": 0},
+    }
     if not STATE_FILE.exists():
         return state
     try:
@@ -47,9 +52,12 @@ def load_state():
                 state["log_offset"] = int(val)
             elif key == "last_ts":
                 state["last_ts"] = val
-            elif key.startswith("cron_offset:"):
-                fname = key[len("cron_offset:"):]
-                state["cron_offsets"][fname] = int(val)
+            elif key == "cron_created_at":
+                state["cron_cursor"]["created_at"] = int(val)
+            elif key == "cron_job_id":
+                state["cron_cursor"]["job_id"] = val
+            elif key == "cron_seq":
+                state["cron_cursor"]["seq"] = int(val)
     except (OSError, ValueError):
         pass
     return state
@@ -59,9 +67,10 @@ def save_state(state):
     lines = [
         f"last_ts={now_iso}",
         f"log_offset={state['log_offset']}",
+        f"cron_created_at={state['cron_cursor']['created_at']}",
+        f"cron_job_id={state['cron_cursor']['job_id']}",
+        f"cron_seq={state['cron_cursor']['seq']}",
     ]
-    for fname, off in state.get("cron_offsets", {}).items():
-        lines.append(f"cron_offset:{fname}={off}")
     STATE_FILE.write_text("\n".join(lines) + "\n")
 
 
@@ -197,79 +206,118 @@ def parse_runtime_log(last_offset):
     return result
 
 
-# ── 3. Parse cron run JSONL ─────────────────────────────────────────────
+# ── 3. Parse SQLite cron run history ────────────────────────────────────
 
-def parse_cron_runs(last_offsets):
+def parse_cron_runs(last_cursor, last_ts):
     result = {
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
         "cron_runs": 0,
         "jobs": [],
-        "new_offsets": {},
+        "new_cursor": dict(last_cursor),
     }
 
-    if not CRON_RUNS_DIR.is_dir():
+    if not CRON_DB.is_file():
         return result
 
-    for fpath in CRON_RUNS_DIR.iterdir():
-        if not fpath.name.endswith(".jsonl"):
-            continue
-
-        fname = fpath.name
+    cursor = dict(last_cursor)
+    if not cursor.get("created_at"):
+        # The first SQLite-aware snapshot should continue from the previous
+        # snapshot timestamp instead of backfilling old runs into one interval.
         try:
-            fsize = fpath.stat().st_size
-        except OSError:
-            continue
-
-        last_off = last_offsets.get(fname, 0)
-        result["new_offsets"][fname] = fsize
-
-        if fsize <= last_off:
-            continue
-
-        try:
-            with open(fpath, "rb") as f:
-                f.seek(last_off)
-                new_bytes = f.read()
-        except OSError:
-            continue
-
-        for line in new_bytes.decode("utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if not line:
-                continue
+            start = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+            cursor["created_at"] = int(start.timestamp() * 1000)
+            result["new_cursor"] = dict(cursor)
+        except (ValueError, AttributeError):
+            # On a fresh install, establish a high-water mark without turning
+            # all retained history into current-period usage.
             try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+                with sqlite3.connect(f"file:{CRON_DB}?mode=ro", uri=True, timeout=5) as conn:
+                    newest = conn.execute(
+                        """
+                        SELECT created_at, job_id, seq
+                          FROM cron_run_logs
+                         WHERE store_key = ?
+                         ORDER BY created_at DESC, job_id DESC, seq DESC
+                         LIMIT 1
+                        """,
+                        (CRON_STORE_KEY,),
+                    ).fetchone()
+            except sqlite3.Error:
+                return result
+            if newest:
+                result["new_cursor"] = {
+                    "created_at": int(newest[0]),
+                    "job_id": newest[1],
+                    "seq": int(newest[2]),
+                }
+            return result
 
-            if rec.get("action") != "finished":
-                continue
+    created_at = int(cursor.get("created_at", 0))
+    job_id = str(cursor.get("job_id", ""))
+    seq = int(cursor.get("seq", 0))
+    try:
+        with sqlite3.connect(f"file:{CRON_DB}?mode=ro", uri=True, timeout=5) as conn:
+            rows = conn.execute(
+                """
+                SELECT job_id, seq, ts, status, delivered, run_at_ms,
+                       duration_ms, model, total_tokens, entry_json, created_at
+                  FROM cron_run_logs
+                 WHERE store_key = ?
+                   AND (
+                        created_at > ?
+                        OR (created_at = ? AND job_id > ?)
+                        OR (created_at = ? AND job_id = ? AND seq > ?)
+                   )
+                 ORDER BY created_at, job_id, seq
+                """,
+                (
+                    CRON_STORE_KEY,
+                    created_at,
+                    created_at, job_id,
+                    created_at, job_id, seq,
+                ),
+            ).fetchall()
+    except sqlite3.Error:
+        return result
 
-            result["cron_runs"] += 1
-            # Token counts live under "usage" dict in newer OpenClaw versions
-            usage = rec.get("usage", {})
-            ot = usage.get("output_tokens", 0) or rec.get("outputTokens", rec.get("output_tokens", 0)) or 0
-            tt = usage.get("total_tokens", 0) or rec.get("totalTokens", rec.get("total_tokens", 0)) or 0
-            # input_tokens from OpenClaw is misleadingly small (counts turns, not tokens).
-            # Derive actual input consumption as total - output.
-            it = max(0, tt - ot)
-            result["input_tokens"] += it
-            result["output_tokens"] += ot
-            result["total_tokens"] += tt
-            result["jobs"].append({
-                "job_id": rec.get("jobId", rec.get("job_id", fname.replace(".jsonl", ""))),
-                "status": rec.get("status", "ok"),
-                "duration_ms": rec.get("durationMs", rec.get("duration_ms", 0)) or 0,
-                "input_tokens": it,
-                "output_tokens": ot,
-                "total_tokens": tt,
-                "model": rec.get("model", ""),
-                "run_at": rec.get("runAtMs", rec.get("ts", 0)) or 0,
-                "delivered": rec.get("delivered", False),
-            })
+    for (
+        row_job_id, row_seq, ts, status, delivered, run_at_ms,
+        duration_ms, model, total_tokens, entry_json, row_created_at,
+    ) in rows:
+        result["new_cursor"] = {
+            "created_at": int(row_created_at),
+            "job_id": row_job_id,
+            "seq": int(row_seq),
+        }
+        try:
+            rec = json.loads(entry_json)
+        except (TypeError, json.JSONDecodeError):
+            rec = {}
+        if rec.get("action", "finished") != "finished":
+            continue
 
+        usage = rec.get("usage", {}) if isinstance(rec.get("usage"), dict) else {}
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        total = int(total_tokens or usage.get("total_tokens", 0) or 0)
+        input_tokens = max(0, total - output_tokens)
+
+        result["cron_runs"] += 1
+        result["input_tokens"] += input_tokens
+        result["output_tokens"] += output_tokens
+        result["total_tokens"] += total
+        result["jobs"].append({
+            "job_id": row_job_id,
+            "status": status or rec.get("status", "ok"),
+            "duration_ms": int(duration_ms or 0),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total,
+            "model": model or rec.get("model", ""),
+            "run_at": int(run_at_ms or ts or 0),
+            "delivered": bool(delivered),
+        })
     return result
 
 
@@ -300,6 +348,7 @@ def fetch_imessage_messages(last_ts):
           AND COALESCE(is_system_message, 0) = 0
           AND COALESCE(item_type, 0) = 0
           AND COALESCE(is_empty, 0) = 0
+          AND service = 'iMessage'
     """
     try:
         with sqlite3.connect(f"file:{MESSAGES_DB}?mode=ro", uri=True, timeout=5) as conn:
@@ -323,7 +372,7 @@ state = load_state()
 
 utilization = fetch_utilization()
 log_data = parse_runtime_log(state["log_offset"])
-cron_data = parse_cron_runs(state["cron_offsets"])
+cron_data = parse_cron_runs(state["cron_cursor"], state["last_ts"])
 imessage_data = fetch_imessage_messages(state["last_ts"])
 
 snapshot = {
@@ -351,7 +400,7 @@ with open(output_file, "a") as f:
 
 # Update state
 state["log_offset"] = log_data["new_offset"]
-state["cron_offsets"] = cron_data["new_offsets"]
+state["cron_cursor"] = cron_data["new_cursor"]
 save_state(state)
 
 # Prune old files (>90 days)

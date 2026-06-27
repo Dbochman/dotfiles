@@ -2,6 +2,10 @@
 
 ## Status: COMPLETE
 
+> Historical implementation snapshot. BlueBubbles services, credentials, and
+> recovery instructions in this plan were superseded by the completed native
+> iMessage migration on 2026-06-27 and are not current operating guidance.
+
 ## Overview
 
 Address the highest-impact reliability, deployment, and automation gaps found by a 4-agent audit of the OpenClaw system. Organized into 6 parallel workstreams, each small enough for one sub-agent.

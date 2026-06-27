@@ -3,9 +3,6 @@ name: openclaw-post-upgrade-scope-fix
 description: >-
   Fix OpenClaw cron delivery failing with "gateway closed (1008): pairing required" after an OpenClaw
   npm upgrade.
-author: Claude Code
-version: 1.0.0
-date: 2026-02-24
 ---
 
 # OpenClaw Post-Upgrade Scope Fix
@@ -70,7 +67,7 @@ sleep 5
 
 # Verify
 launchctl list | grep openclaw.gateway
-tail -20 ~/.openclaw/logs/gateway.log
+tail -20 ~/Library/Logs/openclaw/gateway.log
 ```
 
 ### 4. Test Delivery
@@ -92,7 +89,7 @@ Use any cron job that delivers to Dylan for testing. Returns `{"ok":true,"ran":t
 |------|---------|
 | `~/.openclaw/devices/paired.json` | Device scopes and tokens |
 | `~/.openclaw/devices/pending.json` | Pending scope-upgrade repair requests |
-| `~/.openclaw/logs/gateway.log` | Gateway connection logs |
+| `~/Library/Logs/openclaw/gateway.log` | Current generated-service gateway connection log |
 | `/tmp/openclaw/openclaw-YYYY-MM-DD.log` | Runtime logs with security audit entries |
 
 ## Notes

@@ -1,65 +1,77 @@
 # OpenClaw Cron Jobs
 
-Reference for all cron jobs defined in `~/.openclaw/cron/jobs.json` on the Mac Mini.
+Reference for the canonical cron definitions in this repository and the live
+SQLite-backed scheduler on the Mac Mini.
 
 ## Editing & reading jobs
 
-### State lives in 4 places — and the repo wins
+### State lives in SQLite now
 
-There are **four** independent stores of cron-job state, and they can drift:
+OpenClaw 2026.6 migrated executable cron state and run history to SQLite:
 
-| Layer | Path | Updated by |
-|-------|------|------------|
-| **1. Repo (apex source of truth)** | `~/dotfiles/openclaw/cron/jobs.json` (in this repo) | git commits |
-| **2. Live config** | `~/.openclaw/cron/jobs.json` on the Mini | `dotfiles-pull` + `sync-cron-jobs` (daily at 6 AM and on manual deploy); gateway state writes |
-| **3. Gateway in-memory** | gateway process state | `openclaw cron edit/add/rm` (and on-startup load from layer 2) |
-| **4. Run history / one-shot tombstones** | `~/.openclaw/cron/runs/<id>.jsonl` | gateway after each run; read by `sync-cron-jobs deploy` to suppress completed one-shots |
+| Layer | Location | Updated by |
+|-------|----------|------------|
+| **1. Repo (canonical intent)** | `~/dotfiles/openclaw/cron/jobs.json` | git commits |
+| **2. Live definitions and runtime** | `~/.openclaw/state/openclaw.sqlite`, table `cron_jobs` | gateway cron API and the deploy bridge |
+| **3. Gateway scheduler** | in-memory timers loaded from `cron_jobs` | gateway process |
+| **4. Run history / one-shot tombstones** | the same SQLite database, table `cron_run_logs` | gateway after each run |
 
-The **repo wins on the next deployment**. The scheduled deployment is daily at 6 AM; manual `dotfiles-pull.command` runs deploy immediately. The deploy preserves live runtime state, skips any successful `deleteAfterRun` one-shot recorded in `runs/`, and otherwise overwrites live definitions from the repo. Any CLI-only `cron edit` or `cron rm` is lost at that next deployment unless the repo receives the same change.
+Files named `~/.openclaw/cron/jobs.json.migrated`, `jobs.json.bak*`, and
+`runs/*.jsonl.migrated` are historical migration artifacts. They are not
+executable scheduler state and must not be copied back into place as a recovery
+shortcut.
 
-This is the trap: `cron edit ... --message "..."` shows the change in `cron list --json` immediately and looks durable, but a later deploy can reseed the live file from the repo. The successful-run tombstone prevents completed one-shots from being resurrected; recurring jobs and never-successful one-shots still require the canonical repo edit.
+The repository remains the durable definition record, but SQLite changes how
+deployment works. `sync-cron-jobs.sh deploy` filters completed
+`deleteAfterRun` jobs using `cron_run_logs`, stages the remaining definitions,
+imports new IDs through `openclaw doctor`, and reconciles schedule/enabled
+changes through the live gateway so `nextRunAtMs` is recalculated. Existing
+payload/delivery edits and removals still require the matching cron API command
+as well as the repo edit. The daily deployment runs at 6 AM; a manual
+`dotfiles-pull.command` deploys immediately.
 
 ### CLI commands
 
-> - **Edit:** `openclaw cron edit <id> --message "..."` — mutates gateway memory; **also commit the same change to the repo `jobs.json`** or the next deploy replaces it.
-> - **Read (authoritative for current run cycle):** `openclaw cron list --json`
-> - **Add / disable / enable / remove:** `openclaw cron add|disable|enable|rm` — same caveat: also update repo.
+> - **Edit:** `openclaw cron edit <id> ...` — updates gateway memory and SQLite immediately; mirror the change in repo `jobs.json`.
+> - **Read:** `openclaw cron list --all --json` — authoritative for the current scheduler cycle.
+> - **Add / disable / enable / remove:** `openclaw cron add|disable|enable|rm` — also make the corresponding repo change.
 
-### CRITICAL: a CLI-only edit is doomed
+### Every change still has two durable planes
 
-Two ways the layer drift kills you:
+The old pre-2026.6 ~60-second JSON persistence gap no longer applies: cron API
+mutations synchronously persist to SQLite. A CLI-only change is nevertheless
+incomplete because the repository would still describe different intent and
+could restore it during later recovery or re-creation.
 
-- **Within ~60 seconds**: `openclaw cron edit` mutates in-memory state only. The gateway syncs to live `jobs.json` on its own cadence. If the gateway restarts in that gap (`launchctl kickstart`, npm upgrade, crash, reboot), the in-memory change is silently discarded and reload happens from the unchanged live file. No warning, no error. Hit on 2026-05-01 — edits to 7 jobs were wiped by an unrelated restart.
-
-- **At the next scheduled or manual deploy**: even after the in-memory change syncs to live disk, `dotfiles-pull` re-deploys the repo's `jobs.json`. CLI changes that are not also committed die quietly. The scheduled run is daily at 6 AM, but a manual deployment can happen at any time.
-
-**Therefore: every cron-job change is a two-step commit:**
+Make every cron-job change in both places:
 
 ```bash
-# 1. Apply via CLI (so the change takes effect immediately, with
-#    proper validation and gateway notification)
+# 1. Apply through the gateway so validation, SQLite, and the live timer agree.
 openclaw cron edit <job-id> --message "..."
 
-# 2. Mirror the same change into the repo and push
+# 2. Mirror the same change into the canonical repo and push.
 $EDITOR ~/dotfiles/openclaw/cron/jobs.json
 cd ~/dotfiles && git add openclaw/cron/jobs.json && git commit && git push
-# (or wait for the next daily dotfiles-pull to deploy)
 ```
 
-Verify durability before any restart:
+For schedule edits, always pass the schedule through `openclaw cron edit` even
+when the repo already contains the desired value. This forces the gateway to
+recompute `nextRunAtMs`; `sync-cron-jobs.sh deploy` now performs the same repair
+when it detects schedule-identity or one-shot timestamp drift.
+
+Verify all three views before considering a change complete:
 
 ```bash
-# Confirm live jobs.json mtime is fresh (within ~60s of the edit)
-stat -f '%Sm  %N' ~/.openclaw/cron/jobs.json
+# Gateway / in-memory view
+openclaw cron list --all --json | jq '.jobs[] | select(.id == "<job-id>")'
 
-# Confirm live jobs.json reflects the change
-grep -A2 '<job-id>' ~/.openclaw/cron/jobs.json | head
+# Persisted SQLite view (read-only)
+sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
+  "SELECT job_json, state_json, next_run_at_ms FROM cron_jobs WHERE job_id = '<job-id>';"
 
-# Confirm repo also has the change (so the next deploy doesn't undo it)
+# Canonical repo view
 grep -A2 '<job-id>' ~/dotfiles/openclaw/cron/jobs.json | head
 ```
-
-If live shows the change but repo does not, the next scheduled or manual deployment will revert it. Commit the repo before walking away.
 
 ### Removing jobs (ghost-job pitfalls)
 
@@ -74,33 +86,30 @@ openclaw cron rm <job-id>
 $EDITOR ~/dotfiles/openclaw/cron/jobs.json   # delete the entry
 cd ~/dotfiles && git add openclaw/cron/jobs.json && git commit && git push
 
-# 3. Deploy now, or wait for the daily 6 AM deployment
+# 3. Deploy now, or wait for the daily 6 AM deployment.
 ~/dotfiles/openclaw/sync-cron-jobs.sh deploy
 
 # 4. Verify absent from all executable layers
-openclaw cron list --json | grep <job-id>            # → empty
-grep <job-id> ~/.openclaw/cron/jobs.json             # → empty
-grep <job-id> ~/dotfiles/openclaw/cron/jobs.json     # → empty
+openclaw cron list --all --json | grep <job-id>       # → empty
+sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
+  "SELECT job_id FROM cron_jobs WHERE job_id = '<job-id>';"  # → empty
+grep <job-id> ~/dotfiles/openclaw/cron/jobs.json      # → empty
 
-# Keep runs/<job-id>.jsonl as audit history and a completed-run tombstone.
+# Keep cron_run_logs rows as audit history and completed-run tombstones.
 ```
 
-If the repo and live files are clean but a removed job still fires, stop the
-gateway before changing run history:
+Run history is not executable state; do not delete it to remove a job. If a job
+is absent from `cron_jobs` but still appears armed in the current process,
+restart the gateway so it reloads SQLite, then verify again:
 
 ```bash
-# 1. Stop the gateway and archive, rather than destroy, the anomalous history
-launchctl bootout gui/$(id -u)/ai.openclaw.gateway
-mv ~/.openclaw/cron/runs/<job-id>.jsonl ~/.openclaw/cron/runs/<job-id>.jsonl.quarantine
-# 2. Confirm both jobs.json files are clean, then bootstrap the gateway
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.openclaw.gateway.plist
-# 3. Re-apply and commit any pending CLI-only edits the restart would lose
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+openclaw cron list --all --json | grep <job-id>        # → empty
 ```
 
-Verify the repo, live jobs file, and gateway memory before considering a job
-removed. An orphan run file is normally retained history, not an executable
-definition; quarantine it only when a current-version reproduction proves it
-is independently scheduling a job.
+Do not edit `openclaw.sqlite` directly. Diagnose any persistence anomaly with
+read-only queries, preserve the database and logs, and use the supported cron
+API for repair.
 
 ## Avoiding double delivery
 
@@ -109,7 +118,10 @@ Pick **one** delivery path per job, not both:
 - Cron-managed: set `delivery: { mode: "announce", channel: ..., to: ... }` and **do not** instruct the agent to send the message itself. The cron subsystem sends the agent's summary and applies a stale-delivery guard so very-late retries are dropped.
 - Agent-managed: set `delivery.mode: "none"` (cron does not deliver) and instruct the agent to send via the `message` tool. Good when the agent should compose a custom-formatted message; the prompt still needs an idempotency check because an agent retry can send or act again.
 
-If both fire, the recipient gets two messages per run, and BB stalls during the agent's send produce `status:error` (despite cron's announce delivering successfully) which triggers cron retry — re-running the entire agent task (including any side effects like restaurant bookings). See the 2026-05-01 `datenight-may-mediterranean` incident for the full failure mode.
+If both fire, the recipient gets two messages per run, and a delivery-channel
+failure during the agent's send can produce `status:error` even if the cron
+announce succeeds. That can retry the whole task, including side effects. See
+the historical 2026-05-01 `datenight-may-mediterranean` incident below.
 
 ## Safe one-shots with side effects
 
@@ -118,7 +130,7 @@ purchases, or other irreversible side effects MUST follow all four of these
 or it can run multiple times and create duplicates:
 
 1. **`delivery.mode: "none"`** (set via `--no-deliver`). With `announce`,
-   a delivery-channel failure (BB stall, network blip) flips the run to
+   a delivery-channel failure (service stall, network blip) flips the run to
    `status:error` even when the agent's task succeeded — the cron subsystem
    then retries, and each retry spawns a fresh agent session that re-does
    the side effect. Use `none` and have the agent self-deliver via the
@@ -168,9 +180,16 @@ or it can run multiple times and create duplicates:
    cd ~/dotfiles && git add openclaw/cron/jobs.json && git commit -m "..." && git push
    ```
 
-   Do not delete the successful run file while the definition still exists
-   in the repo. Removing that tombstone makes the next deployment eligible
-   to restore the one-shot.
+   Do not delete the successful `cron_run_logs` row while the definition still
+   exists in the repo. Removing that tombstone makes the next deployment
+   eligible to restore the one-shot.
+
+## Historical incident record (legacy JSON / BlueBubbles era)
+
+The incidents below describe the storage and delivery stack that existed when
+they happened. References to `jobs.json`, run JSONL files, the old sync gap, and
+BlueBubbles are intentionally retained as history; they are not current
+operating instructions.
 
 ### 2026-05-02 datenight-may La Morra ghost-booking
 After the morning ghost re-fire (below) was cleaned up via `cron rm` +
@@ -250,13 +269,13 @@ and perform reservation plus calendar idempotency checks before acting.
 
 ## Recurring Jobs
 
-| ID | Schedule | Tools | Delivery | Description |
-|----|----------|-------|----------|-------------|
-| `gws-julia-morning-triage-0001` | Daily 6:45 AM ET | `exec` | `none` | Silent, fully paginated Gmail triage: labels, thread-aware reply drafts, read-state cleanup, archiving, and conservative spam trashing |
-| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `exec` | announce to Julia via BB | Read-only, high-signal briefing from the triage handoff, today's calendar, cached Eight Sleep, and live household net worth/FIRE aggregates |
-| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `exec` | announce to Dylan via BB | Dylan's morning briefing: calendar (7-day) + inbox summary (24h) + 8sleep summary. Read-only, no email actions |
-| `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via BB | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
-| `financial-scrape-0001` | Sundays 4:05 AM ET | `exec` | `none` (agent self-messages on failure only) | Weekly financial dashboard refresh: Tesla Solar (API), Tier 2 self-healing utilities and PennyMac, plus BoA cookie replay/raw-CDP with one guarded re-auth only after an explicitly signed-out tab, then SQLite imports and a weekly-gated authorized Redfin valuation refresh. Production Plaid sync is a separate daily cache-only LaunchAgent. |
+| ID | Schedule | Payload | Delivery | Description |
+|----|----------|---------|----------|-------------|
+| `gws-julia-morning-triage-0001` | Daily 6:45 AM ET | `agentTurn` | `none` | Silent, fully paginated Gmail triage: labels, thread-aware reply drafts, read-state cleanup, archiving, and conservative spam trashing |
+| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `agentTurn` | announce to Julia via iMessage | Read-only, high-signal briefing from the triage handoff, today's calendar, cached Eight Sleep, and live household net worth/FIRE aggregates |
+| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `agentTurn` | announce to Dylan via iMessage | Read-only seven-day calendar and 24-hour inbox briefing |
+| `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via iMessage | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
+| `financial-scrape-0001` | Sundays 4:05 AM ET | `agentTurn` | `none` (agent self-messages on failure only) | Weekly financial dashboard refresh: Tesla Solar (API), Tier 2 self-healing utilities and PennyMac, plus BoA cookie replay/raw-CDP with one guarded re-auth only after an explicitly signed-out tab, then SQLite imports and a weekly-gated authorized Redfin valuation refresh. Production Plaid sync is a separate daily cache-only LaunchAgent. |
 
 `financial-scrape-0001` owns Redfin refresh through the mortgage import commands; no separate property-value command is needed in its prompt. It must not become the production Plaid or crypto sync path. `ai.openclaw.finance-refresh` owns the daily 06:15 local source refresh, runs the cache-only Plaid component before crypto, and never invokes `op`. The cron's historical conditional fallback is intentionally unconfigured; do not add Plaid or crypto credentials to its environment.
 
@@ -267,10 +286,13 @@ June 25 through the July 19 final. Each is an `at` job with
 `deleteAfterRun: true`, announces one read-only briefing to Dylan, and follows
 `openclaw/prompts/world-cup-2026-briefing.md`. Successful run history acts as a
 tombstone, so daily cron deployment skips consumed definitions even before
-they are removed from the repo.
+they are removed from the repo. The June 25-27 runs each completed and
+delivered once; their definitions have been removed from the repo while their
+SQLite run history remains.
 
-The jobs use lightweight context, minimal thinking, `openai-codex/gpt-5.5`,
-and a direct Sonnet fallback. Their normal data path is
+The jobs use lightweight context, minimal thinking, the canonical
+`openai/gpt-5.5` model alias (resolved at runtime through the `openai-codex`
+provider), and a direct Sonnet fallback. Their normal data path is
 `openclaw/bin/world-cup-briefing-data.py`, which concurrently fetches ESPN's
 date-scoped World Cup scoreboards and standings with six-second deadlines,
 normalizes kickoff times and US broadcasts, and keeps a date-specific cache.
@@ -278,18 +300,22 @@ FIFA's official fixtures page is authoritative but browser-rendered, so the
 agent consults it only to resolve missing or conflicting material facts rather
 than making it part of every run's critical path.
 
-The June 24 first run reached its 300-second deadline before any tool call. Its
+Historical note: the June 24 first run reached its 300-second deadline before any tool call. Its
 primary `openai-codex/gpt-5.5` request failed immediately because the OAuth
 token had been invalidated, then the Opus fallback stalled for the remainder of
 the deadline. The OpenAI profile was reauthenticated and pinned first in the
 Mini's auth order. The failed past-due definition was removed from the repo and
 live state while its run log remains as audit history. A delivery-enabled
 June 24 one-off then completed on `openai-codex/gpt-5.5` in 22.6 seconds,
-delivered through BlueBubbles, and consumed its temporary definition.
+delivered through the then-active BlueBubbles channel, and consumed its
+temporary definition.
 
-### Tool allowlists (added 2026-04-04, requires OpenClaw v2026.4.1+)
+### Cron tools and paths
 
-Jobs with `tools: exec` can invoke shell commands via the exec tool. Isolated cron sessions do NOT have `~/.openclaw/bin` on PATH — all custom CLI commands must use **full absolute paths** (e.g. `/Users/dbochman/.openclaw/bin/8sleep sleep dylan`).
+All current definitions use `payload.kind: agentTurn`; none sets a restrictive
+`toolsAllow` list. Prompts may still invoke shell commands through the exec
+tool. Isolated cron sessions do not have `~/.openclaw/bin` on `PATH`, so custom
+CLI commands must use full absolute paths.
 
 ## One-Shot Date Night Bookings
 
@@ -331,6 +357,7 @@ Quarterly group dinners for 4 via Resy. Party of 4 at 6:30 PM on Fridays, Brookl
 
 | ID | Removed | Reason |
 |----|---------|--------|
+| `world-cup-briefing-2026-06-25` through `-06-27` | 2026-06-27 | Each completed once and delivered through native iMessage; SQLite run history retained |
 | `qd-booking-2026-07-june15` | 2026-06-21 | Completed job repeatedly redeployed; removed after tombstone hardening and duplicate cleanup |
 | `datenight-jun-tapas` | 2026-06-21 | Completed June one-shot |
 | `doubledate-q2-apr-thai` | 2026-06-21 | Completed Q2 one-shot |

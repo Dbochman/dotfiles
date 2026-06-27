@@ -244,9 +244,9 @@ Run at a time you actually want a briefing — the cron run delivers.
 ### 9. Wait for next-morning live firing
 
 Both Dylan's 8AM ET and Julia's 7AM ET fire next morning. Watch
-delivery on iMessage. If either fails, check
-`~/.openclaw/cron/runs/gws-*-morning-briefing-0001.jsonl` for the
-error.
+delivery on iMessage. If either fails, inspect the SQLite-backed history with
+`openclaw cron runs --id <job-id> --limit 10` and retain the failed run ID for
+diagnosis.
 
 ## Rollback plan
 

@@ -696,12 +696,10 @@ install_dotfiles() {
 
       # LaunchAgent plist
       link_file "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
-      link_file "$DOTFILES_DIR/openclaw/launchagents/com.openclaw.bb-watchdog.plist" "$HOME/Library/LaunchAgents/com.openclaw.bb-watchdog.plist"
-      link_file "$DOTFILES_DIR/openclaw/launchagents/com.openclaw.poke-messages.plist" "$HOME/Library/LaunchAgents/com.openclaw.poke-messages.plist"
-      link_file "$DOTFILES_DIR/openclaw/launchagents/com.openclaw.bb-lag-summary.plist" "$HOME/Library/LaunchAgents/com.openclaw.bb-lag-summary.plist"
-      link_file "$DOTFILES_DIR/openclaw/workspace/scripts/bb-watchdog.sh" "$HOME/.openclaw/workspace/scripts/bb-watchdog.sh"
-      link_file "$DOTFILES_DIR/openclaw/workspace/scripts/poke-messages.scpt" "$HOME/.openclaw/workspace/scripts/poke-messages.scpt"
-      link_file "$DOTFILES_DIR/openclaw/workspace/scripts/bb-lag-summary.sh" "$HOME/.openclaw/workspace/scripts/bb-lag-summary.sh"
+
+      # BlueBubbles and its watchdogs are intentionally retired. Current
+      # OpenClaw owns Messages through the native imsg bridge; launching both
+      # helpers makes outbound iMessage delivery hang.
 
       # OpenClaw skills (gateway host only)
       if [[ -d "$DOTFILES_DIR/openclaw/skills" ]]; then

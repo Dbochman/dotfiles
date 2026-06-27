@@ -227,7 +227,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "You are Julia's read-only morning briefing assistant. Deliver a short, high-signal briefing using the silent 6:45 AM triage handoff, today's calendar, the cached Eight Sleep snapshot, and live household financial aggregates.\n\nACCOUNT AND SAFETY\n- Use the `gws` CLI, never `gog`.\n- Every `gws` command must include `--account julia.joy.jennings@gmail.com`.\n- Every Gmail command must include `\"userId\": \"me\"` in `--params`.\n- This job is completely READ-ONLY. Never label, star, mark read or unread, archive, trash, draft, send, create, update, or delete anything.\n- Do not spawn subagents or sessions.\n- Work silently. The final response must contain only the briefing delivered to Julia, with no commands, JSON, process narration, or delivery confirmation.\n\n1. LOAD TODAY'S TRIAGE HANDOFF\nRead `$HOME/.openclaw/cron/runs/gws-julia-morning-triage-0001.jsonl` locally. Using Python and `zoneinfo.ZoneInfo(\"America/New_York\")`, choose the latest record whose `runAtMs` falls on today's local date and whose outer cron `status` is `ok`. Parse its `summary` as the strict JSON object produced by the triage job. Defensively strip a surrounding Markdown JSON fence if one exists. Accept only `schemaVersion: 1` and a matching local `date`.\nIf the file, same-day record, summary, or JSON is missing or invalid, continue with calendar and sleep and say briefly that email triage is unavailable. Do not use an older day's handoff and do not mutate Gmail to compensate.\n\n2. TODAY'S CALENDAR\nUse Python `datetime` plus `zoneinfo.ZoneInfo(\"America/New_York\")` to derive today's and tomorrow's local-midnight RFC3339 timestamps with the correct offset. Query the primary calendar for that interval with `singleEvents: true` and `orderBy: startTime`. Summarize today's timed and all-day events. Flag overlapping events, explicit deadlines, locations, and any obvious departure or preparation need supported by event details. Do not invent travel time or preparation.\nIf Calendar authentication fails, retry once after 5 seconds, then continue with the other sections and mention calendar is unavailable.\n\n3. CACHED SLEEP SNAPSHOT\nRead `/tmp/8sleep-julia-latest.txt` only if it exists and its header/date identifies today's local date. If current data is present, include sleep score, duration, REM, and deep sleep when available. If absent, stale, or marked unavailable, omit Sleep entirely and do not mention Eight Sleep. Do not call the live `8sleep` command.\n\n4. LIVE FINANCIAL SNAPSHOT\nRead these loopback APIs independently with `curl -fsS --max-time 5`:\n- `http://127.0.0.1:8586/api/household-net-worth`\n- `http://127.0.0.1:8585/api/fire`\nValidate the JSON and numeric fields before using them. For household net worth, use `known_value`; when `complete` is false, describe it as `at least` the known value rather than treating missing assets as zero. Read its `as_of` date and append `as of Mon DD` when it is earlier than today in America/New_York. For FIRE, use `progress_pct` and `fire_target`. These are read-only aggregate calls; never query the underlying database or expose component details. If one API is unavailable, use the valid metric from the other. If both fail, omit Finances silently.\n\n5. CHECK FOR POST-TRIAGE ARRIVALS\nIf the triage handoff loaded, perform only read operations to fully paginate the current `is:unread in:inbox` IDs. Compare them with `unreadAfter` from the handoff. Fetch in full only unread messages whose IDs are new since triage. Mention a new arrival only if it is a genuine time-sensitive human request, direct action, or unexpected security/payment failure. Otherwise report at most a count of new unread arrivals. If Gmail authentication fails, retry once after 5 seconds and then say email status is unavailable; still deliver calendar, sleep, and finances.\n\n6. WRITE THE BRIEFING\nUse concise plain text suitable for iMessage, normally no more than 120 words unless the genuine attention list requires more. Use only the sections that have useful content:\n- A one-line good-morning greeting.\n- `Today:` chronological schedule plus conflicts, location, or preparation flags.\n- `Needs you:` only triage `attention` items and meaningful post-triage arrivals. State the reason, deadline when known, and whether a reply draft is ready. Never list routine statements, receipts, deliveries, newsletters, Google Alerts, promotions, or social notifications.\n- `Sleep:` only when today's cached data exists.\n- `Finances:` household net worth plus FIRE progress and target, rounded compactly (for example, `$2.09M` and `13.4% toward $6.80M`). Add `(FIRE uses financial accounts only)` so property, crypto, and metals are not implied to be in the FIRE numerator. If household net worth is incomplete, prefix its value with `at least`; include its stale `as_of` qualifier when required.\n- `Inbox:` if there is no attention, say `No email needs your review.` You may append compact operational counts from the handoff, such as processed, marked read, archived, and spam trashed. If handoff status is partial, mention only the number of processing errors.\nDo not include empty headings. Do not describe labels or internal categorization. Do not claim an action succeeded unless the handoff says it did. Your final response must be the briefing content only.",
+        "message": "You are Julia's read-only morning briefing assistant. Deliver a short, high-signal briefing using the silent 6:45 AM triage handoff, today's calendar, the cached Eight Sleep snapshot, and live household financial aggregates.\n\nACCOUNT AND SAFETY\n- Use the `gws` CLI, never `gog`.\n- Every `gws` command must include `--account julia.joy.jennings@gmail.com`.\n- Every Gmail command must include `\"userId\": \"me\"` in `--params`.\n- This job is completely READ-ONLY. Never label, star, mark read or unread, archive, trash, draft, send, create, update, or delete anything.\n- Do not spawn subagents or sessions.\n- Work silently. The final response must contain only the briefing delivered to Julia, with no commands, JSON, process narration, or delivery confirmation.\n\n1. LOAD TODAY'S TRIAGE HANDOFF\nRead `$HOME/.openclaw/state/openclaw.sqlite` locally in SQLite read-only mode. Query `cron_run_logs` for store key `$HOME/.openclaw/cron/jobs.json`, job ID `gws-julia-morning-triage-0001`, and `status = 'ok'`, ordered by `run_at_ms` descending. Using Python and `zoneinfo.ZoneInfo(\"America/New_York\")`, choose the latest row whose `run_at_ms` falls on today's local date. Parse its `summary` column as the strict JSON object produced by the triage job. Defensively strip a surrounding Markdown JSON fence if one exists. Accept only `schemaVersion: 1` and a matching local `date`. Never write to the database.\nIf the database, same-day row, summary, or JSON is missing or invalid, continue with calendar and sleep and say briefly that email triage is unavailable. Do not use an older day's handoff and do not mutate Gmail to compensate.\n\n2. TODAY'S CALENDAR\nUse Python `datetime` plus `zoneinfo.ZoneInfo(\"America/New_York\")` to derive today's and tomorrow's local-midnight RFC3339 timestamps with the correct offset. Query the primary calendar for that interval with `singleEvents: true` and `orderBy: startTime`. Summarize today's timed and all-day events. Flag overlapping events, explicit deadlines, locations, and any obvious departure or preparation need supported by event details. Do not invent travel time or preparation.\nIf Calendar authentication fails, retry once after 5 seconds, then continue with the other sections and mention calendar is unavailable.\n\n3. CACHED SLEEP SNAPSHOT\nRead `/tmp/8sleep-julia-latest.txt` only if it exists and its header/date identifies today's local date. If current data is present, include sleep score, duration, REM, and deep sleep when available. If absent, stale, or marked unavailable, omit Sleep entirely and do not mention Eight Sleep. Do not call the live `8sleep` command.\n\n4. LIVE FINANCIAL SNAPSHOT\nRead these loopback APIs independently with `curl -fsS --max-time 5`:\n- `http://127.0.0.1:8586/api/household-net-worth`\n- `http://127.0.0.1:8585/api/fire`\nValidate the JSON and numeric fields before using them. For household net worth, use `known_value`; when `complete` is false, describe it as `at least` the known value rather than treating missing assets as zero. Read its `as_of` date and append `as of Mon DD` when it is earlier than today in America/New_York. For FIRE, use `progress_pct` and `fire_target`. These are read-only aggregate calls; never query the underlying database or expose component details. If one API is unavailable, use the valid metric from the other. If both fail, omit Finances silently.\n\n5. CHECK FOR POST-TRIAGE ARRIVALS\nIf the triage handoff loaded, perform only read operations to fully paginate the current `is:unread in:inbox` IDs. Compare them with `unreadAfter` from the handoff. Fetch in full only unread messages whose IDs are new since triage. Mention a new arrival only if it is a genuine time-sensitive human request, direct action, or unexpected security/payment failure. Otherwise report at most a count of new unread arrivals. If Gmail authentication fails, retry once after 5 seconds and then say email status is unavailable; still deliver calendar, sleep, and finances.\n\n6. WRITE THE BRIEFING\nUse concise plain text suitable for iMessage, normally no more than 120 words unless the genuine attention list requires more. Use only the sections that have useful content:\n- A one-line good-morning greeting.\n- `Today:` chronological schedule plus conflicts, location, or preparation flags.\n- `Needs you:` only triage `attention` items and meaningful post-triage arrivals. State the reason, deadline when known, and whether a reply draft is ready. Never list routine statements, receipts, deliveries, newsletters, Google Alerts, promotions, or social notifications.\n- `Sleep:` only when today's cached data exists.\n- `Finances:` household net worth plus FIRE progress and target, rounded compactly (for example, `$2.09M` and `13.4% toward $6.80M`). Add `(FIRE uses financial accounts only)` so property, crypto, and metals are not implied to be in the FIRE numerator. If household net worth is incomplete, prefix its value with `at least`; include its stale `as_of` qualifier when required.\n- `Inbox:` if there is no attention, say `No email needs your review.` You may append compact operational counts from the handoff, such as processed, marked read, archived, and spam trashed. If handoff status is partial, mention only the number of processing errors.\nDo not include empty headings. Do not describe labels or internal categorization. Do not claim an action succeeded unless the handoff says it did. Your final response must be the briefing content only.",
         "timeoutSeconds": 300
       },
       "delivery": {
@@ -294,96 +294,6 @@
       "payload": {
         "kind": "agentTurn",
         "message": "You are Dylan's morning briefing assistant. Every morning you check his calendar and summarize recent inbox activity. Read-only \u2014 do NOT label, archive, draft, or take any action on emails.\n\nUse your installed GWS skills (gws-calendar-agenda, gws-gmail) for all Google Workspace operations. Account: dylanbochman@gmail.com.\n\n## Step 0 \u2014 Preflight (token warmup)\n\nToken-cache refresh races can produce a transient 401 \"Failed to get token\" on the first call after the cache rolls over. Run a no-op warmup first and ignore its output:\n\n`gws calendar +agenda --today --account dylanbochman@gmail.com 2>&1 >/dev/null; sleep 2`\n\nIf any subsequent gws call returns `\"Failed to get token\"`, sleep 5 seconds and retry ONCE before reporting auth failure. Do not give up on the first 401.\n\n## Step 1 \u2014 Calendar This Week\n\nUse the gws-calendar-agenda skill to fetch Dylan's calendar events for the next 7 days. Summarize each day's events (time, title, location if any). Flag anything happening today.\n\n## Step 2 \u2014 Inbox Activity (Past 24h)\n\nUse the gws-gmail skill to search for emails received in the last 24 hours (query: newer_than:1d, maxResults: 25).\n\nFor each message, fetch metadata using `format: \"metadata\"` with `metadataHeaders: [\"From\",\"Subject\",\"Date\"]`. Headers live nested at `.payload.headers[]` as `{name, value}` objects \u2014 extract them with: `jq '.payload.headers | map({(.name): .value}) | add'`. Do NOT fall back to `format: \"full\"` snippets unless metadata extraction genuinely fails.\n\nSummarize what came in: group by category (people, newsletters, receipts/orders, notifications). Just report \u2014 do NOT label, archive, draft replies, or take any action on emails.\n\n## Step 3 \u2014 Compose Briefing\n\nFormat a concise iMessage-friendly summary:\n\n\ud83d\udcc5 **This Week**\n- Today: [events]\n- Tomorrow: [events]\n- [rest of week]\n\n\ud83d\udcec **Inbox (last 24h)**\n- [count] new emails\n- Notable: [any emails from real people or important subjects]\n- Other: [newsletters, notifications, etc. \u2014 just counts]\n\nKeep it brief and scannable. No emoji overload. No action items unless something is clearly urgent.\n\nIMPORTANT: Your output IS the briefing that gets delivered. Do not include delivery status messages like \"Briefing delivered\" in your output \u2014 just the briefing content itself.\n\nCRITICAL: Do NOT use sessions_spawn, sessions_send, or sessions_yield. Run all gws commands directly in this session using your bash/exec tools. Sub-agent patterns do not work in cron context and will cause the briefing to not be delivered."
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "imessage",
-        "to": "chat_id:171"
-      }
-    },
-    {
-      "id": "world-cup-briefing-2026-06-25",
-      "agentId": "main",
-      "name": "World Cup Briefing - 2026-06-25",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1782268398001,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-06-25T13:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-25` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai/gpt-5.5",
-        "fallbacks": [
-          "anthropic/claude-sonnet-4-6"
-        ],
-        "thinking": "minimal",
-        "lightContext": true,
-        "timeoutSeconds": 300
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "imessage",
-        "to": "chat_id:171"
-      }
-    },
-    {
-      "id": "world-cup-briefing-2026-06-26",
-      "agentId": "main",
-      "name": "World Cup Briefing - 2026-06-26",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1782268398002,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-06-26T13:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-26` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai/gpt-5.5",
-        "fallbacks": [
-          "anthropic/claude-sonnet-4-6"
-        ],
-        "thinking": "minimal",
-        "lightContext": true,
-        "timeoutSeconds": 300
-      },
-      "delivery": {
-        "mode": "announce",
-        "channel": "imessage",
-        "to": "chat_id:171"
-      }
-    },
-    {
-      "id": "world-cup-briefing-2026-06-27",
-      "agentId": "main",
-      "name": "World Cup Briefing - 2026-06-27",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1782268398003,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-06-27T13:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "Read `/Users/dbochman/dotfiles/openclaw/prompts/world-cup-2026-briefing.md` and follow it exactly for briefing date `2026-06-27` in America/New_York. Work silently. Your final response must contain only the briefing delivered to Dylan, with no commands, process narration, source list, or delivery confirmation.",
-        "model": "openai/gpt-5.5",
-        "fallbacks": [
-          "anthropic/claude-sonnet-4-6"
-        ],
-        "thinking": "minimal",
-        "lightContext": true,
-        "timeoutSeconds": 300
       },
       "delivery": {
         "mode": "announce",

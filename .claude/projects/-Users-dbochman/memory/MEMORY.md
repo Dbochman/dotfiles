@@ -1,33 +1,33 @@
 # MEMORY.md
 
-## OpenClaw Setup (Updated 2026-03-06)
+## OpenClaw Setup (Updated 2026-06-27)
 
-**Status:** Fully operational. BlueBubbles for iMessage. GWS for Google Workspace. All secrets cached (no 1Password at runtime).
+**Status:** Fully operational. Native `imsg` for iMessage; BlueBubbles fully retired. GWS for Google Workspace. Runtime secrets are cached (no 1Password calls at startup).
 
 ## Key Paths
 - OpenClaw config: `~/.openclaw/openclaw.json`
 - Gateway LaunchAgent: `~/Library/LaunchAgents/ai.openclaw.gateway.plist`
 - FDA .app wrapper: `~/Applications/OpenClawGateway.app`
 - Gateway wrapper: `~/Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway`
-- Gateway logs: `~/.openclaw/logs/gateway.log` and `gateway.err.log`
+- Current generated-service gateway log: `~/Library/Logs/openclaw/gateway.log` (the tracked recovery plist uses `~/.openclaw/logs/gateway.{log,err.log}`)
 - Runtime logs: `/tmp/openclaw/openclaw-YYYY-MM-DD.log` (structured JSON)
-- Cron jobs: `~/.openclaw/cron/jobs.json`
-- Cron run state: `~/.openclaw/cron/runs/<job-id>.jsonl`
+- Canonical cron definitions: `~/dotfiles/openclaw/cron/jobs.json`
+- Live cron definitions, runtime state, and history: `~/.openclaw/state/openclaw.sqlite` (`cron_jobs`, `cron_run_logs`)
 - Secrets cache: `~/.openclaw/.secrets-cache` (chmod 600, KEY=VALUE format)
 - Dotfiles repo: `~/dotfiles` (github.com/Dbochman/dotfiles, PUBLIC)
 - Workspace repo: `~/.openclaw/workspace` (github.com/Dbochman/openclaw-workspace)
 
 ## Config Highlights
-- Model: `anthropic/claude-opus-4-6` (fallback: `anthropic/claude-sonnet-4-6`)
-- Auth: OAuth tokens (`sk-ant-oat01-*`) from Dylan's Claude Max subscription
+- Model: `openai/gpt-5.6-sol` with fast mode (first fallback: `openai/gpt-5.5`)
+- Auth: canonical OpenAI OAuth/token profiles plus Anthropic token fallbacks in `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`
 - TTS: inbound mode via ElevenLabs
 - Session: per-channel-peer isolation, daily reset at 4am
-- iMessage: via BlueBubbles (webhook-only, Private API enabled)
-- Gateway entry point: `dist/entry.js` (changed from `dist/index.js` in v2026.3.2)
+- iMessage: native bundled `imessage` channel via `/opt/homebrew/bin/imsg` JSON-RPC
+- Stable targets: `chat_id:171` (Dylan), `chat_id:1` (Julia), `chat_id:170` (group)
 - Gateway hot-reloads config changes without restart
-- Gateway health monitor: DISABLED (`channelHealthCheckMinutes: 0`) — BB watchdog handles stale detection
-- Heartbeat interval: 12h, minimal BB ping only
-- Typing indicators: native via `typingMode: "thinking"`
+- Gateway health monitor: enabled (`channelHealthCheckMinutes: 5`)
+- Heartbeat interval: 12h with no routine transport action
+- The native bridge supports typing and advanced actions; `typingMode: "never"` and automatic read receipts remain disabled in runtime config
 - Reactions/tapbacks: native `message` tool `action: "react"` (love, like, dislike, laugh, emphasize, question)
 
 ## Secrets & Auth
@@ -36,27 +36,24 @@
 - 1Password service account token: `~/.openclaw/.env-token`
 - **CRITICAL:** `op read` hangs indefinitely under launchd — use cache files exclusively
 
-## BlueBubbles
-- Webhook-only architecture (no socket.io) — BB POSTs to `http://localhost:18789/bluebubbles-webhook`
-- Private API: `http://localhost:1234/api/v1` with `?password=${BLUEBUBBLES_PASSWORD}`
-- BB proxy: `lan-url` (Cloudflare disabled)
-- SIP: disabled on Mac Mini (required for BB Private API)
-- Watchdog: `com.openclaw.bb-watchdog` runs every 60s, detects stale webhooks, coordinates BB+gateway restarts
-- Chat GUIDs: DMs use `any;-;` prefix, groups use `iMessage;+;`
-- `ackReactionScope` config is a no-op for iMessage (only wired for Slack/Discord/Telegram)
-- BB restart: full app restart needed for dead webhooks (soft restart doesn't fix them)
+## Native iMessage
+- OpenClaw `2026.6.10` uses the bundled `imessage` plugin and `imsg 0.11.1`.
+- `imsg status --json` reports basic, advanced, and v2 readiness with bridge version 2.
+- SIP remains disabled and library validation relaxed for advanced native actions.
+- Cron deliveries and direct notifications use stable `chat_id:*` targets.
+- BlueBubbles app, plugin, services, state, credentials, watchdogs, and local caches were removed on 2026-06-27.
 
 ## Cron Jobs
 - Manual trigger: `openclaw cron run <job-id> --timeout 300000 --expect-final`
 - **Do NOT use `openclaw agent --deliver`** — spawns independent async agents with no dedup
-- **CRITICAL:** When removing jobs from `jobs.json`, also delete `~/.openclaw/cron/runs/<job-id>.jsonl` — orphan run files cause ghost executions
-- Health check: job `128c4ed0` at 9AM/9PM ET
+- **CRITICAL:** Remove jobs through `openclaw cron rm` and the canonical repo definition; preserve SQLite `cron_run_logs` as history/tombstones
+- Current inventory: `openclaw cron list --all --json` (SQLite-backed)
 - Julia morning briefing: `gws-julia-morning-briefing-0001` at 7AM ET
-- Weekly upgrade verify: `weekly-upgrade-verify-0001` at 9:15AM Sun ET
+- Weekly activity/security/health report: `weekly-report-0001` at 3 PM Sun ET
 
 ## npm Upgrade Hazards
 - `npm install -g openclaw` may run `openclaw install --service` which overwrites the LaunchAgent plist
-- Weekly upgrade script backs up/restores the plist around npm install
+- Weekly auto-upgrade is retired; manual upgrades must back up and verify the generated plist/service environment
 - After upgrade: check `~/.openclaw/devices/paired.json` for missing scopes
 - Missing scopes cause `gateway closed (1008): pairing required` on cron delivery
 

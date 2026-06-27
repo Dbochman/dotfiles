@@ -32,7 +32,6 @@ op read "op://OpenClaw/Item Name/field"
 | OpenAI API Key | password | `op read "op://OpenClaw/OpenAI API Key/password"` |
 | ElevenLabs API Key | password | `op read "op://OpenClaw/ElevenLabs API Key/password"` |
 | Gateway Token | password | `op read "op://OpenClaw/OpenClaw Gateway Token/password"` |
-| BlueBubbles Password | password | `op read "op://OpenClaw/BlueBubbles Password/password"` |
 | Mysa | username, password | `op read "op://OpenClaw/Mysa/username"` |
 | Star Market | password, username | `op read "op://OpenClaw/Star Market/password"` |
 | Digital Ocean API | credential | `op read "op://OpenClaw/Digital Ocean API Credential/credential"` |

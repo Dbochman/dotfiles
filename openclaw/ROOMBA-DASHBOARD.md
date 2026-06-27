@@ -4,7 +4,7 @@
 **URL:** `http://dylans-mac-mini:8553`  
 **Service:** `ai.openclaw.roomba-dashboard`
 
-Roomba status and controls dashboard covering both Crosstown and Cabin, including automation snooze controls and run-history visualization.
+Roomba status and controls dashboard covering both Crosstown and Cabin, including automation snooze controls and run-history visualization. It is reachable on the home LAN and Tailscale tailnet.
 
 ## What It Shows
 

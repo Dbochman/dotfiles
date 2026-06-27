@@ -113,7 +113,8 @@
 - Historical: BB routing improvements deployed to SOUL.md and TOOLS.md — `any;-;` chat GUIDs avoided old BlueBubbles lookup timeouts. This no longer applies to normal operation after native iMessage cutover.
 
 **2026-06-27:**
-- OpenClaw migrated from BlueBubbles to native `imsg`-backed iMessage. Active sends use `channel: imessage` and stable targets `chat_id:171` (Dylan), `chat_id:1` (Julia), and `chat_id:170` (Dylan+Julia group). BlueBubbles is rollback-only during soak.
+- OpenClaw completed its migration from BlueBubbles to native `imsg`-backed iMessage. Active sends use `channel: imessage` and stable targets `chat_id:171` (Dylan), `chat_id:1` (Julia), and `chat_id:170` (Dylan+Julia group).
+- The retired BlueBubbles plugin, app, services, state, and credentials were removed. `vacancy-actions.sh` now sends lock notifications directly through native `imsg` to `chat_id:171`.
 
 **2026-04-05:**
 - August smart lock skill deployed and verified working (Crosstown front door: locked, 96% battery, WiFi -47dBm)

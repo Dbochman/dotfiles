@@ -4,7 +4,7 @@
 **URL:** `http://dylans-mac-mini:8558`  
 **Service:** `ai.openclaw.home-dashboard`
 
-Unified control plane for smart home devices across Crosstown and Cabin. The dashboard is a single-page control surface with grouped device cards, fast cached status, per-device refresh, and inline command feedback.
+Unified control plane for smart home devices across Crosstown and Cabin. The dashboard is a single-page control surface with grouped device cards, fast cached status, per-device refresh, and inline command feedback. It is reachable on the home LAN and Tailscale tailnet.
 
 ## Layout
 

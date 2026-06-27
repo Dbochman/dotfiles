@@ -6,7 +6,7 @@
     <string>ai.openclaw.gateway</string>
 
     <key>Comment</key>
-    <string>OpenClaw Gateway (v2026.2.3-1)</string>
+    <string>OpenClaw Gateway (v2026.6.10)</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -25,7 +25,7 @@
     <key>HOME</key>
     <string>/Users/dbochman</string>
     <key>PATH</key>
-    <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>OPENCLAW_GATEWAY_PORT</key>
     <string>18789</string>
     <key>OPENCLAW_GATEWAY_TOKEN</key>
@@ -39,7 +39,7 @@
     <key>OPENCLAW_SERVICE_KIND</key>
     <string>gateway</string>
     <key>OPENCLAW_SERVICE_VERSION</key>
-    <string>2026.2.3-1</string>
+    <string>2026.6.10</string>
     </dict>
   </dict>
 </plist>

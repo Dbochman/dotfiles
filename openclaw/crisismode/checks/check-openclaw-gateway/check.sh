@@ -11,6 +11,11 @@ VERB=$(printf '%s' "$INPUT" | sed -n 's/.*"verb" *: *"\([^"]*\)".*/\1/p' | head 
 
 GW_URL="http://localhost:18789"
 GW_LABEL="ai.openclaw.gateway"
+GW_PLIST="$HOME/Library/LaunchAgents/${GW_LABEL}.plist"
+GW_LOG=$(plutil -extract StandardOutPath raw "$GW_PLIST" 2>/dev/null || true)
+if [ -z "$GW_LOG" ] || [ "$GW_LOG" = "/dev/null" ]; then
+  GW_LOG="$HOME/Library/Logs/openclaw/gateway.log"
+fi
 
 case "$VERB" in
   health)
@@ -59,10 +64,10 @@ case "$VERB" in
       ACTIONS='[]'
     elif [ "$EXIT_CODE" -eq 1 ]; then
       SUMMARY="OpenClaw gateway degraded — HTTP ${HTTP_CODE}"
-      ACTIONS='["Check gateway logs: ~/.openclaw/logs/gateway.log","Restart: launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway"]'
+      ACTIONS=$(printf '["Check gateway logs: %s","Restart: launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway"]' "$GW_LOG")
     else
       SUMMARY="OpenClaw gateway down — unreachable or crashed"
-      ACTIONS='["Check gateway logs: ~/.openclaw/logs/gateway.log","Restart: launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway","Verify secrets: source ~/.openclaw/.secrets-cache && env | grep -c PASSWORD"]'
+      ACTIONS=$(printf '["Check gateway logs: %s","Restart: launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway","Verify secrets: source ~/.openclaw/.secrets-cache && env | grep -c PASSWORD"]' "$GW_LOG")
     fi
 
     printf '{"status":"%s","summary":"%s","confidence":0.95,"signals":%s,"recommendedActions":%s}\n' \
@@ -79,7 +84,6 @@ case "$VERB" in
     GW_EXIT=$(printf '%s' "$LAUNCHCTL_OUT" | sed -n 's/.*"LastExitStatus" *= *\([0-9]*\).*/\1/p' | head -1)
 
     # Check gateway log for recent errors
-    GW_LOG="$HOME/.openclaw/logs/gateway.log"
     RECENT_ERRORS=""
     if [ -f "$GW_LOG" ]; then
       RECENT_ERRORS=$(tail -50 "$GW_LOG" 2>/dev/null | grep -ci 'error\|fatal\|crash' 2>/dev/null) || RECENT_ERRORS="0"

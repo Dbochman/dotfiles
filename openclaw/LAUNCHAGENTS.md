@@ -9,10 +9,10 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 
 | Label | Program | Port | Description |
 |-------|---------|------|-------------|
-| `ai.openclaw.gateway` | `OpenClawGateway.app` wrapper | — | OpenClaw gateway (core agent runtime, cron scheduler, BB channel) |
+| `ai.openclaw.gateway` | `OpenClawGateway.app` wrapper | — | OpenClaw gateway (core agent runtime, SQLite cron scheduler, native `imsg` channel) |
 | `ai.openclaw.nest-dashboard` | `nest-dashboard.py` | 8550 | Nest thermostat history dashboard |
-| `ai.openclaw.usage-dashboard` | `usage-dashboard.py` | 8551 | Anthropic usage tracking dashboard |
-| `ai.openclaw.dog-walk-dashboard` | `dog-walk-dashboard.py` | 8552 | Dog walk & Roomba dashboard (walk history, Fi GPS, return signals) |
+| `ai.openclaw.usage-dashboard` | `usage-dashboard.py` | 8551 | AI usage, gateway, and native iMessage health dashboard |
+| `ai.openclaw.dog-walk-dashboard` | `dog-walk-dashboard.py` | 8552 | Dog walk dashboard (walk history, Fi GPS, maps, presence, and return signals) |
 | `ai.openclaw.roomba-dashboard` | `roomba-dashboard.py` | 8553 | Roomba state and command dashboard |
 | `ai.openclaw.home-dashboard` | `home-dashboard.py` | 8558 | Home Control Plane dashboard and provider status API |
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
@@ -36,10 +36,10 @@ Expected target context is the Mac Mini user `dbochman` with `HOME=/Users/dbochm
 /Users/dbochman/repos/financial-dashboard/venv/bin/python3
 ```
 
-The venv should be built from Homebrew Python, not the Command Line Tools Python shim. The current Mini baseline as of 2026-06-18 is Python 3.13.12 with OpenSSL 3.x and the dependencies from `~/repos/financial-dashboard/requirements.txt` installed. Verify it on the Mini with:
+The venv should be built from the currently installed Homebrew Python, not the Command Line Tools Python shim. The Mini baseline as of 2026-06-27 is Python 3.14.3 with OpenSSL 3.x and the dependencies from `~/repos/financial-dashboard/requirements.txt` installed. A Homebrew minor-version removal can leave `venv/bin/python3` as a broken symlink even while an already-running dashboard appears healthy; rebuild the venv before restarting the service when that happens. Verify it on the Mini with:
 
 ```bash
-ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 -c "import sys, ssl, yaml, requests; print(sys.version.split()[0]); print(ssl.OPENSSL_VERSION); print(yaml.__version__); print(requests.__version__)"'
+ssh dylans-mac-mini 'cd ~/repos/financial-dashboard && ./venv/bin/python3 -c "import sys, ssl, yaml, requests; from playwright.sync_api import sync_playwright; print(sys.version.split()[0]); print(ssl.OPENSSL_VERSION); print(yaml.__version__); print(requests.__version__)"'
 ```
 
 The paired forecast dashboard service runs from `~/repos/Financial Advisor` with `/usr/bin/python3` and reads the financial dashboard through `http://127.0.0.1:8585` first, with `http://dylans-mac-mini:8585` as a fallback.
@@ -112,8 +112,6 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `com.openclaw.bb-watchdog` | 60s | `bb-watchdog.sh` | Monitors BlueBubbles health, cross-checks gateway BB plugin activity, and launches recovery instances hidden |
-| `com.openclaw.poke-messages` | 60s | `poke-messages.scpt` | AppleScript to keep Messages.app responsive for BB Private API |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
@@ -128,9 +126,6 @@ through `~/.openclaw/bin/pinchtab-headless-instance`. OpenTable uses the
 `opentable` profile, grocery uses `grocery`, and Cielo retains `default` for its
 attended reauthentication path. The helper refuses to navigate a visible
 PinchTab instance and stops only instances that it created.
-BlueBubbles watchdog recovery uses `open -gj` so restarts do not activate or
-show the app.
-
 The former viewing snooze is retired because scheduled browser work no longer
 needs the display. A visible browser is allowed only for an explicit,
 user-attended authentication flow such as Cielo reCAPTCHA recovery; see the
@@ -170,7 +165,6 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | `ai.openclaw.finance-refresh` | Daily 6:15 AM | `finance-refresh.py` | Sequential cache-only Plaid and crypto refresh with retries and combined health; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
-| `com.openclaw.bb-lag-summary` | Daily 8:05 AM | `bb-lag-summary.sh` | BlueBubbles message lag summary |
 | `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM | `opentable-refresh-token.sh` | Refreshes the OpenTable CLI token in a managed headless PinchTab instance, with GWS email 2FA only as fallback. Uses the cache-only secret environment and does not touch visible browser tabs. |
 
 ## Mac Mini — Event-Driven (WatchPaths)
@@ -191,6 +185,13 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 |-------|----------|---------|-------------|
 | `com.openclaw.presence-crosstown` | 15min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale. **Must NOT be loaded on Mini** — the script ARP-scans `192.168.165.x`, which the Mini isn't on, so the scan returns nothing and Tailscale `file cp` to self fails. A misplaced copy ran on Mini until 2026-05-10. |
 
+The Crosstown source plist is deployed as a regular file on the MacBook rather
+than shared live with the Mini checkout. After changing it, copy the source,
+bootstrap or kickstart it on the MacBook, and compare the deployed file with the
+source. A single nonzero run immediately after login can be a transient ARP
+warm-up failure; investigate repeated failures rather than treating one sample
+as a persistent outage.
+
 ## Local Mac (Dylan's MacBook)
 
 | Label | Interval | Program | Description |
@@ -204,6 +205,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 |-------|------|--------|
 | `ai.openclaw.weekly-upgrade` | `.plist.disabled` | Weekly auto-upgrade removed 2026-03-12; upgrades now manual |
 | `ai.openclaw.usage-token-push` | `usage-token-push.plist.disabled` | Replaced by `oauth-refresh` — was pushing OAuth cache from laptop keychain to Mini, fragile (required laptop open + keychain readable). Lingered as `.plist` on Mini for weeks firing self-loop SSH every 30 min and exit-255'ing; renamed to `.disabled` and bootout'd on 2026-05-10 post-Tahoe-26.4.1 reboot. |
+| `ai.openclaw.ring-listener` | `ring-listener.plist.disabled` | Retired listener retained only as a disabled tombstone; current Ring state is collected through the home-control paths. |
 | `ai.openclaw.boa-keepalive` | `ai.openclaw.boa-keepalive.plist` | Disabled 2026-06-18: UI heartbeat did not prevent BoA's server-side session cutoff. |
 | `ai.openclaw.boa-browser-heartbeat` | `ai.openclaw.boa-browser-heartbeat.plist` | Disabled 2026-06-18 with the keep-alive experiment; source retained for history only. |
 
@@ -221,13 +223,13 @@ Every new LaunchAgent script MUST follow these rules:
 ## Notes
 
 - **Plist source**: OpenClaw-prefix plists in `openclaw/launchagents/`; personal `com.dylanbochman.*` plists in top-level `launchagents/`.
-- **Deployment**: Most plists are deployed via `scp` to `~/Library/LaunchAgents/` on the target machine. Only `ai.openclaw.gateway` is symlinked via `install.sh`. Personal plists are typically copied to `~/Library/LaunchAgents/` once and registered via `launchctl bootstrap gui/$(id -u) <plist>`.
-- **Logs**: Most services log to `~/.openclaw/logs/` or `/tmp/`. Check `StandardErrorPath`/`StandardOutPath` in plists.
+- **Deployment**: Most plists are deployed as regular files via `scp` to `~/Library/LaunchAgents/` on the target machine. `install.sh` can initially symlink the gateway plist, but `openclaw gateway install` may replace it with a generated regular plist that invokes `~/.openclaw/service-env/ai.openclaw.gateway-env-wrapper.sh`. The Mini currently uses that generated contract, so do not assume the live gateway plist is a symlink or byte-identical to the recovery source. Verify its `ProgramArguments`, wrapper, environment file, and loaded job after upgrades. Personal plists are typically copied once and registered with `launchctl bootstrap gui/$(id -u) <plist>`.
+- **Logs**: Most services log to `~/.openclaw/logs/` or `/tmp/`. The current generated gateway job writes to `~/Library/Logs/openclaw/gateway.log`; the tracked recovery plist still names `~/.openclaw/logs/gateway.{log,err.log}`. Check the live plist's `StandardErrorPath` and `StandardOutPath` instead of assuming either layout.
 - **Gateway wrapper**: Uses cache-only secrets pattern (`~/.openclaw/.secrets-cache`), no `op read` at startup (hangs under launchd).
 - **Anthropic OAuth refresh**: `oauth-refresh.sh` hides `/usr/bin` from PATH during `claude auth login` so that `security` (macOS keychain CLI) is not found. This forces Claude Code to write credentials to `~/.claude/.credentials.json` instead of the keychain, which is unreadable over SSH. The refresh token rotates on each login, so the flow is self-sustaining. If the refresh token chain breaks (e.g., manual `claude auth login` rotates it outside the script), re-seed by pushing a fresh token from a machine with keychain access: `security find-generic-password -s "Claude Code-credentials" -w | ssh dylans-mac-mini 'cat > ~/.openclaw/.anthropic-oauth-cache'`.
 - **Anthropic OAuth verification**: after enabling or repairing `ai.openclaw.oauth-refresh`, require exit 0, mode `0600` on `~/.openclaw/.anthropic-oauth-cache`, and non-null `utilization` from `http://127.0.0.1:8551/api/current`.
-- **OpenAI Codex OAuth**: `ai.openclaw.oauth-refresh` does not manage OpenAI. On the Mini's current OpenClaw `2026.5.7` runtime, repair an invalidated primary token with `openclaw models auth login --provider openai-codex`, declare the resulting profile in `openclaw/openclaw.json`, and pin it with `openclaw models auth order set --provider openai-codex openai-codex:dbochman@nvidia.com`. The credential lives in `~/.openclaw/agents/main/agent/auth-profiles.json`; the order override lives in adjacent `auth-state.json`. Source `~/.openclaw/.secrets-cache` and include Homebrew Node in `PATH` before running these commands over SSH. Newer OpenClaw releases use the canonical `openai` route, so run `openclaw doctor` and update this runbook as part of any upgrade.
-- **OpenAI Codex verification**: `openclaw models status --json` checks profile structure and expiry but does not prove the provider still accepts the token. Require a live no-delivery smoke request and verify `agentMeta.provider` is `openai-codex`, `agentMeta.model` is `gpt-5.5`, and `executionTrace.fallbackUsed` is `false`:
+- **OpenAI authentication**: `ai.openclaw.oauth-refresh` manages Anthropic only. OpenClaw `2026.6.10` uses the canonical `openai` provider and stores its usable OAuth/token profiles in `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`; the configured default is `openai/gpt-5.6-sol`. Repair an invalidated profile with `openclaw models auth login --provider openai`, then confirm the intended order with `openclaw models status --json` and `openclaw models auth order`. Source `~/.openclaw/.secrets-cache` and include Homebrew Node in `PATH` before running these commands over SSH.
+- **OpenAI verification**: `openclaw models status --json` checks profile structure and routing but does not prove the provider still accepts the token. Require a live no-delivery smoke request and verify `agentMeta.provider` is `openai`, `agentMeta.model` is `gpt-5.6-sol`, and `executionTrace.fallbackUsed` is `false`:
 
   ```bash
   ssh dylans-mac-mini 'set -a; source ~/.openclaw/.secrets-cache; set +a; \

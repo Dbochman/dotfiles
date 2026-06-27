@@ -22,13 +22,13 @@ qmd collection add ~/dotfiles/openclaw/plans --name plans 2>&1
 qmd collection add ~/dotfiles/openclaw/bin --name bin-scripts 2>&1
 
 echo "=== Adding context descriptions ==="
-qmd context add qmd://workspace/ "OpenClaw runtime workspace: SOUL.md (agent personality/rules), TOOLS.md (device integrations, BB, Nest, Hue, Cielo, presence), HEARTBEAT.md (periodic health checks)"
+qmd context add qmd://workspace/ "OpenClaw runtime workspace: SOUL.md (agent personality/rules), TOOLS.md (native iMessage plus device integrations), HEARTBEAT.md (periodic health ownership)"
 qmd context add qmd://skills/ "OpenClaw skill definitions (SKILL.md files) with full API details, CLI commands, env vars, and troubleshooting for: grocery-reorder (Star Market), gws-gmail/calendar/drive (Google Workspace), cielo-ac (smart AC), mysa-thermostat (baseboard heaters), hue-lights, nest-thermostat (+ DASHBOARD.md), roomba, spotify-speakers, presence detection, opentable/resy booking, sag (TTS), peekaboo (cameras), samsung-tv, 1password, bluetooth, shortcuts, applescript, web-search, summarize, google-speakers, echonest, amazon-shopping, places, cabin/crosstown routines"
-qmd context add qmd://plans/ "OpenClaw architecture and implementation docs: BlueBubbles implementation deep-dive (bluebubbles-implementation-current-state.md — watchdog, webhook architecture, Private API, restart sequencing, Cloudflare issues), BlueBubbles Private API reference (bluebubbles-private-api.md — curl examples, typing, reactions, effects), OpenClaw workspace state overview (openclaw-workspace-state.md — infrastructure, cron jobs, LaunchAgents, skills list)"
-qmd context add qmd://bin-scripts/ "OpenClaw helper scripts documentation: README.md (all bin scripts — gateway, dashboards, nest, usage, bluetooth, iMessage sync, dotfiles pull, qmd setup), WEEKLY-UPGRADE.md (weekly npm upgrade steps, BB plugin patch, plist backup/restore, scope verification)"
+qmd context add qmd://plans/ "OpenClaw current plans and archived implementation records, including the completed native iMessage migration, infrastructure, cron, LaunchAgents, dashboards, and historical transports"
+qmd context add qmd://bin-scripts/ "OpenClaw helper-script documentation for gateway maintenance, dashboards, Nest, usage and cron metrics, Bluetooth, native iMessage, dotfiles sync, and qmd setup"
 
 echo "=== Setting update commands ==="
-DOTFILES_PULL='cd ~/dotfiles && git stash; git pull --rebase --ff-only; git stash pop 2>/dev/null; true'
+DOTFILES_PULL='cd ~/dotfiles && if [ "$(git branch --show-current)" = main ] && [ -z "$(git status --porcelain)" ]; then git pull --ff-only origin main; fi'
 qmd collection update-cmd plans "$DOTFILES_PULL"
 qmd collection update-cmd bin-scripts "$DOTFILES_PULL"
 

@@ -2,7 +2,7 @@
 
 ## Status: v1.5 (2026-06-18)
 
-Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, a forecast-history ledger, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with Tailscale-only access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
+Python HTTP server serving the Financial Advisor forecast dashboard, preset redirects, a preset index page, current-snapshot APIs, public-market prices, a forecast-history ledger, and the monthly operating checklist overlay. Runs at port `8586` on the Mac Mini with home-LAN and Tailscale-tailnet access. A coverage-gated live baseline now seeds eligible forecast inputs from the reconciled financial source on `8585`.
 
 ---
 
@@ -93,7 +93,11 @@ The service is intentionally repo-owned and small. It serves only the forecast d
 | `/forecast-history.html` | Aggregate daily history and saved annual forecast checkpoints |
 | `/forecast-history.js` | Forecast-history UI logic |
 | `/api/current-snapshot` | Current household facts derived from local finance APIs |
+| `/api/default-scenarios` | Current built-in scenario definitions |
 | `/api/prices` | Supported crypto prices, gold/silver spot quotes, and configured ticker prices |
+| `/api/crypto/positions` | Current covered crypto positions and source-readiness state |
+| `/api/household-net-worth` | Forecast-owned household net-worth aggregate and provenance |
+| `/api/retirement-accounts` | Retirement-account summary used by the planning UI |
 | `/api/monthly-operating-tasks` | Read-only planning feed enriched with local mutable UI state |
 | `/api/monthly-operating-task-status` | Mutable local status overlay write/read endpoint |
 | `/api/forecast-ledger/summary` | Aggregate counts, latest observation/run, and due annual-comparison status |
@@ -468,8 +472,8 @@ The forecast dashboard does not intentionally use `eval` or `new Function` in re
 
 ## Security Notes
 
-- Tailscale-only access is the intended exposure model
+- Home-LAN and Tailscale-tailnet access are the intended exposure model; public-internet forwarding is not
 - The dashboard contains sensitive planning assumptions, household balances, allocation targets, and compensation-related planning inputs
 - Do not expose `source-documents/`, raw research exports, PDFs, or other repo contents through the forecast server
-- Bind-on-all-interfaces is acceptable only because the Mac Mini is not publicly forwarded and this matches the other dashboard services
+- Bind-on-all-interfaces provides LAN and tailnet reachability and is acceptable only because the Mac Mini is not publicly forwarded
 - Keep the aggregate ledger and capture-status file local under the mode-restricted forecast runtime directory; the ledger APIs must remain aggregate-only

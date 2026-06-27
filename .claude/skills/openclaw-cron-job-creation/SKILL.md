@@ -1,36 +1,113 @@
 ---
 name: openclaw-cron-job-creation
-description: >-
-  Create and debug OpenClaw cron jobs by editing jobs.json directly.
-author: Claude Code
-version: 2.1.0
-date: 2026-06-21
+description: Create, edit, inspect, test, or remove OpenClaw cron jobs using the supported CLI/gateway, the canonical dotfiles definition, and SQLite-backed runtime state. Use when adding recurring or one-shot jobs, repairing schedule drift, debugging cron schema or delivery, checking run history, or cleaning up completed jobs without resurrecting them.
 ---
 
-# OpenClaw Cron Job Creation
+# Manage OpenClaw Cron Jobs
 
 ## Problem
-Creating OpenClaw cron jobs by editing `~/.openclaw/cron/jobs.json` directly can cause
-the gateway's cron subsystem to crash on startup with a misleading error if the JSON
-schema doesn't match what the gateway expects.
 
-## Context / Trigger Conditions
-- Gateway log shows: `[gateway/cron] failed to start: TypeError: Cannot read properties of undefined (reading 'trim')`
-- Adding a new cron job to `jobs.json` and restarting gateway
-- The `openclaw cron add` CLI fails because it needs env vars (`OPENCLAW_GATEWAY_TOKEN`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, etc.) that are only available inside the gateway wrapper
+OpenClaw 2026.6 stores executable cron definitions, runtime state, and run
+history in `~/.openclaw/state/openclaw.sqlite`. Older instructions that edit
+`~/.openclaw/cron/jobs.json` or `runs/*.jsonl` directly are unsafe and stale:
+those paths are now temporary migration inputs or archived artifacts.
 
-## Solution
+Use the gateway API for live mutations and keep
+`~/dotfiles/openclaw/cron/jobs.json` as the canonical definition record. Never
+write the live SQLite database directly.
 
-### Correct jobs.json Schema for Recurring Cron Jobs
+## Storage model
+
+- Canonical intent: `~/dotfiles/openclaw/cron/jobs.json`
+- Live definitions/runtime: SQLite table `cron_jobs`
+- Run history and one-shot tombstones: SQLite table `cron_run_logs`
+- Active timers: gateway memory, synchronously persisted to SQLite by cron APIs
+- Non-live artifacts: `~/.openclaw/cron/*.migrated`, `*.bak*`, and
+  `runs/*.jsonl.migrated`
+
+`~/dotfiles/openclaw/sync-cron-jobs.sh deploy` stages canonical definitions,
+skips successfully completed `deleteAfterRun` jobs, imports new IDs, and repairs
+schedule/enabled drift through the gateway. Existing payload/delivery edits and
+removals still require both the supported cron API and the repo edit.
+
+## Prepare the CLI
+
+Source the protected gateway environment without printing it:
+
+```bash
+set -a
+source ~/.openclaw/.secrets-cache
+set +a
+```
+
+Inspect all jobs, including disabled ones:
+
+```bash
+openclaw cron list --all --json
+```
+
+## Create a job
+
+Create through the CLI so OpenClaw validates the schema, assigns the ID, writes
+SQLite, and arms the timer:
+
+```bash
+openclaw cron add \
+  --name "Daily briefing" \
+  --cron "0 7 * * *" \
+  --tz America/New_York \
+  --session isolated \
+  --wake next-heartbeat \
+  --message "Produce the briefing. Your final text is the delivered message." \
+  --announce \
+  --channel imessage \
+  --to 'chat_id:171' \
+  --json
+```
+
+Then capture the generated ID in the canonical repo, review the full diff, and
+commit it:
+
+```bash
+~/dotfiles/openclaw/sync-cron-jobs.sh save
+git -C ~/dotfiles diff -- openclaw/cron/jobs.json
+```
+
+Do not commit unrelated live drift produced by `save`; review before staging.
+
+## Edit a job
+
+Apply the live change with `openclaw cron edit`, then mirror the same field in
+the repo. Examples:
+
+```bash
+openclaw cron edit <job-id> --message "Updated prompt"
+openclaw cron edit <job-id> --cron "30 7 * * *" --tz America/New_York
+openclaw cron edit <job-id> --at "2026-10-01T14:00:00.000Z"
+openclaw cron edit <job-id> --announce --channel imessage --to 'chat_id:171'
+```
+
+Always reapply a changed schedule through the CLI even if the repo already has
+the desired value. This forces `nextRunAtMs` to be recomputed. After mirroring
+the repo definition, run the deploy bridge as a consistency check:
+
+```bash
+python3 -m json.tool ~/dotfiles/openclaw/cron/jobs.json >/dev/null
+~/dotfiles/openclaw/sync-cron-jobs.sh deploy
+```
+
+## Canonical schema
+
+Use `schedule.expr`, not `schedule.cron`, and `schedule.tz`, not
+`schedule.timezone`:
 
 ```json
 {
-  "id": "<uuid4>",
+  "id": "stable-job-id",
   "agentId": "main",
-  "name": "My Cron Job",
+  "name": "Daily briefing",
   "enabled": true,
   "createdAtMs": 1771191000000,
-  "updatedAtMs": 1771191000000,
   "schedule": {
     "kind": "cron",
     "expr": "0 7 * * *",
@@ -40,159 +117,92 @@ schema doesn't match what the gateway expects.
   "wakeMode": "next-heartbeat",
   "payload": {
     "kind": "agentTurn",
-    "message": "Your agent prompt here"
+    "message": "Your prompt"
   },
   "delivery": {
     "mode": "announce",
-    "channel": "bluebubbles",
-    "to": "+15551234567"
-  },
-  "state": {}
+    "channel": "imessage",
+    "to": "chat_id:171"
+  }
 }
 ```
 
-### Critical Field Names
-
-| Field | Correct | Wrong | Notes |
-|-------|---------|-------|-------|
-| Cron expression | `schedule.expr` | `schedule.cron` | Source code: `coerceSchedule()` checks `schedule.expr` |
-| Schedule type | `schedule.kind: "cron"` | - | Other kinds: `"at"`, `"every"` |
-| Timezone | `schedule.tz` | `schedule.timezone` | IANA format, optional |
-
-### Schedule Kinds Reference
+Schedule forms:
 
 ```json
-// Recurring cron
 { "kind": "cron", "expr": "0 7 * * *", "tz": "America/New_York" }
-
-// One-shot at time
-{ "kind": "at", "at": "2026-04-01T12:00:00.000Z" }
-
-// Interval
+{ "kind": "at", "at": "2026-10-01T14:00:00.000Z" }
 { "kind": "every", "everyMs": 3600000 }
 ```
 
-### Adding/Editing Jobs Workflow
+Put `timeoutSeconds` inside `payload`. Use `deleteAfterRun: true` only for
+one-shots that should be consumed after success.
 
-The repo file is canonical. Do not make a live-only edit and assume it is
-durable; the next scheduled or manual dotfiles deployment replaces it.
+## Side-effecting one-shots
 
-1. Edit `~/dotfiles/openclaw/cron/jobs.json`.
-2. Validate it: `python3 -m json.tool ~/dotfiles/openclaw/cron/jobs.json >/dev/null`.
-3. Deploy it: `~/dotfiles/openclaw/sync-cron-jobs.sh deploy`.
-4. For an immediate CLI edit, apply the same change with `openclaw cron edit`
-   and still commit the repo copy.
-5. Verify both `openclaw cron list --json` and
-   `~/.openclaw/cron/jobs.json`; a gateway restart is normally unnecessary.
+Bookings, purchases, and other irreversible jobs must have all of these:
 
-### Running Jobs Manually
+- `delivery.mode: "none"`; the agent sends exactly one final status.
+- An idempotency preflight against the external system and matching calendar.
+- `deleteAfterRun: true` / CLI `--delete-after-run`.
+- A retained successful `cron_run_logs` row until the canonical definition is
+  removed; that row is the deployment tombstone.
 
-Use `openclaw cron run` with secrets sourced and a long timeout:
+Do not delete run history to remove a job. History is not executable state.
+
+## Run manually
+
+Manual runs can repeat delivery and side effects. Obtain explicit authorization
+before running a side-effecting job.
+
 ```bash
-set -a && source ~/.openclaw/.secrets-cache && set +a && \
-PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH \
-openclaw cron run <jobId> --timeout 300000 --expect-final
+openclaw cron run <job-id> --wait --wait-timeout 10m --timeout 30000
 ```
 
-Key flags:
-- `--timeout 300000` — 5 minutes (default 30s is too short for most jobs)
-- `--expect-final` — waits for the job to complete and returns `{"ok":true,"ran":true}`
+Do not substitute `openclaw agent --deliver`; it creates an independent agent
+execution outside the cron scheduler.
 
-This is the **correct** way to manually trigger a job. It:
-- Runs through the gateway's cron scheduler (single execution, no duplicates)
-- Uses the exact prompt, delivery channel, and target from `jobs.json`
-- Returns synchronous feedback on success/failure
+## Remove a job
 
-**Do NOT use `openclaw agent --deliver`** for manual cron testing — it spawns independent
-async agents with no dedup. Each invocation creates a separate session that runs all side
-effects (labeling, archiving, sending) independently, causing duplicate deliveries if
-retried.
-
-### Removing Jobs
-
-Remove the job from both gateway state and the canonical repo definition:
+Remove both live and canonical definitions, then deploy:
 
 ```bash
-openclaw cron rm <jobId>
-# Delete the matching object from ~/dotfiles/openclaw/cron/jobs.json and commit it.
+openclaw cron rm <job-id>
+# Delete the matching object from ~/dotfiles/openclaw/cron/jobs.json and commit.
 ~/dotfiles/openclaw/sync-cron-jobs.sh deploy
 ```
 
-Keep `~/.openclaw/cron/runs/<jobId>.jsonl` as append-only audit history. For
-successful `deleteAfterRun` one-shots, `sync-cron-jobs.sh deploy` uses that
-record as a tombstone and refuses to restore the completed repo definition.
-See the `openclaw-cron-ghost-jobs` skill for diagnosis.
+Keep the corresponding `cron_run_logs` records. They preserve audit history
+and prevent a completed one-shot still present in an older checkout from being
+reseeded.
 
-### Fields NOT to Include
+## Verify
 
-- `deleteAfterRun`: Only for one-shot `"at"` jobs (auto-added by gateway for `"at"` kind)
-- `timeoutSeconds`: Goes inside `payload`, not at the top level (gateway handles via `coercePayload`)
+Check the gateway, persisted SQLite state, and canonical repo:
 
-## Verification
-
-After restarting the gateway, check the detailed log:
 ```bash
-grep "cron" /tmp/openclaw/openclaw-$(date +%Y-%m-%d).log | python3 -c "
-import sys, json
-for line in sys.stdin:
-    d = json.loads(line)
-    print(d.get('time','') + ': ' + str(d.get('1', d.get('0','')))[:150])
-"
+openclaw cron list --all --json | jq '.jobs[] | select(.id == "<job-id>")'
+openclaw cron runs --id <job-id> --limit 10
+
+sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
+  "SELECT job_id, enabled, schedule_kind, at, schedule_expr, next_run_at_ms, last_run_status, last_delivery_status FROM cron_jobs WHERE job_id = '<job-id>';"
+
+jq '.jobs[] | select(.id == "<job-id>")' \
+  ~/dotfiles/openclaw/cron/jobs.json
 ```
 
-Success shows: `{'enabled': True, 'jobs': <count>, 'nextWakeAtMs': <timestamp>}`
+For an enabled one-shot, confirm `next_run_at_ms` equals the epoch represented
+by `schedule.at`. For a completed `deleteAfterRun` job, absence from
+`cron_jobs` plus an `ok` row in `cron_run_logs` is expected.
 
-## Example
+## Delivery rule
 
-Adding a daily Gmail triage job for Julia:
-```python
-import json, uuid, time
+Use exactly one path:
 
-with open("/Users/dbochman/.openclaw/cron/jobs.json") as f:
-    data = json.load(f)
+- Ordinary reports: cron-managed `delivery.mode: "announce"`; the prompt must
+  not send with the message tool or `imsg`.
+- Side-effecting one-shots: `delivery.mode: "none"`; the prompt performs one
+  idempotent status send.
 
-job = {
-    "id": str(uuid.uuid4()),
-    "agentId": "main",
-    "name": "Julia Gmail Morning Triage",
-    "enabled": True,
-    "createdAtMs": int(time.time() * 1000),
-    "updatedAtMs": int(time.time() * 1000),
-    "schedule": {
-        "kind": "cron",
-        "expr": "0 7 * * *",       # NOT "cron": "0 7 * * *"
-        "tz": "America/New_York"
-    },
-    "sessionTarget": "isolated",
-    "wakeMode": "next-heartbeat",
-    "payload": {
-        "kind": "agentTurn",
-        "message": "Your prompt here..."
-    },
-    "delivery": {
-        "mode": "announce",
-        "channel": "bluebubbles",
-        "to": "+1XXXXXXXXXX"
-    },
-    "state": {}
-}
-
-data["jobs"].append(job)
-with open("/Users/dbochman/.openclaw/cron/jobs.json", "w") as f:
-    json.dump(data, f, indent=2)
-```
-
-## Notes
-
-- **Repo/live drift**: CLI edits can be correct in gateway memory and the live
-  file yet still be reverted by the next repo deployment. Make the repo change
-  in the same operation.
-- **Channel name**: Delivery channel is `bluebubbles` (NOT `imessage`). All cron jobs use
-  `"delivery": {"channel": "bluebubbles", ...}`. The dotfiles source copy is at
-  `~/dotfiles/openclaw/cron/jobs.json` — keep it in sync with Mini's
-  `~/.openclaw/cron/jobs.json`.
-- The gateway wrapper (`~/Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway`) sources secrets from `~/.openclaw/.secrets-cache` (KEY=VALUE format, chmod 600)
-- Python f-strings with `j["name"]` inside SSH-piped python one-liners cause `NameError` due to shell escaping — use script files (`scp` + run) for complex JSON manipulation
-- The `delivery.to` field accepts both E.164 phone numbers and OpenClaw contact UUIDs
-- Gateway auto-adds `deleteAfterRun: true` for `"at"` schedule jobs during normalization
-- Side-effecting one-shots must also use `delivery.mode: none` and an external-system plus calendar idempotency check. `deleteAfterRun` alone is not a duplicate-prevention strategy.
+Native delivery uses `delivery.channel: "imessage"` and stable targets such as
+`chat_id:171` or `chat_id:1`.

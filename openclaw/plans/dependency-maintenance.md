@@ -99,21 +99,23 @@ Examples:
   fail. Recovery: re-auth on laptop, scp to Mini.
 - `1password-cli` — used in `~/.openclaw/.env-token` chain. Cache-only
   pattern reduces blast radius but version skew can break biometric.
-- `tailscale` (formula) — currently unused on Mini (the GUI app does
-  the work) but on MBP it underpins remote access. Restart can sever
-  the SSH session you're using to upgrade. See
-  `tailscale-macos-localapi-stale-port` skill.
+- `tailscale` (formula) — supplies the Mini's CLI for Serve/status while the
+  logged-in macOS GUI/network extension remains the active backend. Keep
+  `/usr/sbin` on the gateway PATH so backend discovery can use `lsof`; a CLI
+  upgrade or backend-selection regression can disable private Control UI/node
+  access. See `tailscale-macos-localapi-stale-port` skill.
 
 Recovery: SSH-recoverable but with a re-auth detour.
 
 ### Tier 3 — Requires babysitting / physical access
 
-- `openclaw` — known plist-overwrite hazard. Backup
-  `~/Library/LaunchAgents/com.openclaw.*.plist` before, restore
-  after, then `launchctl unload && launchctl load`. See
-  `openclaw-upgrade-plist-overwrite` and
-  `openclaw-post-upgrade-scope-fix` skills. Failure modes can
-  brick the gateway.
+- `openclaw` — service reinstall can replace the gateway plist. Back up the
+  live plist and service-environment files, then verify the generated
+  service-env → FDA app-wrapper chain after upgrade. Regenerate with
+  `openclaw gateway install --force --wrapper ...` when invalid; do not blindly
+  restore an older plist. Use `bootout` + `bootstrap` only when the loaded plist
+  changes. See `openclaw-upgrade-plist-overwrite` and
+  `openclaw-post-upgrade-scope-fix` skills.
 - `pinchtab` — browser-automation library. Major version bumps may
   break grocery-reorder, presence-receive flows. Test against the
   highest-impact skill before committing.
@@ -199,26 +201,26 @@ ssh dylans-mac-mini 'cp -a ~/Library/LaunchAgents/ai.openclaw.*.plist /tmp/openc
 # 2. Backup gateway plist specifically
 ssh dylans-mac-mini 'cp ~/Library/LaunchAgents/<the-gateway-plist>.plist /tmp/gateway-plist.bak'
 
-# 3. Snapshot jobs.json runtime state
-ssh dylans-mac-mini 'cp ~/.openclaw/cron/jobs.json /tmp/jobs.json.pre-upgrade'
+# 3. Snapshot SQLite runtime state; canonical definitions already live in git
+ssh dylans-mac-mini 'sqlite3 ~/.openclaw/state/openclaw.sqlite ".backup /tmp/openclaw.sqlite.pre-upgrade"'
 
 # 4. Upgrade
 ssh dylans-mac-mini 'PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH; \
   npm install -g openclaw@latest'
 
-# 5. Check if plist was overwritten — if ProgramArguments changed
-#    from the wrapper script to direct node, restore from backup
-ssh dylans-mac-mini 'diff /tmp/gateway-plist.bak ~/Library/LaunchAgents/<gateway>.plist'
+# 5. Inspect the post-upgrade launch contract. A generated regular plist is
+#    healthy when service-env wrapper -> env file -> FDA app wrapper remains.
+ssh dylans-mac-mini 'plutil -p ~/Library/LaunchAgents/ai.openclaw.gateway.plist'
 
-# 6. If overwritten: restore + reload
-ssh dylans-mac-mini '<restore commands>'
+# 6. If that chain is broken, follow openclaw-upgrade-plist-overwrite and
+#    regenerate with: openclaw gateway install --force --wrapper <FDA-wrapper>
 
 # 7. Check for new required scopes
 ssh dylans-mac-mini 'cat ~/.openclaw/devices/paired.json'
 # If "pairing required" / scope-upgrade in audit log, see openclaw-post-upgrade-scope-fix skill
 
-# 8. Watch gateway recover
-ssh dylans-mac-mini 'tail -f ~/.openclaw/logs/gateway.log'
+# 8. Watch the current generated-service log
+ssh dylans-mac-mini 'tail -f ~/Library/Logs/openclaw/gateway.log'
 
 # 9. Smoke test: trigger a low-stakes cron job
 ssh dylans-mac-mini 'openclaw cron run <test-job-id> --timeout 300000 --expect-final'
@@ -252,20 +254,19 @@ ssh dylans-mac-mini 'PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH;
   npm install -g pinchtab@0.7.6'
 ```
 
-### macOS 26.4.1 on Mini (Tier 3)
+### Historical macOS 26.4.1 Mini upgrade (completed)
 
-Schedule for a window where ~30 min of downtime is acceptable
-(briefings paused, gateway down, presence stale, dashboards offline,
-cron jobs missed).
+The commands below record the completed 26.4.1 maintenance window; do not rerun
+that version-specific installer. The Mini is on macOS 26.5.1 as of 2026-06-27.
 
 ```bash
 ssh dylans-mac-mini 'softwareupdate --install --restart --agree-to-license \
   "macOS Tahoe 26.4.1-25E253"'
 ```
 
-After reboot, verify:
+For future macOS upgrades, retain the post-reboot verification:
 
-- Gateway came back: `tail -20 ~/.openclaw/logs/gateway.log`
+- Gateway came back: `tail -20 ~/Library/Logs/openclaw/gateway.log`
 - LaunchAgents loaded: `launchctl list | grep openclaw | head`
 - Presence push: `stat -f '%Sm %N' ~/.openclaw/presence/crosstown-scan.json`
 - Tailscale CLI works: `tailscale status` (this is where the LocalAPI
@@ -289,7 +290,7 @@ implemented yet — flag if missed audits become a pattern.
 
 - `openclaw/plans/gws-0.22-migration.md` — gws migration when we're
   ready to bump it
-- `openclaw/plans/system-hardening-2026-04.md` — broader hardening
+- `openclaw/plans/archive/system-hardening-2026-04.md` — completed broader hardening sprint
   context
 - Skills: `openclaw-upgrade-plist-overwrite`,
   `openclaw-post-upgrade-scope-fix`,

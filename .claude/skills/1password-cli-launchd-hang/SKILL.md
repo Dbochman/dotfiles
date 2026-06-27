@@ -3,9 +3,6 @@ name: 1password-cli-launchd-hang
 description: >-
   Fix 1Password CLI (op read) hanging indefinitely in macOS launchd/headless contexts, and fix
   incessant TCC "op would like to access data" popups on macOS Tahoe.
-author: Claude Code
-version: 1.1.0
-date: 2026-02-15
 ---
 
 # 1Password CLI Hangs Under macOS LaunchAgent
@@ -227,7 +224,7 @@ exec /path/to/node /path/to/openclaw/dist/entry.js gateway --port 18789
 OPENAI_API_KEY=sk-proj-...
 ELEVENLABS_API_KEY=...
 OPENCLAW_GATEWAY_TOKEN=...
-BLUEBUBBLES_PASSWORD=...
+OP_SERVICE_ACCOUNT_TOKEN=...
 ```
 
 **Refresh helper** (`~/bin/openclaw-refresh-secrets`):

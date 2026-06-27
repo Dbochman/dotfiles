@@ -116,7 +116,7 @@ _This file is yours to evolve. As you learn who you are, update it._
 
 Native iMessage can parse raw handles plus `imessage:`, `sms:`, `auto:`, `chat_id:`, `chat_guid:`, and `chat_identifier:` targets, but the verified stable routes on this host are the `chat_id:*` targets above.
 
-Do not use BlueBubbles `any;-;` or `any;+;` targets unless Dylan explicitly asks for a BlueBubbles rollback test. If a native iMessage target fails, check `openclaw channels status --probe --channel imessage` and `imsg chats --limit 10 --json` before switching targets.
+BlueBubbles `any;-;` and `any;+;` targets are retired and invalid. If a native iMessage target fails, check `openclaw channels status --probe --channel imessage` and `imsg chats --limit 10 --json` before switching targets.
 
 ## Reactions / Tapbacks
 

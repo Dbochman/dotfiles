@@ -2,9 +2,6 @@
 name: openclaw-browser-cdp-crash
 description: >-
   Fix OpenClaw browser service "Failed to start Chrome CDP on port 18800" error.
-author: Claude Code
-version: 1.0.0
-date: 2026-02-09
 ---
 
 # OpenClaw Browser CDP Crash
@@ -82,7 +79,7 @@ After applying any fix:
 # Wait for gateway to start
 sleep 5
 # Check browser service is ready
-tail -5 ~/.openclaw/logs/gateway.log | grep "Browser control"
+tail -5 ~/Library/Logs/openclaw/gateway.log | grep "Browser control"
 # Test Chrome can start (optional direct test)
 curl -s http://127.0.0.1:18800/json/version
 ```

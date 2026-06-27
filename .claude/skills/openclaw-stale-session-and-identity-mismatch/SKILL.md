@@ -3,9 +3,6 @@ name: openclaw-stale-session-and-identity-mismatch
 description: >-
   Fix OpenClaw agent repeatedly claiming a Google account "isn't authenticated" or failing with auth
   errors even though GWS tokens are valid.
-author: Claude Code
-version: 2.0.0
-date: 2026-03-05
 ---
 
 # OpenClaw Stale Session & Identity Mismatch
@@ -39,7 +36,7 @@ The wrong email can propagate across multiple files:
 |------|-----------------|
 | `~/.openclaw/workspace/USER.md` | Agent's identity context for contacts |
 | `~/.openclaw/workspace/memory/*.md` | Accumulated knowledge from past sessions |
-| `~/.openclaw/cron/jobs.json` | Scheduled tasks that use the email |
+| `~/dotfiles/openclaw/cron/jobs.json` plus `openclaw cron list --all --json` | Canonical and live scheduled tasks that use the email |
 | `~/.openclaw/skills/gws-gmail/SKILL.md` | Skill file with account examples |
 | `~/.openclaw/skills/gws-calendar/SKILL.md` | Skill file with account examples |
 
