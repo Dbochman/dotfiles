@@ -1,7 +1,12 @@
 # HEARTBEAT.md
 # Fires every 12h from gateway start. Keep this ultra-lean.
-# All health checks run via CrisisMode cron job (crisismode-health-scan-0001, 9AM/9PM ET).
+# Do not duplicate scheduled cron/reporting work.
 
 ## On each heartbeat:
 
-No actions. This is intentionally empty — CrisisMode handles all infrastructure monitoring.
+No routine actions. Stay silent unless the gateway provides a current failure that clearly needs attention.
+
+Health ownership:
+- Native iMessage is the active transport; BlueBubbles is rollback-only.
+- Weekly health/security reporting runs through `weekly-report-0001` and `~/.openclaw/bin/openclaw-weekly-report.py`.
+- Do not run BlueBubbles or CrisisMode checks from heartbeat unless Dylan asks or a current incident points there.

@@ -110,7 +110,10 @@
 **2026-05-23:**
 - Vacancy script upgraded: Eight Sleep now uses `away start`/`end` (proper away mode) instead of `off`/`on` (simple thermal pause). Better for extended absences.
 - 8sleep CLI refactored with `--location <crosstown|cabin>` flag for future second Pod support
-- BB routing improvements deployed to SOUL.md and TOOLS.md — always use `any;-;` chat GUIDs as send targets to avoid 30-90s lookup timeouts
+- Historical: BB routing improvements deployed to SOUL.md and TOOLS.md — `any;-;` chat GUIDs avoided old BlueBubbles lookup timeouts. This no longer applies to normal operation after native iMessage cutover.
+
+**2026-06-27:**
+- OpenClaw migrated from BlueBubbles to native `imsg`-backed iMessage. Active sends use `channel: imessage` and stable targets `chat_id:171` (Dylan), `chat_id:1` (Julia), and `chat_id:170` (Dylan+Julia group). BlueBubbles is rollback-only during soak.
 
 **2026-04-05:**
 - August smart lock skill deployed and verified working (Crosstown front door: locked, 96% battery, WiFi -47dBm)

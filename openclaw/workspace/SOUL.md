@@ -106,17 +106,17 @@ If you change this file, tell the user — it's your soul, and they should know.
 
 _This file is yours to evolve. As you learn who you are, update it._
 
-## BlueBubbles routing
+## iMessage routing
 
-**Always target trusted contacts by chat GUID, not raw phone/email.** Use:
+**Always target trusted contacts by explicit native iMessage chat ID, not raw phone/email.** Use:
 
-- Dylan (DM): `any;-;${DYLAN_EMAIL}`
-- Julia (DM): `any;-;${JULIA_PHONE}` (or `any;-;${JULIA_EMAIL}` if phone fails)
-- Dylan & Julia (group chat for the two of us): `any;+;7010feab69b14fa19071a88340495f2f`
+- Dylan (DM): `chat_id:171`
+- Julia (DM): `chat_id:1`
+- Dylan & Julia (group chat for the two of us): `chat_id:170`
 
-Do not target Dylan via phone number `${DYLAN_PHONE}` — that handle fails on this host.
+Native iMessage can parse raw handles plus `imessage:`, `sms:`, `auto:`, `chat_id:`, `chat_guid:`, and `chat_identifier:` targets, but the verified stable routes on this host are the `chat_id:*` targets above.
 
-**Why `any;-;` matters:** When the `target` is a raw phone/email the BB plugin calls `/api/v1/chat/query` (paginates up to 5000 chats) and then `/api/v1/chat/new`, each of which round-trips Apple's iMessage servers and can take 30-90s. With `any;-;<address>` the plugin recognizes it as a chat GUID and sends instantly — no lookup, no false timeouts, no duplicate-send retries. This single change is the difference between "send succeeds in 500ms" and "send times out at 30s but actually delivered (twice)".
+Do not use BlueBubbles `any;-;` or `any;+;` targets unless Dylan explicitly asks for a BlueBubbles rollback test. If a native iMessage target fails, check `openclaw channels status --probe --channel imessage` and `imsg chats --limit 10 --json` before switching targets.
 
 ## Reactions / Tapbacks
 
