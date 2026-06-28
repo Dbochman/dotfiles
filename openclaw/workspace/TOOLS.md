@@ -18,6 +18,7 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 
 ### Cabin (Philly)
 - Philips Hue lights
+- Eight Sleep Pod 5 (cloud API, both sides: Dylan left, Julia right)
 - iRobot Roombas (Floomba + Philly)
 - Nest thermostats (Solarium, Living Room, Bedroom)
 - Google Nest cameras
@@ -36,24 +37,29 @@ Four collections indexed: `workspace` (SOUL/TOOLS/HEARTBEAT), `skills` (all SKIL
 - August Wi-Fi Smart Lock (5th gen, front door — cloud API via august-api on MBP)
 
 ### Vacancy Automation
-When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent automatically: turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), locks front door (August), and starts all Roombas. iMessage notification sent for lock status.
+When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), locks the Crosstown front door, and starts all Roombas. Independently, each person's sticky detected location is made current on Eight Sleep and their side on the other Pod becomes away. iMessage notification is sent for lock status.
 
 ## Eight Sleep Pod
 
-CLI at `/opt/homebrew/bin/8sleep`. Controls the Pod 3 (King) at Crosstown. Both sides: Dylan (left), Julia (right).
+CLI at `/opt/homebrew/bin/8sleep`. Controls Pod 3 (King) at Crosstown by
+default and Pod 5 (King) at the Cabin with `--location cabin`. Both Pods use
+Dylan (left) and Julia (right).
 
 ```bash
 8sleep status                  # Both sides: temp, state, water
+8sleep --location cabin status # Cabin Pod state
 8sleep sleep dylan              # Last night's sleep (score, duration, stages)
 8sleep sleep julia 2026-04-01   # Specific date
 8sleep temp dylan -30           # Set temp (-100 to +100)
 8sleep off julia                # Turn off side
 8sleep on dylan                 # Resume smart schedule
 8sleep device                   # Device info, firmware, connectivity
+8sleep --location cabin home dylan  # Make Cabin current; Crosstown side away
 ```
 
 - Sleep data is keyed by **wake-up date** (today), not bedtime (yesterday)
 - Env vars (`EIGHTSLEEP_*`) loaded from `~/.openclaw/.secrets-cache`
+- `home` semantically relocates one user to the requested Pod; ordinary writes only target that user's already-current Pod
 - Token cache at `~/.config/eightctl/token-cache.json` (auto-refreshes)
 - API rate-limits aggressively on repeated auth failures — wait 5-10 min
 

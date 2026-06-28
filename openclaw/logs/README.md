@@ -49,11 +49,10 @@ Each service uses one of two patterns:
 | `dog-walk-listener.log` | Rotate at 100MB, keep 3 prior files; stderr duplicate/rate guard forces restart on sustained spam | Listener restart wrapper |
 | All others | No automatic rotation | Low-volume scheduled output; monitor size periodically |
 
-`presence-receive` is script-owned. Its plist sends raw stdout/stderr to
-`/dev/null`, while actionable receive failures are summarized in
-`presence-detect.log`. This avoids a third-party CLI retry loop duplicating the
-same line into a launchd-owned log. The historical `presence-receive.log` is
-retained in place but is no longer written.
+`presence-receive` is a script-owned, one-shot WatchPaths job. Its plist sends
+raw stdout/stderr to `/dev/null`, while invalid Taildrop files and evaluation
+failures are summarized in `presence-detect.log`. The historical
+`presence-receive.log` is retained in place but is no longer written.
 
 The strategy is intentionally selective: bound high-volume persistent logs,
 deduplicate repeated errors at the producer, and avoid per-service rotation

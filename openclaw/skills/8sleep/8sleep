@@ -220,11 +220,38 @@ if 'error' in d and not d.get('success'):
 print(f'{d.get(\"side\",\"?\").title()} side turned ON (smart schedule resumed)')
 "
     ;;
+  home)
+    if [[ -z "${2:-}" || "${#LOCATION_ARGS[@]}" -eq 0 ]]; then
+      echo "Usage: 8sleep --location <crosstown|cabin> home <dylan|julia>" >&2
+      echo "  Makes that Pod current for the user; the other Pod becomes away" >&2
+      exit 1
+    fi
+    run_api home "$2" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response'); sys.exit(1)
+expected_side = sys.argv[1].lower()
+expected_location = sys.argv[2].lower()
+if 'error' in d and not d.get('success'):
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}'); sys.exit(1)
+if (d.get('success') is not True or d.get('state') != 'home'
+        or str(d.get('side', '')).lower() != expected_side
+        or str(d.get('location', '')).lower() != expected_location):
+    print('Error: Eight Sleep home verification returned an invalid response')
+    sys.exit(1)
+side = d.get('side', '?').title()
+location = d.get('location', '?').title()
+changed = 'updated' if d.get('changed') else 'already current'
+print(f'{side} home at {location} ({changed})')
+" "$2" "${LOCATION_ARGS[1]}"
+    ;;
   away)
     if [[ -z "${2:-}" || -z "${3:-}" ]]; then
       echo "Usage: 8sleep away <dylan|julia> <start|end>" >&2
       echo "  start = enable away mode (extended absence)" >&2
-      echo "  end   = disable away mode (return home)" >&2
+      echo "  end   = disable away mode on the already-current Pod" >&2
       exit 1
     fi
     run_api away "$2" "$3" | python3 -c "
@@ -258,6 +285,7 @@ else:
     echo "  temp <dylan|julia> <level>      Set side temp (-100 cold to +100 hot)"
     echo "  off <dylan|julia>               Turn off side (stop thermal unit)"
     echo "  on <dylan|julia>                Turn on side (resume smart schedule)"
+    echo "  home <dylan|julia>              With explicit --location, make that Pod current"
     echo "  away <dylan|julia> start|end    Start/end away mode (extended absence)"
     echo "  device                          Device info (model, water, connectivity)"
     echo "  sleep <dylan|julia> [date]      Sleep data (default: last night)"

@@ -23,7 +23,7 @@ The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.
 
 | Occupancy | Meaning | Action |
 |-----------|---------|--------|
-| `confirmed_vacant` | All tracked people absent AND confirmed present at other location | Run vacancy actions |
+| `confirmed_vacant` | All tracked people absent AND confirmed present at the other location with a fresh scan | Run vacancy actions |
 | `occupied` (after vacancy) | At least one person detected again | Run restore actions, clear marker |
 | `possibly_vacant` | Nobody detected but can't confirm elsewhere | No action (too uncertain) |
 
@@ -38,7 +38,7 @@ The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.
 | Hue lights | `hue --crosstown all-off` | All lights off |
 | Nest thermostat | `nest eco crosstown on` | Eco mode |
 | Cielo minisplits | `cielo off -d <unit>` | Bedroom, Office, Living Room off |
-| Eight Sleep Pod | `8sleep away <side> start` | Both sides into away mode (extended absence) |
+| Eight Sleep Pods | `8sleep --location cabin home <side>` | For each person confirmed at Cabin, make Cabin current; their Crosstown side becomes away |
 | August lock | `august status` / `august lock` | Check status first, lock if unlocked, iMessage notification |
 | Roombas | `crosstown-roomba start all` | Combo 10 Max + Roomba J5 start cleaning |
 
@@ -46,7 +46,7 @@ The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.
 
 | System | CLI | Action |
 |--------|-----|--------|
-| Eight Sleep Pod | `8sleep away <side> end` | Both sides exit away mode (resume smart schedule) |
+| Eight Sleep Pods | Presence-driven `home` reconciliation | Each returning person's detected location becomes current independently |
 
 Lights, thermostat, and Cielos are NOT automatically restored — welcome-home routines handle those contextually.
 
@@ -58,11 +58,17 @@ Lights, thermostat, and Cielos are NOT automatically restored — welcome-home r
 |--------|-----|--------|
 | Hue lights | `hue --cabin all-off` | All lights off |
 | Nest thermostat | `nest eco cabin on` | Eco mode |
+| Eight Sleep Pods | `8sleep --location crosstown home <side>` | For each person confirmed at Crosstown, make Crosstown current; their Cabin side becomes away |
 | Roombas | `roomba start floomba` / `roomba start philly` | Both Roombas start cleaning |
 
 **On return to occupied:**
 
-No automated restore actions. Vacancy marker cleared.
+| System | CLI | Action |
+|--------|-----|--------|
+| Eight Sleep Pods | Presence-driven `home` reconciliation | Each returning person's detected location becomes current independently |
+
+The general Cabin vacancy marker is also cleared; other systems are not
+automatically restored.
 
 ## Deduplication
 
@@ -70,8 +76,16 @@ Marker files at `~/.openclaw/presence/vacancy-dispatched/` prevent duplicate tri
 
 - `vacancy-dispatched/crosstown` — created after Crosstown vacancy actions run
 - `vacancy-dispatched/cabin` — created after Cabin vacancy actions run
+- `vacancy-dispatched/8sleep-dylan-home` — last verified current location for Dylan
+- `vacancy-dispatched/8sleep-julia-home` — last verified current location for Julia
 
-Actions only fire when `confirmed_vacant` AND no marker exists. Markers are deleted when occupancy returns to `occupied`.
+Actions only fire when `confirmed_vacant` AND no corresponding marker exists.
+Eight Sleep is reconciled from each person's sticky `people.<name>.location`
+when that location changes. This handles split households without polling the
+cloud on every 15-minute state write. The per-person marker records the last
+verified location. While the location is unchanged, manual Eight Sleep app
+overrides are preserved; the next positive relocation re-applies automation.
+Invalid or unknown locations preserve the marker and perform no device action.
 
 ## Files
 
@@ -105,7 +119,8 @@ Check marker state:
 ls -la ~/.openclaw/presence/vacancy-dispatched/
 ```
 
-Force re-evaluation (clears markers so next vacancy triggers actions again):
-```bash
-rm -f ~/.openclaw/presence/vacancy-dispatched/{crosstown,cabin}
-```
+Do not delete vacancy markers, touch `state.json`, or run a live presence scan
+as a test. Clearing a marker re-arms every physical action for that location on
+the next `confirmed_vacant` evaluation. Use the isolated tests instead:
+`bash openclaw/tests/test-presence-receive.sh` and
+`bash openclaw/tests/test-vacancy-actions.sh`.

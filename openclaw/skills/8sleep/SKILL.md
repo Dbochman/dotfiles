@@ -1,24 +1,30 @@
 ---
 name: 8sleep
-description: Control Eight Sleep Pod(s). Defaults to Crosstown (West Roxbury); pass `--location cabin` once the Cabin Pod is online. Use when asked about bed temperature, sleep tracking, sleep score, Eight Sleep, Pod, bed cooling/heating, or anything about the smart bed. Supports both sides — Dylan (left) and Julia (right). NOT for room thermostat (use nest-thermostat for that).
+description: Control the Eight Sleep Pods at Crosstown and the Cabin. Defaults to Crosstown; pass `--location cabin` for the Cabin Pod. Use when asked about bed temperature, sleep tracking, sleep score, Eight Sleep, Pod, bed cooling/heating, or anything about the smart bed. Supports both sides — Dylan (left) and Julia (right). NOT for room thermostat (use nest-thermostat for that).
 allowed-tools: Bash(8sleep:*)
 metadata: {"openclaw":{"emoji":"S","requires":{"bins":["8sleep"]}}}
 ---
 
 # Eight Sleep Pod Control
 
-Control Eight Sleep Pod(s) via the Eight Sleep cloud API. Currently one Pod: **Pod 3** (King) at Crosstown. A second Pod will be added at the Cabin.
+Control both Eight Sleep Pods via the Eight Sleep cloud API.
 
 ## Locations
 
-| Location | Pod | Env var (optional) |
+| Location | Pod | Device-ID env var |
 |----------|-----|--------------------|
 | **crosstown** (default) | Pod 3 (King) at Crosstown | `EIGHTSLEEP_CROSSTOWN_DEVICE_ID` |
-| **cabin** | (TBD — to be added) | `EIGHTSLEEP_CABIN_DEVICE_ID` |
+| **cabin** | Pod 5 (King) at the Cabin | `EIGHTSLEEP_CABIN_DEVICE_ID` |
 
-Pass `--location <name>` (or `-l <name>`) before any subcommand to target a specific Pod. If unset, defaults to `crosstown`. Env vars are optional — when unset, the CLI falls back to whichever Pod is the account's "current device" (correct for single-Pod accounts).
+Pass `--location <name>` (or `-l <name>`) before any subcommand to target a
+specific Pod. If unset, the CLI defaults to `crosstown`. Both device-ID env vars
+must remain populated for deterministic multi-Pod routing.
 
-**Note:** Eight Sleep's per-side endpoints (`temp`, `off`, `on`, `away`) are user-scoped and route to the user's "current device", not by explicit device ID. Once the Cabin Pod is online, verify these actually target the intended Pod — may need additional plumbing.
+Eight Sleep's per-side write endpoints are user-scoped, and household-set
+selection is a semantic relocation rather than a neutral routing mechanism.
+Use `home` with an explicit location to make that Pod current for one user; the
+other Pod becomes away for that side. Temperature, power, and manual away
+commands fail closed unless the requested Pod is already current.
 
 ## Pod Sides
 
@@ -57,10 +63,26 @@ Shows current temperature level, heating/cooling state, and water status for bot
 ```bash
 8sleep away dylan start   # enable away mode for Dylan
 8sleep away julia start   # enable away mode for Julia
-8sleep away dylan end     # disable away mode for Dylan (returning home)
-8sleep away julia end     # disable away mode for Julia
+8sleep away dylan end     # disable away on Dylan's already-current Pod
+8sleep away julia end     # disable away on Julia's already-current Pod
 ```
-Away mode marks the user as absent — the pod stops all thermal activity for that side and adjusts sleep tracking accordingly. Use this for vacations or extended travel. For short absences (leaving the house for the day), prefer `off`/`on` instead.
+Away mode marks the user as absent — the current Pod stops all thermal activity
+for that side and adjusts sleep tracking accordingly. It does not relocate the
+user between Pods; use `home` for that. Manual away is appropriate for vacations
+or extended travel. For short absences, prefer `off`/`on` instead.
+
+### Move a user's home Pod
+
+```bash
+8sleep --location crosstown home dylan
+8sleep --location cabin home julia
+```
+
+`home` requires an explicit location. It selects that household set, clears
+away mode there, verifies the side assignment moved, and leaves the selection
+in place. The other Pod becomes away for that user. Vacancy automation uses
+this command independently for Dylan and Julia, including when they are at
+different houses.
 
 ### Temperature scale
 | Level | Temp | Feeling |
@@ -90,11 +112,14 @@ Shows model, serial, water level, connectivity, priming status.
 
 ## Architecture
 
-```
-Pod 3 ←─cloud─→ Eight Sleep API ←─HTTPS─→ 8sleep-api.py (Mac Mini)
+```text
+Pod 3 (Crosstown) ─┐
+                   ├─ cloud API ─ 8sleep-api.py (Mac Mini)
+Pod 5 (Cabin) ─────┘
 ```
 
-Cloud-only — requires internet. No local network API. Auth via Dylan's account (household access covers both sides).
+Cloud-only — requires internet. No local network API. Auth via Dylan's account
+and the shared household configuration covers both Pods and both sides.
 
 ## Identifying the requester
 

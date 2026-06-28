@@ -24,7 +24,7 @@ Monitors thermostats and weather across two locations via three heating/cooling 
 
 ### What It Shows
 
-- **Presence cards** — occupancy status per location (Occupied / Vacant / Possibly Vacant)
+- **Vacancy cards** — canonical occupancy per location (Occupied / Confirmed Vacant / Possibly Vacant), with only Dylan and Julia shown
 - **Temperature cards** — current temp, setpoint, HVAC mode, humidity per room
 - **Temperature chart** — line graph with room temps + setpoints + outdoor weather
 - **Humidity chart** — per-room humidity over time
@@ -391,7 +391,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Google Speakers | Bedroom + Living Room | Kitchen + Bedroom |
 | Litter-Robot | LR4 | — |
 | Petlibro | Feeder + Fountain | (seasonal, unplugged) |
-| Eight Sleep | Pod 3 (both sides) | — |
+| Eight Sleep | Pod 3 (dashboard default) | Pod 5 (CLI/vacancy-managed) |
 | Ring Doorbell | Front Door (snap + status) | Front Door (snap + status) |
 | Nest Camera | — | Kitchen (snap) |
 | Dog Walk | Yes | Yes |

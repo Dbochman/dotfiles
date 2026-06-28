@@ -17,8 +17,9 @@
 #   absent there AND confirmed present at the other location.
 #   Otherwise it's "possibly_vacant" (phones may be sleeping).
 #
-# Crosstown pushes its state to the Mac Mini via `tailscale file cp`
-# after each scan. The Mac Mini's `evaluate` mode reads both.
+# Crosstown pushes a named state file to the Mac Mini via `tailscale file cp`
+# after each scan. The macOS Tailscale app deposits it in Downloads, where the
+# Mini's WatchPaths receiver promotes it before `evaluate` reads both scans.
 
 set -euo pipefail
 
@@ -500,7 +501,7 @@ case "$LOCATION" in
     echo "$result" > "${STATE_DIR}/crosstown-scan.json"
     log "Crosstown scan: $(echo "$result" | tr -d '\n' | head -c 300)"
     # Push state to Mac Mini via Tailscale; capture stderr so failures don't go silent
-    push_err=$(echo "$result" | $TAILSCALE file cp - dylans-mac-mini: 2>&1 >/dev/null) && \
+    push_err=$(echo "$result" | $TAILSCALE file cp --name crosstown-scan.json - dylans-mac-mini: 2>&1 >/dev/null) && \
       log "Pushed crosstown state to Mac Mini via Tailscale" || \
       log "WARN: Failed to push crosstown state to Mac Mini: ${push_err:-unknown error}"
     echo "$result"

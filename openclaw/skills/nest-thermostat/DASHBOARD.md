@@ -55,6 +55,7 @@ File-per-day structure acts as a natural date index.
 | `GET /` | Embedded HTML dashboard |
 | `GET /api/data?hours=24` | Snapshots for time range (default 24h, max 8760 = 1 year) |
 | `GET /api/current` | Latest snapshot only |
+| `GET /api/presence` | Current canonical vacancy states with the dashboard roster limited to Dylan and Julia |
 
 **Data loading behavior:**
 - Only reads JSONL files matching the requested date range
@@ -73,6 +74,7 @@ File-per-day structure acts as a natural date index.
 ## Dashboard UI
 
 - **Structure filter buttons:** Both, Philly, Crosstown — filters room cards, weather cards, and all charts
+- **Vacancy badges:** Uses `occupied`, `confirmed_vacant`, and `possibly_vacant` directly; Potato's informational Fi location is excluded
 - **Status cards:** Current temp, setpoint, HVAC status, humidity per room + outdoor weather per structure
 - **Temperature chart** (line): Per-room temps + outdoor temp + setpoint lines (dotted)
 - **Humidity chart** (line): Per-room + outdoor humidity

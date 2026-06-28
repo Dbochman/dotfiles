@@ -168,7 +168,7 @@ Rooms without a prefix default to Philly (Cabin). Crosstown rooms are prefixed w
 | `/` | GET | — | Embedded HTML dashboard (single-page app) |
 | `/api/data` | GET | `hours=N` (default 24, max 8760) | Snapshots + presence history for time range |
 | `/api/current` | GET | — | Latest snapshot only |
-| `/api/presence` | GET | — | Current presence state from `state.json` |
+| `/api/presence` | GET | — | Current canonical vacancy state from `state.json`; dashboard roster is limited to Dylan and Julia |
 
 ### Response: `/api/data?hours=24`
 
@@ -194,7 +194,7 @@ For time ranges > 7 days (168 hours), snapshots are downsampled to ~1 per hour. 
 
 ### Layout
 
-1. **Presence Cards** — Per-location occupancy (Occupied/Partially Occupied/Vacant/Possibly Vacant), people names, duration since last state change
+1. **Vacancy Cards** — Per-location canonical state (Occupied/Confirmed Vacant/Possibly Vacant), Dylan/Julia names, duration since last state change
 2. **Status Cards** — Current temperature, setpoint, HVAC status, humidity, source tag per room
 3. **Structure Filter** — Both | Cabin | Crosstown
 4. **Time Range** — 24h | 7d | 30d | 1Y
@@ -249,9 +249,13 @@ For each room, snapshots are bucketed by hour. Duty cycle per bucket:
 
 When a single structure is selected, temperature/humidity/duty charts render background bands:
 - Green (7% opacity) — Occupied
-- Blue (7% opacity) — Partially Occupied (one person present, others elsewhere)
 - Gray (6% opacity) — Confirmed Vacant
 - Amber (5% opacity) — Possibly Vacant
+
+The badge and overlay map directly from each location's canonical `occupancy`
+enum. They never infer an additional state from the roster. Potato's Fi-collar
+entry is informational, is removed from the dashboard API response, and cannot
+affect vacancy presentation.
 
 ### Technical Stack
 
@@ -354,7 +358,8 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
   - Crosstown: ARP scan (`192.168.165.0/24`) + hostname matching
 - **Model:** Sticky/arrival-based — once detected, person stays at location until detected at the other
 - **Occupancy states:** `occupied`, `confirmed_vacant`, `possibly_vacant` (scans stale > 30 min)
-- **Partial occupancy:** When only some tracked people are at a location, it shows "Partially Occupied" (blue badge)
+- **Roster:** Only Dylan and Julia are displayed; Potato is informational and excluded from vacancy decisions
+- **Split occupancy:** If Dylan and Julia are at different houses, both locations use the canonical `occupied` state and each card shows the person there
 - **State duration:** Each location tracks `stateChangedAt` (ISO timestamp) — carried forward from previous evaluation, reset when occupancy changes. Dashboard displays human-friendly duration ("for 3h 15min", "for 2d 5h")
 
 ---

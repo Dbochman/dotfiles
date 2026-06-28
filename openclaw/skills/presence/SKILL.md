@@ -1,13 +1,15 @@
 ---
 name: presence
-description: Check who is home at the cabin (Philly) or Crosstown (Boston). Use when the user asks "is anyone home", "who's home", "is Julia/Dylan home", "is anyone at the cabin", or presence detection. This skill is read-only — it reports occupancy status but does NOT trigger any actions.
+description: Check who is home at the cabin (Philly) or Crosstown (Boston). Use when the user asks "is anyone home", "who's home", "is Julia/Dylan home", "is anyone at the cabin", or presence detection. Cached reporting is read-only; live scans update state and can trigger separate vacancy automation.
 allowed-tools: Bash(presence:*)
 metadata: {"openclaw":{"emoji":"P"}}
 ---
 
 # Presence Detection
 
-Detect who is home at each location by querying local network devices. This is a **detection-only** system — it tracks and reports occupancy but takes no automated actions (no lights, thermostats, or routines are triggered).
+Cached-state reporting is read-only. A fresh scan rewrites correlated
+`state.json`; the separate vacancy WatchPaths automation can react to that
+write, so do not run a live scan merely to test presence.
 
 ## Quick Check
 
@@ -17,7 +19,8 @@ Read the cached state (updated every 15 min, no scan needed):
 cat ~/.openclaw/presence/state.json
 ```
 
-Or run a fresh scan:
+Live scans are operational, not read-only: they update `state.json` and may
+trigger vacancy actions. Run one only when that side effect is intended:
 
 ```bash
 # Cabin (on Mac Mini)
@@ -85,11 +88,11 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 │ Every 15 min:          │            │ Every 15 min:             │
 │   ARP scan 192.168.165 │            │   Starlink gRPC API       │
 │   Write crosstown-     │──tailscale │   Write cabin-scan.json   │
-│     scan.json          │──file cp──▶│                           │
+│     scan.json          │──named cp─▶│ ~/Downloads/              │
 └───────────────────────┘            │ com.openclaw.             │
                                      │   presence-receive        │
-                                     │ KeepAlive daemon:         │
-                                     │   Receive crosstown scan  │
+                                     │ WatchPaths one-shot:      │
+                                     │   Validate + atomic move  │
                                      │   Trigger evaluate        │
                                      │                           │
                                      │ Evaluator:                │
@@ -104,7 +107,7 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 |-------|------|----------|---------|
 | `com.openclaw.presence-cabin` | Mac Mini | Every 15 min | Scan cabin WiFi, evaluate |
 | `com.openclaw.presence-crosstown` | MacBook Pro | Every 15 min | Scan Crosstown LAN, push to Mac Mini |
-| `com.openclaw.presence-receive` | Mac Mini | KeepAlive | Receive Crosstown state via Tailscale |
+| `com.openclaw.presence-receive` | Mac Mini | WatchPaths on `~/Downloads` | Ingest named Crosstown Taildrop state |
 
 ### Files on Mac Mini (`~/.openclaw/presence/`)
 
@@ -119,7 +122,7 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 ### Logs
 
 - `~/.openclaw/logs/presence-detect.log` (on both machines)
-- `~/.openclaw/logs/presence-receive.log` (on Mac Mini)
+- Receiver ingestion and evaluation summaries share `~/.openclaw/logs/presence-detect.log` on the Mac Mini.
 
 ## Detection Methods
 
@@ -142,7 +145,7 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 
 ## Important Notes
 
-- **No automated actions** — this system only detects and reports. Routines (away mode, welcome home, etc.) must be explicitly requested by the user.
+- **Cached reporting is read-only; live scans are not** — `presence-detect.sh cabin` evaluates and writes `state.json`, while a Crosstown scan pushes a file that the Mini receiver evaluates. Either path can trigger the separate vacancy automation.
 - **Sticky/arrival-based model** — once detected at a location, a person stays there until detected at the other location. Phone sleep, MAC rotation, or missed ARP scans don't cause flicker.
 - Scan staleness: if either location's scan is >30 min old, it's still trusted for the sticky model (previous location is preserved). Staleness only matters for initial detection of a person with no previous location.
 - Mac Mini SSHs to MacBook Pro via Tailscale (`ssh dylans-macbook-pro`) using dedicated key `~/.ssh/id_mini_to_mbp` (bypasses 1Password agent which hangs under launchd).
@@ -150,7 +153,9 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 
 ## Skill Boundaries
 
-This skill is **detection-only** — it reports who is home but takes no automated actions.
+This skill should normally report the cached state only. Do not invoke a fresh
+scanner as a harmless read: its state write can activate the separately managed
+vacancy automation.
 
 For related tasks, switch to:
 - **cabin-routines** / **crosstown-routines**: Run away/welcome home routines based on presence (user must explicitly request)

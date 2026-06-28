@@ -13,7 +13,7 @@ Collected by `home-state-snapshot.py` via LaunchAgent `ai.openclaw.home-state-sn
 | Source | Data | CLI | Update Frequency |
 |--------|------|-----|-----------------|
 | Litter-Robot 4 | Cat weights (per cat, per cycle) | `litter-robot pets` | Each litter box visit |
-| Eight Sleep Pod 3 | Sleep scores, duration, stages, HRV, HR, RR, snoring | `8sleep sleep <side>` | Previous night |
+| Eight Sleep Pods | Sleep scores, duration, stages, HRV, HR, RR, snoring for each user | `8sleep sleep <side>` | Previous night |
 | Ring Doorbell | Battery level per doorbell | `ring status` | On-demand |
 
 ### Event-Driven (Dog Walk Listener)

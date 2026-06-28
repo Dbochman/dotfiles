@@ -23,6 +23,7 @@ PRESENCE_HISTORY_DIR = os.path.join(PRESENCE_DIR, "history")
 PORT = 8550
 MAX_HOURS = 8760  # 1 year
 DOWNSAMPLE_THRESHOLD_HOURS = 168  # 7 days — beyond this, keep ~1 per hour
+VACANCY_PEOPLE = ("Dylan", "Julia")
 
 
 def load_snapshots(hours):
@@ -49,10 +50,14 @@ def load_snapshots(hours):
                         rec = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    if not isinstance(rec, dict):
+                        continue
                     ts_str = rec.get("timestamp", "")
                     try:
                         ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     except (ValueError, AttributeError):
+                        continue
+                    if ts.tzinfo is None:
                         continue
                     if ts >= cutoff:
                         records.append(rec)
@@ -94,12 +99,35 @@ def _ts_minute(rec):
         return 60
 
 
+def normalize_presence_state(state):
+    """Return dashboard presence with only people used by vacancy decisions.
+
+    The canonical state can also contain informational entities such as
+    Potato's Fi-collar location. Those entities do not participate in the
+    occupancy enum and must not appear in, or influence, climate-dashboard
+    vacancy presentation.
+    """
+    if not isinstance(state, dict):
+        return None
+
+    normalized = dict(state)
+    people = state.get("people")
+    if not isinstance(people, dict):
+        people = {}
+    normalized["people"] = {
+        name: people[name]
+        for name in VACANCY_PEOPLE
+        if isinstance(people.get(name), dict)
+    }
+    return normalized
+
+
 def load_current_presence():
-    """Load current presence state from state.json."""
+    """Load and normalize current vacancy state from state.json."""
     path = os.path.join(PRESENCE_DIR, "state.json")
     try:
         with open(path) as f:
-            return json.load(f)
+            return normalize_presence_state(json.load(f))
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -127,10 +155,14 @@ def load_presence_history(hours):
                         rec = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    if not isinstance(rec, dict):
+                        continue
                     ts_str = rec.get("timestamp", "")
                     try:
                         ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
                     except (ValueError, AttributeError):
+                        continue
+                    if ts.tzinfo is None:
                         continue
                     if ts >= cutoff:
                         records.append(rec)
@@ -310,9 +342,9 @@ canvas { width: 100% !important; }
 .presence-card .card-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
 .presence-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
 .presence-badge.occupied { background: #22c55e22; color: #22c55e; }
-.presence-badge.partial { background: #3b82f622; color: #3b82f6; }
-.presence-badge.vacant { background: #6b728022; color: #6b7280; }
-.presence-badge.possibly { background: #f59e0b22; color: #f59e0b; }
+.presence-badge.confirmed-vacant { background: #6b728022; color: #9ca3af; }
+.presence-badge.possibly-vacant { background: #f59e0b22; color: #f59e0b; }
+.presence-badge.unknown { background: #ef444422; color: #f87171; }
 .presence-people { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.35rem; }
 .presence-fresh { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem; }
 .presence-legend { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.75rem; display: none; gap: 1rem; }
@@ -358,8 +390,8 @@ canvas { width: 100% !important; }
 </div>
 <div class="presence-legend" id="presenceLegend">
   <span><span class="swatch" style="background:rgba(34,197,94,0.15)"></span> Occupied</span>
-  <span><span class="swatch" style="background:rgba(59,130,246,0.15)"></span> Partial</span>
-  <span><span class="swatch" style="background:rgba(107,114,128,0.12)"></span> Vacant</span>
+  <span><span class="swatch" style="background:rgba(107,114,128,0.12)"></span> Confirmed Vacant</span>
+  <span><span class="swatch" style="background:rgba(245,158,11,0.10)"></span> Possibly Vacant</span>
 </div>
 <div class="chart-container"><h2>Temperature</h2><div class="chart-wrap"><canvas id="tempChart"></canvas></div><div class="chart-legend" id="tempLegend"></div></div>
 <div class="chart-container"><h2>Humidity</h2><div class="chart-wrap"><canvas id="humidChart"></canvas></div><div class="chart-legend" id="humidLegend"></div></div>
@@ -402,6 +434,41 @@ let currentHours = 24;
 let currentStructure = 'all';
 let currentPresence = []; // presence history for overlay
 let showSetpoints = false;
+
+// Presentation is driven only by the canonical vacancy-state enum. Never
+// infer another occupancy state from the roster: informational entities may
+// coexist in state.json, and split households are still canonically occupied.
+const VACANCY_STATE_VIEW = {
+  occupied: {
+    badgeClass: 'occupied',
+    badgeText: 'Occupied',
+    overlay: 'rgba(34,197,94,0.07)',
+  },
+  confirmed_vacant: {
+    badgeClass: 'confirmed-vacant',
+    badgeText: 'Confirmed Vacant',
+    overlay: 'rgba(107,114,128,0.06)',
+  },
+  possibly_vacant: {
+    badgeClass: 'possibly-vacant',
+    badgeText: 'Possibly Vacant',
+    overlay: 'rgba(245,158,11,0.05)',
+  },
+};
+const UNKNOWN_VACANCY_STATE_VIEW = {
+  badgeClass: 'unknown',
+  badgeText: 'Unknown',
+  overlay: 'rgba(239,68,68,0.04)',
+};
+
+function vacancyStateView(occupancy) {
+  switch (occupancy) {
+    case 'occupied': return VACANCY_STATE_VIEW.occupied;
+    case 'confirmed_vacant': return VACANCY_STATE_VIEW.confirmed_vacant;
+    case 'possibly_vacant': return VACANCY_STATE_VIEW.possibly_vacant;
+    default: return UNKNOWN_VACANCY_STATE_VIEW;
+  }
+}
 
 // Consistent color cache so random colors don't change on re-render
 const colorCache = {};
@@ -624,17 +691,12 @@ function renderLocationGroups(snapshot, presenceState) {
       const info = presenceState[struct.loc];
       if (info) {
         const occ = info.occupancy || 'unknown';
-        const people = presenceState.people
-          ? Object.entries(presenceState.people).filter(([,v]) => v[struct.loc]).map(([k]) => k)
-          : [];
-        const totalTracked = presenceState.people ? Object.keys(presenceState.people).length : 0;
-        const isPartial = occ === 'occupied' && people.length > 0 && people.length < totalTracked;
-        const badgeClass = isPartial ? 'partial' : occ === 'occupied' ? 'occupied' : occ === 'confirmed_vacant' ? 'vacant' : 'possibly';
-        const badgeText = isPartial ? 'Partial' : occ === 'occupied' ? 'Occupied' : occ === 'confirmed_vacant' ? 'Vacant' : 'Possibly Vacant';
+        const stateView = vacancyStateView(occ);
+        const people = ['Dylan', 'Julia'].filter(name => presenceState.people?.[name]?.[struct.loc] === true);
         const fresh = info.fresh !== false ? '' : ' (stale)';
         const sinceChange = info.stateChangedAt ? humanDuration(info.stateChangedAt) : (info.scanAge || '');
         const sinceLabel = info.stateChangedAt ? sinceChange : sinceChange;
-        html += '<span class="presence-badge ' + badgeClass + '">' + badgeText + '</span>';
+        html += '<span class="presence-badge ' + stateView.badgeClass + '">' + stateView.badgeText + '</span>';
         if (people.length) html += '<span class="presence-people" style="margin:0;font-size:0.7rem">' + people.join(', ') + '</span>';
         if (sinceLabel) html += '<span class="presence-fresh" style="margin:0">' + sinceLabel + fresh + '</span>';
       }
@@ -803,16 +865,19 @@ const presenceOverlayPlugin = {
     if (!loc) return;
 
     const { ctx, chartArea: { left, right, top, bottom }, scales: { x: xScale } } = chart;
-    const sorted = currentPresence.filter(p => p[loc]).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    const sorted = currentPresence.filter(p =>
+      p && typeof p === 'object'
+      && typeof p.timestamp === 'string'
+      && Number.isFinite(Date.parse(p.timestamp))
+      && p[loc] && typeof p[loc] === 'object'
+    ).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     if (!sorted.length) return;
 
     ctx.save();
     for (let i = 0; i < sorted.length; i++) {
       const rec = sorted[i];
       const locData = rec[loc];
-      const occ = locData.occupancy;
-      const peopleCt = (locData.people || []).length;
-      const isPartial = occ === 'occupied' && peopleCt === 1;
+      const stateView = vacancyStateView(locData.occupancy);
       const x1 = xScale.getPixelForValue(new Date(rec.timestamp).getTime());
       const nextTs = sorted[i + 1] ? new Date(sorted[i + 1].timestamp).getTime() : Date.now();
       const x2 = xScale.getPixelForValue(nextTs);
@@ -820,7 +885,7 @@ const presenceOverlayPlugin = {
       const clampX2 = Math.min(x2, right);
       if (clampX2 <= clampX1) continue;
 
-      ctx.fillStyle = isPartial ? 'rgba(59,130,246,0.07)' : occ === 'occupied' ? 'rgba(34,197,94,0.07)' : occ === 'confirmed_vacant' ? 'rgba(107,114,128,0.06)' : 'rgba(245,158,11,0.05)';
+      ctx.fillStyle = stateView.overlay;
       ctx.fillRect(clampX1, top, clampX2 - clampX1, bottom - top);
     }
     ctx.restore();

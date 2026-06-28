@@ -6,11 +6,10 @@
 #   - Turn off all lights
 #   - Set thermostat to eco
 #   - Turn off Cielo minisplits (Crosstown)
-#   - Enable Eight Sleep away mode (Crosstown)
+#   - Align each person's current Eight Sleep Pod to their detected location
 #   - Start Roombas
 #
 # When occupied again:
-#   - End Eight Sleep away mode (resume smart schedule)
 #   - Clear markers (reset for next vacancy)
 #   - (Welcome home actions handled by crosstown-routines/cabin-routines skills)
 
@@ -64,22 +63,25 @@ if [[ ! -f "$STATE_FILE" ]]; then
   exit 1
 fi
 
-# Parse occupancy from state.json
-crosstown_occupancy=$(python3 -c "
+# Parse the correlated occupancy and sticky per-person location in one read.
+state_values=$(python3 - "$STATE_FILE" <<'PY' 2>/dev/null || printf 'unknown\tunknown\tunknown\tunknown\n'
 import json
-with open('$STATE_FILE') as f:
-    d = json.load(f)
-print(d.get('crosstown', {}).get('occupancy', 'unknown'))
-" 2>/dev/null || echo "unknown")
+import sys
 
-cabin_occupancy=$(python3 -c "
-import json
-with open('$STATE_FILE') as f:
-    d = json.load(f)
-print(d.get('cabin', {}).get('occupancy', 'unknown'))
-" 2>/dev/null || echo "unknown")
+with open(sys.argv[1], encoding="utf-8") as state_file:
+    state = json.load(state_file)
+print(
+    state.get("crosstown", {}).get("occupancy", "unknown"),
+    state.get("cabin", {}).get("occupancy", "unknown"),
+    state.get("people", {}).get("Dylan", {}).get("location", "unknown"),
+    state.get("people", {}).get("Julia", {}).get("location", "unknown"),
+    sep="\t",
+)
+PY
+)
+IFS=$'\t' read -r crosstown_occupancy cabin_occupancy dylan_location julia_location <<< "$state_values"
 
-log "Check: crosstown=$crosstown_occupancy cabin=$cabin_occupancy"
+log "Check: crosstown=$crosstown_occupancy cabin=$cabin_occupancy dylan=$dylan_location julia=$julia_location"
 
 # --- Crosstown vacancy ---
 if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/crosstown" ]]; then
@@ -105,15 +107,6 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
       log "  Cielo $unit: OFF"
     else
       log "  ERROR: Failed to turn off Cielo $unit"
-    fi
-  done
-
-  # Eight Sleep Pod — enable away mode (extended absence)
-  for side in dylan julia; do
-    if 8sleep away "$side" start >> "$LOG_FILE" 2>&1; then
-      log "  Eight Sleep $side: AWAY MODE ON"
-    else
-      log "  ERROR: Failed to enable Eight Sleep $side away mode"
     fi
   done
 
@@ -150,17 +143,7 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
   log "Crosstown vacancy actions complete"
 
 elif [[ "$crosstown_occupancy" == "occupied" ]] && [[ -f "$MARKER_DIR/crosstown" ]]; then
-  log "Crosstown occupied again — ending Eight Sleep away mode and clearing vacancy marker"
-
-  # End Eight Sleep away mode (resume smart schedule)
-  for side in dylan julia; do
-    if 8sleep away "$side" end >> "$LOG_FILE" 2>&1; then
-      log "  Eight Sleep $side: AWAY MODE OFF"
-    else
-      log "  ERROR: Failed to end Eight Sleep $side away mode"
-    fi
-  done
-
+  log "Crosstown occupied again — clearing vacancy marker"
   rm -f "$MARKER_DIR/crosstown"
 fi
 
@@ -185,12 +168,12 @@ if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin"
   # Start Roombas
   started=0
   if roomba start floomba >> "$LOG_FILE" 2>&1; then
-    ((started++))
+    started=$((started + 1))
   else
     log "  ERROR: Failed to start Floomba"
   fi
   if roomba start philly >> "$LOG_FILE" 2>&1; then
-    ((started++))
+    started=$((started + 1))
   else
     log "  ERROR: Failed to start Philly"
   fi
@@ -203,3 +186,44 @@ elif [[ "$cabin_occupancy" == "occupied" ]] && [[ -f "$MARKER_DIR/cabin" ]]; the
   log "Cabin occupied again — clearing vacancy marker"
   rm -f "$MARKER_DIR/cabin"
 fi
+
+# Eight Sleep's user-scoped API models exactly one current Pod per person; the
+# other Pod becomes away. Reconcile each sticky presence location independently
+# when sticky location changes so split households work while manual app
+# overrides remain untouched until the next positive relocation.
+reconcile_eightsleep_home() {
+  local person="$1" side="$2" location="$3"
+  local marker="$MARKER_DIR/8sleep-$side-home"
+  local stage_file="$marker.$$"
+  local previous="unknown"
+
+  case "$location" in
+    crosstown|cabin) ;;
+    *)
+      log "  WARN: Skipping Eight Sleep $side reconciliation; $person location is $location"
+      return 0
+      ;;
+  esac
+
+  [[ -f "$marker" ]] && previous=$(cat "$marker" 2>/dev/null || echo "unknown")
+  [[ "$previous" == "$location" ]] && return 0
+
+  if 8sleep --location "$location" home "$side" >> "$LOG_FILE" 2>&1; then
+    printf '%s\n' "$location" > "$stage_file"
+    mv -f "$stage_file" "$marker"
+    rm -f \
+      "$MARKER_DIR/crosstown-8sleep-$side" \
+      "$MARKER_DIR/cabin-8sleep-$side"
+    if [[ "$previous" == "$location" ]]; then
+      log "  Eight Sleep $side: $location home state verified"
+    else
+      log "  Eight Sleep $side: home moved ${previous}->${location}; other Pod away"
+    fi
+  else
+    rm -f "$stage_file"
+    log "  ERROR: Failed to reconcile Eight Sleep $side home to $location"
+  fi
+}
+
+reconcile_eightsleep_home "Dylan" dylan "$dylan_location"
+reconcile_eightsleep_home "Julia" julia "$julia_location"

@@ -18,7 +18,6 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
 | `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
-| `com.openclaw.presence-receive` | `presence-receive.sh` | — | Receives Tailscale file pushes from Crosstown, drains stale inbound files before waiting, and logs through `presence-detect.log` |
 
 ### Financial Dashboard LaunchAgents
 
@@ -171,7 +170,8 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 
 | Label | Watches | Program | Description |
 |-------|---------|---------|-------------|
-| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, thermostat eco, Cielos off, Eight Sleep off, Roombas start. On return: Eight Sleep restored. See [VACANCY-AUTOMATION.md](VACANCY-AUTOMATION.md) |
+| `com.openclaw.presence-receive` | `~/Downloads` | `presence-receive.sh` | Validates the newest named Crosstown Taildrop file, atomically promotes it to presence state, and evaluates occupancy |
+| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, thermostat eco, Cielos off where applicable, lock Crosstown, and start Roombas. Independently reconciles each person's detected location with Eight Sleep `home`, which leaves their other Pod side away. See [VACANCY-AUTOMATION.md](VACANCY-AUTOMATION.md) |
 
 ## Mac Mini — Run-Once (RunAtLoad only)
 

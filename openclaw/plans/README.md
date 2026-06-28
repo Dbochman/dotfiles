@@ -6,7 +6,6 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 
 | Plan | Summary |
 |------|---------|
-| [cabin-8sleep-onboarding](cabin-8sleep-onboarding.md) | Flip on the Cabin Eight Sleep Pod once installed — secrets, vacancy wiring, verification |
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
@@ -17,6 +16,7 @@ Completed or historical plans in [`archive/`](archive/).
 
 | Plan | Summary | Status |
 |------|---------|--------|
+| [cabin-8sleep-onboarding](archive/cabin-8sleep-onboarding.md) | Add the Cabin Pod with location-safe routing and vacancy automation | Complete |
 | [bluebubbles-implementation-current-state](archive/bluebubbles-implementation-current-state.md) | BB integration state snapshot (Mar 2026) | Reference |
 | [bluebubbles-private-api](archive/bluebubbles-private-api.md) | Enable BB Private API for reactions/typing | Complete |
 | [cli-path-standardization](archive/cli-path-standardization.md) | Standardize CLI wrappers in `~/.openclaw/bin/` | Complete |

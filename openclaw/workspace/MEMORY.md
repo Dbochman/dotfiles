@@ -29,7 +29,7 @@
 - Google smart speakers
 - August Wi-Fi Smart Lock 4th gen (Crosstown front door, serial L5V82000F7)
 - Cielo minisplits (Crosstown: bedroom, office, living room)
-- Eight Sleep Pod 3 (Crosstown, Dylan=left, Julia=right)
+- Eight Sleep Pod 3 (Crosstown) and Pod 5 (Cabin), Dylan=left, Julia=right
 
 ## Timeline
 
@@ -171,12 +171,13 @@
 - Config: `~/.openclaw/august/config.json` on MBP
 
 **Vacancy Automation** (`vacancy-actions.sh`, WatchPaths on presence state.json):
-- Crosstown vacant → lights off, eco mode, Cielo off, Eight Sleep off, **front door locked**, Roombas start, iMessage notification to Dylan
-- Crosstown occupied → Eight Sleep restored, vacancy marker cleared
+- Crosstown vacant → lights off, eco mode, Cielo off, **front door locked**, Roombas start, iMessage notification to Dylan
 - Cabin vacant → lights off, eco mode, Roombas start
-- Cabin occupied → marker cleared
+- Each person's sticky presence location is reconciled independently with `8sleep --location <house> home <side>`; the selected Pod becomes current and that person's other Pod side becomes away
+- Per-person Eight Sleep markers record the last verified automated home location, so split households work and manual app overrides remain untouched until the next positive relocation
+- A location becoming occupied clears only its general vacancy marker; welcome-home routines handle lights and HVAC
 - Lock logic: checks if already locked first, sends different iMessage for already-locked vs newly-locked vs failed
-- Marker files in `~/.openclaw/presence/vacancy-dispatched/` prevent duplicate runs
+- General vacancy markers and per-person Eight Sleep home markers in `~/.openclaw/presence/vacancy-dispatched/` prevent duplicate runs and isolate retries
 
 ## Presence Detection Fix (2026-03-24)
 - Fixed stale ARP entries causing false presence at Crosstown
