@@ -9,6 +9,7 @@ Intended for home-LAN and Tailscale-tailnet access; not public internet.
 """
 
 import json
+import math
 import os
 import re
 import signal
@@ -329,6 +330,10 @@ def fetch_gateway_usage():
 _imessage_health_cache = {"data": None, "ts": 0}
 _imessage_health_lock = threading.Lock()
 IMESSAGE_HEALTH_CACHE_TTL = 60
+IMESSAGE_RESPONSE_WINDOW_HOURS = 168
+IMESSAGE_MAX_RESPONSE_MS = 30 * 60 * 1000
+IMESSAGE_SLOW_RESPONSE_MS = 2 * 60 * 1000
+IMESSAGE_DIRECT_CHAT_STYLE = 45  # Messages chat.style value for one-to-one chats.
 
 
 def _run_json_probe(command, timeout, env=None):
@@ -443,6 +448,194 @@ def _apple_message_time(value):
         return None
 
 
+def _apple_message_seconds(value):
+    """Normalize a Messages timestamp to seconds since Apple's 2001 epoch."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        return None
+    scale = 1_000_000_000 if abs(value) > 1_000_000_000_000 else 1
+    return value / scale
+
+
+def _nearest_rank_percentile(values, percentile):
+    """Return a deterministic nearest-rank percentile from sorted milliseconds."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, math.ceil(len(ordered) * percentile) - 1)
+    return ordered[index]
+
+
+def _imessage_response_latency(window_hours=IMESSAGE_RESPONSE_WINDOW_HOURS, now=None):
+    """Summarize privacy-safe direct-chat receive-to-response latency.
+
+    A response must be a successful outbound iMessage whose native reply link
+    targets an inbound message in the same direct chat. This excludes unlinked
+    proactive sends and counts only the first message of multipart responses;
+    linked manual replies are indistinguishable from OpenClaw replies. Consecutive
+    inbound messages form one turn, measured from the final inbound.
+    """
+    result = {
+        "available": False,
+        "window_hours": int(window_hours),
+        "sample_count": 0,
+        "latest_ms": None,
+        "median_ms": None,
+        "p95_ms": None,
+        "over_120s_count": 0,
+        "pending_turn_count": 0,
+        "unmatched_turn_count": 0,
+        "latest_received_at": None,
+        "latest_response_at": None,
+    }
+    if not MESSAGES_DB or not os.path.exists(MESSAGES_DB):
+        return result
+
+    observed_at = now or datetime.now(timezone.utc)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    else:
+        observed_at = observed_at.astimezone(timezone.utc)
+    apple_epoch = datetime(2001, 1, 1, tzinfo=timezone.utc)
+    now_seconds = (observed_at - apple_epoch).total_seconds()
+    cutoff_seconds = now_seconds - max(1, int(window_hours)) * 60 * 60
+    max_response_seconds = IMESSAGE_MAX_RESPONSE_MS / 1000
+
+    try:
+        connection = sqlite3.connect(
+            f"file:{MESSAGES_DB}?mode=ro", uri=True, timeout=1,
+        )
+        try:
+            rows = connection.execute(
+                """
+                SELECT c.ROWID, m.ROWID, m.guid, m.reply_to_guid, m.date,
+                       m.is_from_me, m.is_sent, m.error, m.is_finished
+                  FROM message AS m
+                  JOIN chat_message_join AS cmj ON cmj.message_id = m.ROWID
+                  JOIN chat AS c ON c.ROWID = cmj.chat_id
+                 WHERE c.style = ?
+                   AND m.service = 'iMessage'
+                   AND m.date > 0
+                   AND COALESCE(m.item_type, 0) = 0
+                   AND COALESCE(m.is_empty, 0) = 0
+                   AND COALESCE(m.is_system_message, 0) = 0
+                   AND COALESCE(m.associated_message_type, 0) = 0
+                   AND COALESCE(m.is_finished, 0) = 1
+                   AND (
+                        m.date BETWEEN ? AND ?
+                        OR m.date BETWEEN ? AND ?
+                   )
+                """,
+                (
+                    IMESSAGE_DIRECT_CHAT_STYLE,
+                    int(cutoff_seconds), int(now_seconds),
+                    int(cutoff_seconds * 1_000_000_000),
+                    int(now_seconds * 1_000_000_000),
+                ),
+            ).fetchall()
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error):
+        return result
+
+    normalized = []
+    for (
+        chat_id, row_id, guid, reply_to_guid, raw_date,
+        is_from_me, is_sent, error, is_finished,
+    ) in rows:
+        message_seconds = _apple_message_seconds(raw_date)
+        if (
+            message_seconds is None
+            or message_seconds < cutoff_seconds
+            or message_seconds > now_seconds
+        ):
+            continue
+        normalized.append({
+            "chat_id": chat_id,
+            "row_id": row_id,
+            "guid": guid,
+            "reply_to_guid": reply_to_guid,
+            "seconds": message_seconds,
+            "is_from_me": bool(is_from_me),
+            "is_sent": bool(is_sent),
+            "error": int(error or 0),
+            "is_finished": bool(is_finished),
+        })
+    normalized.sort(key=lambda row: (row["chat_id"], row["seconds"], row["row_id"]))
+
+    samples = []
+    pending_by_chat = {}
+    unmatched = 0
+    for row in normalized:
+        chat_id = row["chat_id"]
+        pending = pending_by_chat.get(chat_id, [])
+        if not row["is_from_me"]:
+            if pending and row["seconds"] - pending[-1]["seconds"] > max_response_seconds:
+                unmatched += 1
+                pending = []
+            pending.append(row)
+            pending_by_chat[chat_id] = pending
+            continue
+
+        if not pending or not row["is_sent"] or row["error"] or not row["is_finished"]:
+            continue
+        pending_guids = {item["guid"] for item in pending if item["guid"]}
+        if not row["reply_to_guid"] or row["reply_to_guid"] not in pending_guids:
+            unmatched += 1
+            pending_by_chat[chat_id] = []
+            continue
+
+        inbound = pending[-1]
+        latency_ms = (row["seconds"] - inbound["seconds"]) * 1000
+        if 0 < latency_ms <= IMESSAGE_MAX_RESPONSE_MS:
+            samples.append({
+                "latency_ms": latency_ms,
+                "received_seconds": inbound["seconds"],
+                "response_seconds": row["seconds"],
+                "response_row_id": row["row_id"],
+            })
+        else:
+            unmatched += 1
+        pending_by_chat[chat_id] = []
+
+    pending_count = 0
+    for pending in pending_by_chat.values():
+        if not pending:
+            continue
+        if now_seconds - pending[-1]["seconds"] <= max_response_seconds:
+            pending_count += 1
+        else:
+            unmatched += 1
+
+    result["available"] = True
+    result["pending_turn_count"] = pending_count
+    result["unmatched_turn_count"] = unmatched
+    if not samples:
+        return result
+
+    values = sorted(sample["latency_ms"] for sample in samples)
+    middle = len(values) // 2
+    median = (
+        values[middle]
+        if len(values) % 2
+        else (values[middle - 1] + values[middle]) / 2
+    )
+    latest = max(samples, key=lambda sample: (
+        sample["response_seconds"], sample["response_row_id"],
+    ))
+    result.update({
+        "sample_count": len(values),
+        "latest_ms": round(latest["latency_ms"], 1),
+        "median_ms": round(median, 1),
+        "p95_ms": round(_nearest_rank_percentile(values, 0.95), 1),
+        "over_120s_count": sum(
+            1 for value in values if value > IMESSAGE_SLOW_RESPONSE_MS
+        ),
+        "latest_received_at": _apple_message_time(latest["received_seconds"]),
+        "latest_response_at": _apple_message_time(latest["response_seconds"]),
+    })
+    return result
+
+
 def _latest_imessage_delivery():
     """Read the latest outbound iMessage result without message or recipient data."""
     delivery = {
@@ -506,6 +699,7 @@ def fetch_imessage_health():
 
         imsg_status = _run_json_probe([IMSG_BIN, "status", "--json"], timeout=5)
         delivery = _latest_imessage_delivery()
+        response_latency = _imessage_response_latency()
         gateway_live = _gateway_is_live()
         gateway_pid = _gateway_launchd_pid()
         worker_count = _gateway_imsg_worker_count(gateway_pid)
@@ -572,6 +766,7 @@ def fetch_imessage_health():
             "gateway": gateway,
             "imsg": imsg,
             "last_delivery": delivery,
+            "response_latency": response_latency,
         }
         _imessage_health_cache["data"] = data
         _imessage_health_cache["ts"] = now
@@ -861,6 +1056,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
     <div class="health-metric"><span class="health-label">Native bridge</span><span class="health-value" id="imessageBridge">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Features</span><span class="health-value" id="imessageFeatures">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Last outbound</span><span class="health-value" id="imessageDelivery">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Latest direct response</span><span class="health-value" id="imessageResponseLatest">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">7-day direct response</span><span class="health-value" id="imessageResponseWindow">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Slow / unresolved</span><span class="health-value" id="imessageResponseTail">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Runtime</span><span class="health-value" id="imessageRuntime">Checking...</span></div>
   </div>
   <div class="health-foot" id="imessageHealthFoot">Waiting for the first probe</div>
@@ -970,6 +1168,13 @@ function setImessageMetric(id, text, tone) {
   el.className = 'health-value' + (tone ? ' health-value-' + tone : '');
 }
 
+function responseLatencyTone(ms) {
+  if (ms == null) return '';
+  if (ms <= 60000) return 'good';
+  if (ms <= 120000) return 'warn';
+  return 'bad';
+}
+
 async function refreshImessageHealth() {
   const stateEl = document.getElementById('imessageHealthState');
   const summaryEl = document.getElementById('imessageHealthSummary');
@@ -1039,6 +1244,43 @@ async function refreshImessageHealth() {
       setImessageMetric('imessageDelivery', 'No outbound history', '');
     }
 
+    const response = d.response_latency || {};
+    if (!response.available) {
+      setImessageMetric('imessageResponseLatest', 'History unavailable', '');
+      setImessageMetric('imessageResponseWindow', 'History unavailable', '');
+      setImessageMetric('imessageResponseTail', 'History unavailable', '');
+    } else if (!response.sample_count) {
+      setImessageMetric('imessageResponseLatest', 'No completed direct turns', '');
+      setImessageMetric('imessageResponseWindow', 'No samples in window', '');
+      const pending = response.pending_turn_count || 0;
+      const unmatched = response.unmatched_turn_count || 0;
+      setImessageMetric(
+        'imessageResponseTail',
+        pending + ' pending · ' + unmatched + ' unmatched',
+        pending > 0 ? 'warn' : ''
+      );
+    } else {
+      const latestAge = response.latest_response_at ? ' · ' + fmtAgo(response.latest_response_at) : '';
+      setImessageMetric(
+        'imessageResponseLatest',
+        fmtDuration(response.latest_ms) + latestAge,
+        responseLatencyTone(response.latest_ms)
+      );
+      setImessageMetric(
+        'imessageResponseWindow',
+        'Median ' + fmtDuration(response.median_ms) + ' · p95 ' + fmtDuration(response.p95_ms) + ' · n=' + response.sample_count,
+        responseLatencyTone(response.p95_ms)
+      );
+      const slow = response.over_120s_count || 0;
+      const pending = response.pending_turn_count || 0;
+      const unmatched = response.unmatched_turn_count || 0;
+      setImessageMetric(
+        'imessageResponseTail',
+        slow + ' over 2m · ' + pending + ' pending · ' + unmatched + ' unmatched',
+        slow > 0 || pending > 0 ? 'warn' : 'good'
+      );
+    }
+
     if (i.available) {
       const version = i.version || 'unknown';
       const sip = i.sip || 'unknown';
@@ -1049,12 +1291,15 @@ async function refreshImessageHealth() {
 
     let timing = 'Checked ' + fmtAgo(d.checked_at);
     if (g.last_probe_at) timing += ' · channel probe ' + fmtAgo(g.last_probe_at);
+    if (response.available) timing += ' · direct reply links, 7-day window';
     footEl.textContent = timing;
   } catch (e) {
     stateEl.textContent = 'Unknown';
     stateEl.className = 'health-state health-state-unknown';
     summaryEl.textContent = 'The native iMessage health endpoint is unavailable.';
-    ['imessageChannel', 'imessageBridge', 'imessageFeatures', 'imessageDelivery', 'imessageRuntime']
+    ['imessageChannel', 'imessageBridge', 'imessageFeatures', 'imessageDelivery',
+     'imessageResponseLatest', 'imessageResponseWindow', 'imessageResponseTail',
+     'imessageRuntime']
       .forEach(id => setImessageMetric(id, 'Unavailable', ''));
     footEl.textContent = 'Probe request failed';
   }

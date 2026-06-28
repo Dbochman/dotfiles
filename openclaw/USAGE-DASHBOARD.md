@@ -1,6 +1,6 @@
 # OpenClaw Usage Dashboard
 
-## Status: v7.4 (2026-06-27)
+## Status: v7.5 (2026-06-27)
 
 Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on the Mac Mini with home-LAN and Tailscale-tailnet access.
 
@@ -26,7 +26,7 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on th
 | SQLite cron history | Job ID, status, duration, model, token usage, delivered flag | `parse_cron_runs()` reads `cron_run_logs` with a durable composite cursor |
 | Runtime log | Gateway restarts, errors (tslog format) | `parse_runtime_log()` via offset tracking |
 | Local Messages database | Native iMessage sent/received counts per interval | `fetch_imessage_messages()` via read-only `chat.db` query |
-| Native iMessage health probes | Live OpenClaw channel, bridge capabilities, and latest outbound delivery metadata | Cached gateway `/health`, attached `imsg rpc` worker check, `imsg status`, and optional read-only `chat.db` query |
+| Native iMessage health probes | Live OpenClaw channel, bridge capabilities, latest outbound delivery, and direct-chat response latency | Cached gateway `/health`, attached `imsg rpc` worker check, `imsg status`, and read-only `chat.db` queries |
 | ccusage (Claude Code) | Daily token totals, per-model breakdown, cache stats | `ccusage-push.sh` via `npx ccusage daily --json` on MacBook |
 
 ### Dashboard Features
@@ -35,7 +35,7 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on th
 
 **Stat cards** — All cards auto-hide when their value is zero for the selected time range. Available: Total Cost ($), Total Tokens (in/out with cache), Cron Runs (with failure count), Messages (sent/recv), Sessions (with tool calls), Errors, Gateway Restarts. Cost/sessions require gateway RPC data; falls back to "No Activity" when nothing to show.
 
-**Native iMessage Health card** — A 60-second cached, read-only check of the production OpenClaw gateway, its attached `imsg rpc` delivery worker, and the native `imsg` bridge. Shows healthy/degraded/down state, basic/advanced/v2 readiness, typing/read-receipt capability, `imsg`/SIP runtime details, and privacy-safe metadata for the latest outbound delivery when the database is readable. It never sends a synthetic message and does not expose message contents, recipients, command output, or credentials.
+**Native iMessage Health card** — A 60-second cached, read-only check of the production OpenClaw gateway, its attached `imsg rpc` delivery worker, and the native `imsg` bridge. Shows healthy/degraded/down state, basic/advanced/v2 readiness, typing/read-receipt capability, `imsg`/SIP runtime details, latest outbound delivery, and seven-day observed direct-chat response latency (latest, median, p95, slow, pending, and unmatched turns). It never sends a synthetic message and does not expose message contents, recipients, chat IDs, GUIDs, command output, or credentials.
 
 **Charts** — all charts auto-hide when they have no data to display:
 - Utilization Over Time — line chart with 100% threshold line
@@ -74,6 +74,16 @@ timestamp from the previous snapshot. It counts `is_from_me=1` as sent and
 `is_from_me=0` as received. No channel server or messaging credential is
 required.
 
+The independently refreshed health endpoint also derives observed direct-chat
+response latency from the same database. A completed sample requires a
+successful outbound iMessage whose native `reply_to_guid` targets an inbound
+message in the same direct chat. Consecutive inbound rows are treated as one
+turn and timed from the final inbound row; unlinked proactive sends, group
+traffic, tapbacks, failed sends, and multipart continuations are excluded.
+Linked manual replies are indistinguishable from OpenClaw replies. Samples over
+30 minutes are classified as unmatched rather than included in percentiles.
+Only aggregate timings and counts leave the server process.
+
 The retired Feb 1–Mar 7 BlueBubbles backfill has aged out under the 90-day
 history retention policy. The renderer still recognizes `_backfill: true` so a
 restored archive cannot create false spikes in 6h/24h views.
@@ -95,12 +105,17 @@ Since ccusage data is daily granularity and the push runs on a laptop (not alway
 | `/api/current` | GET | Latest snapshot only |
 | `/api/services` | GET | LaunchAgent service status (label, status, last_run, next_run, schedule kind, last_exit) |
 | `/api/cron` | GET | Upcoming cron job schedule |
-| `/api/imessage-health` | GET | Normalized native iMessage channel, bridge, and latest-delivery health (60-sec cached; always returns a structured state) |
+| `/api/imessage-health` | GET | Normalized native iMessage channel, bridge, latest-delivery health, and privacy-safe seven-day direct-response latency (60-sec cached; always returns a structured state) |
 | `/api/gateway-usage` | GET | Gateway sessions.usage RPC (5-min cached). Returns totals, sessions, daily, aggregates. |
 
 ---
 
 ## Changelog
+
+### v7.5 (2026-06-27)
+- **Native response latency** — expanded the iMessage health card with latest, median, and p95 receive-to-response timing plus counts for responses over two minutes, pending turns, and unmatched turns.
+- **Reply-linked correlation** — latency samples require a successful native reply link in the same direct chat, excluding unlinked proactive/cron sends, groups, tapbacks, failed sends, and multipart continuations.
+- **Regression coverage** — added deterministic temporary-`chat.db` tests for pairing, filtering, mixed Apple timestamp scales, percentiles, privacy, and UI fallbacks under the dashboard's Python 3.9 runtime.
 
 ### v7.4 (2026-06-27)
 - **Native iMessage Health card** — added an always-visible, independently refreshed card for the live OpenClaw channel and `imsg` bridge, including advanced/v2 capability and privacy-safe last-delivery evidence.

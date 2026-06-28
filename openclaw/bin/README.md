@@ -29,7 +29,7 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 | Script | Port | Description |
 |--------|------|-------------|
 | `nest-dashboard.py` | 8550 | Nest climate dashboard — Chart.js UI over JSONL history. Serves thermostat temperatures, humidity, weather, and presence data over the home LAN and Tailscale tailnet. |
-| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, cron, and native iMessage health over the home LAN and Tailscale tailnet. |
+| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, cron, and native iMessage health/response latency over the home LAN and Tailscale tailnet. |
 | `dog-walk-dashboard.py` | 8552 | Dog walk history, Fi route maps, coverage/heatmaps, and return-signal telemetry over the home LAN and Tailscale tailnet. |
 | `roomba-dashboard.py` | 8553 | Crosstown/Cabin Roomba status, command, snooze, and run-history dashboard. |
 | `home-dashboard.py` | 8558 | Home Control Plane status and command dashboard across both locations. |
