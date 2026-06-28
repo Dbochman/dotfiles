@@ -146,7 +146,7 @@ refresh historical Plaid descriptions after an upgrade, run
 
 ## Scraper Pipeline (Tier 1 / 2 / BoA Fallback)
 
-Seven scrapers run weekly via `financial-scrape-0001`. Each writes its own `<source>_data.json`; `update_data.py import-json-*` upserts into `finance.db`.
+Seven scrapers run weekly via `financial-scrape-0001`, which invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper. The helper takes a nonblocking singleton lock, runs each child in a separately cleaned process group, captures child output privately, retries only recognized authentication failures, and imports only sources that succeeded during the current run. Each scraper writes its own `<source>_data.json`; `update_data.py import-json-*` upserts into `finance.db`.
 
 | # | Scraper | Tier | Mechanism | 1Password item (OpenClaw vault) | Property |
 |---|---------|------|-----------|----------------------------------|----------|
@@ -162,25 +162,37 @@ Seven scrapers run weekly via `financial-scrape-0001`. Each writes its own `<sou
 
 ### How Tier 2 self-heal works
 
-When a Tier 2 scraper's session expires, the next `--headless` run exits with "Session expired and running in headless mode". The cron's agent then:
+When a Tier 2 scraper's session expires, the next `--headless` run exits with "Session expired and running in headless mode". The deterministic weekly helper then:
 1. Reads creds from `op://OpenClaw/<title>/{username,password}` (the Mini's service-account token only reaches the OpenClaw vault — see [[MEMORY:1Password access]]).
 2. Runs `./venv/bin/python3 scrape_<name>.py --re-auth --headless`. This drives the login flow programmatically via Playwright, handles MFA where needed (PennyMac auto-fetches the 6-digit `PM-NNNNNNN` code from Julia's Gmail via `gws`), and saves `storage_state.json` in the scraper's `.NAME_session/` dir.
 3. Re-runs the normal scrape, which now finds fresh cookies and pulls data.
 
-The whole loop is documented inline in the cron prompt — `openclaw cron list --json | jq '.[]|select(.id=="financial-scrape-0001").payload.message'` to inspect.
+The tracked helper is `~/dotfiles/openclaw/bin/weekly-financial-scrape.py` and is deployed mode `0755` to `~/.openclaw/bin/weekly-financial-scrape.py`; the cron prompt only invokes that runtime copy and reports its safe final status on failure.
+
+Mortgage scrapes receive one UUID run ID per weekly execution. A successful atomic mode-`0600` JSON write includes safe scrape metadata (source, run ID, completion time, record count, and month coverage). The lender-specific import requires the same run ID and validates all metadata plus strict payment dates, IDs, finite numeric fields, positive payment totals, and nonnegative components before opening SQLite or triggering Redfin. Guarded imports upsert returned months and preserve older months absent from a partial API response. A failed, partial, stale, or schema-degraded scrape therefore cannot replace valid history.
+
+PennyMac no longer treats a generic portal shell as authenticated. It requires a known authenticated app/navigation signal, treats visible login as explicitly signed out, and keeps blocking-loader, incomplete, and ambiguous shells inconclusive rather than authorizing re-auth. The safe Activity probe listens only to the exact HTTPS PennyMac host and loan-activity API path and waits for `domcontentloaded`; it preserves a bearer token captured before a navigation timeout and retries one transient navigation only when no token was captured.
+
+Scheduled child output is captured in memory and not relayed. Standard mortgage output contains counts and month coverage only; MFA codes, message IDs, token-bearing URL queries, API response bodies, payment amounts, balances, and debug screenshots/HTML are excluded from unattended logs.
 
 ### How BoA works
 
-1. **Cookie-replay fast path.** `scrape_mortgage.py --lender boa` first calls the BoA account API through `requests`, using the mode-`0600` cookie store at `~/.openclaw/.boa_cookies.json`. A warm cookie store needs no browser.
-2. **Raw-CDP fallback.** If the API rejects replayed cookies, the scraper discovers Pinchtab's dynamic CDP port and attaches to the existing BoA tab. It uses `Runtime.evaluate` and `Network.getAllCookies`, not `playwright.connect_over_cdp`. A successful fallback atomically replaces the cookie store for the next fast-path scrape.
-3. **Auth verification.** The BoA sign-in URL can render either the account dashboard or the login form, and the title can remain "Accounts Overview" after sign-out. The scraper checks visible login controls before using the title heuristic. A JSON API response alone is not proof that the live tab remains authenticated.
+1. **Cookie-replay fast path.** `scrape_mortgage.py --lender boa` first calls the BoA account API through `requests`, using the mode-`0600` cookie store at `~/.openclaw/.boa_cookies.json`. Replay preserves validated BoA domain/path/secure scope, rejects lookalike domains, and never follows redirects. A warm cookie store needs no browser.
+2. **Raw-CDP fallback.** If the API rejects replayed cookies, the scraper resolves the dedicated low-privilege PinchTab profile named `finance`, matches its exact profile ID to the root Chrome process, prefers that profile's `DevToolsActivePort`, and attaches only to the explicit HTTPS host allowlist: `secure.bankofamerica.com` for account pages or `www.bankofamerica.com` for BoA's sign-out landing. It uses `Runtime.evaluate` and `Network.getAllCookies`, not `playwright.connect_over_cdp`. Only a nonempty boundary-matched cookie set captured on the live secure account host can atomically replace the cookie store.
+3. **Auth verification.** The BoA sign-in URL can render either the account dashboard or the login form, and the title can remain "Accounts Overview" after sign-out. The scraper reads the tab URL live, checks visible login controls before using the title heuristic, and permits positive authentication/account API calls only on the exact HTTPS `secure` host; `www` remains signed-out/form-only. A JSON API response alone is not proof that the live tab remains authenticated.
 4. **Session safety.** Do not call `page.goto`, close the browser context, or kill Pinchtab Chrome after a fresh login. BoA session cookies are process-bound even though the captured cookie store can outlive Chrome for a limited time.
 
 The regular cron must never run generic `--re-auth` for BoA. It uses the
 separate `--boa-re-auth` command only after the normal scrape failed and
-`--verify-auth` reports `not_authenticated`. The command uses the existing
-Pinchtab tab, submits once, saves fresh cookies on success, and stops on MFA,
-any challenge, form failure, rejection, timeout, or CDP failure. Do not
+`--verify-auth` reports the single exact status `not_authenticated`. The
+command uses the existing `finance` tab, requires each intended field to be
+visible/topmost/focused on the live exact HTTPS BoA origin, enters the user ID,
+waits for BoA to enable the password and submit controls, clicks submit once,
+saves fresh cookies on success, and stops on MFA, any challenge, an ambiguous auth state,
+a not-ready form, rejection, timeout, or CDP failure. `auth_unknown`,
+`boa_tab_unavailable`, `cdp_attach_failed`, and `cdp_unavailable` never permit
+credential submission; `host_not_allowed` aborts any in-progress raw-CDP
+recovery if the live tab leaves the exact HTTPS BoA allowlist. Do not
 substitute Playwright login or a LaunchAgent credential fetch.
 
 ### Retired BoA Session-Durability Experiment
@@ -203,15 +215,16 @@ Do not bootstrap or kickstart these labels during normal recovery. See
 
 1. The normal scrape first replays the protected cookie store and then uses raw
    CDP if the live Pinchtab tab remains authenticated.
-2. When that fails, cron runs `--verify-auth`. It may invoke `--boa-re-auth`
-   only for `not_authenticated`, with credentials already supplied by the
-   authorized cron-agent context.
+2. When that fails, the helper runs `--verify-auth`. It may invoke
+   `--boa-re-auth` only for the exact `not_authenticated` status, with
+   credentials supplied only to that child process.
 3. `--boa-re-auth` makes one raw-CDP submission and returns without retrying.
-   After `authenticated`, cron retries the normal scrape once. All other
-   statuses alert for human recovery in the Pinchtab Chrome window. Do not kill
-   a still-authenticated Chrome process.
+   After `authenticated`, the helper retries the normal scrape once and imports
+   only an artifact bearing the current run ID. All other statuses alert for
+   human recovery in the Pinchtab Chrome window. Do not kill a
+   still-authenticated Chrome process.
 
-For Tier 2 manual debugging (e.g. PennyMac credentials change): just run `--re-auth` with creds exported from `op read` — same as the cron does.
+For Tier 2 manual debugging (e.g. PennyMac credentials change): just run `--re-auth` with creds exported from `op read` — the same guarded re-auth command the helper uses.
 
 ---
 

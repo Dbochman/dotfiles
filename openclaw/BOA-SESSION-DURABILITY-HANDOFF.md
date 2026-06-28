@@ -27,9 +27,10 @@ server-side absolute or risk timeout after roughly ten hours.
 | Weekly cron `financial-scrape-0001` | Sunday 04:05 ET | Uses cookie replay, raw-CDP tab fallback, then one guarded raw-CDP re-auth only when the tab is explicitly signed out. |
 
 The normal BoA scrape first uses `requests` with the mode-`0600` cookie
-store at `~/.openclaw/.boa_cookies.json`. On authentication failure it uses
-raw CDP, not Playwright `connect_over_cdp`, because Chrome 149 rejects the
-Playwright attach path.
+store at `~/.openclaw/.boa_cookies.json`. Cookie replay preserves validated
+BoA domain/path/secure scope and never follows redirects. On authentication
+failure it uses raw CDP, not Playwright `connect_over_cdp`, because Chrome 149
+rejects the Playwright attach path.
 
 Runtime locations on the Mini:
 
@@ -52,7 +53,8 @@ it and supported `openclaw cron` commands to mutate it; do not copy a legacy
 - The BoA browser warning was observed live and the heartbeat's accessible
   `OK` handler returned `warning_dismissed`.
 - A title alone is not valid BoA authentication evidence. The scraper rejects
-  a visible login form even if the title still says "Accounts Overview."
+  a visible login form even if the title still says "Accounts Overview," and
+  positive authentication is restricted to the live exact HTTPS `secure` host.
 - A successful API response alone is not sufficient either. `--verify-auth`
   confirms the real tab state before the cron decides whether re-auth is safe.
 - The guarded `--boa-re-auth` command is tested against its raw-CDP control
@@ -70,10 +72,11 @@ evidence; they are no longer health signals for a running service.
 
 Before any recovery action:
 
-1. Capture the last 80 lines of both logs and run `--verify-auth`.
-2. Record whether the failure is `cdp_unavailable`, `not_authenticated`,
-   `api_rejected`, `tab_lost_auth`, `warning_unhandled`, or another
-   status.
+1. Run `--verify-auth` against the dedicated PinchTab profile named `finance`.
+   The retired keep-alive logs are historical evidence, not a recovery input.
+2. Record whether the failure is `cdp_unavailable`, `boa_tab_unavailable`,
+   `cdp_attach_failed`, `host_not_allowed`, `auth_unknown`,
+   `not_authenticated`, or another safe status.
 3. Preserve `~/.openclaw/.boa_cookies.json`. Do not delete it, print it, or
    copy its values into a ticket or chat.
 4. Do not kill or restart Pinchtab Chrome before collecting evidence. BoA
@@ -82,17 +85,23 @@ Before any recovery action:
 The weekly cron now runs the following guarded sequence after a normal BoA
 scrape failure:
 
-1. Run `--verify-auth` against the existing Pinchtab tab.
+1. Resolve the exact `finance` profile and run `--verify-auth` against its
+   existing BoA tab.
 2. Proceed only when its status is exactly `not_authenticated`. A
-   `cdp_unavailable` result is an incident, not permission to submit creds.
-3. Supply `SCRAPER_USER` and `SCRAPER_PW` from the cron agent's authorized
-   context and run `--boa-re-auth` once.
+   `cdp_unavailable`, `boa_tab_unavailable`, `cdp_attach_failed`, or
+   `auth_unknown` result is an incident, not permission to submit creds.
+3. The deterministic weekly helper supplies `SCRAPER_USER` and `SCRAPER_PW`
+   only to the one `--boa-re-auth` child process.
 4. Retry the normal scrape once only after `authenticated` or a race-safe
-   `already_authenticated` result.
+   `already_authenticated` result, then require the current weekly run ID on
+   import.
 
 `--boa-re-auth` does not launch or navigate Chrome, fetch credentials, solve
-MFA, or retry. It stops and alerts on MFA, a security challenge, unavailable
-form, rejected login, timeout, or CDP failure. Do not use generic
+MFA, or retry. It requires each intended control to be topmost/focused on the
+live exact HTTPS BoA origin, enters the user ID, waits for enabled password and
+submit controls, and clicks submit exactly once. It stops and alerts on MFA, a
+security challenge, host change, ambiguous auth, unavailable/not-ready form,
+rejected login, timeout, or CDP failure. Do not use generic
 `--re-auth` for BoA, and do not put credential lookup into a LaunchAgent.
 
 ## Observed Outcome: 2026-06-18
