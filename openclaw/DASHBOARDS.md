@@ -70,7 +70,7 @@ Tracks OpenClaw session activity, token consumption and costs alongside Anthropi
 
 - **Utilization gauges** — 5-hour and 7-day token usage rings (green/amber/red thresholds)
 - **Stat cards** — total cost, total tokens, cron runs, messages sent/received, sessions, errors, gateway restarts
-- **Native iMessage Health** — live OpenClaw channel and `imsg` bridge readiness, latest outbound delivery, and privacy-safe seven-day direct-response latency
+- **Native iMessage Health** — live OpenClaw channel and `imsg` bridge readiness, configured typing/read-receipt behavior, latest outbound delivery, and privacy-safe seven-day direct-response latency
 - **Token Usage Over Time** — stacked OpenClaw/Claude Code bars with adaptive hourly or daily buckets
 - **Activity chart** — sent/received/cron messages over time
 - **Cost Over Time** — cache write/read/output/input cost breakdown
@@ -87,7 +87,7 @@ Tracks OpenClaw session activity, token consumption and costs alongside Anthropi
 | Gateway RPC | 5 min cache/UI refresh | Session data (tool calls, costs, latency) |
 | SQLite `cron_run_logs` | 15 min cursor | Job ID, status, duration, model, delivery, and tokens |
 | Local Messages database | 15 min | Native iMessage send/receive counts |
-| Native iMessage health probes | 60 sec | Gateway health, attached `imsg rpc` worker, basic/advanced/v2 readiness, latest outbound delivery, and direct-response latest/median/p95 plus slow/open counts |
+| Native iMessage health probes | 60 sec | Gateway health, configured typing/read-receipt behavior, attached `imsg rpc` worker, basic/advanced/v2 readiness, latest outbound delivery, and direct-response latest/median/p95 plus slow/open counts |
 | ccusage push | 30 min | Claude Code daily token usage (from MacBook) |
 
 ### Files

@@ -276,6 +276,7 @@ def get_launchagent_status():
 
 
 SECRETS_CACHE = os.path.expanduser("~/.openclaw/.secrets-cache")
+OPENCLAW_CONFIG = os.path.expanduser("~/.openclaw/openclaw.json")
 OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 IMSG_BIN = "/opt/homebrew/bin/imsg"
 MESSAGES_DB = os.path.expanduser("~/Library/Messages/chat.db")
@@ -358,7 +359,7 @@ def _gateway_is_live():
                 return False
             data = json.loads(response.read(4096))
         return isinstance(data, dict) and data.get("ok") is True and data.get("status") == "live"
-    except (OSError, ValueError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return False
 
 
@@ -434,6 +435,44 @@ def _health_int(value):
 def _health_text(value, max_length=64):
     """Return a bounded diagnostic label, never command output or stderr."""
     return value[:max_length] if isinstance(value, str) else None
+
+
+def _imessage_runtime_behavior():
+    """Read only the configured iMessage behaviors exposed by the dashboard."""
+    behavior = {
+        "available": False,
+        "typing_mode": None,
+        "send_read_receipts": None,
+    }
+    try:
+        with open(OPENCLAW_CONFIG, encoding="utf-8") as config_file:
+            config = json.load(config_file)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return behavior
+    if not isinstance(config, dict):
+        return behavior
+
+    session = config.get("session")
+    agents = config.get("agents")
+    agent_defaults = agents.get("defaults") if isinstance(agents, dict) else None
+    channels = config.get("channels")
+    imessage = channels.get("imessage") if isinstance(channels, dict) else None
+    typing_mode = (
+        _health_text(session.get("typingMode"), 24)
+        if isinstance(session, dict) else None
+    )
+    if typing_mode is None and isinstance(agent_defaults, dict):
+        typing_mode = _health_text(agent_defaults.get("typingMode"), 24)
+    behavior.update({
+        "available": True,
+        "typing_mode": typing_mode,
+        # OpenClaw enables these unless the channel setting is explicitly false.
+        "send_read_receipts": not (
+            isinstance(imessage, dict)
+            and imessage.get("sendReadReceipts") is False
+        ),
+    })
+    return behavior
 
 
 def _apple_message_time(value):
@@ -698,6 +737,7 @@ def fetch_imessage_health():
             return cached
 
         imsg_status = _run_json_probe([IMSG_BIN, "status", "--json"], timeout=5)
+        behavior = _imessage_runtime_behavior()
         delivery = _latest_imessage_delivery()
         response_latency = _imessage_response_latency()
         gateway_live = _gateway_is_live()
@@ -765,6 +805,7 @@ def fetch_imessage_health():
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "gateway": gateway,
             "imsg": imsg,
+            "behavior": behavior,
             "last_delivery": delivery,
             "response_latency": response_latency,
         }
@@ -1053,8 +1094,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
   </div>
   <div class="health-grid">
     <div class="health-metric"><span class="health-label">OpenClaw channel</span><span class="health-value" id="imessageChannel">Checking...</span></div>
-    <div class="health-metric"><span class="health-label">Native bridge</span><span class="health-value" id="imessageBridge">Checking...</span></div>
-    <div class="health-metric"><span class="health-label">Features</span><span class="health-value" id="imessageFeatures">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Message behavior</span><span class="health-value" id="imessageFeatures">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Last outbound</span><span class="health-value" id="imessageDelivery">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Latest direct response</span><span class="health-value" id="imessageResponseLatest">Checking...</span></div>
     <div class="health-metric"><span class="health-label">7-day direct response</span><span class="health-value" id="imessageResponseWindow">Checking...</span></div>
@@ -1207,26 +1247,17 @@ async function refreshImessageHealth() {
       setImessageMetric('imessageChannel', 'Running · probe unverified', 'warn');
     }
 
-    const i = d.imsg || {};
-    if (!i.available) {
-      setImessageMetric('imessageBridge', 'Unavailable', 'warn');
-    } else if (i.basic_features === false) {
-      setImessageMetric('imessageBridge', 'Basic bridge not ready', 'bad');
-    } else if (i.advanced_features === true && i.v2_ready === true) {
-      const bridge = i.bridge_version != null ? 'Bridge v' + i.bridge_version : 'Bridge';
-      setImessageMetric('imessageBridge', bridge + ' · advanced', 'good');
+    const behavior = d.behavior || {};
+    if (!behavior.available) {
+      setImessageMetric('imessageFeatures', 'Configuration unavailable', 'warn');
     } else {
-      setImessageMetric('imessageBridge', 'Basic mode only', 'warn');
-    }
-
-    if (!i.available) {
-      setImessageMetric('imessageFeatures', 'Not reported', '');
-    } else {
-      const typing = i.typing_indicators === true ? 'Typing on' : i.typing_indicators === false ? 'Typing off' : 'Typing unknown';
-      const receipts = i.read_receipts === true ? 'receipts on' : i.read_receipts === false ? 'receipts off' : 'receipts unknown';
-      const featureTone = i.typing_indicators === true && i.read_receipts === true ? 'good' : 'warn';
+      const typing = behavior.typing_mode ? 'Typing ' + behavior.typing_mode : 'Typing default';
+      const receipts = behavior.send_read_receipts === true ? 'receipts on' : behavior.send_read_receipts === false ? 'receipts off' : 'receipts unknown';
+      const featureTone = behavior.send_read_receipts != null ? 'good' : 'warn';
       setImessageMetric('imessageFeatures', typing + ' · ' + receipts, featureTone);
     }
+
+    const i = d.imsg || {};
 
     const delivery = d.last_delivery || {};
     if (!delivery.available) {
@@ -1297,7 +1328,7 @@ async function refreshImessageHealth() {
     stateEl.textContent = 'Unknown';
     stateEl.className = 'health-state health-state-unknown';
     summaryEl.textContent = 'The native iMessage health endpoint is unavailable.';
-    ['imessageChannel', 'imessageBridge', 'imessageFeatures', 'imessageDelivery',
+    ['imessageChannel', 'imessageFeatures', 'imessageDelivery',
      'imessageResponseLatest', 'imessageResponseWindow', 'imessageResponseTail',
      'imessageRuntime']
       .forEach(id => setImessageMetric(id, 'Unavailable', ''));

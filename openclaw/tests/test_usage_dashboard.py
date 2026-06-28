@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import json
 import os
 import sqlite3
 import tempfile
@@ -54,11 +55,13 @@ class IMessageResponseLatencyTests(unittest.TestCase):
         )
         self.connection.commit()
         self.original_db = usage_dashboard.MESSAGES_DB
+        self.original_config = usage_dashboard.OPENCLAW_CONFIG
         usage_dashboard.MESSAGES_DB = self.db_path
         self.now = datetime(2026, 6, 27, 20, 0, tzinfo=timezone.utc)
 
     def tearDown(self):
         usage_dashboard.MESSAGES_DB = self.original_db
+        usage_dashboard.OPENCLAW_CONFIG = self.original_config
         self.connection.close()
         self.tempdir.cleanup()
 
@@ -199,7 +202,44 @@ class IMessageResponseLatencyTests(unittest.TestCase):
         self.assertNotIn("recipient", summary)
         self.assertNotIn("text", summary)
 
-    def test_dashboard_contains_latency_metrics_and_fallbacks(self):
+    def test_runtime_behavior_uses_openclaw_configuration(self):
+        config_path = os.path.join(self.tempdir.name, "openclaw.json")
+        with open(config_path, "w", encoding="utf-8") as config_file:
+            json.dump({
+                "session": {"typingMode": "instant"},
+                "channels": {"imessage": {"sendReadReceipts": False}},
+                "private": {"token": "must-not-leak"},
+            }, config_file)
+        usage_dashboard.OPENCLAW_CONFIG = config_path
+
+        behavior = usage_dashboard._imessage_runtime_behavior()
+
+        self.assertEqual(behavior, {
+            "available": True,
+            "typing_mode": "instant",
+            "send_read_receipts": False,
+        })
+        self.assertNotIn("private", behavior)
+        self.assertNotIn("token", behavior)
+
+    def test_runtime_behavior_honors_fallbacks_and_defaults(self):
+        config_path = os.path.join(self.tempdir.name, "openclaw-defaults.json")
+        with open(config_path, "w", encoding="utf-8") as config_file:
+            json.dump({
+                "agents": {"defaults": {"typingMode": "thinking"}},
+                "channels": {"imessage": {}},
+            }, config_file)
+        usage_dashboard.OPENCLAW_CONFIG = config_path
+
+        behavior = usage_dashboard._imessage_runtime_behavior()
+
+        self.assertEqual(behavior, {
+            "available": True,
+            "typing_mode": "thinking",
+            "send_read_receipts": True,
+        })
+
+    def test_dashboard_contains_latency_metrics_and_runtime_behavior(self):
         for metric_id in (
             "imessageResponseLatest",
             "imessageResponseWindow",
@@ -207,6 +247,11 @@ class IMessageResponseLatencyTests(unittest.TestCase):
         ):
             self.assertIn(f'id="{metric_id}"', usage_dashboard.DASHBOARD_HTML)
             self.assertIn(f"'{metric_id}'", usage_dashboard.DASHBOARD_HTML)
+        self.assertIn("Message behavior", usage_dashboard.DASHBOARD_HTML)
+        self.assertIn("d.behavior || {}", usage_dashboard.DASHBOARD_HTML)
+        self.assertNotIn('id="imessageBridge"', usage_dashboard.DASHBOARD_HTML)
+        self.assertNotIn("'imessageBridge'", usage_dashboard.DASHBOARD_HTML)
+        self.assertNotIn("i.typing_indicators === true", usage_dashboard.DASHBOARD_HTML)
 
 
 if __name__ == "__main__":
