@@ -513,6 +513,7 @@ install_dotfiles() {
 
     link_file "$profile_path" "$profile_target"
   done
+  link_file "$DOTFILES_DIR/.codex/AGENTS.md" "$HOME/.codex/AGENTS.md"
   link_file "$DOTFILES_DIR/.codex/rules" "$HOME/.codex/rules"
   log ""
 
