@@ -104,3 +104,4 @@ For related tasks, switch to:
 - If commands fail, the Google Assistant OAuth token may need refreshing — run `roomba setup` on the Mac Mini
 - Ensure the Roombas are powered on, connected to wifi, and registered in Google Home
 - The Mac Mini must have internet access to reach Google Assistant APIs
+- The CLI interpreter lives at `~/.openclaw/roomba/venv/bin/python3`. If a Homebrew Python removal breaks that symlink, rebuild the virtualenv with the pinned dependencies in `~/.openclaw/skills/roomba/requirements.txt` before retrying an automated action.

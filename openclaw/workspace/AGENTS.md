@@ -106,6 +106,13 @@ For iMessage-specific reaction types and strings, see `SOUL.md` — the rules th
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
 
+**Browser automation:** Prefer a purpose-built API/CLI when available; when a
+browser is actually required on the Mac Mini, use PinchTab by default. Read the
+prominent PinchTab section in `TOOLS.md` and its skill before acting, create a
+dedicated agent session before navigation, and never kill or repurpose a shared
+PinchTab instance. Do not assume a Codex in-app browser or account-bound Chrome
+extension is connected to this agent.
+
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
 **📝 Platform Formatting:**

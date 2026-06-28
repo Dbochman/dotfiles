@@ -8,6 +8,7 @@ Scope: this directory and its descendants unless a deeper `AGENTS.md` or `agents
 - Deploy these Financial Dashboard and Forecast Dashboard LaunchAgents only to the Mac Mini. Do not bootstrap them on a local laptop merely because this checkout is present there.
 - Keep wrapper scripts idempotent, lock concurrent work where needed, write protected runtime state atomically, and treat a transient service failure as retryable rather than a reason to erase cached data.
 - When changing a Financial Dashboard, Forecast Dashboard, wrapper, or LaunchAgent contract, synchronize `FINANCIAL-DASHBOARD.md`, `FORECAST-DASHBOARD.md`, `DASHBOARDS.md`, `LAUNCHAGENTS.md`, and the relevant `bin/` or `logs/` README where applicable.
+- For browser or rendered-dashboard verification on the Mac Mini, use PinchTab with a dedicated agent session. Do not depend on the account-bound Codex Chrome extension, reuse a personal Chrome profile, or terminate a shared PinchTab service/instance.
 - After editing a Python wrapper, run `python3 -m py_compile`; after editing a LaunchAgent, run `plutil -lint`. Validate the affected loopback API and LaunchAgent state on the Mini before declaring deployment complete.
 
 Follow the repository-level guidance in the root `AGENTS.md` first. The nested `workspace/AGENTS.md` governs the running OpenClaw workspace separately.

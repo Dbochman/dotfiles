@@ -1,0 +1,2 @@
+gassist-text==0.0.14
+google-auth-oauthlib==1.2.4
