@@ -40,7 +40,7 @@ Host dylans-work-mbp
 
 # Short alias for the work laptop bastion.
 Host work-mac
-  HostName 100.73.15.5
+  HostName work-mbp.tail3e55f9.ts.net
   User dbochman
   IdentityFile ~/.ssh/id_work_mbp
   IdentitiesOnly yes
