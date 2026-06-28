@@ -136,6 +136,118 @@ $HOME/.local/bin/cmux-ssh-tmux \
 
 On the first durable workspace, cmux shows **Auto-Restore / Ask Each Time / Keep Manual** for the exact helper command. Choose **Auto-Restore** only after checking the executable, host, session, and tmux path. cmux 0.64.17's **Settings > Terminal > Resume Commands** row only opens `cmux.json`; do not change a stored policy by hand because approval records are HMAC-signed.
 
+### Relay-Enabled Codex Orchestration
+
+The `home` wrapper above optimizes for a durable terminal. It is not the right bootstrap for an agent that must control cmux itself from the Mac Mini.
+
+In cmux 0.64.17, supplying `tmux` as the command after `--` skips the normal interactive remote bootstrap. The terminal can still work, but the remote process may not receive a usable cmux relay. This was observed as:
+
+```text
+Remote daemon bootstrap failed
+failed to query remote platform
+```
+
+Use a clean managed SSH workspace first, then attach tmux from the remote prompt:
+
+```bash
+# Run on dylans-mac, outside an existing SSH session.
+cmux ssh dylans-mac-mini --name "Codex Orchestrator"
+
+# Run at the new Mac Mini prompt.
+~/.cmux/bin/cmux ping
+tmux new-session -A -s home
+```
+
+The relay health check must return `PONG`. If `home` already contains the orchestrator, attaching returns to the live Codex process. If the process is gone, use the Codex resume picker to reopen its saved transcript:
+
+```bash
+codex resume
+```
+
+The verified topology is:
+
+```text
+dylans-mac
+└── cmux workspace: Codex Orchestrator (renamed and pinned)
+    └── managed SSH connection and authenticated relay
+        └── dylans-mac-mini
+            └── tmux session: home
+                └── long-running Codex orchestration thread
+```
+
+The current workspace also has a manual cmux surface-resume binding for:
+
+```bash
+tmux attach-session -t home
+```
+
+cmux stores this binding with the workspace snapshot. It remains manual because CLI-created resume commands require explicit approval; do not bypass that trust boundary by editing relay or approval state.
+
+#### What the Orchestrator Can Control
+
+Through the authenticated relay, the orchestrator can:
+
+- list and select cmux workspaces and terminal surfaces;
+- read the visible text of a specifically targeted surface;
+- send text or key presses to a specifically targeted surface;
+- create an isolated workspace or split, launch Codex there, and monitor its output; and
+- restore focus and close only workspaces that it created.
+
+These Codex processes are independent CLI sessions, not structured subagents of the orchestrator thread. They do not automatically share prompts, memory, approvals, or completion state.
+
+Use the following operating contract:
+
+- Give every agent an explicit absolute working directory before launching it.
+- Use separate worktrees when multiple agents will modify the same repository concurrently.
+- Target immutable workspace and surface IDs; do not rely on whichever pane happens to be focused.
+- Verify the workspace title and working directory before sending input.
+- Read only the intended agent surface, not unrelated tabs.
+- Do not answer permission prompts or destructive confirmations without explicit authorization.
+
+A simple launch pattern inside a dedicated agent workspace is:
+
+```bash
+cd -- /absolute/path/to/project
+codex
+```
+
+#### Persistence Layers and Limits
+
+| Layer | What persists | Limit |
+| --- | --- | --- |
+| cmux workspace | Title, pin state, layout, working directory, and best-effort scrollback. | Does not checkpoint arbitrary process memory. |
+| Managed SSH | Reconnects after transient connection loss and re-establishes the relay. | Does not survive the remote host rebooting. |
+| Remote tmux | Keeps the live Codex process running across SSH or cmux disconnects. | Ends if the Mac Mini or tmux server stops. |
+| Codex transcript | Allows `codex resume` after the live process is gone. | Automatic resume needs a compatible cmux Codex hook integration. |
+
+`terminal.autoResumeAgentSessions` is currently unset, so cmux's default of `true` applies. However, installed cmux 0.64.17 does not provide the newer `cmux hooks setup codex` command, and `identify` is also unavailable. Do not hand-edit Codex hook files to imitate a newer cmux release. Until cmux is upgraded and the integration is verified, rely on tmux for live-process continuity and `codex resume` for transcript recovery.
+
+Remote-tmux beta and agent hibernation are not required for this setup and remain disabled.
+
+#### Relay Health and Recovery
+
+From the Mac Mini orchestration thread:
+
+```bash
+test -x ~/.cmux/bin/cmux
+test -e ~/.cmux/socket_addr
+~/.cmux/bin/cmux ping
+~/.cmux/bin/cmux capabilities --json
+tmux display-message -p '#S'
+```
+
+Expected results are an executable helper, a relay address, `PONG`, a capabilities response, and tmux session `home`. The helper may not be on `PATH` inside an older tmux process, so use its absolute path. Never print or inspect relay authentication files.
+
+If the relay check fails:
+
+1. Leave the failed cmux workspace intact long enough to capture its error.
+2. Open a new local cmux tab.
+3. Run `cmux ssh dylans-mac-mini --name "Codex Orchestrator"` without a command after `--`.
+4. Confirm `~/.cmux/bin/cmux ping` returns `PONG` before attaching tmux.
+5. Attach `home` and resume Codex only if no live process remains.
+
+Upstream references: [cmux SSH](https://cmux.com/docs/ssh), [CLI and socket API](https://cmux.com/docs/api), and [session restore](https://cmux.com/docs/session-restore).
+
 ## Adding a New cmux Wrapper
 
 Use this pattern for new durable remote sessions:

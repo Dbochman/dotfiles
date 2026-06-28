@@ -39,6 +39,7 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `ssh_config` - Uses 1Password SSH Agent by default, with dedicated on-disk keys for a few Tailscale hosts
 - `setup-1password.md` - Guide for SSH keys and environment variables
 - `docs/setup-devcontainer-ssh.md` - Devcontainer aliases, connection path, and latency checks
+- `.claude/docs/cmux-remote-sessions.md` - Persistent cmux/SSH/tmux sessions and Codex orchestration
 
 ## SSH Keys
 
