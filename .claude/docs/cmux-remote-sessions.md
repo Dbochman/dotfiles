@@ -10,13 +10,15 @@ There are three layers:
 
 | Layer | Runs where | Purpose |
 | --- | --- | --- |
-| `cmux` | Local Mac | Owns the local workspace/tab and the managed SSH connection. |
+| `cmux` | Local Mac | Owns the local workspace/tab. Native remote workspaces may also manage SSH. |
 | `ssh` | Local Mac to remote host | Authenticates and transports the shell/remote command. |
 | `tmux` | Remote host | Keeps shells and long-running work alive after SSH disconnects. |
 
 Use `cmux` for the local workspace, and use `tmux` for durability on the remote machine.
 
-## Command Shape
+## Connection Modes
+
+### Native cmux SSH
 
 ```bash
 cmux ssh <ssh-target> --name "<workspace-name>" --ssh-option RequestTTY=force -- <remote-command>
@@ -29,17 +31,36 @@ Important details:
 - `--ssh-option RequestTTY=force` is required for remote commands like `tmux`.
 - Everything after `--` is the command run on the remote host.
 
+Native remote workspaces provide cmux's remote browser proxy, drag-and-drop upload, CLI relay, and managed reconnection. In cmux 0.64.17, however, forcing a TTY on the workspace can also affect background daemon/platform probes. Use the reconnecting wrapper below for the Mac Mini `home` session, where sleep durability matters more than those managed-remote features.
+
+### Reconnecting SSH + tmux
+
+```bash
+cmux-ssh-tmux <ssh-target> <tmux-session-name> [tmux-binary]
+```
+
+The local helper:
+
+- runs `ssh -tt` inside a normal cmux workspace;
+- uses `ServerAliveInterval=10` and `ServerAliveCountMax=3` to detect a broken connection in roughly 30 seconds;
+- retries only OpenSSH status 255 with bounded backoff;
+- exits normally when tmux detaches cleanly; and
+- registers a signed cmux surface resume command for full app relaunches.
+
+This avoids coupling tmux's foreground TTY to cmux's background remote-daemon probes. The wrapper also disables SSH multiplexing for its connection so it cannot reuse a stale control socket.
+
 ## Canonical Targets
 
 These are the local SSH aliases that matter for cmux remote sessions:
 
 | Alias | Remote | User | Notes |
 | --- | --- | --- | --- |
-| `work-mac` | `100.73.15.5` | `dbochman` | Work MBP by Tailscale IP, with `~/.ssh/id_work_mbp`. |
+| `work-mac` | `work-mbp.tail3e55f9.ts.net` | `dbochman` | Work MBP by MagicDNS, with `~/.ssh/id_work_mbp`. |
 | `work-mbp` | `work-mbp.tail3e55f9.ts.net` | `dbochman` | Work MBP by MagicDNS, with `~/.ssh/id_work_mbp`. |
 | `dylans-work-mbp` | `100.73.15.5` | `dbochman` | Work MBP generic alias; uses dedicated key via `Match`. |
 | `devc` | `127.0.0.1:22390` | `root` | Devcontainer reached through `work-mac` as a proxy. |
 | `dylans-mac-mini` | Tailscale/MagicDNS | `dbochman` | Mac Mini remote shell target. |
+| `mac-mini` | `dylans-mac-mini.tail3e55f9.ts.net` | `dbochman` | Same Mac Mini with the dedicated `~/.ssh/id_mac_mini` key. |
 
 Prefer `work-mac` or `work-mbp` over `dbochman@100.73.15.5`. The aliases select the right key and bypass the 1Password agent.
 
@@ -104,12 +125,16 @@ The `home` shell function opens a cmux workspace named `home` and attaches to or
 home
 ```
 
-Underlying command:
+Underlying workspace command:
 
 ```bash
-cmux ssh dylans-mac-mini --name home --ssh-option RequestTTY=force -- \
-  /opt/homebrew/bin/tmux new-session -A -s home
+$HOME/.local/bin/cmux-ssh-tmux \
+  dylans-mac-mini home /opt/homebrew/bin/tmux
 ```
+
+`home --no-focus` creates the workspace with `--focus false`. Other supported cmux workspace-creation flags are passed through.
+
+On the first durable workspace, cmux shows **Auto-Restore / Ask Each Time / Keep Manual** for the exact helper command. Choose **Auto-Restore** only after checking the executable, host, session, and tmux path. cmux 0.64.17's **Settings > Terminal > Resume Commands** row only opens `cmux.json`; do not change a stored policy by hand because approval records are HMAC-signed.
 
 ## Adding a New cmux Wrapper
 
@@ -117,12 +142,8 @@ Use this pattern for new durable remote sessions:
 
 ```bash
 my-session() {
-  _cmux_ensure_running || return
-
-  cmux ssh <ssh-target> --name <workspace-name> --ssh-option RequestTTY=force "$@" -- \
-    tmux new-session -A -s <tmux-session-name> || \
-    cmux new-workspace --name <workspace-name> \
-      --command "ssh -t <ssh-target> tmux new-session -A -s <tmux-session-name>"
+  _cmux_ssh_tmux \
+    <workspace-name> <ssh-target> <tmux-session-name> <tmux-binary> "$@"
 }
 ```
 
@@ -131,7 +152,8 @@ Rules of thumb:
 - Use `tmux new-session -A -s <name>` when the session should self-create after reboot.
 - Use `tmux attach -t <name>` only when a missing session should be treated as a real error.
 - Keep the cmux workspace name and tmux session name the same unless there is a clear reason not to.
-- Include `"$@"` before `--` so one-off `cmux ssh` flags can still be passed through.
+- Keep native `cmux ssh` when the remote browser proxy, uploads, or CLI relay are required and the target works with cmux's managed daemon.
+- Use `_cmux_ssh_tmux` when remote tmux continuity across local sleep and network changes is the priority.
 
 ## Health Checks
 
@@ -166,6 +188,15 @@ Check what SSH config will actually use:
 ssh -G work-mac | egrep '^(user|hostname|identityfile|identitiesonly|identityagent|requesttty) '
 ```
 
+For the Mac Mini aliases, also verify bounded failure detection:
+
+```bash
+ssh -G dylans-mac-mini | \
+  egrep '^(connecttimeout|connectionattempts|serveraliveinterval|serveralivecountmax) '
+ssh -G mac-mini | \
+  egrep '^(connecttimeout|connectionattempts|serveraliveinterval|serveralivecountmax) '
+```
+
 Check key-based auth without prompting:
 
 ```bash
@@ -197,17 +228,37 @@ ssh -o BatchMode=yes work-mac true
 
 ### `open terminal failed: not a terminal`
 
-`tmux` needs a TTY. Add:
+`tmux` needs a TTY. For a reconnecting durable session, use:
 
 ```bash
---ssh-option RequestTTY=force
+cmux-ssh-tmux <ssh-target> <tmux-session-name> [tmux-binary]
 ```
 
-For plain `ssh`, the equivalent is:
+For one-off plain `ssh`, the equivalent is:
 
 ```bash
-ssh -t work-mac 'tmux new-session -A -s work'
+ssh -tt work-mac 'tmux new-session -A -s work'
 ```
+
+For a native managed cmux workspace, `--ssh-option RequestTTY=force` supplies the TTY but may reproduce the cmux 0.64.17 background-probe conflict described above.
+
+### Workspace Stalls After Laptop Sleep
+
+First confirm tmux survived:
+
+```bash
+ssh <ssh-target> 'tmux list-sessions'
+```
+
+Then inspect cmux and the foreground SSH process:
+
+```bash
+cmux top --all --processes --flat
+cmux ssh-session-list --all-workspaces
+cmux read-screen --workspace <ref> --scrollback --lines 200
+```
+
+If the remote tmux session exists but a native workspace repeatedly reports `Remote daemon bootstrap failed`, close only the stale local workspace and reopen it through `_cmux_ssh_tmux`. Do not kill the remote tmux session.
 
 ### `cmux: command not found`
 
@@ -300,4 +351,7 @@ cmux ssh dbochman@100.73.15.5 --identity ~/.ssh/id_work_mbp \
 opwork
 kb
 home
+
+# Direct reconnecting Mac Mini attach.
+cmux-ssh-tmux dylans-mac-mini home /opt/homebrew/bin/tmux
 ```

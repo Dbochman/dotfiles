@@ -11,6 +11,10 @@ Host dylans-mac
 Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
+  ServerAliveInterval 10
+  ServerAliveCountMax 3
+  ConnectTimeout 8
+  ConnectionAttempts 1
 
 # Mac Mini alias with dedicated key (bypasses 1Password)
 Host mac-mini
@@ -19,6 +23,10 @@ Host mac-mini
   IdentityFile ~/.ssh/id_mac_mini
   IdentitiesOnly yes
   IdentityAgent none
+  ServerAliveInterval 10
+  ServerAliveCountMax 3
+  ConnectTimeout 8
+  ConnectionAttempts 1
 
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro

@@ -1,0 +1,4 @@
+interface:
+  display_name: "cmux SSH + tmux Durability"
+  short_description: "Fix sleep-related cmux SSH/tmux disconnects"
+  default_prompt: "Use $cmux-ssh-tmux-sleep-durability to diagnose and harden this remote cmux/tmux session against sleep and network drops."

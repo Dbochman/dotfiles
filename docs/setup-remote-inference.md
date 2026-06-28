@@ -158,6 +158,10 @@ Host mac-mini
   IdentityFile ~/.ssh/id_mac_mini
   IdentitiesOnly yes
   IdentityAgent none
+  ServerAliveInterval 10
+  ServerAliveCountMax 3
+  ConnectTimeout 8
+  ConnectionAttempts 1
 ```
 
 ### work MBP -> personal Mac (`dylans-mac`)

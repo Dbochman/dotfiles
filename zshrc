@@ -113,14 +113,43 @@ opwork() {
       --command "ssh -t work-mac tmux new-session -A -s work"
 }
 
-# Attach (or create) the 'home' tmux session on the Mac Mini, inside a cmux workspace.
-home() {
+# Attach (or create) a remote tmux session in a reconnecting cmux workspace.
+_cmux_ssh_tmux() {
+  local workspace_name="$1"
+  local host="$2"
+  local session_name="$3"
+  local tmux_bin="$4"
+  shift 4
+
   _cmux_ensure_running || return
 
-  cmux ssh dylans-mac-mini --name home --ssh-option RequestTTY=force "$@" -- \
-    /opt/homebrew/bin/tmux new-session -A -s home || \
-    cmux new-workspace --name home \
-      --command "ssh -t dylans-mac-mini /opt/homebrew/bin/tmux new-session -A -s home"
+  local helper="$HOME/.local/bin/cmux-ssh-tmux"
+  if [[ ! -x "$helper" ]]; then
+    echo "cmux-ssh-tmux not found. Run ./install.sh from the dotfiles repo." >&2
+    return 127
+  fi
+
+  local command="${(q)helper} ${(q)host} ${(q)session_name} ${(q)tmux_bin}"
+  local -a cmux_args
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-focus)
+        cmux_args+=(--focus false)
+        ;;
+      *)
+        cmux_args+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  cmux workspace create --name "$workspace_name" --command "$command" "${cmux_args[@]}"
+}
+
+# Attach (or create) the 'home' tmux session on the Mac Mini. The local SSH
+# client reconnects after sleep/network changes; tmux keeps Codex alive remotely.
+home() {
+  _cmux_ssh_tmux home dylans-mac-mini home /opt/homebrew/bin/tmux "$@"
 }
 
 # Chrome with remote debugging for MCP
