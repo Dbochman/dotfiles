@@ -10,7 +10,8 @@ Roomba status and controls dashboard covering both Crosstown and Cabin, includin
 
 - **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status, tank level (via `dorita980` MQTT path)
 - **Cabin Roomba cards** — last mission outcome, duration, area cleaned (via iRobot Cloud API)
-- **Snooze controls** — temporarily disable Roomba automation per location (1h/3h/8h/Indef)
+- **Snooze controls** — temporarily disable dog-walk and vacancy-triggered
+  Roomba starts per location (1h/3h/8h/Indef); manual starts remain available
 - **Calendar heatmap** — monthly run history per location with hover details
 
 ## Data Sources

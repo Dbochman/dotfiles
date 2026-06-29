@@ -19,6 +19,7 @@ PRESENCE_DIR="$HOME/.openclaw/presence"
 STATE_FILE="$PRESENCE_DIR/state.json"
 MARKER_DIR="$PRESENCE_DIR/vacancy-dispatched"
 LOG_FILE="$HOME/.openclaw/logs/vacancy-actions.log"
+ROOMBA_SNOOZE_FILE="${ROOMBA_SNOOZE_FILE:-$HOME/.openclaw/dog-walk/snooze.json}"
 
 # All CLIs resolved via PATH (~/.openclaw/bin + /opt/homebrew/bin)
 
@@ -54,6 +55,51 @@ _send_imessage() {
   else
     log "  WARN: native imsg notification failed"
   fi
+}
+
+# The Roomba Dashboard owns one per-location snooze policy shared by dog-walk
+# and vacancy automation. Missing policy means starts are allowed; malformed
+# policy fails closed so a broken safety control cannot start a vacuum.
+roomba_start_blocked() {
+  local location="$1" snooze_state
+
+  [[ -f "$ROOMBA_SNOOZE_FILE" ]] || return 1
+
+  snooze_state=$(python3 - "$ROOMBA_SNOOZE_FILE" "$location" <<'PY' 2>/dev/null || echo error
+import json
+import sys
+from datetime import datetime, timezone
+
+with open(sys.argv[1], encoding="utf-8") as snooze_file:
+    snooze = json.load(snooze_file)
+if not isinstance(snooze, dict):
+    raise ValueError("snooze policy must be an object")
+
+location = sys.argv[2]
+if location not in snooze or snooze[location] is None:
+    print("clear")
+else:
+    expires = snooze[location]
+    if not isinstance(expires, str) or not expires:
+        raise ValueError("snooze expiry must be a nonempty timestamp or null")
+    expiry = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+    if expiry.tzinfo is None:
+        raise ValueError("snooze expiry must include a timezone")
+    print("snoozed" if expiry > datetime.now(timezone.utc) else "clear")
+PY
+  )
+
+  case "$snooze_state" in
+    clear) return 1 ;;
+    snoozed)
+      log "  ${location} Roomba automation: SKIPPED (snoozed)"
+      return 0
+      ;;
+    *)
+      log "  WARN: Invalid Roomba snooze policy; skipping ${location} start"
+      return 0
+      ;;
+  esac
 }
 
 mkdir -p "$MARKER_DIR"
@@ -132,8 +178,10 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
     fi
   fi
 
-  # Start Roombas
-  if crosstown-roomba start all >> "$LOG_FILE" 2>&1; then
+  # Start Roombas unless the shared automation snooze is active.
+  if roomba_start_blocked crosstown; then
+    :
+  elif crosstown-roomba start all >> "$LOG_FILE" 2>&1; then
     log "  Crosstown Roombas: STARTED"
   else
     log "  ERROR: Failed to start Crosstown Roombas (may be offline)"
@@ -167,19 +215,23 @@ if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin"
     log "  ERROR: Failed to set Cabin eco mode"
   fi
 
-  # Start Roombas
-  started=0
-  if roomba start floomba >> "$LOG_FILE" 2>&1; then
-    started=$((started + 1))
+  # Start Roombas unless the shared automation snooze is active.
+  if roomba_start_blocked cabin; then
+    :
   else
-    log "  ERROR: Failed to start Floomba"
+    started=0
+    if roomba start floomba >> "$LOG_FILE" 2>&1; then
+      started=$((started + 1))
+    else
+      log "  ERROR: Failed to start Floomba"
+    fi
+    if roomba start philly >> "$LOG_FILE" 2>&1; then
+      started=$((started + 1))
+    else
+      log "  ERROR: Failed to start Philly"
+    fi
+    log "  Cabin Roombas: STARTED ($started/2)"
   fi
-  if roomba start philly >> "$LOG_FILE" 2>&1; then
-    started=$((started + 1))
-  else
-    log "  ERROR: Failed to start Philly"
-  fi
-  log "  Cabin Roombas: STARTED ($started/2)"
 
   date > "$MARKER_DIR/cabin"
   log "Cabin vacancy actions complete"

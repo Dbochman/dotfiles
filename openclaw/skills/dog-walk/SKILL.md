@@ -109,9 +109,13 @@ The collar always resets to NORMAL when the walk ends (via the return monitor's 
 ### Roomba Snooze
 
 Roomba automation can be temporarily disabled per-location via the **Roomba Dashboard** (port 8553). When snoozed:
-- **Start commands are skipped** — Roombas won't start on departure
+- **Automatic start commands are skipped** — both dog-walk departures and
+  vacancy automation honor the same per-location policy
 - **Dock commands still execute** — Roombas should never be left running
 - **Walk tracking continues** — GPS, return detection, and route data are unaffected
+
+Manual CLI/dashboard start commands remain explicit operator actions and do
+not consult the automation snooze.
 
 Snooze state is stored at `~/.openclaw/dog-walk/snooze.json` and expires automatically.
 

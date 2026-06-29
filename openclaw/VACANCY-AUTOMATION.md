@@ -88,6 +88,10 @@ General vacancy markers are cleared only after at least one tracked person's
 sticky location resolves to that house through an unambiguous fresh arrival.
 An ambiguity-only `occupied` state preserves the marker so it cannot re-arm
 physical actions when the location returns to `confirmed_vacant`.
+Roomba starts also honor the per-location Roomba Dashboard snooze at
+`~/.openclaw/dog-walk/snooze.json`. A snooze skips only the automatic Roomba
+start; the remaining vacancy actions and general marker still proceed. An
+invalid snooze policy fails closed for Roomba starts.
 Eight Sleep is reconciled from each person's sticky `people.<name>.location`
 when that location changes. This handles split households without polling the
 cloud on every 15-minute state write. The per-person marker records the last

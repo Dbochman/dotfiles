@@ -189,6 +189,95 @@ test -f "$MARKER_DIR/cabin"
 grep -Fq 'Cabin Roombas: STARTED (2/2)' \
   "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
 
+# The dashboard snooze is shared by dog-walk and vacancy automation. Other
+# vacancy actions still run and the marker is written. The asymmetric cases
+# below prove each location is controlled independently.
+mkdir -p "$TEST_HOME/.openclaw/dog-walk"
+cat > "$TEST_HOME/.openclaw/dog-walk/snooze.json" <<'JSON'
+{"cabin":"2999-01-01T00:00:00Z","crosstown":null}
+JSON
+
+rm -f "$MARKER_DIR/cabin"
+write_state occupied confirmed_vacant crosstown crosstown
+: > "$CALLS_FILE"
+run_vacancy_actions
+
+assert_call hue --cabin all-off
+assert_call nest eco cabin on
+assert_call_count 2
+test -f "$MARKER_DIR/cabin"
+if grep -Eq '^roomba\tstart\t' "$CALLS_FILE"; then
+  echo "cabin snooze allowed a Roomba start" >&2
+  exit 1
+fi
+grep -Fq 'cabin Roomba automation: SKIPPED (snoozed)' \
+  "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
+
+# The cabin snooze is scoped: an explicit null leaves Crosstown automation
+# enabled and preserves its legacy start behavior.
+rm -f "$MARKER_DIR/crosstown"
+write_state confirmed_vacant occupied cabin cabin
+printf '%s\n' cabin > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' cabin > "$MARKER_DIR/8sleep-julia-home"
+: > "$CALLS_FILE"
+run_vacancy_actions
+
+assert_call crosstown-roomba start all
+assert_call_count 7
+
+# An expired timestamp is also clear and preserves the same start behavior.
+cat > "$TEST_HOME/.openclaw/dog-walk/snooze.json" <<'JSON'
+{"cabin":null,"crosstown":"2000-01-01T00:00:00Z"}
+JSON
+rm -f "$MARKER_DIR/crosstown"
+: > "$CALLS_FILE"
+run_vacancy_actions
+
+assert_call crosstown-roomba start all
+assert_call_count 7
+
+# Reversing the policy snoozes only Crosstown.
+cat > "$TEST_HOME/.openclaw/dog-walk/snooze.json" <<'JSON'
+{"cabin":null,"crosstown":"2999-01-01T00:00:00Z"}
+JSON
+rm -f "$MARKER_DIR/crosstown"
+: > "$CALLS_FILE"
+run_vacancy_actions
+
+assert_call hue --crosstown all-off
+assert_call nest eco crosstown on
+assert_call cielo off -d bedroom
+assert_call cielo off -d office
+assert_call cielo off -d "living room"
+assert_call august status
+assert_call_count 6
+test -f "$MARKER_DIR/crosstown"
+if grep -Eq '^crosstown-roomba\tstart\t' "$CALLS_FILE"; then
+  echo "Crosstown snooze allowed a Roomba start" >&2
+  exit 1
+fi
+grep -Fq 'crosstown Roomba automation: SKIPPED (snoozed)' \
+  "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
+
+# A malformed falsey value fails closed rather than silently enabling a start.
+printf '%s\n' '{"cabin":false}' > "$TEST_HOME/.openclaw/dog-walk/snooze.json"
+rm -f "$MARKER_DIR/cabin"
+write_state occupied confirmed_vacant crosstown crosstown
+printf '%s\n' crosstown > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+: > "$CALLS_FILE"
+run_vacancy_actions
+
+assert_call hue --cabin all-off
+assert_call nest eco cabin on
+assert_call_count 2
+if grep -Eq '^roomba\tstart\t' "$CALLS_FILE"; then
+  echo "invalid snooze policy allowed a Roomba start" >&2
+  exit 1
+fi
+grep -Fq 'WARN: Invalid Roomba snooze policy; skipping cabin start' \
+  "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
+
 # Exercise the real shell parser with a fake sibling API script. This validates
 # the response contract without importing credentials or making network calls.
 CLI_TEST_DIR="$TEST_HOME/8sleep-cli"
