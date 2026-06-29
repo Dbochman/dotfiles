@@ -53,9 +53,9 @@ The Mac Mini maintains a correlated view of both locations at `~/.openclaw/prese
 |-------|---------|
 | `occupied` | At least one tracked person is present |
 | `confirmed_vacant` | ALL tracked people absent AND confirmed present at the other location |
-| `possibly_vacant` | Nobody detected, but can't confirm they're elsewhere (no previous location on record) |
+| `possibly_vacant` | Nobody is assigned or freshly observed here, but fresh corroboration at the other location is unavailable |
 
-**Arrival-based (sticky) model:** Once a person is detected at a location, they stay there until positively detected at the other location. Phones going to sleep or missing a scan cycle do NOT cause people to "disappear". Vacancy is only `confirmed_vacant` when everyone has been detected at the other location.
+**Arrival-based (sticky) model:** Once a person is detected at a location, they stay there until positively detected at the other location. Phones going to sleep or missing a scan cycle do NOT cause people to "disappear". Vacancy is only `confirmed_vacant` when everyone has been detected at the other location. When both location snapshots are fresh and both directly report the same person present, that evidence is ambiguous: retain the last unambiguous location and keep both direct-positive locations occupied rather than using scan timestamps or order to infer a relocation. A stale positive neither creates ambiguity nor relocates anyone; only a fresh one-sided positive proves an arrival.
 
 ### Per-location tracking
 
@@ -146,8 +146,9 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 ## Important Notes
 
 - **Cached reporting is read-only; live scans are not** — `presence-detect.sh cabin` evaluates and writes `state.json`, while a Crosstown scan pushes a file that the Mini receiver evaluates. Either path can trigger the separate vacancy automation.
+- **Serialized evaluation** — Cabin scans and Taildrop receipts share one evaluator lock. Each `evaluate` call holds it from the first scan read through the previous-state, event/history, and correlated-state writes; network scanning remains outside the lock.
 - **Sticky/arrival-based model** — once detected at a location, a person stays there until detected at the other location. Phone sleep, MAC rotation, or missed ARP scans don't cause flicker.
-- Scan staleness: if either location's scan is >30 min old, it's still trusted for the sticky model (previous location is preserved). Staleness only matters for initial detection of a person with no previous location.
+- **Scan staleness** — only direct positives from scans under 30 minutes old can establish or change a sticky location. Stale or missing observations preserve the previous sticky location; confirmed vacancy still requires a fresh scan at the other location plus sticky assignments of every tracked person there.
 - Mac Mini SSHs to MacBook Pro via Tailscale (`ssh dylans-macbook-pro`) using dedicated key `~/.ssh/id_mini_to_mbp` (bypasses 1Password agent which hangs under launchd).
 - iOS randomizes MAC addresses per-network — hostname matching is preferred over MAC matching for resilience.
 

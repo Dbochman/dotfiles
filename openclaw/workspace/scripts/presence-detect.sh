@@ -35,6 +35,8 @@ GRPCURL="/opt/homebrew/bin/grpcurl"
 TAILSCALE="/usr/local/bin/tailscale"
 [ -x "$TAILSCALE" ] || TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 STATE_DIR="${HOME}/.openclaw/presence"
+EVALUATE_LOCK_FILE="${STATE_DIR}/evaluate.lock"
+EVALUATE_LOCK_TIMEOUT_SECONDS=10
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
 
@@ -276,7 +278,7 @@ console.log(JSON.stringify({
 
 # ── Evaluate: Correlate both locations (runs on Mac Mini) ────────────────────
 
-evaluate() {
+evaluate_locked() {
   local cabin_state crosstown_state potato_state
 
   # Read cabin state (local, from last cabin scan)
@@ -321,14 +323,15 @@ const crosstownFresh = crosstownAge < 30;
 // until positively detected at the OTHER location (arrival-based model).
 const people = {};
 for (const person of allTracked) {
-  const seenAtCabin = cabinPresence[person]?.present === true;
-  const seenAtCrosstown = crosstownPresence[person]?.present === true;
+  const seenAtCabin = cabinFresh && cabinPresence[person]?.present === true;
+  const seenAtCrosstown = crosstownFresh && crosstownPresence[person]?.present === true;
   const prevLoc = prev.people?.[person]?.location || 'unknown';
 
   let location;
   if (seenAtCabin && seenAtCrosstown) {
-    // Seen at both — unusual, pick based on scan freshness
-    location = cabinAge <= crosstownAge ? 'cabin' : 'crosstown';
+    // Conflicting positives are ambiguous. Preserve the last resolved arrival
+    // instead of manufacturing a relocation from scan ordering.
+    location = prevLoc;
   } else if (seenAtCabin) {
     location = 'cabin';
   } else if (seenAtCrosstown) {
@@ -369,15 +372,20 @@ if (potato && !potato.error && potato.latitude != null) {
 // Crosstown vacancy: all crosstown-tracked people absent at crosstown AND present at cabin
 function occupancy(location) {
   const tracked = location === 'cabin' ? cabinTracked : crosstownTracked;
+  const hereFresh = location === 'cabin' ? cabinFresh : crosstownFresh;
   const otherFresh = location === 'cabin' ? crosstownFresh : cabinFresh;
+  const herePresence = location === 'cabin' ? cabinPresence : crosstownPresence;
   const here = location === 'cabin' ? 'cabin' : 'crosstown';
   const there = location === 'cabin' ? 'crosstown' : 'cabin';
 
+  const anyFreshDirectHere = hereFresh && tracked.some(p => herePresence[p]?.present === true);
   const anyHere = tracked.some(p => people[p]?.[here]);
   const noneHere = tracked.every(p => !people[p]?.[here]);
   const allThere = tracked.every(p => people[p]?.[there]);
 
-  if (anyHere) return 'occupied';
+  // A fresh positive at this location vetoes vacancy even when conflicting
+  // evidence leaves the person's sticky location resolved elsewhere.
+  if (anyHere || anyFreshDirectHere) return 'occupied';
   if (noneHere && allThere && otherFresh) return 'confirmed_vacant';
   if (noneHere) return 'possibly_vacant';
   return 'unknown';
@@ -403,7 +411,9 @@ if (prevCrosstown && prevCrosstown !== crosstownOccupancy) {
 for (const person of allTracked) {
   const prevLoc = prev.people?.[person]?.location;
   const currLoc = people[person].location;
-  const actuallyDetected = (cabinPresence[person]?.present === true) || (crosstownPresence[person]?.present === true);
+  const actuallyDetected =
+    (cabinFresh && cabinPresence[person]?.present === true) ||
+    (crosstownFresh && crosstownPresence[person]?.present === true);
   if (prevLoc && prevLoc !== currLoc && currLoc !== 'unknown' && actuallyDetected) {
     transitions.push({ person, event: 'relocated', from: prevLoc, to: currLoc, timestamp: now });
   }
@@ -463,6 +473,30 @@ fs.appendFileSync(histDir + '/' + dayKey + '.jsonl', histRecord + '\n');
 console.log(JSON.stringify(result, null, 2));
 " "$cabin_state" "$crosstown_state" "$potato_state" 2>/dev/null || echo '{"error":"evaluate_failed"}'
 }
+
+# Cabin scans and Taildrop receipts can request correlation concurrently. Keep
+# network scanning outside this lock, but serialize every evaluation from its
+# first scan read through all correlated state, event, and history writes.
+evaluate() (
+  local lock_status
+
+  exec 9>"$EVALUATE_LOCK_FILE"
+  if /usr/bin/lockf -s -t "$EVALUATE_LOCK_TIMEOUT_SECONDS" 9; then
+    evaluate_locked
+    return
+  else
+    lock_status=$?
+  fi
+
+  if [ "$lock_status" -eq 75 ]; then
+    log "ERROR: Presence evaluation lock timed out after ${EVALUATE_LOCK_TIMEOUT_SECONDS}s"
+    echo '{"error":"evaluate_lock_timeout"}'
+  else
+    log "ERROR: Presence evaluation lock acquisition failed (status $lock_status)"
+    echo '{"error":"evaluate_lock_failed"}'
+  fi
+  return "$lock_status"
+)
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 

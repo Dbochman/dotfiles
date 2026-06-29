@@ -14,7 +14,8 @@ Presence Detection (every 15 min)
   vacancy-actions.sh evaluates occupancy
         ↓
   confirmed_vacant → run vacancy actions
-  occupied (was vacant) → run restore actions
+  occupied + sticky arrival → clear vacancy marker
+  ambiguous occupied → keep vacancy marker
 ```
 
 The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.md) system. When `state.json` changes, `launchd` triggers `vacancy-actions.sh`, which reads the occupancy field for each location and acts accordingly.
@@ -24,8 +25,11 @@ The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.
 | Occupancy | Meaning | Action |
 |-----------|---------|--------|
 | `confirmed_vacant` | All tracked people absent AND confirmed present at the other location with a fresh scan | Run vacancy actions |
-| `occupied` (after vacancy) | At least one person detected again | Run restore actions, clear marker |
+| `occupied` (after vacancy) | At least one person has an unambiguous sticky assignment here, or fresh ambiguous evidence vetoes vacancy | Clear the marker only for a sticky arrival; ambiguity alone keeps it |
 | `possibly_vacant` | Nobody detected but can't confirm elsewhere | No action (too uncertain) |
+
+Ambiguity means both fresh location snapshots directly report the same person
+present. It vetoes `confirmed_vacant` for safety, but does not prove a return.
 
 ## Actions by Location
 
@@ -80,6 +84,10 @@ Marker files at `~/.openclaw/presence/vacancy-dispatched/` prevent duplicate tri
 - `vacancy-dispatched/8sleep-julia-home` — last verified current location for Julia
 
 Actions only fire when `confirmed_vacant` AND no corresponding marker exists.
+General vacancy markers are cleared only after at least one tracked person's
+sticky location resolves to that house through an unambiguous fresh arrival.
+An ambiguity-only `occupied` state preserves the marker so it cannot re-arm
+physical actions when the location returns to `confirmed_vacant`.
 Eight Sleep is reconciled from each person's sticky `people.<name>.location`
 when that location changes. This handles split households without polling the
 cloud on every 15-minute state write. The per-person marker records the last
@@ -122,5 +130,6 @@ ls -la ~/.openclaw/presence/vacancy-dispatched/
 Do not delete vacancy markers, touch `state.json`, or run a live presence scan
 as a test. Clearing a marker re-arms every physical action for that location on
 the next `confirmed_vacant` evaluation. Use the isolated tests instead:
-`bash openclaw/tests/test-presence-receive.sh` and
+`bash openclaw/tests/test-presence-detect.sh`,
+`bash openclaw/tests/test-presence-receive.sh`, and
 `bash openclaw/tests/test-vacancy-actions.sh`.

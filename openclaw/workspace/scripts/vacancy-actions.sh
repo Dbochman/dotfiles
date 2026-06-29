@@ -142,7 +142,9 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
   date > "$MARKER_DIR/crosstown"
   log "Crosstown vacancy actions complete"
 
-elif [[ "$crosstown_occupancy" == "occupied" ]] && [[ -f "$MARKER_DIR/crosstown" ]]; then
+elif [[ "$crosstown_occupancy" == "occupied" ]] && \
+    [[ "$dylan_location" == "crosstown" || "$julia_location" == "crosstown" ]] && \
+    [[ -f "$MARKER_DIR/crosstown" ]]; then
   log "Crosstown occupied again — clearing vacancy marker"
   rm -f "$MARKER_DIR/crosstown"
 fi
@@ -182,7 +184,9 @@ if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin"
   date > "$MARKER_DIR/cabin"
   log "Cabin vacancy actions complete"
 
-elif [[ "$cabin_occupancy" == "occupied" ]] && [[ -f "$MARKER_DIR/cabin" ]]; then
+elif [[ "$cabin_occupancy" == "occupied" ]] && \
+    [[ "$dylan_location" == "cabin" || "$julia_location" == "cabin" ]] && \
+    [[ -f "$MARKER_DIR/cabin" ]]; then
   log "Cabin occupied again — clearing vacancy marker"
   rm -f "$MARKER_DIR/cabin"
 fi
