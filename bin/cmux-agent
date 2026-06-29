@@ -1,0 +1,1049 @@
+#!/usr/bin/env python3
+"""Run one-shot Codex workers in tracked cmux surface tabs."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+from datetime import datetime, timezone
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+from typing import Any, Iterator
+
+
+DEFAULT_TIMEOUT = 3600
+SHELL_READY_TIMEOUT = 15
+STARTUP_TIMEOUT = 20
+JOB_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9]+$")
+ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+REQUIRED_METHODS = {
+    "surface.action",
+    "surface.close",
+    "surface.create",
+    "surface.current",
+    "surface.health",
+    "surface.read_text",
+    "surface.send_text",
+    "workspace.remote.pty_close",
+    "workspace.remote.pty_sessions",
+    "workspace.remote.status",
+}
+PAYLOAD_FILES = ("request.md", "result.tmp", "result.md")
+
+os.umask(0o077)
+
+
+class AgentError(Exception):
+    def __init__(self, message: str, code: int = 1) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class WorkerInterrupted(Exception):
+    def __init__(self, signum: int) -> None:
+        super().__init__(signal.Signals(signum).name)
+        self.signum = signum
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def new_job_id() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{os.getpid()}-{secrets.randbelow(100000)}"
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    )
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+        raise
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    )
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+        raise
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        raise AgentError(f"could not read job state: {path.name}") from error
+    if not isinstance(value, dict):
+        raise AgentError(f"invalid job state: {path.name}")
+    return value
+
+
+def append_event(job_dir: Path, payload: dict[str, Any]) -> None:
+    line = (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+    descriptor = os.open(
+        job_dir / "events.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600
+    )
+    try:
+        os.write(descriptor, line)
+    finally:
+        os.close(descriptor)
+
+
+def write_status(
+    job_dir: Path, state: str, detail: str, exit_code: int | None = None
+) -> None:
+    payload: dict[str, Any] = {
+        "state": state,
+        "detail": detail,
+        "updated_at": utc_now(),
+    }
+    if exit_code is not None:
+        payload["exit_code"] = exit_code
+    atomic_write_json(job_dir / "status.json", payload)
+    append_event(job_dir, payload)
+
+
+def write_exit(job_dir: Path, exit_code: int, result_available: bool) -> None:
+    atomic_write_json(
+        job_dir / "exit.json",
+        {
+            "exit_code": exit_code,
+            "result_available": result_available,
+            "finished_at": utc_now(),
+        },
+    )
+
+
+def state_root() -> Path:
+    configured = os.environ.get("CMUX_AGENT_STATE_DIR")
+    root = Path(configured) if configured else Path(tempfile.gettempdir()) / f"cmux-agent-{os.getuid()}"
+    root = root.expanduser()
+    if not root.is_absolute():
+        raise AgentError("CMUX_AGENT_STATE_DIR must be absolute")
+    if root.is_symlink():
+        raise AgentError(f"refusing symlinked state root: {root}")
+    jobs = root / "jobs"
+    if jobs.is_symlink():
+        raise AgentError(f"refusing symlinked jobs directory: {jobs}")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    jobs.mkdir(exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    os.chmod(jobs, 0o700)
+    if root.stat().st_uid != os.getuid() or jobs.stat().st_uid != os.getuid():
+        raise AgentError("state root is not owned by the current user")
+    return root
+
+
+def resolve_job(job_id: str) -> Path:
+    if not JOB_ID_RE.fullmatch(job_id):
+        raise AgentError(f"invalid job ID: {job_id}")
+    path = state_root() / "jobs" / job_id
+    if not path.is_dir():
+        raise AgentError(f"unknown job: {job_id}")
+    return path
+
+
+def find_executable(environment_name: str, fallback: Path, command: str) -> str:
+    configured = os.environ.get(environment_name)
+    candidates = [configured, str(fallback), shutil.which(command)]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return os.path.abspath(candidate)
+    raise AgentError(f"{command} is not installed")
+
+
+def cmux_error_detail(completed: subprocess.CompletedProcess[str]) -> str:
+    detail = (completed.stderr or completed.stdout).strip().replace("\n", " ")
+    return detail[:300] if detail else f"exit {completed.returncode}"
+
+
+def cmux_command(
+    cmux_bin: str, arguments: list[str], *, timeout: float = 30
+) -> str:
+    try:
+        completed = subprocess.run(
+            [cmux_bin, *arguments],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise AgentError(f"cmux command failed: {arguments[0]}") from error
+    if completed.returncode != 0:
+        raise AgentError(
+            f"cmux {arguments[0]} failed: {cmux_error_detail(completed)}"
+        )
+    return completed.stdout
+
+
+def cmux_rpc(
+    cmux_bin: str, method: str, params: dict[str, Any], *, timeout: float = 30
+) -> dict[str, Any]:
+    output = cmux_command(
+        cmux_bin,
+        ["rpc", method, json.dumps(params, separators=(",", ":"))],
+        timeout=timeout,
+    )
+    try:
+        value = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise AgentError(f"cmux {method} returned invalid JSON") from error
+    if not isinstance(value, dict):
+        raise AgentError(f"cmux {method} returned an invalid response")
+    return value
+
+
+def notify(cmux_bin: str, name: str, state: str, exit_code: int) -> None:
+    with contextlib.suppress(AgentError):
+        cmux_command(
+            cmux_bin,
+            [
+                "notify",
+                "--title",
+                "cmux agent",
+                "--body",
+                f"{name}: {state} (exit {exit_code})",
+            ],
+            timeout=5,
+        )
+
+
+def preflight(cmux_bin: str, workspace_id: str) -> bool:
+    cmux_command(cmux_bin, ["ping"], timeout=5)
+    try:
+        capabilities = json.loads(cmux_command(cmux_bin, ["capabilities", "--json"]))
+    except json.JSONDecodeError as error:
+        raise AgentError("could not parse cmux capabilities") from error
+    methods = set(capabilities.get("methods", []))
+    missing = sorted(REQUIRED_METHODS - methods)
+    if missing:
+        raise AgentError("missing cmux RPC methods: " + ", ".join(missing))
+
+    status = cmux_rpc(
+        cmux_bin, "workspace.remote.status", {"workspace_id": workspace_id}
+    )
+    remote = status.get("remote", {})
+    if isinstance(remote, dict) and remote.get("enabled"):
+        daemon = remote.get("daemon", {})
+        daemon_state = daemon.get("state") if isinstance(daemon, dict) else None
+        if remote.get("state") != "connected" or daemon_state != "ready":
+            raise AgentError("managed SSH workspace is not connected and ready")
+        return True
+    return False
+
+
+def tmux_workspace_id() -> str | None:
+    if os.environ.get("CMUX_WORKSPACE_ID"):
+        return os.environ["CMUX_WORKSPACE_ID"]
+    tmux_bin = shutil.which("tmux")
+    if not tmux_bin:
+        return None
+    completed = subprocess.run(
+        [tmux_bin, "show-environment", "-g", "CMUX_WORKSPACE_ID"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    prefix = "CMUX_WORKSPACE_ID="
+    if completed.returncode == 0 and completed.stdout.startswith(prefix):
+        return completed.stdout.strip()[len(prefix) :]
+    return None
+
+
+def surface_ids(response: dict[str, Any]) -> set[str]:
+    surfaces = response.get("surfaces", [])
+    if not isinstance(surfaces, list):
+        return set()
+    return {
+        item["id"]
+        for item in surfaces
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+
+
+def workspace_surface_ids(
+    cmux_bin: str, workspace_id: str, surface_id: str
+) -> set[str]:
+    return surface_ids(
+        cmux_rpc(
+            cmux_bin,
+            "surface.health",
+            {"workspace_id": workspace_id, "surface_id": surface_id},
+        )
+    )
+
+
+def remote_sessions(cmux_bin: str, workspace_id: str) -> list[dict[str, Any]]:
+    response = cmux_rpc(
+        cmux_bin,
+        "workspace.remote.pty_sessions",
+        {"workspace_id": workspace_id},
+    )
+    sessions = response.get("sessions", [])
+    if not isinstance(sessions, list):
+        raise AgentError("cmux returned invalid remote PTY state")
+    return [item for item in sessions if isinstance(item, dict)]
+
+
+def remote_session_ids(cmux_bin: str, workspace_id: str) -> set[str]:
+    return {
+        item["session_id"]
+        for item in remote_sessions(cmux_bin, workspace_id)
+        if isinstance(item.get("session_id"), str)
+    }
+
+
+def resolve_remote_session_id(
+    cmux_bin: str, workspace_id: str, surface_id: str, timeout: float = 5
+) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        matches: list[str] = []
+        for session in remote_sessions(cmux_bin, workspace_id):
+            attachments = session.get("attachments", [])
+            if not isinstance(attachments, list):
+                continue
+            if any(
+                isinstance(attachment, dict)
+                and attachment.get("attachment_id") == surface_id
+                for attachment in attachments
+            ):
+                session_id = session.get("session_id")
+                if isinstance(session_id, str):
+                    matches.append(session_id)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise AgentError("multiple remote PTY sessions matched the worker surface")
+        time.sleep(0.25)
+    raise AgentError("could not resolve the worker's remote PTY session")
+
+
+def surface_ready(cmux_bin: str, workspace_id: str, surface_id: str) -> bool:
+    deadline = time.monotonic() + SHELL_READY_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            response = cmux_rpc(
+                cmux_bin,
+                "surface.read_text",
+                {"workspace_id": workspace_id, "surface_id": surface_id},
+            )
+            text = ANSI_RE.sub("", str(response.get("text", "")))
+            lines = text.splitlines()
+            if lines and lines[-1].rstrip().endswith(("%", "$", "#", ">")):
+                return True
+        except AgentError:
+            pass
+        time.sleep(1)
+    return False
+
+
+def close_surface(cmux_bin: str, workspace_id: str, surface_id: str) -> None:
+    cmux_rpc(
+        cmux_bin,
+        "surface.close",
+        {"workspace_id": workspace_id, "surface_id": surface_id},
+    )
+
+
+def surface_metadata(job_dir: Path) -> tuple[str, str, str]:
+    metadata = read_json(job_dir / "surface.json")
+    workspace_id = metadata.get("workspace_id")
+    origin_id = metadata.get("origin_surface_id")
+    worker_id = metadata.get("worker_surface_id")
+    if not all(isinstance(value, str) and value for value in (workspace_id, origin_id, worker_id)):
+        raise AgentError("job surface metadata is incomplete")
+    if worker_id == origin_id:
+        raise AgentError("refusing to target the origin surface")
+    return workspace_id, origin_id, worker_id
+
+
+def ensure_worker_remote_pty_closed(job_dir: Path) -> None:
+    marker = job_dir / "pty-closed.json"
+    if marker.exists():
+        return
+    job = read_json(job_dir / "job.json")
+    cmux_bin = job.get("cmux_bin")
+    if not isinstance(cmux_bin, str) or not cmux_bin:
+        raise AgentError("job has no cmux executable")
+    workspace_id, _, worker_id = surface_metadata(job_dir)
+    if job.get("managed_remote") is not True:
+        atomic_write_json(marker, {"acknowledged_at": utc_now(), "local": True})
+        return
+
+    metadata = read_json(job_dir / "surface.json")
+    session_id = metadata.get("remote_session_id")
+    if not isinstance(session_id, str) or not session_id:
+        raise AgentError("job has no remote PTY session ID")
+
+    deadline = time.monotonic() + 3
+    absent_observations = 0
+    while time.monotonic() < deadline:
+        sessions = remote_session_ids(cmux_bin, workspace_id)
+        if session_id not in sessions:
+            absent_observations += 1
+            if absent_observations >= 2:
+                atomic_write_json(marker, {"acknowledged_at": utc_now()})
+                return
+        else:
+            absent_observations = 0
+            with contextlib.suppress(AgentError):
+                cmux_rpc(
+                    cmux_bin,
+                    "workspace.remote.pty_close",
+                    {
+                        "workspace_id": workspace_id,
+                        "session_id": session_id,
+                        "surface_id": worker_id,
+                    },
+                )
+        time.sleep(0.25)
+    raise AgentError("remote worker PTY did not close")
+
+
+def ensure_worker_surface_closed(job_dir: Path) -> None:
+    marker = job_dir / "surface-closed.json"
+    if marker.exists():
+        return
+    job = read_json(job_dir / "job.json")
+    cmux_bin = job.get("cmux_bin")
+    if not isinstance(cmux_bin, str) or not cmux_bin:
+        raise AgentError("job has no cmux executable")
+    workspace_id, _, worker_id = surface_metadata(job_dir)
+    surfaces = workspace_surface_ids(cmux_bin, workspace_id, worker_id)
+    if worker_id not in surfaces:
+        atomic_write_json(
+            marker, {"acknowledged_at": utc_now(), "already_absent": True}
+        )
+        return
+    if not (surfaces - {worker_id}):
+        raise AgentError(
+            "worker is the workspace's final surface; open another tab before cleanup"
+        )
+    try:
+        close_surface(cmux_bin, workspace_id, worker_id)
+    except AgentError:
+        if worker_id in workspace_surface_ids(cmux_bin, workspace_id, worker_id):
+            raise
+    atomic_write_json(marker, {"acknowledged_at": utc_now()})
+
+
+@contextlib.contextmanager
+def directory_lock(path: Path, description: str) -> Iterator[None]:
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError as error:
+        raise AgentError(f"job is already being {description}") from error
+    try:
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            path.rmdir()
+
+
+@contextlib.contextmanager
+def finalization_lock(job_dir: Path, timeout: float | None = None) -> Iterator[None]:
+    descriptor = os.open(job_dir / "finalize.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = None if timeout is None else time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                operation = fcntl.LOCK_EX if deadline is None else fcntl.LOCK_EX | fcntl.LOCK_NB
+                fcntl.flock(descriptor, operation)
+                break
+            except BlockingIOError:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise AgentError("timed out waiting for worker finalization")
+                time.sleep(0.1)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+@contextlib.contextmanager
+def worker_quiesced(job_dir: Path, timeout: float = 10) -> Iterator[None]:
+    descriptor = os.open(job_dir / "lifetime.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise AgentError("worker did not become quiescent after tab closure")
+                time.sleep(0.1)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def remove_payloads(job_dir: Path) -> None:
+    for name in PAYLOAD_FILES:
+        with contextlib.suppress(FileNotFoundError):
+            (job_dir / name).unlink()
+
+
+def finalize_worker(
+    job_dir: Path,
+    job: dict[str, Any],
+    exit_code: int,
+    detail: str,
+    result_available: bool,
+) -> int:
+    cmux_bin = str(job["cmux_bin"])
+    name = str(job["name"])
+    with finalization_lock(job_dir):
+        cancelled = (job_dir / "cancel.json").exists()
+        if cancelled:
+            state = "cancelled"
+            if exit_code == 0:
+                exit_code = 130
+            result_available = False
+            detail = "Worker cancelled by orchestrator"
+        else:
+            state = "succeeded" if exit_code == 0 and result_available else "failed"
+        write_status(job_dir, state, detail, exit_code)
+        notify(cmux_bin, name, state, exit_code)
+        # This is the final observable runner action. A waiter may close the tab
+        # as soon as the atomic marker appears.
+        write_exit(job_dir, exit_code, result_available)
+    return exit_code
+
+
+def terminate_process(process: subprocess.Popen[Any] | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=2)
+
+
+def normalize_return_code(return_code: int) -> int:
+    if return_code < 0:
+        return 128 + abs(return_code)
+    return min(return_code, 255)
+
+
+def run_worker(job_dir: Path) -> int:
+    job = read_json(job_dir / "job.json")
+    request = job_dir / "request.md"
+    if not request.is_file():
+        raise AgentError("worker request is missing", 66)
+    try:
+        (job_dir / "runner.lock").mkdir(mode=0o700)
+    except FileExistsError as error:
+        raise AgentError("worker already claimed this job", 73) from error
+
+    # Deliberately held until process exit. An orchestrator that force-closes
+    # the tab waits on this advisory lock before publishing closed/purging.
+    lifetime_descriptor = os.open(
+        job_dir / "lifetime.lock", os.O_RDWR | os.O_CREAT, 0o600
+    )
+    fcntl.flock(lifetime_descriptor, fcntl.LOCK_EX)
+
+    if (job_dir / "cancel.json").exists():
+        return finalize_worker(
+            job_dir, job, 130, "Worker cancelled before Codex launch", False
+        )
+
+    expected_host = job.get("expected_host")
+    if expected_host != socket.gethostname():
+        return finalize_worker(
+            job_dir, job, 78, "Worker opened on an unexpected host", False
+        )
+
+    process: subprocess.Popen[Any] | None = None
+    previous_handlers: dict[int, Any] = {}
+
+    def on_signal(signum: int, _frame: Any) -> None:
+        raise WorkerInterrupted(signum)
+
+    for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        previous_handlers[signum] = signal.signal(signum, on_signal)
+
+    exit_code = 70
+    detail = "Codex worker failed"
+    result_available = False
+    try:
+        command = [
+            str(job["codex_bin"]),
+            "-a",
+            "never",
+            "exec",
+            "--ephemeral",
+            "--sandbox",
+            str(job["sandbox"]),
+            "--color",
+            "never",
+            "--output-last-message",
+            str(job_dir / "result.tmp"),
+            "-C",
+            str(job["cwd"]),
+            "-",
+        ]
+        cancelled_before_launch = False
+        with finalization_lock(job_dir):
+            if (job_dir / "cancel.json").exists():
+                cancelled_before_launch = True
+            else:
+                write_status(job_dir, "running", "Codex worker is running")
+                with request.open("rb") as prompt:
+                    process = subprocess.Popen(command, stdin=prompt)
+        if cancelled_before_launch:
+            exit_code = 130
+            detail = "Worker cancelled before Codex launch"
+        else:
+            assert process is not None
+            exit_code = normalize_return_code(process.wait())
+            temporary_result = job_dir / "result.tmp"
+            if temporary_result.exists():
+                os.replace(temporary_result, job_dir / "result.md")
+            result = job_dir / "result.md"
+            result_available = result.is_file() and result.stat().st_size > 0
+            if exit_code == 0 and not result_available:
+                exit_code = 70
+            detail = (
+                "Codex worker completed" if exit_code == 0 else "Codex worker failed"
+            )
+    except WorkerInterrupted as error:
+        terminate_process(process)
+        exit_code = 128 + error.signum
+        detail = f"Codex worker interrupted by {signal.Signals(error.signum).name}"
+        result_available = False
+    except BaseException:
+        terminate_process(process)
+        traceback.print_exc()
+        exit_code = 70
+        detail = "Codex worker exited before finalizing"
+        result_available = False
+    finally:
+        for signum, previous in previous_handlers.items():
+            signal.signal(signum, previous)
+
+    return finalize_worker(job_dir, job, exit_code, detail, result_available)
+
+
+def wait_for_startup(job_dir: Path) -> bool:
+    deadline = time.monotonic() + STARTUP_TIMEOUT
+    while time.monotonic() < deadline:
+        if (job_dir / "exit.json").exists():
+            return True
+        status = read_json(job_dir / "status.json")
+        if status.get("state") == "running":
+            return True
+        if status.get("state") in {"closed", "cancelled"}:
+            return False
+        time.sleep(1)
+    return False
+
+
+def output_result(path: Path) -> None:
+    content = path.read_text(encoding="utf-8")
+    try:
+        sys.stdout.write(content)
+        if content and not content.endswith("\n"):
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+    except BrokenPipeError as error:
+        raise AgentError("result output was interrupted; tab retained", 74) from error
+
+
+def collect_job(job_id: str, timeout: int | None, keep_tab: bool) -> int:
+    job_dir = resolve_job(job_id)
+    status = read_json(job_dir / "status.json")
+    if status.get("state") in {"collected", "collected_keep_tab"}:
+        raise AgentError(f"job {job_id} was already collected")
+    if status.get("state") in {"closed", "cancelled"} and not (job_dir / "exit.json").exists():
+        raise AgentError(f"job {job_id} is {status.get('state')} and has no result", 130)
+
+    with directory_lock(job_dir / "collector.lock", "collected"):
+        status = read_json(job_dir / "status.json")
+        if status.get("state") in {"collected", "collected_keep_tab"}:
+            raise AgentError(f"job {job_id} was already collected")
+        job = read_json(job_dir / "job.json")
+        wait_seconds = timeout if timeout is not None else int(job["timeout_seconds"])
+        deadline = time.monotonic() + wait_seconds
+        while not (job_dir / "exit.json").exists():
+            status = read_json(job_dir / "status.json")
+            if status.get("state") in {"closed", "cancelled"}:
+                raise AgentError(
+                    f"job {job_id} was {status.get('state')} before producing a result",
+                    130,
+                )
+            if time.monotonic() >= deadline:
+                raise AgentError(
+                    f"job {job_id} timed out while {status.get('state')}; tab retained",
+                    124,
+                )
+            time.sleep(1)
+
+        completion = read_json(job_dir / "exit.json")
+        exit_code = int(completion.get("exit_code", 70))
+        result_available = completion.get("result_available") is True
+        result = job_dir / "result.md"
+        if exit_code == 0 and result_available and (
+            not result.is_file() or result.stat().st_size == 0
+        ):
+            write_status(
+                job_dir, "failed", "Completion marker had no nonempty result", 70
+            )
+            raise AgentError(
+                f"job {job_id} produced no collectable result; tab retained", 70
+            )
+
+        if result_available and result.is_file():
+            output_result(result)
+        if exit_code != 0 or not result_available:
+            raise AgentError(
+                f"job {job_id} failed with exit {exit_code}; tab and mailbox retained",
+                exit_code or 70,
+            )
+
+        with worker_quiesced(job_dir):
+            ensure_worker_remote_pty_closed(job_dir)
+            if not keep_tab:
+                ensure_worker_surface_closed(job_dir)
+            with finalization_lock(job_dir, timeout=10):
+                if keep_tab:
+                    write_status(
+                        job_dir,
+                        "collected_keep_tab",
+                        "Result collected; worker tab retained",
+                        exit_code,
+                    )
+                else:
+                    write_status(
+                        job_dir,
+                        "collected",
+                        "Result collected; worker tab closed",
+                        exit_code,
+                    )
+                remove_payloads(job_dir)
+    return 0
+
+
+def run_job(args: argparse.Namespace) -> int:
+    if not args.name or len(args.name) > 64 or "\n" in args.name or "\r" in args.name:
+        raise AgentError("--name must be one line of at most 64 characters")
+    cwd = Path(args.cwd).expanduser().resolve()
+    if not cwd.is_dir():
+        raise AgentError(f"working directory does not exist: {args.cwd}")
+    if (args.workspace_id is None) != (args.pane_id is None):
+        raise AgentError("--workspace-id and --pane-id must be supplied together")
+
+    cmux_bin = find_executable(
+        "CMUX_AGENT_CMUX_BIN", Path.home() / ".cmux/bin/cmux", "cmux"
+    )
+    codex_bin = find_executable(
+        "CMUX_AGENT_CODEX_BIN", Path("/opt/homebrew/bin/codex"), "codex"
+    )
+
+    workspace_id = args.workspace_id or tmux_workspace_id()
+    if args.workspace_id is None:
+        print(
+            "cmux-agent: no explicit cmux IDs; snapshotting the selected surface once",
+            file=sys.stderr,
+        )
+    current_params = {"workspace_id": workspace_id} if workspace_id else {}
+    current = cmux_rpc(cmux_bin, "surface.current", current_params)
+    workspace_id = workspace_id or current.get("workspace_id")
+    pane_id = args.pane_id or current.get("pane_id")
+    origin_id = current.get("surface_id")
+    if not all(
+        isinstance(value, str) and value
+        for value in (workspace_id, pane_id, origin_id)
+    ):
+        raise AgentError("cmux context is incomplete")
+
+    managed_remote = preflight(cmux_bin, workspace_id)
+    root = state_root()
+    job_id = new_job_id()
+    job_dir = root / "jobs" / job_id
+    job_dir.mkdir(mode=0o700)
+
+    if args.prompt == "-":
+        prompt = sys.stdin.read()
+    else:
+        prompt_path = Path(args.prompt).expanduser().resolve()
+        if not prompt_path.is_file():
+            raise AgentError(f"prompt file does not exist: {args.prompt}")
+        prompt = prompt_path.read_text(encoding="utf-8")
+    if not prompt:
+        raise AgentError("prompt must not be empty")
+    atomic_write_text(job_dir / "request.md", prompt)
+
+    job = {
+        "version": 1,
+        "id": job_id,
+        "name": args.name,
+        "cwd": str(cwd),
+        "sandbox": args.sandbox,
+        "timeout_seconds": args.timeout,
+        "cmux_bin": cmux_bin,
+        "codex_bin": codex_bin,
+        "expected_host": socket.gethostname(),
+        "managed_remote": managed_remote,
+        "created_at": utc_now(),
+    }
+    atomic_write_json(job_dir / "job.json", job)
+    write_status(job_dir, "created", "Job mailbox created")
+
+    worker_id: str | None = None
+    create_attempted = False
+    try:
+        create_attempted = True
+        created = cmux_rpc(
+            cmux_bin,
+            "surface.create",
+            {
+                "workspace_id": workspace_id,
+                "pane_id": pane_id,
+                "type": "terminal",
+                "focus": False,
+            },
+        )
+        candidate = created.get("surface_id")
+        if not isinstance(candidate, str) or not candidate or candidate == origin_id:
+            raise AgentError("cmux returned an unsafe worker surface ID")
+        worker_id = candidate
+        atomic_write_json(
+            job_dir / "surface.json",
+            {
+                "workspace_id": workspace_id,
+                "pane_id": pane_id,
+                "origin_surface_id": origin_id,
+                "worker_surface_id": worker_id,
+                "remote_session_id": None,
+            },
+        )
+        cmux_rpc(
+            cmux_bin,
+            "surface.action",
+            {
+                "workspace_id": workspace_id,
+                "surface_id": worker_id,
+                "action": "rename",
+                "title": f"Agent: {args.name}",
+            },
+        )
+        if not surface_ready(cmux_bin, workspace_id, worker_id):
+            raise AgentError("worker shell did not become ready")
+        if managed_remote:
+            metadata = read_json(job_dir / "surface.json")
+            metadata["remote_session_id"] = resolve_remote_session_id(
+                cmux_bin, workspace_id, worker_id
+            )
+            atomic_write_json(job_dir / "surface.json", metadata)
+    except BaseException:
+        if worker_id and worker_id != origin_id:
+            if managed_remote:
+                with contextlib.suppress(AgentError):
+                    session_id = resolve_remote_session_id(
+                        cmux_bin, workspace_id, worker_id, timeout=2
+                    )
+                    cmux_rpc(
+                        cmux_bin,
+                        "workspace.remote.pty_close",
+                        {
+                            "workspace_id": workspace_id,
+                            "session_id": session_id,
+                            "surface_id": worker_id,
+                        },
+                    )
+            with contextlib.suppress(AgentError):
+                close_surface(cmux_bin, workspace_id, worker_id)
+        state = "create_ambiguous" if create_attempted and worker_id is None else "failed"
+        detail = (
+            "Surface creation was not acknowledged; inspect cmux manually"
+            if state == "create_ambiguous"
+            else "Worker tab setup failed"
+        )
+        write_status(job_dir, state, detail)
+        raise
+
+    launch = "exec " + shlex.join(
+        [sys.executable, str(Path(__file__).resolve()), "_run", str(job_dir)]
+    ) + "\n"
+    write_status(job_dir, "launching", "Worker command queued")
+    print(f"cmux-agent: job {job_id} created in a background tab", file=sys.stderr)
+    try:
+        cmux_rpc(
+            cmux_bin,
+            "surface.send_text",
+            {"workspace_id": workspace_id, "surface_id": worker_id, "text": launch},
+        )
+    except AgentError as error:
+        write_status(job_dir, "dispatch_unknown", "Worker dispatch was not acknowledged")
+        raise AgentError(
+            f"dispatch acknowledgement failed for {job_id}; tab retained: {error}",
+            75,
+        ) from error
+
+    if not wait_for_startup(job_dir):
+        raise AgentError(
+            f"worker startup was not confirmed for {job_id}; tab retained", 125
+        )
+    if args.detach:
+        print(job_id)
+        return 0
+    return collect_job(job_id, args.timeout, args.keep_tab)
+
+
+def status_job(job_id: str) -> int:
+    status = read_json(resolve_job(job_id) / "status.json")
+    suffix = (
+        f" (exit {status['exit_code']})" if "exit_code" in status else ""
+    )
+    detail = f" — {status['detail']}" if status.get("detail") else ""
+    print(f"{job_id}: {status.get('state', 'unknown')}{suffix}{detail}")
+    return 0
+
+
+def close_job(job_id: str, force: bool, purge: bool) -> int:
+    job_dir = resolve_job(job_id)
+    job = read_json(job_dir / "job.json")
+    status = read_json(job_dir / "status.json")
+    state = status.get("state")
+    complete = (job_dir / "exit.json").exists()
+    active = state in {"created", "launching", "running", "dispatch_unknown"}
+    if not complete and not force and state != "collected_keep_tab":
+        raise AgentError(
+            f"job {job_id} has no completion marker; use close --force to interrupt it"
+        )
+    if active and not force:
+        raise AgentError(f"job {job_id} is {state}; use close --force to interrupt it")
+
+    if force and not complete:
+        with finalization_lock(job_dir, timeout=10):
+            atomic_write_json(
+                job_dir / "cancel.json",
+                {"requested_at": utc_now(), "reason": "explicit force close"},
+            )
+            write_status(job_dir, "cancellation_requested", "Closing active worker tab")
+
+    if force and not complete and job.get("managed_remote") is True:
+        ensure_worker_remote_pty_closed(job_dir)
+    elif force and not complete:
+        ensure_worker_surface_closed(job_dir)
+    with worker_quiesced(job_dir):
+        ensure_worker_remote_pty_closed(job_dir)
+        ensure_worker_surface_closed(job_dir)
+        with finalization_lock(job_dir, timeout=10):
+            write_status(job_dir, "closed", "Worker tab closed explicitly")
+            if purge:
+                remove_payloads(job_dir)
+    return 0
+
+
+def positive_integer(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+    if result <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return result
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="cmux-agent",
+        description="Run one-shot Codex workers in tracked cmux tabs.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="launch and collect a worker")
+    run_parser.add_argument("--name", required=True)
+    run_parser.add_argument("--cwd", required=True)
+    run_parser.add_argument("--prompt", required=True, help="request file, or - for stdin")
+    run_parser.add_argument(
+        "--sandbox", choices=("read-only", "workspace-write"), default="read-only"
+    )
+    run_parser.add_argument("--workspace-id")
+    run_parser.add_argument("--pane-id")
+    run_parser.add_argument("--timeout", type=positive_integer, default=DEFAULT_TIMEOUT)
+    run_parser.add_argument("--detach", action="store_true")
+    run_parser.add_argument("--keep-tab", action="store_true")
+
+    wait_parser = subparsers.add_parser("wait", help="wait for and collect a worker")
+    wait_parser.add_argument("job_id")
+    wait_parser.add_argument("--timeout", type=positive_integer)
+    wait_parser.add_argument("--keep-tab", action="store_true")
+
+    status_parser = subparsers.add_parser("status", help="show a job lifecycle state")
+    status_parser.add_argument("job_id")
+
+    close_parser = subparsers.add_parser("close", help="close a recorded worker tab")
+    close_parser.add_argument("job_id")
+    close_parser.add_argument("--force", action="store_true")
+    close_parser.add_argument("--purge", action="store_true")
+
+    return parser
+
+
+def main() -> int:
+    try:
+        if len(sys.argv) == 3 and sys.argv[1] == "_run":
+            return run_worker(Path(sys.argv[2]))
+        args = build_parser().parse_args()
+        if args.command == "run":
+            return run_job(args)
+        if args.command == "wait":
+            return collect_job(args.job_id, args.timeout, args.keep_tab)
+        if args.command == "status":
+            return status_job(args.job_id)
+        if args.command == "close":
+            return close_job(args.job_id, args.force, args.purge)
+        raise AgentError(f"unknown command: {args.command}")
+    except AgentError as error:
+        print(f"cmux-agent: {error}", file=sys.stderr)
+        return error.code
+    except KeyboardInterrupt:
+        print("cmux-agent: interrupted; worker tab retained", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

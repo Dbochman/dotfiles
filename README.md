@@ -20,6 +20,7 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `.codex/profiles/` - User-level Codex profiles linked by `install.sh`
 - `.local/bin/codex-quick` - Fast Codex CLI wrapper (medium reasoning)
 - `.local/bin/codex-skill-budget` - Verify the model-visible skill list fits without description shortening
+- `bin/cmux-agent` - Run one-shot Codex workers in tracked cmux tabs with safe handoff and cleanup
 
 ### Claude Code
 - `.claude/CLAUDE.md` - Global instructions for all projects

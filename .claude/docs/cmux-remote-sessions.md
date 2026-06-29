@@ -190,8 +190,8 @@ Through the authenticated relay, the orchestrator can:
 - list and select cmux workspaces and terminal surfaces;
 - read the visible text of a specifically targeted surface;
 - send text or key presses to a specifically targeted surface;
-- create an isolated workspace or split, launch Codex there, and monitor its output; and
-- restore focus and close only workspaces that it created.
+- create a background surface tab in a specifically targeted pane, launch Codex there, and collect its result; and
+- close only the exact surfaces that it created.
 
 These Codex processes are independent CLI sessions, not structured subagents of the orchestrator thread. They do not automatically share prompts, memory, approvals, or completion state.
 
@@ -204,12 +204,93 @@ Use the following operating contract:
 - Read only the intended agent surface, not unrelated tabs.
 - Do not answer permission prompts or destructive confirmations without explicit authorization.
 
-A simple launch pattern inside a dedicated agent workspace is:
+Use a new surface tab in the orchestrator's existing pane for an independent worker. It inherits the managed SSH host and keeps the main layout uncluttered. Use a split only when the worker must remain visible beside the orchestrator, and use a separate cmux workspace or macOS window only for a genuinely separate host, project, or long-lived context.
+
+#### Agent Job Protocol
+
+`cmux-agent` turns a one-shot Codex task into a tracked job with an explicit mailbox and surface lifecycle. The normal blocking form is:
 
 ```bash
-cd -- /absolute/path/to/project
-codex
+cmux-agent run \
+  --name "targeted review" \
+  --cwd /absolute/path/to/project \
+  --prompt /absolute/path/to/request.md \
+  --sandbox read-only \
+  --workspace-id <workspace-uuid> \
+  --pane-id <pane-uuid>
 ```
+
+Use `--sandbox workspace-write` only when the worker is meant to edit its assigned checkout or worktree. The helper intentionally does not offer `danger-full-access`.
+
+For a detached job:
+
+```bash
+job_id="$(cmux-agent run \
+  --name "focused implementation" \
+  --cwd /absolute/path/to/worktree \
+  --prompt /absolute/path/to/request.md \
+  --sandbox workspace-write \
+  --workspace-id <workspace-uuid> \
+  --pane-id <pane-uuid> \
+  --detach)"
+
+cmux-agent status "$job_id"
+cmux-agent wait "$job_id"
+```
+
+`run` and `wait` watch the mailbox rather than scraping terminal output. `cmux notify` provides a human-visible completion alert, but it does not wake or message the orchestrating Codex turn; one blocking `wait` is the dependable completion channel.
+
+The primary lifecycle is:
+
+```text
+created → launching → running → succeeded → collected
+                              ↘ failed
+```
+
+Operational side states include `create_ambiguous` when cmux may have created a tab without returning its ID, `dispatch_unknown` when cmux does not acknowledge the send, `cancellation_requested` / `cancelled` during a forced stop, `closed` after explicit cleanup, and `collected_keep_tab` when `--keep-tab` was requested.
+
+- A successful result is printed, acknowledged by the waiting process, and its worker tab is closed immediately. Successful prompt and result payloads are then removed.
+- A failed or timed-out job retains its tab and private mailbox for diagnosis. A wait timeout is non-destructive and starts when that `run` or `wait` invocation begins; it does not stop the worker. Close the tab as soon as diagnosis is complete with `cmux-agent close <job-id> --purge`.
+- `close` refuses to interrupt a launching or running worker unless `--force` is explicit.
+- `--keep-tab` is an intentional exception for a successful job that still needs live inspection; close it when that inspection ends.
+
+Job state lives under `${CMUX_AGENT_STATE_DIR:-${TMPDIR:-/tmp}/cmux-agent-UID}/jobs/<job-id>/` with mode `0700` and includes:
+
+| File | Purpose |
+| --- | --- |
+| `job.json` | Job name, absolute working directory, sandbox, expected host, and executable paths. |
+| `surface.json` | Immutable workspace, pane, origin-surface, and worker-surface IDs. |
+| `pty-closed.json` | Durable acknowledgement that the exact managed-SSH PTY ended. |
+| `surface-closed.json` | Durable acknowledgement that the exact worker tab was closed. |
+| `request.md` | Private prompt copied from a file or standard input. |
+| `status.json` / `events.jsonl` | Atomic current state and transition history. |
+| `result.tmp` → `result.md` | Atomic final-response publication. |
+| `exit.json` | Authoritative completion marker and exit code. |
+| `runner.lock/` | Atomic claim that prevents duplicate execution. |
+| `collector.lock/` | Atomic claim that prevents two waiters from consuming one result. |
+| `finalize.lock` / `lifetime.lock` | Advisory locks that serialize completion, cancellation, and cleanup. |
+| `cancel.json` | Durable forced-cancellation request checked before Codex starts. |
+
+Treat the whole mailbox as sensitive. Prompts and results can contain repository or household context even when the tab title and completion notification do not.
+
+The helper follows these cmux rules:
+
+- It creates `type: terminal` with `focus: false` in one explicit workspace and pane, then targets only the returned worker UUID for rename, send, and close.
+- It never passes `initial_command` to `surface.create`. In a managed SSH workspace, that can override the remote startup and open the worker on the client Mac instead.
+- It reads only the new worker tab until the inherited login shell shows a prompt, then sends the runner command. On cmux 0.64.17, input acknowledged as queued can still be discarded if it arrives before that shell owns the terminal.
+- It launches the runner with `exec`, replacing that temporary login shell. It resolves the exact remote PTY by matching the worker surface against `attachments[].attachment_id`, stores that returned session ID, and terminates only that PTY before closing the UI surface. This matters because `surface.close` alone detaches a managed-SSH PTY and can leave its process alive.
+- The runner compares its hostname with the launch host before invoking Codex, so a tab that lands on the wrong machine fails closed.
+- It does not restore focus after completion. Unconditional focus restoration can yank the user away from work they selected in the meantime.
+- It never retries a successfully acknowledged runner command; the atomic runner claim is a final defense against duplicate execution.
+- If surface creation is ambiguous and no immutable worker UUID was returned, it records `create_ambiguous` and stops. It does not guess from whichever other tab appeared in the pane.
+- cmux refuses to close a workspace's final surface. Keep the orchestrator or another tab open until worker cleanup finishes; if the worker is already the last surface, open a replacement tab and retry cleanup.
+
+Pass `--workspace-id` and `--pane-id` together for automation. When they are omitted, the helper takes one snapshot of the selected surface and warns; changing cmux focus during that snapshot creates a race. Working directory is attentional context, not a security boundary, so concurrent modifying agents still need separate worktrees and an appropriate Codex sandbox.
+
+Two implementation traps are worth preserving in this runbook:
+
+- Do not probe a mutating cmux command with `--help` on cmux 0.64.17. Some commands ignore the flag and perform the mutation. Use the non-mutating top-level help or the advertised raw RPC capabilities instead.
+- In injected zsh commands, use `rc` or `exit_code`, not `status`; zsh reserves `status` as a read-only parameter.
 
 #### Persistence Layers and Limits
 
