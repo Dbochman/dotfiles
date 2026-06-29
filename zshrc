@@ -152,6 +152,21 @@ home() {
   _cmux_ssh_tmux home dylans-mac-mini home /opt/homebrew/bin/tmux "$@"
 }
 
+# Attach to the Mac Mini's durable session from a small mobile terminal without
+# letting the phone resize the desktop client. Use the read-only form when only
+# monitoring; tmux -r also enables the ignore-size client flag.
+home-mobile() {
+  command tmux attach-session -f ignore-size,active-pane -t home
+}
+
+home-mobile-ro() {
+  command tmux attach-session -r -t home
+}
+
+# Short aliases for Termius.
+alias hmi='home-mobile'
+alias hmr='home-mobile-ro'
+
 # Chrome with remote debugging for MCP
 alias chrome-debug='/Applications/Google\ Chrome\ Canary.app/Contents/MacOS/Google\ Chrome\ Canary --remote-debugging-port=9222 --user-data-dir="$HOME/.chrome-debug-profile"'
 

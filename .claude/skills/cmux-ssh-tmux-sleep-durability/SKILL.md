@@ -3,10 +3,12 @@ name: cmux-ssh-tmux-sleep-durability
 description: >-
   Diagnose and fix cmux SSH workspaces that show stale terminals or repeated
   "Remote daemon bootstrap failed: failed to query remote platform: Connection
-  to HOST closed" errors after macOS sleep or network changes while the remote
-  tmux/Codex session remains alive. Use when hardening a cmux alias that runs
-  remote tmux, choosing SSH keepalives, or adding automatic SSH reattachment
-  without turning clean tmux detach into a reconnect loop.
+  to HOST closed" errors, or that report connected/ready while their persistent
+  PTY has zero attachments, after macOS sleep or network changes while the
+  remote tmux/Codex session remains alive. Use when hardening a cmux alias that
+  runs remote tmux, choosing SSH keepalives, recovering an orphaned managed-SSH
+  surface, or adding automatic SSH reattachment without turning clean tmux
+  detach into a reconnect loop.
 ---
 
 # Harden cmux SSH + tmux Across Sleep
@@ -47,6 +49,38 @@ Preserve the process in remote tmux and make the local SSH client disposable. Di
    ```
 
 Treat a cmux error tag and a live remote tmux session as separate facts: the local managed workspace may be broken while Codex continues remotely.
+
+## Recognize an Orphaned Managed-SSH Surface
+
+A particularly misleading cmux 0.64.17 state looks healthy at the workspace
+level while the visible terminal is frozen:
+
+- `workspace.remote.status` reports `connected` and daemon `ready`;
+- `workspace.remote.pty_sessions` reports persistent sessions but the selected
+  surface is absent from every `attachments` array;
+- the local `ssh-pty-attach` process may still exist;
+- independent SSH confirms the remote tmux session and Codex process are alive;
+  and
+- `tmux capture-pane` is newer than `cmux read-screen`.
+
+Use the repository helper from the Mac running cmux:
+
+```bash
+cmux-orchestrator-doctor
+cmux-orchestrator-doctor --repair
+```
+
+The doctor matches the exact workspace title and SSH destination, verifies the
+remote tmux session before mutating anything, and judges the selected surface
+rather than treating an attachment on a different tab as success. Repair first
+uses cmux's supported workspace reconnect. If cmux resets the daemon heartbeat
+but leaves the surface orphaned, the doctor creates and focuses a new surface
+attached to the same persistent remote PTY. Keep the stale tab: closing its
+surface may close the shared PTY. Do not run `codex resume` while the live
+process remains in tmux.
+
+This recovery was verified by restoring interactive input to the original
+Codex process while retaining its tmux PID and transcript.
 
 ## Recognize the cmux TTY Conflict
 
@@ -111,6 +145,31 @@ cmux surface resume show --json
 In cmux 0.64.17, a binding whose source is the default `cli` is silently signed with `manual` policy, and **Settings > Terminal > Resume Commands** only opens `cmux.json`; it does not provide an approval control. Use a stable, non-`cli` integration source to make cmux show its one-time **Auto-Restore / Ask Each Time / Keep Manual** dialog. Review the exact executable and arguments before choosing Auto-Restore. Do not edit the resulting `policy` directly in JSON because the record is HMAC-signed and changing signed fields invalidates it.
 
 Pass a stable `--cwd` such as `$HOME` when the wrapper does not depend on its launch directory. Approval matching includes the working directory, so inheriting arbitrary project directories would create repeated prompts and separate records.
+
+## Attach a Phone Without Resizing the Desktop
+
+On tmux 3.6, `-r` is an alias for the `read-only,ignore-size` client flags. Use
+it for monitoring from Termius. For interactive phone access, retain input but
+exclude the phone from pane-size calculations:
+
+```bash
+tmux attach-session -r -t home
+tmux attach-session -f ignore-size,active-pane -t home
+```
+
+This repository exposes those forms as `hmr` (read-only) and `hmi`
+(interactive) after sourcing its `zshrc`.
+
+Exit copy mode with `q` before detaching. Use the configured tmux prefix (`C-a`
+in this repository) followed by `d`. A phone scroll can enter copy mode for the
+shared pane, while an ordinary attach can also shrink the desktop TUI to the
+phone's dimensions.
+
+cmux 0.64.17's Remote tmux beta did reconnect and re-seed a disposable session
+after its `ssh ... tmux -CC` transport was terminated. However, socket input
+targeted at that mirror was observed on the active caller surface. Keep the beta
+disabled for orchestration until a newer build passes both reconnect and target
+isolation tests.
 
 ## Verify
 

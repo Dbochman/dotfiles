@@ -21,6 +21,7 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `.local/bin/codex-quick` - Fast Codex CLI wrapper (medium reasoning)
 - `.local/bin/codex-skill-budget` - Verify the model-visible skill list fits without description shortening
 - `bin/cmux-agent` - Run one-shot Codex workers in tracked cmux tabs with safe handoff and cleanup
+- `bin/cmux-orchestrator-doctor` - Diagnose and reconnect a stale managed-SSH orchestrator bridge without touching remote tmux
 
 ### Claude Code
 - `.claude/CLAUDE.md` - Global instructions for all projects

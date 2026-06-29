@@ -1,0 +1,559 @@
+#!/usr/bin/env python3
+"""Diagnose and repair a stale cmux-managed Codex Orchestrator bridge."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+from typing import Any
+
+
+DEFAULT_WORKSPACE_TITLE = "Codex Orchestrator"
+DEFAULT_HOST = "dylans-mac-mini"
+DEFAULT_TMUX_SESSION = "home"
+
+
+class DoctorError(Exception):
+    """An actionable diagnostic failure."""
+
+
+@dataclass
+class Health:
+    workspace_id: str
+    workspace_ref: str
+    workspace_title: str
+    remote_state: str
+    daemon_state: str
+    active_terminal_sessions: int
+    persistent_pty_sessions: int
+    attachments: int
+    selected_surface_id: str | None
+    selected_surface_attached: bool
+    heartbeat_age_seconds: float | None
+    tmux_alive: bool
+
+    @property
+    def healthy(self) -> bool:
+        return (
+            self.remote_state == "connected"
+            and self.daemon_state == "ready"
+            and self.active_terminal_sessions > 0
+            and self.persistent_pty_sessions > 0
+            and self.attachments > 0
+            and self.selected_surface_attached
+            and self.tmux_alive
+        )
+
+    @property
+    def orphaned_attachment(self) -> bool:
+        return (
+            self.remote_state == "connected"
+            and self.daemon_state == "ready"
+            and self.active_terminal_sessions > 0
+            and self.persistent_pty_sessions > 0
+            and not self.selected_surface_attached
+            and self.tmux_alive
+        )
+
+
+@dataclass
+class RecoveryTarget:
+    pane_ref: str
+    surface_id: str
+    session_id: str
+    attached_surface_id: str | None = None
+
+
+def executable(env_name: str, fallback: str) -> str:
+    configured = os.environ.get(env_name)
+    if configured:
+        if not os.path.isabs(configured):
+            raise DoctorError(f"{env_name} must be an absolute path")
+        if not os.access(configured, os.X_OK):
+            raise DoctorError(f"{env_name} is not executable: {configured}")
+        return configured
+
+    found = shutil.which(fallback)
+    if not found:
+        raise DoctorError(f"required executable not found: {fallback}")
+    return found
+
+
+def run(
+    command: list[str], *, timeout: float = 15, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise DoctorError(f"command failed to run: {command[0]}") from error
+
+    if check and completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        suffix = f": {detail}" if detail else ""
+        raise DoctorError(f"{command[0]} exited {completed.returncode}{suffix}")
+    return completed
+
+
+def run_json(command: list[str], *, timeout: float = 15) -> dict[str, Any]:
+    completed = run(command, timeout=timeout)
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise DoctorError(f"invalid JSON from {command[0]}") from error
+    if not isinstance(value, dict):
+        raise DoctorError(f"unexpected response from {command[0]}")
+    return value
+
+
+def cmux_rpc(cmux_bin: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    return run_json([cmux_bin, "rpc", method, json.dumps(params)])
+
+
+def find_workspace(cmux_bin: str, title: str) -> dict[str, Any]:
+    payload = cmux_rpc(cmux_bin, "workspace.list", {})
+    workspaces = payload.get("workspaces")
+    if not isinstance(workspaces, list):
+        raise DoctorError("cmux returned an invalid workspace list")
+
+    matches = [
+        item
+        for item in workspaces
+        if isinstance(item, dict) and item.get("title") == title
+    ]
+    if not matches:
+        raise DoctorError(f"workspace not found: {title}")
+    if len(matches) > 1:
+        raise DoctorError(f"multiple workspaces are named: {title}")
+    return matches[0]
+
+
+def remote_tmux_alive(ssh_bin: str, host: str, session: str) -> bool:
+    completed = run(
+        [
+            ssh_bin,
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=8",
+            "--",
+            host,
+            "tmux",
+            "has-session",
+            "-t",
+            session,
+        ],
+        timeout=12,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return True
+    if completed.returncode == 1:
+        return False
+    detail = completed.stderr.strip() or completed.stdout.strip()
+    suffix = f": {detail}" if detail else ""
+    raise DoctorError(f"could not check tmux on {host}{suffix}")
+
+
+def inspect(
+    cmux_bin: str,
+    ssh_bin: str,
+    workspace_title: str,
+    expected_host: str,
+    tmux_session: str,
+) -> Health:
+    run([cmux_bin, "ping"], timeout=5)
+    workspace = find_workspace(cmux_bin, workspace_title)
+
+    workspace_id = workspace.get("id")
+    workspace_ref = workspace.get("ref")
+    remote = workspace.get("remote")
+    if not isinstance(workspace_id, str) or not workspace_id:
+        raise DoctorError("workspace has no stable ID")
+    if not isinstance(workspace_ref, str) or not workspace_ref:
+        raise DoctorError("workspace has no stable ref")
+    if not isinstance(remote, dict) or not remote.get("enabled"):
+        raise DoctorError(f"workspace is not configured for managed SSH: {workspace_title}")
+
+    actual_host = remote.get("destination")
+    if actual_host != expected_host:
+        raise DoctorError(
+            f"workspace destination is {actual_host!r}, expected {expected_host!r}"
+        )
+
+    sessions_payload = cmux_rpc(
+        cmux_bin, "workspace.remote.pty_sessions", {"workspace_id": workspace_id}
+    )
+    sessions = sessions_payload.get("sessions")
+    if not isinstance(sessions, list):
+        raise DoctorError("cmux returned invalid remote PTY state")
+
+    attachment_count = 0
+    attachment_ids: set[str] = set()
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        attachments = session.get("attachments")
+        if isinstance(attachments, list):
+            attachment_count += len(attachments)
+            for attachment in attachments:
+                if not isinstance(attachment, dict):
+                    continue
+                attachment_id = attachment.get("attachment_id")
+                if isinstance(attachment_id, str):
+                    attachment_ids.add(attachment_id)
+
+    panes_payload = cmux_rpc(
+        cmux_bin, "pane.list", {"workspace_id": workspace_id}
+    )
+    panes = panes_payload.get("panes")
+    selected_surface_id: str | None = None
+    if isinstance(panes, list):
+        focused = next(
+            (
+                pane
+                for pane in panes
+                if isinstance(pane, dict) and pane.get("focused") is True
+            ),
+            None,
+        )
+        if focused is None:
+            focused = next((pane for pane in panes if isinstance(pane, dict)), None)
+        if isinstance(focused, dict) and isinstance(
+            focused.get("selected_surface_id"), str
+        ):
+            selected_surface_id = focused["selected_surface_id"]
+
+    daemon = remote.get("daemon")
+    daemon_state = daemon.get("state", "unknown") if isinstance(daemon, dict) else "unknown"
+    heartbeat = remote.get("heartbeat")
+    heartbeat_age = heartbeat.get("age_seconds") if isinstance(heartbeat, dict) else None
+    if not isinstance(heartbeat_age, (int, float)):
+        heartbeat_age = None
+
+    return Health(
+        workspace_id=workspace_id,
+        workspace_ref=workspace_ref,
+        workspace_title=str(workspace.get("title", workspace_title)),
+        remote_state=str(remote.get("state", "unknown")),
+        daemon_state=str(daemon_state),
+        active_terminal_sessions=int(remote.get("active_terminal_sessions", 0)),
+        persistent_pty_sessions=len(sessions),
+        attachments=attachment_count,
+        selected_surface_id=selected_surface_id,
+        selected_surface_attached=selected_surface_id in attachment_ids,
+        heartbeat_age_seconds=float(heartbeat_age) if heartbeat_age is not None else None,
+        tmux_alive=remote_tmux_alive(ssh_bin, expected_host, tmux_session),
+    )
+
+
+def recovery_target(cmux_bin: str, health: Health) -> RecoveryTarget:
+    panes_payload = cmux_rpc(
+        cmux_bin, "pane.list", {"workspace_id": health.workspace_id}
+    )
+    panes = panes_payload.get("panes")
+    if not isinstance(panes, list) or len(panes) != 1 or not isinstance(panes[0], dict):
+        raise DoctorError("safe recovery requires exactly one orchestrator pane")
+
+    pane = panes[0]
+    pane_ref = pane.get("ref")
+    surface_id = pane.get("selected_surface_id")
+    if not isinstance(pane_ref, str) or not pane_ref:
+        raise DoctorError("orchestrator pane has no stable ref")
+    if not isinstance(surface_id, str) or not surface_id:
+        raise DoctorError("orchestrator pane has no selected terminal surface")
+
+    sessions_payload = cmux_rpc(
+        cmux_bin,
+        "workspace.remote.pty_sessions",
+        {"workspace_id": health.workspace_id},
+    )
+    sessions = sessions_payload.get("sessions")
+    if not isinstance(sessions, list):
+        raise DoctorError("cmux returned invalid remote PTY state")
+    session_items = [
+        item
+        for item in sessions
+        if isinstance(item, dict) and isinstance(item.get("session_id"), str)
+    ]
+    session_ids = [item["session_id"] for item in session_items]
+
+    def target_for(session_id: str) -> RecoveryTarget:
+        session = next(item for item in session_items if item["session_id"] == session_id)
+        attachments = session.get("attachments")
+        attached_surface_id = None
+        if isinstance(attachments, list):
+            attached_surface_id = next(
+                (
+                    item.get("attachment_id")
+                    for item in attachments
+                    if isinstance(item, dict)
+                    and isinstance(item.get("attachment_id"), str)
+                    and item.get("attachment_id") != surface_id
+                ),
+                None,
+            )
+        return RecoveryTarget(
+            pane_ref, surface_id, session_id, attached_surface_id
+        )
+
+    suffix_matches = [item for item in session_ids if item.endswith(f"-{surface_id}")]
+    if len(suffix_matches) == 1:
+        return target_for(suffix_matches[0])
+
+    # A doctor-created replacement surface attaches to the original persistent
+    # PTY, so its UUID no longer matches the session suffix. Recover that mapping
+    # from only the leaf cmux attach processes. Parent shell commands may contain
+    # relay data and are deliberately ignored.
+    ps_bin = executable("CMUX_ORCHESTRATOR_PS_BIN", "ps")
+    processes = run([ps_bin, "-axo", "args="], timeout=10).stdout
+    process_matches: list[str] = []
+    for line in processes.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            tokens = shlex.split(stripped)
+        except ValueError:
+            continue
+        if not tokens or os.path.basename(tokens[0]) != "cmux":
+            continue
+        if "ssh-pty-attach" not in tokens:
+            continue
+        try:
+            workspace = tokens[tokens.index("--workspace") + 1]
+            session = tokens[tokens.index("--session-id") + 1]
+            attachment = tokens[tokens.index("--attachment-id") + 1]
+        except (ValueError, IndexError):
+            continue
+        if workspace == health.workspace_id and attachment == surface_id:
+            process_matches.append(session)
+
+    process_matches = sorted(set(process_matches))
+    if len(process_matches) == 1 and process_matches[0] in session_ids:
+        return target_for(process_matches[0])
+    if len(session_ids) == 1:
+        return target_for(session_ids[0])
+    raise DoctorError("could not safely identify the persistent PTY for this surface")
+
+
+def print_health(health: Health) -> None:
+    heartbeat = (
+        f"{health.heartbeat_age_seconds:.0f}s"
+        if health.heartbeat_age_seconds is not None
+        else "unknown"
+    )
+    print(f"Workspace: {health.workspace_title} ({health.workspace_ref})")
+    print(f"Remote: {health.remote_state}; daemon: {health.daemon_state}; heartbeat: {heartbeat}")
+    print(
+        "PTY: "
+        f"active={health.active_terminal_sessions}; "
+        f"persistent={health.persistent_pty_sessions}; "
+        f"attachments={health.attachments}; "
+        f"selected={'attached' if health.selected_surface_attached else 'orphaned'}"
+    )
+    print(f"Remote tmux: {'alive' if health.tmux_alive else 'missing'}")
+    if health.healthy:
+        print("Diagnosis: healthy")
+    elif health.orphaned_attachment:
+        print("Diagnosis: wedged local PTY bridge (remote tmux is safe)")
+    else:
+        print("Diagnosis: unhealthy managed SSH workspace")
+
+
+def repair(
+    cmux_bin: str,
+    ssh_bin: str,
+    health: Health,
+    workspace_title: str,
+    expected_host: str,
+    tmux_session: str,
+    timeout: float,
+) -> Health:
+    if not health.tmux_alive:
+        raise DoctorError("refusing to reconnect because the remote tmux session is missing")
+
+    target = recovery_target(cmux_bin, health)
+
+    if target.attached_surface_id:
+        print("Repair: focusing the existing healthy attachment; stale tab retained")
+        cmux_rpc(
+            cmux_bin,
+            "surface.focus",
+            {
+                "workspace_id": health.workspace_id,
+                "surface_id": target.attached_surface_id,
+            },
+        )
+        return inspect(
+            cmux_bin,
+            ssh_bin,
+            workspace_title,
+            expected_host,
+            tmux_session,
+        )
+
+    print(f"Repair: reconnecting only {health.workspace_ref}; remote tmux is untouched")
+    run(
+        [cmux_bin, "workspace", "reconnect", "--workspace", health.workspace_ref],
+        timeout=15,
+    )
+
+    deadline = time.monotonic() + timeout
+    reconnect_deadline = min(deadline, time.monotonic() + min(10, timeout / 2))
+    last = health
+    while time.monotonic() < reconnect_deadline:
+        time.sleep(1)
+        try:
+            last = inspect(
+                cmux_bin,
+                ssh_bin,
+                workspace_title,
+                expected_host,
+                tmux_session,
+            )
+        except DoctorError:
+            continue
+        if last.healthy:
+            return last
+
+    print(
+        "Repair: reconnect did not restore the attachment; "
+        "opening a recovered tab on the same persistent PTY"
+    )
+    attached = run_json(
+        [
+            cmux_bin,
+            "--json",
+            "ssh-session-attach",
+            "--session-id",
+            target.session_id,
+            "--workspace",
+            health.workspace_ref,
+            "--pane",
+            target.pane_ref,
+            "--focus",
+            "false",
+        ],
+        timeout=20,
+    )
+    recovered_surface_id = attached.get("surface_id")
+    recovered_surface_ref = attached.get("surface_ref")
+    if not isinstance(recovered_surface_id, str) or not recovered_surface_id:
+        raise DoctorError("cmux did not return the recovered surface ID")
+
+    # Naming and focusing are local UI operations. The stale original tab is
+    # retained rather than risking closure of its shared persistent PTY.
+    cmux_rpc(
+        cmux_bin,
+        "tab.action",
+        {
+            "workspace_id": health.workspace_id,
+            "surface_id": recovered_surface_id,
+            "action": "rename",
+            "title": "Recovered Orchestrator",
+        },
+    )
+    cmux_rpc(
+        cmux_bin,
+        "surface.focus",
+        {"workspace_id": health.workspace_id, "surface_id": recovered_surface_id},
+    )
+    if isinstance(recovered_surface_ref, str):
+        print(f"Repair: attached {recovered_surface_ref}; stale original tab retained")
+
+    while time.monotonic() < deadline:
+        time.sleep(1)
+        try:
+            last = inspect(
+                cmux_bin,
+                ssh_bin,
+                workspace_title,
+                expected_host,
+                tmux_session,
+            )
+        except DoctorError:
+            continue
+        if last.healthy:
+            return last
+    return last
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Diagnose a cmux managed-SSH workspace whose remote tmux/Codex "
+            "session is alive but whose local PTY bridge is stale."
+        )
+    )
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="reconnect the managed workspace and safely reattach its PTY if needed",
+    )
+    parser.add_argument("--timeout", type=float, default=30, help="repair wait in seconds (default: 30)")
+    parser.add_argument("--workspace-title", default=DEFAULT_WORKSPACE_TITLE)
+    parser.add_argument("--host", default=DEFAULT_HOST)
+    parser.add_argument("--tmux-session", default=DEFAULT_TMUX_SESSION)
+    args = parser.parse_args()
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        cmux_bin = executable("CMUX_ORCHESTRATOR_CMUX_BIN", "cmux")
+        ssh_bin = executable("CMUX_ORCHESTRATOR_SSH_BIN", "ssh")
+        health = inspect(
+            cmux_bin,
+            ssh_bin,
+            args.workspace_title,
+            args.host,
+            args.tmux_session,
+        )
+        print_health(health)
+        if health.healthy:
+            return 0
+        if not args.repair:
+            print("Run again with --repair to reconnect only this workspace.")
+            return 1
+
+        repaired = repair(
+            cmux_bin,
+            ssh_bin,
+            health,
+            args.workspace_title,
+            args.host,
+            args.tmux_session,
+            args.timeout,
+        )
+        print_health(repaired)
+        if repaired.healthy:
+            print("Repair succeeded; the original tmux/Codex process was preserved.")
+            return 0
+        print("Repair timed out; quit and reopen cmux without killing remote tmux.")
+        return 1
+    except DoctorError as error:
+        print(f"cmux-orchestrator-doctor: {error}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("cmux-orchestrator-doctor: interrupted", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -301,9 +301,19 @@ Two implementation traps are worth preserving in this runbook:
 | Remote tmux | Keeps the live Codex process running across SSH or cmux disconnects. | Ends if the Mac Mini or tmux server stops. |
 | Codex transcript | Allows `codex resume` after the live process is gone. | Automatic resume needs a compatible cmux Codex hook integration. |
 
-`terminal.autoResumeAgentSessions` is currently unset, so cmux's default of `true` applies. However, installed cmux 0.64.17 does not provide the newer `cmux hooks setup codex` command, and `identify` is also unavailable. Do not hand-edit Codex hook files to imitate a newer cmux release. Until cmux is upgraded and the integration is verified, rely on tmux for live-process continuity and `codex resume` for transcript recovery.
+`terminal.autoResumeAgentSessions` is currently unset, so cmux's default of
+`true` applies. Installed cmux 0.64.17 now exposes both `cmux hooks setup codex`
+and `cmux identify`, but this long-running workspace uses its explicit tmux
+resume binding as the recovery contract. Keep tmux as the live-process owner;
+do not launch `codex resume` while the original process still exists in `home`.
 
 Remote-tmux beta and agent hibernation are not required for this setup and remain disabled.
+On 2026-06-29, a disposable cmux 0.64.17 Remote tmux pilot survived a
+forced termination of only its `ssh ... tmux -CC` transport and re-seeded the
+same remote session. However, socket input targeted at the pilot mirror was
+delivered to the active caller surface instead of remaining isolated to the
+mirror. Do not migrate the orchestrator to Remote tmux until a newer build is
+retested for target isolation as well as reconnect behavior.
 
 #### Relay Health and Recovery
 
@@ -326,6 +336,39 @@ If the relay check fails:
 3. Run `cmux ssh dylans-mac-mini --name "Codex Orchestrator"` without a command after `--`.
 4. Confirm `~/.cmux/bin/cmux ping` returns `PONG` before attaching tmux.
 5. Attach `home` and resume Codex only if no live process remains.
+
+If the relay is healthy but the terminal view is frozen, run the local doctor
+from `dylans-mac`:
+
+```bash
+cmux-orchestrator-doctor
+cmux-orchestrator-doctor --repair
+```
+
+The read-only invocation verifies the exact `Codex Orchestrator` workspace,
+managed-SSH status, persistent PTY attachment count, and the independent remote
+`home` tmux session. `--repair` refuses to act if `home` is missing and first
+reconnects only the managed workspace. If cmux leaves the old surface orphaned,
+the doctor opens and focuses a `Recovered Orchestrator` tab attached to the same
+persistent remote PTY. It retains the stale tab rather than risking the shared
+PTY, and it never kills or resumes Codex.
+
+#### Phone Access Without Resizing the Desktop
+
+On the Mac Mini, use these zsh helpers instead of a plain `tmux attach` from
+Termius:
+
+```bash
+home-mobile-ro  # monitor only; read-only and ignored for pane sizing
+home-mobile     # interactive; ignored for pane sizing
+hmi             # short interactive alias
+hmr             # short read-only alias
+```
+
+Before detaching an interactive phone client, press `q` to leave tmux copy mode
+if necessary, then press `Ctrl-a d`. This configuration uses `Ctrl-a` as the
+tmux prefix. Avoid leaving a phone client in copy mode because pane modes are
+visible to every client attached to the shared pane.
 
 Upstream references: [cmux SSH](https://cmux.com/docs/ssh), [CLI and socket API](https://cmux.com/docs/api), and [session restore](https://cmux.com/docs/session-restore).
 
