@@ -6,7 +6,7 @@
 #
 # Options:
 #   -n, --dry-run    Preview changes without making them
-#   -f, --force      Replace conflicts without prompting
+#   -f, --force      Replace conflicts without prompting (runtime-owned files remain protected)
 #   -v, --verbose    Detailed output
 #   -q, --quiet      Minimal output
 #   -h, --help       Show this help message
@@ -119,6 +119,7 @@ log() {
 
 log_verbose() {
   [[ "$VERBOSE" = true ]] && echo -e "$1"
+  return 0
 }
 
 log_warn() {
@@ -132,7 +133,7 @@ log_error() {
 # === Backup Functions ===
 
 create_backup_dir() {
-  [[ -n "$CURRENT_BACKUP_DIR" ]] && return
+  [[ -n "$CURRENT_BACKUP_DIR" ]] && return 0
 
   local timestamp
   timestamp=$(date +%Y-%m-%d-%H%M%S)
@@ -140,37 +141,67 @@ create_backup_dir() {
 
   if [[ "$DRY_RUN" = true ]]; then
     log_verbose "  [dry-run] Would create backup: $CURRENT_BACKUP_DIR"
-    return
+    return 0
   fi
 
-  mkdir -p "$CURRENT_BACKUP_DIR"
+  if ! mkdir -p "$CURRENT_BACKUP_DIR"; then
+    log_error "Could not create backup directory: $CURRENT_BACKUP_DIR"
+    CURRENT_BACKUP_DIR=""
+    EXIT_CODE=1
+    return 1
+  fi
+  if ! chmod 700 "$BACKUP_DIR" "$CURRENT_BACKUP_DIR"; then
+    log_error "Could not secure backup directory: $CURRENT_BACKUP_DIR"
+    CURRENT_BACKUP_DIR=""
+    EXIT_CODE=1
+    return 1
+  fi
+  return 0
 }
 
 backup_item() {
   local src="$1"
   [[ -e "$src" || -L "$src" ]] || return 0
 
-  create_backup_dir
+  create_backup_dir || return 1
 
   local relative_path="${src#$HOME/}"
   local dest="$CURRENT_BACKUP_DIR/$relative_path"
 
   if [[ "$DRY_RUN" = true ]]; then
     log_verbose "  [dry-run] Would backup: $src"
-    return
+    return 0
   fi
 
-  mkdir -p "$(dirname "$dest")"
+  local previous_umask
+  previous_umask=$(umask)
+  umask 077
+  if ! mkdir -p "$(dirname "$dest")"; then
+    umask "$previous_umask"
+    log_error "Could not create backup parent for: $src"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  local copy_status=0
   if [[ -L "$src" ]]; then
-    cp -P "$src" "$dest"
+    cp -P "$src" "$dest" || copy_status=$?
   elif [[ -d "$src" ]]; then
-    cp -R "$src" "$dest"
+    cp -R "$src" "$dest" || copy_status=$?
   else
-    cp "$src" "$dest"
+    cp "$src" "$dest" || copy_status=$?
+  fi
+  umask "$previous_umask"
+
+  if [[ "$copy_status" -ne 0 ]]; then
+    log_error "Could not back up before replacement: $src"
+    EXIT_CODE=1
+    return 1
   fi
 
   BACKED_UP_ITEMS+=("$src")
-  ((ITEMS_BACKED_UP++))
+  ITEMS_BACKED_UP=$((ITEMS_BACKED_UP + 1))
+  return 0
 }
 
 prune_old_backups() {
@@ -311,7 +342,7 @@ link_file() {
         rm "$dst"
       fi
     elif [[ "$FORCE" = true ]]; then
-      backup_item "$dst"
+      backup_item "$dst" || return 1
       if [[ "$DRY_RUN" != true ]]; then
         rm "$dst"
       fi
@@ -319,7 +350,7 @@ link_file() {
       if ! prompt_conflict "$dst" "symlink to $current_target"; then
         return 0
       fi
-      backup_item "$dst"
+      backup_item "$dst" || return 1
       if [[ "$DRY_RUN" != true ]]; then
         rm "$dst"
       fi
@@ -330,7 +361,7 @@ link_file() {
     file_type=$(get_file_type "$dst")
 
     if [[ "$FORCE" = true ]]; then
-      backup_item "$dst"
+      backup_item "$dst" || return 1
       if [[ "$DRY_RUN" != true ]]; then
         rm -rf "$dst"
       fi
@@ -338,7 +369,7 @@ link_file() {
       if ! prompt_conflict "$dst" "$file_type"; then
         return 0
       fi
-      backup_item "$dst"
+      backup_item "$dst" || return 1
       if [[ "$DRY_RUN" != true ]]; then
         rm -rf "$dst"
       fi
@@ -359,6 +390,379 @@ link_file() {
   fi
 
   ((ITEMS_LINKED++))
+}
+
+discard_staging_root() {
+  local staging_root="$1"
+
+  if [[ -d "$staging_root" ]] && ! rm -rf "$staging_root"; then
+    log_warn "Could not remove installer staging directory: $staging_root"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  return 0
+}
+
+swap_staged_path() {
+  local staging_root="$1"
+  local staged="$2"
+  local dst="$3"
+  local label="$4"
+  local original="$staging_root/original"
+  local had_original=false
+
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    if ! mv "$dst" "$original"; then
+      log_error "Could not move existing $label aside: $dst"
+      EXIT_CODE=1
+      discard_staging_root "$staging_root" || true
+      return 1
+    fi
+    had_original=true
+  fi
+
+  if ! mv "$staged" "$dst"; then
+    log_error "Could not install staged $label: $dst"
+    EXIT_CODE=1
+    if [[ "$had_original" = true ]]; then
+      if ! mv "$original" "$dst"; then
+        log_error "Could not restore original $label; it remains at: $original"
+        return 1
+      fi
+    fi
+    discard_staging_root "$staging_root" || true
+    return 1
+  fi
+
+  discard_staging_root "$staging_root" || return 1
+  return 0
+}
+
+stage_symlink_replacement() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+  local parent
+  parent=$(dirname "$dst")
+
+  if ! mkdir -p "$parent"; then
+    log_error "Could not create parent directory for $label: $parent"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  local staging_root
+  if ! staging_root=$(mktemp -d "$parent/.codex-install.XXXXXX"); then
+    log_error "Could not create staging directory for $label: $dst"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  local staged="$staging_root/replacement"
+  if ! ln -s "$src" "$staged"; then
+    log_error "Could not stage symlink for $label: $dst"
+    EXIT_CODE=1
+    discard_staging_root "$staging_root" || true
+    return 1
+  fi
+
+  swap_staged_path "$staging_root" "$staged" "$dst" "$label"
+}
+
+link_skill_directory() {
+  local src="${1%/}"
+  local dst="$2"
+
+  # Older installs copied skills into place. If the copy is identical, migrate
+  # it without turning a harmless stale deployment into an interactive conflict.
+  if [[ -d "$dst" && ! -L "$dst" ]] && diff -qr "$src" "$dst" &>/dev/null; then
+    if [[ "$DRY_RUN" = true ]]; then
+      log "  [dry-run] Would replace identical skill copy with symlink: $dst"
+    else
+      stage_symlink_replacement "$src" "$dst" "skill symlink" || return 1
+      log "  Linked identical skill copy: $dst"
+    fi
+    ((ITEMS_LINKED++))
+    return 0
+  fi
+
+  link_file "$src" "$dst"
+}
+
+directory_matches_copy_without_symlinks() {
+  local src="${1%/}"
+  local dst="$2"
+  [[ -d "$src" && -d "$dst" && ! -L "$dst" ]] || return 1
+
+  local rel src_item dst_item
+  while IFS= read -r -d '' rel; do
+    [[ "$rel" = "." ]] && continue
+    rel="${rel#./}"
+    src_item="$src/$rel"
+    dst_item="$dst/$rel"
+
+    if [[ -d "$src_item" && ! -L "$src_item" ]]; then
+      [[ -d "$dst_item" && ! -L "$dst_item" ]] || return 1
+    elif [[ -f "$src_item" && ! -L "$src_item" ]]; then
+      [[ -f "$dst_item" && ! -L "$dst_item" ]] || return 1
+      cmp -s "$src_item" "$dst_item" || return 1
+    else
+      return 1
+    fi
+  done < <(cd "$src" && find . ! -type l -print0)
+
+  # The deployed copy must not contain extra files or any nested symlink.
+  while IFS= read -r -d '' rel; do
+    [[ "$rel" = "." ]] && continue
+    rel="${rel#./}"
+    dst_item="$dst/$rel"
+    src_item="$src/$rel"
+    [[ ! -L "$dst_item" ]] || return 1
+    [[ -e "$src_item" && ! -L "$src_item" ]] || return 1
+  done < <(cd "$dst" && find . -print0)
+
+  return 0
+}
+
+validate_openclaw_skill_source() {
+  local src="${1%/}"
+  local nested_link
+
+  while IFS= read -r -d '' nested_link; do
+    # Legacy tracked artifact from the original Peekaboo sync test. It points
+    # back at its own skill directory and is intentionally omitted from copies.
+    if [[ "$(basename "$src")" = "peekaboo" && "$nested_link" = "$src/peekaboo" ]]; then
+      local link_target
+      link_target=$(readlink "$nested_link") || link_target=""
+      if [[ -n "$link_target" ]]; then
+        [[ "$link_target" != /* ]] && link_target="$(dirname "$nested_link")/$link_target"
+        if [[ "$(resolve_path "$link_target")" = "$(resolve_path "$src")" ]]; then
+          continue
+        fi
+      fi
+    fi
+
+    log_error "OpenClaw skill source contains a nested symlink: $nested_link"
+    log_error "Remove or replace it before deploying the skill copy."
+    EXIT_CODE=1
+    return 1
+  done < <(find "$src" -mindepth 1 -type l -print0)
+
+  return 0
+}
+
+normalize_openclaw_skill_copy_permissions() {
+  local dst="$1"
+  [[ "$DRY_RUN" = true ]] && return 0
+
+  if ! find "$dst" -maxdepth 1 -type f ! -name "*.md" ! -name "*.json" ! -name "*.yaml" -exec chmod +x {} +; then
+    log_error "Could not normalize OpenClaw skill wrapper permissions: $dst"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  return 0
+}
+
+stage_openclaw_skill_copy() {
+  local src="$1"
+  local dst="$2"
+  local parent
+  parent=$(dirname "$dst")
+
+  if ! mkdir -p "$parent"; then
+    log_error "Could not create OpenClaw skills directory: $parent"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  local staging_root
+  if ! staging_root=$(mktemp -d "$parent/.codex-install.XXXXXX"); then
+    log_error "Could not create staging directory for OpenClaw skill: $dst"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  local staged="$staging_root/replacement"
+  if ! cp -R "$src" "$staged"; then
+    log_error "Could not stage OpenClaw skill copy: $dst"
+    EXIT_CODE=1
+    discard_staging_root "$staging_root" || true
+    return 1
+  fi
+  if ! find "$staged" -type l -delete; then
+    log_error "Could not remove nested symlinks from staged OpenClaw skill: $dst"
+    EXIT_CODE=1
+    discard_staging_root "$staging_root" || true
+    return 1
+  fi
+  if ! normalize_openclaw_skill_copy_permissions "$staged"; then
+    discard_staging_root "$staging_root" || true
+    return 1
+  fi
+
+  swap_staged_path "$staging_root" "$staged" "$dst" "OpenClaw skill copy"
+}
+
+deploy_openclaw_skill_copy() {
+  local src="${1%/}"
+  local dst="$2"
+
+  validate_openclaw_skill_source "$src" || return 1
+
+  if directory_matches_copy_without_symlinks "$src" "$dst"; then
+    normalize_openclaw_skill_copy_permissions "$dst" || return 1
+    log_verbose "  Already deployed as copy: $dst"
+    return 0
+  fi
+
+  # Migrate the pre-2026.3.7 symlink contract to the real-copy contract.
+  if [[ -L "$dst" ]]; then
+    local current_target
+    current_target=$(get_symlink_target "$dst")
+    [[ "$current_target" != /* ]] && current_target="$(dirname "$dst")/$current_target"
+    current_target=$(resolve_path "$current_target")
+    if [[ "$current_target" = "$(resolve_path "$src")" ]]; then
+      log "  Migrating OpenClaw skill symlink to copy: $dst"
+    elif [[ "$FORCE" = true ]]; then
+      backup_item "$dst" || return 1
+    else
+      if ! prompt_conflict "$dst" "symlink to $current_target"; then
+        return 0
+      fi
+      backup_item "$dst" || return 1
+    fi
+  elif [[ -e "$dst" ]]; then
+    if [[ "$FORCE" = true ]]; then
+      backup_item "$dst" || return 1
+    else
+      if ! prompt_conflict "$dst" "$(get_file_type "$dst")"; then
+        return 0
+      fi
+      backup_item "$dst" || return 1
+    fi
+  fi
+
+  if [[ "$DRY_RUN" = true ]]; then
+    log "  [dry-run] Would deploy OpenClaw skill copy: $dst"
+  else
+    stage_openclaw_skill_copy "$src" "$dst" || return 1
+    log "  Deployed OpenClaw skill copy: $dst"
+  fi
+  ((ITEMS_LINKED++))
+}
+
+stage_local_file() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+  local parent
+  parent=$(dirname "$dst")
+
+  if ! mkdir -p "$parent"; then
+    log_error "Could not create parent directory for $label: $parent"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  local staging_root
+  if ! staging_root=$(mktemp -d "$parent/.codex-install.XXXXXX"); then
+    log_error "Could not create staging directory for $label: $dst"
+    EXIT_CODE=1
+    return 1
+  fi
+
+  local staged="$staging_root/replacement"
+  if ! cp "$src" "$staged"; then
+    log_error "Could not stage $label: $dst"
+    EXIT_CODE=1
+    discard_staging_root "$staging_root" || true
+    return 1
+  fi
+  if ! chmod 600 "$staged"; then
+    log_error "Could not secure staged $label: $dst"
+    EXIT_CODE=1
+    discard_staging_root "$staging_root" || true
+    return 1
+  fi
+
+  swap_staged_path "$staging_root" "$staged" "$dst" "$label"
+}
+
+preserve_or_seed_local_file() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+
+  # OpenClaw rewrites this file atomically and keeps machine-local settings in
+  # it. Once it is a regular file, the runtime copy is authoritative.
+  if [[ -f "$dst" && ! -L "$dst" ]]; then
+    log_verbose "  Preserving machine-local $label: $dst"
+    return 0
+  fi
+
+  if [[ -L "$dst" ]]; then
+    local current_target
+    current_target=$(get_symlink_target "$dst")
+    [[ "$current_target" != /* ]] && current_target="$(dirname "$dst")/$current_target"
+    current_target=$(resolve_path "$current_target")
+    if [[ "$current_target" = "$(resolve_path "$src")" ]]; then
+      if [[ "$DRY_RUN" = true ]]; then
+        log "  [dry-run] Would convert $label symlink to local file: $dst"
+      else
+        stage_local_file "$src" "$dst" "$label" || return 1
+        log "  Converted $label to local file: $dst"
+      fi
+      ((ITEMS_LINKED++))
+      return 0
+    fi
+  fi
+
+  if [[ -e "$dst" || -L "$dst" ]]; then
+    if [[ "$FORCE" = true ]]; then
+      backup_item "$dst" || return 1
+    else
+      if ! prompt_conflict "$dst" "$(get_file_type "$dst")"; then
+        return 0
+      fi
+      backup_item "$dst" || return 1
+    fi
+  fi
+
+  if [[ "$DRY_RUN" = true ]]; then
+    log "  [dry-run] Would seed local $label: $dst"
+  else
+    stage_local_file "$src" "$dst" "$label" || return 1
+    log "  Seeded local $label: $dst"
+  fi
+  ((ITEMS_LINKED++))
+}
+
+is_generated_openclaw_gateway_plist() {
+  local path="$1"
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+
+  local label program
+  label=$(/usr/libexec/PlistBuddy -c 'Print :Label' "$path" 2>/dev/null) || return 1
+  program=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$path" 2>/dev/null) || return 1
+  [[ "$label" = "ai.openclaw.gateway" ]] || return 1
+  [[ "$program" = "$HOME/.openclaw/service-env/ai.openclaw.gateway-env-wrapper.sh" ]]
+}
+
+install_openclaw_gateway_plist() {
+  local src="$1"
+  local dst="$2"
+
+  if is_generated_openclaw_gateway_plist "$dst"; then
+    log_verbose "  Preserving generated OpenClaw gateway plist: $dst"
+    return 0
+  fi
+  if [[ -f "$dst" && ! -L "$dst" ]] && cmp -s "$src" "$dst"; then
+    log_verbose "  Preserving identical gateway plist copy: $dst"
+    return 0
+  fi
+  link_file "$src" "$dst"
 }
 
 # === Migration Functions ===
@@ -545,7 +949,7 @@ install_dotfiles() {
       [[ -d "$skill_path" ]] || continue
       local skill_name
       skill_name=$(basename "$skill_path")
-      link_file "$skill_path" "$skills_target/$skill_name"
+      link_skill_directory "$skill_path" "$skills_target/$skill_name"
     done
   fi
   log ""
@@ -615,7 +1019,9 @@ install_dotfiles() {
       # Back up existing if present
       if [[ -e "$hook_dst" || -L "$hook_dst" ]]; then
         if [[ "$FORCE" = true ]]; then
-          backup_item "$hook_dst"
+          if ! backup_item "$hook_dst"; then
+            continue
+          fi
           if [[ "$DRY_RUN" != true ]]; then
             rm -f "$hook_dst"
           fi
@@ -623,7 +1029,9 @@ install_dotfiles() {
           if ! prompt_conflict "$hook_dst" "$(get_file_type "$hook_dst")"; then
             continue
           fi
-          backup_item "$hook_dst"
+          if ! backup_item "$hook_dst"; then
+            continue
+          fi
           if [[ "$DRY_RUN" != true ]]; then
             rm -f "$hook_dst"
           fi
@@ -689,14 +1097,21 @@ install_dotfiles() {
         mkdir -p "$HOME/.openclaw/workspace/scripts"
       fi
 
-      # Gateway config (full config with local gateway, channels, skills)
-      link_file "$DOTFILES_DIR/openclaw/openclaw.json" "$HOME/.openclaw/openclaw.json"
+      # Seed the gateway config, then preserve OpenClaw's machine-local regular
+      # file. OpenClaw Doctor may replace an old symlink during atomic rewrites.
+      preserve_or_seed_local_file \
+        "$DOTFILES_DIR/openclaw/openclaw.json" \
+        "$HOME/.openclaw/openclaw.json" \
+        "OpenClaw gateway config"
 
       # FDA .app wrapper for gateway LaunchAgent
       link_file "$DOTFILES_DIR/openclaw/OpenClawGateway.app" "$HOME/Applications/OpenClawGateway.app"
 
-      # LaunchAgent plist
-      link_file "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.gateway.plist" "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+      # The tracked plist is a recovery source. A generated service-env plist
+      # installed by OpenClaw is an equally valid live contract and is preserved.
+      install_openclaw_gateway_plist \
+        "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.gateway.plist" \
+        "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
 
       # BlueBubbles and its watchdogs are intentionally retired. Current
       # OpenClaw owns Messages through the native imsg bridge; launching both
@@ -711,14 +1126,18 @@ install_dotfiles() {
           [[ -d "$skill_dir" ]] || continue
           local skill_name
           skill_name=$(basename "$skill_dir")
-          link_file "$skill_dir" "$HOME/.openclaw/skills/$skill_name"
+          deploy_openclaw_skill_copy "$skill_dir" "$HOME/.openclaw/skills/$skill_name"
         done
       fi
     else
       log "  Detected remote client: $hostname"
 
-      # Remote config (thin client pointing to gateway over Tailscale)
-      link_file "$DOTFILES_DIR/openclaw/openclaw-remote.json" "$HOME/.openclaw/openclaw.json"
+      # Remote config (thin client pointing to gateway over Tailscale). Keep it
+      # local after seeding so runtime-managed settings never modify the repo.
+      preserve_or_seed_local_file \
+        "$DOTFILES_DIR/openclaw/openclaw-remote.json" \
+        "$HOME/.openclaw/openclaw.json" \
+        "OpenClaw remote config"
     fi
   fi
   log ""
@@ -787,11 +1206,12 @@ usage() {
   cat << 'EOF'
 Usage: ./install.sh [options]
 
-Installs dotfiles by creating symlinks from home directory to this repo.
+Installs dotfiles using symlinks, runtime-safe copies, and machine-local seeds.
 
 Options:
   -n, --dry-run    Preview changes without making them
-  -f, --force      Replace conflicts without prompting
+  -f, --force      Replace conflicts without prompting; runtime-owned OpenClaw
+                   config and generated service files remain protected
   -v, --verbose    Detailed output
   -q, --quiet      Minimal output
   -h, --help       Show this help message
@@ -804,7 +1224,7 @@ Exit codes:
 Examples:
   ./install.sh                # Interactive install
   ./install.sh --dry-run      # Preview what would happen
-  ./install.sh --force        # Replace all conflicts
+  ./install.sh --force        # Replace unprotected conflicts
   ./install.sh -fq            # Force + quiet (for scripts)
 EOF
 }

@@ -149,5 +149,5 @@ The `sync.sh` script manages synchronization between your local Claude Code conf
 ## Adding new dotfiles
 
 1. Copy the file to `~/dotfiles/`
-2. Add a symlink line to `install.sh`
+2. Add the appropriate symlink, copy, or machine-local seed step to `install.sh`
 3. Commit and push
