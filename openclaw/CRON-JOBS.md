@@ -273,11 +273,25 @@ and perform reservation plus calendar idempotency checks before acting.
 |----|----------|---------|----------|-------------|
 | `gws-julia-morning-triage-0001` | Daily 6:45 AM ET | `agentTurn` | `none` | Silent, fully paginated Gmail triage: labels, thread-aware reply drafts, read-state cleanup, archiving, and conservative spam trashing |
 | `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `agentTurn` | announce to Julia via iMessage | Read-only, high-signal briefing from the triage handoff, today's calendar, cached Eight Sleep, and live household net worth/FIRE aggregates |
-| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `agentTurn` | announce to Dylan via iMessage | Read-only seven-day calendar and 24-hour inbox briefing |
+| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `agentTurn` | announce to Dylan via iMessage | Read-only seven-day calendar and 24-hour inbox briefing from the deterministic `dylan-morning-briefing-data.py` collector |
 | `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via iMessage | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
 | `financial-scrape-0001` | Sundays 4:05 AM ET | `agentTurn` | `none` (agent self-messages on failure only) | Invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper: Tesla Solar (API), Tier 2 self-healing utilities and PennyMac, plus BoA cookie replay/exact `finance`-profile raw CDP with one guarded re-auth only after explicit `not_authenticated`; imports only current-run successes, with mortgage run-ID validation and a weekly-gated authorized Redfin refresh. Production Plaid sync is a separate daily cache-only LaunchAgent. |
 
 `financial-scrape-0001` owns Redfin refresh through guarded mortgage import commands; no separate property-value command is needed in its prompt. The helper serializes whole runs with a protected nonblocking lock, cleans the complete child process group on timeout or interruption, captures child output privately, emits only source/phase status metadata, binds both mortgage artifacts to one run ID, and skips every import whose scrape did not succeed in that execution. Guarded mortgage imports preserve older months omitted by a partial response and reject malformed/non-finite payment records before SQLite access. It must not become the production Plaid or crypto sync path. `ai.openclaw.finance-refresh` owns the daily 06:15 local source refresh, runs the cache-only Plaid component before crypto, and never invokes `op`. The cron's historical conditional fallback is removed; do not add Plaid or crypto credentials to its environment.
+
+### Dylan morning briefing data path
+
+`gws-dylan-morning-briefing-0001` must call
+`/Users/dbochman/dotfiles/openclaw/bin/dylan-morning-briefing-data.py` exactly
+once and must not synthesize `gws`, retry, or `jq` shell pipelines itself. The
+helper uses `--account` only for the Calendar helper and
+`GOOGLE_WORKSPACE_CLI_ACCOUNT` for raw Gmail endpoints, retries only the known
+token-cache race once, handles an empty inbox as success, and filters metadata
+to From/Subject/Date without emitting message IDs or snippets. Expected
+Calendar or Gmail failures are returned as bounded `unavailable`/`partial`
+status objects with exit zero so the other section can still be delivered.
+The collector has a 150-second global deadline, while the agent turn has a
+240-second timeout so partial data can still be composed before cron aborts.
 
 ## Temporary World Cup Briefings
 

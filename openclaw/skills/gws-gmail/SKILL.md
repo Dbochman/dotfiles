@@ -97,10 +97,14 @@ gws gmail users messages get --params '{
 gws gmail users messages get --params '{
   "userId": "me",
   "id": "<messageId>",
-  "format": "metadata",
-  "metadataHeaders": ["From", "Subject", "Date", "To"]
+  "format": "metadata"
 }'
 ```
+
+With pinned GWS 0.4.4, passing `metadataHeaders` through `--params` can return
+`payload` without a `headers` array. Omit that parameter, request metadata, and
+filter the returned headers locally. Do not pipe an API error object into `jq`;
+check the command status and `.error` first.
 
 ### Response shape — where headers actually live
 
@@ -124,8 +128,15 @@ The `metadata` response does NOT put headers at the top level. They're nested un
 To extract them flat, pipe through jq:
 
 ```bash
-gws gmail users messages get --params '{"userId":"me","id":"<id>","format":"metadata","metadataHeaders":["From","Subject","Date"]}' \
-  | jq '.payload.headers | map({(.name): .value}) | add'
+if ! out=$(gws gmail users messages get --params '{"userId":"me","id":"<id>","format":"metadata"}' 2>&1); then
+  echo "Gmail metadata unavailable" >&2
+  exit 1
+fi
+jq -e '(.error? == null) and (.payload.headers | type == "array")' <<<"$out" >/dev/null || {
+  echo "Gmail metadata unavailable" >&2
+  exit 1
+}
+jq '.payload.headers | map(select(.name == "From" or .name == "Subject" or .name == "Date") | {(.name): .value}) | add' <<<"$out"
 # → {"From":"sender@x.com","Subject":"...","Date":"..."}
 ```
 
@@ -342,4 +353,4 @@ Julia's inbox has an automated daily briefing via cron:
 - `gws` outputs JSON by default — parse directly or pipe through `jq`
 - Thread endpoints group messages into conversations; message endpoints return individual messages
 - The `raw` field for send/drafts uses base64url encoding — always use Python `base64.urlsafe_b64encode` (shell `printf | base64 | tr` corrupts `!` and other special chars)
-- Use `format: "metadata"` with `metadataHeaders` to fetch only headers (faster for triage)
+- With GWS 0.4.4, use `format: "metadata"` without `metadataHeaders`, validate the response, and select only the needed headers locally
