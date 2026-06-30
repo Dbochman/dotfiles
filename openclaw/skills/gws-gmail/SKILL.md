@@ -11,22 +11,28 @@ Access Gmail via the `gws` CLI at `/opt/homebrew/bin/gws`. Credentials are AES-2
 
 ## Accounts
 
-| Account | Owner | Flag |
-|---------|-------|------|
-| dylanbochman@gmail.com | Dylan | Default (no flag needed) |
-| julia.joy.jennings@gmail.com | Julia | `--account julia.joy.jennings@gmail.com` |
-| bochmanspam@gmail.com | Dylan (spam) | `--account bochmanspam@gmail.com` |
-| clawdbotbochman@gmail.com | OpenClaw | `--account clawdbotbochman@gmail.com` |
+| Account | Owner | Raw Gmail API selector |
+|---------|-------|-------------------------|
+| dylanbochman@gmail.com | Dylan | Default, or `GOOGLE_WORKSPACE_CLI_ACCOUNT=dylanbochman@gmail.com` |
+| julia.joy.jennings@gmail.com | Julia | `GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com` |
+| bochmanspam@gmail.com | Dylan (spam) | `GOOGLE_WORKSPACE_CLI_ACCOUNT=bochmanspam@gmail.com` |
+| clawdbotbochman@gmail.com | OpenClaw | `GOOGLE_WORKSPACE_CLI_ACCOUNT=clawdbotbochman@gmail.com` |
 
 When Dylan asks about "my email", use default. When he says "Julia's email", use her account.
 
 ## Command Pattern
 
-All commands follow: `gws gmail <resource> <method> [--params '<JSON>'] [--json '<JSON>'] [--account <email>]`
+Raw Gmail API commands follow:
+
+`GOOGLE_WORKSPACE_CLI_ACCOUNT=<email> gws gmail <resource> <method> [--params '<JSON>'] [--json '<JSON>']`
 
 - `--params` = URL/query parameters (userId, q, maxResults, etc.)
 - `--json` = request body (for send, modify, etc.)
-- `--account` = target account
+
+With pinned GWS 0.4.4, do not use `--account` on raw API resource commands;
+that flag is not reliably routed and can return `No credentials provided`.
+Use `GOOGLE_WORKSPACE_CLI_ACCOUNT` instead. Reserve `--account` for helper or
+authentication subcommands that explicitly support it.
 
 **Important:** Most Gmail endpoints require `"userId": "me"` in params.
 
@@ -53,11 +59,11 @@ gws gmail users messages list --params '{
 }'
 
 # Julia's unread
-gws gmail users messages list --params '{
+GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com gws gmail users messages list --params '{
   "userId": "me",
   "q": "is:unread",
   "maxResults": 10
-}' --account julia.joy.jennings@gmail.com
+}'
 ```
 
 ### Common Gmail Query Syntax
@@ -325,9 +331,10 @@ gws schema gmail.users.threads.get
 
 ## Automated Inbox Management (Julia)
 
-Julia's inbox has an automated daily briefing via cron:
+Julia's inbox automation is split into two daily cron jobs:
 
-- **Morning Briefing** (7 AM ET): Calendar preview + inbox triage (categorize, label, draft replies) + cleanup (archive old read, trash spam) — delivered to Julia via iMessage
+- **Silent Triage** (6:45 AM ET): categorizes and labels mail, creates guarded reply drafts, resolves read state, archives stale read mail, and conservatively trashes clear spam; produces a JSON handoff without delivering a message.
+- **Read-Only Briefing** (7 AM ET): combines that handoff with Calendar and household summaries, then delivers the concise briefing to Julia via iMessage without mutating Gmail.
 
 ### OpenClaw Labels (Julia's account)
 

@@ -279,6 +279,18 @@ and perform reservation plus calendar idempotency checks before acting.
 
 `financial-scrape-0001` owns Redfin refresh through guarded mortgage import commands; no separate property-value command is needed in its prompt. The helper serializes whole runs with a protected nonblocking lock, cleans the complete child process group on timeout or interruption, captures child output privately, emits only source/phase status metadata, binds both mortgage artifacts to one run ID, and skips every import whose scrape did not succeed in that execution. Guarded mortgage imports preserve older months omitted by a partial response and reject malformed/non-finite payment records before SQLite access. It must not become the production Plaid or crypto sync path. `ai.openclaw.finance-refresh` owns the daily 06:15 local source refresh, runs the cache-only Plaid component before crypto, and never invokes `op`. The cron's historical conditional fallback is removed; do not add Plaid or crypto credentials to its environment.
 
+### Julia morning triage account routing
+
+`gws-julia-morning-triage-0001` uses raw Gmail API resource commands. With
+pinned GWS 0.4.4, each shell invocation must export
+`GOOGLE_WORKSPACE_CLI_ACCOUNT` for Julia before running those commands; the
+raw resource path must not rely on the CLI account flag. During the preflight
+auth check, retry once only for the exact transient `Failed to get token`
+cache race. Treat a preflight `No credentials provided` response as a
+non-retryable routing/configuration error and return an `auth_error` handoff
+before any mailbox mutation. Later per-message failures retain the prompt's
+existing leave-unread-and-record-error behavior.
+
 ### Dylan morning briefing data path
 
 `gws-dylan-morning-briefing-0001` must call
