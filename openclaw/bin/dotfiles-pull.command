@@ -141,6 +141,34 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) scripts: deployed $SCRIPTS_DEPLOYED to $BIN_DST" >> "$LOG"
 
+# Keep the reboot recovery LaunchAgent synchronized. Most OpenClaw plists are
+# deployed manually because they carry service-specific state; this watchdog
+# is intentionally repo-managed and safe to reload whenever its source changes.
+IMSG_WATCHDOG_LABEL="ai.openclaw.imsg-bridge-ensure"
+IMSG_WATCHDOG_SRC="$REPO/openclaw/launchagents/$IMSG_WATCHDOG_LABEL.plist"
+IMSG_WATCHDOG_DST="$HOME/Library/LaunchAgents/$IMSG_WATCHDOG_LABEL.plist"
+if [ -f "$IMSG_WATCHDOG_SRC" ]; then
+  IMSG_WATCHDOG_CHANGED=0
+  if [ ! -f "$IMSG_WATCHDOG_DST" ] || ! cmp -s "$IMSG_WATCHDOG_SRC" "$IMSG_WATCHDOG_DST"; then
+    cp "$IMSG_WATCHDOG_SRC" "$IMSG_WATCHDOG_DST.new"
+    chmod 644 "$IMSG_WATCHDOG_DST.new"
+    mv "$IMSG_WATCHDOG_DST.new" "$IMSG_WATCHDOG_DST"
+    IMSG_WATCHDOG_CHANGED=1
+  fi
+
+  IMSG_WATCHDOG_DOMAIN="gui/$(id -u)"
+  if launchctl print "$IMSG_WATCHDOG_DOMAIN/$IMSG_WATCHDOG_LABEL" >/dev/null 2>&1; then
+    if [ "$IMSG_WATCHDOG_CHANGED" -eq 1 ]; then
+      launchctl bootout "$IMSG_WATCHDOG_DOMAIN/$IMSG_WATCHDOG_LABEL" >/dev/null 2>&1 || true
+      launchctl bootstrap "$IMSG_WATCHDOG_DOMAIN" "$IMSG_WATCHDOG_DST"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) launchagent: reloaded $IMSG_WATCHDOG_LABEL" >> "$LOG"
+    fi
+  else
+    launchctl bootstrap "$IMSG_WATCHDOG_DOMAIN" "$IMSG_WATCHDOG_DST"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) launchagent: bootstrapped $IMSG_WATCHDOG_LABEL" >> "$LOG"
+  fi
+fi
+
 # Symlink top-level bin/ scripts into /opt/homebrew/bin/ so they track dotfiles HEAD.
 # Matches the pattern set by install.sh for hue/nest/speaker — replaces any stale
 # regular-file copies so a fix committed to bin/<cli> propagates on the next pull.

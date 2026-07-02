@@ -10,6 +10,8 @@ COMPUTER_NAME="${MAC_HOSTNAME_COMPUTER_NAME:-mac-mini}"
 LOCAL_HOST_NAME="${MAC_HOSTNAME_LOCAL_HOST_NAME:-mac-mini}"
 HOST_NAME="${MAC_HOSTNAME_HOST_NAME:-mac-mini}"
 NETBIOS_NAME="${MAC_HOSTNAME_NETBIOS_NAME:-MAC-MINI}"
+TAILSCALE_NAME="${MAC_HOSTNAME_TAILSCALE_NAME:-dylans-mac-mini}"
+TAILSCALE_CLI="${MAC_HOSTNAME_TAILSCALE_CLI:-/Applications/Tailscale.app/Contents/MacOS/Tailscale}"
 START_INTERVAL="${MAC_HOSTNAME_START_INTERVAL:-300}"
 
 usage() {
@@ -27,6 +29,8 @@ Environment overrides:
   MAC_HOSTNAME_LOCAL_HOST_NAME default: ${LOCAL_HOST_NAME}
   MAC_HOSTNAME_HOST_NAME       default: ${HOST_NAME}
   MAC_HOSTNAME_NETBIOS_NAME    default: ${NETBIOS_NAME}
+  MAC_HOSTNAME_TAILSCALE_NAME  default: ${TAILSCALE_NAME}
+  MAC_HOSTNAME_TAILSCALE_CLI   default: ${TAILSCALE_CLI}
   MAC_HOSTNAME_START_INTERVAL  default: ${START_INTERVAL}
 EOF
 }
@@ -71,10 +75,50 @@ validate_names() {
     exit 1
   fi
 
+  if [[ -z "$TAILSCALE_NAME" || "$TAILSCALE_NAME" == *[!A-Za-z0-9-]* ]]; then
+    echo "Invalid Tailscale hostname: $TAILSCALE_NAME" >&2
+    echo "Use only letters, numbers, and hyphens." >&2
+    exit 1
+  fi
+
   if ! [[ "$START_INTERVAL" =~ ^[0-9]+$ ]] || [[ "$START_INTERVAL" -lt 60 ]]; then
     echo "Invalid MAC_HOSTNAME_START_INTERVAL: $START_INTERVAL" >&2
     echo "Use an integer >= 60 seconds." >&2
     exit 1
+  fi
+}
+
+tailscale_name() {
+  [[ -x "$TAILSCALE_CLI" ]] || return 1
+
+  TAILSCALE_BE_CLI=1 "$TAILSCALE_CLI" status --json 2>/dev/null | \
+    /usr/bin/python3 -c '
+import json
+import sys
+
+try:
+    print(json.load(sys.stdin).get("Self", {}).get("HostName", ""))
+except (OSError, ValueError):
+    raise SystemExit(1)
+'
+}
+
+apply_tailscale_name() {
+  local current=""
+
+  if [[ ! -x "$TAILSCALE_CLI" ]]; then
+    echo "WARNING: Tailscale CLI not found at $TAILSCALE_CLI" >&2
+    return 0
+  fi
+
+  current=$(tailscale_name 2>/dev/null || true)
+  if [[ "$current" = "$TAILSCALE_NAME" ]]; then
+    return 0
+  fi
+
+  if ! TAILSCALE_BE_CLI=1 "$TAILSCALE_CLI" set --hostname="$TAILSCALE_NAME"; then
+    echo "WARNING: unable to enforce Tailscale hostname $TAILSCALE_NAME" >&2
+    return 0
   fi
 }
 
@@ -84,6 +128,7 @@ status() {
   printf 'LocalHostName:  %s\n' "$(scutil --get LocalHostName 2>/dev/null || true)"
   printf 'ComputerName:   %s\n' "$(scutil --get ComputerName 2>/dev/null || true)"
   printf 'NetBIOSName:    %s\n' "$(defaults read /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName 2>/dev/null || true)"
+  printf 'TailscaleName:  %s\n' "$(tailscale_name 2>/dev/null || true)"
 }
 
 apply_names() {
@@ -94,6 +139,7 @@ apply_names() {
   scutil --set LocalHostName "$LOCAL_HOST_NAME"
   scutil --set HostName "$HOST_NAME"
   defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "$NETBIOS_NAME"
+  apply_tailscale_name
 
   dscacheutil -flushcache 2>/dev/null || true
   killall -HUP mDNSResponder 2>/dev/null || true
@@ -131,6 +177,10 @@ install_daemon() {
     <string>${HOST_NAME}</string>
     <key>MAC_HOSTNAME_NETBIOS_NAME</key>
     <string>${NETBIOS_NAME}</string>
+    <key>MAC_HOSTNAME_TAILSCALE_NAME</key>
+    <string>${TAILSCALE_NAME}</string>
+    <key>MAC_HOSTNAME_TAILSCALE_CLI</key>
+    <string>${TAILSCALE_CLI}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

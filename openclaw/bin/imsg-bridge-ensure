@@ -1,0 +1,211 @@
+#!/bin/bash
+# Keep the native imsg v2 bridge injected after login or an unexpected reboot.
+
+set -euo pipefail
+
+export HOME="${HOME:-/Users/dbochman}"
+export PATH="${PATH:-/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+IMSG_BIN="${IMSG_BIN:-/opt/homebrew/bin/imsg}"
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+PERL_BIN="${PERL_BIN:-/usr/bin/perl}"
+LAUNCHCTL_BIN="${LAUNCHCTL_BIN:-/bin/launchctl}"
+CURL_BIN="${CURL_BIN:-/usr/bin/curl}"
+SLEEP_BIN="${SLEEP_BIN:-/bin/sleep}"
+GATEWAY_LABEL="${GATEWAY_LABEL:-ai.openclaw.gateway}"
+GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:18789/}"
+
+STARTUP_DELAY_SECONDS="${IMSG_BRIDGE_STARTUP_DELAY_SECONDS:-20}"
+COMMAND_TIMEOUT_SECONDS="${IMSG_BRIDGE_COMMAND_TIMEOUT_SECONDS:-45}"
+POLL_ATTEMPTS="${IMSG_BRIDGE_POLL_ATTEMPTS:-20}"
+POLL_INTERVAL_SECONDS="${IMSG_BRIDGE_POLL_INTERVAL_SECONDS:-3}"
+MIN_REPAIR_INTERVAL_SECONDS="${IMSG_BRIDGE_MIN_REPAIR_INTERVAL_SECONDS:-900}"
+GATEWAY_POLL_ATTEMPTS="${IMSG_BRIDGE_GATEWAY_POLL_ATTEMPTS:-30}"
+
+STATE_DIR="${IMSG_BRIDGE_STATE_DIR:-$OPENCLAW_HOME/run/imsg-bridge-ensure}"
+LOG_FILE="${IMSG_BRIDGE_LOG_FILE:-$OPENCLAW_HOME/logs/imsg-bridge-ensure.log}"
+LOCK_DIR="$STATE_DIR/lock"
+LAST_ATTEMPT_FILE="$STATE_DIR/last-attempt"
+BRIDGE_JSON=""
+LOCK_HELD=false
+
+mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
+chmod 700 "$STATE_DIR"
+
+rotate_log() {
+  local size
+  [[ -f "$LOG_FILE" ]] || return 0
+  size=$(stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
+  if [[ "$size" -gt 1048576 ]]; then
+    tail -500 "$LOG_FILE" > "$LOG_FILE.tmp"
+    mv "$LOG_FILE.tmp" "$LOG_FILE"
+  fi
+}
+
+log() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG_FILE"
+}
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+  "$PERL_BIN" -e '
+    my $seconds = shift @ARGV;
+    $SIG{ALRM} = sub { exit 124 };
+    alarm $seconds;
+    exec @ARGV;
+    exit 127;
+  ' "$timeout_seconds" "$@"
+}
+
+bridge_ready() {
+  if ! BRIDGE_JSON=$(run_with_timeout 15 "$IMSG_BIN" status --json 2>> "$LOG_FILE"); then
+    return 1
+  fi
+
+  printf '%s' "$BRIDGE_JSON" | "$PYTHON_BIN" -c '
+import json
+import sys
+
+try:
+    status = json.load(sys.stdin)
+    ready = status.get("v2_ready") is True and int(status.get("bridge_version") or 0) >= 2
+except (TypeError, ValueError, json.JSONDecodeError):
+    ready = False
+
+raise SystemExit(0 if ready else 1)
+' 2>> "$LOG_FILE"
+}
+
+acquire_lock() {
+  local owner=""
+
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" > "$LOCK_DIR/pid"
+    LOCK_HELD=true
+    return 0
+  fi
+
+  [[ -f "$LOCK_DIR/pid" ]] && owner=$(<"$LOCK_DIR/pid")
+  if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
+    log "check skipped: repair already running as pid=$owner"
+    return 1
+  fi
+
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR"
+  printf '%s\n' "$$" > "$LOCK_DIR/pid"
+  LOCK_HELD=true
+}
+
+release_lock() {
+  if [[ "$LOCK_HELD" = true ]]; then
+    rm -rf "$LOCK_DIR"
+  fi
+}
+
+repair_is_rate_limited() {
+  local last_attempt=0 now
+  [[ -f "$LAST_ATTEMPT_FILE" ]] && last_attempt=$(<"$LAST_ATTEMPT_FILE")
+  [[ "$last_attempt" =~ ^[0-9]+$ ]] || last_attempt=0
+  now=$(date +%s)
+  (( now - last_attempt < MIN_REPAIR_INTERVAL_SECONDS ))
+}
+
+record_repair_attempt() {
+  local tmp="$LAST_ATTEMPT_FILE.tmp.$$"
+  date +%s > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$LAST_ATTEMPT_FILE"
+}
+
+restart_gateway() {
+  local domain="gui/$(id -u)"
+  local attempt
+
+  if ! "$LAUNCHCTL_BIN" print "$domain/$GATEWAY_LABEL" >/dev/null 2>&1; then
+    log "bridge repaired; gateway job is not loaded yet"
+    return 0
+  fi
+
+  if ! "$LAUNCHCTL_BIN" kickstart -k "$domain/$GATEWAY_LABEL" >> "$LOG_FILE" 2>&1; then
+    log "ERROR: bridge repaired but gateway restart failed"
+    return 1
+  fi
+
+  for ((attempt = 1; attempt <= GATEWAY_POLL_ATTEMPTS; attempt++)); do
+    if "$CURL_BIN" -fsS --connect-timeout 2 --max-time 3 "$GATEWAY_URL" >/dev/null 2>&1; then
+      log "bridge repaired and gateway restarted successfully"
+      return 0
+    fi
+    "$SLEEP_BIN" 2
+  done
+
+  log "ERROR: gateway did not become healthy after bridge repair"
+  return 1
+}
+
+main() {
+  local attempt
+
+  rotate_log
+
+  if [[ ! -x "$IMSG_BIN" ]]; then
+    log "ERROR: imsg is not executable at $IMSG_BIN"
+    return 1
+  fi
+
+  if (( STARTUP_DELAY_SECONDS > 0 )); then
+    "$SLEEP_BIN" "$STARTUP_DELAY_SECONDS"
+  fi
+
+  if bridge_ready; then
+    log "healthy: imsg bridge v2 is ready"
+    return 0
+  fi
+
+  if ! acquire_lock; then
+    return 0
+  fi
+  trap release_lock EXIT
+
+  # A concurrent login helper may have repaired the bridge while this process
+  # waited for the lock.
+  if bridge_ready; then
+    log "healthy: imsg bridge became ready before repair"
+    return 0
+  fi
+
+  if repair_is_rate_limited; then
+    log "WARNING: imsg bridge is not v2-ready; repair suppressed by cooldown"
+    return 1
+  fi
+  record_repair_attempt
+
+  log "repairing: imsg bridge is not v2-ready"
+  if ! run_with_timeout "$COMMAND_TIMEOUT_SECONDS" "$IMSG_BIN" launch --kill-only --json >> "$LOG_FILE" 2>&1; then
+    log "ERROR: failed to stop the existing Messages bridge"
+    return 1
+  fi
+
+  "$SLEEP_BIN" 2
+  if ! run_with_timeout "$COMMAND_TIMEOUT_SECONDS" "$IMSG_BIN" launch --json >> "$LOG_FILE" 2>&1; then
+    log "ERROR: failed to launch Messages with imsg injection"
+    return 1
+  fi
+
+  for ((attempt = 1; attempt <= POLL_ATTEMPTS; attempt++)); do
+    if bridge_ready; then
+      log "ready: imsg bridge v2 recovered on attempt=$attempt"
+      restart_gateway
+      return $?
+    fi
+    "$SLEEP_BIN" "$POLL_INTERVAL_SECONDS"
+  done
+
+  log "ERROR: imsg bridge did not become v2-ready after repair"
+  return 1
+}
+
+main "$@"

@@ -765,6 +765,64 @@ install_openclaw_gateway_plist() {
   link_file "$src" "$dst"
 }
 
+install_managed_file_copy() {
+  local src="$1"
+  local dst="$2"
+  local mode="$3"
+  local label="$4"
+
+  if [[ -f "$dst" && ! -L "$dst" ]] && cmp -s "$src" "$dst"; then
+    chmod "$mode" "$dst" 2>/dev/null || true
+    log_verbose "  Preserving identical $label: $dst"
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" = true ]]; then
+    log "  [dry-run] Would install $label: $dst"
+  else
+    local tmp="$dst.tmp.$$"
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$tmp"
+    chmod "$mode" "$tmp"
+    mv "$tmp" "$dst"
+    log "  Installed $label: $dst"
+  fi
+  ((ITEMS_LINKED++))
+}
+
+install_managed_launchagent() {
+  local src="$1"
+  local dst="$2"
+  local label="$3"
+  local domain="gui/$(id -u)"
+  local changed=false
+
+  if [[ ! -f "$dst" || -L "$dst" ]] || ! cmp -s "$src" "$dst"; then
+    changed=true
+    install_managed_file_copy "$src" "$dst" 644 "$label LaunchAgent"
+  fi
+
+  if [[ "$DRY_RUN" = true ]]; then
+    if ! launchctl print "$domain/$label" >/dev/null 2>&1; then
+      log "  [dry-run] Would bootstrap $label"
+    elif [[ "$changed" = true ]]; then
+      log "  [dry-run] Would reload $label"
+    fi
+    return 0
+  fi
+
+  if launchctl print "$domain/$label" >/dev/null 2>&1; then
+    if [[ "$changed" = true ]]; then
+      launchctl bootout "$domain/$label"
+      launchctl bootstrap "$domain" "$dst"
+      log "  Reloaded LaunchAgent: $label"
+    fi
+  else
+    launchctl bootstrap "$domain" "$dst"
+    log "  Bootstrapped LaunchAgent: $label"
+  fi
+}
+
 # === Migration Functions ===
 
 migrate_directory_symlink() {
@@ -1112,6 +1170,19 @@ install_dotfiles() {
       install_openclaw_gateway_plist \
         "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.gateway.plist" \
         "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+
+      # The native imsg bridge injection does not survive a reboot. This
+      # one-shot/interval agent repairs bridge v2 in the Aqua session and only
+      # restarts the gateway after the bridge is confirmed ready.
+      install_managed_file_copy \
+        "$DOTFILES_DIR/openclaw/bin/imsg-bridge-ensure" \
+        "$HOME/.openclaw/bin/imsg-bridge-ensure" \
+        755 \
+        "imsg bridge watchdog"
+      install_managed_launchagent \
+        "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.imsg-bridge-ensure.plist" \
+        "$HOME/Library/LaunchAgents/ai.openclaw.imsg-bridge-ensure.plist" \
+        "ai.openclaw.imsg-bridge-ensure"
 
       # BlueBubbles and its watchdogs are intentionally retired. Current
       # OpenClaw owns Messages through the native imsg bridge; launching both

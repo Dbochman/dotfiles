@@ -111,11 +111,48 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
+| `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback uses an isolated managed headless PinchTab instance |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
+
+### Native iMessage Reboot Recovery
+
+The `imsg` v2 dylib injection does not survive a Messages.app or macOS restart.
+`ai.openclaw.imsg-bridge-ensure` runs in the logged-in Aqua session, waits 20
+seconds for login services to settle, and checks both `bridge_version >= 2` and
+`v2_ready=true`. A healthy check is read-only and never sends a synthetic
+message.
+
+When the bridge is degraded, the watchdog:
+
+1. Acquires a single-process lock and enforces a 15-minute repair cooldown.
+2. Runs `imsg launch --kill-only`, followed by `imsg launch`.
+3. Polls for bridge v2 readiness.
+4. Restarts `ai.openclaw.gateway` only after the bridge is ready, which clears
+   stale `imsg rpc` workers without replaying uncertain deliveries.
+
+The script owns its bounded log at
+`~/.openclaw/logs/imsg-bridge-ensure.log`; the plist sends stdout/stderr to
+`/dev/null`. The daily dotfiles pull deploys the script and reloads this one
+repo-managed LaunchAgent when its plist changes. Other service plists retain
+their manual deployment policy.
+
+Post-reboot verification:
+
+```bash
+ssh dylans-mac-mini 'PATH=/opt/homebrew/bin:$PATH imsg status --json | jq ".bridge_version, .v2_ready"'
+ssh dylans-mac-mini 'launchctl print "gui/$(id -u)/ai.openclaw.imsg-bridge-ensure" | grep -E "state =|last exit code"'
+ssh dylans-mac-mini 'tail -20 ~/.openclaw/logs/imsg-bridge-ensure.log'
+curl -fsS http://dylans-mac-mini:8551/api/imessage-health | jq '.status, .gateway.v2_ready'
+```
+
+Expected bridge values are `2` and `true`, with the dashboard health returning
+`healthy`. If macOS presents a new Automation or Full Disk Access prompt after
+an `imsg` or OS upgrade, approve it from the Mini's GUI session; the watchdog
+rate-limits retries rather than repeatedly killing Messages.
 
 ### Headless Browser Policy
 
@@ -224,6 +261,8 @@ Every new LaunchAgent script MUST follow these rules:
 
 - **Plist source**: OpenClaw-prefix plists in `openclaw/launchagents/`; personal `com.dylanbochman.*` plists in top-level `launchagents/`.
 - **Deployment**: Most plists are deployed as regular files via `scp` to `~/Library/LaunchAgents/` on the target machine. `install.sh` can initially symlink the gateway plist, but `openclaw gateway install` may replace it with a generated regular plist that invokes `~/.openclaw/service-env/ai.openclaw.gateway-env-wrapper.sh`. The Mini currently uses that generated contract, so do not assume the live gateway plist is a symlink or byte-identical to the recovery source. Verify its `ProgramArguments`, wrapper, environment file, and loaded job after upgrades. Personal plists are typically copied once and registered with `launchctl bootstrap gui/$(id -u) <plist>`.
+- **Gateway token source**: Source `~/.openclaw/.secrets-cache` before running `openclaw gateway install --force`. The FDA wrapper sources the same cache at runtime. Do not install with an ad-hoc generated token, which leaves CLI probes and the running gateway on different credentials.
+- **Stable Tailscale name**: macOS intentionally uses local hostname `mac-mini`, while `bin/mac-hostname` pins the Tailscale override to `dylans-mac-mini`. This keeps existing SSH, dashboard, Taildrop, and WSS targets stable across Tailscale or macOS restarts.
 - **Logs**: Most services log to `~/.openclaw/logs/` or `/tmp/`. The current generated gateway job writes to `~/Library/Logs/openclaw/gateway.log`; the tracked recovery plist still names `~/.openclaw/logs/gateway.{log,err.log}`. Check the live plist's `StandardErrorPath` and `StandardOutPath` instead of assuming either layout.
 - **Gateway wrapper**: Uses cache-only secrets pattern (`~/.openclaw/.secrets-cache`), no `op read` at startup (hangs under launchd).
 - **Anthropic OAuth refresh**: `oauth-refresh.sh` hides `/usr/bin` from PATH during `claude auth login` so that `security` (macOS keychain CLI) is not found. This forces Claude Code to write credentials to `~/.claude/.credentials.json` instead of the keychain, which is unreadable over SSH. The refresh token rotates on each login, so the flow is self-sustaining. If the refresh token chain breaks (e.g., manual `claude auth login` rotates it outside the script), re-seed by pushing a fresh token from a machine with keychain access: `security find-generic-password -s "Claude Code-credentials" -w | ssh dylans-mac-mini 'cat > ~/.openclaw/.anthropic-oauth-cache'`.
