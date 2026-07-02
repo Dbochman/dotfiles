@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Open a remote tmux session over Mosh so it survives sleep and network changes.
+
+set -o pipefail
+
+usage() {
+  echo "Usage: cmux-mosh-tmux <ssh-host> <tmux-session> [tmux-binary]" >&2
+}
+
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  usage
+  exit 2
+fi
+
+host="$1"
+session="$2"
+tmux_bin="${3:-tmux}"
+mosh_bin="${CMUX_MOSH_TMUX_MOSH_BIN:-/opt/homebrew/bin/mosh}"
+mosh_server="${CMUX_MOSH_TMUX_SERVER_BIN:-/opt/homebrew/bin/mosh-server}"
+ssh_bin="${CMUX_MOSH_TMUX_SSH_BIN:-/usr/bin/ssh}"
+
+if [[ "$host" == -* || "$host" == *[[:space:]]* ]]; then
+  echo "cmux-mosh-tmux: invalid SSH host: $host" >&2
+  exit 2
+fi
+
+if [[ ! "$session" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+  echo "cmux-mosh-tmux: invalid tmux session name: $session" >&2
+  exit 2
+fi
+
+if [[ ! "$tmux_bin" =~ ^[A-Za-z0-9_./+-]+$ ]]; then
+  echo "cmux-mosh-tmux: invalid tmux binary: $tmux_bin" >&2
+  exit 2
+fi
+
+if [[ ! -x "$mosh_bin" ]]; then
+  echo "cmux-mosh-tmux: Mosh is not installed at $mosh_bin" >&2
+  exit 127
+fi
+
+if [[ ! -x "$ssh_bin" ]]; then
+  echo "cmux-mosh-tmux: SSH binary is not executable: $ssh_bin" >&2
+  exit 127
+fi
+
+register_cmux_resume() {
+  [[ -n "${CMUX_SURFACE_ID:-}" ]] || return 0
+  command -v cmux >/dev/null 2>&1 || return 0
+
+  local resume_command
+  printf -v resume_command '%q %q %q %q' "$0" "$host" "$session" "$tmux_bin"
+  cmux surface resume set \
+    --kind tmux \
+    --checkpoint "mosh-${host}-${session}" \
+    --source cmux-mosh-tmux \
+    --cwd "$HOME" \
+    --shell "$resume_command" \
+    >/dev/null 2>&1 || true
+}
+
+register_cmux_resume
+
+exec "$mosh_bin" \
+  --server="$mosh_server" \
+  --ssh="$ssh_bin -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=8 -o ConnectionAttempts=1" \
+  "$host" -- \
+  "$tmux_bin" new-session -A -s "$session"

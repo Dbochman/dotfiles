@@ -349,6 +349,26 @@ def recovery_target(cmux_bin: str, health: Health) -> RecoveryTarget:
     raise DoctorError("could not safely identify the persistent PTY for this surface")
 
 
+def resolve_surface_ref(cmux_bin: str, workspace_id: str, surface_ref: str) -> str:
+    panes_payload = cmux_rpc(
+        cmux_bin, "pane.list", {"workspace_id": workspace_id}
+    )
+    panes = panes_payload.get("panes")
+    if not isinstance(panes, list):
+        raise DoctorError("cmux returned an invalid pane list after PTY recovery")
+    for pane in panes:
+        if not isinstance(pane, dict):
+            continue
+        refs = pane.get("surface_refs")
+        ids = pane.get("surface_ids")
+        if not isinstance(refs, list) or not isinstance(ids, list):
+            continue
+        for candidate_ref, candidate_id in zip(refs, ids, strict=False):
+            if candidate_ref == surface_ref and isinstance(candidate_id, str):
+                return candidate_id
+    raise DoctorError(f"could not resolve recovered surface: {surface_ref}")
+
+
 def print_health(health: Health) -> None:
     heartbeat = (
         f"{health.heartbeat_age_seconds:.0f}s"
@@ -451,6 +471,12 @@ def repair(
     )
     recovered_surface_id = attached.get("surface_id")
     recovered_surface_ref = attached.get("surface_ref")
+    if not isinstance(recovered_surface_id, str) and isinstance(
+        recovered_surface_ref, str
+    ):
+        recovered_surface_id = resolve_surface_ref(
+            cmux_bin, health.workspace_id, recovered_surface_ref
+        )
     if not isinstance(recovered_surface_id, str) or not recovered_surface_id:
         raise DoctorError("cmux did not return the recovered surface ID")
 

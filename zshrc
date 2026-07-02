@@ -103,14 +103,32 @@ kb() {
     cmux new-workspace --name lpu-kb --command "ssh lpu-kb-container"
 }
 
-# Attach (or create) the 'work' tmux session on the Work MBP, inside a cmux workspace.
-opwork() {
+# Attach (or create) the 'work' tmux session on the Work MBP over Mosh.
+# Mosh keeps the terminal alive across sleep, roaming, and network interruptions.
+work() {
   _cmux_ensure_running || return
 
-  cmux ssh work-mac --name "op-research work" --ssh-option RequestTTY=force "$@" -- \
-    tmux new-session -A -s work || \
-    cmux new-workspace --name "op-research work" \
-      --command "ssh -t work-mac tmux new-session -A -s work"
+  local helper="$HOME/.local/bin/cmux-mosh-tmux"
+  if [[ ! -x "$helper" ]]; then
+    echo "cmux-mosh-tmux not found. Run ./install.sh from the dotfiles repo." >&2
+    return 127
+  fi
+
+  local command="${(q)helper} work-mac work /opt/homebrew/bin/tmux"
+  local -a cmux_args
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-focus)
+        cmux_args+=(--focus false)
+        ;;
+      *)
+        cmux_args+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  cmux workspace create --name "op-research work" --command "$command" "${cmux_args[@]}"
 }
 
 # Attach (or create) a remote tmux session in a reconnecting cmux workspace.
@@ -144,6 +162,11 @@ _cmux_ssh_tmux() {
   done
 
   cmux workspace create --name "$workspace_name" --command "$command" "${cmux_args[@]}"
+}
+
+# SSH fallback for networks that block Mosh's UDP transport.
+work-ssh() {
+  _cmux_ssh_tmux "op-research work (SSH)" work-mac work /opt/homebrew/bin/tmux "$@"
 }
 
 # Attach (or create) the 'home' tmux session on the Mac Mini. The local SSH
