@@ -917,6 +917,7 @@ install_dotfiles() {
   log "${BLUE}Core dotfiles:${NC}"
   link_file "$DOTFILES_DIR/zshrc" "$HOME/.zshrc"
   link_file "$DOTFILES_DIR/gitconfig" "$HOME/.gitconfig"
+  link_file "$DOTFILES_DIR/tmux.conf" "$HOME/.tmux.conf"
 
   # SSH config
   if [[ "$DRY_RUN" != true ]]; then
