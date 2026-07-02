@@ -71,30 +71,26 @@ Prefer `work-mac` or `work-mbp` over `dbochman@100.73.15.5`. The aliases select 
 Use the local wrapper:
 
 ```bash
-opwork
+work
 ```
 
 Attach to or create the `work` tmux session on the work MBP:
 
 ```bash
-cmux ssh work-mac --name "op-research work" --ssh-option RequestTTY=force -- \
-  tmux new-session -A -s work
+$HOME/.local/bin/cmux-mosh-tmux \
+  work-mac work /opt/homebrew/bin/tmux
 ```
 
-The equivalent MagicDNS version is:
+Mosh keeps the terminal transport alive across sleep, roaming, and network
+changes. If the current network blocks Mosh's UDP transport, use the SSH
+fallback:
 
 ```bash
-cmux ssh work-mbp --name "op-research work" --ssh-option RequestTTY=force -- \
-  tmux new-session -A -s work
+work-ssh
 ```
 
-If you use the raw IP, pass the key explicitly:
-
-```bash
-cmux ssh dbochman@100.73.15.5 --identity ~/.ssh/id_work_mbp \
-  --name "op-research work" --ssh-option RequestTTY=force -- \
-  tmux new-session -A -s work
-```
+Both the local Mac and work MBP need the Homebrew `mosh` package. The helper
+uses the existing `work-mac` SSH alias for authentication and initial setup.
 
 ### Knowledge Base Devcontainer
 
@@ -128,11 +124,13 @@ home
 Underlying workspace command:
 
 ```bash
-$HOME/.local/bin/cmux-ssh-tmux \
+$HOME/.local/bin/cmux-mosh-tmux \
   dylans-mac-mini home /opt/homebrew/bin/tmux
 ```
 
 `home --no-focus` creates the workspace with `--focus false`. Other supported cmux workspace-creation flags are passed through.
+Use `home-ssh` when the current network blocks Mosh's UDP transport. Both forms
+attach to the same remote `home` tmux session.
 
 On the first durable workspace, cmux shows **Auto-Restore / Ask Each Time / Keep Manual** for the exact helper command. Choose **Auto-Restore** only after checking the executable, host, session, and tmux path. cmux 0.64.17's **Settings > Terminal > Resume Commands** row only opens `cmux.json`; do not change a stored policy by hand because approval records are HMAC-signed.
 
@@ -570,24 +568,18 @@ ssh <ssh-target> 'tmux kill-session -t <name>'
 ## Quick Reference
 
 ```bash
-# Work MBP durable session.
-cmux ssh work-mac --name "op-research work" --ssh-option RequestTTY=force -- \
-  tmux new-session -A -s work
-
-# Same target by MagicDNS alias.
-cmux ssh work-mbp --name "op-research work" --ssh-option RequestTTY=force -- \
-  tmux new-session -A -s work
-
-# Raw-IP fallback with explicit key.
-cmux ssh dbochman@100.73.15.5 --identity ~/.ssh/id_work_mbp \
-  --name "op-research work" --ssh-option RequestTTY=force -- \
-  tmux new-session -A -s work
-
-# Existing local wrappers.
-opwork
-kb
+# Durable Mosh + tmux wrappers.
+work
 home
 
-# Direct reconnecting Mac Mini attach.
-cmux-ssh-tmux dylans-mac-mini home /opt/homebrew/bin/tmux
+# SSH fallbacks for networks that block Mosh UDP.
+work-ssh
+home-ssh
+
+# Other managed remote workspace.
+kb
+
+# Direct Mosh + tmux helpers.
+cmux-mosh-tmux work-mac work /opt/homebrew/bin/tmux
+cmux-mosh-tmux dylans-mac-mini home /opt/homebrew/bin/tmux
 ```

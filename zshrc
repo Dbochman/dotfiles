@@ -103,9 +103,14 @@ kb() {
     cmux new-workspace --name lpu-kb --command "ssh lpu-kb-container"
 }
 
-# Attach (or create) the 'work' tmux session on the Work MBP over Mosh.
-# Mosh keeps the terminal alive across sleep, roaming, and network interruptions.
-work() {
+# Attach (or create) a remote tmux session over Mosh in a cmux workspace.
+_cmux_mosh_tmux() {
+  local workspace_name="$1"
+  local host="$2"
+  local session_name="$3"
+  local tmux_bin="$4"
+  shift 4
+
   _cmux_ensure_running || return
 
   local helper="$HOME/.local/bin/cmux-mosh-tmux"
@@ -114,7 +119,7 @@ work() {
     return 127
   fi
 
-  local command="${(q)helper} work-mac work /opt/homebrew/bin/tmux"
+  local command="${(q)helper} ${(q)host} ${(q)session_name} ${(q)tmux_bin}"
   local -a cmux_args
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -128,7 +133,13 @@ work() {
     shift
   done
 
-  cmux workspace create --name "op-research work" --command "$command" "${cmux_args[@]}"
+  cmux workspace create --name "$workspace_name" --command "$command" "${cmux_args[@]}"
+}
+
+# Attach (or create) the 'work' tmux session on the Work MBP over Mosh.
+# Mosh keeps the terminal alive across sleep, roaming, and network interruptions.
+work() {
+  _cmux_mosh_tmux "op-research work" work-mac work /opt/homebrew/bin/tmux "$@"
 }
 
 # Attach (or create) a remote tmux session in a reconnecting cmux workspace.
@@ -169,10 +180,14 @@ work-ssh() {
   _cmux_ssh_tmux "op-research work (SSH)" work-mac work /opt/homebrew/bin/tmux "$@"
 }
 
-# Attach (or create) the 'home' tmux session on the Mac Mini. The local SSH
-# client reconnects after sleep/network changes; tmux keeps Codex alive remotely.
+# Attach (or create) the 'home' tmux session on the Mac Mini over Mosh.
 home() {
-  _cmux_ssh_tmux home dylans-mac-mini home /opt/homebrew/bin/tmux "$@"
+  _cmux_mosh_tmux home dylans-mac-mini home /opt/homebrew/bin/tmux "$@"
+}
+
+# SSH fallback for networks that block Mosh's UDP transport.
+home-ssh() {
+  _cmux_ssh_tmux "home (SSH)" dylans-mac-mini home /opt/homebrew/bin/tmux "$@"
 }
 
 # Attach to the Mac Mini's durable session from a small mobile terminal without
