@@ -24,7 +24,9 @@ REPO = Path.home() / "repos" / "financial-dashboard"
 PYTHON = REPO / "venv" / "bin" / "python3"
 OP_TOKEN_FILE = Path.home() / ".openclaw" / ".env-token"
 LOCK_PATH = Path.home() / ".openclaw" / "financial-dashboard" / ".weekly-scrape.lock"
+PINCHTAB_INSTANCE_HELPER = Path.home() / ".openclaw" / "bin" / "pinchtab-headless-instance"
 COMMAND_TIMEOUT_SECONDS = 420
+PROFILE_PREFLIGHT_TIMEOUT_SECONDS = 45
 PROCESS_GROUP_GRACE_SECONDS = 5
 TERMINATION_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
@@ -318,6 +320,31 @@ def credentials_for(item, env, op_env=None):
     return child_env
 
 
+def ensure_boa_profile(env):
+    """Start or reuse the dedicated headless PinchTab finance profile.
+
+    The helper output is treated as untrusted and never relayed. This step
+    does not navigate a tab, read credentials, or weaken the exact
+    ``not_authenticated`` gate that protects BoA re-authentication.
+    """
+    completed = _run_captured(
+        [str(PINCHTAB_INSTANCE_HELPER), "acquire", "finance"],
+        env,
+        PROFILE_PREFLIGHT_TIMEOUT_SECONDS,
+    )
+    if completed.timed_out:
+        return "timeout"
+    if completed.returncode != 0:
+        return "failed"
+    lines = completed.stdout.splitlines()
+    if len(lines) != 1 or not re.fullmatch(
+        r"inst_[A-Za-z0-9]+\t[01]",
+        lines[0].strip(),
+    ):
+        return "failed"
+    return "ok"
+
+
 def command_status(result):
     if result.timed_out:
         return "timeout"
@@ -454,7 +481,11 @@ def run_boa(run_id, env, op_env=None):
 
 
 def result_ok(result):
-    return result.get("scrape") == "ok" and result.get("import") == "ok"
+    return (
+        result.get("scrape") == "ok"
+        and result.get("import") == "ok"
+        and result.get("profile_preflight", "ok") == "ok"
+    )
 
 
 def dry_run_plan():
@@ -481,6 +512,7 @@ def _run_locked():
     env.pop("SCRAPER_PW", None)
     op_env = env.copy()
     op_env["OP_SERVICE_ACCOUNT_TOKEN"] = token
+    boa_profile_preflight = ensure_boa_profile(env)
     run_id = str(uuid.uuid4())
     results = []
     for source in SOURCES:
@@ -488,6 +520,7 @@ def _run_locked():
         results.append(result)
         print(json.dumps({"event": "source_complete", **result}, sort_keys=True), flush=True)
     boa_result = run_boa(run_id, env, op_env)
+    boa_result["profile_preflight"] = boa_profile_preflight
     results.append(boa_result)
     print(json.dumps({"event": "source_complete", **boa_result}, sort_keys=True), flush=True)
     op_env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)

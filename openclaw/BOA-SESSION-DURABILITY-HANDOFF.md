@@ -72,27 +72,33 @@ evidence; they are no longer health signals for a running service.
 
 Before any recovery action:
 
-1. Run `--verify-auth` against the dedicated PinchTab profile named `finance`.
+1. Confirm the weekly profile preflight started or reused the dedicated
+   headless PinchTab profile named `finance`. The preflight does not navigate,
+   inspect account data, or read credentials; `profile_preflight` failures are
+   incidents even when cookie replay succeeds.
+2. Run `--verify-auth` against the dedicated profile's existing BoA tab.
    The retired keep-alive logs are historical evidence, not a recovery input.
-2. Record whether the failure is `cdp_unavailable`, `boa_tab_unavailable`,
+3. Record whether the failure is `cdp_unavailable`, `boa_tab_unavailable`,
    `cdp_attach_failed`, `host_not_allowed`, `auth_unknown`,
    `not_authenticated`, or another safe status.
-3. Preserve `~/.openclaw/.boa_cookies.json`. Do not delete it, print it, or
+4. Preserve `~/.openclaw/.boa_cookies.json`. Do not delete it, print it, or
    copy its values into a ticket or chat.
-4. Do not kill or restart Pinchtab Chrome before collecting evidence. BoA
+5. Do not kill or restart Pinchtab Chrome before collecting evidence. BoA
    session cookies are process-bound and a restart destroys useful evidence.
 
 The weekly cron now runs the following guarded sequence after a normal BoA
 scrape failure:
 
-1. Resolve the exact `finance` profile and run `--verify-auth` against its
+1. Start or reuse the exact dedicated headless `finance` profile with the
+   non-navigating, credential-free profile preflight.
+2. Resolve that exact profile and run `--verify-auth` against its
    existing BoA tab.
-2. Proceed only when its status is exactly `not_authenticated`. A
+3. Proceed only when its status is exactly `not_authenticated`. A
    `cdp_unavailable`, `boa_tab_unavailable`, `cdp_attach_failed`, or
    `auth_unknown` result is an incident, not permission to submit creds.
-3. The deterministic weekly helper supplies `SCRAPER_USER` and `SCRAPER_PW`
+4. The deterministic weekly helper supplies `SCRAPER_USER` and `SCRAPER_PW`
    only to the one `--boa-re-auth` child process.
-4. Retry the normal scrape once only after `authenticated` or a race-safe
+5. Retry the normal scrape once only after `authenticated` or a race-safe
    `already_authenticated` result, then require the current weekly run ID on
    import.
 
