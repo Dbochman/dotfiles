@@ -32,8 +32,14 @@ else
   NODE="$(command -v node || echo /opt/homebrew/bin/node)"
 fi
 GRPCURL="/opt/homebrew/bin/grpcurl"
-TAILSCALE="/usr/local/bin/tailscale"
-[ -x "$TAILSCALE" ] || TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+PING="${PRESENCE_PING_BIN:-/sbin/ping}"
+ARP="${PRESENCE_ARP_BIN:-/usr/sbin/arp}"
+if [ -n "${PRESENCE_TAILSCALE_BIN:-}" ]; then
+  TAILSCALE="$PRESENCE_TAILSCALE_BIN"
+else
+  TAILSCALE="/usr/local/bin/tailscale"
+  [ -x "$TAILSCALE" ] || TAILSCALE="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+fi
 STATE_DIR="${HOME}/.openclaw/presence"
 EVALUATE_LOCK_FILE="${STATE_DIR}/evaluate.lock"
 EVALUATE_LOCK_TIMEOUT_SECONDS=10
@@ -93,7 +99,6 @@ CABIN_DEVICES='[
 CROSSTOWN_DEVICES='[
   {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"},
   {"person":"Julia","match":"mac","pattern":"38:e1:3d:c0:40:63"},
-  {"person":"Julia","match":"ip","pattern":"192.168.165.248"},
   {"person":"Julia","match":"hostname","pattern":"julias-iphone"}
 ]'
 
@@ -173,59 +178,143 @@ console.log(JSON.stringify({
 # ── Crosstown: ARP scan ─────────────────────────────────────────────────────
 
 scan_crosstown() {
-  # Step 1: Subnet sweep to populate ARP table
+  # Step 1: Probe the subnet. iPhones may ignore ICMP while still answering
+  # link-layer resolution, so ping success is not used as the presence signal.
+  local gateway_ip="192.168.165.1"
   local known_ips="192.168.165.124 192.168.165.248"
-  for ip in $known_ips; do
-    ping -c3 -W2 "$ip" >/dev/null 2>&1 &
+  local probe_ips="$gateway_ip $known_ips"
+  local sweep_hosts
+  if [ "${PRESENCE_CROSSTOWN_SWEEP_HOSTS+x}" = "x" ]; then
+    # Test seam: an explicitly empty value disables only the broad sweep.
+    sweep_hosts="$PRESENCE_CROSSTOWN_SWEEP_HOSTS"
+  else
+    sweep_hosts=$(/usr/bin/seq 1 254)
+  fi
+  for ip in $probe_ips; do
+    "$PING" -c3 -W2 "$ip" >/dev/null 2>&1 &
   done
-  for i in $(seq 1 254); do ping -c1 -W1 "192.168.165.$i" >/dev/null 2>&1 & done
+  for i in $sweep_hosts; do
+    "$PING" -c1 -W1 "192.168.165.$i" >/dev/null 2>&1 &
+  done
   wait
 
-  # Step 2: Delete ARP entries for tracked IPs to clear stale cache,
-  # then re-ping to see if they come back. Devices on the network will
-  # re-populate the ARP entry even if sleeping (ARP is layer 2, not ICMP).
-  for ip in $known_ips; do
-    arp -d "$ip" >/dev/null 2>&1 || true
-  done
-  # Brief pause + re-ping to trigger fresh ARP resolution
+  # Step 2: Re-probe tracked IPs, then require fresh inbound link-layer
+  # reachability from `arp -anl`. Plain `arp -a` retains complete entries after
+  # a device leaves, and deleting those entries requires root on macOS.
   sleep 1
-  for ip in $known_ips; do
-    ping -c2 -W3 "$ip" >/dev/null 2>&1 &
+  for ip in $probe_ips; do
+    "$PING" -c2 -W3 "$ip" >/dev/null 2>&1 &
   done
   wait
 
-  local arp_output
-  arp_output=$(arp -a | grep '192.168.165' 2>/dev/null || echo "")
-
-  if [ -z "$arp_output" ]; then
-    log "ERROR: ARP scan returned no results"
+  local arp_all reachability_all
+  if ! arp_all=$("$ARP" -a 2>/dev/null); then
+    log "WARN: ARP hostname query failed; continuing with numeric reachability"
+    arp_all=""
+  fi
+  if ! reachability_all=$("$ARP" -anl 2>/dev/null); then
+    log "ERROR: Extended ARP reachability query failed"
+    echo '{"error":"arp_reachability_failed","location":"crosstown"}'
+    return 1
+  fi
+  if [ -z "$reachability_all" ]; then
+    log "ERROR: Extended ARP reachability query returned no output"
     echo '{"error":"arp_scan_failed","location":"crosstown"}'
     return 1
   fi
 
-  $NODE -e "
+  local parsed
+  if ! parsed=$($NODE -e "
 const devices = $CROSSTOWN_DEVICES;
 const arpLines = process.argv[1].split('\n').filter(Boolean);
+const rawReachabilityLines = process.argv[2].split('\n').map(line => line.trim()).filter(Boolean);
 const results = {};
 
+function fail(message) {
+  console.error(message);
+  process.exit(2);
+}
+
+function normalizeMac(value) {
+  const parts = String(value || '').toLowerCase().split(':');
+  if (parts.length !== 6 || parts.some(part => !/^[0-9a-f]{1,2}$/.test(part))) return null;
+  return parts.map(part => Number.parseInt(part, 16).toString(16).padStart(2, '0')).join(':');
+}
+
+function inboundExpiryIsLive(value) {
+  // macOS arp -anl renders live durations as combinations such as 52s,
+  // 2m21s, or 1h3m. Unknown/expired/static entries must not prove presence.
+  if (value === 'expired' || value === '(none)') return false;
+  if (!/^[1-9][0-9dhms]{1,8}$/.test(value || '')) fail('unexpected inbound reachability value');
+  return true;
+}
+
+const header = rawReachabilityLines.shift() || '';
+if (!/^Neighbor\s+Linklayer Address\s+Expire\(O\)\s+Expire\(I\)\s+Netif(?:\s+Refs\s+Prbs)?$/.test(header)) {
+  fail('unexpected arp -anl header');
+}
+
+const liveRows = [];
+const liveKeys = new Map();
+for (const line of rawReachabilityLines) {
+  const columns = line.trim().split(/\s+/);
+  if (columns.length < 5) continue;
+  const [ip, rawMac, , inboundExpiry, iface] = columns;
+  if (!/^192\.168\.165\.[0-9]+$/.test(ip)) continue;
+  if (rawMac === '(incomplete)') continue;
+  const mac = normalizeMac(rawMac);
+  if (!mac) fail('malformed in-subnet link-layer address');
+  if (!inboundExpiryIsLive(inboundExpiry)) continue;
+  const key = ip + '|' + iface;
+  const previous = liveKeys.get(key);
+  if (previous && previous !== mac) fail('conflicting live link-layer rows');
+  if (!previous) {
+    liveKeys.set(key, mac);
+    liveRows.push({ ip, mac, iface });
+  }
+}
+
+const gatewayRows = liveRows.filter(row => row.ip === '192.168.165.1');
+if (gatewayRows.length !== 1) fail('gateway lacks unambiguous fresh inbound reachability');
+const activeInterface = gatewayRows[0].iface;
+const activeRows = liveRows.filter(row => row.iface === activeInterface);
+
+function neighborKey(ip, mac, iface) {
+  return ip + '|' + mac + '|' + iface;
+}
+
+const namesByNeighbor = new Map();
+for (const line of arpLines) {
+  const match = line.match(/^(\S+)\s+\(([0-9.]+)\)\s+at\s+([0-9a-f:]+|\(incomplete\))\s+on\s+(\S+)/i);
+  if (!match) continue;
+  const [, rawName, ip, rawMac, iface] = match;
+  const mac = normalizeMac(rawMac);
+  if (!mac) continue;
+  const live = activeRows.some(row => row.ip === ip && row.mac === mac && row.iface === iface);
+  if (!live) continue;
+  const name = rawName.toLowerCase().replace(/\.$/, '');
+  if (name !== '?') namesByNeighbor.set(neighborKey(ip, mac, iface), name);
+}
+
+function hostnameMatches(name, pattern) {
+  if (!name) return false;
+  const expected = pattern.toLowerCase().replace(/\.$/, '');
+  return name === expected || name.split('.')[0] === expected;
+}
+
 for (const dev of devices) {
-  for (const line of arpLines) {
-    const macMatch = line.match(/at\s+([0-9a-f:]+)/i);
-    const ipMatch = line.match(/\(([0-9.]+)\)/);
-    if (!macMatch || !ipMatch) continue;
-    // Skip incomplete ARP entries (device not on network)
-    if (line.includes('(incomplete)')) continue;
-    const mac = macMatch[1].toLowerCase();
-    const ip = ipMatch[1];
+  for (const row of activeRows) {
+    const name = namesByNeighbor.get(neighborKey(row.ip, row.mac, row.iface));
     let matched = false;
-    if (dev.match === 'mac') matched = mac === dev.pattern.toLowerCase();
-    else if (dev.match === 'ip') matched = ip === dev.pattern;
-    else if (dev.match === 'name' || dev.match === 'hostname') {
-      const nm = line.match(/^(\S+)/);
-      matched = nm && nm[1].toLowerCase().includes(dev.pattern.toLowerCase());
-    }
+    if (dev.match === 'mac') matched = row.mac === normalizeMac(dev.pattern);
+    else if (dev.match === 'name' || dev.match === 'hostname') matched = hostnameMatches(name, dev.pattern);
     if (matched) {
-      results[dev.person] = { present: true, ip, mac, device: dev.match === 'mac' ? 'phone (MAC match)' : dev.match === 'ip' ? 'phone (IP match)' : line.match(/^(\S+)/)?.[1] || 'unknown' };
+      results[dev.person] = {
+        present: true,
+        ip: row.ip,
+        mac: row.mac,
+        device: dev.match === 'mac' ? 'phone (MAC match)' : name
+      };
       break;
     }
   }
@@ -235,10 +324,15 @@ for (const dev of devices) {
 console.log(JSON.stringify({
   location: 'crosstown',
   timestamp: new Date().toISOString(),
-  totalDevices: arpLines.filter(l => !l.includes('(incomplete)')).length,
+  totalDevices: activeRows.length,
   presence: results
 }, null, 2));
-" "$arp_output" 2>/dev/null || echo '{"error":"parse_failed","location":"crosstown"}'
+" "$arp_all" "$reachability_all" 2>/dev/null); then
+    log "ERROR: ARP reachability parsing failed"
+    echo '{"error":"parse_failed","location":"crosstown"}'
+    return 1
+  fi
+  printf '%s\n' "$parsed"
 }
 
 # ── Potato: Fi collar GPS (runs on Mac Mini, queries cellular API) ──────────

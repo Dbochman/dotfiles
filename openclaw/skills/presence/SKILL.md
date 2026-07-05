@@ -136,12 +136,12 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 
 ### Crosstown (Boston)
 
-- **Method**: ARP scan of `192.168.165.0/24` with stale-entry refresh. After initial ping sweep, tracked IPs' ARP entries are deleted and re-pinged — only devices actually on the network re-populate (ARP is layer 2, works even when iPhones are sleeping and ignoring ICMP).
+- **Method**: Unprivileged ARP reachability scan of `192.168.165.0/24`. After active probes, `arp -anl` supplies receive-side reachability; only a matching device with a live inbound timer on the gateway's interface counts. This works when an iPhone answers ARP but ignores ICMP, without trusting a complete but expired cache row.
 - **Dylan**: MAC `6c:3a:ff:5f:fc:ba` (private WiFi address off at Crosstown)
-- **Julia**: Hostname `julias-iphone`, MAC `38:e1:3d:c0:40:63`, IP `192.168.165.248`
+- **Julia**: MAC `38:e1:3d:c0:40:63`, with exact hostname `julias-iphone` as the MAC-rotation fallback. IP alone is not identity.
 - **Potato** (dog, informational only): Fi collar base station — MAC `d4:3d:39:a7:4b:6c`, hostname `da16200-4b6c`. Does NOT affect vacancy decisions.
-- **Note**: Hostname matching (`julias-iphone.lan` from mDNS) is the most durable — survives MAC/IP rotation. MAC and IP are fallbacks.
-- **Stale ARP fix**: ARP entries persist 20+ minutes after a device leaves the network. The delete-and-re-ping cycle prevents false presence from cached entries.
+- **Note**: Exact hostname matching (`julias-iphone.lan` from mDNS) is the MAC-rotation fallback, but it is accepted only when joined to the same fresh IP/MAC/interface row.
+- **Stale ARP defense**: Complete ARP entries can persist after a device leaves. Presence therefore requires live receive-side reachability, plus a MAC or exact hostname match; send-side freshness, `(none)`, `expired`, and `(incomplete)` rows do not count. A fresh gateway row is required so LAN failure cannot become a valid all-absent scan.
 
 ## Important Notes
 

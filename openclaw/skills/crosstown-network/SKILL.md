@@ -62,21 +62,27 @@ ssh dylans-macbook-pro "for i in \$(seq 1 254); do ping -c1 -W1 192.168.165.\$i 
 Check a specific device:
 
 ```bash
-ssh dylans-macbook-pro "ping -c3 -W2 192.168.165.124; arp -a | grep 192.168.165.124"
+ssh dylans-macbook-pro "ping -c3 -W2 192.168.165.124; arp -anl | grep '^192.168.165.124 '; arp -a | grep 192.168.165.124"
 ```
 
 ## Presence Detection
 
-Track phone presence by pinging known MAC addresses and hostnames:
+Track phone presence by probing the LAN and requiring live receive-side
+reachability from `arp -anl` before matching a MAC or exact hostname:
 
 | Person | Hostname | MAC (Crosstown WiFi) | IP |
 |---|---|---|---|
 | Dylan | `dylans-iphone` | `6c:3a:ff:5f:fc:ba` | `192.168.165.124` |
 | Julia | `julias-iphone` | `38:e1:3d:c0:40:63` | `192.168.165.248` |
 
-Matching priority: MAC → IP → hostname (mDNS `.lan` name from ARP table). Hostname is most durable — survives iOS MAC/IP rotation.
+Matching priority: MAC → exact hostname (mDNS `.lan` name joined to the same
+fresh IP/MAC/interface row). IP alone is not accepted as identity. Hostname is
+the durable fallback when iOS rotates its per-network MAC.
 
-iPhones in sleep mode may not respond to the first ping — use `ping -c3` for reliability.
+iPhones in sleep mode may ignore ICMP while still answering ARP. The presence
+scanner therefore ignores ping exit status and trusts only a live inbound
+reachability timer; cached complete rows with expired inbound reachability do
+not count.
 
 ## Bonjour Discovery
 
