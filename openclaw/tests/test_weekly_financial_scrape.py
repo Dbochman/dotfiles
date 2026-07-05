@@ -140,6 +140,61 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         self.assertEqual(credential_env["SCRAPER_PW"], "private-password")
         self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", credential_env)
 
+    def test_boa_profile_preflight_acquires_only_the_finance_profile(self):
+        completed = weekly_financial_scrape.CommandResult(
+            0,
+            stdout="inst_123abc\t1\n",
+        )
+        with patch.object(
+            weekly_financial_scrape,
+            "_run_captured",
+            return_value=completed,
+        ) as run_captured:
+            status = weekly_financial_scrape.ensure_boa_profile(self.BASE_ENV)
+
+        self.assertEqual(status, "ok")
+        run_captured.assert_called_once_with(
+            [
+                str(weekly_financial_scrape.PINCHTAB_INSTANCE_HELPER),
+                "acquire",
+                "finance",
+            ],
+            self.BASE_ENV,
+            weekly_financial_scrape.PROFILE_PREFLIGHT_TIMEOUT_SECONDS,
+        )
+
+    def test_boa_profile_preflight_fails_closed_on_bad_helper_results(self):
+        cases = (
+            (weekly_financial_scrape.CommandResult(1), "failed"),
+            (weekly_financial_scrape.CommandResult(124, timed_out=True), "timeout"),
+            (weekly_financial_scrape.CommandResult(0, stdout=""), "failed"),
+            (weekly_financial_scrape.CommandResult(0, stdout="unexpected\n"), "failed"),
+            (
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="inst_one\t0\ninst_two\t0\n",
+                ),
+                "failed",
+            ),
+        )
+        for completed, expected in cases:
+            with self.subTest(completed=completed), patch.object(
+                weekly_financial_scrape,
+                "_run_captured",
+                return_value=completed,
+            ):
+                self.assertEqual(
+                    weekly_financial_scrape.ensure_boa_profile(self.BASE_ENV),
+                    expected,
+                )
+
+    def test_boa_profile_preflight_is_part_of_source_health(self):
+        result = {"scrape": "ok", "import": "ok", "profile_preflight": "ok"}
+        self.assertTrue(weekly_financial_scrape.result_ok(result))
+
+        result["profile_preflight"] = "failed"
+        self.assertFalse(weekly_financial_scrape.result_ok(result))
+
     def test_standard_source_reauths_once_for_recognized_auth_failure(self):
         source = self.source_named("eversource")
         op_env = {
@@ -703,8 +758,10 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         )
         private_markers = ("private-child-stdout", "private-child-stderr")
         calls = []
+        events = []
 
         def fake_run(arguments, env, timeout=weekly_financial_scrape.COMMAND_TIMEOUT_SECONDS):
+            events.append("source")
             calls.append((arguments, dict(env)))
             return weekly_financial_scrape.CommandResult(
                 0,
@@ -720,10 +777,17 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             "import": "ok",
         }
         boa_calls = []
+        profile_preflight_calls = []
 
         def fake_boa(run_id, env, op_env=None):
+            events.append("boa")
             boa_calls.append((run_id, dict(env), dict(op_env or {})))
             return boa_result
+
+        def fake_profile_preflight(env):
+            events.append("profile_preflight")
+            profile_preflight_calls.append(dict(env))
+            return "ok"
 
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
@@ -748,6 +812,11 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                 patch.object(weekly_financial_scrape, "run_command", side_effect=fake_run),
                 patch.object(
                     weekly_financial_scrape,
+                    "ensure_boa_profile",
+                    side_effect=fake_profile_preflight,
+                ),
+                patch.object(
+                    weekly_financial_scrape,
                     "run_boa",
                     side_effect=fake_boa,
                 ),
@@ -767,12 +836,23 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         self.assertEqual(returncode, 0)
         for marker in private_markers:
             self.assertNotIn(marker, output)
+        self.assertEqual(
+            events,
+            ["profile_preflight", "source", "source", "boa"],
+        )
         self.assertEqual(len(calls), 2)
         for _, child_env in calls:
             self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", child_env)
             self.assertNotIn("SCRAPER_USER", child_env)
             self.assertNotIn("SCRAPER_PW", child_env)
         self.assertEqual(len(boa_calls), 1)
+        self.assertEqual(len(profile_preflight_calls), 1)
+        self.assertNotIn(
+            "OP_SERVICE_ACCOUNT_TOKEN",
+            profile_preflight_calls[0],
+        )
+        self.assertNotIn("SCRAPER_USER", profile_preflight_calls[0])
+        self.assertNotIn("SCRAPER_PW", profile_preflight_calls[0])
         boa_child_env = boa_calls[0][1]
         boa_op_env = boa_calls[0][2]
         self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", boa_child_env)
@@ -787,6 +867,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         payloads = [json.loads(line) for line in output.splitlines()]
         self.assertEqual(payloads[0]["source"], "fixture_source")
         self.assertEqual(payloads[1]["source"], "boa")
+        self.assertEqual(payloads[1]["profile_preflight"], "ok")
         self.assertEqual(payloads[2]["status"], "ok")
         self.assertEqual(payloads[2]["run_id"], self.RUN_ID)
 
