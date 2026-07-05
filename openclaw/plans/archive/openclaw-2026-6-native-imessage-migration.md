@@ -39,7 +39,7 @@ retired application.
 - The live SQLite cron store has 25 enabled iMessage deliveries and zero
   BlueBubbles deliveries.
 - `vacancy-actions.sh` sends front-door lock alerts through native `imsg` to
-  `chat_id:171`; no production caller requires the retired HTTP API.
+  `chat_id:${DYLAN_CHAT_ID}`; no production caller requires the retired HTTP API.
 - The usage dashboard now reports the supported native path through a passive
   iMessage health card and `/api/imessage-health`; the live state is healthy.
 - Inbound iMessage attachments are enabled globally, constrained to the local
@@ -68,7 +68,7 @@ retired application.
   `v2_ready: true`, `bridge_version: 2`, typing indicators and read receipts
   available.
 - `imsg rpc`: `chats.list` JSON-RPC smoke test succeeds.
-- `imsg send --chat-id 171` and `imsg send --chat-id 1`: direct test sends
+- `imsg send --chat-id ${DYLAN_CHAT_ID}` and `imsg send --chat-id ${JULIA_CHAT_ID}`: direct test sends
   succeeded after the upgrade.
 - Gateway iMessage provider: running after macOS Full Disk Access/Automation
   prompts were approved for `OpenClawGateway.app`.
@@ -136,15 +136,15 @@ Known delivery targets from `jobs.json`:
 
 | Jobs | Legacy pre-cutover target | Current native iMessage target |
 |------|----------------|--------------------------|
-| Julia morning briefing | `+15084234853` | `chat_id:1` |
-| Dylan briefings and World Cup jobs | `+17813544611` | `chat_id:171` |
-| Weekly report | `+17813544611` | `chat_id:171` |
+| Julia morning briefing | `${JULIA_PHONE}` | `chat_id:${JULIA_CHAT_ID}` |
+| Dylan briefings and World Cup jobs | `${DYLAN_PHONE}` | `chat_id:${DYLAN_CHAT_ID}` |
+| Weekly report | `${DYLAN_PHONE}` | `chat_id:${DYLAN_CHAT_ID}` |
 
 Native `imsg chats` currently maps:
 
-- `chat_id:171` -> `dylanbochman@gmail.com`
-- `chat_id:1` -> `+15084234853`
-- `chat_id:170` -> group identifier `7010feab69b14fa19071a88340495f2f`
+- `chat_id:${DYLAN_CHAT_ID}` -> `${IMESSAGE_CHAT_IDENTIFIER}`
+- `chat_id:${JULIA_CHAT_ID}` -> `${JULIA_PHONE}`
+- `chat_id:${HOUSEHOLD_CHAT_ID}` -> group identifier `${IMESSAGE_GROUP_IDENTIFIER}`
 
 Production jobs use `chat_id:*` delivery targets. The OpenClaw `2026.6.10`
 iMessage docs recommend explicit chat targets for stable routing.
@@ -266,7 +266,7 @@ Completed notes:
 - First `imsg launch` timed out because Messages.app was not fully reset.
   `imsg launch --kill-only`, followed by `imsg launch --verbose`, succeeded.
 - `imsg status --json` now reports `advanced_features: true`.
-- Direct sends to `chat_id:171` and `chat_id:1` succeeded.
+- Direct sends to `chat_id:${DYLAN_CHAT_ID}` and `chat_id:${JULIA_CHAT_ID}` succeeded.
 - `imsg rpc` responded to `chats.list`.
 
 Pre-migration note: the installed `imsg 0.5.0` was too old for the target
@@ -290,9 +290,9 @@ Before relying on launchd, validate from the exact process contexts that matter:
 
 ```bash
 imsg chats --limit 10 --json | jq -s 'length'
-imsg history --chat-id 171 --limit 5 --attachments --json | jq -s 'length'
-imsg send --chat-id 171 --text "OpenClaw imsg direct test"
-imsg send --chat-id 1 --text "OpenClaw imsg direct test"
+imsg history --chat-id ${DYLAN_CHAT_ID} --limit 5 --attachments --json | jq -s 'length'
+imsg send --chat-id ${DYLAN_CHAT_ID} --text "OpenClaw imsg direct test"
+imsg send --chat-id ${JULIA_CHAT_ID} --text "OpenClaw imsg direct test"
 ```
 
 If reads hang or fail:
@@ -352,8 +352,8 @@ Completed notes:
 - The live-preserving `openai-codex:default` auth profile was retained in repo
   config.
 - Cron delivery channels were migrated from `bluebubbles` to `imessage`.
-- Dylan deliveries now target `chat_id:171`; Julia deliveries now target
-  `chat_id:1`.
+- Dylan deliveries now target `chat_id:${DYLAN_CHAT_ID}`; Julia deliveries now target
+  `chat_id:${JULIA_CHAT_ID}`.
 - Direct production notification scripts were moved off BlueBubbles HTTP:
   - `openclaw/skills/dog-walk/dog-walk-listener.py`
   - `openclaw/bin/send-audio-briefing`
@@ -442,8 +442,8 @@ Notes:
 Update `openclaw/cron/jobs.json`:
 
 - Replace every `delivery.channel: "bluebubbles"` with `"imessage"`.
-- Replace Dylan delivery targets with `chat_id:171`.
-- Replace Julia delivery targets with `chat_id:1`.
+- Replace Dylan delivery targets with `chat_id:${DYLAN_CHAT_ID}`.
+- Replace Julia delivery targets with `chat_id:${JULIA_CHAT_ID}`.
 - Leave job prompts alone unless they explicitly say BlueBubbles.
 - Preserve `--no-deliver` or delivery suppression decisions already present in
   job definitions.
@@ -622,10 +622,10 @@ Completed notes:
   `bonjour, browser, canvas, device-pair, elevenlabs, file-transfer, imessage,
   memory-core, phone-control, talk-voice`.
 - Gateway outbound send to Dylan through `openclaw message send --channel
-  imessage --target chat_id:171` succeeded. The local Messages DB confirmed
-  GUID `320F4753-C638-4792-A48D-30F06B791DA1`.
+  imessage --target chat_id:${DYLAN_CHAT_ID}` succeeded. The local Messages DB confirmed
+  GUID `[private message GUID]`.
 - A second post-permission gateway send succeeded with GUID
-  `4F12B4D6-CA3F-46CD-86C9-EDE1BB62D098`.
+  `[private message GUID]`.
 - Dylan replied `"Messaged received"` to the first gateway test.
 - Dylan tapbacked the post-permission test; the gateway logged
   `reaction system event queued` for the iMessage session, confirming the
@@ -635,9 +635,9 @@ Completed notes:
   reply included a visible fallback notice from `openai-codex/gpt-5.5` to
   `anthropic/claude-opus-4-6`.
 - A post-restart gateway send succeeded with GUID
-  `92BE7CE5-B4E3-489E-BF9A-BFF45296EA4B`; the local Messages DB confirmed the
+  `[private message GUID]`; the local Messages DB confirmed the
   send and a tapback reaction.
-- Direct `imsg` sends to Julia `chat_id:1` succeeded before the OpenClaw
+- Direct `imsg` sends to Julia `chat_id:${JULIA_CHAT_ID}` succeeded before the OpenClaw
   package cutover.
 - `openclaw cron status --json`: `storage: "sqlite"`, `jobs: 38`.
 - `openclaw cron list --json`: 25 live iMessage delivery jobs and zero
@@ -673,13 +673,13 @@ Expected:
 ```bash
 openclaw message send \
   --channel imessage \
-  --target chat_id:171 \
+  --target chat_id:${DYLAN_CHAT_ID} \
   --message "OpenClaw native iMessage cutover test to Dylan" \
   --json | jq .
 
 openclaw message send \
   --channel imessage \
-  --target chat_id:1 \
+  --target chat_id:${JULIA_CHAT_ID} \
   --message "OpenClaw native iMessage cutover test to Julia" \
   --json | jq .
 ```
@@ -804,7 +804,7 @@ Completed retirement and purge:
 - Refreshed the plugin registry and restarted the gateway. The native-only
   startup loaded `imessage` and no BlueBubbles plugin; plugin doctor was clean.
 - Migrated `vacancy-actions.sh` lock alerts to
-  `/opt/homebrew/bin/imsg send --chat-id 171` and verified `imsg` readiness from
+  `/opt/homebrew/bin/imsg send --chat-id ${DYLAN_CHAT_ID}` and verified `imsg` readiness from
   a launchd job context.
 - Removed the BlueBubbles Homebrew cask with its zap stanza, app-owned
   Application Support, preferences, logs, saved state, login item, and local
@@ -882,7 +882,7 @@ csrutil status
 defaults read /Library/Preferences/com.apple.security.libraryvalidation.plist DisableLibraryValidation 2>/dev/null || true
 imsg status --json | jq .
 openclaw channels status --probe --channel imessage
-openclaw message send --channel imessage --target chat_id:171 --message "SIP re-enabled iMessage test" --json
+openclaw message send --channel imessage --target chat_id:${DYLAN_CHAT_ID} --message "SIP re-enabled iMessage test" --json
 ```
 
 Expected under Option B:

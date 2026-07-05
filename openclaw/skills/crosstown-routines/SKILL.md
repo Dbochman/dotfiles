@@ -7,7 +7,7 @@ metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest","crosstown-r
 
 # Crosstown Routines (Boston)
 
-Predefined routines for the **Crosstown (Boston — 19 Crosstown Ave)** home. These only apply to Crosstown — do NOT run these for the Cabin (Philly). For Cabin routines, see the `cabin-routines` skill.
+Predefined routines for the **Crosstown (Boston — Crosstown residence)** home. These only apply to Crosstown — do NOT run these for the Cabin (Philly). For Cabin routines, see the `cabin-routines` skill.
 
 **Important:** All `hue` commands in this skill use the `--crosstown` flag (or no flag, since Crosstown is the default). Crosstown speakers are controlled via the `speaker` CLI.
 

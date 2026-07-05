@@ -17,7 +17,7 @@
         "provider": "openai",
         "mode": "oauth"
       },
-      "openai:dbochman@nvidia.com": {
+      "openai:work-account": {
         "provider": "openai",
         "mode": "oauth"
       }

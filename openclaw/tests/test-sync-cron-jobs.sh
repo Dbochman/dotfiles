@@ -9,6 +9,14 @@ trap 'rm -rf "$TEST_HOME"' EXIT
 mkdir -p \
   "$TEST_HOME/dotfiles/openclaw/cron" \
   "$TEST_HOME/.openclaw/cron/runs"
+printf '%s\n' \
+  "DYLAN_EMAIL=dylan@example.invalid" \
+  "JULIA_EMAIL=julia@example.invalid" \
+  "HOUSEHOLD_CHAT_ID=170" \
+  "JULIA_CHAT_ID=1" \
+  "DYLAN_CHAT_ID=2" \
+  > "$TEST_HOME/.openclaw/.secrets-cache"
+chmod 600 "$TEST_HOME/.openclaw/.secrets-cache"
 cp "$REPO_ROOT/openclaw/sync-cron-jobs.sh" \
   "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh"
 chmod +x "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh"
@@ -273,5 +281,65 @@ if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_UPDATE" ] || \
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
 fi
+
+# Private identities remain placeholders in dotfiles, expand only into the
+# machine-local live store, and are re-redacted by save.
+PRIVATE_DOTFILES="$TEST_HOME/private-jobs.json"
+PRIVATE_LIVE="$TEST_HOME/private-live/jobs.json"
+PRIVATE_SQLITE="$TEST_HOME/private-live/missing.sqlite"
+mkdir -p "$(dirname "$PRIVATE_LIVE")"
+printf '%s\n' '{
+  "version": 1,
+  "jobs": [{
+    "id": "private-routing",
+    "enabled": true,
+    "schedule": {"kind": "cron", "expr": "0 7 1 2 *"},
+    "payload": {"message": "account=${DYLAN_EMAIL}"},
+    "delivery": {"to": "chat_id:${DYLAN_CHAT_ID}"}
+  }]
+}' > "$PRIVATE_DOTFILES"
+HOME="$TEST_HOME" \
+DOTFILES_JOBS="$PRIVATE_DOTFILES" \
+LIVE_JOBS="$PRIVATE_LIVE" \
+SQLITE_DB="$PRIVATE_SQLITE" \
+  "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh" deploy >/dev/null
+python3 - "$PRIVATE_DOTFILES" "$PRIVATE_LIVE" <<'PY'
+import json
+import sys
+
+tracked = open(sys.argv[1], encoding="utf-8").read()
+live = json.load(open(sys.argv[2], encoding="utf-8"))["jobs"][0]
+assert "${DYLAN_EMAIL}" in tracked
+assert "${DYLAN_CHAT_ID}" in tracked
+assert '"expr": "0 7 1 2 *"' in tracked
+assert live["payload"]["message"] == "account=dylan@example.invalid"
+assert live["delivery"]["to"] == "chat_id:2"
+PY
+HOME="$TEST_HOME" \
+DOTFILES_JOBS="$PRIVATE_DOTFILES" \
+LIVE_JOBS="$PRIVATE_LIVE" \
+SQLITE_DB="$PRIVATE_SQLITE" \
+  "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh" save >/dev/null
+grep -Fq '${DYLAN_EMAIL}' "$PRIVATE_DOTFILES"
+grep -Fq '${DYLAN_CHAT_ID}' "$PRIVATE_DOTFILES"
+if grep -Fq 'dylan@example.invalid' "$PRIVATE_DOTFILES"; then
+  echo "save leaked a machine-local identity into tracked definitions" >&2
+  exit 1
+fi
+
+chmod 644 "$TEST_HOME/.openclaw/.secrets-cache"
+before_insecure=$(cksum "$PRIVATE_LIVE")
+insecure_output=$(HOME="$TEST_HOME" \
+  DOTFILES_JOBS="$PRIVATE_DOTFILES" \
+  LIVE_JOBS="$PRIVATE_LIVE" \
+  SQLITE_DB="$PRIVATE_SQLITE" \
+    "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh" deploy 2>&1)
+after_insecure=$(cksum "$PRIVATE_LIVE")
+if [[ "$before_insecure" != "$after_insecure" ]]; then
+  echo "cron deploy changed live definitions with an insecure identity cache" >&2
+  exit 1
+fi
+grep -q 'live definitions preserved' <<< "$insecure_output"
+chmod 600 "$TEST_HOME/.openclaw/.secrets-cache"
 
 echo "test-sync-cron-jobs: PASS"

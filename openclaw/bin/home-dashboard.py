@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Home Control Plane Dashboard — single-file HTTP server with embedded UI."""
 
+import hmac
 import json
+import math
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -16,8 +19,12 @@ from urllib.parse import parse_qs, urlparse
 
 
 PORT = 8558
+BIND_HOST = "0.0.0.0"
 CACHE_TTL_SECONDS = 60
 COMMAND_TIMEOUT_SECONDS = 30
+MAX_COMMAND_BODY_BYTES = 16 * 1024
+MUTATION_TOKEN = secrets.token_urlsafe(32)
+MUTATION_TOKEN_PLACEHOLDER = "__HOME_DASHBOARD_MUTATION_TOKEN__"
 PRESENCE_STATE_PATH = os.path.expanduser("~/.openclaw/presence/state.json")
 NEST_HISTORY_DIR = os.path.expanduser("~/.openclaw/nest-history")
 DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
@@ -377,6 +384,79 @@ def _build_hue_command(bridge_flag, action, args):
     raise KeyError("action")
 
 
+class CommandValidationError(ValueError):
+    """Raised when a dashboard command is outside its fixed allowlist."""
+
+
+_NEST_THERMOSTAT_ROOMS = {"Solarium", "Living Room", "Bedroom"}
+_NEST_CAMERA_ROOMS = {"kitchen", "laundry", "livingroom"}
+
+
+def _require_args(args, *, required, optional=()):
+    required = set(required)
+    allowed = required | set(optional)
+    keys = set(args)
+    if keys - allowed:
+        raise CommandValidationError("unexpected command argument")
+    if required - keys:
+        raise CommandValidationError("missing command argument")
+
+
+def _require_choice(value, choices, field):
+    if not isinstance(value, str) or value not in choices:
+        raise CommandValidationError(f"invalid {field}")
+    return value
+
+
+def _build_nest_set_command(args):
+    _require_args(args, required=("room", "temp"))
+    room = _require_choice(args["room"], _NEST_THERMOSTAT_ROOMS, "room")
+    raw_temp = args["temp"]
+    if isinstance(raw_temp, bool) or not isinstance(raw_temp, (int, float, str)):
+        raise CommandValidationError("invalid temperature")
+    try:
+        temp = float(raw_temp)
+    except (TypeError, ValueError):
+        raise CommandValidationError("invalid temperature") from None
+    if not math.isfinite(temp) or not 45 <= temp <= 90:
+        raise CommandValidationError("temperature must be between 45 and 90 degrees Fahrenheit")
+    return ["nest", "set", room, format(temp, "g")]
+
+
+def _build_nest_mode_command(args):
+    _require_args(args, required=("room", "mode"))
+    room = _require_choice(args["room"], _NEST_THERMOSTAT_ROOMS, "room")
+    mode = _require_choice(args["mode"], {"HEAT", "OFF"}, "mode")
+    return ["nest", "mode", room, mode]
+
+
+def _build_nest_eco_command(args):
+    _require_args(args, required=("room",), optional=("mode",))
+    room = _require_choice(args["room"], _NEST_THERMOSTAT_ROOMS, "room")
+    mode = _require_choice(args.get("mode", "on"), {"on", "off"}, "eco mode")
+    return ["nest", "eco", room, mode]
+
+
+def _build_nest_camera_command(args):
+    _require_args(args, required=("room",))
+    room = _require_choice(args["room"], _NEST_CAMERA_ROOMS, "camera room")
+    return ["nest", "camera", "snap", room, os.path.join(CAMERA_SNAP_DIR, f"{room}.jpg")]
+
+
+def _build_petlibro_feed_command(args):
+    _require_args(args, required=("portions",))
+    portions = args["portions"]
+    if isinstance(portions, bool):
+        raise CommandValidationError("portions must be an integer from 1 to 3")
+    try:
+        normalized = int(portions)
+    except (TypeError, ValueError):
+        raise CommandValidationError("portions must be an integer from 1 to 3") from None
+    if str(portions).strip() != str(normalized) or not 1 <= normalized <= 3:
+        raise CommandValidationError("portions must be an integer from 1 to 3")
+    return ["petlibro", "feed", "crosstown-feeder", str(normalized)]
+
+
 COMMANDS = {
     "hue_crosstown": {
         "on": lambda a: _build_hue_command("--crosstown", "on", a),
@@ -391,9 +471,9 @@ COMMANDS = {
         "color": lambda a: _build_hue_command("--cabin", "color", a),
     },
     "nest": {
-        "set": lambda a: ["nest", "set", a["room"], str(a["temp"])],
-        "mode": lambda a: ["nest", "mode", a["room"], a["mode"]],
-        "eco": lambda a: ["nest", "eco", a["room"], a.get("mode", "on")],
+        "set": _build_nest_set_command,
+        "mode": _build_nest_mode_command,
+        "eco": _build_nest_eco_command,
     },
     "cielo": {
         "on": lambda a: ["cielo", "on", "-d", a["device"]],
@@ -435,7 +515,7 @@ COMMANDS = {
         "reset": lambda a: ["litter-robot", "reset"],
     },
     "petlibro": {
-        "feed": lambda a: ["petlibro", "feed", "feeder"] + ([str(a["portions"])] if "portions" in a else []),
+        "feed": _build_petlibro_feed_command,
     },
     "eightsleep": {
         "temp": lambda a: ["8sleep", "temp", a["side"], str(a["level"])],
@@ -443,8 +523,7 @@ COMMANDS = {
         "on": lambda a: ["8sleep", "on", a["side"]],
     },
     "nest_camera": {
-        "snap": lambda a: ["nest", "camera", "snap", a.get("room", "kitchen"),
-                           os.path.join(CAMERA_SNAP_DIR, a.get("room", "kitchen") + ".jpg")],
+        "snap": _build_nest_camera_command,
     },
     "ring_camera": {
         "snap": lambda a: ["ring", "snapshot",
@@ -462,23 +541,25 @@ def execute_command(payload):
     action = payload.get("action")
     args = payload.get("args") or {}
 
+    if not isinstance(device, str) or not isinstance(action, str):
+        return 400, {"success": False, "error": "device and action must be strings"}
     if not isinstance(args, dict):
         return 400, {"success": False, "error": "args must be a JSON object"}
 
     device_commands = COMMANDS.get(device)
     if not device_commands:
-        return 400, {"success": False, "error": f"unknown device: {device}"}
+        return 400, {"success": False, "error": "unknown device"}
 
     builder = device_commands.get(action)
     if not builder:
-        return 400, {"success": False, "error": f"unknown action for {device}: {action}"}
+        return 400, {"success": False, "error": "unknown action"}
 
     try:
         command = builder(args)
-    except KeyError as exc:
-        return 400, {"success": False, "error": f"missing argument: {exc.args[0]}"}
-    except Exception as exc:
+    except CommandValidationError as exc:
         return 400, {"success": False, "error": str(exc)}
+    except (KeyError, TypeError, ValueError):
+        return 400, {"success": False, "error": "invalid command arguments"}
 
     try:
         result = subprocess.run(
@@ -487,23 +568,21 @@ def execute_command(payload):
             timeout=COMMAND_TIMEOUT_SECONDS,
             text=True,
         )
-    except FileNotFoundError as exc:
-        return 502, {"success": False, "error": str(exc), "command": command}
+    except FileNotFoundError:
+        return 502, {"success": False, "error": "command unavailable"}
     except subprocess.TimeoutExpired:
         return 504, {
             "success": False,
             "error": f"command timed out after {COMMAND_TIMEOUT_SECONDS}s",
-            "command": command,
         }
-    except OSError as exc:
-        return 502, {"success": False, "error": str(exc), "command": command}
+    except OSError:
+        return 502, {"success": False, "error": "command could not be started"}
 
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
 
     response = {
         "success": result.returncode == 0,
-        "command": command,
         "output": stdout,
         "error": stderr,
         "returncode": result.returncode,
@@ -523,9 +602,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Allow", "GET, POST, OPTIONS")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
     def do_GET(self):
@@ -566,10 +644,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._respond(404, {"error": "not found"})
             return
 
+        if not self._origin_is_same_host():
+            self._respond(403, {"success": False, "error": "cross-origin mutation denied"})
+            return
+
+        if not self._has_valid_mutation_token():
+            self._respond(
+                401,
+                {"success": False, "error": "mutation authorization required"},
+                extra_headers=(("WWW-Authenticate", "Bearer"),),
+            )
+            return
+
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             self._respond(400, {"success": False, "error": "invalid Content-Length"})
+            return
+        if not 0 <= content_length <= MAX_COMMAND_BODY_BYTES:
+            self._respond(413, {"success": False, "error": "command body too large"})
             return
 
         body = self.rfile.read(content_length) if content_length > 0 else b"{}"
@@ -582,22 +675,55 @@ class DashboardHandler(BaseHTTPRequestHandler):
         code, response = execute_command(payload)
         self._respond(code, response)
 
-    def _respond(self, code, data):
+    def _origin_is_same_host(self):
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = self.headers.get("Host")
+        if not host:
+            return False
+        parsed = urlparse(origin)
+        return (
+            parsed.scheme in {"http", "https"}
+            and parsed.netloc.casefold() == host.casefold()
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path in {"", "/"}
+            and not parsed.params
+            and not parsed.query
+            and not parsed.fragment
+        )
+
+    def _has_valid_mutation_token(self):
+        authorization = self.headers.get("Authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        return (
+            separator == " "
+            and scheme == "Bearer"
+            and bool(token)
+            and hmac.compare_digest(token, MUTATION_TOKEN)
+        )
+
+    def _respond(self, code, data, *, extra_headers=()):
         body = json.dumps(data).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Cache-Control", "no-store")
+        for name, value in extra_headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
     def _serve_html(self):
-        body = DASHBOARD_HTML.encode()
+        token_literal = json.dumps(MUTATION_TOKEN)
+        body = DASHBOARD_HTML.replace(MUTATION_TOKEN_PLACEHOLDER, token_literal).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
@@ -836,7 +962,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
               <option value="Living Room">Living Room</option>
               <option value="Bedroom" selected>Bedroom</option>
             </select>
-            <input name="temp" type="number" step="1" placeholder="Temp °F">
+            <input name="temp" type="number" min="45" max="90" step="1" placeholder="Temp °F (45-90)">
             <select name="mode">
               <option value="">Mode...</option>
               <option value="HEAT">Heat</option>
@@ -1068,7 +1194,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
         <div id="petlibroContent" class="content"></div>
         <div class="controls">
           <form id="petlibro-form" class="controls-grid">
-            <input name="portions" type="number" min="1" step="1" placeholder="Portions">
+            <input name="portions" type="number" min="1" max="3" step="1" required placeholder="Portions (1-3)">
           </form>
           <div class="command-row">
             <button type="button" data-command data-device="petlibro" data-action="feed" data-form="petlibro-form" data-fields="portions">Feed</button>
@@ -1210,6 +1336,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 </div>
 
 <script>
+const MUTATION_TOKEN = __HOME_DASHBOARD_MUTATION_TOKEN__;
 const state = {
   location: 'both',
   data: null,
@@ -1929,7 +2056,10 @@ async function postCommand(button) {
   try {
     const response = await fetch('/api/command', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Authorization': `Bearer ${MUTATION_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ device, action, args }),
     });
     const data = await response.json();
@@ -2038,7 +2168,7 @@ setInterval(() => fetchStatus(), 5 * 60 * 1000);
 
 
 def run():
-    server = ThreadedHTTPServer(("0.0.0.0", PORT), DashboardHandler)
+    server = ThreadedHTTPServer((BIND_HOST, PORT), DashboardHandler)
 
     # Precache all collectors on startup
     threading.Thread(target=collect_status_bundle, daemon=True).start()
@@ -2067,7 +2197,7 @@ def run():
 
     threading.Thread(target=_periodic_refresh, daemon=True).start()
 
-    print(f"Home Control Plane running on http://0.0.0.0:{PORT}", flush=True)
+    print(f"Home Control Plane running on http://{BIND_HOST}:{PORT}", flush=True)
     print("  Access via Tailscale IP or localhost", flush=True)
 
     def shutdown(signum, frame):

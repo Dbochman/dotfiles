@@ -24,6 +24,22 @@ SPEC.loader.exec_module(briefing)
 
 
 class DylanMorningBriefingDataTests(unittest.TestCase):
+    def setUp(self) -> None:
+        original_account = briefing.ACCOUNT
+        briefing.ACCOUNT = "dylan@example.invalid"
+        self.addCleanup(setattr, briefing, "ACCOUNT", original_account)
+
+    def test_missing_account_fails_unavailable_before_spawning_gws(self) -> None:
+        briefing.ACCOUNT = ""
+
+        def forbidden_runner(*_args, **_kwargs):
+            self.fail("GWS must not be spawned without an explicit account")
+
+        result = briefing.collect_data(runner=forbidden_runner)
+
+        self.assertEqual(result["calendar"]["reason"], "missing_account")
+        self.assertEqual(result["inbox"]["reason"], "missing_account")
+
     def test_success_filters_gmail_output_and_uses_raw_api_account_env(self) -> None:
         calls: list[tuple[list[str], dict[str, str]]] = []
 
@@ -279,6 +295,7 @@ child.wait()
             env = os.environ.copy()
             env["GWS_BIN"] = str(fake_gws)
             env["CHILD_MARKER"] = str(marker)
+            env["DYLAN_EMAIL"] = "dylan@example.invalid"
             process = subprocess.Popen(
                 [sys.executable, str(SCRIPT)],
                 env=env,

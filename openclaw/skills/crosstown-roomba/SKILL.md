@@ -1,13 +1,13 @@
 ---
 name: crosstown-roomba
-description: Control the iRobot Roombas at Crosstown (Boston — 19 Crosstown Ave). Two robots available. Use when asked to vacuum, mop, start/stop/dock the Roomba at Crosstown, clean the house, or anything about the Roombas at Crosstown. NOT for Cabin Roombas (use roomba skill for Floomba/Philly).
-allowed-tools: Bash(crosstown-roomba:*) Bash(ssh:*)
+description: Control the iRobot Roombas at Crosstown (Boston — Crosstown residence). Two robots available. Use when asked to vacuum, mop, start/stop/dock the Roomba at Crosstown, clean the house, or anything about the Roombas at Crosstown. NOT for Cabin Roombas (use roomba skill for Floomba/Philly).
+allowed-tools: Bash(crosstown-roomba:*)
 metadata: {"openclaw":{"emoji":"🤖","requires":{"bins":["crosstown-roomba"]}}}
 ---
 
 # Crosstown Roomba Control (Boston)
 
-Control two iRobot Roombas at **Crosstown (Boston — 19 Crosstown Ave)** via local MQTT through the MacBook Pro.
+Control two iRobot Roombas at **Crosstown (Boston — Crosstown residence)** via local MQTT through the MacBook Pro.
 
 ## Robots
 
@@ -17,6 +17,10 @@ Control two iRobot Roombas at **Crosstown (Boston — 19 Crosstown Ave)** via lo
 | **scoomba** | j5 | Roomba J5 | Vacuum only |
 
 Use `all` to target both robots.
+
+Robot names and aliases are exact (case-insensitive). Never guess from a partial
+name: if a requested name is not listed above, ask the user to clarify instead
+of substituting a robot.
 
 ## Commands
 
@@ -46,7 +50,11 @@ crosstown-roomba dock all
 ```
 The `dock` command automatically sends `stop` first, then `dock`. This is necessary because iRobot's MQTT `dock` command alone does not interrupt an active cleaning cycle — the robot ignores it while in `run` phase.
 
-If a robot is already on the dock charging (`cleanMissionStatus.phase == "charge"`), the CLI skips the stop+dock sequence for that robot and prints `Already on dock — skipping.`. With `dock all`, the other robot is still processed normally. This avoids redundant commands on the verify-retry path when only one robot needs a re-dock.
+Before docking, the CLI must successfully read mission status. If the robot is
+already charging (`cleanMissionStatus.phase == "charge"`), it safely skips that
+robot. Otherwise it requires both the pre-dock `stop` command and stop-state
+verification to succeed before sending `dock`; a failed stop is never ignored.
+With `dock all`, the other robot is still processed normally.
 
 ### Locate (play sound)
 ```bash
@@ -68,6 +76,26 @@ crosstown-roomba state roomba     # requires specific robot name
 crosstown-roomba list
 ```
 
+## Results and verification
+
+Action commands (`start`, `stop`, `pause`, `resume`, `dock`, and `find`) print
+one JSON summary with a `results` entry for every targeted robot. Check both the
+process exit status and each result's `ok`, `verification`, `phase`, and `error`
+fields. When targeting `all`, the CLI attempts both robots and exits nonzero if
+either one fails; a successful first robot never hides a failed second robot.
+
+The CLI polls mission status a bounded number of times after stateful actions:
+
+- `start` / `resume` must reach `run`
+- `pause` must reach `pause`
+- `stop` must reach `stop` or `charge`
+- `dock` must report a return-to-dock phase or `charge`
+- `find` has no persistent mission state, so only its command response is checked
+
+A timeout or mismatched phase is a failure even when MQTT initially accepted
+the action. `dock` success confirms that return-to-dock began (or the robot is
+already charging); it does not wait indefinitely for physical docking.
+
 ## Architecture
 
 ```
@@ -78,6 +106,7 @@ Roomba J5     ←─MQTT:8883─→ roomba-cmd.js (MacBook Pro) ←─SSH─→ 
 - `roomba-cmd.js` on the MacBook Pro connects to the robot via dorita980 MQTT, runs the command, disconnects
 - The CLI SSHs into the MacBook Pro for each command (connect-per-request, no persistent MQTT)
 - Each command takes ~5-10s due to SSH + MQTT connect/disconnect
+- SSH, invalid JSON, robot-reported errors, and verification failures all produce a nonzero CLI exit
 
 ## Dog Walk Mode
 
@@ -119,6 +148,13 @@ ssh dylans-macbook-pro "echo ok"
 - Robot may be off WiFi or powered down
 - Check WiFi: `crosstown-roomba wifi <name>`
 - Ensure robot is on the 192.168.165.x network
+
+### Action returns JSON with `"ok": false`
+
+- Read the failed robot's `error.code`, `error.message`, and last observed `phase`
+- With target `all`, inspect both entries; one robot may have succeeded
+- Do not immediately retry `dock` if `pre_dock_stop_failed` or
+  `pre_dock_stop_verification_failed` is reported; check status first
 
 ### Command takes too long
 Each command needs ~5-10s for SSH + MQTT handshake. This is normal for the connect-per-request architecture.

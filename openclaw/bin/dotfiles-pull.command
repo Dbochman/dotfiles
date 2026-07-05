@@ -82,17 +82,127 @@ if [ "$PULL_STATUS" -ne 0 ]; then
   exit 1
 fi
 
+# shellcheck source=../lib/deployment.sh
+source "$REPO/openclaw/lib/deployment.sh"
+
+# Sync files the Crosstown MBP runs (it has no dotfiles auto-pull of its own;
+# without this, scripts on MBP go stale relative to dotfiles). The Mini owns
+# the dedicated SSH key, so existence of the key implies we're on the Mini
+# and the MBP is the intended target.
+# Format: "<repo-relative-src>:<MBP-home-relative-dst>"
+MBP_SSH_KEY="$HOME/.ssh/id_mini_to_mbp"
+MBP_HOST="dylans-macbook-pro"
+MBP_SYNC_PAIRS=(
+  "openclaw/workspace/scripts/presence-detect.sh:.openclaw/workspace/scripts/presence-detect.sh"
+  "openclaw/skills/august-lock/august-cmd.js:.openclaw/august/august-cmd.js"
+  "openclaw/rest980/start-10max.sh:.openclaw/rest980/start-10max.sh"
+  "openclaw/rest980/start-j5.sh:.openclaw/rest980/start-j5.sh"
+  "openclaw/rest980/roomba-cmd.js:.openclaw/rest980/roomba-cmd.js"
+)
+HOST_KEY=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
+IS_GATEWAY_HOST=0
+case "$HOST_KEY" in
+  mac-mini|mac-mini-[0-9]*|dylans-mac-mini|dylans-mac-mini-[0-9]*) IS_GATEWAY_HOST=1 ;;
+esac
+if [ "$IS_GATEWAY_HOST" -eq 1 ] && [ ! -f "$MBP_SSH_KEY" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: FATAL dedicated SSH key is missing; refusing protocol-dependent local deployment" >> "$LOG"
+  exit 1
+fi
+if [ -f "$MBP_SSH_KEY" ]; then
+  MBP_PROTOCOL_SYNC_FAILED=0
+  MBP_SYNC_OK=0
+  MBP_SYNC_TOTAL=0
+  MBP_SYNC_ERR=""
+  for pair in "${MBP_SYNC_PAIRS[@]}"; do
+    src_rel="${pair%%:*}"
+    dst_rel="${pair##*:}"
+    src="$REPO/$src_rel"
+    [ -f "$src" ] || continue
+    MBP_SYNC_TOTAL=$((MBP_SYNC_TOTAL + 1))
+    PROTOCOL_PAIR=0
+    case "$src_rel" in
+      openclaw/skills/august-lock/august-cmd.js|openclaw/rest980/roomba-cmd.js)
+        PROTOCOL_PAIR=1
+        ;;
+    esac
+    if [ "$src_rel" = "openclaw/workspace/scripts/presence-detect.sh" ]; then
+      if ! ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+               -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+               "$MBP_HOST" \
+               'p="$HOME/.openclaw/presence-devices.env"; [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -f "%u %Lp" "$p")" = "$(id -u) 600" ]' \
+               >/dev/null 2>&1; then
+        MBP_SYNC_ERR="presence device config missing or insecure; preserved prior scanner"
+        continue
+      fi
+    fi
+    if [ "$src_rel" = "openclaw/skills/august-lock/august-cmd.js" ]; then
+      if ! ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+               -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+               "$MBP_HOST" \
+               'p="$HOME/.openclaw/august/config.json"; [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -f "%u %Lp" "$p")" = "$(id -u) 600" ]' \
+               >/dev/null 2>&1; then
+        MBP_SYNC_ERR="August config missing or insecure"
+        MBP_PROTOCOL_SYNC_FAILED=1
+        continue
+      fi
+    fi
+    if [ "$src_rel" = "openclaw/rest980/roomba-cmd.js" ]; then
+      if ! ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+               -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+               "$MBP_HOST" \
+               'for p in "$HOME/.openclaw/rest980/env-10max" "$HOME/.openclaw/rest980/env-j5"; do [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -f "%u %Lp" "$p")" = "$(id -u) 600" ] || exit 1; done' \
+               >/dev/null 2>&1; then
+        MBP_SYNC_ERR="Roomba credential files missing or insecure"
+        MBP_PROTOCOL_SYNC_FAILED=1
+        continue
+      fi
+    fi
+    if scp_err=$(scp -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+                     -o StrictHostKeyChecking=accept-new \
+                     -o ConnectTimeout=10 -q \
+                     "$src" "$MBP_HOST:$dst_rel" 2>&1); then
+      MBP_SYNC_OK=$((MBP_SYNC_OK + 1))
+    else
+      MBP_SYNC_ERR="$scp_err"
+      if [ "$PROTOCOL_PAIR" -eq 1 ]; then
+        MBP_PROTOCOL_SYNC_FAILED=1
+      fi
+    fi
+  done
+  if [ "$MBP_PROTOCOL_SYNC_FAILED" -ne 0 ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: FATAL protocol counterpart was not synchronized: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
+    exit 1
+  fi
+  if [ "$MBP_SYNC_OK" -eq "$MBP_SYNC_TOTAL" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL files to $MBP_HOST" >> "$LOG"
+  else
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: WARN synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL files to $MBP_HOST: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
+  fi
+fi
+
 # Deploy skills as real copies (OpenClaw rejects symlinks via realPath check)
 SKILLS_SRC="$REPO/openclaw/skills"
 SKILLS_DST="$HOME/.openclaw/skills"
 if [ -d "$SKILLS_SRC" ]; then
+  mkdir -p "$SKILLS_DST"
+
+  # Remove only known catalog entries retired from the tracked skills tree.
+  # Real-copy deployments otherwise survive after their sources are removed.
+  for retired_skill_name in TEMPLATE gws-shared; do
+    retired_skill_path="$SKILLS_DST/$retired_skill_name"
+    if [ -e "$retired_skill_path" ] || [ -L "$retired_skill_path" ]; then
+      rm -rf -- "$retired_skill_path"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skills: removed retired $retired_skill_name" >> "$LOG"
+    fi
+  done
+
   DEPLOYED=0
   for skill_dir in "$SKILLS_SRC"/*/; do
+    [ -d "$skill_dir" ] || continue
+    [ -f "$skill_dir/SKILL.md" ] || continue
     skill_name=$(basename "$skill_dir")
-    rm -rf "$SKILLS_DST/$skill_name"
-    cp -R "$skill_dir" "$SKILLS_DST/$skill_name"
-    # Remove any nested symlinks that snuck in
-    find "$SKILLS_DST/$skill_name" -type l -delete 2>/dev/null
+    rm -rf -- "$SKILLS_DST/$skill_name"
+    copy_openclaw_skill_tree "$skill_dir" "$SKILLS_DST/$skill_name"
     # Preserve executable bit on CLI wrappers inside skills
     find "$SKILLS_DST/$skill_name" -maxdepth 1 -type f ! -name "*.md" ! -name "*.json" ! -name "*.yaml" -exec chmod +x {} +
     DEPLOYED=$((DEPLOYED + 1))
@@ -263,45 +373,6 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
       WS_SCRIPTS_DEPLOYED=$((WS_SCRIPTS_DEPLOYED + 1))
     done
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed $WS_SCRIPTS_DEPLOYED scripts to $SCRIPTS_DST" >> "$LOG"
-  fi
-fi
-
-# Sync files the Crosstown MBP runs (it has no dotfiles auto-pull of its own;
-# without this, scripts on MBP go stale relative to dotfiles). The Mini owns
-# the dedicated SSH key, so existence of the key implies we're on the Mini
-# and the MBP is the intended target.
-# Format: "<repo-relative-src>:<MBP-home-relative-dst>"
-MBP_SSH_KEY="$HOME/.ssh/id_mini_to_mbp"
-MBP_HOST="dylans-macbook-pro"
-MBP_SYNC_PAIRS=(
-  "openclaw/workspace/scripts/presence-detect.sh:.openclaw/workspace/scripts/presence-detect.sh"
-  "openclaw/rest980/start-10max.sh:.openclaw/rest980/start-10max.sh"
-  "openclaw/rest980/start-j5.sh:.openclaw/rest980/start-j5.sh"
-  "openclaw/rest980/roomba-cmd.js:.openclaw/rest980/roomba-cmd.js"
-)
-if [ -f "$MBP_SSH_KEY" ]; then
-  MBP_SYNC_OK=0
-  MBP_SYNC_TOTAL=0
-  MBP_SYNC_ERR=""
-  for pair in "${MBP_SYNC_PAIRS[@]}"; do
-    src_rel="${pair%%:*}"
-    dst_rel="${pair##*:}"
-    src="$REPO/$src_rel"
-    [ -f "$src" ] || continue
-    MBP_SYNC_TOTAL=$((MBP_SYNC_TOTAL + 1))
-    if scp_err=$(scp -i "$MBP_SSH_KEY" -o IdentityAgent=none \
-                     -o StrictHostKeyChecking=accept-new \
-                     -o ConnectTimeout=10 -q \
-                     "$src" "$MBP_HOST:$dst_rel" 2>&1); then
-      MBP_SYNC_OK=$((MBP_SYNC_OK + 1))
-    else
-      MBP_SYNC_ERR="$scp_err"
-    fi
-  done
-  if [ "$MBP_SYNC_OK" -eq "$MBP_SYNC_TOTAL" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL files to $MBP_HOST" >> "$LOG"
-  else
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: WARN synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL files to $MBP_HOST: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
   fi
 fi
 

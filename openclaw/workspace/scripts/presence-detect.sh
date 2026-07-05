@@ -8,6 +8,7 @@
 #   presence-detect.sh crosstown   # Scan Crosstown LAN (run on MacBook Pro)
 #   presence-detect.sh potato      # Scan Potato GPS only (run on Mac Mini)
 #   presence-detect.sh evaluate    # Correlate all signals (run on Mac Mini)
+#   presence-detect.sh observe cabin|crosstown  # Read-only network observation
 #
 # Cabin (Philly):   Starlink gRPC API via grpcurl (Mac Mini, local)
 # Crosstown (Boston): ARP scan (MacBook Pro, local)
@@ -23,6 +24,10 @@
 
 set -euo pipefail
 
+REQUESTED_MODE="${1:-}"
+READ_ONLY_OBSERVATION=0
+[ "$REQUESTED_MODE" = "observe" ] && READ_ONLY_OBSERVATION=1
+
 LOG_FILE="$HOME/.openclaw/logs/presence-detect.log"
 if [ -x "/opt/homebrew/opt/node@22/bin/node" ]; then
   NODE="/opt/homebrew/opt/node@22/bin/node"
@@ -31,7 +36,7 @@ elif [ -x "/opt/homebrew/bin/node" ]; then
 else
   NODE="$(command -v node || echo /opt/homebrew/bin/node)"
 fi
-GRPCURL="/opt/homebrew/bin/grpcurl"
+GRPCURL="${PRESENCE_GRPCURL_BIN:-/opt/homebrew/bin/grpcurl}"
 PING="${PRESENCE_PING_BIN:-/sbin/ping}"
 ARP="${PRESENCE_ARP_BIN:-/usr/sbin/arp}"
 if [ -n "${PRESENCE_TAILSCALE_BIN:-}" ]; then
@@ -43,8 +48,6 @@ fi
 STATE_DIR="${HOME}/.openclaw/presence"
 EVALUATE_LOCK_FILE="${STATE_DIR}/evaluate.lock"
 EVALUATE_LOCK_TIMEOUT_SECONDS=10
-
-mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
 
 rotate_log_if_needed() {
   local max_bytes=${PRESENCE_LOG_MAX_BYTES:-$((100 * 1024 * 1024))}
@@ -58,7 +61,6 @@ rotate_log_if_needed() {
   lock="${LOG_FILE}.rotate.lock"
   mkdir "$lock" 2>/dev/null || return 0
 
-  # Recheck after acquiring the lock because cabin and receive paths share it.
   size=$(stat -f%z "$LOG_FILE" 2>/dev/null || echo 0)
   if [ "$size" -gt "$max_bytes" ]; then
     i=$keep
@@ -74,20 +76,24 @@ rotate_log_if_needed() {
   rmdir "$lock" 2>/dev/null || true
 }
 
-rotate_log_if_needed
+if [ "$READ_ONLY_OBSERVATION" -eq 0 ]; then
+  mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
+  rotate_log_if_needed
+fi
 
 log() {
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+  if [ "$READ_ONLY_OBSERVATION" -eq 1 ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2
+  else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+  fi
 }
 
 # ── Known devices ────────────────────────────────────────────────────────────
 
-# Tracked people per location — vacancy requires all tracked people for THAT
-# location to be absent AND confirmed at the other location.
 CABIN_TRACKED='["Dylan","Julia"]'
 CROSSTOWN_TRACKED='["Dylan","Julia"]'
 
-# Cabin (Philly) — matched by device name from Starlink gRPC API
 CABIN_DEVICES='[
   {"person":"Dylan","match":"name","pattern":"Dylan","require":"iPhone"},
   {"person":"Dylan","match":"name","pattern":"Dylan","require":"phone"},
@@ -95,12 +101,52 @@ CABIN_DEVICES='[
   {"person":"Julia","match":"name_fallback","pattern":"iPhone","excludeNames":["Dylan"]},
 ]'
 
-# Crosstown (Boston) — matched by MAC address via ARP scan
-CROSSTOWN_DEVICES='[
-  {"person":"Dylan","match":"mac","pattern":"6c:3a:ff:5f:fc:ba"},
-  {"person":"Julia","match":"mac","pattern":"38:e1:3d:c0:40:63"},
+# Crosstown MAC identities are machine-local private configuration on the MBP.
+CROSSTOWN_DEVICE_CONFIG="${PRESENCE_CROSSTOWN_DEVICE_CONFIG:-$HOME/.openclaw/presence-devices.env}"
+CROSSTOWN_DEVICES=""
+
+load_crosstown_devices() {
+  if [[ -z "${CROSSTOWN_DYLAN_MAC:-}" || -z "${CROSSTOWN_JULIA_MAC:-}" ]]; then
+    if [[ ! -e "$CROSSTOWN_DEVICE_CONFIG" && ! -L "$CROSSTOWN_DEVICE_CONFIG" ]]; then
+      log "WARN: Crosstown device config is not provisioned; using exact hostname-only matching"
+      CROSSTOWN_DEVICES='[
+  {"person":"Dylan","match":"hostname","pattern":"dylans-iphone"},
   {"person":"Julia","match":"hostname","pattern":"julias-iphone"}
 ]'
+      return 0
+    fi
+    if [[ ! -f "$CROSSTOWN_DEVICE_CONFIG" || -L "$CROSSTOWN_DEVICE_CONFIG" ]]; then
+      log "ERROR: Crosstown device config must be a regular non-symlink file"
+      return 1
+    fi
+    local owner mode
+    read -r owner mode < <(stat -f '%u %Lp' "$CROSSTOWN_DEVICE_CONFIG")
+    if [[ "$owner" != "$(id -u)" || "$mode" != "600" ]]; then
+      log "ERROR: Crosstown device config must be owned by the current user with mode 0600"
+      return 1
+    fi
+    set -a
+    if ! . "$CROSSTOWN_DEVICE_CONFIG" >/dev/null 2>&1; then
+      set +a
+      log "ERROR: Crosstown device config could not be loaded"
+      return 1
+    fi
+    set +a
+  fi
+
+  local mac_pattern='^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$'
+  if [[ ! "${CROSSTOWN_DYLAN_MAC:-}" =~ $mac_pattern ||
+        ! "${CROSSTOWN_JULIA_MAC:-}" =~ $mac_pattern ]]; then
+    log "ERROR: Crosstown device config contains an invalid MAC address"
+    return 1
+  fi
+
+  CROSSTOWN_DEVICES=$(printf '%s' "[
+  {\"person\":\"Dylan\",\"match\":\"mac\",\"pattern\":\"$CROSSTOWN_DYLAN_MAC\"},
+  {\"person\":\"Julia\",\"match\":\"mac\",\"pattern\":\"$CROSSTOWN_JULIA_MAC\"},
+  {\"person\":\"Julia\",\"match\":\"hostname\",\"pattern\":\"julias-iphone\"}
+]")
+}
 
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
 
@@ -178,6 +224,10 @@ console.log(JSON.stringify({
 # ── Crosstown: ARP scan ─────────────────────────────────────────────────────
 
 scan_crosstown() {
+  if ! load_crosstown_devices; then
+    echo '{"error":"crosstown_device_config_unavailable","location":"crosstown"}'
+    return 1
+  fi
   # Step 1: Probe the subnet. iPhones may ignore ICMP while still answering
   # link-layer resolution, so ping success is not used as the presence signal.
   local gateway_ip="192.168.165.1"
@@ -368,6 +418,62 @@ console.log(JSON.stringify({
   longitude: data.longitude
 }, null, 2));
 " "$fi_response" 2>/dev/null || echo '{"error":"parse_failed","name":"Potato"}'
+}
+
+# Validate the strict stdout contract used by side-effect-free callers. This is
+# intentionally separate from scheduled scan modes so their behavior is
+# unchanged.
+validate_observation() {
+  local result="$1" expected_location="$2"
+  "$NODE" -e '
+let observation;
+try {
+  observation = JSON.parse(process.argv[1]);
+} catch {
+  process.exit(2);
+}
+if (!observation || typeof observation !== "object" || Array.isArray(observation)) process.exit(2);
+if (observation.error || observation.location !== process.argv[2]) process.exit(2);
+const timestamp = Date.parse(observation.timestamp);
+const ageMs = Date.now() - timestamp;
+if (!Number.isFinite(timestamp) || ageMs < -60000 || ageMs > 300000) process.exit(2);
+const presence = observation.presence;
+if (!presence || typeof presence !== "object" || Array.isArray(presence)
+    || Object.keys(presence).length === 0) process.exit(2);
+for (const [person, info] of Object.entries(presence)) {
+  if (!person || !info || typeof info !== "object" || Array.isArray(info)
+      || typeof info.present !== "boolean") process.exit(2);
+}
+console.log(JSON.stringify(observation, null, 2));
+' "$result" "$expected_location"
+}
+
+observe_network() {
+  local location="$1" result validated scan_status
+  case "$location" in
+    cabin)
+      if result=$(scan_cabin); then scan_status=0; else scan_status=$?; fi
+      ;;
+    crosstown)
+      if result=$(scan_crosstown); then scan_status=0; else scan_status=$?; fi
+      ;;
+    *)
+      echo '{"error":"unknown_observation_location"}'
+      return 2
+      ;;
+  esac
+
+  if [ "$scan_status" -ne 0 ]; then
+    log "ERROR: Read-only $location observation failed (status $scan_status)"
+    echo "{\"error\":\"observation_failed\",\"location\":\"$location\"}"
+    return "$scan_status"
+  fi
+  if ! validated=$(validate_observation "$result" "$location" 2>/dev/null); then
+    log "ERROR: Read-only $location observation returned malformed data"
+    echo "{\"error\":\"invalid_observation\",\"location\":\"$location\"}"
+    return 1
+  fi
+  printf '%s\n' "$validated"
 }
 
 # ── Evaluate: Correlate both locations (runs on Mac Mini) ────────────────────
@@ -607,6 +713,13 @@ fi
 log "Running: $LOCATION"
 
 case "$LOCATION" in
+  observe)
+    if [ "$#" -ne 2 ]; then
+      echo '{"error":"usage","message":"presence-detect.sh observe <cabin|crosstown>"}'
+      exit 2
+    fi
+    observe_network "$2"
+    ;;
   cabin)
     result=$(scan_cabin)
     echo "$result" > "${STATE_DIR}/cabin-scan.json"

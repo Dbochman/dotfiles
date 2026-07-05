@@ -51,6 +51,12 @@ MAX_AVAILABILITY_SLOTS = 50
 # Global flags
 JSON_OUTPUT = False
 DRY_RUN = False
+# Unattended commands fail closed instead of spawning 1Password. An attended
+# terminal may still refresh long-lived credential fields, and tests or a
+# deliberately supervised process can opt in explicitly.
+CACHE_ONLY = os.environ.get("RESY_CACHE_ONLY") == "1" or (
+    os.environ.get("RESY_ALLOW_1PASSWORD") != "1" and not sys.stdin.isatty()
+)
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +178,14 @@ class ResyCredentials:
             return cached
         # Only api_key, email, password come from 1Password
         if name in ("api_key", "email", "password"):
+            if CACHE_ONLY:
+                print(
+                    f"Error: Resy cache-only credential '{name}' is unavailable. "
+                    "Refresh Resy authentication in an attended shell; unattended "
+                    "runs never invoke 1Password.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             val = self._op_read(name)
             if val:
                 self._write_cache(name, val)
@@ -225,6 +239,7 @@ class ResyAPI:
             self.login()
 
     def _request(self, method, path, auth_required=True, retry_auth=True, **kwargs):
+        is_booking_request = method.upper() == "POST" and path == "/3/book"
         if auth_required:
             self._ensure_auth()
         self.limiter.wait()
@@ -235,6 +250,14 @@ class ResyAPI:
         try:
             resp = self.session.request(method, url, headers=headers, timeout=30, **kwargs)
         except requests.RequestException as e:
+            if is_booking_request:
+                log.error("Booking request transport failure; outcome unknown")
+                print(
+                    "Error: Booking request outcome is unknown; do not retry. "
+                    "Reconcile with `resy reservations` before taking any further action.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             log.error("Network error: %s", e)
             # Retry once after 5s
             time.sleep(5)
@@ -245,14 +268,19 @@ class ResyAPI:
                 print(f"Error: Network request failed: {e2}", file=sys.stderr)
                 sys.exit(1)
 
-        if resp.status_code == 401 and auth_required and retry_auth:
+        if (
+            resp.status_code == 401
+            and auth_required
+            and retry_auth
+            and not is_booking_request
+        ):
             log.info("Got 401, re-authenticating")
             self.creds.clear("auth_token")
             self.login()
             headers = self._headers()
             return self._request(method, path, auth_required=True, retry_auth=False, headers=headers, **kwargs)
 
-        if resp.status_code == 429:
+        if resp.status_code == 429 and not is_booking_request:
             # Exponential backoff: 4s, 8s, 16s
             for attempt, delay in enumerate([4, 8, 16], 1):
                 log.warning("Rate limited (429), backing off %ds (attempt %d)", delay, attempt)

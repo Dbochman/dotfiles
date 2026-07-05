@@ -1,24 +1,14 @@
 #!/usr/bin/env node
 /**
- * august-cmd.js — CLI wrapper for August smart lock API
+ * Safe CLI wrapper for the August lock API.
  *
- * Usage:
- *   august-cmd.js status          # Lock state, door, battery
- *   august-cmd.js lock            # Lock the door
- *   august-cmd.js unlock          # Unlock the door
- *   august-cmd.js authorize       # Start 2FA (sends code to email/phone)
- *   august-cmd.js validate <code> # Complete 2FA with 6-digit code
- *   august-cmd.js locks           # List all locks on account
- *
- * Environment variables:
- *   AUGUST_INSTALL_ID   — persistent install ID (saved after first auth)
- *   AUGUST_ID           — email or phone (e.g., dylanbochman@gmail.com)
- *   AUGUST_PASSWORD     — account password
- *
- * Config file: ~/.openclaw/august/config.json
- *   { "installId": "...", "augustId": "...", "password": "..." }
+ * Normal invocation comes from the `august` SSH wrapper as a base64-encoded
+ * JSON argv array. Direct local invocation remains supported for diagnostics.
  */
 
+'use strict'
+
+const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
 
@@ -26,132 +16,365 @@ const CONFIG_FILE = path.join(
   process.env.HOME || '/tmp',
   '.openclaw/august/config.json'
 )
+const CONFIG_KEYS = new Set(['installId', 'augustId', 'password'])
+const COMMANDS = new Set([
+  'authorize',
+  'validate',
+  'locks',
+  'status',
+  'lock',
+  'unlock',
+  'details',
+])
+const LOCK_ID_PATTERN = /^[a-fA-F0-9]{32}$/
+const VERIFY_ATTEMPTS = 5
+const DEFAULT_VERIFY_DELAY_MS = 1000
 
-function loadConfig() {
-  const config = {}
+class CliError extends Error {
+  constructor(code, message) {
+    super(message)
+    this.code = code
+  }
+}
 
-  // Load from config file first
+function fail(code, message) {
+  throw new CliError(code, message)
+}
+
+function decodeInvocation(argv) {
+  if (argv[0] !== '--argv-base64') return argv
+  if (argv.length !== 2) fail('invalid_arguments', 'Encoded invocation requires exactly one payload')
+
+  const payload = argv[1]
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(payload) || payload.length % 4 !== 0) {
+    fail('invalid_arguments', 'Encoded invocation payload is invalid')
+  }
+
+  let decoded
   try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const data = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
-      Object.assign(config, data)
+    decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'))
+  } catch {
+    fail('invalid_arguments', 'Encoded invocation payload is invalid')
+  }
+  if (!Array.isArray(decoded) || decoded.length === 0 || decoded.length > 3 ||
+      decoded.some(value => typeof value !== 'string')) {
+    fail('invalid_arguments', 'Encoded invocation payload must be a short string array')
+  }
+  return decoded
+}
+
+function validateLockId(lockId) {
+  if (lockId !== undefined && !LOCK_ID_PATTERN.test(lockId)) {
+    fail('invalid_lock_id', 'Lock ID must be exactly 32 hexadecimal characters')
+  }
+}
+
+function validateInvocation(argv) {
+  const [command, ...args] = argv
+  if (!COMMANDS.has(command)) fail('unsupported_command', 'Unsupported August command')
+
+  let lockId
+  switch (command) {
+    case 'authorize':
+    case 'locks':
+      if (args.length !== 0) fail('invalid_arguments', `${command} does not accept arguments`)
+      break
+    case 'validate':
+      if (args.length !== 1 || !/^\d{6}$/.test(args[0])) {
+        fail('invalid_auth_code', 'Validation code must be exactly 6 digits')
+      }
+      break
+    case 'status':
+    case 'lock':
+    case 'details':
+      if (args.length > 1) fail('invalid_arguments', `${command} accepts at most one lock ID`)
+      lockId = args[0]
+      validateLockId(lockId)
+      break
+    case 'unlock':
+      if (args[0] !== '--confirm' || args.length > 2) {
+        fail('confirmation_required', 'Unlock requires the explicit --confirm flag')
+      }
+      lockId = args[1]
+      validateLockId(lockId)
+      break
+  }
+  return { command, args, lockId }
+}
+
+function validateConfigObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    fail('invalid_config', 'August config must be a JSON object')
+  }
+  for (const key of Object.keys(value)) {
+    if (!CONFIG_KEYS.has(key)) fail('invalid_config', 'August config contains unsupported fields')
+    const field = value[key]
+    if (typeof field !== 'string' || field.length === 0 || field.length > 1024 || field.includes('\0')) {
+      fail('invalid_config', `August config field ${key} is invalid`)
     }
-  } catch (e) {
-    // ignore
   }
+  return { ...value }
+}
 
-  // Env vars override
-  if (process.env.AUGUST_INSTALL_ID) config.installId = process.env.AUGUST_INSTALL_ID
-  if (process.env.AUGUST_ID) config.augustId = process.env.AUGUST_ID
-  if (process.env.AUGUST_PASSWORD) config.password = process.env.AUGUST_PASSWORD
-
-  // Generate installId if missing
-  if (!config.installId) {
-    const crypto = require('crypto')
-    config.installId = crypto.randomUUID()
-    saveConfig(config)
+function readStoredConfig() {
+  let stat
+  try {
+    stat = fs.lstatSync(CONFIG_FILE)
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return {}
+    fail('invalid_config', 'August config is unreadable; repair it manually')
   }
-
-  return config
+  try {
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) {
+      fail('insecure_config', 'August config must be a regular file with mode 0600')
+    }
+    return validateConfigObject(JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')))
+  } catch (error) {
+    if (error instanceof CliError) throw error
+    fail('invalid_config', 'August config is unreadable or malformed; repair it manually')
+  }
 }
 
 function saveConfig(config) {
+  const validated = validateConfigObject(config)
+  const directory = path.dirname(CONFIG_FILE)
+  const temporary = path.join(
+    directory,
+    `.config.json.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`
+  )
+  let descriptor
   try {
-    const dir = path.dirname(CONFIG_FILE)
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 })
-  } catch (e) {
-    console.error(JSON.stringify({ error: 'Failed to save config', message: e.message }))
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+    fs.chmodSync(directory, 0o700)
+    descriptor = fs.openSync(temporary, 'wx', 0o600)
+    fs.fchmodSync(descriptor, 0o600)
+    fs.writeFileSync(descriptor, `${JSON.stringify(validated, null, 2)}\n`, 'utf8')
+    fs.fsyncSync(descriptor)
+    fs.closeSync(descriptor)
+    descriptor = undefined
+    fs.renameSync(temporary, CONFIG_FILE)
+  } catch {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor) } catch {}
+    }
+    try { fs.unlinkSync(temporary) } catch {}
+    fail('config_save_failed', 'Could not securely save August config')
   }
+}
+
+function effectiveConfig(stored) {
+  const config = { ...stored }
+  if (process.env.AUGUST_INSTALL_ID) config.installId = process.env.AUGUST_INSTALL_ID
+  if (process.env.AUGUST_ID) config.augustId = process.env.AUGUST_ID
+  if (process.env.AUGUST_PASSWORD) config.password = process.env.AUGUST_PASSWORD
+  validateConfigObject(config)
+  return config
+}
+
+function loadConfig() {
+  const stored = readStoredConfig()
+  const config = effectiveConfig(stored)
+  if (!config.installId) {
+    config.installId = crypto.randomUUID()
+    saveConfig({ ...stored, installId: config.installId })
+  }
+  return { config, stored }
+}
+
+function verificationDelay() {
+  const raw = process.env.AUGUST_VERIFY_DELAY_MS
+  if (raw === undefined) return DEFAULT_VERIFY_DELAY_MS
+  if (!/^(0|[1-9]\d{0,3})$/.test(raw) || Number(raw) > 5000) {
+    fail('invalid_verify_delay', 'AUGUST_VERIFY_DELAY_MS must be 0-5000')
+  }
+  return Number(raw)
+}
+
+function sleep(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds))
+}
+
+function resolveExclusiveState(canonical, canonicalValues, nested, first, second) {
+  let candidates = new Set([first, second])
+
+  if (canonical !== undefined && canonical !== null && canonical !== '') {
+    const resolved = canonicalValues[canonical]
+    if (!resolved) return null
+    candidates = new Set([resolved])
+  }
+
+  for (const key of [first, second]) {
+    if (!Object.prototype.hasOwnProperty.call(nested, key)) continue
+    if (typeof nested[key] !== 'boolean') return null
+    if (nested[key]) {
+      candidates = new Set([...candidates].filter(value => value === key))
+    } else {
+      candidates.delete(key)
+    }
+  }
+
+  return candidates.size === 1 ? [...candidates][0] : null
+}
+
+function statusSummary(status) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) return null
+  if (status.state !== undefined &&
+      (!status.state || typeof status.state !== 'object' || Array.isArray(status.state))) {
+    return null
+  }
+  const state = status.state || {}
+  const lockState = resolveExclusiveState(
+    status.status,
+    {
+      kAugLockState_Locked: 'locked',
+      kAugLockState_Unlocked: 'unlocked',
+    },
+    state,
+    'locked',
+    'unlocked'
+  )
+  const doorState = resolveExclusiveState(
+    status.doorState,
+    {
+      kAugDoorState_Closed: 'closed',
+      kAugDoorState_Open: 'open',
+    },
+    state,
+    'closed',
+    'open'
+  )
+  if (!lockState || !doorState) return null
+  return {
+    lockID: typeof status.lockID === 'string' ? status.lockID : undefined,
+    status: typeof status.status === 'string' ? status.status : undefined,
+    doorState: typeof status.doorState === 'string' ? status.doorState : undefined,
+    state: {
+      locked: lockState === 'locked',
+      unlocked: lockState === 'unlocked',
+      closed: doorState === 'closed',
+      open: doorState === 'open',
+    },
+  }
+}
+
+function matchesPostcondition(summary, action) {
+  if (!summary) return false
+  if (action === 'lock') {
+    return summary.state.locked && !summary.state.unlocked && summary.state.closed
+  }
+  return summary.state.unlocked && !summary.state.locked &&
+    (summary.state.closed || summary.state.open)
+}
+
+async function verifyAction(august, action, lockId, delay) {
+  let lastSummary = null
+  for (let attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt += 1) {
+    try {
+      lastSummary = statusSummary(await august.status(lockId))
+      if (matchesPostcondition(lastSummary, action)) {
+        return { ...lastSummary, attempts: attempt }
+      }
+    } catch {
+      lastSummary = null
+    }
+    if (attempt < VERIFY_ATTEMPTS && delay > 0) await sleep(delay)
+  }
+  const error = new CliError(
+    'verification_failed',
+    action === 'lock'
+      ? 'Lock action was not verified as locked with the door closed'
+      : 'Unlock action was not verified as unlocked with a known door state'
+  )
+  error.summary = lastSummary
+  throw error
+}
+
+async function checkActionPrecondition(august, action, lockId) {
+  let summary
+  try {
+    summary = statusSummary(await august.status(lockId))
+  } catch {
+    fail('precondition_unavailable', 'Current lock and door state could not be verified')
+  }
+  if (!summary) {
+    fail('precondition_unavailable', 'Current lock and door state could not be verified')
+  }
+
+  if (action === 'lock' && !summary.state.closed) {
+    const error = new CliError(
+      'door_not_closed',
+      'Refusing to extend the lock while the door is not verified closed'
+    )
+    error.summary = summary
+    throw error
+  }
+
+  const alreadySatisfied = action === 'lock'
+    ? summary.state.locked && !summary.state.unlocked
+    : summary.state.unlocked && !summary.state.locked
+  return { summary, alreadySatisfied }
 }
 
 async function main() {
-  const August = require('august-api')
-  const cmd = process.argv[2]
-
-  if (!cmd) {
-    console.error('Usage: august-cmd.js <status|lock|unlock|authorize|validate|locks>')
-    process.exit(1)
-  }
-
-  const config = loadConfig()
-
+  const invocation = validateInvocation(decodeInvocation(process.argv.slice(2)))
+  const { config, stored } = loadConfig()
   if (!config.augustId || !config.password) {
-    console.error(JSON.stringify({
-      error: 'Missing credentials',
-      message: 'Set AUGUST_ID and AUGUST_PASSWORD env vars or add to ~/.openclaw/august/config.json'
-    }))
-    process.exit(1)
+    fail('missing_credentials', 'Set AUGUST_ID and AUGUST_PASSWORD or add them to the protected config')
   }
 
+  const August = require('august-api')
   const august = new August(config)
+  const { command, args, lockId } = invocation
 
-  try {
-    switch (cmd) {
-      case 'authorize': {
-        await august.authorize()
-        console.log(JSON.stringify({ ok: true, message: 'Verification code sent to ' + config.augustId }))
-        break
+  switch (command) {
+    case 'authorize':
+      await august.authorize()
+      console.log(JSON.stringify({ ok: true, message: 'Verification code sent' }))
+      return
+    case 'validate':
+      await august.validate(args[0])
+      saveConfig({ ...stored, installId: config.installId })
+      console.log(JSON.stringify({ ok: true, message: 'Validation succeeded' }))
+      return
+    case 'locks':
+      console.log(JSON.stringify(await august.locks(), null, 2))
+      return
+    case 'status':
+      console.log(JSON.stringify(await august.status(lockId)))
+      return
+    case 'details':
+      console.log(JSON.stringify(await august.details(lockId), null, 2))
+      return
+    case 'lock':
+    case 'unlock': {
+      const delay = verificationDelay()
+      const precondition = await checkActionPrecondition(august, command, lockId)
+      if (precondition.alreadySatisfied) {
+        console.log(JSON.stringify({
+          ok: true,
+          action: command,
+          verified: true,
+          alreadySatisfied: true,
+          attempts: 0,
+          ...precondition.summary,
+        }))
+        return
       }
-
-      case 'validate': {
-        const code = process.argv[3]
-        if (!code) {
-          console.error(JSON.stringify({ error: 'Missing code', message: 'Usage: august-cmd.js validate <6-digit-code>' }))
-          process.exit(1)
-        }
-        await august.validate(code)
-        // Save installId so we don't need 2FA again
-        saveConfig(config)
-        console.log(JSON.stringify({ ok: true, message: 'Validated successfully. installId saved.' }))
-        break
-      }
-
-      case 'locks': {
-        const locks = await august.locks()
-        console.log(JSON.stringify(locks, null, 2))
-        break
-      }
-
-      case 'status': {
-        const lockId = process.argv[3] || undefined
-        const status = await august.status(lockId)
-        console.log(JSON.stringify(status))
-        break
-      }
-
-      case 'lock': {
-        const lockId = process.argv[3] || undefined
-        const result = await august.lock(lockId)
-        console.log(JSON.stringify(result))
-        break
-      }
-
-      case 'unlock': {
-        const lockId = process.argv[3] || undefined
-        const result = await august.unlock(lockId)
-        console.log(JSON.stringify(result))
-        break
-      }
-
-      case 'details': {
-        const lockId = process.argv[3] || undefined
-        const details = await august.details(lockId)
-        console.log(JSON.stringify(details, null, 2))
-        break
-      }
-
-      default:
-        console.error(JSON.stringify({ error: 'Unknown command: ' + cmd }))
-        process.exit(1)
+      await august[command](lockId)
+      const verified = await verifyAction(august, command, lockId, delay)
+      console.log(JSON.stringify({ ok: true, action: command, verified: true, ...verified }))
+      return
     }
-  } catch (e) {
-    console.error(JSON.stringify({
-      error: e.message || String(e),
-      code: e.statusCode || e.code,
-    }))
-    process.exit(1)
   }
 }
 
-main()
+main().catch(error => {
+  const output = {
+    ok: false,
+    error_code: error instanceof CliError ? error.code : 'august_api_error',
+    message: error instanceof CliError ? error.message : 'August API request failed',
+  }
+  if (error instanceof CliError && error.summary) output.observed = error.summary
+  console.error(JSON.stringify(output))
+  process.exitCode = 1
+})

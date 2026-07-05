@@ -2,27 +2,6 @@
   "version": 1,
   "jobs": [
     {
-      "id": "datenight-jul-japanese",
-      "agentId": "main",
-      "name": "Monthly Date Night Booking - July (Japanese/Asian)",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1770516806667,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-07-01T12:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in July 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY July 2026 booking exists, send chat-id 170 a status message (\"July date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any July booking, the agent's job is done.\n\nIf no July 2026 booking exists, proceed:\n\nBook monthly date night. Search for Japanese/Asian restaurants in Newton/Brookline on Resy. Friday in July 2026 (try July 10-24) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any July booking already exists, even if the existing one is at a different restaurant or on a different date."
-      },
-      "delivery": {
-        "mode": "none"
-      }
-    },
-    {
       "id": "datenight-aug-farmtotable",
       "agentId": "main",
       "name": "Monthly Date Night Booking - August (Farm-to-Table)",
@@ -37,7 +16,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in August 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY August 2026 booking exists, send chat-id 170 a status message (\"August date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any August booking, the agent's job is done.\n\nIf no August 2026 booking exists, proceed:\n\nBook monthly date night. Search for Farm-to-Table restaurants in Newton/Brookline on Resy. Friday in August 2026 (try August 7-21) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any August booking already exists, even if the existing one is at a different restaurant or on a different date."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in August 2026 (any date, any time, any restaurant — not just a Friday at 7 PM). If ANY August 2026 booking exists, send chat-id ${HOUSEHOLD_CHAT_ID} a status message (\"August date night already booked: [restaurant], [date]\") and STOP — do NOT book another. Do not pivot to a different Friday or different time; if there is any August booking, the agent's job is done.\n\nRESY BOOKING SAFETY: This job is standing authorization for one surprise venue within these constraints. Set `RESY_CACHE_ONLY=1` on every raw `resy` command, never run `resy auth` or `op`, make at most one live booking call, never retry an ambiguous call, never cancel, and do not accept a deposit, prepayment, nonrefundable reservation, or unfamiliar fee.\n\nIf no August 2026 booking exists, proceed:\n\nBook monthly date night. Search for Farm-to-Table restaurants in Newton/Brookline on Resy. Friday in August 2026 (try August 7-21) for 2 people at 7 PM. Book it, then send a status message to chat-id ${HOUSEHOLD_CHAT_ID} with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL — only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any August booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
         "mode": "none"
@@ -58,7 +37,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in September 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY September 2026 booking exists, send chat-id 170 a status message (\"September date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any September booking, the agent's job is done.\n\nIf no September 2026 booking exists, proceed:\n\nBook monthly date night. Search for American/Steakhouse restaurants in Newton/Brookline on Resy. Friday in September 2026 (try September 11-25) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any September booking already exists, even if the existing one is at a different restaurant or on a different date."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in September 2026 (any date, any time, any restaurant — not just a Friday at 7 PM). If ANY September 2026 booking exists, send chat-id ${HOUSEHOLD_CHAT_ID} a status message (\"September date night already booked: [restaurant], [date]\") and STOP — do NOT book another. Do not pivot to a different Friday or different time; if there is any September booking, the agent's job is done.\n\nRESY BOOKING SAFETY: This job is standing authorization for one surprise venue within these constraints. Set `RESY_CACHE_ONLY=1` on every raw `resy` command, never run `resy auth` or `op`, make at most one live booking call, never retry an ambiguous call, never cancel, and do not accept a deposit, prepayment, nonrefundable reservation, or unfamiliar fee.\n\nIf no September 2026 booking exists, proceed:\n\nBook monthly date night. Search for American/Steakhouse restaurants in Newton/Brookline on Resy. Friday in September 2026 (try September 11-25) for 2 people at 7 PM. Book it, then send a status message to chat-id ${HOUSEHOLD_CHAT_ID} with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL — only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any September booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
         "mode": "none"
@@ -79,7 +58,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in October 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY October 2026 booking exists, send chat-id 170 a status message (\"October date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any October booking, the agent's job is done.\n\nIf no October 2026 booking exists, proceed:\n\nBook monthly date night. Search for Indian restaurants in Newton/Brookline on Resy. Friday in October 2026 (try October 9-23) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any October booking already exists, even if the existing one is at a different restaurant or on a different date."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in October 2026 (any date, any time, any restaurant — not just a Friday at 7 PM). If ANY October 2026 booking exists, send chat-id ${HOUSEHOLD_CHAT_ID} a status message (\"October date night already booked: [restaurant], [date]\") and STOP — do NOT book another. Do not pivot to a different Friday or different time; if there is any October booking, the agent's job is done.\n\nRESY BOOKING SAFETY: This job is standing authorization for one surprise venue within these constraints. Set `RESY_CACHE_ONLY=1` on every raw `resy` command, never run `resy auth` or `op`, make at most one live booking call, never retry an ambiguous call, never cancel, and do not accept a deposit, prepayment, nonrefundable reservation, or unfamiliar fee.\n\nIf no October 2026 booking exists, proceed:\n\nBook monthly date night. Search for Indian restaurants in Newton/Brookline on Resy. Friday in October 2026 (try October 9-23) for 2 people at 7 PM. Book it, then send a status message to chat-id ${HOUSEHOLD_CHAT_ID} with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL — only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any October booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
         "mode": "none"
@@ -100,7 +79,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in November 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY November 2026 booking exists, send chat-id 170 a status message (\"November date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any November booking, the agent's job is done.\n\nIf no November 2026 booking exists, proceed:\n\nBook monthly date night. Search for Modern American restaurants in Newton/Brookline on Resy. Friday in November 2026 (try November 6-20) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any November booking already exists, even if the existing one is at a different restaurant or on a different date."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in November 2026 (any date, any time, any restaurant — not just a Friday at 7 PM). If ANY November 2026 booking exists, send chat-id ${HOUSEHOLD_CHAT_ID} a status message (\"November date night already booked: [restaurant], [date]\") and STOP — do NOT book another. Do not pivot to a different Friday or different time; if there is any November booking, the agent's job is done.\n\nRESY BOOKING SAFETY: This job is standing authorization for one surprise venue within these constraints. Set `RESY_CACHE_ONLY=1` on every raw `resy` command, never run `resy auth` or `op`, make at most one live booking call, never retry an ambiguous call, never cancel, and do not accept a deposit, prepayment, nonrefundable reservation, or unfamiliar fee.\n\nIf no November 2026 booking exists, proceed:\n\nBook monthly date night. Search for Modern American restaurants in Newton/Brookline on Resy. Friday in November 2026 (try November 6-20) for 2 people at 7 PM. Book it, then send a status message to chat-id ${HOUSEHOLD_CHAT_ID} with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL — only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any November booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
         "mode": "none"
@@ -121,28 +100,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in December 2026 (any date, any time, any restaurant \u2014 not just a Friday at 7 PM). If ANY December 2026 booking exists, send chat-id 170 a status message (\"December date night already booked: [restaurant], [date]\") and STOP \u2014 do NOT book another. Do not pivot to a different Friday or different time; if there is any December booking, the agent's job is done.\n\nIf no December 2026 booking exists, proceed:\n\nBook monthly date night. Search for Upscale (French/Italian/Contemporary) restaurants in Newton/Brookline on Resy. Friday in December 2026 (try December 4-18) for 2 people at 7 PM. Book it, then send a status message to chat-id 170 with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL \u2014 only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any December booking already exists, even if the existing one is at a different restaurant or on a different date."
-      },
-      "delivery": {
-        "mode": "none"
-      }
-    },
-    {
-      "id": "doubledate-q3-jul-korean",
-      "agentId": "main",
-      "name": "Quarterly Double Date - Q3 July (Korean)",
-      "enabled": true,
-      "deleteAfterRun": true,
-      "createdAtMs": 1772412431651,
-      "schedule": {
-        "kind": "at",
-        "at": "2026-07-01T14:00:00.000Z"
-      },
-      "sessionTarget": "isolated",
-      "wakeMode": "next-heartbeat",
-      "payload": {
-        "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on July 16-18, 2026. If either a reservation or matching calendar event exists, send its details to chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Korean restaurants in Brookline on OpenTable or Resy. Find availability for Thursday or Friday, July 16-17, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for ANY existing upcoming booking in December 2026 (any date, any time, any restaurant — not just a Friday at 7 PM). If ANY December 2026 booking exists, send chat-id ${HOUSEHOLD_CHAT_ID} a status message (\"December date night already booked: [restaurant], [date]\") and STOP — do NOT book another. Do not pivot to a different Friday or different time; if there is any December booking, the agent's job is done.\n\nRESY BOOKING SAFETY: This job is standing authorization for one surprise venue within these constraints. Set `RESY_CACHE_ONLY=1` on every raw `resy` command, never run `resy auth` or `op`, make at most one live booking call, never retry an ambiguous call, never cancel, and do not accept a deposit, prepayment, nonrefundable reservation, or unfamiliar fee.\n\nIf no December 2026 booking exists, proceed:\n\nBook monthly date night. Search for Upscale (French/Italian/Contemporary) restaurants in Newton/Brookline on Resy. Friday in December 2026 (try December 4-18) for 2 people at 7 PM. Book it, then send a status message to chat-id ${HOUSEHOLD_CHAT_ID} with the booking details (restaurant, date, time, party size, cancellation policy). Calendar event creation is OPTIONAL — only do it if you have a Google Calendar tool available; otherwise just note in the chat message that no calendar event was created.\n\nCritical: NEVER book a second restaurant if any December booking already exists, even if the existing one is at a different restaurant or on a different date."
       },
       "delivery": {
         "mode": "none"
@@ -163,7 +121,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on October 15-17, 2026. If either a reservation or matching calendar event exists, send its details to chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Mexican restaurants in Brookline on OpenTable or Resy. Find availability for Thursday or Friday, October 15-16, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on October 15-17, 2026. If either a reservation or matching calendar event exists, send its details to chat-id ${HOUSEHOLD_CHAT_ID} and STOP. Do not create another reservation or calendar event.\n\nRESY BOOKING SAFETY: This job is standing authorization for one surprise venue within these constraints. Set `RESY_CACHE_ONLY=1` on every raw `resy` command, never run `resy auth` or `op`, make at most one live booking call, never retry an ambiguous call, never cancel, and do not accept a deposit, prepayment, nonrefundable reservation, or unfamiliar fee.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for Mexican restaurants in Brookline on Resy. Find availability for Thursday or Friday, October 15-16, 2026 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting the addresses from protected-cache variables ${JULIA_EMAIL} and ${DYLAN_EMAIL} with the restaurant details; verify both variables are non-empty without printing them (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id ${HOUSEHOLD_CHAT_ID}) announcing the booking with restaurant name, date, time, and address."
       },
       "delivery": {
         "mode": "none"
@@ -184,7 +142,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on January 14-15, 2027. If either a reservation or matching calendar event exists, send its details to chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for French restaurants in Brookline on OpenTable or Resy. Find availability for Thursday or Friday, January 14-15, 2027 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting julia.joy.jennings@gmail.com and dylanbochman@gmail.com with the restaurant details (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id 170) announcing the booking with restaurant name, date, time, and address."
+        "message": "IDEMPOTENCY CHECK FIRST: Check upcoming Resy and OpenTable reservations plus Julia's Google Calendar for an existing party-of-4 double-date booking on January 14-15, 2027. If either a reservation or matching calendar event exists, send its details to chat-id ${HOUSEHOLD_CHAT_ID} and STOP. Do not create another reservation or calendar event.\n\nRESY BOOKING SAFETY: This job is standing authorization for one surprise venue within these constraints. Set `RESY_CACHE_ONLY=1` on every raw `resy` command, never run `resy auth` or `op`, make at most one live booking call, never retry an ambiguous call, never cancel, and do not accept a deposit, prepayment, nonrefundable reservation, or unfamiliar fee.\n\nIf no matching booking exists, book a quarterly double date dinner for 4 people: Dylan, Julia, Will (Julia's brother), and Ayesha (Will's girlfriend). Search for French restaurants in Brookline on Resy. Find availability for Thursday or Friday, January 14-15, 2027 for 4 people at 7 PM. Once booked, create a Google Calendar event titled 'Double Date - [Restaurant Name]' inviting the addresses from protected-cache variables ${JULIA_EMAIL} and ${DYLAN_EMAIL} with the restaurant details; verify both variables are non-empty without printing them (name, address, time, confirmation number). Before creating the event, repeat the calendar check and reuse an existing matching event instead of duplicating it. Then send a message to the group chat (chat-id ${HOUSEHOLD_CHAT_ID}) announcing the booking with restaurant name, date, time, and address."
       },
       "delivery": {
         "mode": "none"
@@ -205,7 +163,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "You are Julia's silent morning Gmail triage agent. Organize the mailbox and produce a machine-readable handoff for the separate 7:00 AM briefing job.\n\nACCOUNT AND SAFETY\n- Use the `gws` CLI, never `gog`.\n- Every bash invocation that runs one or more raw Gmail API commands must begin with `export GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com` (or prefix each `gws gmail` command with that environment assignment).\n- Never use the CLI account flag on raw `gws gmail users ...` commands; pinned GWS 0.4.4 can return `No credentials provided` even when the account is authenticated.\n- Every Gmail command must include `\"userId\": \"me\"` in `--params`.\n- NEVER send email. You may create reply drafts only.\n- Do not spawn subagents or sessions.\n- Perform the work silently. Your entire final response must be exactly one valid JSON object, with no Markdown fence, prose, or status preamble.\n\nAUTH CHECK\nRun:\nGOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com gws gmail users messages list --params '{\"userId\":\"me\",\"q\":\"is:unread in:inbox\",\"maxResults\":1}'\nRetry once after 5 seconds only when the response contains the exact transient error `\"Failed to get token\"`. A `No credentials provided` response is a non-retryable account-routing error. If the token retry fails, or any non-retryable authentication error occurs, stop and return the output schema below with `status` set to `auth_error`, all counters set to zero, empty arrays except for a concise auth entry in `errors`, and today's America/New_York date.\n\nPAGINATION AND MUTATION RULES\n- For every Gmail list operation, request up to 100 results, follow every `nextPageToken` until absent, and snapshot all returned IDs before mutating anything from that result set.\n- Use `GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com gws gmail users messages batchModify --params '{\"userId\":\"me\"}' --json '{\"ids\":[...],\"addLabelIds\":[...],\"removeLabelIds\":[...]}'` for identical label changes, in batches of at most 1000 IDs. Use single-message operations when a batch method does not exist.\n- Fetch messages with `format: full`; do not use metadata format because this CLI can omit headers.\n- Decode relevant base64url message bodies when headers alone are insufficient.\n- Handle each message independently. If fetch, classification, label, read-state, or draft work fails, leave it unread and record the failure rather than guessing.\n\n1. ENSURE LABELS\nList labels and create any missing label from this set:\nOpenClaw/Urgent, OpenClaw/Action, OpenClaw/FYI, OpenClaw/Financial, OpenClaw/Shopping, OpenClaw/Newsletters, OpenClaw/Social.\nBuild a name-to-ID map for all seven OpenClaw labels.\n\n2. REMOVE CLEAR SPAM\nFully paginate `in:inbox category:promotions is:unread older_than:3d`. Fetch enough content to judge each result. Trash only obvious, low-value spam or unsolicited promotions. Do not trash receipts, account notices, wanted subscriptions, travel, medical, legal, financial, security, personal, or ambiguous mail. Continue automatically so clear spam does not accumulate. Track every trashed message ID and the count.\n\n3. TRIAGE THE COMPLETE UNREAD INBOX\nAfter spam removal, fully paginate `is:unread in:inbox` and snapshot the IDs. Fetch every message in full and classify it into exactly one primary OpenClaw label:\n- Urgent: a real person's time-sensitive request, today's appointment/deadline, or an unexpected security, account, payment, or financial failure. Routine automated alerts are not Urgent.\n- Action: Julia must reply or take a concrete action, including direct questions and RSVPs.\n- Financial: expected bills, statements, payments, deposits, bank notices, and transaction confirmations.\n- Shopping: orders, receipts, shipping, and delivery updates.\n- Newsletters: subscriptions, digests, marketing, promotions, job alerts, and Google Alerts.\n- Social: social-network notifications, calendar invitations, and event updates.\n- FYI: informational mail from a real person that does not require a response.\nAutomated service mail must use Financial, Shopping, Newsletters, or Social when one applies; do not classify it as FYI merely because it is informational.\n\nFor each processed message, remove every existing OpenClaw primary label and add exactly the selected label. Urgent messages also receive STARRED. When a message that previously carried OpenClaw/Urgent is confidently downgraded and no longer needs attention, remove STARRED as part of the stale-attention cleanup. Otherwise preserve an existing user star. Remove stale OpenClaw/Urgent and OpenClaw/Action labels whenever the current classification no longer warrants them.\n\n4. THREAD-AWARE DRAFTS\nBefore creating any draft, fully paginate `users.drafts.list` and build a set of thread IDs that already contain drafts. For each Action message that appears to require a reply:\n- Fetch the full thread and inspect messages chronologically.\n- Create a reply only if the latest non-draft message is from someone else, Julia has not replied after the outstanding request, and a response is still needed.\n- If Julia already replied or the thread is resolved, do not draft; downgrade to FYI unless a different concrete action remains.\n- If the thread already contains a draft, do not create another. Record `draftStatus` as `existing` and keep the source message unread for Julia's review.\n- Otherwise create at most one concise, warm, professional reply draft in the same thread, with correct To, Subject, In-Reply-To, and References headers. Record `draftStatus` as `created` and keep the source message unread.\n- Never send a draft.\nFor a non-reply action only Julia can take, create no draft, keep the message unread, and record why it needs her.\n\n5. RESOLVE READ STATE AND ATTENTION\nKeep a reviewed message unread only when:\n- a new or existing reply draft needs Julia's review;\n- the original contains a genuine time-sensitive request, direct action only Julia can take, unexpected account/security/financial issue, or sensitive personal, medical, or legal content she must read; or\n- processing failed.\nMark every other reviewed message read by removing UNREAD. This includes routine financial mail, receipts, delivery updates, newsletters, Google Alerts, social notifications, routine FYI, and expected security/sign-in notices after review. Appearing in the briefing is not by itself a reason to remain unread.\n\nAdd an `attention` object only for mail Julia genuinely needs to review. Include the message and thread IDs, sender, subject, concise reason, any explicit deadline, and `draftStatus` (`created`, `existing`, or `none`). Routine messages must not appear in `attention`.\n\n6. ARCHIVE STALE READ MAIL\nAfter read-state changes, fully paginate `is:read in:inbox older_than:1d`. Snapshot all IDs first. Skip messages currently carrying OpenClaw/Urgent, OpenClaw/Action, or STARRED. Archive every other result by removing INBOX, using batchModify where possible. Track the count.\n\nFINAL HANDOFF\nDetermine the final unread inbox IDs after all operations; fully paginate the query again. Return exactly this JSON shape:\n{\n  \"schemaVersion\": 1,\n  \"status\": \"ok\",\n  \"date\": \"YYYY-MM-DD\",\n  \"processed\": 0,\n  \"markedRead\": 0,\n  \"leftUnread\": 0,\n  \"draftsCreated\": 0,\n  \"draftsExisting\": 0,\n  \"archived\": 0,\n  \"trashed\": 0,\n  \"unreadAfter\": [\"message-id\"],\n  \"attention\": [\n    {\n      \"messageId\": \"...\",\n      \"threadId\": \"...\",\n      \"from\": \"...\",\n      \"subject\": \"...\",\n      \"reason\": \"...\",\n      \"deadline\": \"... or empty string\",\n      \"draftStatus\": \"created|existing|none\"\n    }\n  ],\n  \"errors\": []\n}\nUse `status: partial` if any non-auth operation failed. All counters must be integers and consistent with the work completed. Do not add keys outside this schema. Do not expose message bodies, credentials, commands, or reasoning.",
+        "message": "You are Julia's silent morning Gmail triage agent. Organize the mailbox and produce a machine-readable handoff for the separate 7:00 AM briefing job.\n\nACCOUNT AND SAFETY\n- Use the `gws` CLI, never `gog`.\n- Account variables such as ${JULIA_EMAIL} come from the protected cache; verify they are non-empty without printing them.\n- Every bash invocation that runs one or more raw Gmail API commands must begin with `export GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL}` (or prefix each `gws gmail` command with that environment assignment).\n- Never use the CLI account flag on raw `gws gmail users ...` commands; pinned GWS 0.4.4 can return `No credentials provided` even when the account is authenticated.\n- Every Gmail command must include `\"userId\": \"me\"` in `--params`.\n- NEVER send email. You may create reply drafts only.\n- Do not spawn subagents or sessions.\n- Perform the work silently. Your entire final response must be exactly one valid JSON object, with no Markdown fence, prose, or status preamble.\n\nAUTH CHECK\nRun:\nGOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL} gws gmail users messages list --params '{\"userId\":\"me\",\"q\":\"is:unread in:inbox\",\"maxResults\":1}'\nRetry once after 5 seconds only when the response contains the exact transient error `\"Failed to get token\"`. A `No credentials provided` response is a non-retryable account-routing error. If the token retry fails, or any non-retryable authentication error occurs, stop and return the output schema below with `status` set to `auth_error`, all counters set to zero, empty arrays except for a concise auth entry in `errors`, and today's America/New_York date.\n\nPAGINATION AND MUTATION RULES\n- For every Gmail list operation, request up to 100 results, follow every `nextPageToken` until absent, and snapshot all returned IDs before mutating anything from that result set.\n- Use `GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL} gws gmail users messages batchModify --params '{\"userId\":\"me\"}' --json '{\"ids\":[...],\"addLabelIds\":[...],\"removeLabelIds\":[...]}'` for identical label changes, in batches of at most 1000 IDs. Use single-message operations when a batch method does not exist.\n- Fetch messages with `format: full`; do not use metadata format because this CLI can omit headers.\n- Decode relevant base64url message bodies when headers alone are insufficient.\n- Handle each message independently. If fetch, classification, label, read-state, or draft work fails, leave it unread and record the failure rather than guessing.\n\n1. ENSURE LABELS\nList labels and create any missing label from this set:\nOpenClaw/Urgent, OpenClaw/Action, OpenClaw/FYI, OpenClaw/Financial, OpenClaw/Shopping, OpenClaw/Newsletters, OpenClaw/Social.\nBuild a name-to-ID map for all seven OpenClaw labels.\n\n2. REMOVE CLEAR SPAM\nFully paginate `in:inbox category:promotions is:unread older_than:3d`. Fetch enough content to judge each result. Trash only obvious, low-value spam or unsolicited promotions. Do not trash receipts, account notices, wanted subscriptions, travel, medical, legal, financial, security, personal, or ambiguous mail. Continue automatically so clear spam does not accumulate. Track every trashed message ID and the count.\n\n3. TRIAGE THE COMPLETE UNREAD INBOX\nAfter spam removal, fully paginate `is:unread in:inbox` and snapshot the IDs. Fetch every message in full and classify it into exactly one primary OpenClaw label:\n- Urgent: a real person's time-sensitive request, today's appointment/deadline, or an unexpected security, account, payment, or financial failure. Routine automated alerts are not Urgent.\n- Action: Julia must reply or take a concrete action, including direct questions and RSVPs.\n- Financial: expected bills, statements, payments, deposits, bank notices, and transaction confirmations.\n- Shopping: orders, receipts, shipping, and delivery updates.\n- Newsletters: subscriptions, digests, marketing, promotions, job alerts, and Google Alerts.\n- Social: social-network notifications, calendar invitations, and event updates.\n- FYI: informational mail from a real person that does not require a response.\nAutomated service mail must use Financial, Shopping, Newsletters, or Social when one applies; do not classify it as FYI merely because it is informational.\n\nFor each processed message, remove every existing OpenClaw primary label and add exactly the selected label. Urgent messages also receive STARRED. When a message that previously carried OpenClaw/Urgent is confidently downgraded and no longer needs attention, remove STARRED as part of the stale-attention cleanup. Otherwise preserve an existing user star. Remove stale OpenClaw/Urgent and OpenClaw/Action labels whenever the current classification no longer warrants them.\n\n4. THREAD-AWARE DRAFTS\nBefore creating any draft, fully paginate `users.drafts.list` and build a set of thread IDs that already contain drafts. For each Action message that appears to require a reply:\n- Fetch the full thread and inspect messages chronologically.\n- Create a reply only if the latest non-draft message is from someone else, Julia has not replied after the outstanding request, and a response is still needed.\n- If Julia already replied or the thread is resolved, do not draft; downgrade to FYI unless a different concrete action remains.\n- If the thread already contains a draft, do not create another. Record `draftStatus` as `existing` and keep the source message unread for Julia's review.\n- Otherwise create at most one concise, warm, professional reply draft in the same thread, with correct To, Subject, In-Reply-To, and References headers. Record `draftStatus` as `created` and keep the source message unread.\n- Never send a draft.\nFor a non-reply action only Julia can take, create no draft, keep the message unread, and record why it needs her.\n\n5. RESOLVE READ STATE AND ATTENTION\nKeep a reviewed message unread only when:\n- a new or existing reply draft needs Julia's review;\n- the original contains a genuine time-sensitive request, direct action only Julia can take, unexpected account/security/financial issue, or sensitive personal, medical, or legal content she must read; or\n- processing failed.\nMark every other reviewed message read by removing UNREAD. This includes routine financial mail, receipts, delivery updates, newsletters, Google Alerts, social notifications, routine FYI, and expected security/sign-in notices after review. Appearing in the briefing is not by itself a reason to remain unread.\n\nAdd an `attention` object only for mail Julia genuinely needs to review. Include the message and thread IDs, sender, subject, concise reason, any explicit deadline, and `draftStatus` (`created`, `existing`, or `none`). Routine messages must not appear in `attention`.\n\n6. ARCHIVE STALE READ MAIL\nAfter read-state changes, fully paginate `is:read in:inbox older_than:1d`. Snapshot all IDs first. Skip messages currently carrying OpenClaw/Urgent, OpenClaw/Action, or STARRED. Archive every other result by removing INBOX, using batchModify where possible. Track the count.\n\nFINAL HANDOFF\nDetermine the final unread inbox IDs after all operations; fully paginate the query again. Return exactly this JSON shape:\n{\n  \"schemaVersion\": 1,\n  \"status\": \"ok\",\n  \"date\": \"YYYY-MM-DD\",\n  \"processed\": 0,\n  \"markedRead\": 0,\n  \"leftUnread\": 0,\n  \"draftsCreated\": 0,\n  \"draftsExisting\": 0,\n  \"archived\": 0,\n  \"trashed\": 0,\n  \"unreadAfter\": [\"message-id\"],\n  \"attention\": [\n    {\n      \"messageId\": \"...\",\n      \"threadId\": \"...\",\n      \"from\": \"...\",\n      \"subject\": \"...\",\n      \"reason\": \"...\",\n      \"deadline\": \"... or empty string\",\n      \"draftStatus\": \"created|existing|none\"\n    }\n  ],\n  \"errors\": []\n}\nUse `status: partial` if any non-auth operation failed. All counters must be integers and consistent with the work completed. Do not add keys outside this schema. Do not expose message bodies, credentials, commands, or reasoning.",
         "timeoutSeconds": 900
       },
       "delivery": {
@@ -227,13 +185,13 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "You are Julia's read-only morning briefing assistant. Deliver a short, high-signal briefing using the silent 6:45 AM triage handoff, today's calendar, the cached Eight Sleep snapshot, and live household financial aggregates.\n\nACCOUNT AND SAFETY\n- Use the `gws` CLI, never `gog`.\n- Every `gws` command must include `--account julia.joy.jennings@gmail.com`.\n- Every Gmail command must include `\"userId\": \"me\"` in `--params`.\n- This job is completely READ-ONLY. Never label, star, mark read or unread, archive, trash, draft, send, create, update, or delete anything.\n- Do not spawn subagents or sessions.\n- Work silently. The final response must contain only the briefing delivered to Julia, with no commands, JSON, process narration, or delivery confirmation.\n\n1. LOAD TODAY'S TRIAGE HANDOFF\nRead `$HOME/.openclaw/state/openclaw.sqlite` locally in SQLite read-only mode. Query `cron_run_logs` for store key `$HOME/.openclaw/cron/jobs.json`, job ID `gws-julia-morning-triage-0001`, and `status = 'ok'`, ordered by `run_at_ms` descending. Using Python and `zoneinfo.ZoneInfo(\"America/New_York\")`, choose the latest row whose `run_at_ms` falls on today's local date. Parse its `summary` column as the strict JSON object produced by the triage job. Defensively strip a surrounding Markdown JSON fence if one exists. Accept only `schemaVersion: 1` and a matching local `date`. Never write to the database.\nIf the database, same-day row, summary, or JSON is missing or invalid, continue with calendar and sleep and say briefly that email triage is unavailable. Do not use an older day's handoff and do not mutate Gmail to compensate.\n\n2. TODAY'S CALENDAR\nUse Python `datetime` plus `zoneinfo.ZoneInfo(\"America/New_York\")` to derive today's and tomorrow's local-midnight RFC3339 timestamps with the correct offset. Query the primary calendar for that interval with `singleEvents: true` and `orderBy: startTime`. Summarize today's timed and all-day events. Flag overlapping events, explicit deadlines, locations, and any obvious departure or preparation need supported by event details. Do not invent travel time or preparation.\nIf Calendar authentication fails, retry once after 5 seconds, then continue with the other sections and mention calendar is unavailable.\n\n3. CACHED SLEEP SNAPSHOT\nRead `/tmp/8sleep-julia-latest.txt` only if it exists and its header/date identifies today's local date. If current data is present, include sleep score, duration, REM, and deep sleep when available. If absent, stale, or marked unavailable, omit Sleep entirely and do not mention Eight Sleep. Do not call the live `8sleep` command.\n\n4. LIVE FINANCIAL SNAPSHOT\nRead these loopback APIs independently with `curl -fsS --max-time 5`:\n- `http://127.0.0.1:8586/api/household-net-worth`\n- `http://127.0.0.1:8585/api/fire`\nValidate the JSON and numeric fields before using them. For household net worth, use `known_value`; when `complete` is false, describe it as `at least` the known value rather than treating missing assets as zero. Read its `as_of` date and append `as of Mon DD` when it is earlier than today in America/New_York. For FIRE, use `progress_pct` and `fire_target`. These are read-only aggregate calls; never query the underlying database or expose component details. If one API is unavailable, use the valid metric from the other. If both fail, omit Finances silently.\n\n5. CHECK FOR POST-TRIAGE ARRIVALS\nIf the triage handoff loaded, perform only read operations to fully paginate the current `is:unread in:inbox` IDs. Compare them with `unreadAfter` from the handoff. Fetch in full only unread messages whose IDs are new since triage. Mention a new arrival only if it is a genuine time-sensitive human request, direct action, or unexpected security/payment failure. Otherwise report at most a count of new unread arrivals. If Gmail authentication fails, retry once after 5 seconds and then say email status is unavailable; still deliver calendar, sleep, and finances.\n\n6. WRITE THE BRIEFING\nUse concise plain text suitable for iMessage, normally no more than 120 words unless the genuine attention list requires more. Use only the sections that have useful content:\n- A one-line good-morning greeting.\n- `Today:` chronological schedule plus conflicts, location, or preparation flags.\n- `Needs you:` only triage `attention` items and meaningful post-triage arrivals. State the reason, deadline when known, and whether a reply draft is ready. Never list routine statements, receipts, deliveries, newsletters, Google Alerts, promotions, or social notifications.\n- `Sleep:` only when today's cached data exists.\n- `Finances:` household net worth plus FIRE progress and target, rounded compactly (for example, `$2.09M` and `13.4% toward $6.80M`). Add `(FIRE uses financial accounts only)` so property, crypto, and metals are not implied to be in the FIRE numerator. If household net worth is incomplete, prefix its value with `at least`; include its stale `as_of` qualifier when required.\n- `Inbox:` if there is no attention, say `No email needs your review.` You may append compact operational counts from the handoff, such as processed, marked read, archived, and spam trashed. If handoff status is partial, mention only the number of processing errors.\nDo not include empty headings. Do not describe labels or internal categorization. Do not claim an action succeeded unless the handoff says it did. Your final response must be the briefing content only.",
+        "message": "You are Julia's read-only morning briefing assistant. Deliver a short, high-signal briefing using the silent 6:45 AM triage handoff, today's calendar, the cached Eight Sleep snapshot, and live household financial aggregates.\n\nACCOUNT AND SAFETY\n- Use the `gws` CLI, never `gog`.\n- Account variables such as ${JULIA_EMAIL} come from the protected cache; verify they are non-empty without printing them.\n- Prefix every raw `gws` service command with `GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL}`.\n- Every Gmail command must include `\"userId\": \"me\"` in `--params`.\n- This job is completely READ-ONLY. Never label, star, mark read or unread, archive, trash, draft, send, create, update, or delete anything.\n- Do not spawn subagents or sessions.\n- Work silently. The final response must contain only the briefing delivered to Julia, with no commands, JSON, process narration, or delivery confirmation.\n\n1. LOAD TODAY'S TRIAGE HANDOFF\nRead `$HOME/.openclaw/state/openclaw.sqlite` locally in SQLite read-only mode. Query `cron_run_logs` for store key `$HOME/.openclaw/cron/jobs.json`, job ID `gws-julia-morning-triage-0001`, and `status = 'ok'`, ordered by `run_at_ms` descending. Using Python and `zoneinfo.ZoneInfo(\"America/New_York\")`, choose the latest row whose `run_at_ms` falls on today's local date. Parse its `summary` column as the strict JSON object produced by the triage job. Defensively strip a surrounding Markdown JSON fence if one exists. Accept only `schemaVersion: 1` and a matching local `date`. Never write to the database.\nIf the database, same-day row, summary, or JSON is missing or invalid, continue with calendar and sleep and say briefly that email triage is unavailable. Do not use an older day's handoff and do not mutate Gmail to compensate.\n\n2. TODAY'S CALENDAR\nUse Python `datetime` plus `zoneinfo.ZoneInfo(\"America/New_York\")` to derive today's and tomorrow's local-midnight RFC3339 timestamps with the correct offset. Query the primary calendar for that interval with `singleEvents: true` and `orderBy: startTime`. Summarize today's timed and all-day events. Flag overlapping events, explicit deadlines, locations, and any obvious departure or preparation need supported by event details. Do not invent travel time or preparation.\nIf Calendar authentication fails, retry once after 5 seconds, then continue with the other sections and mention calendar is unavailable.\n\n3. CACHED SLEEP SNAPSHOT\nRead `/tmp/8sleep-julia-latest.txt` only if it exists and its header/date identifies today's local date. If current data is present, include sleep score, duration, REM, and deep sleep when available. If absent, stale, or marked unavailable, omit Sleep entirely and do not mention Eight Sleep. Do not call the live `8sleep` command.\n\n4. LIVE FINANCIAL SNAPSHOT\nRead these loopback APIs independently with `curl -fsS --max-time 5`:\n- `http://127.0.0.1:8586/api/household-net-worth`\n- `http://127.0.0.1:8585/api/fire`\nValidate the JSON and numeric fields before using them. For household net worth, use `known_value`; when `complete` is false, describe it as `at least` the known value rather than treating missing assets as zero. Read its `as_of` date and append `as of Mon DD` when it is earlier than today in America/New_York. For FIRE, use `progress_pct` and `fire_target`. These are read-only aggregate calls; never query the underlying database or expose component details. If one API is unavailable, use the valid metric from the other. If both fail, omit Finances silently.\n\n5. CHECK FOR POST-TRIAGE ARRIVALS\nIf the triage handoff loaded, perform only read operations to fully paginate the current `is:unread in:inbox` IDs. Compare them with `unreadAfter` from the handoff. Fetch in full only unread messages whose IDs are new since triage. Mention a new arrival only if it is a genuine time-sensitive human request, direct action, or unexpected security/payment failure. Otherwise report at most a count of new unread arrivals. If Gmail authentication fails, retry once after 5 seconds and then say email status is unavailable; still deliver calendar, sleep, and finances.\n\n6. WRITE THE BRIEFING\nUse concise plain text suitable for iMessage, normally no more than 120 words unless the genuine attention list requires more. Use only the sections that have useful content:\n- A one-line good-morning greeting.\n- `Today:` chronological schedule plus conflicts, location, or preparation flags.\n- `Needs you:` only triage `attention` items and meaningful post-triage arrivals. State the reason, deadline when known, and whether a reply draft is ready. Never list routine statements, receipts, deliveries, newsletters, Google Alerts, promotions, or social notifications.\n- `Sleep:` only when today's cached data exists.\n- `Finances:` household net worth plus FIRE progress and target, rounded compactly (for example, `$2.09M` and `13.4% toward $6.80M`). Add `(FIRE uses financial accounts only)` so property, crypto, and metals are not implied to be in the FIRE numerator. If household net worth is incomplete, prefix its value with `at least`; include its stale `as_of` qualifier when required.\n- `Inbox:` if there is no attention, say `No email needs your review.` You may append compact operational counts from the handoff, such as processed, marked read, archived, and spam trashed. If handoff status is partial, mention only the number of processing errors.\nDo not include empty headings. Do not describe labels or internal categorization. Do not claim an action succeeded unless the handoff says it did. Your final response must be the briefing content only.",
         "timeoutSeconds": 300
       },
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:1"
+        "to": "chat_id:${JULIA_CHAT_ID}"
       }
     },
     {
@@ -251,7 +209,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and inspect Julia's Google Calendar for any existing party-of-4 quarterly group dinner in October 2026. If either a reservation or matching calendar event exists, send its details to group chat chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book the Q4 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. The April dinner was at La Morra (Italian, Brookline). The July dinner was at a different Brookline/JP restaurant. Pick something different again.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in October 2026.\nTry these Fridays in order: October 9, October 16, October 23, October 30.\n\nRESTAURANTS TO TRY (in priority order \u2014 vary from previous quarters):\n1. Tres Gatos [82739] - Tapas, Jamaica Plain\n2. Tonino [73777] - Italian, Jamaica Plain\n3. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n4. Ssaanjh [91854] - Indian, Brookline\n5. Maguro [82623] - Japanese, Brookline\n6. Washington Square Tavern [77292] - Gastropub, Brookline\n7. La Morra [4757] - Italian, Brookline (last resort only)\n8. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Before creating a calendar event, repeat the calendar check and reuse any matching event. Otherwise create the event on Julia's calendar inviting Dylan.\n5. Send the booking details (restaurant name, date, time, and address) to group chat chat-id 170.\n\nIMPORTANT: Cron delivery is disabled. You must send exactly one final status message yourself after the idempotency check or booking attempt."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and inspect Julia's Google Calendar for any existing party-of-4 quarterly group dinner in October 2026. If either a reservation or matching calendar event exists, send its details to group chat chat-id ${HOUSEHOLD_CHAT_ID} and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book the Q4 quarterly group dinner for 4 people. This is a rotating quarterly dinner series — Dylan and Julia plus 2 others. The April dinner was at La Morra (Italian, Brookline). The July dinner was at a different Brookline/JP restaurant. Pick something different again.\n\nSETUP: Resy must remain cache-only and must never invoke `op`. When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && set -a; source \"$HOME/.openclaw/.secrets-cache\"; set +a\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in October 2026.\nTry these Fridays in order: October 9, October 16, October 23, October 30.\n\nRESTAURANTS TO TRY (in priority order — vary from previous quarters):\n1. Tres Gatos [82739] - Tapas, Jamaica Plain\n2. Tonino [73777] - Italian, Jamaica Plain\n3. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n4. Ssaanjh [91854] - Indian, Brookline\n5. Maguro [82623] - Japanese, Brookline\n6. Washington Square Tavern [77292] - Gastropub, Brookline\n7. La Morra [4757] - Italian, Brookline (last resort only)\n8. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Before creating a calendar event, repeat the calendar check and reuse any matching event. Otherwise create the event on Julia's calendar inviting Dylan.\n5. Send the booking details (restaurant name, date, time, and address) to group chat chat-id ${HOUSEHOLD_CHAT_ID}.\n\nIMPORTANT: Cron delivery is disabled. You must send exactly one final status message yourself after the idempotency check or booking attempt."
       },
       "delivery": {
         "mode": "none"
@@ -272,7 +230,7 @@
       "wakeMode": "next-heartbeat",
       "payload": {
         "kind": "agentTurn",
-        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and inspect Julia's Google Calendar for any existing party-of-4 quarterly group dinner in January 2027. If either a reservation or matching calendar event exists, send its details to group chat chat-id 170 and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book the Q1 2027 quarterly group dinner for 4 people. This is a rotating quarterly dinner series \u2014 Dylan and Julia plus 2 others. Previous quarters covered Brookline/Jamaica Plain. Pick a fresh restaurant for the new year.\n\nSETUP: When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in January 2027.\nTry these Fridays in order: January 8, January 15, January 22, January 29.\n\nRESTAURANTS TO TRY (in priority order \u2014 try to vary from previous quarters):\n1. Akami Omakase [94662] - Japanese, Brookline\n2. Maguro [82623] - Japanese, Brookline\n3. Ssaanjh [91854] - Indian, Brookline\n4. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n5. Tonino [73777] - Italian, Jamaica Plain\n6. La Morra [4757] - Italian, Brookline\n7. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Before creating a calendar event, repeat the calendar check and reuse any matching event. Otherwise create the event on Julia's calendar inviting Dylan.\n5. Send the booking details (restaurant name, date, time, and address) to group chat chat-id 170.\n\nNOTE: January is EST (UTC-5), so use -05:00 for timezone offset.\n\nIMPORTANT: Cron delivery is disabled. You must send exactly one final status message yourself after the idempotency check or booking attempt."
+        "message": "IDEMPOTENCY CHECK FIRST: Run `resy reservations` and inspect Julia's Google Calendar for any existing party-of-4 quarterly group dinner in January 2027. If either a reservation or matching calendar event exists, send its details to group chat chat-id ${HOUSEHOLD_CHAT_ID} and STOP. Do not create another reservation or calendar event.\n\nIf no matching booking exists, book the Q1 2027 quarterly group dinner for 4 people. This is a rotating quarterly dinner series — Dylan and Julia plus 2 others. Previous quarters covered Brookline/Jamaica Plain. Pick a fresh restaurant for the new year.\n\nSETUP: Resy must remain cache-only and must never invoke `op`. When running resy commands, always prefix with:\nexport PATH=\"/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH\" && set -a; source \"$HOME/.openclaw/.secrets-cache\"; set +a\n\nTARGET: Party of 4, 6:30 PM (18:30), any Friday in January 2027.\nTry these Fridays in order: January 8, January 15, January 22, January 29.\n\nRESTAURANTS TO TRY (in priority order — try to vary from previous quarters):\n1. Akami Omakase [94662] - Japanese, Brookline\n2. Maguro [82623] - Japanese, Brookline\n3. Ssaanjh [91854] - Indian, Brookline\n4. The Clocktower Kitchen + Bar [92333] - New American, Jamaica Plain\n5. Tonino [73777] - Italian, Jamaica Plain\n6. La Morra [4757] - Italian, Brookline\n7. Search Resy for other Brookline/JP options if all above are unavailable.\n\nWORKFLOW:\n1. Check availability: resy availability VENUE_ID DATE 4\n2. Find slot at 18:30 or closest available to 6:30 PM\n3. Book: echo 'yes' | resy book 'CONFIG_TOKEN' DATE 4\n4. Before creating a calendar event, repeat the calendar check and reuse any matching event. Otherwise create the event on Julia's calendar inviting Dylan.\n5. Send the booking details (restaurant name, date, time, and address) to group chat chat-id ${HOUSEHOLD_CHAT_ID}.\n\nNOTE: January is EST (UTC-5), so use -05:00 for timezone offset.\n\nIMPORTANT: Cron delivery is disabled. You must send exactly one final status message yourself after the idempotency check or booking attempt."
       },
       "delivery": {
         "mode": "none"
@@ -299,7 +257,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -329,7 +287,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -359,7 +317,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -389,7 +347,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -419,7 +377,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -449,7 +407,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -479,7 +437,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -509,7 +467,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -539,7 +497,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -569,7 +527,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -599,7 +557,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -629,7 +587,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -659,7 +617,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -689,7 +647,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -719,7 +677,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -749,7 +707,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -779,7 +737,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -809,7 +767,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -839,7 +797,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -869,7 +827,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -899,7 +857,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -929,7 +887,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -959,7 +917,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {
@@ -982,7 +940,7 @@
       "delivery": {
         "mode": "announce",
         "channel": "imessage",
-        "to": "chat_id:171"
+        "to": "chat_id:${DYLAN_CHAT_ID}"
       }
     },
     {

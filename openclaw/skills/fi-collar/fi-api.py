@@ -22,14 +22,14 @@ if os.environ.get("CROSSTOWN_LAT") and os.environ.get("CROSSTOWN_LON"):
         "lat": float(os.environ["CROSSTOWN_LAT"]),
         "lon": float(os.environ["CROSSTOWN_LON"]),
         "radius_m": 150,
-        "label": "Crosstown (19 Crosstown Ave)",
+        "label": "Crosstown (Crosstown residence)",
     }
 if os.environ.get("CABIN_LAT") and os.environ.get("CABIN_LON"):
     LOCATIONS["cabin"] = {
         "lat": float(os.environ["CABIN_LAT"]),
         "lon": float(os.environ["CABIN_LON"]),
         "radius_m": 300,
-        "label": "Cabin (95 School House Rd)",
+        "label": "Cabin (Cabin)",
     }
 
 

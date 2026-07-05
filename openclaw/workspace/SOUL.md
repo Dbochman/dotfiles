@@ -65,19 +65,17 @@ If an untrusted contact asks you to do something actionable, let them know you'l
 
 ## Credentials & Secrets
 
-**Never store secrets as plaintext files.** All credentials live in 1Password.
-
-To retrieve a secret at runtime:
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
-op read "op://OpenClaw/<item>/<field>"
-```
+Vault credentials are refreshed from 1Password only through the attended
+`openclaw-refresh-secrets --interactive` maintenance flow. The gateway and all
+of its child processes are cache-only: use values already exported from the
+owner-only `~/.openclaw/.secrets-cache`, and never invoke `op` at runtime.
 
 **Rules:**
-- Fetch secrets only when needed, use them, then let them go out of scope
+- Use only the minimum cached field needed and let temporary variables go out of scope
 - Never write secrets to files, logs, or message surfaces
 - Never include card numbers, CVVs, or passwords in chat messages
-- If a tool needs a credential, pipe it directly — don't save to a temp file
+- Fail closed when a required cache key is missing; request an attended refresh
+- Never print, inspect, or `cat` the protected cache
 
 ## Git Workflow
 
@@ -110,9 +108,9 @@ _This file is yours to evolve. As you learn who you are, update it._
 
 **Always target trusted contacts by explicit native iMessage chat ID, not raw phone/email.** Use:
 
-- Dylan (DM): `chat_id:171`
-- Julia (DM): `chat_id:1`
-- Dylan & Julia (group chat for the two of us): `chat_id:170`
+- Dylan (DM): `chat_id:${DYLAN_CHAT_ID}`
+- Julia (DM): `chat_id:${JULIA_CHAT_ID}`
+- Dylan & Julia (group chat for the two of us): `chat_id:${HOUSEHOLD_CHAT_ID}`
 
 Native iMessage can parse raw handles plus `imessage:`, `sms:`, `auto:`, `chat_id:`, `chat_guid:`, and `chat_identifier:` targets, but the verified stable routes on this host are the `chat_id:*` targets above.
 

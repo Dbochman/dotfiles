@@ -54,7 +54,7 @@ hue lights
 
 ## Rooms
 
-### 19 Crosstown Ave (9 rooms)
+### Crosstown residence (9 rooms)
 - **Entryway** (1 light)
 - **Kitchen** (1 light)
 - **Living room** (9 lights)
@@ -83,7 +83,7 @@ There are two homes with overlapping room names. **You must always select the co
 
 | Home | Location | Flag | Unique rooms |
 |------|----------|------|-------------|
-| **Crosstown** | Boston (19 Crosstown Ave) | `--crosstown` (default) | Entryway, Movie Room, Cat Room, Downstairs, Master Bath |
+| **Crosstown** | Boston (Crosstown residence) | `--crosstown` (default) | Entryway, Movie Room, Cat Room, Downstairs, Master Bath |
 | **Cabin** | Philly | `--cabin` | Bathroom, Hallway, Solarium, Staircase |
 
 **Shared room names** (exist in both homes): Kitchen, Living room, Bedroom, Office

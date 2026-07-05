@@ -37,7 +37,7 @@ Other changes:
   `GOOGLE_WORKSPACE_CLI_TOKEN`, etc.
 
 The breakage on our side is concrete and reproducible: every skill that
-embeds `--account julia.joy.jennings@gmail.com` (or any other account
+embeds `--account ${JULIA_EMAIL}` (or any other account
 flag) will return:
 
 ```
@@ -59,7 +59,7 @@ Agent and cron calls become:
 
 ```bash
 # old
-gws gmail users messages list --params '{"userId":"me",...}' --account julia.joy.jennings@gmail.com
+gws gmail users messages list --params '{"userId":"me",...}' --account ${JULIA_EMAIL}
 
 # new
 gws-julia gmail users messages list --params '{"userId":"me",...}'
@@ -112,7 +112,7 @@ Known skills with `--account` in their SKILL.md (counts from
 Replacement pattern for each:
 
 ```diff
-- gws gmail users messages list --params '...' --account julia.joy.jennings@gmail.com
+- gws gmail users messages list --params '...' --account ${JULIA_EMAIL}
 + gws-julia gmail users messages list --params '...'
 
 - gws calendar events list --params '...'    # implicit Dylan default
@@ -123,11 +123,11 @@ Replacement pattern for each:
 
 Julia's morning briefing prompt embeds the literal string:
 
-> TOOL: Use `gws` CLI (NOT gog). Always include `--account julia.joy.jennings@gmail.com`.
+> TOOL: Use `gws` CLI (NOT gog). Always include `--account ${JULIA_EMAIL}`.
 
 And later:
 
-> gws gmail users messages list --params '{"userId": "me", ...}' --account julia.joy.jennings@gmail.com
+> gws gmail users messages list --params '{"userId": "me", ...}' --account ${JULIA_EMAIL}
 
 Both must be rewritten to use `gws-julia`.
 
@@ -269,7 +269,7 @@ ssh dylans-mac-mini 'PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH 
 The wrapper scripts are harmless under 0.4.4 (env var is ignored),
 but the prompts embedded in cron jobs and skills will still call
 `gws-julia` etc. which won't exist. So either keep the wrappers as
-identity stubs (`exec gws --account julia.joy.jennings@gmail.com "$@"`
+identity stubs (`exec gws --account ${JULIA_EMAIL} "$@"`
 for the rollback window) or revert the file changes via `git revert`
 of the migration commit before rolling back the binary.
 

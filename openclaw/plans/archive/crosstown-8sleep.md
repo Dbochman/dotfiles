@@ -26,9 +26,9 @@ The 8sleep account was created via **Google Sign-In** — the email+password API
 |-------|-------|
 | Model | Pod 3 |
 | Size | King |
-| Serial | 00027826 |
+| Serial | `${EIGHTSLEEP_CROSSTOWN_DEVICE_SERIAL}` |
 | HW Revision | H40 |
-| Device ID | `69e00d7434b871d53075eccecf1c4aa283a0bf67` |
+| Device ID | `${EIGHTSLEEP_CROSSTOWN_DEVICE_ID}` |
 
 ### Sides
 

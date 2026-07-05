@@ -14,7 +14,7 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
 - Departure detection is **Fi-only**. Ring and presence no longer decide whether a walk started.
 - The listener uses Potato's Fi GPS/geofence result to choose the home, and stores the last confirmed in-geofence home as `home_location`.
 - Walks now get immutable `walk_id` and `origin_location` fields at departure.
-- Route files are persisted during return monitoring at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`.
+- Route files are persisted atomically during return monitoring at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`; per-route locking keeps concurrent polling, finalization, car marking, and delayed Fi enrichment from dropping one another's fields.
 - Route files include `distance_m`, `point_count`, inferred `end_location`, and `is_interhome_transit`.
 - Inter-home transits are filtered out of the dashboard route-summary API, so future map views only show same-home walks.
 - Walk hours now cover the full day in three contiguous sections: `7 AM-12 PM`, `12 PM-5 PM`, `5 PM-9 PM`.
@@ -73,8 +73,8 @@ If no combo trigger fires, the GPS-only path still works:
 
 | Location | Radius |
 |----------|--------|
-| Crosstown (19 Crosstown Ave, West Roxbury) | 30m |
-| Cabin (95 School House Rd, Phillipston) | 75m |
+| Crosstown (Crosstown residence, West Roxbury) | 30m |
+| Cabin (Cabin, Phillipston) | 75m |
 
 ### Return Detection (multi-signal)
 
@@ -83,12 +83,12 @@ After departure, the return monitor uses three signals — any one triggers Room
 | Signal | Interval | How it works |
 |--------|----------|-------------|
 | **Ring motion** | Event-driven | Person detected at doorbell during monitoring |
-| **WiFi / network presence** | Every 30s (after 10min) | ARP scan (Crosstown via MBP) or Starlink gRPC (Cabin). Detects phone reconnecting to WiFi. **Ignored for first 10 minutes** — phones linger on WiFi at the front door. |
+| **WiFi / network presence** | Every 30s (after 10min) | Read-only `presence-detect.sh observe <location>` via the MBP (Crosstown) or locally (Cabin). Detects phone reconnecting without writing correlated presence state, pushing Taildrop, or triggering vacancy automation. **Ignored for first 10 minutes** — phones linger on WiFi at the front door. |
 | **Fi GPS** | Every 30s | Polls Potato's Fi collar GPS. Docks when Potato re-enters home geofence. Base-station echo detection prevents false "at home" readings. |
 | **Fi GPS (inter-home)** | Every 30s | If Potato enters the *other* home's geofence during monitoring, the walk is auto-finalized as an inter-home transit. Roombas dock at origin, home anchor updates to the new location. |
 
 - Departure GPS point is seeded as the first route point for dashboard maps
-- 2 minutes after departure, a network scan identifies **who left**
+- 2 minutes after departure, the same read-only network observation identifies **who left**. Missing, stale, malformed, or incomplete observations fail closed: they neither dock Roombas nor infer walkers.
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
 - On return, the full Fi `OngoingWalk` path is fetched (dense polyline) and merged into the route file
 - **Fi walk enrichment** queries `activityFeed` for authoritative timestamps and distance, then **merges all Walk segments that overlap our outing window** (`[our_started_at - 5min, our_ended_at + 5min]`). Fi splits a single outing into multiple Walks when the dog pauses for Play/Rest (sniffing, yard time); the merge takes the earliest start, latest end, sum of distances, and records `fi_walk_count` for transparency. A background thread retries at 5 / 10 / 20 min after return to catch Walks Fi finalizes late — retries are idempotent and always scheduled so late segments can be merged in.

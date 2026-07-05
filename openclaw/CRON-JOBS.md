@@ -129,6 +129,16 @@ Any one-shot (`deleteAfterRun: true`) whose agent makes external bookings,
 purchases, or other irreversible side effects MUST follow all four of these
 or it can run multiple times and create duplicates:
 
+The canonical date-night, double-date, and quarterly-dinner jobs are a
+deliberate exception to exact-venue confirmation: their enabled definitions
+are standing user authorization to choose and book one surprise restaurant
+within the prompt's cuisine, location, date, time, party-size, and fee-policy
+constraints. The uncertainty is part of the experience. Do not disable these
+jobs or convert them to proposal-only work merely because the exact venue is
+unknown. This does not waive the idempotency, cache-only, one-attempt,
+no-unattended-cancellation, `delivery.mode: none`, `deleteAfterRun`, or
+successful-run tombstone requirements below.
+
 1. **`delivery.mode: "none"`** (set via `--no-deliver`). With `announce`,
    a delivery-channel failure (service stall, network blip) flips the run to
    `status:error` even when the agent's task succeeded — the cron subsystem
@@ -146,7 +156,7 @@ or it can run multiple times and create duplicates:
    IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for any
    existing upcoming booking in <month> 2026 (any date, any time, any
    restaurant — not just the specific Friday). If ANY May 2026 booking
-   exists, send chat-id 170 a status message ("<month> date night
+   exists, send chat-id ${HOUSEHOLD_CHAT_ID} a status message ("<month> date night
    already booked: [restaurant], [date]") and STOP — do NOT book
    another.
 
@@ -347,13 +357,12 @@ CLI commands must use full absolute paths.
 
 Monthly date nights for Dylan and Julia (2 people, Fridays at 7 PM,
 Newton/Brookline area via Resy). All `deleteAfterRun: true`, agent
-self-delivers to group chat (chat-id 170) via the `message` tool —
+self-delivers to group chat (chat-id ${HOUSEHOLD_CHAT_ID}) via the `message` tool —
 `delivery.mode: "none"` at the cron layer (see "Safe one-shots" above).
 Each prompt opens with an idempotency check against `resy reservations`.
 
 | ID | Fires On | Cuisine |
 |----|----------|---------|
-| `datenight-jul-japanese` | Jul 1, 2026 | Japanese/Asian |
 | `datenight-aug-farmtotable` | Aug 1, 2026 | Farm-to-Table |
 | `datenight-sep-steakhouse` | Sep 1, 2026 | American/Steakhouse |
 | `datenight-oct-indian` | Oct 1, 2026 | Indian |
@@ -366,7 +375,6 @@ Quarterly double dates for 4 (Dylan, Julia, Will, Ayesha). Thursdays or Fridays 
 
 | ID | Fires On | Cuisine |
 |----|----------|---------|
-| `doubledate-q3-jul-korean` | Jul 1, 2026 | Korean |
 | `doubledate-q4-oct-mexican` | Oct 1, 2026 | Mexican |
 | `doubledate-q1-jan27-french` | Jan 2, 2027 | French |
 
@@ -383,6 +391,8 @@ Quarterly group dinners for 4 via Resy. Party of 4 at 6:30 PM on Fridays, Brookl
 
 | ID | Removed | Reason |
 |----|---------|--------|
+| `datenight-jul-japanese` | 2026-07-05 | Completed successfully on July 1; run-history tombstone retained and canonical one-shot removed |
+| `doubledate-q3-jul-korean` | 2026-07-05 | Completed successfully on July 1; run-history tombstone retained and canonical one-shot removed |
 | `world-cup-briefing-2026-06-25` through `-06-27` | 2026-06-27 | Each completed once and delivered through native iMessage; SQLite run history retained |
 | `qd-booking-2026-07-june15` | 2026-06-21 | Completed job repeatedly redeployed; removed after tombstone hardening and duplicate cleanup |
 | `datenight-jun-tapas` | 2026-06-21 | Completed June one-shot |

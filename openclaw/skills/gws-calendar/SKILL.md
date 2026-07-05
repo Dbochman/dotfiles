@@ -9,24 +9,26 @@ metadata: {"openclaw":{"emoji":"📅","requires":{"bins":["gws"]}}}
 
 Access Google Calendar via the `gws` CLI at `/opt/homebrew/bin/gws`. Credentials are AES-256-GCM encrypted at `~/.config/gws/`.
 
+Read [references/gws-cli.md](references/gws-cli.md) before selecting an account, changing authentication, or executing a write.
+
 ## Accounts
 
-| Account | Owner | Flag |
-|---------|-------|------|
-| dylanbochman@gmail.com | Dylan | Default (no flag needed) |
-| julia.joy.jennings@gmail.com | Julia | `--account julia.joy.jennings@gmail.com` |
-| bochmanspam@gmail.com | Dylan (spam) | `--account bochmanspam@gmail.com` |
-| clawdbotbochman@gmail.com | OpenClaw | `--account clawdbotbochman@gmail.com` |
+| Account | Owner | Service-command selection |
+|---------|-------|---------------------------|
+| ${DYLAN_EMAIL} | Dylan | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${DYLAN_EMAIL}` |
+| ${JULIA_EMAIL} | Julia | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL}` |
+| ${STARMARKET_GMAIL} | Dylan (spam) | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${STARMARKET_GMAIL}` |
+| ${OPENCLAW_EMAIL} | OpenClaw | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${OPENCLAW_EMAIL}` |
 
 When Dylan asks about "my calendar", use default. When he says "Julia's calendar", use her account.
 
 ## Command Pattern
 
-All commands follow: `gws calendar <resource> <method> [--params '<JSON>'] [--json '<JSON>'] [--account <email>]`
+All raw API commands follow: `GOOGLE_WORKSPACE_CLI_ACCOUNT=<email> gws calendar <resource> <method> [--params '<JSON>'] [--json '<JSON>']`
 
 - `--params` = URL/query parameters (calendarId, timeMin, maxResults, etc.)
 - `--json` = request body (for create/update)
-- `--account` = target account (omit for Dylan)
+- Omit the environment prefix for Dylan's default account.
 
 ## List Calendars
 
@@ -56,13 +58,13 @@ gws calendar events list --params '{
 }'
 
 # Julia's events today
-gws calendar events list --params '{
+GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL} gws calendar events list --params '{
   "calendarId": "primary",
   "timeMin": "2026-03-05T00:00:00-05:00",
   "timeMax": "2026-03-06T00:00:00-05:00",
   "singleEvents": true,
   "orderBy": "startTime"
-}' --account julia.joy.jennings@gmail.com
+}'
 
 # All calendars (use calendarList first, then query each)
 gws calendar events list --params '{
@@ -109,7 +111,7 @@ gws calendar events insert --params '{"calendarId": "primary"}' --json '{
   "start": {"dateTime": "2026-03-10T09:00:00-05:00", "timeZone": "America/New_York"},
   "end": {"dateTime": "2026-03-10T09:30:00-05:00", "timeZone": "America/New_York"},
   "attendees": [
-    {"email": "alice@example.com"}
+    {"email": "person@example.com"}
   ]
 }'
 ```
@@ -151,7 +153,7 @@ gws calendar events insert --params '{"calendarId": "primary", "conferenceDataVe
   "summary": "1:1 with Alice",
   "start": {"dateTime": "2026-03-10T14:00:00-05:00", "timeZone": "America/New_York"},
   "end": {"dateTime": "2026-03-10T14:30:00-05:00", "timeZone": "America/New_York"},
-  "attendees": [{"email": "alice@example.com"}],
+  "attendees": [{"email": "attendee@example.com"}],
   "conferenceData": {
     "createRequest": {"requestId": "meet-1", "conferenceSolutionKey": {"type": "hangoutsMeet"}}
   }
@@ -189,8 +191,8 @@ gws calendar freebusy query --json '{
   "timeMin": "2026-03-10T00:00:00-05:00",
   "timeMax": "2026-03-10T23:59:59-05:00",
   "items": [
-    {"id": "dylanbochman@gmail.com"},
-    {"id": "julia.joy.jennings@gmail.com"}
+    {"id": "${DYLAN_EMAIL}"},
+    {"id": "${JULIA_EMAIL}"}
   ]
 }'
 ```
@@ -207,7 +209,7 @@ gws calendar events patch --params '{
   "calendarId": "primary",
   "eventId": "<eventId>"
 }' --json '{
-  "attendees": [{"email": "dylanbochman@gmail.com", "responseStatus": "accepted"}]
+  "attendees": [{"email": "${DYLAN_EMAIL}", "responseStatus": "accepted"}]
 }'
 ```
 
@@ -221,7 +223,7 @@ gws schema calendar.events.insert
 
 ## Notes
 
-- Default account: dylanbochman@gmail.com
+- Default account: ${DYLAN_EMAIL}
 - **Always confirm with Dylan before creating, updating, or deleting events**
 - When creating events on Julia's calendar, double-confirm since it affects her schedule
 - Calendar ID `primary` = default calendar for the account

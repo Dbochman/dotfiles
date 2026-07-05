@@ -2,7 +2,7 @@
 
 ## Context
 
-Two iRobot Roombas at Crosstown (Boston — 19 Crosstown Ave):
+Two iRobot Roombas at Crosstown (Boston — [private address]):
 - **Roomba** (aliases: 10max, combo, max) — iRobot Roomba Combo 10 Max (vacuums + mops)
 - **scoomba** (aliases: j5) — iRobot Roomba J5 (vacuum only)
 
@@ -35,8 +35,8 @@ rest980 (persistent HTTP server wrapping dorita980) was the original plan but **
 
 | Robot | SKU | IP | MAC | BLID (prefix) |
 |-------|-----|-----|-----|---------------|
-| Roomba (10 Max) | x085020 | 192.168.165.4 | 4c:b9:ea:96:bd:bc | 81039F92... |
-| scoomba (J5) | j517020 | 192.168.165.3 | 4c:b9:ea:3c:c5:cc | 195EFAE5... |
+| Roomba (10 Max) | x085020 | 192.168.165.4 | ${PRIVATE_MAC} | 81039F92... |
+| scoomba (J5) | j517020 | 192.168.165.3 | ${PRIVATE_MAC} | 195EFAE5... |
 
 ## Status
 

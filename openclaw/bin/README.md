@@ -16,7 +16,7 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 
 | Script | Location on Mini | Description |
 |--------|-----------------|-------------|
-| `openclaw-refresh-secrets` | `~/bin/` | Refreshes `~/.openclaw/.secrets-cache` from 1Password. Run over SSH after key rotation. |
+| `openclaw-refresh-secrets` | `~/bin/` | Attended exact-field refresh of `~/.openclaw/.secrets-cache`; run with `--interactive` after key rotation, never from launchd/cron. |
 | `openai-memory-key` | `~/.openclaw/bin/` | Mode-restricted exec secret-provider helper for memory search. Emits the existing `openai:default` token from the agent auth database; never log or call it for diagnostics. |
 | `pinchtab-headless-instance` | `~/.openclaw/bin/` | Acquires, scopes, and releases managed headless PinchTab instances without navigating a visible browser. |
 | `opentable-refresh-token.sh` | `~/.openclaw/bin/` | Refreshes and validates the OpenTable CLI token in a managed headless PinchTab instance; uses Gmail verification only when reauthentication is required and never logs token material. |

@@ -28,7 +28,7 @@ Routes:
 - `GET /api/status` — non-blocking cached status
 - `GET /api/status?refresh=true` — force refresh all collectors
 - `GET /api/status/<device>` — refresh one collector
-- `POST /api/command` — execute a control action
+- `POST /api/command` — execute a bearer-protected control action
 - `GET /api/camera-snap/<name>` — serve JPEG snapshot
 - `GET /api/presence` — presence state
 
@@ -40,6 +40,30 @@ Runtime behavior:
 - `speakers` and `cabin_speakers` are excluded from background refresh to avoid Cast chimes on idle devices
 - command timeout is 30 seconds
 - startup loads env vars from `~/.openclaw/.secrets-cache`
+
+### LAN trust and mutation protection
+
+The service continues to listen on `0.0.0.0` so status reads and the dashboard
+remain available on the trusted LAN and Tailscale tailnet. Read routes are not
+account-authenticated.
+
+Control mutations have an additional browser boundary:
+
+- each server process generates a fresh bearer token and embeds it in the
+  no-store dashboard page;
+- dashboard JavaScript sends that token in the `Authorization` header for
+  `POST /api/command`;
+- browser requests with an `Origin` header must match the request's `Host`;
+- responses do not advertise wildcard CORS, so another website cannot use the
+  mutation endpoint through a cross-origin browser request;
+- the dashboard refuses cross-origin framing to prevent clickjacking; and
+- a service restart invalidates tokens in already-open pages, so refresh an old
+  tab before sending another command.
+
+This is CSRF-style protection for a trusted network, not per-user login. Anyone
+who can load the dashboard page from the trusted LAN can also obtain its current
+mutation token and operate the exposed controls. Header-only clients may omit
+`Origin`, but must supply the bearer token from the current process.
 
 ## Controls
 
@@ -55,7 +79,9 @@ All controls use selectors with predefined room/device values.
 
 ### Other Key Controls
 
-- **Nest:** set temp, set mode, eco on/off
+- **Nest:** set temp (45–90°F), set mode, eco on/off. A write is reported as
+  successful only after the API response is valid and a bounded device readback
+  confirms the requested state.
 - **Cielo:** on/off, set temp, set mode
 - **August:** lock/unlock
 - **Ring/Nest Cameras:** take snapshots — Ring (Crosstown + Cabin doorbells), Nest (Kitchen @ Cabin, Laundry + Living Room @ Crosstown). Nest device discovery uses customName as a fallback to room name for cameras whose Google Home room doesn't match the dashboard label (e.g. "laundry camera" lives in the "Garage" room). Adding new Nest devices requires `nest reauth` to re-run Google Device Access OAuth consent.

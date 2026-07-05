@@ -1,15 +1,16 @@
 ---
 name: presence
-description: Check who is home at the cabin (Philly) or Crosstown (Boston). Use when the user asks "is anyone home", "who's home", "is Julia/Dylan home", "is anyone at the cabin", or presence detection. Cached reporting is read-only; live scans update state and can trigger separate vacancy automation.
+description: Check who is home at the cabin (Philly) or Crosstown (Boston). Use when the user asks "is anyone home", "who's home", "is Julia/Dylan home", "is anyone at the cabin", or presence detection. Cached reporting and explicit network observation are read-only; scheduled state-refresh scans can trigger separate vacancy automation.
 allowed-tools: Bash(presence:*)
 metadata: {"openclaw":{"emoji":"P"}}
 ---
 
 # Presence Detection
 
-Cached-state reporting is read-only. A fresh scan rewrites correlated
-`state.json`; the separate vacancy WatchPaths automation can react to that
-write, so do not run a live scan merely to test presence.
+Cached-state reporting is read-only. Use the explicit `observe` mode only when a
+fresh network observation is required without changing correlated state. The
+scheduled scan modes rewrite presence files; the separate vacancy WatchPaths
+automation can react to those writes.
 
 ## Quick Check
 
@@ -19,8 +20,23 @@ Read the cached state (updated every 15 min, no scan needed):
 cat ~/.openclaw/presence/state.json
 ```
 
-Live scans are operational, not read-only: they update `state.json` and may
-trigger vacancy actions. Run one only when that side effect is intended:
+For a fresh, side-effect-free network observation:
+
+```bash
+# Cabin (on Mac Mini)
+~/.openclaw/workspace/scripts/presence-detect.sh observe cabin
+
+# Crosstown (on MacBook Pro)
+ssh dylans-macbook-pro \
+  "~/.openclaw/workspace/scripts/presence-detect.sh observe crosstown"
+```
+
+`observe` prints a validated, fresh scan but does not write raw/correlated
+presence state, evaluate occupancy, push Taildrop, or activate vacancy actions.
+It exits nonzero for unavailable, stale, or malformed observations.
+
+Scheduled/state-refresh scans are operational: they update state and may
+trigger vacancy actions. Run one manually only when that side effect is intended:
 
 ```bash
 # Cabin (on Mac Mini)
@@ -137,10 +153,14 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 ### Crosstown (Boston)
 
 - **Method**: Unprivileged ARP reachability scan of `192.168.165.0/24`. After active probes, `arp -anl` supplies receive-side reachability; only a matching device with a live inbound timer on the gateway's interface counts. This works when an iPhone answers ARP but ignores ICMP, without trusting a complete but expired cache row.
-- **Dylan**: MAC `6c:3a:ff:5f:fc:ba` (private WiFi address off at Crosstown)
-- **Julia**: MAC `38:e1:3d:c0:40:63`, with exact hostname `julias-iphone` as the MAC-rotation fallback. IP alone is not identity.
-- **Potato** (dog, informational only): Fi collar base station — MAC `d4:3d:39:a7:4b:6c`, hostname `da16200-4b6c`. Does NOT affect vacancy decisions.
-- **Note**: Exact hostname matching (`julias-iphone.lan` from mDNS) is the MAC-rotation fallback, but it is accepted only when joined to the same fresh IP/MAC/interface row.
+- **Private identifiers**: Dylan and Julia MACs are loaded on the MBP from `~/.openclaw/presence-devices.env`, a regular owner-owned mode-`0600` file containing `CROSSTOWN_DYLAN_MAC` and `CROSSTOWN_JULIA_MAC`. They are never tracked in dotfiles.
+- **Migration fallback**: if that file has not yet been provisioned, scans use
+  only exact Dylan/Julia phone hostnames joined to a fresh IP/MAC/interface
+  row. An insecure or malformed config still fails closed.
+- **Rollout guard**: dotfiles pull preserves the prior MBP scanner instead of
+  deploying this version until that protected config exists with the required
+  ownership and mode.
+- **Julia fallback**: The exact hostname fallback remains local to the scanner and is accepted only when joined to the same fresh IP/MAC/interface row. IP alone is not identity.
 - **Stale ARP defense**: Complete ARP entries can persist after a device leaves. Presence therefore requires live receive-side reachability, plus a MAC or exact hostname match; send-side freshness, `(none)`, `expired`, and `(incomplete)` rows do not count. A fresh gateway row is required so LAN failure cannot become a valid all-absent scan.
 
 ## Important Notes
@@ -154,9 +174,9 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 
 ## Skill Boundaries
 
-This skill should normally report the cached state only. Do not invoke a fresh
-scanner as a harmless read: its state write can activate the separately managed
-vacancy automation.
+This skill should normally report cached state. If a fresh network-only reading
+is necessary, use `observe`; do not invoke the state-refresh modes as harmless
+reads because their writes can activate separately managed vacancy automation.
 
 For related tasks, switch to:
 - **cabin-routines** / **crosstown-routines**: Run away/welcome home routines based on presence (user must explicitly request)

@@ -50,18 +50,18 @@ Started by `start_return_monitor()` at line 1008. Runs as async task.
 ```json
 {
   "name": "Potato",
-  "petId": "4WbrzFllED1YxCLqdT5SC4",
+  "petId": "${TRYFI_PET_ID}",
   "activity": "Rest",           // "Rest" or "Walk"
   "areaName": null,
   "lastReport": "2026-04-02T02:06:03.357Z",
-  "latitude": 42.602,
-  "longitude": -72.151,
+  "latitude": ${CABIN_LAT},
+  "longitude": ${CABIN_LON},
   "location": "cabin",          // nearest configured location
-  "label": "Cabin (95 School House Rd)",
+  "label": "Cabin (${CABIN_ADDRESS})",
   "distance_m": 26,             // meters from location center
   "at_location": true,          // within geofence radius
   "place": "Philly",            // Fi's named place (if any)
-  "address": "95 School House Rd"
+  "address": "${CABIN_ADDRESS}"
 }
 ```
 
@@ -117,8 +117,8 @@ Started by `start_return_monitor()` at line 1008. Runs as async task.
 1. Add geofence constants (copied from `fi-api.py:17-22`, not imported — ring-listener is a standalone script):
 ```python
 _FI_LOCATIONS = {
-    "crosstown": {"lat": 42.26233696, "lon": -71.16434947, "radius_m": 150},
-    "cabin": {"lat": 42.60211154, "lon": -72.15119056, "radius_m": 300},
+    "crosstown": {"lat": ${CROSSTOWN_LAT}, "lon": ${CROSSTOWN_LON}, "radius_m": 150},
+    "cabin": {"lat": ${CABIN_LAT}, "lon": ${CABIN_LON}, "radius_m": 300},
 }
 ```
 
@@ -313,8 +313,8 @@ if max_people >= 1 and max_dogs == 0 and fi_departed:
 
 | Location | Center Lat | Center Lon | Radius | Source |
 |----------|-----------|-----------|--------|--------|
-| Crosstown | 42.26233696 | -71.16434947 | 150m | Fi base station GPS |
-| Cabin | 42.60211154 | -72.15119056 | 300m | Fi collar GPS at cabin |
+| Crosstown | ${CROSSTOWN_LAT} | ${CROSSTOWN_LON} | 150m | Fi base station GPS |
+| Cabin | ${CABIN_LAT} | ${CABIN_LON} | 300m | Fi collar GPS at cabin |
 
 Cabin has a larger radius due to the rural setting and larger property.
 

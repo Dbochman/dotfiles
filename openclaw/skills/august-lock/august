@@ -1,38 +1,211 @@
-#!/bin/bash
-# august — control August smart lock at Crosstown via MBP
-# SSH to MacBook Pro, runs august-cmd.js with august-api
-#
-# Usage:
-#   august status              # Lock state, door position, battery
-#   august lock                # Lock the door
-#   august unlock              # Unlock the door
-#   august authorize           # Start 2FA (sends code to email)
-#   august validate <code>     # Complete 2FA
-#   august locks               # List all locks
-#   august details             # Full lock details
+#!/usr/bin/env bash
+# august — control the Crosstown August lock through the designated MBP.
 
 set -euo pipefail
+umask 077
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MACBOOK="dylans-macbook-pro"
 NODE="/opt/homebrew/bin/node"
-CMD_SCRIPT="\$HOME/.openclaw/august/august-cmd.js"
+CMD_SCRIPT='${HOME}/.openclaw/august/august-cmd.js'
+SSH_BIN="${AUGUST_SSH_BIN:-ssh}"
+PYTHON_BIN="${AUGUST_PYTHON_BIN:-python3}"
+APPROVAL_HELPER="${AUGUST_APPROVAL_HELPER:-$SCRIPT_DIR/august-approval.py}"
+APPROVAL_CACHE_DIR="${AUGUST_APPROVAL_CACHE_DIR:-$HOME/.cache/openclaw-gateway/august-unlock-approvals}"
+APPROVAL_TTL_SECONDS="${AUGUST_APPROVAL_TTL_SECONDS:-300}"
+LOCK_ID_PATTERN='^[[:xdigit:]]{32}$'
+APPROVAL_ID_PATTERN='^[A-Za-z0-9_-]{24,128}$'
 
-if [[ $# -lt 1 ]]; then
-  echo "Usage: august <command> [args]"
-  echo ""
-  echo "Commands:"
-  echo "  status              Lock state, door position, battery"
-  echo "  lock                Lock the door"
-  echo "  unlock              Unlock the door"
-  echo "  authorize           Start 2FA (sends verification code)"
-  echo "  validate <code>     Complete 2FA with 6-digit code"
-  echo "  locks               List all locks on account"
-  echo "  details             Full lock details JSON"
-  exit 1
-fi
+usage() {
+  cat >&2 <<'EOF'
+Usage: august <command> [args]
 
-CMD="$1"
+Commands:
+  status [lock-id]               Lock state, door position, battery
+  lock [lock-id]                 Lock and verify the door
+  unlock [lock-id]               Preview exact state and create one-use approval
+  unlock --confirm <approval-id> Consume approval, recheck state, unlock once
+  authorize                      Start 2FA
+  validate <6-digit-code>        Complete 2FA
+  locks                          List locks on the account
+  details [lock-id]              Full lock details JSON
+EOF
+  exit 2
+}
+
+fail() {
+  printf 'august: %s\n' "$1" >&2
+  exit 2
+}
+
+validate_lock_id() {
+  [[ "$1" =~ $LOCK_ID_PATTERN ]] || \
+    fail "lock ID must be exactly 32 hexadecimal characters"
+}
+
+emit_error() {
+  "$PYTHON_BIN" - "$1" "$2" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "success": False,
+    "error_code": sys.argv[1],
+    "message": sys.argv[2],
+}, separators=(",", ":"), sort_keys=True))
+PY
+}
+
+emit_unknown() {
+  "$PYTHON_BIN" - "$1" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "success": False,
+    "mode": "commit",
+    "status": "unknown",
+    "error_code": "unlock_outcome_unknown",
+    "message": "August unlock outcome is unknown; reconcile physical state before any new request",
+    "approval_id": sys.argv[1],
+    "mutation_attempted": True,
+    "non_retryable": True,
+}, separators=(",", ":"), sort_keys=True))
+PY
+}
+
+encode_args() {
+  "$PYTHON_BIN" - "$@" <<'PY'
+import base64
+import json
+import sys
+
+raw = json.dumps(sys.argv[1:], separators=(",", ":")).encode("utf-8")
+print(base64.b64encode(raw).decode("ascii"))
+PY
+}
+
+remote_command_for() {
+  local payload
+  payload=$(encode_args "$@")
+  printf '%s' "$NODE \"$CMD_SCRIPT\" --argv-base64 '$payload'"
+}
+
+remote_call() {
+  local remote_command
+  remote_command=$(remote_command_for "$@")
+  "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=5 "$MACBOOK" "$remote_command"
+}
+
+claim_field() {
+  "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$1" "$2"
+}
+
+preview_unlock() {
+  local requested_lock_id="${1:-}" status_output approval_output
+  local status_args=(status)
+  if [[ -n "$requested_lock_id" ]]; then
+    validate_lock_id "$requested_lock_id"
+    status_args+=("$requested_lock_id")
+  fi
+  if [[ ! -f "$APPROVAL_HELPER" ]]; then
+    emit_error "approval_store_unavailable" "August unlock approval helper is unavailable"
+    return 1
+  fi
+  if ! status_output=$(remote_call "${status_args[@]}" 2>&1); then
+    emit_error "status_unavailable" "Current August lock state could not be verified"
+    return 1
+  fi
+  if ! approval_output=$(printf '%s' "$status_output" | "$PYTHON_BIN" "$APPROVAL_HELPER" \
+      create "$APPROVAL_CACHE_DIR" "$APPROVAL_TTL_SECONDS" "$requested_lock_id"); then
+    printf '%s\n' "$approval_output"
+    return 1
+  fi
+  printf '%s\n' "$approval_output"
+}
+
+confirm_unlock() {
+  local approval_id="$1" claim_output lock_id status_output verify_output mutation_output result_output
+  if [[ ! "$approval_id" =~ $APPROVAL_ID_PATTERN ]]; then
+    emit_error "invalid_approval_id" "August unlock approval ID has an invalid format"
+    return 2
+  fi
+  if [[ ! -f "$APPROVAL_HELPER" ]]; then
+    emit_error "approval_store_unavailable" "August unlock approval helper is unavailable"
+    return 1
+  fi
+  if ! claim_output=$("$PYTHON_BIN" "$APPROVAL_HELPER" claim "$APPROVAL_CACHE_DIR" "$approval_id"); then
+    printf '%s\n' "$claim_output"
+    return 1
+  fi
+  if ! lock_id=$(claim_field "$claim_output" lock_id 2>/dev/null); then
+    emit_error "approval_state_invalid" "August unlock approval state is invalid"
+    return 1
+  fi
+
+  if ! status_output=$(remote_call status "$lock_id" 2>&1); then
+    emit_error "status_unavailable" "Approval was consumed, but current August state could not be verified"
+    return 1
+  fi
+  if ! verify_output=$(printf '%s' "$status_output" | "$PYTHON_BIN" "$APPROVAL_HELPER" \
+      verify "$APPROVAL_CACHE_DIR" "$claim_output"); then
+    printf '%s\n' "$verify_output"
+    return 1
+  fi
+
+  if ! mutation_output=$(remote_call unlock --confirm "$lock_id" 2>&1); then
+    emit_unknown "$approval_id"
+    return 1
+  fi
+  if ! result_output=$(printf '%s' "$mutation_output" | "$PYTHON_BIN" "$APPROVAL_HELPER" \
+      validate-result "$APPROVAL_CACHE_DIR" "$claim_output"); then
+    emit_unknown "$approval_id"
+    return 1
+  fi
+  printf '%s\n' "$result_output"
+}
+
+[[ $# -ge 1 ]] || usage
+COMMAND="$1"
 shift
 
-ssh -o ConnectTimeout=5 "$MACBOOK" \
-  "PATH=/opt/homebrew/bin:\$PATH $NODE $CMD_SCRIPT $CMD $*" 2>&1
+if [[ "$COMMAND" == "unlock" ]]; then
+  if (( $# == 0 )); then
+    preview_unlock
+  elif (( $# == 1 )) && [[ "$1" != "--confirm" ]]; then
+    preview_unlock "$1"
+  elif (( $# == 2 )) && [[ "$1" == "--confirm" ]]; then
+    confirm_unlock "$2"
+  else
+    usage
+  fi
+  exit $?
+fi
+
+REMOTE_ARGS=("$COMMAND")
+case "$COMMAND" in
+  status|lock|details)
+    [[ $# -le 1 ]] || usage
+    if [[ $# -eq 1 ]]; then
+      validate_lock_id "$1"
+      REMOTE_ARGS+=("$1")
+    fi
+    ;;
+  authorize|locks)
+    [[ $# -eq 0 ]] || usage
+    ;;
+  validate)
+    [[ $# -eq 1 ]] || usage
+    [[ "$1" =~ ^[0-9]{6}$ ]] || fail "validation code must be exactly 6 digits"
+    REMOTE_ARGS+=("$1")
+    ;;
+  *)
+    fail "unsupported command"
+    ;;
+esac
+
+# Encode argv as one JSON/base64 token. The remote shell receives only a
+# static command plus base64, so user-controlled values are never interpolated
+# as shell syntax.
+REMOTE_COMMAND=$(remote_command_for "${REMOTE_ARGS[@]}")
+exec "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=5 "$MACBOOK" "$REMOTE_COMMAND"

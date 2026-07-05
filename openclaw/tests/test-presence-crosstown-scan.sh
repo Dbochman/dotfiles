@@ -17,6 +17,11 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$FAKE_BIN" "$TEST_HOME/.openclaw/logs" "$TEST_HOME/.openclaw/presence"
+printf '%s\n' \
+  'CROSSTOWN_DYLAN_MAC=02:00:00:00:00:11' \
+  'CROSSTOWN_JULIA_MAC=02:00:00:00:00:22' \
+  > "$TEST_HOME/.openclaw/presence-devices.env"
+chmod 600 "$TEST_HOME/.openclaw/presence-devices.env"
 
 cat > "$FAKE_BIN/ping" <<'SH'
 #!/bin/bash
@@ -147,30 +152,30 @@ run_failure() {
 
 # A live receive-side reachability timer proves presence even when every ICMP
 # probe fails (the common sleeping-iPhone case).
-write_standard_row dylans-iphone.lan 192.168.165.124 6c:3a:ff:5f:fc:ba > "$ARP_STANDARD"
+write_standard_row dylans-iphone.lan 192.168.165.124 02:00:00:00:00:11 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.124        6c:3a:ff:5f:fc:ba 1m5s      37s            en0    1'
+  printf '%s\n' '192.168.165.124        02:00:00:00:00:11 1m5s      37s            en0    1'
 } > "$ARP_REACHABILITY"
 run_success fresh-mac true false 2
 
 # A complete cached row with only send-side freshness is stale and must not
 # create a second-location positive.
-write_standard_row dylans-iphone.lan 192.168.165.124 6c:3a:ff:5f:fc:ba > "$ARP_STANDARD"
+write_standard_row dylans-iphone.lan 192.168.165.124 02:00:00:00:00:11 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.124        6c:3a:ff:5f:fc:ba 1m5s      expired        en0    1'
+  printf '%s\n' '192.168.165.124        02:00:00:00:00:11 1m5s      expired        en0    1'
 } > "$ARP_REACHABILITY"
 run_success expired-inbound false false 1
 
 # Static/no-receive and incomplete entries are also non-authoritative.
-write_standard_row dylans-iphone.lan 192.168.165.124 6c:3a:ff:5f:fc:ba > "$ARP_STANDARD"
+write_standard_row dylans-iphone.lan 192.168.165.124 02:00:00:00:00:11 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.124        6c:3a:ff:5f:fc:ba (none)    (none)         en0    1'
+  printf '%s\n' '192.168.165.124        02:00:00:00:00:11 (none)    (none)         en0    1'
 } > "$ARP_REACHABILITY"
 run_success no-inbound false false 1
 
@@ -183,38 +188,38 @@ write_standard_row '?' 192.168.165.124 '(incomplete)' > "$ARP_STANDARD"
 run_success incomplete false false 1
 
 # A fresh device merely inheriting the old reserved IP is not identity.
-write_standard_row '?' 192.168.165.248 aa:bb:cc:dd:ee:ff > "$ARP_STANDARD"
+write_standard_row '?' 192.168.165.248 02:00:00:00:00:44 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.248        aa:bb:cc:dd:ee:ff 1m2s      44s            en0    1'
+  printf '%s\n' '192.168.165.248        02:00:00:00:00:44 1m2s      44s            en0    1'
 } > "$ARP_REACHABILITY"
 run_success wrong-mac-on-old-ip false false 2
 
 # Exact hostname remains a live, MAC-rotation-tolerant fallback when the two
 # snapshots agree on IP, MAC, and interface.
-write_standard_row julias-iphone.lan 192.168.165.77 aa:bb:cc:dd:ee:77 > "$ARP_STANDARD"
+write_standard_row julias-iphone.lan 192.168.165.77 02:00:00:00:00:33 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.77         aa:bb:cc:dd:ee:77 1m8s      51s            en0    1'
+  printf '%s\n' '192.168.165.77         02:00:00:00:00:33 1m8s      51s            en0    1'
 } > "$ARP_REACHABILITY"
 run_success hostname-fallback false true 2
 
 # Substring names and cross-interface joins cannot establish identity.
-write_standard_row not-julias-iphone.lan 192.168.165.77 aa:bb:cc:dd:ee:77 > "$ARP_STANDARD"
+write_standard_row not-julias-iphone.lan 192.168.165.77 02:00:00:00:00:33 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.77         aa:bb:cc:dd:ee:77 1m8s      51s            en0    1'
+  printf '%s\n' '192.168.165.77         02:00:00:00:00:33 1m8s      51s            en0    1'
 } > "$ARP_REACHABILITY"
 run_success hostname-substring false false 2
 
-write_standard_row julias-iphone.lan 192.168.165.77 aa:bb:cc:dd:ee:77 en1 > "$ARP_STANDARD"
+write_standard_row julias-iphone.lan 192.168.165.77 02:00:00:00:00:33 en1 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.77         aa:bb:cc:dd:ee:77 1m8s      51s            en0    1'
+  printf '%s\n' '192.168.165.77         02:00:00:00:00:33 1m8s      51s            en0    1'
 } > "$ARP_REACHABILITY"
 run_success hostname-interface-mismatch false false 2
 
@@ -231,7 +236,7 @@ run_failure malformed-header 'ARP reachability parsing failed'
 {
   write_reachability_header
   printf '%s\n' '192.168.165.1          aa:bb:cc:dd:ee:1  1m20s     expired        en0    1'
-  printf '%s\n' '192.168.165.124        6c:3a:ff:5f:fc:ba 1m5s      37s            en0    1'
+  printf '%s\n' '192.168.165.124        02:00:00:00:00:11 1m5s      37s            en0    1'
 } > "$ARP_REACHABILITY"
 run_failure stale-gateway 'ARP reachability parsing failed'
 

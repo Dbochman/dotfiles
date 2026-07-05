@@ -1,38 +1,115 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # crosstown-roomba — control iRobot Roombas at Crosstown (Boston)
-# Talks to robots via SSH to MacBook Pro + dorita980 MQTT
-#
-# Robots:
-#   roomba / 10max  — Roomba Combo 10 Max
-#   scoomba / j5    — Roomba J5
-#   all             — both robots
+# Talks to robots via SSH to MacBook Pro + dorita980 MQTT.
 
 set -euo pipefail
 
-MACBOOK="dylans-macbook-pro"
-CMD_SCRIPT="\$HOME/.openclaw/rest980/roomba-cmd.js"
-ENV_10MAX="\$HOME/.openclaw/rest980/env-10max"
-ENV_J5="\$HOME/.openclaw/rest980/env-j5"
-NODE="/opt/homebrew/bin/node"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+MACBOOK="${CROSSTOWN_ROOMBA_HOST:-dylans-macbook-pro}"
+SSH_BIN="${CROSSTOWN_ROOMBA_SSH_BIN:-ssh}"
+PYTHON_BIN="${CROSSTOWN_ROOMBA_PYTHON_BIN:-python3}"
+JSON_HELPER="${CROSSTOWN_ROOMBA_JSON_HELPER:-$SCRIPT_DIR/roomba-json.py}"
+CMD_SCRIPT="${CROSSTOWN_ROOMBA_REMOTE_SCRIPT:-\$HOME/.openclaw/rest980/roomba-cmd.js}"
+ENV_10MAX="${CROSSTOWN_ROOMBA_ENV_10MAX:-\$HOME/.openclaw/rest980/env-10max}"
+ENV_J5="${CROSSTOWN_ROOMBA_ENV_J5:-\$HOME/.openclaw/rest980/env-j5}"
+NODE="${CROSSTOWN_ROOMBA_REMOTE_NODE:-/opt/homebrew/bin/node}"
+VERIFY_ATTEMPTS="${CROSSTOWN_ROOMBA_VERIFY_ATTEMPTS:-4}"
+VERIFY_INTERVAL="${CROSSTOWN_ROOMBA_VERIFY_INTERVAL:-2}"
+DOCK_STOP_DELAY="${CROSSTOWN_ROOMBA_DOCK_STOP_DELAY:-1}"
 
-# Robot name → env file mapping
+LAST_RESPONSE=""
+LAST_ERROR_CODE=""
+LAST_ERROR_MESSAGE=""
+LAST_ERROR_DETAIL=""
+LAST_PHASE=""
+
+usage() {
+  cat <<'EOF'
+Usage: crosstown-roomba <command> [robot]
+
+Commands:
+  status  [robot]   Battery, mission status, bin (default: all)
+  start   [robot]   Start cleaning (default: all)
+  stop    [robot]   Stop cleaning (default: all)
+  pause   [robot]   Pause cleaning (default: all)
+  resume  [robot]   Resume cleaning (default: all)
+  dock    [robot]   Stop, then return to dock (default: all)
+  find    [robot]   Play sound to locate (default: all)
+  wifi    [robot]   WiFi info (default: all)
+  state   <robot>   Full robot state JSON
+  list              Show known robots
+
+Robots: roomba (10 Max), scoomba (J5), all
+EOF
+}
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Required command not found: $1" >&2
+    return 1
+  fi
+}
+
+validate_remote_token() {
+  [[ -n "$2" && "$2" =~ ^[A-Za-z0-9_./\$~-]+$ ]] || {
+    echo "Invalid $1 setting" >&2
+    return 1
+  }
+}
+
+validate_settings() {
+  require_command "$SSH_BIN"
+  require_command "$PYTHON_BIN"
+  [[ -r "$JSON_HELPER" ]] || {
+    echo "Roomba JSON helper is not readable: $JSON_HELPER" >&2
+    return 1
+  }
+
+  [[ "$MACBOOK" =~ ^[A-Za-z0-9_.@-]+$ ]] || {
+    echo "Invalid CROSSTOWN_ROOMBA_HOST setting" >&2
+    return 1
+  }
+  validate_remote_token "remote Node path" "$NODE"
+  validate_remote_token "remote command script" "$CMD_SCRIPT"
+  validate_remote_token "10 Max environment path" "$ENV_10MAX"
+  validate_remote_token "J5 environment path" "$ENV_J5"
+
+  [[ "$VERIFY_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || {
+    echo "CROSSTOWN_ROOMBA_VERIFY_ATTEMPTS must be a positive integer" >&2
+    return 1
+  }
+  (( VERIFY_ATTEMPTS <= 10 )) || {
+    echo "CROSSTOWN_ROOMBA_VERIFY_ATTEMPTS must be 10 or less" >&2
+    return 1
+  }
+  [[ "$VERIFY_INTERVAL" =~ ^(0|[1-9][0-9]*)$ ]] || {
+    echo "CROSSTOWN_ROOMBA_VERIFY_INTERVAL must be a non-negative integer" >&2
+    return 1
+  }
+  (( VERIFY_INTERVAL <= 30 )) || {
+    echo "CROSSTOWN_ROOMBA_VERIFY_INTERVAL must be 30 or less" >&2
+    return 1
+  }
+  [[ "$DOCK_STOP_DELAY" =~ ^(0|[1-9][0-9]*)$ ]] || {
+    echo "CROSSTOWN_ROOMBA_DOCK_STOP_DELAY must be a non-negative integer" >&2
+    return 1
+  }
+  (( DOCK_STOP_DELAY <= 30 )) || {
+    echo "CROSSTOWN_ROOMBA_DOCK_STOP_DELAY must be 30 or less" >&2
+    return 1
+  }
+}
+
+# Robot aliases are intentionally exact. Fuzzy matching is unsafe for commands
+# that can start a physical device.
 resolve_robot() {
   local name
-  name="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')"
+  name=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
   case "$name" in
     roomba|10max|10-max|combo|max) echo "10max" ;;
     scoomba|j5|j-5)               echo "j5" ;;
     all|both|"")                   echo "all" ;;
-    *)
-      # Fuzzy match
-      if echo "roomba 10max" | grep -q "$name"; then
-        echo "10max"
-      elif echo "scoomba j5" | grep -q "$name"; then
-        echo "j5"
-      else
-        echo "unknown"
-      fi
-      ;;
+    *)                            echo "unknown" ;;
   esac
 }
 
@@ -40,6 +117,7 @@ env_for_robot() {
   case "$1" in
     10max) echo "$ENV_10MAX" ;;
     j5)    echo "$ENV_J5" ;;
+    *)     return 2 ;;
   esac
 }
 
@@ -47,243 +125,402 @@ label_for_robot() {
   case "$1" in
     10max) echo "Roomba (10 Max)" ;;
     j5)    echo "scoomba (J5)" ;;
+    *)     return 2 ;;
   esac
 }
 
-# Run a command on one robot
 run_one() {
   local robot="$1"
-  local cmd="$2"
-  local env_file
-  env_file=$(env_for_robot "$robot")
+  local command="$2"
+  local env_file remote_command
 
-  ssh -o ConnectTimeout=5 "$MACBOOK" "PATH=/opt/homebrew/bin:\$PATH $NODE $CMD_SCRIPT $env_file $cmd" 2>&1
+  case "$command" in
+    status|state|start|stop|pause|resume|dock|find|wifi|mission) ;;
+    *)
+      echo "Refusing unsupported remote command: $command" >&2
+      return 2
+      ;;
+  esac
+  env_file=$(env_for_robot "$robot") || {
+    echo "Refusing unknown robot target: $robot" >&2
+    return 2
+  }
+  remote_command="PATH=/opt/homebrew/bin:\$PATH $NODE $CMD_SCRIPT $env_file $command"
+  "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=5 "$MACBOOK" "$remote_command" 2>&1
 }
 
-# Return 0 if robot is currently on the dock charging, else 1.
-# Used to skip redundant stop+dock commands when the robot is already parked.
-robot_is_charging() {
+response_reports_error() {
+  local rc
+  if printf '%s' "$1" | "$PYTHON_BIN" "$JSON_HELPER" validate >/dev/null 2>&1; then
+    return 1
+  else
+    rc=$?
+  fi
+  (( rc == 3 ))
+}
+
+# Populate LAST_RESPONSE on success, or LAST_ERROR_* on failure.
+invoke_json() {
+  local robot="$1"
+  local command="$2"
+  local output normalized rc
+
+  LAST_RESPONSE=""
+  LAST_ERROR_CODE=""
+  LAST_ERROR_MESSAGE=""
+  LAST_ERROR_DETAIL=""
+
+  if output=$(run_one "$robot" "$command"); then
+    :
+  else
+    rc=$?
+    LAST_ERROR_DETAIL="$output"
+    if (( rc == 255 )); then
+      LAST_ERROR_CODE="transport_error"
+      LAST_ERROR_MESSAGE="SSH transport failed"
+    elif response_reports_error "$output"; then
+      LAST_ERROR_CODE="action_error"
+      LAST_ERROR_MESSAGE="Remote command reported a failure"
+    else
+      LAST_ERROR_CODE="remote_command_failed"
+      LAST_ERROR_MESSAGE="Remote command exited with status $rc"
+    fi
+    return 1
+  fi
+
+  if normalized=$(printf '%s' "$output" | "$PYTHON_BIN" "$JSON_HELPER" validate 2>&1); then
+    LAST_RESPONSE="$normalized"
+    return 0
+  else
+    rc=$?
+  fi
+
+  LAST_ERROR_DETAIL="$normalized"
+  if (( rc == 3 )); then
+    LAST_ERROR_CODE="action_error"
+    LAST_ERROR_MESSAGE="Robot reported a command error"
+  else
+    LAST_ERROR_CODE="invalid_json"
+    LAST_ERROR_MESSAGE="Remote command returned invalid JSON"
+  fi
+  return 1
+}
+
+fetch_phase() {
   local robot="$1"
   local phase
-  phase=$(run_one "$robot" "status" 2>/dev/null | python3 -c "
-import sys, json
-try:
-    d = json.loads(sys.stdin.read())
-    print(d.get('cleanMissionStatus', {}).get('phase', ''))
-except Exception:
-    pass
-" 2>/dev/null || true)
-  [[ "$phase" == "charge" ]]
-}
 
-# Parse status JSON into human-readable output
-parse_status() {
-  local label="$1"
-  python3 -c "
-import sys, json
-try:
-    d = json.loads(sys.stdin.read())
-except:
-    print('$label: Error reading response')
-    sys.exit(1)
-if 'error' in d:
-    print('$label: Error -', d.get('message', 'unknown'))
-    sys.exit(1)
-ms = d.get('cleanMissionStatus', {})
-phases = {
-    'charge': 'Charging (on dock)',
-    'new': 'Starting',
-    'run': 'Cleaning',
-    'pause': 'Paused',
-    'stop': 'Stopped',
-    'stuck': 'Stuck!',
-    'hmMidMsn': 'Returning to dock (recharging)',
-    'hmUsrDock': 'Returning to dock',
-    'hmPostMsn': 'Returning to dock (done)',
-    'evac': 'Emptying bin',
-}
-phase = ms.get('phase', '?')
-print(f'$label:')
-print(f'  Status:   {phases.get(phase, phase)}')
-print(f'  Battery:  {d.get(\"batPct\", \"?\")}%')
-bf = d.get('bin', {})
-print(f'  Bin:      {\"FULL\" if bf.get(\"full\") else \"OK\"} ({\"present\" if bf.get(\"present\") else \"MISSING\"})')
-tank = d.get('tankLvl')
-if tank is not None:
-    print(f'  Tank:     {tank}%')
-err = ms.get('error', 0)
-if err:
-    print(f'  Error:    code {err}')
-print(f'  Missions: {ms.get(\"nMssn\", \"?\")}')
-"
-}
-
-# Parse wifi JSON
-parse_wifi() {
-  local label="$1"
-  python3 -c "
-import sys, json
-try:
-    d = json.loads(sys.stdin.read())
-except:
-    print('$label: Error reading response')
-    sys.exit(1)
-sig = d.get('signal', {})
-net = d.get('netinfo', {})
-ssid_hex = d.get('wlcfg', {}).get('ssid', '')
-try:
-    ssid = bytes.fromhex(ssid_hex).decode('utf-8') if ssid_hex else '?'
-except:
-    ssid = ssid_hex
-print(f'$label:')
-print(f'  SSID:   {ssid}')
-print(f'  Signal: {sig.get(\"rssi\", \"?\")} dBm (SNR {sig.get(\"snr\", \"?\")})')
-print(f'  IP:     {net.get(\"addr\", \"?\")}')
-"
-}
-
-cmd_status() {
-  local robot
-  robot=$(resolve_robot "${1:-all}")
-  if [[ "$robot" == "unknown" ]]; then
-    echo "Unknown robot: $1. Use: roomba, scoomba, or all" >&2
-    exit 1
+  LAST_PHASE=""
+  if ! invoke_json "$robot" "status"; then
+    return 1
   fi
-  if [[ "$robot" == "all" ]]; then
-    run_one "10max" "status" | parse_status "$(label_for_robot 10max)"
-    echo ""
-    run_one "j5" "status" | parse_status "$(label_for_robot j5)"
+  if phase=$(printf '%s' "$LAST_RESPONSE" | "$PYTHON_BIN" "$JSON_HELPER" phase); then
+    LAST_PHASE="$phase"
+    return 0
+  fi
+
+  LAST_ERROR_CODE="missing_phase"
+  LAST_ERROR_MESSAGE="Status response did not include a mission phase"
+  LAST_ERROR_DETAIL="$LAST_RESPONSE"
+  LAST_PHASE=""
+  return 1
+}
+
+phase_matches_action() {
+  local action="$1"
+  local phase="$2"
+  case "$action:$phase" in
+    start:run|resume:run|pause:pause|stop:stop|stop:charge) return 0 ;;
+    dock:charge|dock:hmUsrDock|dock:hmMidMsn|dock:hmPostMsn) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+verify_phase() {
+  local robot="$1"
+  local action="$2"
+  local attempt last_seen=""
+  local underlying_detail=""
+
+  for ((attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt++)); do
+    if fetch_phase "$robot"; then
+      last_seen="$LAST_PHASE"
+      if phase_matches_action "$action" "$LAST_PHASE"; then
+        return 0
+      fi
+    else
+      underlying_detail="$LAST_ERROR_DETAIL"
+    fi
+    if (( attempt < VERIFY_ATTEMPTS && VERIFY_INTERVAL > 0 )); then
+      sleep "$VERIFY_INTERVAL"
+    fi
+  done
+
+  LAST_ERROR_CODE="verification_failed"
+  if [[ -n "$last_seen" ]]; then
+    LAST_ERROR_MESSAGE="Mission phase did not reach the expected state for $action"
+    LAST_ERROR_DETAIL="last phase: $last_seen"
+    LAST_PHASE="$last_seen"
   else
-    run_one "$robot" "status" | parse_status "$(label_for_robot "$robot")"
+    LAST_ERROR_MESSAGE="Unable to verify mission phase after $action"
+    LAST_ERROR_DETAIL="$underlying_detail"
+    LAST_PHASE=""
   fi
+  return 1
+}
+
+make_success_result() {
+  "$PYTHON_BIN" "$JSON_HELPER" success "$@"
+}
+
+make_failure_result() {
+  "$PYTHON_BIN" "$JSON_HELPER" failure "$@"
+}
+
+action_message() {
+  case "$1" in
+    start)  echo "Cleaning started" ;;
+    stop)   echo "Cleaning stopped" ;;
+    pause)  echo "Cleaning paused" ;;
+    resume) echo "Cleaning resumed" ;;
+    dock)   echo "Return to dock started" ;;
+    find)   echo "Locate sound requested" ;;
+  esac
+}
+
+execute_action_one() {
+  local robot="$1"
+  local action="$2"
+  local label message
+  label=$(label_for_robot "$robot")
+  message=$(action_message "$action")
+
+  if [[ "$action" == "dock" ]]; then
+    if fetch_phase "$robot"; then
+      if [[ "$LAST_PHASE" == "charge" ]]; then
+        make_success_result \
+          "$robot" "$label" "$action" "skipped" "true" "$LAST_PHASE" \
+          "Already charging on dock; no command sent"
+        return 0
+      fi
+    else
+      make_failure_result \
+        "$robot" "$label" "$action" "dock_status_check_failed" \
+        "$LAST_ERROR_MESSAGE" "$LAST_ERROR_DETAIL" "$LAST_PHASE"
+      return 1
+    fi
+
+    if ! invoke_json "$robot" "stop"; then
+      make_failure_result \
+        "$robot" "$label" "$action" "pre_dock_stop_failed" \
+        "$LAST_ERROR_MESSAGE" "$LAST_ERROR_DETAIL" "$LAST_PHASE"
+      return 1
+    fi
+    if ! verify_phase "$robot" "stop"; then
+      make_failure_result \
+        "$robot" "$label" "$action" "pre_dock_stop_verification_failed" \
+        "$LAST_ERROR_MESSAGE" "$LAST_ERROR_DETAIL" "$LAST_PHASE"
+      return 1
+    fi
+    if (( DOCK_STOP_DELAY > 0 )); then
+      sleep "$DOCK_STOP_DELAY"
+    fi
+  fi
+
+  if ! invoke_json "$robot" "$action"; then
+    make_failure_result \
+      "$robot" "$label" "$action" "$LAST_ERROR_CODE" \
+      "$LAST_ERROR_MESSAGE" "$LAST_ERROR_DETAIL" "$LAST_PHASE"
+    return 1
+  fi
+
+  if [[ "$action" == "find" ]]; then
+    make_success_result \
+      "$robot" "$label" "$action" "not_applicable" "false" "" "$message"
+    return 0
+  fi
+
+  if ! verify_phase "$robot" "$action"; then
+    make_failure_result \
+      "$robot" "$label" "$action" "$LAST_ERROR_CODE" \
+      "$LAST_ERROR_MESSAGE" "$LAST_ERROR_DETAIL" "$LAST_PHASE"
+    return 1
+  fi
+  make_success_result \
+    "$robot" "$label" "$action" "passed" "false" "$LAST_PHASE" "$message"
+}
+
+emit_action_summary() {
+  local action="$1"
+  local target="$2"
+  shift 2
+  {
+    local item
+    for item in "$@"; do
+      printf '%s\n' "$item"
+    done
+  } | "$PYTHON_BIN" "$JSON_HELPER" summary "$action" "$target"
 }
 
 cmd_action() {
   local action="$1"
-  local robot
-  robot=$(resolve_robot "${2:-all}")
+  local requested="${2:-all}"
+  local robot result failed=0
+  local results=()
+  local targets=()
+
+  robot=$(resolve_robot "$requested")
   if [[ "$robot" == "unknown" ]]; then
-    echo "Unknown robot: $2. Use: roomba, scoomba, or all" >&2
-    exit 1
+    echo "Unknown robot: $requested. Use: roomba, scoomba, or all" >&2
+    return 2
   fi
-
-  local msg
-  case "$action" in
-    start)  msg="Cleaning started" ;;
-    stop)   msg="Cleaning stopped" ;;
-    pause)  msg="Paused" ;;
-    resume) msg="Resumed" ;;
-    dock)   msg="Returning to dock" ;;
-    find)   msg="Playing sound" ;;
-    *)      msg="$action done" ;;
-  esac
-
   if [[ "$robot" == "all" ]]; then
-    for r in 10max j5; do
-      # dock needs stop first — dock alone doesn't interrupt an active cleaning cycle
-      if [[ "$action" == "dock" ]]; then
-        if robot_is_charging "$r"; then
-          echo "$(label_for_robot "$r"): Already on dock — skipping."
-          continue
-        fi
-        run_one "$r" "stop" >/dev/null 2>&1 || true
-        sleep 2
-      fi
-      local result
-      result=$(run_one "$r" "$action")
-      if echo "$result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); sys.exit(1 if 'error' in d else 0)" 2>/dev/null; then
-        echo "$(label_for_robot "$r"): $msg."
-      else
-        echo "$(label_for_robot "$r"): Error — $result" >&2
-      fi
-    done
+    targets=(10max j5)
   else
-    # dock needs stop first — dock alone doesn't interrupt an active cleaning cycle
-    if [[ "$action" == "dock" ]]; then
-      if robot_is_charging "$robot"; then
-        echo "$(label_for_robot "$robot"): Already on dock — skipping."
-        return 0
-      fi
-      run_one "$robot" "stop" >/dev/null 2>&1 || true
-      sleep 2
-    fi
-    local result
-    result=$(run_one "$robot" "$action")
-    if echo "$result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); sys.exit(1 if 'error' in d else 0)" 2>/dev/null; then
-      echo "$(label_for_robot "$robot"): $msg."
-    else
-      echo "$(label_for_robot "$robot"): Error — $result" >&2
-    fi
+    targets=("$robot")
   fi
+
+  for robot in "${targets[@]}"; do
+    if result=$(execute_action_one "$robot" "$action"); then
+      :
+    else
+      failed=1
+    fi
+    results[${#results[@]}]="$result"
+  done
+  emit_action_summary "$action" "$requested" "${results[@]}"
+  return "$failed"
 }
 
-cmd_wifi() {
-  local robot
-  robot=$(resolve_robot "${1:-all}")
+parse_status() {
+  "$PYTHON_BIN" "$JSON_HELPER" status "$1"
+}
+
+parse_wifi() {
+  "$PYTHON_BIN" "$JSON_HELPER" wifi "$1"
+}
+
+print_last_error() {
+  local label="$1"
+  echo "$label: Error [$LAST_ERROR_CODE] — $LAST_ERROR_MESSAGE" >&2
+}
+
+show_status_one() {
+  local robot="$1"
+  local label
+  label=$(label_for_robot "$robot")
+  if ! invoke_json "$robot" "status"; then
+    print_last_error "$label"
+    return 1
+  fi
+  printf '%s' "$LAST_RESPONSE" | parse_status "$label"
+}
+
+show_wifi_one() {
+  local robot="$1"
+  local label
+  label=$(label_for_robot "$robot")
+  if ! invoke_json "$robot" "wifi"; then
+    print_last_error "$label"
+    return 1
+  fi
+  printf '%s' "$LAST_RESPONSE" | parse_wifi "$label"
+}
+
+run_for_target() {
+  local operation="$1"
+  local requested="${2:-all}"
+  local robot current failed=0 first=1
+  local targets=()
+
+  robot=$(resolve_robot "$requested")
   if [[ "$robot" == "unknown" ]]; then
-    echo "Unknown robot: $1" >&2; exit 1
+    echo "Unknown robot: $requested. Use: roomba, scoomba, or all" >&2
+    return 2
   fi
   if [[ "$robot" == "all" ]]; then
-    run_one "10max" "wifi" | parse_wifi "$(label_for_robot 10max)"
-    echo ""
-    run_one "j5" "wifi" | parse_wifi "$(label_for_robot j5)"
+    targets=(10max j5)
   else
-    run_one "$robot" "wifi" | parse_wifi "$(label_for_robot "$robot")"
+    targets=("$robot")
   fi
+
+  for current in "${targets[@]}"; do
+    if (( first == 0 )); then
+      echo ""
+    fi
+    first=0
+    if "$operation" "$current"; then
+      :
+    else
+      failed=1
+    fi
+  done
+  return "$failed"
 }
 
 cmd_state() {
+  local requested="$1"
   local robot
-  robot=$(resolve_robot "${1:-}")
+  robot=$(resolve_robot "$requested")
   if [[ "$robot" == "unknown" || "$robot" == "all" ]]; then
     echo "Usage: crosstown-roomba state <roomba|scoomba>" >&2
-    exit 1
+    return 2
   fi
-  run_one "$robot" "state" | python3 -m json.tool
+  if ! invoke_json "$robot" "state"; then
+    print_last_error "$(label_for_robot "$robot")"
+    return 1
+  fi
+  printf '%s' "$LAST_RESPONSE" | "$PYTHON_BIN" -m json.tool
 }
 
 cmd_list() {
-  echo "Crosstown Roombas:"
-  echo "  roomba  (10max, combo, max)  — iRobot Roomba Combo 10 Max"
-  echo "  scoomba (j5)                 — iRobot Roomba J5"
-  echo ""
-  echo "Use 'all' to target both robots."
+  cat <<'EOF'
+Crosstown Roombas:
+  roomba  (10max, 10-max, combo, max)  — iRobot Roomba Combo 10 Max
+  scoomba (j5, j-5)                   — iRobot Roomba J5
+
+Use 'all' or 'both' to target both robots.
+EOF
 }
 
-# ---- Main ----
-if [[ $# -lt 1 ]]; then
-  echo "Usage: crosstown-roomba <command> [robot]"
-  echo ""
-  echo "Commands:"
-  echo "  status  [robot]   Battery, mission status, bin (default: all)"
-  echo "  start   [robot]   Start cleaning (default: all)"
-  echo "  stop    [robot]   Stop cleaning (default: all)"
-  echo "  pause   [robot]   Pause cleaning (default: all)"
-  echo "  resume  [robot]   Resume cleaning (default: all)"
-  echo "  dock    [robot]   Return to dock (default: all)"
-  echo "  find    [robot]   Play sound to locate (default: all)"
-  echo "  wifi    [robot]   WiFi info (default: all)"
-  echo "  state   <robot>   Full robot state JSON"
-  echo "  list              Show known robots"
-  echo ""
-  echo "Robots: roomba (10 Max), scoomba (J5), all"
-  exit 1
+if (( $# < 1 )); then
+  usage
+  exit 2
 fi
 
-case "$1" in
-  status)   cmd_status "${2:-}" ;;
-  start)    cmd_action "start" "${2:-}" ;;
-  stop)     cmd_action "stop" "${2:-}" ;;
-  pause)    cmd_action "pause" "${2:-}" ;;
-  resume)   cmd_action "resume" "${2:-}" ;;
-  dock)     cmd_action "dock" "${2:-}" ;;
-  find)     cmd_action "find" "${2:-}" ;;
-  wifi)     cmd_wifi "${2:-}" ;;
-  state)    cmd_state "${2:-}" ;;
-  list)     cmd_list ;;
+command="$1"
+shift
+case "$command" in
+  list)
+    if (( $# != 0 )); then
+      echo "Usage: crosstown-roomba list" >&2
+      exit 2
+    fi
+    cmd_list
+    ;;
+  state)
+    if (( $# != 1 )); then
+      echo "Usage: crosstown-roomba state <roomba|scoomba>" >&2
+      exit 2
+    fi
+    validate_settings
+    cmd_state "$1"
+    ;;
+  status|wifi|start|stop|pause|resume|dock|find)
+    if (( $# > 1 )); then
+      echo "Usage: crosstown-roomba $command [robot]" >&2
+      exit 2
+    fi
+    validate_settings
+    case "$command" in
+      status) run_for_target show_status_one "${1:-all}" ;;
+      wifi)   run_for_target show_wifi_one "${1:-all}" ;;
+      *)      cmd_action "$command" "${1:-all}" ;;
+    esac
+    ;;
   *)
-    echo "Unknown command: $1" >&2
+    echo "Unknown command: $command" >&2
     echo "Run 'crosstown-roomba' for help." >&2
-    exit 1
+    exit 2
     ;;
 esac

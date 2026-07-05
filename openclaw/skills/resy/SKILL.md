@@ -1,93 +1,81 @@
 ---
 name: resy
-description: Search restaurants, check availability, and book reservations on Resy. Use when asked about restaurant reservations, dinner plans, booking a table, finding available restaurants, or sniping hard-to-get reservations.
-allowed-tools: Bash(resy:*)
-metadata: {"openclaw":{"emoji":"R","requires":{"bins":["resy"]}}}
+description: Search Resy, inspect availability, and book reservations, including intentionally surprise-driven date cron jobs with standing authorization. Use for Resy discovery, availability, reservations, and booking. Use restaurant-snipe only for bounded cancellation monitoring; never use this skill for unattended cancellation.
+allowed-tools: Bash(resy-read:*) Bash(resy:*)
+metadata: {"openclaw":{"emoji":"R","requires":{"bins":["resy-read","resy"]}}}
 ---
 
-# Resy Reservations
+# Resy reservations
 
-Search restaurants, check availability, and manage reservations via the `resy` CLI. Credentials are managed via 1Password.
+Use `resy-read` for ordinary discovery and reservation review. It exposes only
+search, availability, and reservations, and redacts mutation tokens.
 
-## Available Commands
+Use raw `resy` only when a booking is authorized. Never reproduce config,
+booking, reservation, authentication, or payment tokens in messages, calendar
+events, logs, or the final response.
 
-### Authenticate
+## Authorization model
+
+- A canonical date, double-date, or quarterly-dinner cron whose prompt says to
+  book is standing user authorization for one reservation within that prompt's
+  cuisine, location, date, time, party-size, and payment-policy constraints.
+  The venue choice is intentionally delegated: the surprise is part of the
+  experience. Do not pause for exact-venue confirmation.
+- A direct user request to book may also delegate venue choice through broad
+  constraints. A request only to search or check availability is not booking
+  authorization.
+- Cancellation always requires a fresh, explicit user request. Cron jobs must
+  never cancel an existing reservation to make room for another.
+- Use `restaurant-snipe` for bounded background monitoring. Do not create an
+  ad-hoc raw `resy snipe` loop from this skill.
+
+## Read-only commands
+
 ```bash
-resy auth
+resy-read search "Japanese Brookline"
+resy-read availability <venue-id> 2026-08-15 2
+resy-read reservations
 ```
 
-### Check auth status
-```bash
-resy status
-```
+Venue IDs must be numeric. Dates use `YYYY-MM-DD`; party size is 1–20.
 
-### Search restaurants by name
-```bash
-resy search "Carbone"
-resy search "sushi boston"
-```
+## Authorized booking workflow
 
-### Check availability for a venue
-```bash
-resy availability <venue_id> 2026-03-20 2
-```
-Use the venue ID from search results. Date format is YYYY-MM-DD, last argument is party size.
+1. Run the prompt's idempotency check before searching. If a matching booking
+   or calendar event already exists, report it and stop.
+2. In an unattended run, export `RESY_CACHE_ONLY=1` for every raw `resy`
+   command. Never run `resy auth` or `op`; fail closed if cached authentication
+   is unavailable.
+3. Search and inspect availability within the authorized constraints:
 
-### Book a reservation
-```bash
-resy book <config_token> 2026-03-20 2
-resy book <config_token> 2026-03-20 2 --dry-run
-```
-The config_token comes from the availability output. Always use `--dry-run` first to preview.
+   ```bash
+   RESY_CACHE_ONLY=1 resy search "Japanese Brookline"
+   RESY_CACHE_ONLY=1 resy availability <venue-id> 2026-08-15 2
+   ```
 
-### Cancel a reservation
-```bash
-resy cancel <resy_token>
-```
-The resy_token comes from the reservations list.
+4. Select a slot within scope. A different restaurant is welcome; a different
+   date, time window, party size, location, fee policy, or cuisine is not.
+5. Preview the selected slot, then make at most one live booking call:
 
-### List upcoming reservations
-```bash
-resy reservations
-```
+   ```bash
+   RESY_CACHE_ONLY=1 resy book '<config-token>' 2026-08-15 2 --dry-run
+   printf 'yes\n' | RESY_CACHE_ONLY=1 resy book '<config-token>' 2026-08-15 2
+   ```
 
-### Snipe mode (auto-book when slot appears)
-```bash
-# Dry-run: poll but don't book
-resy snipe <venue_id> 2026-03-20 2 --time 19:00
+6. Read reservations back once and report only the human-readable booking
+   facts. If the live call returns a transport error or any ambiguous result,
+   never retry it. Reconcile with `resy reservations` and report the outcome as
+   unknown if confirmation cannot be established.
 
-# With auto-booking enabled
-resy snipe <venue_id> 2026-03-20 2 --time 19:00 --confirm
+## Standing safeguards
 
-# Custom poll duration (seconds)
-resy snipe <venue_id> 2026-03-20 2 --time 20:00 --duration 3600 --confirm
-```
-
-## Global Flags
-
-- `--json` — Machine-readable JSON output
-- `--dry-run` — Stop before booking or cancelling
-
-## Typical Workflow
-
-1. Search for a restaurant: `resy search "name"`
-2. Note the venue ID from results (e.g. `[12345]`)
-3. Check availability: `resy availability 12345 2026-03-20 2`
-4. Preview booking: `resy book <config_token> 2026-03-20 2 --dry-run`
-5. Confirm booking: `resy book <config_token> 2026-03-20 2`
-
-## Safety Rules
-
-- **Never book without user confirmation** — always use `--dry-run` first and show the user what will be booked
-- **Snipe mode requires `--confirm`** — without it, snipe only reports matches
-- **Never exceed rate limits** — the CLI enforces 2s between requests and max 30/minute
-- **Validate dates** — must be YYYY-MM-DD and not in the past
-- **Party size** — must be 1-20
-
-## Notes
-
-- Venue IDs are shown in brackets in search results (e.g. `[12345]`)
-- Config tokens come from availability output
-- Resy tokens come from the reservations list
-- Auth tokens are cached for 12 hours; credentials for 1 year
-- Logs are written to `~/.openclaw/logs/resy.log`
+- One authorized reservation means one live booking attempt. Never pivot to a
+  second booking after an attempted mutation.
+- Do not book a deposit, prepayment, nonrefundable reservation, or unfamiliar
+  cancellation/no-show fee unless the standing prompt explicitly permits it.
+  Venue uncertainty does not imply payment-term authorization.
+- Canonical booking one-shots must retain `deleteAfterRun: true`,
+  `delivery.mode: none`, a leading idempotency check, cache-only execution, and
+  the successful-run tombstone used by cron deployment.
+- The CLI enforces dates, party-size limits, and request rate limits. Do not
+  bypass those checks.

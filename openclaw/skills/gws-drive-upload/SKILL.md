@@ -1,52 +1,26 @@
 ---
 name: gws-drive-upload
-version: 1.0.0
-description: "Google Drive: Upload a file with automatic metadata."
-metadata:
-  openclaw:
-    category: "productivity"
-    requires:
-      bins: ["gws"]
-    cliHelp: "gws drive +upload --help"
+description: Upload one local file to Google Drive with the gws helper. Use when the user asks to place a specific file in Drive with an optional destination folder or target filename; use gws-drive for sharing, moving, copying, or permission changes.
 ---
 
-# drive +upload
+# Upload one file to Google Drive
 
-> **PREREQUISITE:** Read `../gws-shared/SKILL.md` for auth, global flags, and security rules. If missing, run `gws generate-skills` to create it.
+Use the pinned `gws drive +upload` helper. Read the [Drive gws reference](../gws-drive/references/gws-cli.md) before choosing an account or executing the write.
 
-Upload a file with automatic metadata
+## Command shape
 
-## Usage
-
-```bash
-gws drive +upload <file>
-```
-
-## Flags
-
-| Flag | Required | Default | Description |
-|------|----------|---------|-------------|
-| `<file>` | ✓ | — | Path to file to upload |
-| `--parent` | — | — | Parent folder ID |
-| `--name` | — | — | Target filename (defaults to source filename) |
-
-## Examples
+The local file is a positional argument; there is no `--file` flag.
 
 ```bash
-gws drive +upload ./report.pdf
-gws drive +upload ./report.pdf --parent FOLDER_ID
-gws drive +upload ./data.csv --name 'Sales Data.csv'
+gws drive +upload '<LOCAL_FILE>' [--parent '<FOLDER_ID>'] [--name '<DRIVE_FILENAME>']
 ```
 
-## Tips
+## Required write gate
 
-- MIME type is detected automatically.
-- Filename is inferred from the local path unless --name is given.
+1. Verify that the requested local path is a regular file and resolve the target account, parent folder, filename, and file size. Do not read or summarize file contents unless the request requires it.
+2. Run the exact upload command with `--dry-run`.
+3. Show the user the source path, size, target account, destination folder, and final filename.
+4. Ask for explicit confirmation immediately before running the command without `--dry-run`.
+5. Verify the returned Drive file ID, filename, and parent. Do not claim success from the process exit alone.
 
-> [!CAUTION]
-> This is a **write** command — confirm with the user before executing.
-
-## See Also
-
-- [gws-shared](../gws-shared/SKILL.md) — Global flags and auth
-- [gws-drive](../gws-drive/SKILL.md) — All manage files, folders, and shared drives commands
+Never broaden an upload from one named file to a directory or wildcard without a new confirmation. Use [gws-drive](../gws-drive/SKILL.md) for permissions or other Drive mutations.

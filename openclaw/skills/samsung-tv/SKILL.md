@@ -64,8 +64,8 @@ samsung-tv art <name> select <id>       # Display specific artwork
 
 ## TVs
 
-### 19 Crosstown Ave
-- **Samsung The Frame 65** — QN65LS03BAFXZA, 2022 (`192.168.165.2`, MAC `A0:D7:F3:B2:C0:AC`)
+### Crosstown residence
+- **Samsung The Frame 65** — QN65LS03BAFXZA, 2022 (`192.168.165.2`, MAC `${SAMSUNG_TV_MAC}`)
 
 TV names are fuzzy-matched (e.g. "frame" for Samsung The Frame 65).
 

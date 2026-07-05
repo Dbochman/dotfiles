@@ -1,13 +1,13 @@
 ---
 name: amazon-shopping
-description: Search, browse, and purchase products on Amazon. Use when asked to buy something, find a product on Amazon, check prices, compare products, track orders, or manage the Amazon cart. Requires browser control and payment details from 1Password.
+description: Search, browse, and purchase products on Amazon using saved account details and explicit approval. Use when asked to buy something, find a product on Amazon, check prices, compare products, track orders, or manage the Amazon cart. Stop for attended payment entry when saved checkout details are unavailable.
 allowed-tools: browser(*), Bash(amazon:*)
 metadata: {"openclaw":{"emoji":"📦","requires":{"services":["browser"]}}}
 ---
 
 # Amazon Shopping
 
-Search, browse, and purchase products on Amazon using browser automation. Payment details are read from 1Password at runtime.
+Search, browse, and purchase products on Amazon using browser automation and saved Amazon checkout details. The OpenClaw gateway and its children must never invoke `op`; missing payment data requires an attended handoff.
 
 ## Important: Purchase Approval Required
 
@@ -19,12 +19,6 @@ Before clicking "Place your order":
 3. If no response, do NOT proceed
 
 ## Spending Limits
-
-```bash
-# Read the spending cap before any purchase
-# OP_SERVICE_ACCOUNT_TOKEN is pre-loaded by the gateway from ~/.openclaw/.secrets-cache
-op read "op://OpenClaw/Visa/credit limit"
-```
 
 - **Hard cap**: Never exceed the credit limit (currently $250)
 - **Soft cap**: Flag anything over $100 for extra confirmation
@@ -76,23 +70,10 @@ browser snapshot
 
 ### 5. Fill Payment Details (if needed)
 
-Amazon should have saved payment methods. If it asks for card details:
-
-```bash
-# OP_SERVICE_ACCOUNT_TOKEN is pre-loaded by the gateway from ~/.openclaw/.secrets-cache
-CARD_NUMBER=$(op read "op://OpenClaw/Visa/number")
-CARD_EXPIRY=$(op read "op://OpenClaw/Visa/expiry date")
-CARD_CVV=$(op read "op://OpenClaw/Visa/verification number")
-CARD_NAME=$(op read "op://OpenClaw/Visa/cardholder name")
-```
-
-Then fill the form fields:
-```
-browser type <card_number_ref> <number>
-browser type <expiry_ref> <expiry>
-browser type <cvv_ref> <cvv>
-browser type <name_ref> <name>
-```
+Amazon should have a saved payment method. If checkout requests card fields,
+stop and ask Dylan to complete payment entry in an attended session. Never call
+`op`, place card data in the general secrets cache, or expose payment fields in
+chat or tool output.
 
 ### 6. Fill Shipping Address (if needed)
 
@@ -101,11 +82,8 @@ Read the local-only address file for field values:
 cat ~/.openclaw/skills/amazon-shopping/address.local.md
 ```
 
-If the file doesn't exist, fall back to 1Password:
-```bash
-# OP_SERVICE_ACCOUNT_TOKEN is pre-loaded by the gateway
-op read "op://OpenClaw/Visa/address"
-```
+If the file does not exist or is incomplete, stop and ask Dylan for an attended
+checkout update. Do not fall back to `op` from the gateway process.
 
 ### 7. Review Order (MANDATORY)
 

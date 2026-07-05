@@ -7,18 +7,18 @@ Add Potato's Fi Series 3+ collar to the Crosstown presence detection system.
 
 ## What We Know
 
-- **Collar**: Fi Series 3+, Serial #FC35G072187, Model FC3B, MAC D4:3D:39:A7:4B:6C
+- **Collar**: Fi Series 3+, Serial `${TRYFI_COLLAR_SERIAL}`, Model FC3B, MAC ${PRIVATE_MAC}
 - **How it works**: Collar connects to Fi base station via BLE, base connects to WiFi. The collar itself does NOT appear as a WiFi client.
-- **Fi base location**: Crosstown (19 Crosstown Ave) — NOT Cabin
-- **Fi base on network**: hostname `da16200-4b6c.lan`, IP `192.168.165.187`, MAC `d4:3d:39:a7:4b:6c`
+- **Fi base location**: Crosstown ([private address]) — NOT Cabin
+- **Fi base on network**: hostname `da16200-4b6c.lan`, IP `192.168.165.187`, MAC `${PRIVATE_MAC}`
 - The `da16200` prefix is a Dialog Semiconductor DA16200 WiFi SoC used in Fi base stations
-- **Fi API**: `api.tryfi.com` — both `dylanbochman@gmail.com` and `juliajoyjennings@gmail.com` return 401 (likely Google SSO accounts, need password reset via Fi "Forgot Password" flow to enable API login)
+- **Fi API**: `api.tryfi.com` — both `${TRYFI_EMAIL}` and `${JULIA_EMAIL}` return 401 (likely Google SSO accounts, need password reset via Fi "Forgot Password" flow to enable API login)
 
 ## Implementation (Completed)
 
 ### Added to Crosstown devices in `presence-detect.sh`
 ```json
-{"person":"Potato","match":"mac","pattern":"d4:3d:39:a7:4b:6c"},
+{"person":"Potato","match":"mac","pattern":"${PRIVATE_MAC}"},
 {"person":"Potato","match":"hostname","pattern":"da16200-4b6c"}
 ```
 
@@ -46,7 +46,7 @@ The ring-listener already calls `presence-detect.sh` for network checks, so Pota
 Fi GPS polling (every 3 min in ring-listener) provides real coordinates and geofence status, making base station network detection redundant. Removed Potato entries from both CABIN_DEVICES and CROSSTOWN_DEVICES in presence-detect.sh. A second base station was added at the cabin but not tracked in presence — Fi GPS covers both locations.
 
 ## Fi API — IMPLEMENTED (2026-04-01)
-Password reset completed for `dylanbochman@gmail.com`. Fi API is fully operational.
+Password reset completed for `${TRYFI_EMAIL}`. Fi API is fully operational.
 - CLI: `fi-collar location` / `fi-collar status` (wrapper at `~/.openclaw/bin/fi-collar`)
 - API script: `openclaw/skills/fi-collar/fi-api.py`
 - Auth: `TRYFI_EMAIL` + `TRYFI_PASSWORD` in `~/.openclaw/.secrets-cache`

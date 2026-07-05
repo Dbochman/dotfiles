@@ -251,11 +251,12 @@ as a persistent outage.
 Every new LaunchAgent script MUST follow these rules:
 
 1. **Set `HOME` and `PATH`** in the plist `EnvironmentVariables` — LaunchAgents inherit a minimal environment (`/usr/bin:/bin:/usr/sbin:/sbin`)
-2. **Set `OP_SERVICE_ACCOUNT_TOKEN`** in any script that calls `op` (directly or via a CLI that calls `op` internally like `opentable`, `resy`, `nest`). Without it, `op` tries the 1Password desktop app's Mach bootstrap service, which triggers a GUI permission popup on every run — impossible to approve without VNC. Use: `export OP_SERVICE_ACCOUNT_TOKEN=$(cat "$HOME/.openclaw/.env-token")`
-3. **Source `.secrets-cache`** for environment secrets: `set -a && source ~/.openclaw/.secrets-cache && set +a`
-4. **Use `IdentityAgent none`** for any SSH/scp to known hosts — the default 1Password SSH agent also triggers GUI popups under launchd
-5. **Choose one log owner**: plist-owned services write stdout/stderr to `~/.openclaw/logs/`; scripts with their own bounded `log()` function send plist stdout/stderr to `/dev/null` so third-party CLI noise cannot create an unbounded duplicate log
-6. **Track the plist** in `openclaw/launchagents/` in the dotfiles repo (deploy via scp)
+2. **Never invoke `op` anywhere in the process tree** — this includes the plist program, wrappers, retry/probe paths, and child CLIs. Service-account or biometric environment flags do not make `op` reliable under launchd on Tahoe. Audit dependencies before deployment and make any `op` fallback interactive-only.
+3. **Source `.secrets-cache` and fail closed** for environment secrets: `set -a && source ~/.openclaw/.secrets-cache && set +a`. Check every required key before starting; never print or replace the cache from a LaunchAgent.
+4. **Refresh secrets only through the attended helper**: run `openclaw-refresh-secrets --interactive` from a user-controlled terminal. A LaunchAgent must never call the helper.
+5. **Use `IdentityAgent none`** for any SSH/scp to known hosts — the default 1Password SSH agent also triggers GUI popups under launchd
+6. **Choose one log owner**: plist-owned services write stdout/stderr to `~/.openclaw/logs/`; scripts with their own bounded `log()` function send plist stdout/stderr to `/dev/null` so third-party CLI noise cannot create an unbounded duplicate log
+7. **Track the plist** in `openclaw/launchagents/` in the dotfiles repo (deploy via scp)
 
 ## Notes
 
@@ -265,6 +266,7 @@ Every new LaunchAgent script MUST follow these rules:
 - **Stable Tailscale name**: macOS intentionally uses local hostname `mac-mini`, while `bin/mac-hostname` pins the Tailscale override to `dylans-mac-mini`. This keeps existing SSH, dashboard, Taildrop, and WSS targets stable across Tailscale or macOS restarts.
 - **Logs**: Most services log to `~/.openclaw/logs/` or `/tmp/`. The current generated gateway job writes to `~/Library/Logs/openclaw/gateway.log`; the tracked recovery plist still names `~/.openclaw/logs/gateway.{log,err.log}`. Check the live plist's `StandardErrorPath` and `StandardOutPath` instead of assuming either layout.
 - **Gateway wrapper**: Uses cache-only secrets pattern (`~/.openclaw/.secrets-cache`), no `op read` at startup (hangs under launchd).
+- **Secret refresh**: `openclaw-refresh-secrets --interactive` is an attended maintenance command. It reads exact field references from an owner-only local seed and atomically replaces the cache only after every required field succeeds; never schedule it with launchd or cron.
 - **Anthropic OAuth refresh**: `oauth-refresh.sh` hides `/usr/bin` from PATH during `claude auth login` so that `security` (macOS keychain CLI) is not found. This forces Claude Code to write credentials to `~/.claude/.credentials.json` instead of the keychain, which is unreadable over SSH. The refresh token rotates on each login, so the flow is self-sustaining. If the refresh token chain breaks (e.g., manual `claude auth login` rotates it outside the script), re-seed by pushing a fresh token from a machine with keychain access: `security find-generic-password -s "Claude Code-credentials" -w | ssh dylans-mac-mini 'cat > ~/.openclaw/.anthropic-oauth-cache'`.
 - **Anthropic OAuth verification**: after enabling or repairing `ai.openclaw.oauth-refresh`, require exit 0, mode `0600` on `~/.openclaw/.anthropic-oauth-cache`, and non-null `utilization` from `http://127.0.0.1:8551/api/current`.
 - **OpenAI authentication**: `ai.openclaw.oauth-refresh` manages Anthropic only. OpenClaw `2026.6.10` uses the canonical `openai` provider and stores its usable OAuth/token profiles in `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`; the configured default is `openai/gpt-5.6-sol`. Repair an invalidated profile with `openclaw models auth login --provider openai`, then confirm the intended order with `openclaw models status --json` and `openclaw models auth order`. Source `~/.openclaw/.secrets-cache` and include Homebrew Node in `PATH` before running these commands over SSH.

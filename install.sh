@@ -18,6 +18,9 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="$DOTFILES_DIR/.backup"
 MAX_BACKUPS=10
 
+# shellcheck source=openclaw/lib/deployment.sh
+source "$DOTFILES_DIR/openclaw/lib/deployment.sh"
+
 # State
 DRY_RUN=false
 FORCE=false
@@ -499,6 +502,7 @@ directory_matches_copy_without_symlinks() {
   while IFS= read -r -d '' rel; do
     [[ "$rel" = "." ]] && continue
     rel="${rel#./}"
+    openclaw_skill_path_is_deployment_artifact "$rel" && continue
     src_item="$src/$rel"
     dst_item="$dst/$rel"
 
@@ -516,6 +520,7 @@ directory_matches_copy_without_symlinks() {
   while IFS= read -r -d '' rel; do
     [[ "$rel" = "." ]] && continue
     rel="${rel#./}"
+    openclaw_skill_path_is_deployment_artifact "$rel" && return 1
     dst_item="$dst/$rel"
     src_item="$src/$rel"
     [[ ! -L "$dst_item" ]] || return 1
@@ -585,14 +590,8 @@ stage_openclaw_skill_copy() {
   fi
 
   local staged="$staging_root/replacement"
-  if ! cp -R "$src" "$staged"; then
+  if ! copy_openclaw_skill_tree "$src" "$staged"; then
     log_error "Could not stage OpenClaw skill copy: $dst"
-    EXIT_CODE=1
-    discard_staging_root "$staging_root" || true
-    return 1
-  fi
-  if ! find "$staged" -type l -delete; then
-    log_error "Could not remove nested symlinks from staged OpenClaw skill: $dst"
     EXIT_CODE=1
     discard_staging_root "$staging_root" || true
     return 1
@@ -788,6 +787,32 @@ install_managed_file_copy() {
     log "  Installed $label: $dst"
   fi
   ((ITEMS_LINKED++))
+}
+
+install_openclaw_guarded_helpers() {
+  local openclaw_src="${1%/}"
+  local openclaw_home="${2%/}"
+  local spec src_rel dst_rel mode label src dst
+  local helper_specs=(
+    "bin/august|bin/august|755|August guarded unlock wrapper"
+    "bin/opentable-book|bin/opentable-book|755|OpenTable guarded booking wrapper"
+    "bin/restaurant-snipe|bin/restaurant-snipe|755|restaurant snipe guarded wrapper"
+    "bin/resy-read|bin/resy-read|755|Resy read-only wrapper"
+    "workspace/scripts/opentable-book.sh|workspace/scripts/opentable-book.sh|755|OpenTable guarded booking helper"
+    "workspace/scripts/opentable-book-state.py|workspace/scripts/opentable-book-state.py|755|OpenTable approval state helper"
+  )
+
+  for spec in "${helper_specs[@]}"; do
+    IFS='|' read -r src_rel dst_rel mode label <<< "$spec"
+    src="$openclaw_src/$src_rel"
+    dst="$openclaw_home/$dst_rel"
+    if [[ ! -f "$src" || -L "$src" ]]; then
+      log_error "Required $label source is unavailable: $src"
+      EXIT_CODE=1
+      return 1
+    fi
+    install_managed_file_copy "$src" "$dst" "$mode" "$label" || return 1
+  done
 }
 
 install_managed_launchagent() {
@@ -1180,6 +1205,9 @@ install_dotfiles() {
         "$HOME/.openclaw/bin/imsg-bridge-ensure" \
         755 \
         "imsg bridge watchdog"
+      install_openclaw_guarded_helpers \
+        "$DOTFILES_DIR/openclaw" \
+        "$HOME/.openclaw"
       install_managed_launchagent \
         "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.imsg-bridge-ensure.plist" \
         "$HOME/Library/LaunchAgents/ai.openclaw.imsg-bridge-ensure.plist" \
@@ -1194,8 +1222,32 @@ install_dotfiles() {
         if [[ "$DRY_RUN" != true ]]; then
           mkdir -p "$HOME/.openclaw/skills"
         fi
+
+        # Remove only known catalog entries retired from the tracked skills
+        # tree. Without this migration, old real-copy deployments survive
+        # indefinitely even though their sources no longer exist.
+        local retired_skill_name
+        local retired_skill_path
+        for retired_skill_name in TEMPLATE gws-shared; do
+          retired_skill_path="$HOME/.openclaw/skills/$retired_skill_name"
+          if [[ -e "$retired_skill_path" || -L "$retired_skill_path" ]]; then
+            if [[ "$DRY_RUN" = true ]]; then
+              log "  [dry-run] Would remove retired OpenClaw skill: $retired_skill_path"
+            elif rm -rf -- "$retired_skill_path"; then
+              log "  Removed retired OpenClaw skill: $retired_skill_path"
+            else
+              log_error "Could not remove retired OpenClaw skill: $retired_skill_path"
+              EXIT_CODE=1
+            fi
+          fi
+        done
+
         for skill_dir in "$DOTFILES_DIR/openclaw/skills"/*/; do
           [[ -d "$skill_dir" ]] || continue
+          if [[ ! -f "$skill_dir/SKILL.md" ]]; then
+            log_verbose "  Skipping non-skill directory: $skill_dir"
+            continue
+          fi
           local skill_name
           skill_name=$(basename "$skill_dir")
           deploy_openclaw_skill_copy "$skill_dir" "$HOME/.openclaw/skills/$skill_name"
@@ -1367,4 +1419,6 @@ main() {
   exit $EXIT_CODE
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

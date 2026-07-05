@@ -47,7 +47,8 @@ This skill runs on a **headless Mac Mini** via OpenClaw. Key constraints:
 - **`claude` CLI available** at `/opt/homebrew/opt/node@22/bin/claude`
 - **Python 3** at `/opt/homebrew/bin/python3`
 - **Subagents available** — spawn test runs in parallel
-- **Skill template** at `openclaw/skills/TEMPLATE/SKILL.md` in the dotfiles repo
+- **Skill template** at `openclaw/templates/skill/SKILL.md` in the dotfiles repo;
+  read `openclaw/SKILL-AUTHORING.md` before copying it into `openclaw/skills/`
 
 ## Communicating with the user
 
@@ -78,7 +79,8 @@ Wait to write test prompts until this is solid.
 
 ### Write the SKILL.md
 
-Follow OpenClaw conventions (see the TEMPLATE skill for reference):
+Follow OpenClaw conventions (see `openclaw/SKILL-AUTHORING.md` and the
+non-deployable template at `openclaw/templates/skill/SKILL.md`):
 
 **Frontmatter (required):**
 - `name`: kebab-case, under 64 chars

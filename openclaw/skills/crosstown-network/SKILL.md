@@ -1,13 +1,13 @@
 ---
 name: crosstown-network
-description: Access the 19 Crosstown Ave local network via the MacBook Pro. Use when needing to reach Crosstown LAN devices, run commands at Crosstown, scan the local network, interact with the AmpliFi router, Hue Bridge, Ring Doorbell, or any device on the 192.168.165.x subnet. Also use for presence detection at Crosstown.
+description: Access the Crosstown residence local network via the MacBook Pro. Use when needing to reach Crosstown LAN devices, run commands at Crosstown, scan the local network, interact with the AmpliFi router, Hue Bridge, Ring Doorbell, or any device on the 192.168.165.x subnet. Also use for presence detection at Crosstown.
 allowed-tools: Bash(ssh:*)
 metadata: {"openclaw":{"emoji":"N"}}
 ---
 
 # Crosstown Network Access
 
-The OpenClaw gateway runs on the **cabin Mac Mini** (`dylans-mac-mini`). To reach devices on the **19 Crosstown Ave** local network, SSH into the MacBook Pro there.
+The OpenClaw gateway runs on the **cabin Mac Mini** (`dylans-mac-mini`). To reach devices on the **Crosstown residence** local network, SSH into the MacBook Pro there.
 
 ## SSH Access
 
@@ -39,13 +39,13 @@ ssh dylans-macbook-pro "<command>"
 | .110 | mac.lan | MacBook Pro (this machine) |
 | .117 | movie-room.lan | Apple TV (Movie Room) |
 | .119 | ys-l16030313e8.lan | Yeelight / smart light |
-| .124 | dylans-iphone.lan | Dylan's iPhone (MAC: `6c:3a:ff:5f:fc:ba`) |
+| .124 | dylans-iphone.lan | Dylan's iPhone (MAC: `${CROSSTOWN_DYLAN_MAC}`) |
 | .129 | huesyncbox.lan | Philips Hue Sync Box |
 | .142, .162, .164, .178, .236 | espressif.lan | ESP32 smart home devices |
 | .4 | irobot-81039f...lan | iRobot Roomba Combo 10 Max |
 | .3 | irobot-195efa...lan | iRobot Roomba J5 (scoomba) |
-| .132 | ? | Petlibro Granary Smart Feeder (MAC: E0:09:CF:01:05:20) |
-| .225 | ? | Petlibro Dockstream 2 Fountain (MAC: E0:08:BF:00:21:62) |
+| .132 | ? | Petlibro Granary Smart Feeder (MAC: ${PETLIBRO_FEEDER_MAC}) |
+| .225 | ? | Petlibro Dockstream 2 Fountain (MAC: ${PETLIBRO_FOUNTAIN_MAC}) |
 | .155 | litter-robot4.lan | Litter Robot 4 |
 | .171 | mac.lan | Dylan's Mac (desktop) |
 | .195 | 001788284a36.lan | Philips Hue Bridge |
@@ -72,8 +72,8 @@ reachability from `arp -anl` before matching a MAC or exact hostname:
 
 | Person | Hostname | MAC (Crosstown WiFi) | IP |
 |---|---|---|---|
-| Dylan | `dylans-iphone` | `6c:3a:ff:5f:fc:ba` | `192.168.165.124` |
-| Julia | `julias-iphone` | `38:e1:3d:c0:40:63` | `192.168.165.248` |
+| Dylan | `dylans-iphone` | `${CROSSTOWN_DYLAN_MAC}` | `192.168.165.124` |
+| Julia | `julias-iphone` | `${CROSSTOWN_JULIA_MAC}` | `192.168.165.248` |
 
 Matching priority: MAC → exact hostname (mDNS `.lan` name joined to the same
 fresh IP/MAC/interface row). IP alone is not accepted as identity. Hostname is

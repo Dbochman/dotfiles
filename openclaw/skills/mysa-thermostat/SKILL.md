@@ -22,7 +22,7 @@ Returns JSON with all devices:
     {
       "name": "Bedroom",
       "model": "BB-V1-1",
-      "mac": "AA:BB:CC:DD:EE:FF",
+      "mac": "${MYSA_DEVICE_MAC}",
       "temp_f": 68.5,
       "temp_c": 20.3,
       "setpoint_f": 70.0,

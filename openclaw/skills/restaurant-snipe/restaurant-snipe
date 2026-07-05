@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+PYTHON=${RESTAURANT_SNIPE_PYTHON:-/opt/homebrew/bin/python3}
+
+case "${1:-}" in
+  stage|--help|-h)
+    ;;
+  *)
+    echo "restaurant-snipe: only attended staging is exposed; run is LaunchAgent-internal" >&2
+    exit 64
+    ;;
+esac
+
+exec "$PYTHON" "$SCRIPT_DIR/scripts/restaurant_snipe.py" "$@"

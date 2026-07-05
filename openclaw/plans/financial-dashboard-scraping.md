@@ -296,7 +296,7 @@ The import function (`update_data.py import-json-paystubs`) reads a JSON file wi
 
 ```
 1. Search Julia's Gmail:
-   gws gmail users messages list --account julia.joy.jennings@gmail.com \
+   GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL} gws gmail users messages list \
      --params '{"userId":"me","q":"subject:(pay stub OR earnings statement) newer_than:16d has:attachment","maxResults":3}'
 
 2. For each unprocessed message:
@@ -326,7 +326,7 @@ The import function (`update_data.py import-json-paystubs`) reads a JSON file wi
 ### Paystub Search Refinement
 
 Julia's employer uses ADP. Search query refinements to try (in order):
-1. `from:noreply@adp.com subject:earnings newer_than:16d has:attachment`
+1. `from:${PRIVATE_EMAIL} subject:earnings newer_than:16d has:attachment`
 2. `subject:(pay stub OR earnings statement OR direct deposit) newer_than:16d has:attachment`
 3. Fall back to broader search and let Claude filter by content
 
@@ -392,7 +392,7 @@ Julia's employer uses ADP. Search query refinements to try (in order):
   "wakeMode": "next-heartbeat",
   "payload": {
     "kind": "agentTurn",
-    "message": "Check Julia's Gmail for recent paystub PDFs and import them to the financial dashboard.\n\n1. Search: gws gmail users messages list --account julia.joy.jennings@gmail.com --params '{\"userId\":\"me\",\"q\":\"subject:(pay stub OR earnings statement) newer_than:16d has:attachment\",\"maxResults\":3}'\n2. For each message with a PDF attachment:\n   a. Download the PDF to /tmp/paystub-<message_id>.pdf\n   b. Read the PDF and extract ALL these fields (current period only, not YTD): pay_date, period_start, period_end, pay_type ('regular' or 'bonus'), gross_pay, net_pay, regular_pay, bonus, deductions_total, federal_tax, state_tax, social_security_tax, medicare_tax, retirement_401k, retirement_401k_er, hsa_employee, hsa_employer, benefits_pretax, other_deductions\n   c. Generate id as 'adp-<pay_date>-<period_end>' (collision-safe)\n   d. Write JSON: {\"paystubs\": [{\"id\": \"...\", ...all fields...}]}\n3. Write to ~/repos/financial-dashboard/paystubs_data.json\n4. Run: cd ~/repos/financial-dashboard && ./venv/bin/python3 update_data.py import-json-paystubs\n5. Clean up: rm /tmp/paystub-*.pdf\n6. If any new paystubs were imported, send Julia a summary via the `message` tool (DM to her iMessage at +15084234853). If no new paystubs were found, do nothing — do NOT send a 'nothing to import' message."
+    "message": "Check Julia's Gmail for recent paystub PDFs and import them to the financial dashboard.\n\n1. Search: GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL} gws gmail users messages list --params '{\"userId\":\"me\",\"q\":\"subject:(pay stub OR earnings statement) newer_than:16d has:attachment\",\"maxResults\":3}'\n2. For each message with a PDF attachment:\n   a. Download the PDF to /tmp/paystub-<message_id>.pdf\n   b. Read the PDF and extract ALL these fields (current period only, not YTD): pay_date, period_start, period_end, pay_type ('regular' or 'bonus'), gross_pay, net_pay, regular_pay, bonus, deductions_total, federal_tax, state_tax, social_security_tax, medicare_tax, retirement_401k, retirement_401k_er, hsa_employee, hsa_employer, benefits_pretax, other_deductions\n   c. Generate id as 'adp-<pay_date>-<period_end>' (collision-safe)\n   d. Write JSON: {\"paystubs\": [{\"id\": \"...\", ...all fields...}]}\n3. Write to ~/repos/financial-dashboard/paystubs_data.json\n4. Run: cd ~/repos/financial-dashboard && ./venv/bin/python3 update_data.py import-json-paystubs\n5. Clean up: rm /tmp/paystub-*.pdf\n6. If any new paystubs were imported, send Julia a summary via the `message` tool (DM to her iMessage at chat_id:${JULIA_CHAT_ID}). If no new paystubs were found, do nothing — do NOT send a 'nothing to import' message."
   },
   "delivery": {
     "mode": "none"

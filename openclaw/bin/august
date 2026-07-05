@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# august — PATH entrypoint for the protected Crosstown August lock wrapper.
+
+set -euo pipefail
+
+SKILL_DIR="$HOME/.openclaw/skills/august-lock"
+exec "$SKILL_DIR/august" "$@"

@@ -10,8 +10,8 @@ TOKEN_CACHE="$HOME/.cache/openclaw-gateway/opentable_auth_token"
 SECRETS_CACHE="$HOME/.openclaw/.secrets-cache"
 RUNTIME_DIR="$HOME/.openclaw/run"
 LOCK_DIR="$RUNTIME_DIR/opentable-refresh.lock"
-OT_EMAIL="bochmanspam@gmail.com"
-GWS_ACCOUNT="bochmanspam@gmail.com"
+OT_EMAIL=""
+GWS_ACCOUNT=""
 OT_DASHBOARD_URL="https://www.opentable.com/user/dining-dashboard"
 OT_LOGIN_URL="https://www.opentable.com/authenticate/start?isPopup=false"
 PINCHTAB_INSTANCE_HELPER="$HOME/.openclaw/bin/pinchtab-headless-instance"
@@ -69,11 +69,25 @@ acquire_lock() {
 
 trap cleanup EXIT
 
-if [[ -r "$SECRETS_CACHE" ]]; then
-  set -a
-  . "$SECRETS_CACHE"
-  set +a
+if [[ ! -f "$SECRETS_CACHE" || -L "$SECRETS_CACHE" ]]; then
+  log "Protected cache must be a regular non-symlink file"
+  exit 1
 fi
+read -r cache_owner cache_mode < <(stat -f '%u %Lp' "$SECRETS_CACHE")
+if [[ "$cache_owner" != "$(id -u)" || "$cache_mode" != "600" ]]; then
+  log "Protected cache must be owned by the current user with mode 0600"
+  exit 1
+fi
+set -a
+if ! . "$SECRETS_CACHE" >/dev/null 2>&1; then
+  set +a
+  log "Protected cache could not be loaded"
+  exit 1
+fi
+set +a
+: "${OPENTABLE_EMAIL:?OPENTABLE_EMAIL is missing from the protected cache}"
+OT_EMAIL="$OPENTABLE_EMAIL"
+GWS_ACCOUNT="$OPENTABLE_EMAIL"
 
 is_atk() {
   [[ "$1" =~ ^[A-Za-z0-9-]{20,}$ ]]

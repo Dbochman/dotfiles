@@ -47,8 +47,8 @@ fi-collar login
 {
   "name": "Potato",
   "activity": "Rest",
-  "latitude": 42.602,
-  "longitude": -72.151,
+  "latitude": ${CABIN_LAT},
+  "longitude": ${CABIN_LON},
   "location": "cabin",
   "distance_m": 26,
   "at_location": true,
@@ -56,7 +56,7 @@ fi-collar login
   "connection": "User",
   "connectionDetail": "Dylan",
   "place": "Philly",
-  "address": "95 School House Rd"
+  "address": "[private address]"
 }
 ```
 
@@ -66,15 +66,15 @@ Fi GPS is polled every 60s during dog walk return monitoring. When Potato re-ent
 
 ## Auth
 
-- Account: `dylanbochman@gmail.com` (password in `TRYFI_PASSWORD` env var)
+- Account: `${TRYFI_EMAIL}` (password in `TRYFI_PASSWORD` env var)
 - Session cached at `~/.config/fi-collar/session.json` (12hr TTL, auto-re-login on 401)
 - Credentials: `TRYFI_EMAIL` + `TRYFI_PASSWORD` in `~/.openclaw/.secrets-cache`
 
 ## Collar Details
 
 - **Dog**: Potato
-- **Collar**: Fi Series 3+, Serial FC35G072187
-- **Pet ID**: 4WbrzFllED1YxCLqdT5SC4
+- **Collar**: Fi Series 3+, Serial `${TRYFI_COLLAR_SERIAL}`
+- **Pet ID**: `${TRYFI_PET_ID}`
 - **Base station**: "Crosstown" at Crosstown Ave (always online, WiFi connected)
 - **GPS**: GNSS (GPS + GLONASS + Galileo), updates every ~7 min at rest, more frequent during walks
 - **Cellular**: Built-in LTE for GPS reporting when away from WiFi/base

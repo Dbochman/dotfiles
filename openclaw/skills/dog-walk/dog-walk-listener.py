@@ -175,7 +175,8 @@ def _install_stderr_guard() -> None:
     t.start()
 
 
-_install_stderr_guard()
+if __name__ == "__main__":
+    _install_stderr_guard()
 
 # Use venv packages (Ring doorbell library for FCM push events)
 VENV_SITE = Path.home() / ".openclaw/ring/venv/lib"
@@ -192,7 +193,10 @@ TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 FCM_CREDS_FILE = Path.home() / ".openclaw/dog-walk/fcm-credentials.json"
 
 IMSG_BIN = "/opt/homebrew/bin/imsg"
-DYLAN_IMESSAGE_TARGET = os.environ.get("OPENCLAW_DYLAN_IMESSAGE_TARGET", "chat_id:171")
+_dylan_chat_id = os.environ.get("DYLAN_CHAT_ID", "").strip()
+DYLAN_IMESSAGE_TARGET = os.environ.get("OPENCLAW_DYLAN_IMESSAGE_TARGET", "").strip()
+if not DYLAN_IMESSAGE_TARGET and _dylan_chat_id.isdigit():
+    DYLAN_IMESSAGE_TARGET = f"chat_id:{_dylan_chat_id}"
 USER_AGENT = "OpenClaw/1.0"
 
 # Doorbell ID → location mapping
@@ -239,6 +243,11 @@ SNOOZE_FILE = Path.home() / ".openclaw/dog-walk/snooze.json"
 
 # State file serialization lock
 _state_lock = threading.Lock()
+# Route updates also run from delayed enrichment and Fi polling threads. Keep a
+# distinct re-entrant lock per route so every read-modify-write sees the latest
+# fields without serializing unrelated walks.
+_route_locks_guard = threading.Lock()
+_route_locks: dict[str, threading.RLock] = {}
 _SKIP_KEYS = {"skip_reason", "skip_location", "skip_details"}
 _CANDIDATE_KEYS = {
     "candidate_location",
@@ -524,14 +533,43 @@ def _route_path(walk_id: str | None, origin_location: str | None, started_at: st
     return ROUTES_DIR / origin_location / started_at[:10] / f"{walk_id}.json"
 
 
+def _route_lock(path: Path) -> threading.RLock:
+    key = str(path.absolute())
+    with _route_locks_guard:
+        lock = _route_locks.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _route_locks[key] = lock
+        return lock
+
+
 def _write_json_file(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    with open(tmp_path, "w") as f:
-        f.write(json.dumps(data, indent=2))
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(str(tmp_path), str(path))
+    """Atomically replace one route file while holding its per-route lock."""
+    with _route_lock(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(
+            f".{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, indent=2))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(str(tmp_path), str(path))
+            try:
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                # Atomic replacement already completed; there is no safe rollback.
+                pass
+        finally:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def _read_json_file(path: Path) -> dict | None:
@@ -539,6 +577,34 @@ def _read_json_file(path: Path) -> dict | None:
         return json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _new_route(walk_id: str, origin_location: str, started_at: str) -> dict:
+    return {
+        "walk_id": walk_id,
+        "origin_location": origin_location,
+        "started_at": started_at,
+        "ended_at": None,
+        "return_signal": None,
+        "distance_m": 0,
+        "point_count": 0,
+        "end_location": None,
+        "is_interhome_transit": False,
+        "points": [],
+    }
+
+
+def _read_or_new_route(
+    path: Path, walk_id: str, origin_location: str, started_at: str
+) -> dict:
+    existing = _read_json_file(path)
+    if not isinstance(existing, dict):
+        return _new_route(walk_id, origin_location, started_at)
+    route = _new_route(walk_id, origin_location, started_at)
+    route.update(existing)
+    if not isinstance(route.get("points"), list):
+        route["points"] = []
+    return route
 
 
 def _route_point_from_fi(fi_result: dict | None) -> dict | None:
@@ -615,25 +681,17 @@ def _init_walk_route(
     started_at: str,
     fi_result: dict | None = None,
 ) -> dict:
-    route = {
-        "walk_id": walk_id,
-        "origin_location": origin_location,
-        "started_at": started_at,
-        "ended_at": None,
-        "return_signal": None,
-        "distance_m": 0,
-        "point_count": 0,
-        "end_location": None,
-        "is_interhome_transit": False,
-        "points": [],
-    }
-    point = _route_point_from_fi(fi_result)
-    if point:
-        route["points"].append(point)
-    route.update(_summarize_route(route, fi_result=fi_result))
-
     path = _route_path(walk_id, origin_location, started_at)
-    if path:
+    route = _new_route(walk_id, origin_location, started_at)
+    if not path:
+        return {"distance_m": 0, "point_count": 0}
+
+    with _route_lock(path):
+        route = _read_or_new_route(path, walk_id, origin_location, started_at)
+        point = _route_point_from_fi(fi_result)
+        if point and point not in route["points"]:
+            route["points"].append(point)
+        route.update(_summarize_route(route, fi_result=fi_result))
         _write_json_file(path, route)
 
     return {"distance_m": route["distance_m"], "point_count": route["point_count"]}
@@ -650,38 +708,25 @@ def _append_walk_route_point(
     if not path or not point:
         return None
 
-    route = _read_json_file(path)
-    if route is None:
-        route = {
-            "walk_id": walk_id,
-            "origin_location": origin_location,
-            "started_at": started_at,
-            "ended_at": None,
-            "return_signal": None,
-            "distance_m": 0,
-            "point_count": 0,
-            "end_location": None,
-            "is_interhome_transit": False,
-            "points": [],
-        }
-
-    points = route.setdefault("points", [])
-    last_point = points[-1] if points else None
-    is_duplicate = bool(
-        last_point
-        and (
-            last_point.get("ts") == point["ts"]
-            or (
-                last_point.get("lat") == point["lat"]
-                and last_point.get("lon") == point["lon"]
+    with _route_lock(path):
+        route = _read_or_new_route(path, walk_id, origin_location, started_at)
+        points = route.setdefault("points", [])
+        last_point = points[-1] if points else None
+        is_duplicate = bool(
+            last_point
+            and (
+                last_point.get("ts") == point["ts"]
+                or (
+                    last_point.get("lat") == point["lat"]
+                    and last_point.get("lon") == point["lon"]
+                )
             )
         )
-    )
-    if not is_duplicate:
-        points.append(point)
+        if not is_duplicate:
+            points.append(point)
 
-    route.update(_summarize_route(route, fi_result=fi_result))
-    _write_json_file(path, route)
+        route.update(_summarize_route(route, fi_result=fi_result))
+        _write_json_file(path, route)
     return {"distance_m": route["distance_m"], "point_count": route["point_count"]}
 
 
@@ -697,32 +742,19 @@ def _finalize_walk_route(
     if not path:
         return None
 
-    route = _read_json_file(path)
-    if route is None:
-        route = {
-            "walk_id": walk_id,
-            "origin_location": origin_location,
-            "started_at": started_at,
-            "ended_at": None,
-            "return_signal": None,
-            "distance_m": 0,
-            "point_count": 0,
-            "end_location": None,
-            "is_interhome_transit": False,
-            "points": [],
-        }
+    with _route_lock(path):
+        route = _read_or_new_route(path, walk_id, origin_location, started_at)
+        point = _route_point_from_fi(fi_result)
+        if point:
+            points = route.setdefault("points", [])
+            last_point = points[-1] if points else None
+            if not last_point or last_point.get("ts") != point["ts"]:
+                points.append(point)
 
-    point = _route_point_from_fi(fi_result)
-    if point:
-        points = route.setdefault("points", [])
-        last_point = points[-1] if points else None
-        if not last_point or last_point.get("ts") != point["ts"]:
-            points.append(point)
-
-    route["ended_at"] = ended_at
-    route["return_signal"] = return_signal
-    route.update(_summarize_route(route, fi_result=fi_result))
-    _write_json_file(path, route)
+        route["ended_at"] = ended_at
+        route["return_signal"] = return_signal
+        route.update(_summarize_route(route, fi_result=fi_result))
+        _write_json_file(path, route)
     return {"distance_m": route["distance_m"], "point_count": route["point_count"]}
 
 
@@ -945,40 +977,44 @@ def _enrich_route_with_fi_walks(fi_walks: list[dict] | None, *,
             started_at = walk.get("departed_at")
 
     path = _route_path(walk_id, origin, started_at)
-    if not path or not path.exists():
+    if not path:
         return False
 
     try:
-        route = json.loads(path.read_text())
-        merged = _merge_fi_walks(
-            fi_walks,
-            route.get("started_at", ""),
-            route.get("ended_at"),
-        )
-        if not merged:
-            log(f"FI ENRICH: no Fi walks overlap route {walk_id} window "
-                f"({route.get('started_at')}..{route.get('ended_at')})")
-            return False
+        with _route_lock(path):
+            route = _read_json_file(path)
+            if route is None:
+                return False
+            merged = _merge_fi_walks(
+                fi_walks,
+                route.get("started_at", ""),
+                route.get("ended_at"),
+            )
+            if not merged:
+                log(f"FI ENRICH: no Fi walks overlap route {walk_id} window "
+                    f"({route.get('started_at')}..{route.get('ended_at')})")
+                return False
 
-        # Idempotent: if merged result matches stored values, nothing to do
-        if (route.get("fi_walk_start") == merged["fi_start"]
-                and route.get("fi_walk_end") == merged["fi_end"]
-                and route.get("fi_distance_m") == merged["fi_distance_m"]):
-            log(f"FI ENRICH: route {walk_id} already has merged data — no change")
-            return True
+            # Idempotent: if merged result matches stored values, nothing to do
+            if (route.get("fi_walk_start") == merged["fi_start"]
+                    and route.get("fi_walk_end") == merged["fi_end"]
+                    and route.get("fi_distance_m") == merged["fi_distance_m"]
+                    and route.get("fi_walker") == merged["fi_walker"]
+                    and route.get("fi_walk_count") == merged["fi_walk_count"]):
+                log(f"FI ENRICH: route {walk_id} already has merged data — no change")
+                return True
 
-        our_start = _parse_iso(route.get("started_at", ""))
-        fi_start = _parse_iso(merged["fi_start"])
-        latency_s = round((our_start - fi_start).total_seconds()) if (our_start and fi_start) else 0
+            our_start = _parse_iso(route.get("started_at", ""))
+            fi_start = _parse_iso(merged["fi_start"])
+            latency_s = round((our_start - fi_start).total_seconds()) if (our_start and fi_start) else 0
 
-        route["fi_walk_start"] = merged["fi_start"]
-        route["fi_walk_end"] = merged["fi_end"]
-        route["fi_distance_m"] = merged["fi_distance_m"]
-        route["fi_walker"] = merged["fi_walker"]
-        route["fi_walk_count"] = merged["fi_walk_count"]
-        route["detection_latency_s"] = latency_s
-
-        path.write_text(json.dumps(route, indent=2))
+            route["fi_walk_start"] = merged["fi_start"]
+            route["fi_walk_end"] = merged["fi_end"]
+            route["fi_distance_m"] = merged["fi_distance_m"]
+            route["fi_walker"] = merged["fi_walker"]
+            route["fi_walk_count"] = merged["fi_walk_count"]
+            route["detection_latency_s"] = latency_s
+            _write_json_file(path, route)
         log(f"FI ENRICH: enriched route {walk_id} — "
             f"{merged['fi_walk_count']} segment(s), "
             f"{merged['fi_start']} -> {merged['fi_end']}, "
@@ -1037,9 +1073,12 @@ def _mark_route_car_trip(location: str) -> None:
         return
 
     try:
-        route = json.loads(path.read_text())
-        route["is_car_trip"] = True
-        path.write_text(json.dumps(route, indent=2))
+        with _route_lock(path):
+            route = _read_json_file(path)
+            if route is None:
+                return
+            route["is_car_trip"] = True
+            _write_json_file(path, route)
         log(f"CAR TRIP: marked route {walk_id} as car trip")
     except Exception as e:
         log(f"CAR TRIP: error marking route: {e}")
@@ -1067,45 +1106,36 @@ def _merge_walk_path_into_route(walk_path: list[dict]) -> None:
     if not route_file.exists():
         return
 
-    try:
-        route = json.loads(route_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return
+    with _route_lock(route_file):
+        route = _read_json_file(route_file)
+        if route is None:
+            return
+        existing = route.get("points") or []
 
-    existing = route.get("points") or []
+        def is_duplicate(new_pt: dict) -> bool:
+            for ep in existing:
+                if _haversine(new_pt["lat"], new_pt["lon"], ep["lat"], ep["lon"]) < 5:
+                    return True
+            return False
 
-    def is_duplicate(new_pt: dict) -> bool:
-        for ep in existing:
-            if _haversine(new_pt["lat"], new_pt["lon"], ep["lat"], ep["lon"]) < 5:
-                return True
-        return False
+        added = 0
+        for pt in walk_path:
+            if not is_duplicate(pt):
+                existing.append(pt)
+                added += 1
 
-    added = 0
-    for pt in walk_path:
-        if not is_duplicate(pt):
-            existing.append(pt)
-            added += 1
+        if added == 0:
+            log(f"FI WALK PATH: no new points to merge (all {len(walk_path)} were duplicates)")
+            return
 
-    if added == 0:
-        log(f"FI WALK PATH: no new points to merge (all {len(walk_path)} were duplicates)")
-        return
-
-    # Sort by timestamp
-    existing.sort(key=lambda p: p.get("ts", ""))
-    route["points"] = existing
-    route["point_count"] = len(existing)
-
-    # Recompute distance
-    total_dist = 0
-    for i in range(1, len(existing)):
-        total_dist += _haversine(
-            existing[i - 1]["lat"], existing[i - 1]["lon"],
-            existing[i]["lat"], existing[i]["lon"],
-        )
-    route["distance_m"] = round(total_dist)
-
-    route_file.write_text(json.dumps(route, indent=2))
-    log(f"FI WALK PATH: merged {added} new points into route (total: {len(existing)}, distance: {round(total_dist)}m)")
+        existing.sort(key=lambda p: p.get("ts", ""))
+        route["points"] = existing
+        route["point_count"] = len(existing)
+        distance_m = _route_distance_m(existing)
+        route["distance_m"] = distance_m
+        _write_json_file(route_file, route)
+    log(f"FI WALK PATH: merged {added} new points into route "
+        f"(total: {len(existing)}, distance: {distance_m}m)")
 
 
 # ---------------------------------------------------------------------------
@@ -1147,6 +1177,9 @@ def save_fcm_credentials(creds: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def send_imessage(text: str) -> bool:
+    if not DYLAN_IMESSAGE_TARGET:
+        log("ERROR sending iMessage: protected Dylan chat target is unavailable")
+        return False
     if DYLAN_IMESSAGE_TARGET.startswith("chat_id:"):
         target_args = ["--chat-id", DYLAN_IMESSAGE_TARGET.removeprefix("chat_id:")]
     elif DYLAN_IMESSAGE_TARGET.startswith("chat_guid:"):
@@ -1393,43 +1426,92 @@ def _verify_dock_and_retry(location: str) -> None:
 # Network presence (return monitoring only)
 # ---------------------------------------------------------------------------
 
-def _check_network_presence(location: str) -> dict:
-    """Check network presence. Returns {"any_present": bool, "people": {...}}."""
-    try:
-        if location == "crosstown":
-            result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=5", "dylans-macbook-pro",
-                 "~/.openclaw/workspace/scripts/presence-detect.sh", "crosstown"],
-                capture_output=True, timeout=90, text=True,
-            )
-        elif location == "cabin":
-            script = str(Path.home() / ".openclaw/workspace/scripts/presence-detect.sh")
-            result = subprocess.run(
-                [script, "cabin"],
-                capture_output=True, timeout=60, text=True,
-            )
-        else:
-            return {"any_present": False, "people": {}}
+_NETWORK_OBSERVATION_MAX_AGE_SECONDS = 300
 
+
+def _parse_network_observation(raw: str, location: str) -> dict[str, dict]:
+    observation = json.loads(raw)
+    if not isinstance(observation, dict) or observation.get("error"):
+        raise ValueError("observation is not a successful object")
+    if observation.get("location") != location:
+        raise ValueError("observation location mismatch")
+
+    observed_at_raw = observation.get("timestamp")
+    if not isinstance(observed_at_raw, str):
+        raise ValueError("observation timestamp missing")
+    observed_at = datetime.fromisoformat(observed_at_raw.replace("Z", "+00:00"))
+    if observed_at.tzinfo is None:
+        raise ValueError("observation timestamp lacks timezone")
+    age_s = (datetime.now(timezone.utc) - observed_at).total_seconds()
+    if age_s > _NETWORK_OBSERVATION_MAX_AGE_SECONDS or age_s < -60:
+        raise ValueError("observation timestamp is outside the freshness window")
+
+    presence = observation.get("presence")
+    if not isinstance(presence, dict) or not presence:
+        raise ValueError("observation presence is missing")
+    people: dict[str, dict] = {}
+    for person, info in presence.items():
+        if (not isinstance(person, str) or not person
+                or not isinstance(info, dict)
+                or type(info.get("present")) is not bool):
+            raise ValueError("observation presence entry is malformed")
+        people[person] = {"present": info["present"]}
+    return people
+
+
+def _run_network_observation(location: str) -> dict:
+    """Run a side-effect-free network observation and validate its response."""
+    if location == "crosstown":
+        command = [
+            "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+            "dylans-macbook-pro",
+            "~/.openclaw/workspace/scripts/presence-detect.sh", "observe", "crosstown",
+        ]
+        timeout = 90
+    elif location == "cabin":
+        script = str(Path.home() / ".openclaw/workspace/scripts/presence-detect.sh")
+        command = [script, "observe", "cabin"]
+        timeout = 60
+    else:
+        return {"ok": False, "people": {}, "error": "unknown_location"}
+
+    try:
+        result = subprocess.run(
+            command, capture_output=True, timeout=timeout, text=True,
+        )
         if result.returncode != 0:
-            log(f"NETWORK CHECK: {location} scan failed: {result.stderr[:200]}")
-            return {"any_present": False, "people": {}}
-        scan = json.loads(result.stdout)
-        presence = scan.get("presence", {})
-        people_detail = {}
-        any_present = False
-        for person, info in presence.items():
-            present = info.get("present", False)
-            people_detail[person] = {"present": present}
-            if present:
-                any_present = True
-                log(f"NETWORK CHECK: {person} detected on {location} network")
-        if not any_present:
-            log(f"NETWORK CHECK: no one on {location} network")
-        return {"any_present": any_present, "people": people_detail}
+            log(f"NETWORK OBSERVE: {location} failed (rc={result.returncode}): "
+                f"{result.stderr[:200]}")
+            return {"ok": False, "people": {}, "error": "command_failed"}
+        people = _parse_network_observation(result.stdout, location)
+        return {"ok": True, "people": people}
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        log(f"NETWORK OBSERVE: invalid {location} response: {e}")
+        return {"ok": False, "people": {}, "error": "invalid_observation"}
     except Exception as e:
-        log(f"NETWORK CHECK: error: {e}")
-        return {"any_present": False, "people": {}}
+        log(f"NETWORK OBSERVE: {location} error: {e}")
+        return {"ok": False, "people": {}, "error": "observation_unavailable"}
+
+
+def _check_network_presence(location: str) -> dict:
+    """Check network presence without mutating correlated presence state."""
+    observation = _run_network_observation(location)
+    if not observation["ok"]:
+        return {
+            "ok": False,
+            "any_present": False,
+            "people": {},
+            "error": observation["error"],
+        }
+
+    people = observation["people"]
+    any_present = any(info["present"] for info in people.values())
+    for person, info in people.items():
+        if info["present"]:
+            log(f"NETWORK CHECK: {person} detected on {location} network")
+    if not any_present:
+        log(f"NETWORK CHECK: no one on {location} network")
+    return {"ok": True, "any_present": any_present, "people": people}
 
 
 def _people_at_location(location: str) -> set[str]:
@@ -1507,47 +1589,36 @@ def _detect_who_left(location: str) -> list[str]:
     recently_present = _recently_present_on_network(location)
     log(f"WHO LEFT: recently present on {location} network: {sorted(recently_present)}")
 
-    try:
-        if location == "crosstown":
-            result = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=5", "dylans-macbook-pro",
-                 "~/.openclaw/workspace/scripts/presence-detect.sh", "crosstown"],
-                capture_output=True, timeout=90, text=True,
-            )
-        elif location == "cabin":
-            script = str(Path.home() / ".openclaw/workspace/scripts/presence-detect.sh")
-            result = subprocess.run([script, "cabin"], capture_output=True, timeout=60, text=True)
-        else:
-            return sorted(candidates)
+    observation = _run_network_observation(location)
+    if not observation["ok"]:
+        log(f"WHO LEFT: read-only network observation unavailable at {location}; "
+            "not inferring walkers")
+        return []
 
-        if result.returncode != 0:
-            log(f"WHO LEFT: network scan failed (rc={result.returncode})")
-            return sorted(candidates)
+    presence = {
+        person.lower(): info for person, info in observation["people"].items()
+    }
+    missing_candidates = candidates - presence.keys()
+    if missing_candidates:
+        log(f"WHO LEFT: observation omitted candidates {sorted(missing_candidates)}; "
+            "not inferring walkers")
+        return []
 
-        scan = json.loads(result.stdout)
-        presence = scan.get("presence", {})
+    absent_from_network = {
+        person for person, info in presence.items() if not info["present"]
+    }
+    walkers = absent_from_network & candidates & recently_present
+    still_home = candidates - absent_from_network
+    absent_but_not_recent = (absent_from_network & candidates) - recently_present
 
-        # People absent from the fresh scan
-        absent_from_network = set()
-        for person_key, info in presence.items():
-            if not info.get("present"):
-                absent_from_network.add(person_key.lower())
+    if still_home:
+        log(f"WHO LEFT: still on network at {location}: {sorted(still_home)}")
+    if absent_but_not_recent:
+        log(f"WHO LEFT: absent but not recently on network (excluded): "
+            f"{sorted(absent_but_not_recent)}")
 
-        # Walkers = absent now AND were at this location AND recently on network
-        walkers = absent_from_network & candidates & recently_present
-        still_home = candidates - absent_from_network
-        absent_but_not_recent = (absent_from_network & candidates) - recently_present
-
-        if still_home:
-            log(f"WHO LEFT: still on network at {location}: {sorted(still_home)}")
-        if absent_but_not_recent:
-            log(f"WHO LEFT: absent but not recently on network (excluded): {sorted(absent_but_not_recent)}")
-
-        # If nobody qualifies, fall back to all candidates
-        return sorted(walkers) if walkers else sorted(candidates)
-    except Exception as e:
-        log(f"WHO LEFT: error detecting: {e}")
-        return sorted(candidates)
+    # Preserve the existing fallback only for a complete, valid observation.
+    return sorted(walkers) if walkers else sorted(candidates)
 
 
 # ---------------------------------------------------------------------------

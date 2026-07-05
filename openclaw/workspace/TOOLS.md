@@ -144,12 +144,13 @@ CLI at `/opt/homebrew/bin/august`. Controls the August Wi-Fi Smart Lock (5th gen
 ```bash
 august status       # Lock state, door position, battery, WiFi signal
 august lock         # Lock the front door
-august unlock       # Unlock the front door
+august unlock --confirm  # Explicitly confirm, unlock, then verify
 august locks        # List all locks on account
 ```
 
-- Account: `dylanbochman@gmail.com`
-- Lock: "Front Door" at "Potato's House", serial L5V82000F7
+- Credentials live only in the mode-`0600` MBP config; the Mini does not
+  forward them over SSH
+- Lock: "Front Door" at "Potato's House", serial `${AUGUST_LOCK_SERIAL}`
 - Auth: JWT token via installId (cached at `~/.openclaw/august/config.json` on MBP, ~120 day expiry)
 - Re-auth: `august authorize` then `august validate <code>` (sends 6-digit code to email)
 - Architecture: SSH to MBP → Node.js august-cmd.js → August cloud API
@@ -169,7 +170,7 @@ cp /tmp/screenshot.png ~/.openclaw/workspace/tmp/screenshot.png
 
 CLI at `/opt/homebrew/bin/gws` (**pinned at v0.4.4**, Rust binary). Gmail, Calendar, Drive, Tasks. Do NOT bump — 0.22.x is a breaking redesign that drops `--account` in favor of per-account `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` dirs. See `openclaw/plans/gws-0.22-migration.md` for the full migration plan before upgrading.
 
-- Command pattern: `gws <service> <resource> <method> [--params '<JSON>'] [--json '<JSON>'] [--account <email>]`
+- Raw service command pattern: `GOOGLE_WORKSPACE_CLI_ACCOUNT=<email> gws <service> <resource> <method> [--params '<JSON>'] [--json '<JSON>']`
 - Credentials: AES-256-GCM encrypted at `~/.config/gws/`
 - **DANGER: `gws auth logout` without `--account <email>` NUKES ALL accounts**
 
@@ -177,10 +178,10 @@ CLI at `/opt/homebrew/bin/gws` (**pinned at v0.4.4**, Rust binary). Gmail, Calen
 
 | Account | Owner | Flag |
 |---|---|---|
-| `dylanbochman@gmail.com` | Dylan | Default (no flag needed) |
-| `julia.joy.jennings@gmail.com` | Julia | `--account julia.joy.jennings@gmail.com` |
-| `bochmanspam@gmail.com` | Dylan (spam) | `--account bochmanspam@gmail.com` |
-| `clawdbotbochman@gmail.com` | OpenClaw | `--account clawdbotbochman@gmail.com` |
+| `${DYLAN_EMAIL}` | Dylan | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${DYLAN_EMAIL}` |
+| `${JULIA_EMAIL}` | Julia | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL}` |
+| `${STARMARKET_GMAIL}` | Dylan (spam) | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${STARMARKET_GMAIL}` |
+| `${OPENCLAW_EMAIL}` | OpenClaw | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${OPENCLAW_EMAIL}` |
 
 ### Skills
 
@@ -198,14 +199,14 @@ Active transport is native OpenClaw `imessage`, backed by `/opt/homebrew/bin/ims
 
 ```bash
 openclaw channels status --probe --channel imessage
-openclaw message send --channel imessage --target chat_id:171 --message "..."
+openclaw message send --channel imessage --target chat_id:${DYLAN_CHAT_ID} --message "..."
 imsg status --json
 imsg chats --limit 10 --json
 ```
 
-- Dylan DM: `chat_id:171`
-- Julia DM: `chat_id:1`
-- Dylan & Julia group: `chat_id:170`
+- Dylan DM: `chat_id:${DYLAN_CHAT_ID}`
+- Julia DM: `chat_id:${JULIA_CHAT_ID}`
+- Dylan & Julia group: `chat_id:${HOUSEHOLD_CHAT_ID}`
 - Current cron deliveries use `channel: "imessage"` with `chat_id:*` targets.
 - Native iMessage accepts handles and explicit prefixes (`imessage:`, `sms:`, `auto:`, `chat_id:`, `chat_guid:`, `chat_identifier:`), but prefer `chat_id:*` for known stable chats.
 - BlueBubbles `any;-;` and `any;+;` targets are retired and invalid.

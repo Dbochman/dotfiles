@@ -1,121 +1,113 @@
 ---
 name: findmy-locate
-description: Locate Dylan, Julia, or both using Apple FindMy. Returns a screenshot of their map location. Use when asked "where is Dylan/Julia", "find Dylan/Julia", "locate someone", or anything about someone's physical location.
+description: Privately locate Dylan, Julia, the Mac Mini account, or both people through Apple Find My using exact accessibility-name verification. Use only for an explicit location request in a one-to-one conversation with the authorized direct user. Never run or disclose results in group chats, shared channels, or for a third party. Report only a coarse area by default; provide precise location only when the direct user explicitly requests it.
 allowed-tools: Bash(findmy-locate:*)
 metadata: {"openclaw":{"emoji":"P","requires":{"bins":["peekaboo"]}}}
 ---
 
-# FindMy Locate
+# Find My Locate
 
-Locate people using Apple **Find My** app via Peekaboo screen automation. Returns a screenshot of the zoomed map view showing the person's location pin.
+Use Find My through Peekaboo to capture a short-lived, precise map image for
+one explicitly requested person. Treat every capture and inferred location as
+highly sensitive personal data.
+
+## Privacy boundary
+
+- Run this skill only in a direct one-to-one session with the authorized user.
+- Never run it from a group chat, shared channel, forwarded request, or request
+  made on someone else's behalf.
+- Never attach, quote, or summarize a capture into a group conversation.
+- Report only a coarse result by default, such as home, a city, neighborhood,
+  or general area.
+- Give a street-level or otherwise precise result only when the direct user
+  explicitly asks for precision in the current request.
+- Do not retain coordinates, addresses, screenshots, or inferred travel
+  history in memory or operational notes.
 
 ## Commands
 
-### Locate a person
 ```bash
-findmy-locate dylan     # Dylan Bochman
-findmy-locate julia     # Julia Jennings
-findmy-locate me        # clawdbotbochman (Mac Mini)
-findmy-locate both      # Dylan + Julia (two screenshots)
+findmy-locate dylan
+findmy-locate julia
+findmy-locate me
+findmy-locate both
+findmy-locate cleanup
 ```
 
-Returns JSON with the screenshot path:
+Single-person success:
+
 ```json
-{"success": true, "person": "Dylan Bochman", "capture": "/path/to/screenshot.png", "size": 285432}
+{"success":true,"person":"Dylan Bochman","capture":"/protected/path.png","size":285432,"delete_after_seconds":300}
 ```
 
-For `both`, returns an array:
-```json
-{"results": [{"success": true, "person": "Dylan Bochman", ...}, {"success": true, "person": "Julia Jennings", ...}]}
-```
+`both` returns two result objects and exits nonzero if either person could not
+be selected, verified, or captured.
 
-### Interpreting results
+## Required workflow
 
-The screenshot shows FindMy's zoomed map view centered on the person's location pin. **Read the screenshot image** to determine:
-- Street address or neighborhood
-- Proximity to known locations (Crosstown at 19 Crosstown Ave, West Roxbury; Cabin at 95 School House Rd, Phillipston)
-- Whether the person is moving or stationary (FindMy shows a directional arrow when moving)
-- Nearby landmarks visible on the map
+1. Confirm that the request is from the authorized user in a direct session.
+2. Run the narrowest requested command. Do not locate both people when only one
+   was requested.
+3. Continue only when the command returns `success: true` for the requested
+   person. Never infer identity from sidebar position or a visually plausible
+   map.
+4. Inspect the capture privately and answer at coarse granularity unless the
+   current request explicitly asks for a precise result.
+5. Immediately after interpreting the image, run:
 
-## People in FindMy
+   ```bash
+   findmy-locate cleanup
+   ```
 
-| Position | Name | Notes |
-|----------|------|-------|
-| 0 | Me (clawdbotbochman) | The Mac Mini itself — always at home |
-| 1 | Dylan Bochman | |
-| 2 | Julia Jennings | |
+6. Do not reproduce the capture path after cleanup or place it in messages,
+   logs, notes, or memory.
 
-The sidebar order matters — the script navigates via keyboard arrow keys.
+## Identity verification
 
-## How It Works
+The script:
 
-1. Opens Find My app and brings it to the front
-2. Resets the cursor to position 0 (Me) by pressing Up x3
-3. Presses Down N times to reach the target person
-4. Waits 3 seconds for the map to animate and zoom to the pin
-5. Captures the frontmost window via `peekaboo image --mode frontmost`
+1. Opens Find My and takes a Peekaboo accessibility snapshot.
+2. Requires exactly one selected **People** tab.
+3. Finds exactly one row whose accessibility name exactly matches the requested
+   person; list position and keyboard order are ignored.
+4. Clicks the fresh accessibility element ID.
+5. Takes another snapshot and requires that same exact row ID and name to be
+   selected before capture.
+6. Fails closed on tab, name, duplicate-name, element-ID, or selected-row
+   mismatch.
 
-**Navigation is relative.** After reset, the cursor starts at position 0. Each `_navigate_and_capture` call moves Down by a step count relative to the *current* cursor position — it does NOT reset between captures. This is why `both` works in a single pass: reset → Down 1 (Dylan, capture) → Down 1 more (Julia, capture).
+Do not replace this sequence with arrow-key counts, fuzzy text, coordinates, or
+an unverified screenshot.
 
-**FindMy blocks mouse clicks** — accessibility API clicks are silently ignored. Keyboard arrow keys via Peekaboo are the only reliable way to navigate the sidebar.
+## Capture lifetime
 
-**If the People tab isn't showing** (Items or Devices tab is active), keyboard navigation won't reach the people list. The script assumes People is the active tab. If captures consistently fail, manually click the People tab once on the Mini.
+Captures are created under `~/.openclaw/findmy-locate/` with directory mode
+`0700` and file mode `0600`. Each successful capture schedules deletion after
+five minutes by default. `FINDMY_CAPTURE_TTL_SECONDS` may be set from 30 to
+3600 seconds. Expired captures are also pruned on each invocation, and
+`cleanup` removes captures immediately after use.
+
+TTL cleanup is a fallback, not a reason to retain the image until expiry.
+
+## Failure handling
+
+- `person_not_verified`: the People tab or exact name was unavailable. Do not
+  capture or guess.
+- `selection_mismatch`: the selected row did not exactly match the requested
+  person. Do not use any image from that attempt.
+- `accessibility_unavailable`: Peekaboo could not inspect Find My. Check local
+  Accessibility permission without weakening verification.
+- `capture_failed` or `capture_incomplete`: no usable image was retained.
+- A failed `both` result is partial and nonzero; use only a successful person's
+  result if that person was explicitly requested, then clean up every capture.
 
 ## Requirements
 
-- **Peekaboo** (`/opt/homebrew/bin/peekaboo`) with TCC grants:
-  - Screen Recording (for screenshots)
-  - Accessibility (for keyboard input)
-- **`~/Applications/Peekaboo.app`** — TCC wrapper that holds the grants
-- Must run from **LaunchAgent context or local terminal** — TCC blocks headless SSH sessions
-- Find My app must be signed into the shared Apple ID
+- Peekaboo with Screen Recording and Accessibility permission in the local GUI
+  session
+- Find My signed into the intended account
+- The People tab visible and accessibility-readable
 
-## Screenshots
-
-Captures are saved to `~/.openclaw/findmy-locate/` with the pattern:
-```
-findmy-<name>-<unix_timestamp>.png
-```
-
-Old captures are not automatically cleaned. Periodically prune:
-```bash
-find ~/.openclaw/findmy-locate/ -name "*.png" -mtime +7 -delete
-```
-
-## Troubleshooting
-
-### "Failed to capture FindMy — check Peekaboo TCC permissions"
-Screen Recording or Accessibility not granted to Peekaboo.app. Open System Settings > Privacy & Security on the Mini and grant both.
-
-### Screenshot is too small (< 50KB)
-Peekaboo captured an empty or partial window. FindMy may not be fully loaded. Try again — the script has fallbacks for Desktop-saved screenshots.
-
-### Wrong person selected
-The sidebar order may have changed (e.g., new person added to FindMy). Update the position constants in the script.
-
-### Keyboard navigation not working
-FindMy must be the frontmost app and the People tab must be active. If Items or Devices tab is showing, manually switch to People first.
-
-## Next Steps After Locating
-
-After capturing someone's location, consider whether the **places** skill (`goplaces` CLI) would be useful. Common follow-ups:
-
-- **"What's near them?"** — `goplaces search "restaurants" --lat=<lat> --lng=<lng>` to find nearby places
-- **"How far are they from home?"** — `goplaces directions <their location> "19 Crosstown Ave, West Roxbury MA"` for travel time
-- **"Find them a coffee shop"** — `goplaces search "coffee" --lat=<lat> --lng=<lng> --open-now`
-- **"What neighborhood is that?"** — `goplaces details <place_id>` for area context
-
-Read the FindMy screenshot to estimate coordinates or identify the neighborhood, then pass that to `goplaces` for structured place data, directions, or recommendations.
-
-## Skill Boundaries
-
-This skill locates people via FindMy screenshots. It does NOT:
-- Track location continuously (use `fi-collar` for Potato's GPS)
-- Determine who is home (use `presence` skill for WiFi-based detection)
-- Trigger any automated actions
-
-For related tasks:
-- **places**: Search nearby businesses, get directions, find restaurants/shops near someone's location
-- **presence**: WiFi-based home/away detection (faster, no screenshot needed)
-- **fi-collar**: Potato's GPS location via Fi collar API (structured data, not screenshots)
-- **dog-walk**: Automated walk detection + Roomba control
+This skill does not continuously track anyone, determine household occupancy,
+or trigger automation. Use `presence` for coarse home/away state and
+`fi-collar` only for the dog's location.

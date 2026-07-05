@@ -44,9 +44,10 @@ All loops share state via module-level globals. The FCM callback runs on a **bac
 
 ### WiFi Network Presence
 
-- **Crosstown**: ARP scan via SSH to MacBook Pro (`presence-detect.sh crosstown`)
-- **Cabin**: ARP scan locally (`presence-detect.sh cabin`)
+- **Crosstown**: read-only ARP observation via SSH to MacBook Pro (`presence-detect.sh observe crosstown`)
+- **Cabin**: read-only Starlink observation locally (`presence-detect.sh observe cabin`)
 - **Detects**: Phone reconnecting to home WiFi network
+- **Side effects**: Observation mode does not write presence state, push Taildrop, evaluate occupancy, or activate vacancy automation. Invalid/stale output is ignored (fail closed).
 - **Limitation**: Phones linger on WiFi at the front door for several minutes after departure (see [WiFi Departure Unreliability](#wifi-departure-unreliability))
 
 ---
@@ -299,7 +300,7 @@ Each walk produces a route file at:
   "end_location": "crosstown",
   "is_interhome_transit": false,
   "points": [
-    {"ts": "2026-04-05T20:15:11.248Z", "lat": 42.262500, "lon": -71.164310},
+    {"ts": "2026-04-05T20:15:11.248Z", "lat": ${CROSSTOWN_LAT}, "lon": ${CROSSTOWN_LON}},
     ...
   ]
 }
@@ -311,6 +312,8 @@ Each walk produces a route file at:
 3. **Fi OngoingWalk path merge**: on return, the full dense polyline from Fi's API is fetched and merged (deduplicated by lat/lon within 5m)
 
 **Distance calculation:** Uses the route file's `distance_m`, which prefers Fi's `walkDistance_m` (from `OngoingWalk.distance`) when available, falling back to haversine sum of consecutive points.
+
+**Concurrent persistence:** Every route mutation holds a per-route re-entrant lock across the read-modify-write and uses the fsync + atomic-replace writer. Polling, finalization, dense-path merge, car marking, and delayed Fi enrichment therefore preserve fields added by concurrent workers; unrelated routes remain independent.
 
 ### Fi Walk Summary Enrichment (Post-Walk)
 
@@ -346,7 +349,7 @@ After return finalization, the listener queries Fi's `activityFeed` (limit 15) a
 On departure, the listener waits 2 minutes then runs a fresh ARP/WiFi network scan to identify who left. Three sources are cross-referenced:
 
 1. **Sticky presence state** (`~/.openclaw/presence/state.json`): who was at this location → candidates
-2. **Fresh network scan** (`presence-detect.sh <location>`): who is currently absent from the network
+2. **Fresh read-only network observation** (`presence-detect.sh observe <location>`): who is currently absent from the network
 3. **Last periodic scan** (`~/.openclaw/presence/<location>-scan.json`): who was recently present on the network (within 1 hour)
 
 A person is only flagged as a walker if **all three** conditions are met:
@@ -359,6 +362,10 @@ This prevents two classes of false positives:
 - Someone at the other location whose sticky presence is stale (not a candidate → excluded)
 
 If nobody qualifies after all three checks, the system falls back to all candidates at the location.
+
+That fallback applies only to a complete, valid observation. Command failures,
+malformed/stale JSON, or observations missing a candidate fail closed and record
+no walkers.
 
 **Note**: Fi's `fi_walker` BLE field (who was near the collar) is stored in the route file but not used for dashboard display — it only detects one phone, so multi-walker walks would undercount.
 
@@ -434,7 +441,9 @@ await _run_roomba_command_async(loc, a)  # → asyncio.to_thread(run_roomba_comm
 await _update_state_dog_walk_async(...)  # → asyncio.to_thread(_update_state_dog_walk, ...)
 ```
 
-File persistence functions use a `threading.Lock` (`_state_lock`) to serialize concurrent writes from worker threads.
+State persistence uses `_state_lock`. Route persistence uses a separate
+per-route `threading.RLock`, held across each read-modify-write, so concurrent
+workers cannot overwrite enrichment or classification fields with stale data.
 
 ### Shared State Model (Post-Hardening)
 

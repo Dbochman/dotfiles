@@ -46,7 +46,7 @@ speaker cast <name> "https://example.com/audio.mp3"
 
 ## Speakers
 
-### Crosstown (Boston — 19 Crosstown Ave)
+### Crosstown (Boston — Crosstown residence)
 - **Bedroom speaker** — Google Nest Mini (`192.168.165.146`)
 - **Living Room speaker** — Nest Audio (`192.168.165.113`)
 

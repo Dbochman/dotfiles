@@ -24,17 +24,49 @@ usage() {
 }
 
 source_openclaw_secrets() {
-  [ -f "$SECRETS_CACHE" ] || return 0
+  if [ ! -f "$SECRETS_CACHE" ] || [ -L "$SECRETS_CACHE" ]; then
+    echo "Error: protected cron identity cache must be a regular non-symlink file" >&2
+    return 1
+  fi
+  local owner mode key value
+  if stat -f '%u %Lp' "$SECRETS_CACHE" >/dev/null 2>&1; then
+    read -r owner mode < <(stat -f '%u %Lp' "$SECRETS_CACHE")
+  else
+    read -r owner mode < <(stat -c '%u %a' "$SECRETS_CACHE")
+  fi
+  if [ "$owner" != "$(id -u)" ] || [ "$mode" != "600" ]; then
+    echo "Error: protected cron identity cache must be owner-owned mode 0600" >&2
+    return 1
+  fi
   set -a
   # shellcheck disable=SC1090
-  . "$SECRETS_CACHE"
+  if ! . "$SECRETS_CACHE" >/dev/null 2>&1; then
+    set +a
+    echo "Error: protected cron identity cache could not be loaded" >&2
+    return 1
+  fi
   set +a
+  for key in DYLAN_EMAIL JULIA_EMAIL HOUSEHOLD_CHAT_ID JULIA_CHAT_ID DYLAN_CHAT_ID; do
+    value="${!key:-}"
+    if [ -z "$value" ]; then
+      echo "Error: protected cron identity $key is missing" >&2
+      return 1
+    fi
+  done
+  for key in HOUSEHOLD_CHAT_ID JULIA_CHAT_ID DYLAN_CHAT_ID; do
+    value="${!key}"
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+      echo "Error: protected cron identity $key must be numeric" >&2
+      return 1
+    fi
+  done
 }
 
 [ $# -eq 1 ] || usage
 
 case "$1" in
   save)
+    source_openclaw_secrets
     # Strip state from live file → dotfiles. OpenClaw 2026.6 migrates cron
     # jobs into SQLite and archives the legacy JSON file, so prefer SQLite
     # when the live JSON store is gone.
@@ -53,6 +85,38 @@ def strip_state(job):
     job = dict(job)
     job.pop("state", None)
     return job
+
+
+PRIVATE_KEYS = (
+    "DYLAN_EMAIL",
+    "JULIA_EMAIL",
+    "HOUSEHOLD_CHAT_ID",
+    "JULIA_CHAT_ID",
+    "DYLAN_CHAT_ID",
+)
+
+
+def redact_private_values(value):
+    if isinstance(value, dict):
+        return {key: redact_private_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_private_values(item) for item in value]
+    if isinstance(value, str):
+        for key in ("DYLAN_EMAIL", "JULIA_EMAIL"):
+            value = value.replace(os.environ[key], "${" + key + "}")
+        value = value.replace(
+            "chat-id " + os.environ["HOUSEHOLD_CHAT_ID"],
+            "chat-id ${HOUSEHOLD_CHAT_ID}",
+        )
+        value = value.replace(
+            "chat_id:" + os.environ["JULIA_CHAT_ID"],
+            "chat_id:${JULIA_CHAT_ID}",
+        )
+        value = value.replace(
+            "chat_id:" + os.environ["DYLAN_CHAT_ID"],
+            "chat_id:${DYLAN_CHAT_ID}",
+        )
+    return value
 
 
 def load_from_legacy_json():
@@ -104,6 +168,7 @@ if not loaded:
     sys.exit(1)
 
 data, source = loaded
+data = redact_private_values(data)
 with open(dotfiles_path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
@@ -114,6 +179,10 @@ PY
   deploy)
     # Stage definitions for the SQLite migration bridge, preserving safe state.
     [ -f "$DOTFILES_JOBS" ] || { echo "Error: $DOTFILES_JOBS not found" >&2; exit 1; }
+    if ! source_openclaw_secrets; then
+      echo "Skipped cron deployment: protected identities are not ready; live definitions preserved" >&2
+      exit 0
+    fi
     SCHEDULE_REPAIR_PLAN=$(mktemp "${TMPDIR:-/tmp}/openclaw-cron-schedule-repair.XXXXXX")
     export SCHEDULE_REPAIR_PLAN
     trap 'rm -f "$SCHEDULE_REPAIR_PLAN"' EXIT
@@ -134,6 +203,28 @@ with open(dotfiles_path) as f:
 
 if not isinstance(new_defs.get('jobs'), list):
     raise SystemExit(f'Error: {dotfiles_path} is missing jobs[]')
+
+PRIVATE_KEYS = (
+    "DYLAN_EMAIL",
+    "JULIA_EMAIL",
+    "HOUSEHOLD_CHAT_ID",
+    "JULIA_CHAT_ID",
+    "DYLAN_CHAT_ID",
+)
+
+
+def expand_private_values(value):
+    if isinstance(value, dict):
+        return {key: expand_private_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [expand_private_values(item) for item in value]
+    if isinstance(value, str):
+        for key in PRIVATE_KEYS:
+            value = value.replace("${" + key + "}", os.environ[key])
+    return value
+
+
+new_defs = expand_private_values(new_defs)
 
 
 def iter_jsonl(path):

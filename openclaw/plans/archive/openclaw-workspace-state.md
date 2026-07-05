@@ -40,7 +40,7 @@ OpenClaw is an AI agent ("Claude Bochman") running on a Mac Mini at the cabin in
 | Server | `http://localhost:1234` |
 | Private API | Enabled (port 45670) — reactions, typing, edit/unsend, effects |
 | Proxy | `lan-url` (Cloudflare disabled) |
-| iCloud | `clawdbotbochman@gmail.com` |
+| iCloud | `${PRIVATE_EMAIL}` |
 | SIP | Disabled (required for Private API) |
 | Watchdog | BB watchdog handles stale detection (replaces gateway health check) |
 
@@ -111,7 +111,7 @@ All tracked in `dotfiles/openclaw/workspace/`. Files with PII use `${PLACEHOLDER
 | `datenight-nov-american` | Nov 1 | Modern American | Newton/Brookline |
 | `datenight-dec-upscale` | Dec 1 | Upscale/Special | Newton/Brookline |
 
-All date nights: party of 2, ~7 PM Friday, book on Resy, create Calendar event, announce in group chat (chat-id 170).
+All date nights: party of 2, ~7 PM Friday, book on Resy, create Calendar event, announce in group chat (chat-id ${HOUSEHOLD_CHAT_ID}).
 
 ### One-Shot — Double Dates (delete after run)
 

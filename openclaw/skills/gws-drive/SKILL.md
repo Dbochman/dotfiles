@@ -9,24 +9,26 @@ metadata: {"openclaw":{"emoji":"D","requires":{"bins":["gws"]}}}
 
 Access Google Drive via the `gws` CLI at `/opt/homebrew/bin/gws`. Credentials are AES-256-GCM encrypted at `~/.config/gws/`.
 
+Read [references/gws-cli.md](references/gws-cli.md) before selecting an account, changing authentication, or executing a write.
+
 ## Accounts
 
-| Account | Owner | Flag |
-|---------|-------|------|
-| dylanbochman@gmail.com | Dylan | Default (no flag needed) |
-| julia.joy.jennings@gmail.com | Julia | `--account julia.joy.jennings@gmail.com` |
-| bochmanspam@gmail.com | Dylan (spam) | `--account bochmanspam@gmail.com` |
-| clawdbotbochman@gmail.com | OpenClaw | `--account clawdbotbochman@gmail.com` |
+| Account | Owner | Service-command selection |
+|---------|-------|---------------------------|
+| ${DYLAN_EMAIL} | Dylan | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${DYLAN_EMAIL}` |
+| ${JULIA_EMAIL} | Julia | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL}` |
+| ${STARMARKET_GMAIL} | Dylan (spam) | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${STARMARKET_GMAIL}` |
+| ${OPENCLAW_EMAIL} | OpenClaw | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${OPENCLAW_EMAIL}` |
 
 When Dylan asks about "my Drive", use default. When he says "Julia's Drive", use her account.
 
 ## Command Pattern
 
-All commands follow: `gws drive <resource> <method> [--params '<JSON>'] [--json '<JSON>'] [--account <email>]`
+All raw API commands follow: `GOOGLE_WORKSPACE_CLI_ACCOUNT=<email> gws drive <resource> <method> [--params '<JSON>'] [--json '<JSON>']`
 
 - `--params` = URL/query parameters (fileId, q, pageSize, etc.)
 - `--json` = request body (for create, update, etc.)
-- `--account` = target account
+- Omit the environment prefix for Dylan's default account.
 
 ## Search / List Files
 
@@ -64,11 +66,11 @@ gws drive files list --params '{
 }'
 
 # Julia's recent files
-gws drive files list --params '{
+GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL} gws drive files list --params '{
   "pageSize": 10,
   "orderBy": "modifiedTime desc",
   "fields": "files(id,name,mimeType,modifiedTime)"
-}' --account julia.joy.jennings@gmail.com
+}'
 ```
 
 ### Common Query Syntax
@@ -208,7 +210,7 @@ gws drive permissions create --params '{
 }' --json '{
   "role": "writer",
   "type": "user",
-  "emailAddress": "recipient@example.com"
+  "emailAddress": "attendee@example.com"
 }'
 
 # Share with a specific user (viewer)
@@ -217,7 +219,7 @@ gws drive permissions create --params '{
 }' --json '{
   "role": "reader",
   "type": "user",
-  "emailAddress": "recipient@example.com"
+  "emailAddress": "attendee@example.com"
 }'
 
 # Share with anyone who has the link
@@ -308,7 +310,7 @@ gws schema drive.permissions.create
 
 ## Notes
 
-- Default account: dylanbochman@gmail.com
+- Default account: ${DYLAN_EMAIL}
 - **When sharing files or changing permissions, confirm with the user first**
 - `fields` parameter controls which metadata fields are returned — always specify to reduce response size
 - Google Workspace files (Docs, Sheets, Slides) use `export` to download; regular files use `get` with `alt: media`

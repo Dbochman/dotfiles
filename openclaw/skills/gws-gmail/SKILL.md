@@ -9,14 +9,16 @@ metadata: {"openclaw":{"emoji":"E","requires":{"bins":["gws"]}}}
 
 Access Gmail via the `gws` CLI at `/opt/homebrew/bin/gws`. Credentials are AES-256-GCM encrypted at `~/.config/gws/`.
 
+Read [references/gws-cli.md](references/gws-cli.md) before selecting an account, changing authentication, or executing a write.
+
 ## Accounts
 
 | Account | Owner | Raw Gmail API selector |
 |---------|-------|-------------------------|
-| dylanbochman@gmail.com | Dylan | Default, or `GOOGLE_WORKSPACE_CLI_ACCOUNT=dylanbochman@gmail.com` |
-| julia.joy.jennings@gmail.com | Julia | `GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com` |
-| bochmanspam@gmail.com | Dylan (spam) | `GOOGLE_WORKSPACE_CLI_ACCOUNT=bochmanspam@gmail.com` |
-| clawdbotbochman@gmail.com | OpenClaw | `GOOGLE_WORKSPACE_CLI_ACCOUNT=clawdbotbochman@gmail.com` |
+| ${DYLAN_EMAIL} | Dylan | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${DYLAN_EMAIL}` |
+| ${JULIA_EMAIL} | Julia | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL}` |
+| ${STARMARKET_GMAIL} | Dylan (spam) | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${STARMARKET_GMAIL}` |
+| ${OPENCLAW_EMAIL} | OpenClaw | `GOOGLE_WORKSPACE_CLI_ACCOUNT=${OPENCLAW_EMAIL}` |
 
 When Dylan asks about "my email", use default. When he says "Julia's email", use her account.
 
@@ -31,8 +33,8 @@ Raw Gmail API commands follow:
 
 With pinned GWS 0.4.4, do not use `--account` on raw API resource commands;
 that flag is not reliably routed and can return `No credentials provided`.
-Use `GOOGLE_WORKSPACE_CLI_ACCOUNT` instead. Reserve `--account` for helper or
-authentication subcommands that explicitly support it.
+Use `GOOGLE_WORKSPACE_CLI_ACCOUNT` instead. Reserve `--account` for
+authentication subcommands that explicitly list it in `gws auth --help`.
 
 **Important:** Most Gmail endpoints require `"userId": "me"` in params.
 
@@ -49,7 +51,7 @@ gws gmail users messages list --params '{
 # From a specific sender
 gws gmail users messages list --params '{
   "userId": "me",
-  "q": "from:someone@example.com"
+  "q": "from:sender@example.com"
 }'
 
 # With attachments, recent
@@ -59,7 +61,7 @@ gws gmail users messages list --params '{
 }'
 
 # Julia's unread
-GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com gws gmail users messages list --params '{
+GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL} gws gmail users messages list --params '{
   "userId": "me",
   "q": "is:unread",
   "maxResults": 10
@@ -75,8 +77,8 @@ GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com gws gmail users messag
 | `is:important` | Important messages |
 | `in:inbox` | Messages in inbox |
 | `in:sent` | Sent messages |
-| `from:user@example.com` | From specific sender |
-| `to:user@example.com` | To specific recipient |
+| `from:sender@example.com` | From specific sender |
+| `to:recipient@example.com` | To specific recipient |
 | `subject:keyword` | Subject contains keyword |
 | `has:attachment` | Has attachments |
 | `filename:pdf` | Has PDF attachment |
@@ -87,7 +89,7 @@ GOOGLE_WORKSPACE_CLI_ACCOUNT=julia.joy.jennings@gmail.com gws gmail users messag
 | `label:work` | Has label |
 | `category:promotions` | In category |
 
-Combine queries: `from:boss@co.com is:unread after:2026/01/01`
+Combine queries: `from:sender@example.com is:unread after:2026/01/01`
 
 ## Get a Single Message
 
@@ -143,7 +145,7 @@ jq -e '(.error? == null) and (.payload.headers | type == "array")' <<<"$out" >/d
   exit 1
 }
 jq '.payload.headers | map(select(.name == "From" or .name == "Subject" or .name == "Date") | {(.name): .value}) | add' <<<"$out"
-# → {"From":"sender@x.com","Subject":"...","Date":"..."}
+# → {"From":"person@example.com","Subject":"...","Date":"..."}
 ```
 
 For batch summaries (e.g., morning briefing), loop a list call's IDs through this pattern and concat — don't fall back to `format: "full"` snippets, which is slow and lossy.
@@ -168,7 +170,7 @@ Messages must be base64url-encoded RFC 2822 format.
 # Step 1: Build base64url payload with Python (safe for all characters)
 RAW_B64=$(python3 -c "
 import base64
-msg = 'From: sender@gmail.com\r\nTo: recipient@example.com\r\nSubject: Hello\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nMessage body here!'
+msg = 'From: sender@example.com\r\nTo: sender@example.com\r\nSubject: Hello\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nMessage body here!'
 print(base64.urlsafe_b64encode(msg.encode()).decode().rstrip('='))
 ")
 
@@ -179,7 +181,7 @@ gws gmail users messages send --params '{"userId": "me"}' \
 # Reply to a thread (add threadId, In-Reply-To, References headers)
 RAW_B64=$(python3 -c "
 import base64
-msg = 'From: sender@gmail.com\r\nTo: recipient@example.com\r\nSubject: Re: Original Subject\r\nIn-Reply-To: <original-message-id>\r\nReferences: <original-message-id>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nReply body here'
+msg = 'From: sender@example.com\r\nTo: sender@example.com\r\nSubject: Re: Original Subject\r\nIn-Reply-To: <original-message-id>\r\nReferences: <original-message-id>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nReply body here'
 print(base64.urlsafe_b64encode(msg.encode()).decode().rstrip('='))
 ")
 gws gmail users messages send --params '{"userId": "me"}' \
@@ -355,7 +357,7 @@ Julia's inbox automation is split into two daily cron jobs:
 ## Notes
 
 - **Only use the `gws` CLI for Gmail** — do NOT use `himalaya`, `mutt`, `mail`, or any other email CLI. The `gws` CLI handles multi-account auth and is the only supported tool.
-- Default account: dylanbochman@gmail.com
+- Default account: ${DYLAN_EMAIL}
 - Always check inbox/unread first before reporting on emails
 - `gws` outputs JSON by default — parse directly or pipe through `jq`
 - Thread endpoints group messages into conversations; message endpoints return individual messages

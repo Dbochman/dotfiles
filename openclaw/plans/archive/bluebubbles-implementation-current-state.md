@@ -124,8 +124,8 @@ The watchdog (`bb-watchdog.sh`) runs every 60 seconds and detects four distinct 
 
 ### Phone-handle send failure
 
-- `chatGuid: any;-;+17813544611` fails (AppleScript error)
-- `chatGuid: any;-;dylanbochman@gmail.com` succeeds
+- `chatGuid: any;-;${DYLAN_PHONE}` fails (AppleScript error)
+- `chatGuid: any;-;${BLUEBUBBLES_CHAT_GUID}` succeeds
 - **Policy:** Always use email handle for Dylan DMs
 
 ### BB + gateway restart sequencing
@@ -139,8 +139,8 @@ BB runs a Cloudflare daemon even with `lan-url` proxy. Crash-loops can corrupt B
 ## 6. Routing policy
 
 For BlueBubbles direct messages to Dylan:
-- Use: `dylanbochman@gmail.com`
-- Do not use: `+17813544611`
+- Use: `${BLUEBUBBLES_CHAT_GUID}`
+- Do not use: `${DYLAN_PHONE}`
 
 DM GUIDs use `any;-;` prefix; group GUIDs use `iMessage;+;` prefix.
 

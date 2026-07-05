@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 
-ACCOUNT = "dylanbochman@gmail.com"
+ACCOUNT = os.environ.get("DYLAN_EMAIL", "")
 GWS_BIN = os.environ.get("GWS_BIN", "/opt/homebrew/bin/gws")
 COMMAND_TIMEOUT_SECONDS = 30.0
 OVERALL_TIMEOUT_SECONDS = 150.0
@@ -392,6 +392,17 @@ def collect_data(
     sleeper: Sleeper = time.sleep,
     clock: Clock = time.monotonic,
 ) -> dict[str, object]:
+    if not ACCOUNT.strip():
+        return {
+            "schemaVersion": 1,
+            "calendar": {"status": "unavailable", "reason": "missing_account"},
+            "inbox": {
+                "status": "unavailable",
+                "reason": "missing_account",
+                "count": 0,
+                "messages": [],
+            },
+        }
     deadline = clock() + OVERALL_TIMEOUT_SECONDS
     return {
         "schemaVersion": 1,

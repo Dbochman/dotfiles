@@ -7,7 +7,7 @@ metadata: {"openclaw":{"emoji":"🍎","requires":{"bins":["gws"]}}}
 
 # Red Apple Farm & Brew Barn Events
 
-Fetch upcoming events from two sources near the cabin in Phillipston, MA, and sync them to the `clawdbotbochman@gmail.com` Google Calendar.
+Fetch upcoming events from two sources near the cabin in Phillipston, MA, and sync them to the `${OPENCLAW_EMAIL}` Google Calendar.
 
 ## Event Sources
 
@@ -64,7 +64,7 @@ Some events appear on both sites (e.g., major festivals). Deduplicate by matchin
 
 ## Step 4: Sync to Calendar
 
-Create events on the `clawdbotbochman@gmail.com` calendar using `gws`:
+Create events on the `${OPENCLAW_EMAIL}` calendar using `gws`:
 
 ```bash
 gws calendar events insert --params '{"calendarId": "primary"}' --json '{
@@ -73,7 +73,7 @@ gws calendar events insert --params '{"calendarId": "primary"}' --json '{
   "location": "Red Apple Farm, 455 Highland Ave, Phillipston, MA 01331",
   "start": {"date": "2026-07-19"},
   "end": {"date": "2026-07-20"}
-}' --account clawdbotbochman@gmail.com
+}' --account ${OPENCLAW_EMAIL}
 ```
 
 ### For timed events (e.g., Brew Barn music nights):
@@ -84,7 +84,7 @@ gws calendar events insert --params '{"calendarId": "primary"}' --json '{
   "location": "Brew Barn at Red Apple Farm, 455 Highland Ave, Phillipston, MA 01331",
   "start": {"dateTime": "2026-07-19T19:00:00-04:00", "timeZone": "America/New_York"},
   "end": {"dateTime": "2026-07-19T22:00:00-04:00", "timeZone": "America/New_York"}
-}' --account clawdbotbochman@gmail.com
+}' --account ${OPENCLAW_EMAIL}
 ```
 
 ### Before creating, check for existing events to avoid duplicates:
@@ -98,7 +98,7 @@ gws calendar events list --params "{
   \"timeMax\": \"${YEAR}-12-31T23:59:59-05:00\",
   \"singleEvents\": true,
   \"orderBy\": \"startTime\"
-}" --account clawdbotbochman@gmail.com
+}" --account ${OPENCLAW_EMAIL}
 ```
 
 ## Emoji Prefixes
@@ -112,7 +112,7 @@ Use these prefixes in event summaries for quick identification:
 
 ## Notes
 
-- All events go to `clawdbotbochman@gmail.com` (OpenClaw's calendar), NOT Dylan's personal calendar
+- All events go to `${OPENCLAW_EMAIL}` (OpenClaw's calendar), NOT Dylan's personal calendar
 - Location for all events: **455 Highland Ave, Phillipston, MA 01331** (unless specified otherwise, e.g., Applefest is at Wachusett Mountain)
 - Times are Eastern (America/New_York) — use -05:00 for EST, -04:00 for EDT
 - For annual events without exact dates yet, create all-day events on the approximate date with "(Date TBD)" in the description

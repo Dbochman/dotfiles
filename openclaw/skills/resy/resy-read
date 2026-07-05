@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+RESY_BIN=${RESY_READ_BIN:-resy}
+
+usage() {
+  echo "Usage: resy-read search <query> | availability <venue-id> <YYYY-MM-DD> <party-size> | reservations" >&2
+  exit 64
+}
+
+reject_flag_like() {
+  local value
+  for value in "$@"; do
+    [[ "$value" != -* ]] || usage
+  done
+}
+
+run_sanitized() {
+  "$@" | awk '
+    /^[[:space:]]*Token:/ { next }
+    {
+      sub(/[[:space:]]+token:[[:space:]]+[^[:space:]]+/, "")
+      print
+    }
+  '
+}
+
+[[ $# -ge 1 ]] || usage
+command_name=$1
+shift
+
+case "$command_name" in
+  search)
+    [[ $# -ge 1 && $# -le 12 ]] || usage
+    reject_flag_like "$@"
+    exec "$RESY_BIN" search "$@"
+    ;;
+  availability)
+    [[ $# -eq 3 ]] || usage
+    [[ "$1" =~ ^[0-9]+$ ]] || usage
+    [[ "$2" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || usage
+    [[ "$3" =~ ^([1-9]|1[0-9]|20)$ ]] || usage
+    run_sanitized "$RESY_BIN" availability "$1" "$2" "$3"
+    ;;
+  reservations)
+    [[ $# -eq 0 ]] || usage
+    run_sanitized "$RESY_BIN" reservations
+    ;;
+  *)
+    usage
+    ;;
+esac

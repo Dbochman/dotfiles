@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SKILL_DIR=${OPENCLAW_SKILLS_DIR:-$HOME/.openclaw/skills}
+
+exec "$SKILL_DIR/restaurant-snipe/restaurant-snipe" "$@"

@@ -10,8 +10,8 @@
 ## Places
 
 **Properties:**
-- Cabin: 95 School House Rd, Phillipston, MA (my home base)
-- West Roxbury: 19 Crosstown Ave, West Roxbury, MA 02132
+- Cabin: Cabin, Phillipston, MA (my home base)
+- West Roxbury: Crosstown residence, West Roxbury, MA 02132
 
 ## Key Information
 
@@ -27,7 +27,7 @@
 - Nest thermostats
 - Google Nest cameras
 - Google smart speakers
-- August Wi-Fi Smart Lock 4th gen (Crosstown front door, serial L5V82000F7)
+- August Wi-Fi Smart Lock 4th gen (Crosstown front door, serial `${AUGUST_LOCK_SERIAL}`)
 - Cielo minisplits (Crosstown: bedroom, office, living room)
 - Eight Sleep Pod 3 (Crosstown) and Pod 5 (Cabin), Dylan=left, Julia=right
 
@@ -75,8 +75,8 @@
 - 1000-day retention policy
 
 **Spotify Connect:**
-- Kitchen speaker: device ID `b8581271559fd61aa994726df743285c` (default volume: 100)
-- Mac mini: device ID `0eb8b896cf741cd28d15b1ce52904ae7940e4aae`
+- Kitchen speaker: device ID `${SPOTIFY_KITCHEN_DEVICE_ID}` (default volume: 100)
+- Mac mini: device ID `${SPOTIFY_MAC_MINI_DEVICE_ID}`
 - Default spogo device set to "Dylan's Mac mini" as fallback
 - Google Home speakers only appear in Spotify Connect when actively playing — use `catt` to wake them into a cast session first
 - catt v0.13.1 installed; Kitchen speaker @ 192.168.1.66, Bedroom speaker @ 192.168.1.163
@@ -85,7 +85,7 @@
 - Julia's Monty Tech courses registered and on calendar (both Spring 2026):
   - Soups & Chowders: Mondays 3/02/2026, 6-9 PM, Room 433
   - Small Engine Repair: Wednesdays 3/04-4/15/2026, 5:30-8:30 PM, Room 735
-  - Location: 1050 Westminster St, Fitchburg, MA (off Route 2A)
+  - Location: [private address], Fitchburg, MA (off Route 2A)
 - Dylan invited to all Julia's class events
 
 ## Browser & Web Access
@@ -96,7 +96,7 @@
 ## Amazon Shopping
 
 - Hard spending cap: $250, soft cap: $100 (flag if soft cap exceeded)
-- Shipping address: 19 Crosstown Ave, West Roxbury, MA 02132
+- Shipping address: Crosstown residence, West Roxbury, MA 02132
 - Workflow: always provide order summary before requesting checkout approval
 
 ## Preferences & Notes
@@ -113,8 +113,8 @@
 - Historical: BB routing improvements deployed to SOUL.md and TOOLS.md — `any;-;` chat GUIDs avoided old BlueBubbles lookup timeouts. This no longer applies to normal operation after native iMessage cutover.
 
 **2026-06-27:**
-- OpenClaw completed its migration from BlueBubbles to native `imsg`-backed iMessage. Active sends use `channel: imessage` and stable targets `chat_id:171` (Dylan), `chat_id:1` (Julia), and `chat_id:170` (Dylan+Julia group).
-- The retired BlueBubbles plugin, app, services, state, and credentials were removed. `vacancy-actions.sh` now sends lock notifications directly through native `imsg` to `chat_id:171`.
+- OpenClaw completed its migration from BlueBubbles to native `imsg`-backed iMessage. Active sends use `channel: imessage` and stable targets `chat_id:${DYLAN_CHAT_ID}` (Dylan), `chat_id:${JULIA_CHAT_ID}` (Julia), and `chat_id:${HOUSEHOLD_CHAT_ID}` (Dylan+Julia group).
+- The retired BlueBubbles plugin, app, services, state, and credentials were removed. `vacancy-actions.sh` now sends lock notifications directly through native `imsg` to `chat_id:${DYLAN_CHAT_ID}`.
 
 **2026-04-05:**
 - August smart lock skill deployed and verified working (Crosstown front door: locked, 96% battery, WiFi -47dBm)
@@ -167,8 +167,9 @@
 - August Wi-Fi Smart Lock 4th gen at Crosstown front door
 - CLI: `august status|lock|unlock|locks|details`
 - Architecture: Mini → SSH → MBP → august-api npm → August Cloud
-- Auth: dylanbochman@gmail.com, JWT token (~120 day expiry), installId cached on MBP
-- Config: `~/.openclaw/august/config.json` on MBP
+- Auth: credentials and installId are held only in the protected MBP config;
+  the Mini does not forward credentials over SSH
+- Config: `~/.openclaw/august/config.json` on MBP, regular mode-`0600` file
 
 **Vacancy Automation** (`vacancy-actions.sh`, WatchPaths on presence state.json):
 - Crosstown vacant → lights off, eco mode, Cielo off, **front door locked**, Roombas start, iMessage notification to Dylan
@@ -215,4 +216,4 @@
 ## Key Contacts
 
 - **Cameron (Cam) Bochman** (${CAM_PHONE}): Dylan's brother. Trusted contact (full actions, keep Dylan informed). First interaction 2026-05-12 — messaged asking about birthday ideas for Dylan, got stonewalled by untrusted-contact protocol before Dylan confirmed identity. Now fully trusted.
-- **Hamed Silatani** (hamed@uptimelabs.io): Security/incident response simulation workshops; draft reply pending in Gmail
+- **Hamed Silatani** ([private contact address]): Security/incident response simulation workshops; draft reply pending in Gmail

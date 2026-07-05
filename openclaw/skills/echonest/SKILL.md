@@ -37,22 +37,22 @@ curl -s 'https://echone.st/search/v2?q=bohemian+rhapsody'
 ```bash
 # Spotify
 curl -s -X POST https://echone.st/add_song \
-  -d 'track_uri=spotify:track:4u7EnebtmKWzUH433cf5Qv&email=dylanbochman@gmail.com'
+  -d 'track_uri=spotify:track:4u7EnebtmKWzUH433cf5Qv&email=${ECHONEST_EMAIL}'
 
 # YouTube
 curl -s -X POST https://echone.st/add_song \
-  -d 'track_uri=youtube:dQw4w9WgXcQ&email=dylanbochman@gmail.com'
+  -d 'track_uri=youtube:dQw4w9WgXcQ&email=${ECHONEST_EMAIL}'
 
 # SoundCloud
 curl -s -X POST https://echone.st/add_song \
-  -d 'track_uri=soundcloud:123456&email=dylanbochman@gmail.com'
+  -d 'track_uri=soundcloud:123456&email=${ECHONEST_EMAIL}'
 ```
 The `track_uri` format is `<source>:<id>`. Get the ID from search results.
 
 ### Jam (Show Appreciation)
 ```bash
 curl -s -X POST https://echone.st/jam \
-  -d 'id=<track_id>&email=dylanbochman@gmail.com'
+  -d 'id=<track_id>&email=${ECHONEST_EMAIL}'
 ```
 
 ### Quick Jam (Now Playing)
@@ -63,7 +63,7 @@ curl -s https://echone.st/api/jammit/
 ### Blast Airhorn
 ```bash
 curl -s -X POST https://echone.st/blast_airhorn \
-  -d 'name=classic&email=dylanbochman@gmail.com'
+  -d 'name=classic&email=${ECHONEST_EMAIL}'
 ```
 
 ### View Play History
@@ -278,7 +278,7 @@ ssh echonest-droplet 'df -h / && echo --- && free -m && echo --- && docker stats
 ## Notes
 
 - All REST API queue endpoints are public (no auth cookies needed)
-- `email=dylanbochman@gmail.com` should be used as the user identifier for API calls
+- `email=${ECHONEST_EMAIL}` from the protected cache should be used as the user identifier for API calls
 - Music sources: Spotify, YouTube, SoundCloud (podcasts also supported)
 - Search always goes through Spotify's API
 - The Bender auto-fill engine automatically queues songs when the queue runs low

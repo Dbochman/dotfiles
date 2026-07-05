@@ -13,9 +13,9 @@ Control Bluetooth devices and audio routing on the Mac Mini (macOS Tahoe 26.x).
 
 | Name | MAC Address | Type |
 |------|-------------|------|
-| Kitchen speaker | DC:E5:5B:C0:91:1A | Audio |
-| Magic Keyboard with Numeric Keypad | 80:4A:14:76:DA:A6 | Keyboard |
-| Magic Trackpad 2 | AC:88:FD:EF:5F:7F | Trackpad |
+| Kitchen speaker | ${KITCHEN_SPEAKER_MAC} | Audio |
+| Magic Keyboard with Numeric Keypad | ${MAGIC_KEYBOARD_MAC} | Keyboard |
+| Magic Trackpad 2 | ${MAGIC_TRACKPAD_MAC} | Trackpad |
 
 ## Important: macOS Tahoe Workaround
 
@@ -26,14 +26,14 @@ Read operations (list devices, check status, audio switching) work directly over
 ## Connect a Bluetooth Device
 
 ```bash
-ssh dylans-mac-mini "echo 'connect DC:E5:5B:C0:91:1A' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command && sleep 12 && cat /tmp/bt_exit.txt"
+ssh dylans-mac-mini "echo 'connect ${KITCHEN_SPEAKER_MAC}' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command && sleep 12 && cat /tmp/bt_exit.txt"
 ```
 Exit code 0 = success. Wait 12 seconds for the Bluetooth connection to establish.
 
 ### Connect + Switch Audio (Full Pattern)
 
 ```bash
-ssh dylans-mac-mini "echo 'connect DC:E5:5B:C0:91:1A' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command"
+ssh dylans-mac-mini "echo 'connect ${KITCHEN_SPEAKER_MAC}' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command"
 sleep 12
 ssh dylans-mac-mini "export PATH=/opt/homebrew/bin:\$PATH && SwitchAudioSource -s 'Kitchen speaker' -t output"
 ```
@@ -41,14 +41,14 @@ ssh dylans-mac-mini "export PATH=/opt/homebrew/bin:\$PATH && SwitchAudioSource -
 ## Disconnect a Bluetooth Device
 
 ```bash
-ssh dylans-mac-mini "echo 'disconnect DC:E5:5B:C0:91:1A' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command && sleep 12 && cat /tmp/bt_exit.txt"
+ssh dylans-mac-mini "echo 'disconnect ${KITCHEN_SPEAKER_MAC}' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command && sleep 12 && cat /tmp/bt_exit.txt"
 ```
 
 ### Disconnect + Reset Audio
 
 ```bash
 ssh dylans-mac-mini "export PATH=/opt/homebrew/bin:\$PATH && SwitchAudioSource -s 'Mac mini Speakers' -t output"
-ssh dylans-mac-mini "echo 'disconnect DC:E5:5B:C0:91:1A' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command"
+ssh dylans-mac-mini "echo 'disconnect ${KITCHEN_SPEAKER_MAC}' > /tmp/bt_command.txt && rm -f /tmp/bt_result.txt /tmp/bt_exit.txt && open /tmp/bt_op.command"
 ```
 
 ## List Paired Devices

@@ -1,148 +1,146 @@
 ---
 name: 1password
-description: Read secrets, credentials, and payment information from the OpenClaw 1Password vault. Use when asked about passwords, API keys, credit card details, SSH keys, or any stored credentials. Also use when making purchases that require card information.
-allowed-tools: Bash(1password:*)
+description: Safely use exact 1Password fields during attended interactive work and maintain the protected OpenClaw secrets cache. Use for passwords, API keys, credentials, payment data, cache refreshes, or diagnosing credential access. Never use `op` from a LaunchAgent or any child process it starts.
+allowed-tools: Bash(openclaw-refresh-secrets:*)
 metadata: {"openclaw":{"emoji":"🔐","requires":{"bins":["op"]}}}
 ---
 
-# 1Password Vault Access
+# 1Password and cached secrets
 
-Read secrets and credentials from the OpenClaw vault via the `op` CLI. The service account has **read-only** access.
+Choose one of two modes before accessing credentials. They are deliberately
+separate because macOS LaunchAgents cannot safely interact with the 1Password
+desktop session.
 
-## Setup
+## Mode 1: attended interactive access
 
-The service account token is at `~/.openclaw/.env-token`. Set it before using `op`:
+Use this mode only in a user-attended terminal for an immediate task. The
+agent does not have direct `op` tool permission; ask the owner to run the exact
+single-field read in their terminal when a one-off field is needed.
 
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
-```
+1. Identify the single field the task needs.
+2. Obtain its exact `op://` reference from an owner-only local configuration or
+   the user. Do not place vault, item, field, or account identifiers in tracked
+   files merely for convenience.
+3. Run `op read "$FIELD_REFERENCE"` and capture the result directly into the
+   consuming command or a short-lived variable.
+4. Do not print, inspect, summarize, log, or return the value. Unset temporary
+   variables when the command finishes.
 
-## Reading Secrets
-
-### Read a specific field
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
-op read "op://OpenClaw/Item Name/field"
-```
-
-### Common items in the vault
-
-| Item | Field | Read Command |
-|------|-------|-------------|
-| OpenAI API Key | password | `op read "op://OpenClaw/OpenAI API Key/password"` |
-| ElevenLabs API Key | password | `op read "op://OpenClaw/ElevenLabs API Key/password"` |
-| Gateway Token | password | `op read "op://OpenClaw/OpenClaw Gateway Token/password"` |
-| Mysa | username, password | `op read "op://OpenClaw/Mysa/username"` |
-| Star Market | password, username | `op read "op://OpenClaw/Star Market/password"` |
-| Digital Ocean API | credential | `op read "op://OpenClaw/Digital Ocean API Credential/credential"` |
-| Tavily | password | `op read "op://OpenClaw/Tavily/password"` |
-| Google Places API | password | `op read "op://OpenClaw/Google Places API/password"` |
-| OpenRouter | password | `op read "op://OpenClaw/OpenRouter/password"` |
-| Resy | password | `op read "op://OpenClaw/Resy/password"` |
-| OpenTable | password | `op read "op://OpenClaw/OpenTable/password"` |
-
-### Credit Card (Visa)
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
-
-op read "op://OpenClaw/Visa/number"                # Card number
-op read "op://OpenClaw/Visa/expiry date"            # Expiration (YYYYMM)
-op read "op://OpenClaw/Visa/verification number"    # CVV
-op read "op://OpenClaw/Visa/cardholder name"        # Cardholder
-op read "op://OpenClaw/Visa/credit limit"           # Spending cap
-op read "op://OpenClaw/Visa/address"                # Billing address
-```
-
-### List all items
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
-op item list --vault OpenClaw --format json
-```
-
-### Get full item details
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.openclaw/.env-token)
-op item get "Item Name" --vault OpenClaw --format json
-```
-
-## Using Credit Card for Purchases
-
-When making online purchases with the credit card:
-
-1. **Read card details** from 1Password (never from files)
-2. **Use browser automation** to navigate to the checkout page
-3. **Fill in payment fields** with the card data
-4. **Always confirm with Dylan** before completing any purchase
-5. **Never log or display full card numbers** — show only last 4 digits
-
-### Purchase Safety Rules
-
-- ALWAYS ask Dylan for confirmation before submitting any payment
-- NEVER share card details in messages, logs, or chat
-- When displaying card info to Dylan, mask it: `****-****-****-0298`
-- If a purchase requires 2FA or SMS verification, notify Dylan
-- Check credit limit before purchasing
-- NEVER exceed the credit limit — this is a hard spending cap set by Dylan
-- Flag anything over $100 for explicit approval even if under the limit
-
-## Notes
-
-- The service account is **read-only** — cannot create or modify vault items
-- The vault is named `OpenClaw` — only items in this vault are accessible
-- Items in other vaults (`Private`, etc.) are NOT accessible
-- The `OP_SERVICE_ACCOUNT_TOKEN` is loaded from `~/.openclaw/.env-token`
-
-## CRITICAL: LaunchAgent Scripts That Call `op`
-
-**Any script run by a LaunchAgent that calls `op` (directly or via a CLI like `opentable`, `resy`, `nest`) MUST set `OP_SERVICE_ACCOUNT_TOKEN` before invoking `op`.** Without it, `op` falls back to the 1Password desktop app's Mach bootstrap service, which triggers a GUI permission popup for "bash" every run. On a headless Mini with no VNC, this popup is impossible to approve and the `op` call hangs until timeout.
+Example pattern using a non-secret placeholder reference:
 
 ```bash
-# Add this near the top of any LaunchAgent script that may call op
-if [[ -f "$HOME/.openclaw/.env-token" ]]; then
-  export OP_SERVICE_ACCOUNT_TOKEN=$(cat "$HOME/.openclaw/.env-token")
-fi
+secret_value=$(op read "$FIELD_REFERENCE") || exit 1
+SERVICE_TOKEN="$secret_value" command-that-needs-it
+unset secret_value
 ```
 
-This applies even to scripts that only _indirectly_ call `op` — e.g., a bash script that calls `opentable snipe`, which internally calls `op read` when its credential cache expires. See `LAUNCHAGENTS.md § New LaunchAgent Checklist` for the full list of rules.
+Read exact fields only. Do not use full-item JSON, item lists, note blobs, bulk
+exports, or commands that reveal unrelated fields.
 
-## Secret Caching (Gateway Only)
+## Mode 2: LaunchAgent and unattended services
 
-The gateway wrapper uses a **cached secrets file** instead of calling `op read` at startup.
-This is a necessary exception to the "read from 1Password at runtime" principle.
+LaunchAgents and every child process they start must be cache-only:
 
-### Why caching is required
+```bash
+CACHE="${OPENCLAW_SECRETS_CACHE:-$HOME/.openclaw/.secrets-cache}"
+[[ -f "$CACHE" && ! -L "$CACHE" ]] || exit 1
+set -a
+source "$CACHE"
+set +a
+[[ -n "${REQUIRED_KEY:-}" ]] || exit 1
+exec service-command
+```
 
-On macOS Tahoe (26.x), `op read` **hangs indefinitely** when called from a LaunchAgent
-context. The 1Password CLI spawns an `op daemon --background` process that attempts to
-connect to the 1Password desktop app via a Mach bootstrap service. Under launchd, this
-connection blocks forever because the desktop app requires user interaction (Touch ID/GUI
-prompt) that can't happen in a non-GUI launchd context.
+- Never run `op`, probe it with a timeout, start its daemon, or set a service
+  account token as a workaround.
+- Audit indirect dependencies too. A CLI that falls back to `op` is not safe
+  for LaunchAgent use until that fallback is disabled or made interactive-only.
+- Fail closed when the cache or a required key is absent. Preserve the last
+  known-good service state rather than replacing cache data with blanks.
+- Do not print or `cat` the cache during diagnosis.
 
-Every approach was tested and failed:
-- `OP_SERVICE_ACCOUNT_TOKEN` alone — daemon still spawns before token is evaluated
-- `OP_BIOMETRIC_UNLOCK_ENABLED=false` — Mach port connection precedes env check
-- `--config /isolated/dir` — new daemon spawns, same behavior
-- `env -i` minimal environment — Mach ports are per-user-session, not env-based
-- Background process + kill timer — works but each `op` invocation also triggers
-  incessant TCC "op would like to access data" popups on Tahoe that don't persist
+## Refreshing the protected cache
 
-The **only** reliable solution is to never call `op` from the launchd wrapper at all.
+Run the tracked helper manually after a vault rotation or when adding a cache
+key:
 
-### How it works
+```bash
+openclaw-refresh-secrets --interactive
+```
 
-- **Cache file**: `~/.openclaw/.secrets-cache` (chmod 600, KEY=VALUE format)
-- **Gateway wrapper** sources the cache via `set -a; source $CACHE; set +a`
-- **Refresh helper**: `~/bin/openclaw-refresh-secrets` — fetches secrets from 1Password
-  via `op read` and writes them to the cache. Run over SSH after key rotation.
-- `op read` works fine over SSH and in interactive terminals — only launchd is broken.
+The helper reads exact field references from
+`~/.openclaw/.secrets-refresh.env` by default. That owner-only mode-`0600` file
+is local input and is never committed. It may contain:
 
-### Security posture
+- `OP_REF_<CACHE_KEY>` assignments for exact 1Password fields;
+- private cache-only identity, device, account, and household values that do
+  not yet have configured exact vault-field references; and
+- optional Mysa references as a complete username/password pair.
 
-- Cache file is `chmod 600` (owner-only read/write)
-- File lives outside the dotfiles repo (not committed to git)
-- Refresh is manual — secrets only update when explicitly requested
-- After rotating any API key in 1Password, you must SSH into the Mini and run:
-  `~/bin/openclaw-refresh-secrets`
-- The agent itself still uses `op read` at runtime for on-demand secret access
-  (this works because the agent runs inside the gateway's node process, which
-  already has the secrets loaded as environment variables)
+Current required local-seed/cache keys are grouped by meaning:
+
+- general private identities: `DYLAN_EMAIL`, `JULIA_EMAIL`;
+- service-specific identities: `OPENCLAW_EMAIL`, `OPENTABLE_EMAIL`,
+  `ECHONEST_EMAIL`, `STARMARKET_GMAIL`, `TRYFI_EMAIL`;
+- credentials or authentication material: `STARMARKET_DEVICE_TOKEN`,
+  `EIGHTSLEEP_CLIENT_SECRET`, `CIELO_API_KEY`, `TRYFI_PASSWORD`;
+- private device/account identifiers: `STARMARKET_USER_HASH`,
+  `EIGHTSLEEP_CLIENT_ID`, `EIGHTSLEEP_DYLAN_USER_ID`,
+  `EIGHTSLEEP_JULIA_USER_ID`, `EIGHTSLEEP_CROSSTOWN_DEVICE_ID`,
+  `EIGHTSLEEP_CABIN_DEVICE_ID`, `PETLIBRO_APPSN`, `HOUSEHOLD_CHAT_ID`,
+  `JULIA_CHAT_ID`, `DYLAN_CHAT_ID`; and
+- private household location data: `CROSSTOWN_LAT`, `CROSSTOWN_LON`,
+  `CABIN_LAT`, `CABIN_LON`.
+
+An identifier is not automatically a secret, but these identities, device
+identifiers, and locations are still private and must remain in the owner-only
+seed/cache. Truly public, non-household configuration may remain tracked and
+does not belong in this cache. Use the general identity keys for GWS and contact
+identity; use service-specific keys only for the named service.
+
+Vault-backed values require an `OP_REF_<CACHE_KEY>` exact-field reference in
+the seed. This includes `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`,
+`OPENCLAW_GATEWAY_TOKEN`, the Cielo and Star Market username/password pairs,
+the Plaid client and environment secrets, and all four `NEST_*` fields.
+
+The helper:
+
+- refuses to run without `--interactive`, a real terminal, and the owner
+  typing the displayed confirmation word;
+- accepts only regular owner-owned mode-`0600` cache and seed files;
+- calls only `op read` for configured exact fields;
+- never prints field references or values;
+- requires every configured field before changing the cache;
+- shell-quotes every value, writes a mode-`0600` temporary file, fsyncs it, and
+  atomically renames it over the cache; and
+- leaves the previous cache byte-for-byte intact on any missing field or error.
+
+Restart only services that need rotated values after a successful refresh.
+
+## Payment information
+
+Treat payment fields as highly sensitive interactive-only data.
+
+- Retrieve only the specific fields required by an explicitly authorized
+  checkout.
+- Inject values directly into the approved checkout; never display them in
+  chat, terminal output, screenshots, logs, or saved automation artifacts.
+- Show the user the merchant, item, quantity, delivery details, recurring
+  terms, and final total, then obtain explicit confirmation before submission.
+- Stop for MFA, a changed total, an unexpected subscription, or an unfamiliar
+  payment/cancellation term.
+- Never add payment fields to `.secrets-cache` or the refresh seed.
+
+## Diagnosis
+
+When a service reports missing credentials:
+
+1. Determine whether it is interactive or LaunchAgent-owned.
+2. For LaunchAgents, inspect only cache presence, ownership, mode, required key
+   names, and child command paths. Never test by invoking `op`.
+3. For interactive work, verify `op` authentication with a non-revealing status
+   command, then retry one exact-field read without printing its result.
+4. Run `openclaw-refresh-secrets --interactive` when the cache needs repair.
+
+The repeated Tahoe GUI prompt/hang is resolved by removing `op` from the entire
+LaunchAgent process tree, not by adding `OP_SERVICE_ACCOUNT_TOKEN`.

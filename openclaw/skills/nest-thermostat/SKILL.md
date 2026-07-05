@@ -7,7 +7,7 @@ metadata: {"openclaw":{"emoji":"T","requires":{"bins":["nest"]}}}
 
 # Nest Thermostat & Camera Control
 
-Control Google Nest thermostats and cameras via the `nest` CLI. All credentials are managed via 1Password.
+Control Google Nest thermostats and cameras via the `nest` CLI. Unattended commands use the protected OpenClaw cache; 1Password access is attended and exact-field only.
 
 ## Available Commands
 
@@ -83,7 +83,7 @@ There are two homes. Rooms are prefixed with home name in the Nest API.
 - **Philly Bedroom** (matches: bed, bedroom)
 - **Kitchen** camera (matches: kitchen, kit)
 
-### Crosstown (Boston — 19 Crosstown Ave)
+### Crosstown (Boston — Crosstown residence)
 - **19Crosstown Living Room** (matches: crosstown)
 - **Cat room** cameras x2
 
@@ -113,7 +113,7 @@ The Google OAuth refresh token has been revoked. Common causes:
 2. **User revoked access** or **password change** — need to re-authorize
 
 **Re-auth flow:**
-1. Get credentials from 1Password (vault "OpenClaw", item "Google Nest"): `clientID`, `client_secret`, `project_id`
+1. Run `openclaw-refresh-secrets --interactive` so the protected cache contains `NEST_CLIENT_ID`, `NEST_CLIENT_SECRET`, and `NEST_PROJECT_ID`
 2. Open auth URL:
    ```
    https://nestservices.google.com/partnerconnections/<PROJECT_ID>/auth?redirect_uri=https://www.google.com&access_type=offline&prompt=consent&client_id=<CLIENT_ID>&response_type=code&scope=https://www.googleapis.com/auth/sdm.service
@@ -128,16 +128,9 @@ The Google OAuth refresh token has been revoked. Common causes:
      -d "grant_type=authorization_code" \
      -d "redirect_uri=https://www.google.com"
    ```
-5. Update `refresh_token` in 1Password
-6. Clear cache on Mac Mini: `rm -rf ~/.cache/nest-sdm/`
-7. Write new credentials to cache (if 1Password biometric is unavailable via SSH):
-   ```bash
-   mkdir -p ~/.cache/nest-sdm
-   echo -n '<REFRESH_TOKEN>' > ~/.cache/nest-sdm/refresh_token
-   echo -n '<CLIENT_ID>' > ~/.cache/nest-sdm/clientid
-   echo -n '<CLIENT_SECRET>' > ~/.cache/nest-sdm/client_secret
-   echo -n '<PROJECT_ID>' > ~/.cache/nest-sdm/project_id
-   ```
+5. `nest reauth <code-or-redirect-url>` writes the new refresh/access tokens atomically to owner-only local token files
+6. Store the rotated refresh token in its exact 1Password field, then run `openclaw-refresh-secrets --interactive` to update the combined cache
+7. Never write token values with `echo`, print the token response, or call `op` from a LaunchAgent
 
 ### "Can't link to HomeAutomation"
 The OAuth consent screen is blocking auth. Check:
@@ -145,5 +138,9 @@ The OAuth consent screen is blocking auth. Check:
 - Your Google account must be listed as a test user if still in Testing mode
 - Device Access project must exist at [console.nest.google.com/device-access](https://console.nest.google.com/device-access)
 
-### 1Password unreachable via SSH
-Mac Mini 1Password requires biometric unlock which can't be triggered over SSH. Workaround: write credentials directly to `~/.cache/nest-sdm/` cache files (see re-auth flow above). The `nest` CLI reads from cache first before hitting 1Password.
+### Credentials unavailable in unattended execution
+The `nest` CLI reads `NEST_CLIENT_ID`, `NEST_CLIENT_SECRET`,
+`NEST_REFRESH_TOKEN`, and `NEST_PROJECT_ID` from the protected cache. If a key
+is missing under launchd it fails closed without invoking `op`. An attended
+terminal may use exact `OP_REF_NEST_*` environment references as a temporary
+fallback; repair the durable cache with `openclaw-refresh-secrets --interactive`.

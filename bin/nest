@@ -1,19 +1,20 @@
 #!/bin/bash
 # nest — CLI wrapper for Google Nest SDM API + local weather (Open-Meteo)
-# Credentials stored in 1Password; tokens auto-refresh.
+# Unattended credentials come from the protected cache; attended exact-field
+# 1Password reads are an explicit terminal-only fallback. Tokens auto-refresh.
 
 set -euo pipefail
 
-export OP_BIOMETRIC_UNLOCK_ENABLED=true
-
-# 1Password paths
-OP_ITEM="Google Nest"
-OP_VAULT="OpenClaw"
-
-# Cache directory
-CACHE_DIR="${HOME}/.cache/nest-sdm"
-TOKEN_TTL=3300       # 55 minutes (access tokens last 60)
-CREDS_TTL=31536000   # 1 year (credentials never change unless rotated)
+# LaunchAgent-safe credential sources. API credentials come from the protected
+# OpenClaw cache; only a real interactive terminal may fall back to exact-field
+# `op read` calls supplied through OP_REF_NEST_* environment variables.
+CACHE_DIR="${NEST_CACHE_DIR:-${HOME}/.cache/nest-sdm}"
+TOKEN_TTL=3300
+SECRETS_CACHE="${OPENCLAW_SECRETS_CACHE:-${HOME}/.openclaw/.secrets-cache}"
+INTERACTIVE_TERMINAL=0
+if [[ -t 0 && -t 1 ]]; then
+  INTERACTIVE_TERMINAL=1
+fi
 
 # History directory (JSONL snapshots, one file per day)
 HISTORY_DIR="${HOME}/.openclaw/nest-history"
@@ -24,102 +25,312 @@ DASHBOARD_PLIST="${HOME}/Library/LaunchAgents/${DASHBOARD_LABEL}.plist"
 DASHBOARD_SCRIPT="${HOME}/.openclaw/bin/nest-dashboard.py"
 DASHBOARD_PORT=8550
 
-# Location config (lat/lon for weather)
+# Protected location config (lat/lon for weather)
 LOCATION_FILE="${HOME}/.openclaw/nest-location.conf"
-DEFAULT_LAT="42.6021"
-DEFAULT_LON="-72.1510"
+
+_validate_coordinates() {
+  python3 - "$1" "$2" <<'PY'
+import math
+import sys
+
+try:
+    latitude = float(sys.argv[1])
+    longitude = float(sys.argv[2])
+except (IndexError, TypeError, ValueError):
+    raise SystemExit(1)
+
+if not (
+    math.isfinite(latitude)
+    and math.isfinite(longitude)
+    and -90 <= latitude <= 90
+    and -180 <= longitude <= 180
+):
+    raise SystemExit(1)
+PY
+}
+
+_validate_location_list() {
+  local entry name latitude longitude extra
+  [[ -n "${NEST_LOCATIONS:-}" ]] || return 0
+  for entry in $NEST_LOCATIONS; do
+    IFS=':' read -r name latitude longitude extra <<< "$entry"
+    if [[ -z "$name" || -n "$extra" ]] || ! _validate_coordinates "$latitude" "$longitude"; then
+      echo "Nest location config contains an invalid location entry" >&2
+      return 1
+    fi
+  done
+}
+
+_load_protected_crosstown_location() {
+  local protected_coordinates
+  if ! protected_coordinates=$(
+    unset CROSSTOWN_LAT CROSSTOWN_LON
+    _source_private_assignments "$SECRETS_CACHE" || exit $?
+    if ! _validate_coordinates "${CROSSTOWN_LAT:-}" "${CROSSTOWN_LON:-}"; then
+      echo "Nest location coordinates are missing or invalid in the protected cache" >&2
+      exit 1
+    fi
+    printf '%s\t%s' "$CROSSTOWN_LAT" "$CROSSTOWN_LON"
+  ); then
+    return 1
+  fi
+  IFS=$'\t' read -r NEST_LAT NEST_LON <<< "$protected_coordinates"
+}
 
 _get_location() {
-  if [[ -f "$LOCATION_FILE" ]]; then
-    source "$LOCATION_FILE"
-  fi
-  NEST_LAT="${NEST_LAT:-$DEFAULT_LAT}"
-  NEST_LON="${NEST_LON:-$DEFAULT_LON}"
-}
+  NEST_LAT=""
+  NEST_LON=""
+  NEST_LOCATIONS=""
 
-_op_read() {
-  /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null
-}
-
-_cached_op_read() {
-  local label="$1"
-  local cache_file="$CACHE_DIR/$(echo "$label" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')"
-  mkdir -p "$CACHE_DIR"
-
-  if [[ -f "$cache_file" ]]; then
-    local age=$(( $(date +%s) - $(stat -f %m "$cache_file") ))
-    if (( age < CREDS_TTL )); then
-      cat "$cache_file"
-      return
+  if [[ -e "$LOCATION_FILE" || -L "$LOCATION_FILE" ]]; then
+    if [[ -L "$LOCATION_FILE" || ! -f "$LOCATION_FILE" ]]; then
+      echo "Nest location config must be a regular, non-symlink file" >&2
+      return 1
+    fi
+    local owner mode
+    read -r owner mode < <(_private_file_metadata "$LOCATION_FILE")
+    if [[ "$owner" != "$(id -u)" || "$mode" != "600" ]]; then
+      echo "Nest location config must be owner-only with mode 0600" >&2
+      return 1
+    fi
+    # shellcheck disable=SC1090
+    if ! source "$LOCATION_FILE" >/dev/null 2>&1; then
+      echo "Nest location config could not be loaded" >&2
+      return 1
+    fi
+    if ! _validate_location_list; then
+      return 1
+    fi
+    if [[ -n "${NEST_LAT:-}" || -n "${NEST_LON:-}" ]] \
+      && ! _validate_coordinates "${NEST_LAT:-}" "${NEST_LON:-}"; then
+      echo "Nest location config contains invalid fallback coordinates" >&2
+      return 1
     fi
   fi
 
-  local val
-  val=$(_op_read "$label")
-  if [[ -n "$val" ]]; then
-    echo "$val" > "$cache_file"
+  if [[ -z "${NEST_LAT:-}" || -z "${NEST_LON:-}" ]]; then
+    _load_protected_crosstown_location || return 1
   fi
-  echo "$val"
 }
+
+_private_file_metadata() {
+  local file="$1"
+  if stat -f '%u %Lp' "$file" >/dev/null 2>&1; then
+    stat -f '%u %Lp' "$file"
+  else
+    stat -c '%u %a' "$file"
+  fi
+}
+
+_source_private_assignments() {
+  local file="$1"
+  [[ -e "$file" || -L "$file" ]] || return 1
+  if [[ -L "$file" || ! -f "$file" ]]; then
+    echo "Nest secrets cache must be a regular, non-symlink file" >&2
+    return 2
+  fi
+  local owner mode
+  read -r owner mode < <(_private_file_metadata "$file")
+  if [[ "$owner" != "$(id -u)" || "$mode" != "600" ]]; then
+    echo "Nest secrets cache must be owner-only with mode 0600" >&2
+    return 2
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  if ! source "$file"; then
+    set +a
+    echo "Nest secrets cache is malformed" >&2
+    return 2
+  fi
+  set +a
+}
+
+_read_private_value_file() {
+  local file="$1"
+  [[ -e "$file" || -L "$file" ]] || return 1
+  if [[ -L "$file" || ! -f "$file" ]]; then
+    echo "Nest token cache must be a regular, non-symlink file" >&2
+    return 2
+  fi
+  local owner mode
+  read -r owner mode < <(_private_file_metadata "$file")
+  if [[ "$owner" != "$(id -u)" || "$mode" != "600" ]]; then
+    echo "Nest token cache must be owner-only with mode 0600" >&2
+    return 2
+  fi
+  cat "$file"
+}
+
+_interactive_op_read() {
+  local key="$1"
+  local reference_variable="OP_REF_${key}"
+  local reference="${!reference_variable:-}"
+  local op_bin value
+
+  if [[ "$INTERACTIVE_TERMINAL" -ne 1 ]]; then
+    echo "Missing $key in the protected cache; refusing to call op without an interactive terminal" >&2
+    return 1
+  fi
+  if [[ -z "$reference" ]]; then
+    echo "Missing interactive field reference $reference_variable; run openclaw-refresh-secrets" >&2
+    return 1
+  fi
+  op_bin=$(command -v op || true)
+  if [[ -z "$op_bin" ]]; then
+    echo "1Password CLI is unavailable" >&2
+    return 1
+  fi
+  if ! value=$("$op_bin" read "$reference" 2>/dev/null) || [[ -z "$value" ]]; then
+    echo "Could not read required Nest field $key" >&2
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+_nest_credential() {
+  local key="$1"
+  local value
+
+  if [[ "$key" == "NEST_REFRESH_TOKEN" ]]; then
+    if value=$(_read_private_value_file "$CACHE_DIR/refresh_token"); then
+      [[ -n "$value" ]] && { printf '%s' "$value"; return 0; }
+    elif [[ "$?" -ne 1 ]]; then
+      return 2
+    fi
+  fi
+
+  value="${!key:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return 0
+  fi
+  if _source_private_assignments "$SECRETS_CACHE"; then
+    value="${!key:-}"
+    if [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+  elif [[ "$?" -ne 1 ]]; then
+    return 2
+  fi
+  _interactive_op_read "$key"
+}
+
+_write_private_value_file() (
+  local destination="$1"
+  local value="$2"
+  local directory temporary
+  directory=$(dirname "$destination")
+  mkdir -p "$directory"
+  chmod 700 "$directory"
+  temporary=$(mktemp "$directory/.$(basename "$destination").XXXXXX")
+  trap 'rm -f "$temporary"' EXIT
+  chmod 600 "$temporary"
+  printf '%s' "$value" > "$temporary"
+  python3 - "$temporary" <<'PY'
+import os
+import sys
+
+descriptor = os.open(sys.argv[1], os.O_RDONLY)
+try:
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+PY
+  mv -f "$temporary" "$destination"
+  chmod 600 "$destination"
+  trap - EXIT
+)
 
 _get_access_token() {
   mkdir -p "$CACHE_DIR"
+  chmod 700 "$CACHE_DIR"
   local token_cache="$CACHE_DIR/access_token"
 
-  # Use cached token if fresh
   if [[ -f "$token_cache" ]]; then
     local age=$(( $(date +%s) - $(stat -f %m "$token_cache") ))
     if (( age < TOKEN_TTL )); then
-      cat "$token_cache"
+      _read_private_value_file "$token_cache"
       return
     fi
   fi
 
-  # Refresh token using cached 1Password credentials
-  local client_id=$(_cached_op_read "clientID")
-  local client_secret=$(_cached_op_read "client_secret")
-  local refresh_token=$(_cached_op_read "refresh_token")
+  local client_id client_secret refresh_token
+  client_id=$(_nest_credential NEST_CLIENT_ID)
+  client_secret=$(_nest_credential NEST_CLIENT_SECRET)
+  refresh_token=$(_nest_credential NEST_REFRESH_TOKEN)
 
-  local resp
-  resp=$(curl -s -L -X POST "https://www.googleapis.com/oauth2/v4/token" \
+  local resp token
+  if ! resp=$(curl -sS --fail-with-body -X POST "https://www.googleapis.com/oauth2/v4/token" \
     -d "client_id=${client_id}" \
     -d "client_secret=${client_secret}" \
     -d "refresh_token=${refresh_token}" \
-    -d "grant_type=refresh_token")
+    -d "grant_type=refresh_token"); then
+    echo "Error refreshing Nest access token" >&2
+    return 1
+  fi
+  token=$(printf '%s' "$resp" | python3 -c '
+import json
+import sys
 
-  local token
-  token=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null)
-
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    sys.exit(1)
+token = data.get("access_token") if isinstance(data, dict) and "error" not in data else None
+if not isinstance(token, str) or not token or any(char.isspace() for char in token):
+    sys.exit(1)
+sys.stdout.write(token)
+' 2>/dev/null || true)
   if [[ -z "$token" ]]; then
-    echo "Error refreshing token: $resp" >&2
-    exit 1
+    echo "Error refreshing Nest access token" >&2
+    return 1
   fi
 
-  echo "$token" > "$token_cache"
-  echo "$token"
+  _write_private_value_file "$token_cache" "$token"
+  printf '%s' "$token"
 }
 
 _project_id() {
-  _cached_op_read "project_id"
+  _nest_credential NEST_PROJECT_ID
 }
 
 _api() {
   local method="$1" path="$2"
   shift 2
-  local token project_id
+  local token project_id response validated
   token=$(_get_access_token)
   project_id=$(_project_id)
-  curl -s -X "$method" \
+  if ! response=$(curl -sS --fail-with-body -X "$method" \
     "https://smartdevicemanagement.googleapis.com/v1/enterprises/${project_id}${path}" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer ${token}" \
-    "$@"
+    "$@"); then
+    echo "Nest API request failed" >&2
+    return 1
+  fi
+  if ! validated=$(printf '%s' "$response" | python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    sys.exit(1)
+if not isinstance(data, dict) or "error" in data:
+    sys.exit(1)
+sys.stdout.write(json.dumps(data, separators=(",", ":")))
+' 2>/dev/null); then
+    echo "Nest API returned an invalid response" >&2
+    return 1
+  fi
+  printf '%s\n' "$validated"
 }
 
 _get_weather() {
   # Returns JSON: {"temp_f":12.0,"feels_like_f":4.7,"humidity":73,"wind_mph":1.9,"code":3,"description":"Overcast"}
   # Optional: _get_weather [lat] [lon] — uses positional args if provided, else NEST_LAT/NEST_LON
-  _get_location
+  _get_location || return 1
   local lat="${1:-$NEST_LAT}" lon="${2:-$NEST_LON}"
   local resp
   resp=$(curl -s --connect-timeout 5 --max-time 10 \
@@ -165,7 +376,7 @@ _get_all_weather() {
   # If NEST_LOCATIONS is set (space-separated "name:lat:lon" entries),
   # returns a JSON dict keyed by structure name: {"Philly": {...}, "19Crosstown": {...}}
   # Otherwise falls back to single-location _get_weather (returns flat dict).
-  _get_location
+  _get_location || return 1
   if [[ -z "${NEST_LOCATIONS:-}" ]]; then
     _get_weather
     return
@@ -185,26 +396,23 @@ _get_all_weather() {
   echo "{$joined}"
 }
 
-_get_cielo_status() {
-  # Returns JSON array of Cielo device statuses; [] on failure
-  local out
-  out=$(/usr/local/bin/node ~/repos/cielo-cli/cli.js status --json 2>/dev/null) || true
-  if [[ -z "$out" ]]; then echo '[]'; else echo "$out"; fi
-}
-
-_get_mysa_status() {
-  # Returns JSON from mysa-status.py; {} on failure
-  local out
-  out=$(~/.openclaw/mysa/venv/bin/python3 ~/.openclaw/bin/mysa-status.py 2>/dev/null) || true
-  if [[ -z "$out" ]]; then echo '{}'; else echo "$out"; fi
-}
-
 _c_to_f() {
-  python3 -c "print(round($1 * 9/5 + 32, 1))"
+  python3 -c 'import sys; print(round(float(sys.argv[1]) * 9/5 + 32, 1))' "$1"
 }
 
 _f_to_c() {
-  python3 -c "print(round(($1 - 32) * 5/9, 6))"
+  python3 -c '
+import math
+import sys
+
+try:
+    value = float(sys.argv[1])
+except (TypeError, ValueError):
+    sys.exit(2)
+if not math.isfinite(value) or not 45 <= value <= 90:
+    sys.exit(2)
+print(round((value - 32) * 5/9, 6))
+' "$1"
 }
 
 # Structure name map (cached per session)
@@ -257,7 +465,16 @@ _resolve_device() {
   query="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
   _build_device_map
   local match
-  match=$(echo "$_device_map" | awk -F'\t' -v q="$query" 'tolower($1) ~ q {print $2; exit}')
+  match=$(python3 -c '
+import sys
+
+query = sys.argv[1]
+for line in sys.stdin:
+    name, separator, device_id = line.rstrip("\n").partition("\t")
+    if separator and query in name.lower():
+        print(device_id)
+        break
+' "$query" <<< "$_device_map")
   if [[ -z "$match" ]]; then
     echo "No thermostat matching '$1'. Available:" >&2
     echo "$_device_map" | awk -F'\t' '{print "  - " $1}' >&2
@@ -355,15 +572,96 @@ for name, w in locations.items():
 "
 }
 
+_thermostat_payload() {
+  local command="$1" parameter="$2" value="$3" value_type="$4"
+  python3 -c '
+import json
+import sys
+
+command, parameter, value, value_type = sys.argv[1:]
+if value_type == "number":
+    value = float(value)
+elif value_type != "string":
+    sys.exit(2)
+print(json.dumps({"command": command, "params": {parameter: value}}, separators=(",", ":")))
+' "$command" "$parameter" "$value" "$value_type"
+}
+
+_verify_mutation() {
+  local device_path="$1" kind="$2" expected="$3"
+  local attempts="${NEST_VERIFY_ATTEMPTS:-3}"
+  local delay_seconds="${NEST_VERIFY_DELAY_SECONDS:-2}"
+  local response attempt
+
+  if ! [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || (( attempts > 10 )); then
+    echo "Invalid Nest verification attempt count" >&2
+    return 2
+  fi
+  if ! [[ "$delay_seconds" =~ ^([0-9]([.][0-9]+)?|10([.]0+)?)$ ]]; then
+    echo "Invalid Nest verification delay" >&2
+    return 2
+  fi
+
+  attempt=1
+  while (( attempt <= attempts )); do
+    if response=$(_api GET "$device_path"); then
+      if printf '%s' "$response" | python3 -c '
+import json
+import math
+import sys
+
+kind = sys.argv[1]
+expected = sys.argv[2]
+try:
+    data = json.load(sys.stdin)
+    traits = data["traits"]
+    if kind == "heat":
+        actual = traits["sdm.devices.traits.ThermostatTemperatureSetpoint"]["heatCelsius"]
+        if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+            raise ValueError
+        matched = math.isfinite(float(actual)) and abs(float(actual) - float(expected)) <= 0.15
+    elif kind == "mode":
+        actual = traits["sdm.devices.traits.ThermostatMode"]["mode"]
+        matched = isinstance(actual, str) and actual == expected
+    elif kind == "eco":
+        actual = traits["sdm.devices.traits.ThermostatEco"]["mode"]
+        matched = isinstance(actual, str) and actual == expected
+    else:
+        raise ValueError
+except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    sys.exit(2)
+sys.exit(0 if matched else 1)
+' "$kind" "$expected" 2>/dev/null; then
+        return 0
+      fi
+    fi
+    if (( attempt < attempts )) && [[ "$delay_seconds" != "0" ]]; then
+      sleep "$delay_seconds"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  echo "Nest command completed, but the requested state could not be verified" >&2
+  return 1
+}
+
 cmd_set() {
   local room="$1" temp_f="$2"
-  local device_path temp_c
+  local device_path temp_c payload
+  if ! temp_c=$(_f_to_c "$temp_f"); then
+    echo "Temperature must be a finite number from 45 to 90°F" >&2
+    return 2
+  fi
   device_path=$(_device_path "$room")
-  temp_c=$(_f_to_c "$temp_f")
+  payload=$(_thermostat_payload \
+    "sdm.devices.commands.ThermostatTemperatureSetpoint.SetHeat" \
+    "heatCelsius" "$temp_c" "number")
 
-  _api POST "${device_path}:executeCommand" \
-    -d "{\"command\": \"sdm.devices.commands.ThermostatTemperatureSetpoint.SetHeat\", \"params\": {\"heatCelsius\": ${temp_c}}}" \
-    > /dev/null
+  if ! _api POST "${device_path}:executeCommand" -d "$payload" > /dev/null; then
+    echo "Nest temperature command failed" >&2
+    return 1
+  fi
+  _verify_mutation "$device_path" heat "$temp_c" || return
 
   echo "Set $room to ${temp_f}°F"
 }
@@ -371,12 +669,21 @@ cmd_set() {
 cmd_mode() {
   local room="$1" mode
   mode="$(echo "$2" | tr '[:lower:]' '[:upper:]')"
-  local device_path
+  local device_path payload
+  if [[ "$mode" != "HEAT" && "$mode" != "OFF" ]]; then
+    echo "Mode must be HEAT or OFF" >&2
+    return 2
+  fi
   device_path=$(_device_path "$room")
+  payload=$(_thermostat_payload \
+    "sdm.devices.commands.ThermostatMode.SetMode" \
+    "mode" "$mode" "string")
 
-  _api POST "${device_path}:executeCommand" \
-    -d "{\"command\": \"sdm.devices.commands.ThermostatMode.SetMode\", \"params\": {\"mode\": \"${mode}\"}}" \
-    > /dev/null
+  if ! _api POST "${device_path}:executeCommand" -d "$payload" > /dev/null; then
+    echo "Nest mode command failed" >&2
+    return 1
+  fi
+  _verify_mutation "$device_path" mode "$mode" || return
 
   echo "Set $room mode to ${mode}"
 }
@@ -384,12 +691,21 @@ cmd_mode() {
 cmd_eco() {
   local room="$1" mode
   mode="$(echo "${2:-MANUAL_ECO}" | tr '[:lower:]' '[:upper:]')"
-  local device_path
+  local device_path payload
+  if [[ "$mode" != "MANUAL_ECO" && "$mode" != "OFF" ]]; then
+    echo "Eco mode must be MANUAL_ECO or OFF" >&2
+    return 2
+  fi
   device_path=$(_device_path "$room")
+  payload=$(_thermostat_payload \
+    "sdm.devices.commands.ThermostatEco.SetMode" \
+    "mode" "$mode" "string")
 
-  _api POST "${device_path}:executeCommand" \
-    -d "{\"command\": \"sdm.devices.commands.ThermostatEco.SetMode\", \"params\": {\"mode\": \"${mode}\"}}" \
-    > /dev/null
+  if ! _api POST "${device_path}:executeCommand" -d "$payload" > /dev/null; then
+    echo "Nest eco command failed" >&2
+    return 1
+  fi
+  _verify_mutation "$device_path" eco "$mode" || return
 
   echo "Set $room eco to ${mode}"
 }
@@ -407,14 +723,11 @@ cmd_snapshot() {
   fi
 
   weather=$(_get_all_weather)
-  local cielo mysa
-  cielo=$(_get_cielo_status)
-  mysa=$(_get_mysa_status)
   ts=$(date -u +%FT%TZ)
   today=$(date +%Y-%m-%d)
 
   _build_structure_map
-  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" CIELO_JSON="$cielo" MYSA_JSON="$mysa" python3 -c "
+  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" python3 -c "
 import json, sys, os
 data = json.load(sys.stdin)
 ts = os.environ['SNAP_TS']
@@ -459,65 +772,6 @@ for d in data.get('devices', []):
         'setpoint_c': round(set_c, 2),
         'setpoint_f': round(set_c * 9/5 + 32, 1),
         'connectivity': conn,
-        'source': 'nest',
-    })
-# Inject Cielo devices (all at Crosstown)
-cielo_raw = os.environ.get('CIELO_JSON', '[]')
-try:
-    cielo_devices = json.loads(cielo_raw) if cielo_raw else []
-except Exception:
-    cielo_devices = []
-for cd in cielo_devices:
-    env = cd.get('latEnv', {})
-    action = cd.get('latestAction', {})
-    c_temp_f = env.get('temp', 0)
-    c_humidity = env.get('humidity', 0)
-    c_mode = action.get('mode', '?')
-    c_power = action.get('power', 'off')
-    hvac_map = {'heat': 'HEATING', 'cool': 'COOLING', 'auto': 'AUTO', 'fan': 'FAN', 'dry': 'DRY'}
-    c_hvac = hvac_map.get(c_mode, 'ON') if c_power == 'on' else 'OFF'
-    c_set_f = float(action.get('temp', 0))
-    c_name = cd.get('deviceName', 'Unknown')
-    c_status = cd.get('deviceStatus', 0)
-    snapshot['rooms'].append({
-        'room': '19Crosstown ' + c_name,
-        'temp_f': round(c_temp_f, 1),
-        'temp_c': round((c_temp_f - 32) * 5 / 9, 2),
-        'humidity': c_humidity,
-        'mode': c_mode,
-        'hvac': c_hvac,
-        'eco': 'OFF',
-        'setpoint_f': round(c_set_f, 1),
-        'setpoint_c': round((c_set_f - 32) * 5 / 9, 2),
-        'connectivity': 'ONLINE' if c_status == 1 else 'OFFLINE',
-        'source': 'cielo',
-    })
-# Inject Mysa baseboard heaters (all at Crosstown)
-mysa_raw = os.environ.get('MYSA_JSON', '{}')
-try:
-    mysa_data = json.loads(mysa_raw) if mysa_raw else {}
-except Exception:
-    mysa_data = {}
-for md in mysa_data.get('devices', []):
-    m_name = md.get('name', 'Unknown')
-    m_temp_f = md.get('temp_f') or md.get('sensor_temp_f') or 0
-    m_humidity = md.get('humidity', 0)
-    m_set_f = md.get('setpoint_f', 0)
-    m_duty = md.get('duty_pct', 0)
-    m_hvac = 'HEATING' if m_duty > 0 else 'OFF'
-    snapshot['rooms'].append({
-        'room': '19Crosstown ' + m_name,
-        'temp_f': round(m_temp_f, 1),
-        'temp_c': round((m_temp_f - 32) * 5 / 9, 2),
-        'humidity': m_humidity,
-        'mode': 'heat' if m_duty > 0 else 'off',
-        'hvac': m_hvac,
-        'eco': 'OFF',
-        'setpoint_f': round(m_set_f, 1),
-        'setpoint_c': round((m_set_f - 32) * 5 / 9, 2),
-        'connectivity': 'ONLINE',
-        'duty_pct': m_duty,
-        'source': 'mysa',
     })
 print(json.dumps(snapshot))
 " <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"
@@ -533,13 +787,14 @@ cmd_history() {
   local hours="${1:-24}" room_filter="${2:-}"
   mkdir -p "$HISTORY_DIR"
 
-  python3 -c "
+  NEST_HISTORY_HOURS="$hours" NEST_HISTORY_ROOM="$room_filter" \
+    NEST_HISTORY_DIR_PATH="$HISTORY_DIR" python3 -c "
 import json, sys, os
 from datetime import datetime, timedelta, timezone
 
-hours = int('$hours')
-room_filter = '$room_filter'.lower()
-history_dir = '$HISTORY_DIR'
+hours = int(os.environ['NEST_HISTORY_HOURS'])
+room_filter = os.environ['NEST_HISTORY_ROOM'].lower()
+history_dir = os.environ['NEST_HISTORY_DIR_PATH']
 cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
 # Collect snapshots from recent daily files
@@ -696,12 +951,117 @@ Commands:
   dashboard start|stop      Start/stop dashboard LaunchAgent
   dashboard restart|status  Restart or check dashboard status
   raw                       Raw JSON device dump
+  reauth                    Re-run Google Device Access OAuth (e.g. to add a new camera)
   help                      Show this help
 
 Room names are fuzzy-matched (e.g. "bed" matches "Bedroom").
 History is stored in ~/.openclaw/nest-history/ as daily JSONL files.
 Weather data from Open-Meteo. Location: ~/.openclaw/nest-location.conf
 HELP
+}
+
+cmd_reauth() {
+  # Re-run Google Device Access OAuth consent to add newly-paired Nest devices.
+  # Required whenever a device is added in the Google Home app after initial setup —
+  # SDM only exposes devices that were ticked on the consent screen at grant time.
+  #
+  # Two-step (non-interactive) flow so it works fine over SSH/`!` shell-out:
+  #   1) `nest reauth`             → prints the consent URL
+  #   2) `nest reauth <code-or-redirect-url>` → exchanges code for tokens
+  local client_id client_secret project_id redirect_uri code resp
+  local refresh_token access_token input="${1:-}"
+
+  client_id=$(_nest_credential NEST_CLIENT_ID)
+  client_secret=$(_nest_credential NEST_CLIENT_SECRET)
+  project_id=$(_nest_credential NEST_PROJECT_ID)
+  redirect_uri="${NEST_REAUTH_REDIRECT_URI:-https://www.google.com}"
+
+  if [[ -z "$client_id" || -z "$project_id" || -z "$client_secret" ]]; then
+    echo "Missing client_id, client_secret, or project_id from the protected cache" >&2
+    echo "Run openclaw-refresh-secrets --interactive before retrying" >&2
+    exit 1
+  fi
+
+  if [[ -z "$input" ]]; then
+    cat <<EOF
+1) Open this URL in a browser. On the consent screen, tick EVERY device you
+   want SDM to see — both previously-authorized AND any newly-added ones.
+   Anything left unticked becomes invisible to the API.
+
+   https://nestservices.google.com/partnerconnections/${project_id}/auth?redirect_uri=${redirect_uri}&access_type=offline&prompt=consent&client_id=${client_id}&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fsdm.service
+
+2) After consenting, the browser will redirect to a URL like:
+     ${redirect_uri}/?code=<LONG_CODE>&scope=...
+
+3) Run:  nest reauth '<that-redirect-URL-or-bare-code>'
+EOF
+    return 0
+  fi
+
+  # Extract code from full URL or accept bare code
+  if [[ "$input" == *"code="* ]]; then
+    code="${input#*code=}"
+    code="${code%%&*}"
+  else
+    code="$input"
+  fi
+
+  if [[ -z "$code" ]]; then
+    echo "No code provided" >&2
+    exit 1
+  fi
+
+  echo "Exchanging code for tokens..."
+  if ! resp=$(curl -sS --fail-with-body -X POST "https://www.googleapis.com/oauth2/v4/token" \
+    -d "client_id=${client_id}" \
+    -d "client_secret=${client_secret}" \
+    -d "code=${code}" \
+    -d "grant_type=authorization_code" \
+    --data-urlencode "redirect_uri=${redirect_uri}"); then
+    echo "Failed to exchange the Nest authorization code" >&2
+    return 1
+  fi
+
+  local token_pair
+  if ! token_pair=$(printf '%s' "$resp" | python3 -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    sys.exit(1)
+if not isinstance(data, dict) or "error" in data:
+    sys.exit(1)
+refresh = data.get("refresh_token")
+access = data.get("access_token")
+if not all(isinstance(value, str) and value and not any(char.isspace() for char in value) for value in (refresh, access)):
+    sys.exit(1)
+sys.stdout.write(refresh + "\t" + access)
+' 2>/dev/null); then
+    echo "Failed to obtain a Nest refresh token" >&2
+    return 1
+  fi
+  IFS=$'\t' read -r refresh_token access_token <<< "$token_pair"
+
+  mkdir -p "$CACHE_DIR"
+  _write_private_value_file "$CACHE_DIR/refresh_token" "$refresh_token"
+  _write_private_value_file "$CACHE_DIR/access_token" "$access_token"
+
+  echo "✓ New refresh_token + access_token saved to $CACHE_DIR"
+  echo "  (Update 1Password 'Google Nest' item's refresh_token field if you"
+  echo "   want it in the combined cache, run openclaw-refresh-secrets --interactive.)"
+  echo
+  echo "Visible devices now:"
+  _api GET /devices | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for d in data.get('devices', []):
+    t = d['type'].split('.')[-1]
+    name = d['parentRelations'][0].get('displayName') if d.get('parentRelations') else '?'
+    custom = d['traits'].get('sdm.devices.traits.Info', {}).get('customName') or ''
+    print(f'  {t:14}  {name:20}  {custom}')
+"
 }
 
 cmd_camera_snap() {
@@ -712,15 +1072,17 @@ cmd_camera_snap() {
   # Find camera device ID
   local data camera_id
   data=$(_api GET /devices)
-  camera_id=$(python3 -c "
+  camera_id=$(NEST_CAMERA_QUERY="$room" python3 -c "
 import json, sys
-query = '$room'.lower()
+import os
+query = os.environ['NEST_CAMERA_QUERY'].lower()
 data = json.load(sys.stdin)
 for d in data.get('devices', []):
-    if 'CAMERA' not in d.get('type', ''):
+    if 'CAMERA' not in d.get('type', '') and 'DOORBELL' not in d.get('type', ''):
         continue
-    room = d.get('parentRelations', [{}])[0].get('displayName', '').lower()
-    if query in room:
+    room_name = d.get('parentRelations', [{}])[0].get('displayName', '').lower()
+    custom_name = d.get('traits', {}).get('sdm.devices.traits.Info', {}).get('customName', '').lower()
+    if query in room_name or (custom_name and query in custom_name):
         print(d['name'].split('/')[-1])
         break
 " <<< "$data")
@@ -745,12 +1107,23 @@ cmd_raw() {
 case "${1:-help}" in
   status)           cmd_status ;;
   weather)          cmd_weather ;;
-  set)              cmd_set "${2:?room required}" "${3:?temperature required}" ;;
-  mode)             cmd_mode "${2:?room required}" "${3:?mode required}" ;;
+  set)
+    [[ "$#" -eq 3 ]] || { echo "Usage: nest set <room> <temp°F>" >&2; exit 2; }
+    cmd_set "$2" "$3"
+    ;;
+  mode)
+    [[ "$#" -eq 3 ]] || { echo "Usage: nest mode <room> <HEAT|OFF>" >&2; exit 2; }
+    cmd_mode "$2" "$3"
+    ;;
   eco)
-    room="${2:?room required}"
+    [[ "$#" -ge 2 && "$#" -le 3 ]] || { echo "Usage: nest eco <room> [on|off]" >&2; exit 2; }
+    room="$2"
     toggle="${3:-on}"
-    [[ "$toggle" == "off" ]] && cmd_eco "$room" "OFF" || cmd_eco "$room" "MANUAL_ECO"
+    case "$toggle" in
+      on)  cmd_eco "$room" "MANUAL_ECO" ;;
+      off) cmd_eco "$room" "OFF" ;;
+      *)   echo "Usage: nest eco <room> [on|off]" >&2; exit 2 ;;
+    esac
     ;;
   camera)
     case "${2:-}" in
@@ -762,6 +1135,7 @@ case "${1:-help}" in
   history)          cmd_history "${2:-24}" "${3:-}" ;;
   dashboard)        cmd_dashboard "${2:-open}" ;;
   raw)              cmd_raw ;;
+  reauth)           cmd_reauth "${2:-}" ;;
   help|--help|-h)   cmd_help ;;
   *)                echo "Unknown command: $1. Run 'nest help'." >&2; exit 1 ;;
 esac
