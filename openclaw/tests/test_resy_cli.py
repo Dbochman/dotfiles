@@ -35,9 +35,11 @@ class FakeSession:
     def __init__(self, outcomes: list[object]):
         self.outcomes = list(outcomes)
         self.calls = 0
+        self.call_kwargs: list[dict[str, object]] = []
 
     def request(self, *_args: object, **_kwargs: object) -> FakeResponse:
         self.calls += 1
+        self.call_kwargs.append(dict(_kwargs))
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -107,6 +109,75 @@ class ResyCliTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertEqual(session.calls, 1)
 
+    def test_booking_deadline_callback_runs_after_limiter_before_send(self) -> None:
+        module = self.load_module(RESY_CACHE_ONLY="1")
+        session = FakeSession([FakeResponse(payload={"ok": True})])
+        api = self.api_with_session(module, session)
+        events = []
+        api.limiter = types.SimpleNamespace(wait=lambda: events.append("waited"))
+
+        def reject_expired() -> None:
+            self.assertEqual(events, ["waited"])
+            events.append("checked")
+            raise RuntimeError("expired")
+
+        api._pre_mutation_check = reject_expired
+        with self.assertRaisesRegex(RuntimeError, "expired"):
+            api._request("POST", "/3/book", auth_required=False, data={})
+
+        self.assertEqual(events, ["waited", "checked"])
+        self.assertEqual(session.calls, 0)
+
+    def test_booking_guard_precedes_limiter_and_fresh_headers(self) -> None:
+        module = self.load_module(RESY_CACHE_ONLY="1")
+        session = FakeSession(
+            [
+                FakeResponse(payload={"reservations": []}),
+                FakeResponse(payload={"ok": True}),
+            ]
+        )
+        api = self.api_with_session(module, session)
+        events = []
+        api._ensure_auth = lambda: events.append("auth-ready")
+        api.limiter = module.RateLimiter()
+        api._headers = lambda: events.append("headers") or {}
+        api._pre_mutation_check = lambda: events.append("deadline")
+
+        def live_guard() -> None:
+            events.append("guarded")
+            self.assertEqual(api.limiter.reserved_slots, 2)
+            api._restaurant_snipe_final_guard = True
+            try:
+                api._request("GET", "/3/user/reservations", auth_required=False)
+            finally:
+                api._restaurant_snipe_final_guard = False
+            self.assertEqual(api.limiter.reserved_slots, 1)
+
+        api._pre_booking_guard = live_guard
+
+        result = api._request("POST", "/3/book", data={})
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            events,
+            ["auth-ready", "guarded", "headers", "headers", "deadline"],
+        )
+        self.assertEqual(api.limiter.reserved_slots, 0)
+        self.assertEqual(len(api.limiter.timestamps), 2)
+        self.assertEqual(session.calls, 2)
+
+    def test_final_guard_request_is_single_attempt_and_never_redirects(self) -> None:
+        module = self.load_module(RESY_CACHE_ONLY="1")
+        for outcome in (module.requests.ConnectionError("lost response"), FakeResponse(429)):
+            with self.subTest(outcome=outcome):
+                session = FakeSession([outcome])
+                api = self.api_with_session(module, session)
+                api._restaurant_snipe_final_guard = True
+                with self.assertRaises(SystemExit):
+                    api._request("GET", "/3/user/reservations", auth_required=False)
+                self.assertEqual(session.calls, 1)
+                self.assertIs(session.call_kwargs[0]["allow_redirects"], False)
+
     def test_booking_401_and_rate_limit_are_never_retried(self) -> None:
         module = self.load_module(RESY_CACHE_ONLY="1")
         for status_code in (401, 429):
@@ -116,6 +187,19 @@ class ResyCliTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     api._request("POST", "/3/book", data={})
                 self.assertEqual(session.calls, 1)
+                self.assertIs(session.call_kwargs[0]["allow_redirects"], False)
+
+    def test_booking_redirects_are_disabled_and_reported_unknown(self) -> None:
+        module = self.load_module(RESY_CACHE_ONLY="1")
+        for status_code in (307, 308):
+            with self.subTest(status_code=status_code):
+                session = FakeSession([FakeResponse(status_code)])
+                api = self.api_with_session(module, session)
+                with self.assertRaises(SystemExit) as raised:
+                    api._request("POST", "/3/book", auth_required=False, data={})
+                self.assertEqual(raised.exception.code, 2)
+                self.assertEqual(session.calls, 1)
+                self.assertIs(session.call_kwargs[0]["allow_redirects"], False)
 
     def test_non_booking_transport_failure_retains_single_retry(self) -> None:
         module = self.load_module(RESY_CACHE_ONLY="1")

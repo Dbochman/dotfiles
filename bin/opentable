@@ -120,22 +120,47 @@ class RateLimiter:
         self.min_interval = min_interval
         self.max_per_minute = max_per_minute
         self.timestamps = deque()
+        self._reserved_slots = 0
+
+    def _acquire_capacity(self, count):
+        if not 1 <= count <= self.max_per_minute:
+            raise ValueError("invalid rate-limit reservation")
+        while True:
+            now = time.time()
+            while self.timestamps and now - self.timestamps[0] >= 60:
+                self.timestamps.popleft()
+            delay = 0.0
+            overflow = len(self.timestamps) + count - self.max_per_minute
+            if overflow > 0:
+                delay = max(delay, self.timestamps[overflow - 1] + 60 - now)
+            if self.timestamps:
+                delay = max(delay, self.timestamps[-1] + self.min_interval - now)
+            if delay <= 0:
+                break
+            log.info("Rate limit: sleeping %.1fs", delay)
+            time.sleep(delay)
+        reserved_at = time.time()
+        self.timestamps.extend([reserved_at] * count)
+
+    def reserve(self, count):
+        if self._reserved_slots:
+            raise RuntimeError("rate-limit reservation already active")
+        self._acquire_capacity(count)
+        self._reserved_slots = count
+
+    @property
+    def reserved_slots(self):
+        return self._reserved_slots
+
+    def cancel_reservation(self):
+        # Capacity remains counted conservatively even if a guarded pair aborts.
+        self._reserved_slots = 0
 
     def wait(self):
-        now = time.time()
-        while self.timestamps and now - self.timestamps[0] > 60:
-            self.timestamps.popleft()
-        if len(self.timestamps) >= self.max_per_minute:
-            sleep_until = self.timestamps[0] + 60
-            wait_time = sleep_until - now
-            if wait_time > 0:
-                log.info("Rate limit: sleeping %.1fs (max/min)", wait_time)
-                time.sleep(wait_time)
-        if self.timestamps:
-            elapsed = now - self.timestamps[-1]
-            if elapsed < self.min_interval:
-                time.sleep(self.min_interval - elapsed)
-        self.timestamps.append(time.time())
+        if self._reserved_slots:
+            self._reserved_slots -= 1
+            return
+        self._acquire_capacity(1)
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +247,8 @@ class OpenTableCredentials:
 class OpenTableAPI:
     """OpenTable mobile API client using bearer token auth."""
 
+    PRE_MUTATION_CHECK_CONTRACT = 2
+
     def __init__(self):
         self.creds = OpenTableCredentials()
         self.limiter = RateLimiter()
@@ -236,6 +263,24 @@ class OpenTableAPI:
         }
 
     def _request(self, method, path, **kwargs):
+        is_booking_request = (
+            method.upper() == "POST" and path == "/api/v3/reservation/book"
+        )
+        is_final_guard_request = bool(
+            getattr(self, "_restaurant_snipe_final_guard", False)
+        )
+        if is_booking_request:
+            pre_booking_guard = getattr(self, "_pre_booking_guard", None)
+            if callable(pre_booking_guard):
+                self.limiter.reserve(2)
+                try:
+                    pre_booking_guard()
+                except BaseException:
+                    self.limiter.cancel_reservation()
+                    raise
+                if self.limiter.reserved_slots != 1:
+                    self.limiter.cancel_reservation()
+                    raise RuntimeError("booking guard did not consume its reserved request slot")
         self.limiter.wait()
         url = f"{MOBILE_API_URL}{path}"
         headers = self._headers()
@@ -246,10 +291,29 @@ class OpenTableAPI:
         if HAS_CURL_CFFI:
             req_kwargs["impersonate"] = "chrome"
         req_kwargs.update(kwargs)
+        if is_booking_request or is_final_guard_request:
+            req_kwargs["allow_redirects"] = False
+
+        if is_booking_request:
+            pre_mutation_check = getattr(self, "_pre_mutation_check", None)
+            if callable(pre_mutation_check):
+                pre_mutation_check()
 
         try:
             resp = requests.request(method, url, **req_kwargs)
         except Exception as e:
+            if is_booking_request:
+                log.error("Booking request transport failure; outcome unknown")
+                print(
+                    "Error: Booking request outcome is unknown; do not retry. "
+                    "Reconcile in OpenTable before taking any further action.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            if is_final_guard_request:
+                log.error("Final live reservation guard transport failure")
+                print("Error: Final live reservation check failed.", file=sys.stderr)
+                sys.exit(1)
             log.error("Network error: %s", e)
             time.sleep(5)
             try:
@@ -259,6 +323,19 @@ class OpenTableAPI:
                 print(f"Error: Network request failed: {e2}", file=sys.stderr)
                 sys.exit(1)
 
+        if is_booking_request and 300 <= resp.status_code < 400:
+            log.error("Booking request returned a redirect; outcome unknown")
+            print(
+                "Error: Booking request outcome is unknown after a redirect; "
+                "do not retry. Reconcile in OpenTable before taking any further action.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if is_final_guard_request and 300 <= resp.status_code < 400:
+            log.error("Final live reservation guard returned a redirect")
+            print("Error: Final live reservation check failed.", file=sys.stderr)
+            sys.exit(1)
+
         if resp.status_code == 401:
             log.error("Auth error 401 — token expired")
             self.creds.clear("auth_token")
@@ -266,7 +343,11 @@ class OpenTableAPI:
             print(AUTH_REFRESH_CHECKLIST, file=sys.stderr)
             sys.exit(1)
 
-        if resp.status_code == 429:
+        if (
+            resp.status_code == 429
+            and not is_booking_request
+            and not is_final_guard_request
+        ):
             for attempt, delay in enumerate([5, 10, 20], 1):
                 log.warning("Rate limited (429), backing off %ds (attempt %d)", delay, attempt)
                 time.sleep(delay)

@@ -13,6 +13,7 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import uuid
@@ -22,8 +23,13 @@ from pathlib import Path
 
 REPO = Path.home() / "repos" / "financial-dashboard"
 PYTHON = REPO / "venv" / "bin" / "python3"
-OP_TOKEN_FILE = Path.home() / ".openclaw" / ".env-token"
 LOCK_PATH = Path.home() / ".openclaw" / "financial-dashboard" / ".weekly-scrape.lock"
+FINANCE_CREDENTIAL_CACHE = (
+    Path.home()
+    / ".openclaw"
+    / "financial-dashboard"
+    / "scraper-credentials.json"
+)
 PINCHTAB_INSTANCE_HELPER = Path.home() / ".openclaw" / "bin" / "pinchtab-headless-instance"
 COMMAND_TIMEOUT_SECONDS = 420
 PROFILE_PREFLIGHT_TIMEOUT_SECONDS = 45
@@ -41,6 +47,14 @@ class WrapperInterrupted(Exception):
 
 class RunLockError(Exception):
     """The protected singleton lock could not be opened or acquired."""
+
+
+class CredentialCacheError(Exception):
+    """The dedicated finance credential cache is absent or malformed."""
+
+    def __init__(self, missing_profiles=()):
+        super().__init__("finance credential cache unavailable")
+        self.missing_profiles = tuple(sorted(missing_profiles))
 
 
 _ACTIVE_PROCESS = None
@@ -65,9 +79,38 @@ class Source:
     name: str
     scrape_args: tuple[str, ...]
     import_args: tuple[str, ...]
-    op_item: str | None = None
+    credential_profile: str | None = None
     reauth_args: tuple[str, ...] | None = None
     mortgage_source: str | None = None
+
+
+FINANCE_CREDENTIAL_KEYS = {
+    "eversource": (
+        "FINANCE_EVERSOURCE_USERNAME",
+        "FINANCE_EVERSOURCE_PASSWORD",
+    ),
+    "national_grid": (
+        "FINANCE_NATIONAL_GRID_USERNAME",
+        "FINANCE_NATIONAL_GRID_PASSWORD",
+    ),
+    "bwsc": (
+        "FINANCE_BWSC_USERNAME",
+        "FINANCE_BWSC_PASSWORD",
+    ),
+    "pennymac": (
+        "FINANCE_PENNYMAC_USERNAME",
+        "FINANCE_PENNYMAC_PASSWORD",
+    ),
+    "boa": (
+        "FINANCE_BOA_USERNAME",
+        "FINANCE_BOA_PASSWORD",
+    ),
+}
+FINANCE_CREDENTIAL_ENV_KEYS = frozenset(
+    key
+    for pair in FINANCE_CREDENTIAL_KEYS.values()
+    for key in pair
+)
 
 
 SOURCES = (
@@ -80,35 +123,35 @@ SOURCES = (
         "eversource",
         ("scrape_eversource.py", "--headless", "--merge"),
         ("update_data.py", "import-json-utilities"),
-        "www.eversource.com",
+        "eversource",
         ("scrape_eversource.py", "--re-auth", "--headless"),
     ),
     Source(
         "national_grid_electric",
         ("scrape_national_grid_electric.py", "--headless", "--merge"),
         ("update_data.py", "import-json-electric-cabin"),
-        "login.nationalgridus.com",
+        "national_grid",
         ("scrape_national_grid_electric.py", "--re-auth", "--headless"),
     ),
     Source(
         "national_grid_gas",
         ("scrape_national_grid.py", "--headless", "--merge"),
         ("update_data.py", "import-json-gas"),
-        "login.nationalgridus.com",
+        "national_grid",
         ("scrape_national_grid.py", "--re-auth", "--headless"),
     ),
     Source(
         "bwsc",
         ("scrape_bwsc.py", "--headless", "--merge"),
         ("update_data.py", "import-json-water"),
-        "umaxcustomerportalprod.b2clogin.com",
+        "bwsc",
         ("scrape_bwsc.py", "--re-auth", "--headless"),
     ),
     Source(
         "pennymac",
         ("scrape_mortgage.py", "--lender", "pennymac", "--headless", "--merge"),
         ("update_data.py", "import-json-pennymac-mortgage"),
-        "PennyMac",
+        "pennymac",
         ("scrape_mortgage.py", "--lender", "pennymac", "--re-auth", "--headless"),
         "pennymac",
     ),
@@ -298,22 +341,70 @@ def run_command(arguments, env, timeout=COMMAND_TIMEOUT_SECONDS):
     )
 
 
-def run_op_read(item, field, env):
-    completed = _run_captured(
-        ["op", "read", f"op://OpenClaw/{item}/{field}"],
-        env,
-        30,
-    )
-    value = completed.stdout.strip()
-    return value if completed.returncode == 0 and value else None
+def scrub_child_environment(parent_env):
+    """Remove credential material from every ordinary child environment."""
+    child_env = parent_env.copy()
+    child_env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+    child_env.pop("SCRAPER_USER", None)
+    child_env.pop("SCRAPER_PW", None)
+    for key in FINANCE_CREDENTIAL_ENV_KEYS:
+        child_env.pop(key, None)
+    return child_env
 
 
-def credentials_for(item, env, op_env=None):
-    credential_env = op_env or env
-    username = run_op_read(item, "username", credential_env)
-    password = run_op_read(item, "password", credential_env)
-    if not username or not password:
+def load_credential_store(path=None):
+    """Read the dedicated owner-only JSON cache without invoking a shell."""
+    cache_path = Path(path or FINANCE_CREDENTIAL_CACHE)
+    try:
+        parent_metadata = cache_path.parent.lstat()
+        metadata = cache_path.lstat()
+    except OSError as error:
+        raise CredentialCacheError(FINANCE_CREDENTIAL_KEYS) from error
+    if (
+        stat.S_ISLNK(parent_metadata.st_mode)
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.getuid()
+        or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+    ):
+        raise CredentialCacheError()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise CredentialCacheError()
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise CredentialCacheError() from error
+    if not isinstance(payload, dict) or set(payload) != set(FINANCE_CREDENTIAL_KEYS):
+        missing = set(FINANCE_CREDENTIAL_KEYS) - set(payload) if isinstance(payload, dict) else ()
+        raise CredentialCacheError(missing)
+
+    credential_store = {}
+    malformed = []
+    for profile in FINANCE_CREDENTIAL_KEYS:
+        values = payload.get(profile)
+        if not isinstance(values, dict) or set(values) != {"username", "password"}:
+            malformed.append(profile)
+            continue
+        username = values.get("username")
+        password = values.get("password")
+        if not isinstance(username, str) or not username or not isinstance(password, str) or not password:
+            malformed.append(profile)
+            continue
+        credential_store[profile] = (username, password)
+    if malformed:
+        raise CredentialCacheError(malformed)
+    return credential_store
+
+
+def credentials_for(profile, env, credential_store):
+    credentials = credential_store.get(profile)
+    if credentials is None:
         return None
+    username, password = credentials
     child_env = env.copy()
     child_env["SCRAPER_USER"] = username
     child_env["SCRAPER_PW"] = password
@@ -368,13 +459,17 @@ def guarded_import_args(source, run_id):
     return (*source.import_args, "--require-run-id", run_id)
 
 
-def run_standard_source(source, run_id, env, op_env=None):
+def run_standard_source(source, run_id, env, credential_store=None):
     scrape_args = with_run_id(source.scrape_args, run_id, source.mortgage_source)
     scrape = run_command(scrape_args, env)
     reauth_status = "not_needed"
 
     if scrape.returncode != 0 and source.reauth_args and is_auth_failure(scrape):
-        credential_env = credentials_for(source.op_item, env, op_env)
+        credential_env = credentials_for(
+            source.credential_profile,
+            env,
+            credential_store or {},
+        )
         if credential_env is None:
             reauth_status = "credentials_unavailable"
         else:
@@ -426,7 +521,7 @@ def parse_boa_reauth_status(output):
     return "reauth_failed"
 
 
-def run_boa(run_id, env, op_env=None):
+def run_boa(run_id, env, credential_store=None):
     scrape_args = (
         "scrape_mortgage.py", "--lender", "boa", "--headless", "--merge",
         "--run-id", run_id,
@@ -441,7 +536,7 @@ def run_boa(run_id, env, op_env=None):
         )
         verify_status = parse_boa_verify_status(verified.output)
         if verify_status == "not_authenticated":
-            credential_env = credentials_for("Bank of America", env, op_env)
+            credential_env = credentials_for("boa", env, credential_store or {})
             if credential_env is None:
                 reauth_status = "credentials_unavailable"
             else:
@@ -493,38 +588,44 @@ def dry_run_plan():
     print(json.dumps({"status": "dry_run", "sources": plan}, sort_keys=True))
 
 
+def credential_preflight(parent_env):
+    env = scrub_child_environment(parent_env)
+    try:
+        credential_store = load_credential_store()
+    except CredentialCacheError as error:
+        result = {
+            "status": "preflight_failed",
+            "reason": "credential_cache_unavailable",
+        }
+        if error.missing_profiles:
+            result["missing_profiles"] = list(error.missing_profiles)
+        return env, {}, result
+    return env, credential_store, {
+        "status": "preflight_ok",
+        "credential_profiles": sorted(credential_store),
+    }
+
+
 def _run_locked():
-    if not REPO.is_dir() or not PYTHON.is_file() or not OP_TOKEN_FILE.is_file():
+    if not REPO.is_dir() or not PYTHON.is_file():
         print(json.dumps({"status": "preflight_failed"}))
         return 1
 
-    try:
-        token = OP_TOKEN_FILE.read_text().strip()
-    except OSError:
-        print(json.dumps({"status": "preflight_failed"}))
+    env, credential_store, preflight = credential_preflight(os.environ)
+    if preflight["status"] != "preflight_ok":
+        print(json.dumps(preflight, sort_keys=True))
         return 1
-    if not token:
-        print(json.dumps({"status": "preflight_failed"}))
-        return 1
-    env = os.environ.copy()
-    env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
-    env.pop("SCRAPER_USER", None)
-    env.pop("SCRAPER_PW", None)
-    op_env = env.copy()
-    op_env["OP_SERVICE_ACCOUNT_TOKEN"] = token
     boa_profile_preflight = ensure_boa_profile(env)
     run_id = str(uuid.uuid4())
     results = []
     for source in SOURCES:
-        result = run_standard_source(source, run_id, env, op_env)
+        result = run_standard_source(source, run_id, env, credential_store)
         results.append(result)
         print(json.dumps({"event": "source_complete", **result}, sort_keys=True), flush=True)
-    boa_result = run_boa(run_id, env, op_env)
+    boa_result = run_boa(run_id, env, credential_store)
     boa_result["profile_preflight"] = boa_profile_preflight
     results.append(boa_result)
     print(json.dumps({"event": "source_complete", **boa_result}, sort_keys=True), flush=True)
-    op_env.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
-
     status = "ok" if all(result_ok(result) for result in results) else "failed"
     print(json.dumps({"status": status, "run_id": run_id, "results": results}, sort_keys=True))
     return 0 if status == "ok" else 1
@@ -534,6 +635,13 @@ def main():
     if sys.argv[1:] == ["--dry-run"]:
         dry_run_plan()
         return 0
+    if sys.argv[1:] == ["--preflight"]:
+        if not REPO.is_dir() or not PYTHON.is_file():
+            print(json.dumps({"status": "preflight_failed"}))
+            return 1
+        _, _, preflight = credential_preflight(os.environ)
+        print(json.dumps(preflight, sort_keys=True))
+        return 0 if preflight["status"] == "preflight_ok" else 1
     if sys.argv[1:]:
         print(json.dumps({"status": "invalid_arguments"}))
         return 2

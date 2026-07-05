@@ -98,10 +98,28 @@ seed/cache. Truly public, non-household configuration may remain tracked and
 does not belong in this cache. Use the general identity keys for GWS and contact
 identity; use service-specific keys only for the named service.
 
-Vault-backed values require an `OP_REF_<CACHE_KEY>` exact-field reference in
+General-cache vault-backed values require an `OP_REF_<CACHE_KEY>` exact-field reference in
 the seed. This includes `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`,
 `OPENCLAW_GATEWAY_TOKEN`, the Cielo and Star Market username/password pairs,
 the Plaid client and environment secrets, and all four `NEST_*` fields.
+
+The dedicated weekly finance cache uses these exact-field references:
+
+- `FINANCE_EVERSOURCE_USERNAME` / `FINANCE_EVERSOURCE_PASSWORD`;
+- `FINANCE_NATIONAL_GRID_USERNAME` / `FINANCE_NATIONAL_GRID_PASSWORD`;
+- `FINANCE_BWSC_USERNAME` / `FINANCE_BWSC_PASSWORD`;
+- `FINANCE_PENNYMAC_USERNAME` / `FINANCE_PENNYMAC_PASSWORD`; and
+- `FINANCE_BOA_USERNAME` / `FINANCE_BOA_PASSWORD`.
+
+The finance references are optional for an unrelated general-cache refresh but
+must be configured as a complete ten-field group. When complete, the refresh
+helper writes them only to the dedicated owner-only mode-`0600` JSON file at
+`~/.openclaw/financial-dashboard/scraper-credentials.json`; they are never
+written to the gateway-exported `.secrets-cache`. The two National Grid
+scrapers intentionally share one pair. The weekly finance helper reads this
+file directly, removes any stale finance names from ordinary child
+environments, and injects one pair as `SCRAPER_USER` / `SCRAPER_PW` only for a
+guarded re-authentication child. It never reads `.env-token` or invokes `op`.
 
 The helper:
 
@@ -111,9 +129,12 @@ The helper:
 - calls only `op read` for configured exact fields;
 - never prints field references or values;
 - requires every configured field before changing the cache;
-- shell-quotes every value, writes a mode-`0600` temporary file, fsyncs it, and
-  atomically renames it over the cache; and
-- leaves the previous cache byte-for-byte intact on any missing field or error.
+- shell-quotes every general-cache value, writes mode-`0600` temporary files,
+  fsyncs them, and atomically renames the general and optional dedicated
+  finance cache independently; and
+- leaves both previous caches byte-for-byte intact on field-read, validation,
+  or temporary-write errors; each cache is then installed with its own atomic
+  rename.
 
 Restart only services that need rotated values after a successful refresh.
 

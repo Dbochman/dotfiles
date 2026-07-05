@@ -65,6 +65,18 @@ VAULT_KEYS = [
     "NEST_REFRESH_TOKEN",
     "NEST_PROJECT_ID",
 ]
+FINANCE_VAULT_KEYS = [
+    "FINANCE_EVERSOURCE_USERNAME",
+    "FINANCE_EVERSOURCE_PASSWORD",
+    "FINANCE_NATIONAL_GRID_USERNAME",
+    "FINANCE_NATIONAL_GRID_PASSWORD",
+    "FINANCE_BWSC_USERNAME",
+    "FINANCE_BWSC_PASSWORD",
+    "FINANCE_PENNYMAC_USERNAME",
+    "FINANCE_PENNYMAC_PASSWORD",
+    "FINANCE_BOA_USERNAME",
+    "FINANCE_BOA_PASSWORD",
+]
 
 class SecretCacheTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -74,6 +86,12 @@ class SecretCacheTests(unittest.TestCase):
         self.home = self.root / "home"
         self.fake_bin = self.root / "bin"
         self.cache = self.home / ".openclaw" / ".secrets-cache"
+        self.finance_cache = (
+            self.home
+            / ".openclaw"
+            / "financial-dashboard"
+            / "scraper-credentials.json"
+        )
         self.seed = self.home / ".openclaw" / ".secrets-refresh.env"
         self.op_log = self.root / "op.log"
         self.http_log = self.root / "http.log"
@@ -126,7 +144,12 @@ esac
     def seed_values(self) -> dict[str, str]:
         values = {key: f"fake-cache-{key.lower()}" for key in CACHE_ONLY_KEYS}
         values["TRYFI_PASSWORD"] = "fake cache value with spaces '$HOME # !"
-        values.update({f"OP_REF_{key}": f"ref://{key}" for key in VAULT_KEYS})
+        values.update(
+            {
+                f"OP_REF_{key}": f"ref://{key}"
+                for key in VAULT_KEYS + FINANCE_VAULT_KEYS
+            }
+        )
         return values
 
     def environment(self, **overrides: str) -> dict[str, str]:
@@ -136,6 +159,7 @@ esac
                 "HOME": str(self.home),
                 "PATH": f"{self.fake_bin}:{env['PATH']}",
                 "OPENCLAW_SECRETS_CACHE": str(self.cache),
+                "OPENCLAW_FINANCE_SECRETS_CACHE": str(self.finance_cache),
                 "OPENCLAW_SECRETS_SEED": str(self.seed),
                 "NEST_CACHE_DIR": str(self.nest_cache),
                 "FAKE_OP_LOG": str(self.op_log),
@@ -254,10 +278,21 @@ esac
         text = self.cache.read_text(encoding="utf-8")
         self.assertNotIn("OP_REF_", text)
         self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
-        expected_calls = [f"read:ref://{key}" for key in VAULT_KEYS]
+        expected_calls = [
+            f"read:ref://{key}"
+            for key in VAULT_KEYS + FINANCE_VAULT_KEYS
+        ]
         self.assertEqual(self.op_log.read_text().splitlines(), expected_calls)
         self.assertNotIn("fake-vault-", refresh_output)
         self.assertNotIn("ref://", refresh_output)
+        self.assertEqual(stat.S_IMODE(self.finance_cache.stat().st_mode), 0o600)
+        finance_payload = json.loads(self.finance_cache.read_text(encoding="utf-8"))
+        self.assertEqual(
+            set(finance_payload),
+            {"eversource", "national_grid", "bwsc", "pennymac", "boa"},
+        )
+        for key in FINANCE_VAULT_KEYS:
+            self.assertNotIn(key, text)
 
         expected = self.seed_values()["TRYFI_PASSWORD"]
         check = subprocess.run(
@@ -276,9 +311,13 @@ esac
     def test_refresh_failure_preserves_last_good_cache_byte_for_byte(self) -> None:
         self._write_assignments(self.seed, self.seed_values())
         original = b"LAST_GOOD='preserve me exactly'\n"
+        original_finance = b'{"last_good": true}\n'
         self.cache.parent.mkdir(parents=True, exist_ok=True)
         self.cache.write_bytes(original)
         self.cache.chmod(0o600)
+        self.finance_cache.parent.mkdir(parents=True, exist_ok=True)
+        self.finance_cache.write_bytes(original_finance)
+        self.finance_cache.chmod(0o600)
 
         returncode, refresh_output = self.run_refresh_in_pty(
             "--interactive",
@@ -287,8 +326,46 @@ esac
 
         self.assertNotEqual(returncode, 0)
         self.assertEqual(self.cache.read_bytes(), original)
+        self.assertEqual(self.finance_cache.read_bytes(), original_finance)
         self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
         self.assertNotIn("fake-vault-", refresh_output)
+
+    def test_general_refresh_does_not_require_or_export_finance_references(self) -> None:
+        values = self.seed_values()
+        for key in FINANCE_VAULT_KEYS:
+            values.pop(f"OP_REF_{key}")
+        self._write_assignments(self.seed, values)
+
+        returncode, output = self.run_refresh_in_pty("--interactive")
+
+        self.assertEqual(returncode, 0, output)
+        self.assertFalse(self.finance_cache.exists())
+        cache_text = self.cache.read_text(encoding="utf-8")
+        for key in FINANCE_VAULT_KEYS:
+            self.assertNotIn(key, cache_text)
+        self.assertEqual(
+            self.op_log.read_text().splitlines(),
+            [f"read:ref://{key}" for key in VAULT_KEYS],
+        )
+
+    def test_partial_finance_references_preserve_both_caches(self) -> None:
+        values = self.seed_values()
+        values.pop("OP_REF_FINANCE_BOA_PASSWORD")
+        self._write_assignments(self.seed, values)
+        original = b"LAST_GOOD='general'\n"
+        original_finance = b'{"last_good": true}\n'
+        self.cache.parent.mkdir(parents=True, exist_ok=True)
+        self.cache.write_bytes(original)
+        self.cache.chmod(0o600)
+        self.finance_cache.parent.mkdir(parents=True, exist_ok=True)
+        self.finance_cache.write_bytes(original_finance)
+        self.finance_cache.chmod(0o600)
+
+        returncode, output = self.run_refresh_in_pty("--interactive")
+
+        self.assertNotEqual(returncode, 0, output)
+        self.assertEqual(self.cache.read_bytes(), original)
+        self.assertEqual(self.finance_cache.read_bytes(), original_finance)
 
     def test_refresh_requires_confirmation_and_secure_seed_without_calling_op(self) -> None:
         self._write_assignments(self.seed, self.seed_values(), mode=0o644)
@@ -360,7 +437,7 @@ esac
         source = REFRESH.read_text(encoding="utf-8")
         self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN=", source)
         self.assertNotIn("op item get", source)
-        for key in CACHE_ONLY_KEYS + VAULT_KEYS:
+        for key in CACHE_ONLY_KEYS + VAULT_KEYS + FINANCE_VAULT_KEYS:
             literal_assignment = re.compile(
                 rf"^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(?![\"']?\$)",
                 re.MULTILINE,

@@ -23,6 +23,38 @@ SPEC.loader.exec_module(weekly_financial_scrape)
 class WeeklyFinancialScrapeTests(unittest.TestCase):
     RUN_ID = "11111111-2222-3333-4444-555555555555"
     BASE_ENV = {"PATH": "/usr/bin:/bin", "SAFE_PARENT_VALUE": "present"}
+    CREDENTIAL_STORE = {
+        profile: (f"private-{profile}-user", f"private-{profile}-password")
+        for profile in weekly_financial_scrape.FINANCE_CREDENTIAL_KEYS
+    }
+
+    @classmethod
+    def credential_parent_environment(cls):
+        environment = {
+            **cls.BASE_ENV,
+            "OP_SERVICE_ACCOUNT_TOKEN": "stale-parent-token",
+            "SCRAPER_USER": "stale-parent-user",
+            "SCRAPER_PW": "stale-parent-password",
+        }
+        for profile, (username_key, password_key) in (
+            weekly_financial_scrape.FINANCE_CREDENTIAL_KEYS.items()
+        ):
+            username, password = cls.CREDENTIAL_STORE[profile]
+            environment[username_key] = username
+            environment[password_key] = password
+        return environment
+
+    @classmethod
+    def write_credential_cache(cls, path, store=None, mode=0o600):
+        store = cls.CREDENTIAL_STORE if store is None else store
+        payload = {
+            profile: {"username": username, "password": password}
+            for profile, (username, password) in store.items()
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.chmod(0o700)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        path.chmod(mode)
 
     @staticmethod
     def source_named(name):
@@ -113,32 +145,211 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                     )
                 )
 
-    def test_credentials_use_op_environment_but_return_token_free_child_environment(self):
-        op_env = {
-            **self.BASE_ENV,
-            "OP_SERVICE_ACCOUNT_TOKEN": "private-service-token",
-        }
-        with patch.object(
-            weekly_financial_scrape,
-            "run_op_read",
-            side_effect=["private-user", "private-password"],
-        ) as op_read:
-            credential_env = weekly_financial_scrape.credentials_for(
-                "Fixture Item",
-                self.BASE_ENV,
-                op_env,
-            )
+    def test_credentials_are_scoped_to_one_reauth_child(self):
+        credential_env = weekly_financial_scrape.credentials_for(
+            "eversource",
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+        )
 
         self.assertEqual(
-            op_read.call_args_list,
-            [
-                call("Fixture Item", "username", op_env),
-                call("Fixture Item", "password", op_env),
-            ],
+            credential_env["SCRAPER_USER"],
+            self.CREDENTIAL_STORE["eversource"][0],
         )
-        self.assertEqual(credential_env["SCRAPER_USER"], "private-user")
-        self.assertEqual(credential_env["SCRAPER_PW"], "private-password")
+        self.assertEqual(
+            credential_env["SCRAPER_PW"],
+            self.CREDENTIAL_STORE["eversource"][1],
+        )
         self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", credential_env)
+        for key in weekly_financial_scrape.FINANCE_CREDENTIAL_ENV_KEYS:
+            self.assertNotIn(key, credential_env)
+
+    def test_dedicated_cache_is_loaded_and_parent_credentials_are_scrubbed(self):
+        parent = self.credential_parent_environment()
+        with tempfile.TemporaryDirectory() as tempdir:
+            cache = Path(tempdir) / "scraper-credentials.json"
+            self.write_credential_cache(cache)
+            store = weekly_financial_scrape.load_credential_store(cache)
+
+        child = weekly_financial_scrape.scrub_child_environment(parent)
+
+        self.assertEqual(store, self.CREDENTIAL_STORE)
+        self.assertEqual(child["SAFE_PARENT_VALUE"], "present")
+        for key in (
+            "OP_SERVICE_ACCOUNT_TOKEN",
+            "SCRAPER_USER",
+            "SCRAPER_PW",
+            *weekly_financial_scrape.FINANCE_CREDENTIAL_ENV_KEYS,
+        ):
+            self.assertNotIn(key, child)
+
+    def test_national_grid_sources_share_only_the_national_grid_profile(self):
+        electric = self.source_named("national_grid_electric")
+        gas = self.source_named("national_grid_gas")
+
+        self.assertEqual(electric.credential_profile, "national_grid")
+        self.assertEqual(gas.credential_profile, "national_grid")
+        credential_env = weekly_financial_scrape.credentials_for(
+            electric.credential_profile,
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+        )
+        self.assertEqual(
+            credential_env["SCRAPER_USER"],
+            self.CREDENTIAL_STORE["national_grid"][0],
+        )
+        self.assertNotEqual(
+            credential_env["SCRAPER_USER"],
+            self.CREDENTIAL_STORE["eversource"][0],
+        )
+
+    def test_dedicated_cache_rejects_insecure_symlinked_and_malformed_files(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            cache = root / "scraper-credentials.json"
+            self.write_credential_cache(cache, mode=0o644)
+            with self.assertRaises(weekly_financial_scrape.CredentialCacheError):
+                weekly_financial_scrape.load_credential_store(cache)
+
+            cache.chmod(0o600)
+            link = root / "linked-credentials.json"
+            link.symlink_to(cache)
+            with self.assertRaises(weekly_financial_scrape.CredentialCacheError):
+                weekly_financial_scrape.load_credential_store(link)
+
+            cache.write_text('{"unexpected": true}', encoding="utf-8")
+            cache.chmod(0o600)
+            with self.assertRaises(weekly_financial_scrape.CredentialCacheError):
+                weekly_financial_scrape.load_credential_store(cache)
+
+    def test_safe_preflight_fails_before_any_child_when_cache_is_incomplete(self):
+        incomplete_store = dict(self.CREDENTIAL_STORE)
+        incomplete_store.pop("boa")
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo = Path(tempdir) / "repo"
+            python = repo / "venv" / "bin" / "python3"
+            cache = Path(tempdir) / "scraper-credentials.json"
+            python.parent.mkdir(parents=True)
+            python.touch()
+            self.write_credential_cache(cache, incomplete_store)
+            with (
+                patch.object(sys, "argv", [str(MODULE_PATH), "--preflight"]),
+                patch.object(weekly_financial_scrape, "REPO", repo),
+                patch.object(weekly_financial_scrape, "PYTHON", python),
+                patch.object(
+                    weekly_financial_scrape,
+                    "FINANCE_CREDENTIAL_CACHE",
+                    cache,
+                ),
+                patch.object(weekly_financial_scrape, "run_command") as run_command,
+                patch.object(weekly_financial_scrape, "ensure_boa_profile") as profile,
+                patch.object(weekly_financial_scrape.subprocess, "Popen") as popen,
+                patch.dict(
+                    os.environ,
+                    self.credential_parent_environment(),
+                    clear=True,
+                ),
+            ):
+                returncode, output = self.capture_stdout(weekly_financial_scrape.main)
+
+        self.assertEqual(returncode, 1)
+        self.assertEqual(
+            json.loads(output),
+            {
+                "status": "preflight_failed",
+                "reason": "credential_cache_unavailable",
+                "missing_profiles": ["boa"],
+            },
+        )
+        run_command.assert_not_called()
+        profile.assert_not_called()
+        popen.assert_not_called()
+
+    def test_safe_preflight_succeeds_without_browser_or_data_access(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo = Path(tempdir) / "repo"
+            python = repo / "venv" / "bin" / "python3"
+            cache = Path(tempdir) / "scraper-credentials.json"
+            python.parent.mkdir(parents=True)
+            python.touch()
+            self.write_credential_cache(cache)
+            with (
+                patch.object(sys, "argv", [str(MODULE_PATH), "--preflight"]),
+                patch.object(weekly_financial_scrape, "REPO", repo),
+                patch.object(weekly_financial_scrape, "PYTHON", python),
+                patch.object(
+                    weekly_financial_scrape,
+                    "FINANCE_CREDENTIAL_CACHE",
+                    cache,
+                ),
+                patch.object(weekly_financial_scrape, "run_command") as run_command,
+                patch.object(weekly_financial_scrape, "ensure_boa_profile") as profile,
+                patch.object(weekly_financial_scrape.subprocess, "Popen") as popen,
+                patch.dict(
+                    os.environ,
+                    self.credential_parent_environment(),
+                    clear=True,
+                ),
+            ):
+                returncode, output = self.capture_stdout(weekly_financial_scrape.main)
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(
+            json.loads(output),
+            {
+                "status": "preflight_ok",
+                "credential_profiles": sorted(self.CREDENTIAL_STORE),
+            },
+        )
+        run_command.assert_not_called()
+        profile.assert_not_called()
+        popen.assert_not_called()
+
+    def test_scheduled_run_fails_before_profile_or_scrapers_when_cache_is_incomplete(self):
+        incomplete_store = dict(self.CREDENTIAL_STORE)
+        incomplete_store.pop("pennymac")
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo = Path(tempdir) / "repo"
+            python = repo / "venv" / "bin" / "python3"
+            cache = Path(tempdir) / "scraper-credentials.json"
+            python.parent.mkdir(parents=True)
+            python.touch()
+            self.write_credential_cache(cache, incomplete_store)
+            with (
+                patch.object(weekly_financial_scrape, "REPO", repo),
+                patch.object(weekly_financial_scrape, "PYTHON", python),
+                patch.object(
+                    weekly_financial_scrape,
+                    "FINANCE_CREDENTIAL_CACHE",
+                    cache,
+                ),
+                patch.object(weekly_financial_scrape, "run_command") as run_command,
+                patch.object(weekly_financial_scrape, "ensure_boa_profile") as profile,
+                patch.object(weekly_financial_scrape.subprocess, "Popen") as popen,
+                patch.dict(
+                    os.environ,
+                    self.credential_parent_environment(),
+                    clear=True,
+                ),
+            ):
+                returncode, output = self.capture_stdout(
+                    weekly_financial_scrape._run_locked
+                )
+
+        self.assertEqual(returncode, 1)
+        self.assertEqual(json.loads(output)["missing_profiles"], ["pennymac"])
+        run_command.assert_not_called()
+        profile.assert_not_called()
+        popen.assert_not_called()
+
+    def test_weekly_helper_has_no_runtime_op_or_token_file_path(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+
+        self.assertNotIn(".env-token", source)
+        self.assertNotIn("op://", source)
+        self.assertNotIn("run_op_read", source)
+        self.assertNotIn('["op", "read"', source)
 
     def test_boa_profile_preflight_acquires_only_the_finance_profile(self):
         completed = weekly_financial_scrape.CommandResult(
@@ -197,10 +408,6 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
 
     def test_standard_source_reauths_once_for_recognized_auth_failure(self):
         source = self.source_named("eversource")
-        op_env = {
-            **self.BASE_ENV,
-            "OP_SERVICE_ACCOUNT_TOKEN": "private-service-token",
-        }
         responses = iter(
             [
                 weekly_financial_scrape.CommandResult(
@@ -235,10 +442,14 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                 source,
                 self.RUN_ID,
                 self.BASE_ENV,
-                op_env,
+                self.CREDENTIAL_STORE,
             )
 
-        credentials.assert_called_once_with(source.op_item, self.BASE_ENV, op_env)
+        credentials.assert_called_once_with(
+            source.credential_profile,
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+        )
         self.assertEqual(
             [arguments for arguments, _ in calls],
             [
@@ -325,10 +536,6 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         self.assertEqual(result["import"], "skipped")
 
     def test_boa_reauths_only_for_exact_not_authenticated_status(self):
-        op_env = {
-            **self.BASE_ENV,
-            "OP_SERVICE_ACCOUNT_TOKEN": "private-service-token",
-        }
         responses = iter(
             [
                 weekly_financial_scrape.CommandResult(1, stderr="scrape failed"),
@@ -369,10 +576,14 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             result = weekly_financial_scrape.run_boa(
                 self.RUN_ID,
                 self.BASE_ENV,
-                op_env,
+                self.CREDENTIAL_STORE,
             )
 
-        credentials.assert_called_once_with("Bank of America", self.BASE_ENV, op_env)
+        credentials.assert_called_once_with(
+            "boa",
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+        )
         self.assertEqual(
             [arguments for arguments, _ in calls],
             [
@@ -779,9 +990,9 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         boa_calls = []
         profile_preflight_calls = []
 
-        def fake_boa(run_id, env, op_env=None):
+        def fake_boa(run_id, env, credential_store=None):
             events.append("boa")
-            boa_calls.append((run_id, dict(env), dict(op_env or {})))
+            boa_calls.append((run_id, dict(env), dict(credential_store or {})))
             return boa_result
 
         def fake_profile_preflight(env):
@@ -793,16 +1004,20 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             temp_path = Path(tempdir)
             repo = temp_path / "repo"
             python = repo / "venv" / "bin" / "python3"
-            token_file = temp_path / ".env-token"
+            cache = temp_path / "scraper-credentials.json"
             python.parent.mkdir(parents=True)
             python.touch()
-            token_file.write_text("private-service-token", encoding="utf-8")
+            self.write_credential_cache(cache)
 
             with (
                 patch.object(sys, "argv", [str(MODULE_PATH)]),
                 patch.object(weekly_financial_scrape, "REPO", repo),
                 patch.object(weekly_financial_scrape, "PYTHON", python),
-                patch.object(weekly_financial_scrape, "OP_TOKEN_FILE", token_file),
+                patch.object(
+                    weekly_financial_scrape,
+                    "FINANCE_CREDENTIAL_CACHE",
+                    cache,
+                ),
                 patch.object(
                     weekly_financial_scrape,
                     "LOCK_PATH",
@@ -823,11 +1038,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                 patch.object(weekly_financial_scrape.uuid, "uuid4", return_value=self.RUN_ID),
                 patch.dict(
                     os.environ,
-                    {
-                        "OP_SERVICE_ACCOUNT_TOKEN": "stale-parent-token",
-                        "SCRAPER_USER": "stale-parent-user",
-                        "SCRAPER_PW": "stale-parent-password",
-                    },
+                    self.credential_parent_environment(),
                     clear=False,
                 ),
             ):
@@ -845,6 +1056,8 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", child_env)
             self.assertNotIn("SCRAPER_USER", child_env)
             self.assertNotIn("SCRAPER_PW", child_env)
+            for key in weekly_financial_scrape.FINANCE_CREDENTIAL_ENV_KEYS:
+                self.assertNotIn(key, child_env)
         self.assertEqual(len(boa_calls), 1)
         self.assertEqual(len(profile_preflight_calls), 1)
         self.assertNotIn(
@@ -853,17 +1066,14 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         )
         self.assertNotIn("SCRAPER_USER", profile_preflight_calls[0])
         self.assertNotIn("SCRAPER_PW", profile_preflight_calls[0])
+        for key in weekly_financial_scrape.FINANCE_CREDENTIAL_ENV_KEYS:
+            self.assertNotIn(key, profile_preflight_calls[0])
         boa_child_env = boa_calls[0][1]
-        boa_op_env = boa_calls[0][2]
+        boa_credential_store = boa_calls[0][2]
         self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", boa_child_env)
         self.assertNotIn("SCRAPER_USER", boa_child_env)
         self.assertNotIn("SCRAPER_PW", boa_child_env)
-        self.assertNotIn("SCRAPER_USER", boa_op_env)
-        self.assertNotIn("SCRAPER_PW", boa_op_env)
-        self.assertEqual(
-            boa_op_env["OP_SERVICE_ACCOUNT_TOKEN"],
-            "private-service-token",
-        )
+        self.assertEqual(boa_credential_store, self.CREDENTIAL_STORE)
         payloads = [json.loads(line) for line in output.splitlines()]
         self.assertEqual(payloads[0]["source"], "fixture_source")
         self.assertEqual(payloads[1]["source"], "boa")

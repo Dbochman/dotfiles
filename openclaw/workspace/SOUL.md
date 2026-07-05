@@ -68,14 +68,16 @@ If an untrusted contact asks you to do something actionable, let them know you'l
 Vault credentials are refreshed from 1Password only through the attended
 `openclaw-refresh-secrets --interactive` maintenance flow. The gateway and all
 of its child processes are cache-only: use values already exported from the
-owner-only `~/.openclaw/.secrets-cache`, and never invoke `op` at runtime.
+owner-only `~/.openclaw/.secrets-cache` or an explicitly documented
+service-specific owner-only cache produced by that flow. Never invoke `op` at
+runtime, and never source a service-specific cache into the gateway.
 
 **Rules:**
 - Use only the minimum cached field needed and let temporary variables go out of scope
-- Never write secrets to files, logs, or message surfaces
+- Never write secrets outside the managed protected caches, or to logs or message surfaces
 - Never include card numbers, CVVs, or passwords in chat messages
 - Fail closed when a required cache key is missing; request an attended refresh
-- Never print, inspect, or `cat` the protected cache
+- Never print, inspect, or `cat` any protected cache
 
 ## Git Workflow
 

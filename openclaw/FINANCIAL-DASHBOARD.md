@@ -146,7 +146,7 @@ refresh historical Plaid descriptions after an upgrade, run
 
 ## Scraper Pipeline (Tier 1 / 2 / BoA Fallback)
 
-Seven scrapers run weekly via `financial-scrape-0001`, which invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper. The helper takes a nonblocking singleton lock, preflights BoA's existing dedicated `finance` PinchTab profile, runs each child in a separately cleaned process group, captures child output privately, retries only recognized authentication failures, and imports only sources that succeeded during the current run. Each scraper writes its own `<source>_data.json`; `update_data.py import-json-*` upserts into `finance.db`.
+Seven scrapers run weekly via `financial-scrape-0001`, which invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper. The helper takes a nonblocking singleton lock, validates that all five protected finance credential profiles are present, preflights BoA's existing dedicated `finance` PinchTab profile, runs each child in a separately cleaned process group, captures child output privately, retries only recognized authentication failures, and imports only sources that succeeded during the current run. Each scraper writes its own `<source>_data.json`; `update_data.py import-json-*` upserts into `finance.db`.
 
 | # | Scraper | Tier | Mechanism | 1Password item (OpenClaw vault) | Property |
 |---|---------|------|-----------|----------------------------------|----------|
@@ -163,11 +163,27 @@ Seven scrapers run weekly via `financial-scrape-0001`, which invokes the determi
 ### How Tier 2 self-heal works
 
 When a Tier 2 scraper's session expires, the next `--headless` run exits with "Session expired and running in headless mode". The deterministic weekly helper then:
-1. Reads creds from `op://OpenClaw/<title>/{username,password}` (the Mini's service-account token only reaches the OpenClaw vault — see [[MEMORY:1Password access]]).
+1. Loads the five provider profiles from the dedicated owner-only mode-`0600` JSON cache at `~/.openclaw/financial-dashboard/scraper-credentials.json`, then selects only that provider's username/password pair. The attended refresh helper populated this file from exact `OP_REF_FINANCE_*` fields. The file is never sourced or exported by the gateway, and the cron process never reads `.env-token`, receives a service-account token, or invokes `op`.
 2. Runs `./venv/bin/python3 scrape_<name>.py --re-auth --headless`. This drives the login flow programmatically via Playwright, handles MFA where needed (PennyMac auto-fetches the 6-digit `PM-NNNNNNN` code from Julia's Gmail via `gws`), and saves `storage_state.json` in the scraper's `.NAME_session/` dir.
 3. Re-runs the normal scrape, which now finds fresh cookies and pulls data.
 
-The tracked helper is `~/dotfiles/openclaw/bin/weekly-financial-scrape.py` and is deployed mode `0755` to `~/.openclaw/bin/weekly-financial-scrape.py`; the cron prompt only invokes that runtime copy and reports its safe final status on failure.
+The helper rejects a missing, symlinked, non-regular, non-owner, non-`0600`, malformed, partial, or extra-profile cache. It also strips any stale `FINANCE_*`, `SCRAPER_*`, and `OP_SERVICE_ACCOUNT_TOKEN` values inherited from the parent. Only the one guarded re-authentication child receives `SCRAPER_USER` and `SCRAPER_PW`. The tracked helper is `~/dotfiles/openclaw/bin/weekly-financial-scrape.py` and is deployed mode `0755` to `~/.openclaw/bin/weekly-financial-scrape.py`; the cron prompt only invokes that runtime copy and reports its safe final status on failure. `--preflight` validates repository paths and credential-profile presence without starting PinchTab, a browser, scraper, or import.
+
+To roll out or rotate these pairs, add all ten corresponding
+`OP_REF_FINANCE_*` exact-field references to the owner-only mode-`0600`
+`~/.openclaw/.secrets-refresh.env`, run the newly deployed
+`openclaw-refresh-secrets --interactive`, then validate without browser or
+data access:
+
+```bash
+python3 ~/.openclaw/bin/weekly-financial-scrape.py --preflight
+```
+
+Success reports only the five profile names. Failure reports only missing
+profile names; neither path prints keys or values. The finance cache is read
+directly, so a gateway restart is not required for these pairs. Do not remove the legacy
+`.env-token` until a separate whole-machine reference audit confirms nothing
+else uses it, but this helper no longer reads it.
 
 Mortgage scrapes receive one UUID run ID per weekly execution. A successful atomic mode-`0600` JSON write includes safe scrape metadata (source, run ID, completion time, record count, and month coverage). The lender-specific import requires the same run ID and validates all metadata plus strict payment dates, IDs, finite numeric fields, positive payment totals, and nonnegative components before opening SQLite or triggering Redfin. Guarded imports upsert returned months and preserve older months absent from a partial API response. A failed, partial, stale, or schema-degraded scrape therefore cannot replace valid history.
 
@@ -228,7 +244,7 @@ Do not bootstrap or kickstart these labels during normal recovery. See
    human recovery in the Pinchtab Chrome window. Do not kill a
    still-authenticated Chrome process.
 
-For Tier 2 manual debugging (e.g. PennyMac credentials change): just run `--re-auth` with creds exported from `op read` — the same guarded re-auth command the helper uses.
+For Tier 2 manual debugging, use an attended exact-field 1Password workflow or a purpose-built cache reader that injects only the selected dedicated-cache profile into the exact `--re-auth` process. Never print the JSON cache, source it into the gateway, or call `op` from the helper, cron session, or any descendant process.
 
 ---
 

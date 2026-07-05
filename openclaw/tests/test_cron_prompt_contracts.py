@@ -98,6 +98,15 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertNotIn("datenight-jul-japanese", self.jobs)
         self.assertNotIn("doubledate-q3-jul-korean", self.jobs)
 
+    def test_weekly_finance_cron_requires_cache_only_credentials(self) -> None:
+        prompt = self.jobs["financial-scrape-0001"]["payload"]["message"]
+
+        self.assertIn("dedicated-cache-only credential scoping", prompt)
+        self.assertIn("must never read `.env-token`", prompt)
+        self.assertIn("invoke `op`", prompt)
+        self.assertIn("1Password service-account token", prompt)
+        self.assertIn("source finance credentials into the gateway environment", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -97,8 +97,9 @@ Examples:
   `ai.openclaw.oauth-refresh` LaunchAgent. If the refresh agent
   stops working, OAuth tokens age out and `openclaw` agent calls
   fail. Recovery: re-auth on laptop, scp to Mini.
-- `1password-cli` — used in `~/.openclaw/.env-token` chain. Cache-only
-  pattern reduces blast radius but version skew can break biometric.
+- `1password-cli` — used only by attended exact-field cache refreshes. No
+  LaunchAgent, cron job, or gateway child may read `.env-token` or invoke it;
+  version skew can still break attended biometric refresh.
 - Tailscale — the logged-in macOS app/network extension is the authoritative
   backend. `/opt/homebrew/bin/tailscale` is a source-controlled wrapper that
   executes the app-bundled CLI with `TAILSCALE_BE_CLI=1`, keeping the CLI and
@@ -274,7 +275,8 @@ For future macOS upgrades, retain the post-reboot verification:
 - Presence push: `stat -f '%Sm %N' ~/.openclaw/presence/crosstown-scan.json`
 - Tailscale CLI works: `tailscale status` (this is where the LocalAPI
   stale-port issue could re-trigger; see skill)
-- `~/.openclaw/.env-token` and other secret-cache files survived
+- `~/.openclaw/.secrets-refresh.env` and `.secrets-cache` survived; the legacy
+  `.env-token` is not part of the LaunchAgent/cron credential contract
 
 ## Audit cadence
 
