@@ -1,8 +1,8 @@
 ---
 name: restaurant-snipe
-description: Stage tightly scoped background reservation monitoring for OpenTable or Resy after the user explicitly preauthorizes the bounded scope. OpenTable is read-only until its adapter gains a live reservations lookup; Resy may auto-book after approval. Use when the user asks to watch for cancellations or auto-book a specific venue over a bounded period. Not for one-shot restaurant search, availability checks, attended bookings, or cancellations; use the platform skill for those.
-allowed-tools: Bash(restaurant-snipe:*)
-metadata: {"openclaw":{"emoji":"🎯","requires":{"bins":["python3","opentable","resy","restaurant-snipe"]}}}
+description: Stage tightly scoped background reservation monitoring for OpenTable or Resy after explicit bounded preauthorization. Resy may auto-book after approval; OpenTable remains notification-only until this runtime adapter integrates the deployed live reservations reader. Not for one-shot search, attended booking, or cancellation.
+allowed-tools: Bash(opentable-reservations:*) Bash(resy-read:*) Bash(restaurant-snipe:*)
+metadata: {"openclaw":{"emoji":"🎯","requires":{"bins":["opentable","opentable-reservations","pinchtab-headless-instance","python3","resy","resy-read","restaurant-snipe"]}}}
 ---
 
 # Restaurant Snipe
@@ -15,10 +15,12 @@ a live LaunchAgent.
 
 - Default to read-only availability monitoring. Auto-book only after the user
   explicitly approves the complete scope below in the current conversation.
-- OpenTable monitoring currently executes read-only because its adapter cannot
-  perform the required live existing-reservation check. Even a separately
-  approved, digest-bound `auto-book` scope must not create an attempt marker or call
-  the booking endpoint while that capability is absent.
+- OpenTable monitoring currently executes read-only because the snipe runtime
+  adapter does not invoke the deployed reservation reader at its mutation
+  boundary. The standalone reader supports a safe attended staging snapshot,
+  but it does not silently upgrade a staged snipe. Even a separately approved,
+  digest-bound `auto-book` scope must not create an attempt marker or call the
+  booking endpoint while that integration is absent.
 - Treat “watch,” “monitor,” or “snipe” alone as insufficient authorization to
   book. Do not infer missing values or reuse approval from another job.
 - Never put a 1Password token in a job, source `.env-token` or
@@ -56,9 +58,16 @@ staging.
 
 1. Load the appropriate platform skill, then resolve and verify the venue with
    its attended read-only `info` or `search` command.
-2. Review the booking account for existing reservations. Resy supports
-   `resy reservations --json`; for OpenTable, inspect My Reservations in an
-   attended authenticated session because the CLI has no reservations command.
+2. Review the booking account through its normalized read-only command:
+
+   ```bash
+   resy-read reservations
+   opentable-reservations --json
+   ```
+
+   Any command failure, incomplete account proof, malformed row, or
+   authentication uncertainty is unknown—not an empty reservations list—and
+   blocks staging.
 3. Save only normalized, non-secret facts to a temporary JSON file:
 
 ```json
@@ -109,8 +118,9 @@ restaurant-snipe stage \
 
 OpenTable may use digest-bound `auto-book` only after the user explicitly approves
 that mode, but its current adapter still downgrades matches to notified
-read-only results because it cannot perform the live account-reservations check
-required for mutation. The helper emits only `authorization.json` and a plist in the staging
+read-only results because it does not integrate the deployed account reader as
+the live pre-mutation guard required for mutation. The helper emits only
+`authorization.json` and a plist in the staging
 directory. Inspect both and summarize the approved venue, dates, party, time
 policy, declared booking mode, duration, expiry, and whether an existing conflict
 was found. Do not display the notification target.
@@ -132,8 +142,9 @@ The tracked runner performs one poll per LaunchAgent invocation:
   a PATH that excludes Homebrew `op`/`timeout`.
 - Immediately before any mutation, repeat the live reservations check. Missing,
   malformed, or failed lookup capability is never equivalent to an empty list.
-  OpenTable therefore reports a safe read-only match and keeps monitoring;
-  only an adapter with an explicit normalized live lookup may proceed.
+  The current OpenTable snipe adapter therefore reports a safe read-only match
+  and keeps monitoring; only an adapter explicitly wired to the normalized
+  live lookup may proceed.
 - Serialize all booking mutations through one account-wide lock and recheck
   cross-job receipts and unresolved attempt markers while holding it. An
   ambiguous attempt in any overlapping scope blocks other jobs pending review.

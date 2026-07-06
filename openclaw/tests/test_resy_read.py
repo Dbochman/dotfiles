@@ -87,12 +87,14 @@ esac
         self.assertNotIn("SECRET-CANCEL", reservations.stdout)
         self.assertIn("2099-08-15", reservations.stdout)
 
-    def test_skill_allows_standing_authorized_raw_booking(self) -> None:
+    def test_skill_routes_canonical_jobs_and_keeps_ad_hoc_booking_guarded(self) -> None:
         text = SKILL.read_text(encoding="utf-8")
         self.assertIn("allowed-tools: Bash(resy-read:*)", text)
         self.assertIn("Bash(resy:*)", text)
-        self.assertIn("standing user authorization", text)
-        self.assertIn("Do not pause for exact-venue confirmation", text)
+        self.assertIn("stop\nand use `restaurant-book`", text)
+        self.assertIn("this skill must not execute", text)
+        self.assertIn("Attended ad-hoc booking workflow", text)
+        self.assertNotIn("Do not pause for exact-venue confirmation", text)
         self.assertIn("RESY_CACHE_ONLY=1", text)
         self.assertIn("never retry it", text)
         self.assertIn("Cancellation always requires a fresh, explicit user request", text)

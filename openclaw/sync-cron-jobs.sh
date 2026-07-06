@@ -568,8 +568,8 @@ PY
 
       # Exit status alone cannot prove that a gateway update or doctor import
       # changed the executable store. Read both SQLite and the active Gateway
-      # back and compare every canonical definition field before reporting a
-      # successful deployment.
+      # back and compare their exact ID sets and every canonical definition
+      # field before reporting a successful deployment.
       if ! openclaw cron list --all --json > "$CRON_GATEWAY_SNAPSHOT" 2>/dev/null; then
         echo "Error: could not read the active Gateway cron definitions after deployment" >&2
         exit 1
@@ -689,6 +689,22 @@ except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
     print("Error: post-deploy cron definition verification could not read a valid store", file=sys.stderr)
     raise SystemExit(1) from exc
 
+desired_ids = set(desired)
+id_sets_match = True
+for label, actual in (("SQLite", sqlite_defs), ("Gateway", gateway)):
+    actual_ids = set(actual)
+    missing = sorted(desired_ids - actual_ids)
+    extra = sorted(actual_ids - desired_ids)
+    if missing or extra:
+        print(
+            f"Error: post-deploy {label} cron ID set mismatch: "
+            f"missing={missing}; extra={extra}",
+            file=sys.stderr,
+        )
+        id_sets_match = False
+if not id_sets_match:
+    raise SystemExit(1)
+
 for job_id, definition in desired.items():
     sqlite_definition = sqlite_defs.get(job_id)
     gateway_definition = gateway.get(job_id)
@@ -699,7 +715,7 @@ for job_id, definition in desired.items():
         print(f"Error: post-deploy Gateway cron definition mismatch: {job_id}", file=sys.stderr)
         raise SystemExit(1)
 
-print(f"Verified {len(desired)} cron definitions in SQLite and the active Gateway")
+print(f"Verified exact parity for {len(desired)} cron definitions in SQLite and the active Gateway")
 PY
       then
         exit 1

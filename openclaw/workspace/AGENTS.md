@@ -125,7 +125,7 @@ extension is connected to this agent.
 
 **Heartbeat** fires every 12h. Follow `HEARTBEAT.md` strictly — it's intentionally minimal to save tokens. If nothing needs attention, stay silent.
 
-**Cron jobs** handle scheduled tasks (email digests, health checks, bookings). They run in isolated sessions with precise timing. Use `openclaw cron list --all --json` for live SQLite-backed state; the canonical definitions are in `~/dotfiles/openclaw/cron/jobs.json`.
+**Cron jobs** handle scheduled tasks (email digests, health checks, bookings). They run in isolated sessions with precise timing. Use `openclaw cron list --all --json` for live SQLite-backed state; the canonical definitions are in `~/dotfiles/openclaw/cron/jobs.json`. Canonical restaurant one-shots additionally require the same job ID in `~/dotfiles/openclaw/cron/restaurant-booking-scopes.json`; keep the paired job and standing-authorization scope synchronized and deploy them together.
 
 **Rule of thumb:** Heartbeat = lightweight "am I alive" check. Cron = real work on a schedule. Don't duplicate cron work during heartbeats.
 

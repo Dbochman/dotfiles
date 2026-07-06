@@ -32,6 +32,7 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `.claude/hooks/` - Pre-tool hooks (no-rm safety, continuous learning)
 
 ### OpenClaw Operations
+- `openclaw/CRON-JOBS.md` - SQLite-backed cron lifecycle, one-shot safety, and canonical restaurant-coordinator runbook
 - `openclaw/DASHBOARDS.md` - Dashboard catalog, ports, data cadence, and service ownership
 - `openclaw/FINANCIAL-DASHBOARD.md` - Financial source, cache-only Plaid sync, and forecast-baseline contract
 - `openclaw/FORECAST-DASHBOARD.md` - Forecast service, current-day baseline application, and override rules

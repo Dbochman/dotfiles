@@ -90,7 +90,10 @@ To commit and push changes you've made:
 ~/dotfiles/openclaw/git-sync.sh both "describe what you changed"
 ```
 
-Use this after modifying workspace files (SOUL.md, MEMORY.md, etc.) or dotfiles (cron-jobs.json, skills, etc.) so your changes are backed up and synced.
+Use this after modifying workspace files (SOUL.md, MEMORY.md, etc.) or dotfiles
+(`openclaw/cron/jobs.json`, its paired
+`openclaw/cron/restaurant-booking-scopes.json`, skills, etc.) so your changes
+are backed up and synced.
 
 ## Vibe
 

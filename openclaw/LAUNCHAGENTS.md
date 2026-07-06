@@ -115,7 +115,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
-| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback uses an isolated managed headless PinchTab instance |
+| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's `default` profile |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
 ### Native iMessage Reboot Recovery
@@ -156,12 +156,15 @@ rate-limits retries rather than repeatedly killing Messages.
 
 ### Headless Browser Policy
 
-PinchTab defaults to headless mode on the Mini. Cielo fallback, OpenTable token
-refresh and booking, and Star Market grocery automation acquire isolated tabs
+PinchTab defaults to headless mode on the Mini. OpenTable token refresh,
+reservation reads, attended booking, coordinator discovery, Star Market
+grocery automation, and weekly finance automation acquire isolated tabs
 through `~/.openclaw/bin/pinchtab-headless-instance`. OpenTable uses the
-`opentable` profile, grocery uses `grocery`, and Cielo retains `default` for its
-attended reauthentication path. The helper refuses to navigate a visible
-PinchTab instance and stops only instances that it created.
+`opentable` profile, grocery uses `grocery`, and finance uses `finance`. The
+helper refuses to navigate a visible PinchTab instance and stops only instances
+that it created. Cielo does not use this helper: its fallback owns a separate
+direct headless lifecycle on `default` and retains its attended
+reauthentication path.
 The former viewing snooze is retired because scheduled browser work no longer
 needs the display. A visible browser is allowed only for an explicit,
 user-attended authentication flow such as Cielo reCAPTCHA recovery; see the
@@ -196,7 +199,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 
 | Label | Schedule | Program | Description |
 |-------|----------|---------|-------------|
-| `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles repo, deploys skills/wrappers to Mini |
+| `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles, deploys skills/wrappers plus the protected restaurant scope registry, reconciles cron, and verifies required restaurant skills through the active gateway |
 | `ai.openclaw.8sleep-snapshot` | Daily 6:50 AM | `8sleep-snapshot.sh` | Pre-captures last-night summaries to `/tmp/8sleep-{dylan,julia}-latest.txt` before morning briefings |
 | `ai.openclaw.finance-refresh` | Daily 6:15 AM | `finance-refresh.py` | Sequential cache-only Plaid and crypto refresh with retries and combined health; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |

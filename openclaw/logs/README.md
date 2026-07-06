@@ -20,6 +20,8 @@ Each service uses one of two patterns:
 |----------|---------|-------------|
 | `presence-detect.log` | `com.openclaw.presence-cabin` / `presence-crosstown` / `presence-receive` | Presence scan, receive, and evaluation summaries |
 | `vacancy-actions.log` | `com.openclaw.vacancy-actions` | Vacancy trigger actions (lights, thermostat, 8sleep, Roombas) |
+| `opentable.log` | OpenTable CLI | Safe request-path, status, and failure diagnostics; never provider tokens or raw responses |
+| `resy.log` | Resy CLI | Safe request-path, status, and failure diagnostics; never provider tokens or raw responses |
 
 ### Plist-Owned (stdout capture)
 
@@ -27,6 +29,7 @@ Each service uses one of two patterns:
 |----------|---------|-------------|
 | `dog-walk-listener.log` | `ai.openclaw.dog-walk-listener` | Dog walk detection (Fi GPS departure, multi-signal return) |
 | `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Cielo AC token refresh via pinchtab |
+| `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh; stdout and stderr share this file |
 | `~/Library/Logs/openclaw/gateway.log` | `ai.openclaw.gateway` | Current generated-service gateway output; the tracked recovery plist instead uses `~/.openclaw/logs/gateway.{log,err.log}` |
 | `nest-cron.log` | `ai.openclaw.nest-snapshot` | Nest thermostat snapshot cron |
 | `nest-dashboard.log` / `.err.log` | `ai.openclaw.nest-dashboard` | Nest dashboard HTTP server |
@@ -38,6 +41,11 @@ Each service uses one of two patterns:
 | `forecast-ledger-capture.log` / `.err.log` | `ai.openclaw.forecast-ledger-capture` | Daily aggregate Forecast observation capture; status metadata is stored beside the local ledger |
 | `dotfiles-pull.log` | `ai.openclaw.dotfiles-pull` | Daily dotfiles sync |
 | `home-state-snapshot.log` | `ai.openclaw.home-state-snapshot` | Daily home state snapshot (cat weights, sleep, doorbell) |
+
+The restaurant coordinator imports both provider modules in one Python
+process. Because the first root logging configuration wins, coordinator
+diagnostics can share one provider log; check both `resy.log` and
+`opentable.log` rather than assuming either file is provider-exclusive.
 
 ## Log Rotation
 

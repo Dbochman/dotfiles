@@ -10,6 +10,15 @@ Scripts in this directory are tracked in the dotfiles repo and deployed to Mini 
 scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 ```
 
+Per-file `scp` is only for an isolated helper with no paired artifacts. Never
+use it for the restaurant coordinator: that rollout includes wrappers, Python,
+provider readers, copied skills, the owner-only scope registry, cron
+definitions, and the gateway `PATH` contract. Use `dotfiles-pull.command` for
+the ordered, mode-correct rollout and its live gateway/cron verification. The
+initial installer can seed the coordinator files, copied skills, and protected
+scope on a new host, but it neither reconciles live cron nor runs the same
+active post-deploy checks.
+
 ## Scripts
 
 ### Gateway & Maintenance
@@ -67,7 +76,7 @@ scp openclaw/bin/<script> dylans-mac-mini:~/.openclaw/bin/<script>
 
 | Script | Description |
 |--------|-------------|
-| `dotfiles-pull.command` | Daily git pull of the dotfiles repo on Mini. Stashes local changes, pulls `--ff-only`, pops stash. Runs cron job sync after pull. Auto-closes Terminal window. Runs as a LaunchAgent via Terminal.app for git credential access. |
+| `dotfiles-pull.command` | Daily git pull and deployment on Mini. Stashes local changes, pulls `--ff-only`, restores the stash, copies skills/wrappers/scripts, atomically installs the protected restaurant scope registry, reconciles cron, activates a changed gateway wrapper, and verifies restaurant skills through the active gateway before succeeding. Auto-closes its Terminal window and runs via Terminal.app for git credential access. |
 
 ### Markdown Search (qmd)
 

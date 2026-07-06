@@ -2,7 +2,7 @@
 name: opentable
 description: Read upcoming OpenTable reservations or handle attended ad-hoc OpenTable availability and exact-approval booking. Use for OpenTable account reads, attended restaurant searches, or a user-confirmed one-off reservation; route canonical recurring date-night, double-date, and quarterly-group jobs to the restaurant-book skill instead.
 allowed-tools: Bash(opentable-book:*) Bash(opentable-reservations:*)
-metadata: {"openclaw":{"emoji":"O","requires":{"bins":["pinchtab","opentable-book","opentable-reservations"]}}}
+metadata: {"openclaw":{"emoji":"O","requires":{"bins":["opentable-book","opentable-reservations","pinchtab","pinchtab-headless-instance"]}}}
 ---
 
 # OpenTable Reservations
@@ -119,8 +119,9 @@ checkout data, booking URLs, cookies, or authentication tokens.
 1. For a canonical recurring date-night, double-date, or quarterly-group job, stop here and use `restaurant-book`; otherwise preview with `opentable-book "cuisine area" DATE TIME PARTY`
 2. Show the user every returned restaurant, location, date, time, party, seating, payment, cancellation, and no-show fact
 3. Continue only when `approvable` is `true`; if any detail is unsuitable or unknown, change the request and preview again
-4. After explicit approval of those exact facts, run `--confirm <approval-id>` with no other arguments
-5. If the renderer is unavailable, report that safe inspection is blocked and stop without mutation; do not silently switch providers
+4. After explicit approval, run `opentable-reservations --json` and stop if the complete account read fails or already contains a conflicting reservation
+5. Run `--confirm <approval-id>` with no other arguments
+6. If the renderer is unavailable, report that safe inspection is blocked and stop without mutation; do not silently switch providers
 
 For a specific restaurant, use its exact name and location as the search term.
 Do not switch to the direct CLI when the search is inconvenient or incomplete.
@@ -143,8 +144,10 @@ Do not switch to the direct CLI when the search is inconvenient or incomplete.
 ## Background monitoring
 
 Use the `restaurant-snipe` skill for cancellation monitoring, polling, or
-pre-authorized automatic booking. Do not create ad-hoc background loops from
-this skill.
+pre-authorized background work. Resy scopes may auto-book when explicitly
+authorized; the current OpenTable snipe adapter remains notification-only even
+though this skill has a standalone reservations reader. Do not create ad-hoc
+background loops from this skill.
 
 ## Notes
 

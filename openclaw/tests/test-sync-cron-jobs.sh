@@ -211,7 +211,23 @@ elif args[:2] == ["cron", "list"]:
             rows = connection.execute(
                 "SELECT job_json FROM cron_jobs ORDER BY job_id"
             ).fetchall()
-    print(json.dumps({"jobs": [json.loads(row[0]) for row in rows]}))
+    jobs = [json.loads(row[0]) for row in rows]
+    hidden_job_id = os.environ.get("FAKE_GATEWAY_HIDE_JOB_ID")
+    if hidden_job_id:
+        jobs = [job for job in jobs if job.get("id") != hidden_job_id]
+    extra_job_id = os.environ.get("FAKE_GATEWAY_EXTRA_JOB_ID")
+    if extra_job_id:
+        jobs.append({
+            "id": extra_job_id,
+            "name": "Gateway-only extra job",
+            "enabled": True,
+            "schedule": {"kind": "cron", "expr": "0 0 * * *"},
+            "sessionTarget": "isolated",
+            "wakeMode": "next-heartbeat",
+            "payload": {"kind": "agentTurn", "message": "extra"},
+            "delivery": {"mode": "none"},
+        })
+    print(json.dumps({"jobs": jobs}))
 else:
     raise SystemExit(1)
 PY
@@ -472,6 +488,67 @@ if deploy 2>/dev/null; then
   exit 1
 fi
 write_fake_openclaw
+
+# Exact parity must reject an extra SQLite definition even when the active
+# Gateway does not expose it.
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+import sqlite3
+
+live_path = os.path.expanduser("~/.openclaw/cron/jobs.json")
+sqlite_path = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
+job = {
+    "id": "extra-sqlite",
+    "name": "SQLite-only extra job",
+    "enabled": True,
+    "schedule": {"kind": "cron", "expr": "0 0 * * *"},
+    "sessionTarget": "isolated",
+    "wakeMode": "next-heartbeat",
+    "payload": {"kind": "agentTurn", "message": "extra"},
+    "delivery": {"mode": "none"},
+}
+with sqlite3.connect(sqlite_path) as connection:
+    connection.execute(
+        "INSERT INTO cron_jobs VALUES (?, ?, ?, ?, ?, ?)",
+        (live_path, job["id"], "{}", json.dumps(job), None, None),
+    )
+PY
+export FAKE_GATEWAY_HIDE_JOB_ID=extra-sqlite
+if PARITY_OUT=$(deploy 2>&1); then
+  echo "cron deployment accepted an extra SQLite definition" >&2
+  exit 1
+fi
+unset FAKE_GATEWAY_HIDE_JOB_ID
+if ! printf '%s\n' "$PARITY_OUT" | grep -q 'post-deploy SQLite cron ID set mismatch' || \
+   ! printf '%s\n' "$PARITY_OUT" | grep -q 'extra-sqlite'; then
+  echo "extra SQLite definition did not produce a useful parity error" >&2
+  printf '%s\n' "$PARITY_OUT" >&2
+  exit 1
+fi
+HOME="$TEST_HOME" python3 <<'PY'
+import os
+import sqlite3
+
+path = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
+with sqlite3.connect(path) as connection:
+    connection.execute("DELETE FROM cron_jobs WHERE job_id = 'extra-sqlite'")
+PY
+
+# Check the Gateway set independently; it may contain a stale in-memory job
+# that is absent from SQLite.
+export FAKE_GATEWAY_EXTRA_JOB_ID=extra-gateway
+if PARITY_OUT=$(deploy 2>&1); then
+  echo "cron deployment accepted an extra Gateway definition" >&2
+  exit 1
+fi
+unset FAKE_GATEWAY_EXTRA_JOB_ID
+if ! printf '%s\n' "$PARITY_OUT" | grep -q 'post-deploy Gateway cron ID set mismatch' || \
+   ! printf '%s\n' "$PARITY_OUT" | grep -q 'extra-gateway'; then
+  echo "extra Gateway definition did not produce a useful parity error" >&2
+  printf '%s\n' "$PARITY_OUT" >&2
+  exit 1
+fi
 
 # Successful exit codes are not enough: a no-op gateway/doctor pair must fail
 # the post-deploy SQLite/Gateway parity read-back.

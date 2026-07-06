@@ -31,15 +31,20 @@ enabled edits recalculate `nextRunAtMs`. The daily deployment runs at 6 AM; a
 manual `dotfiles-pull.command` deploys immediately. Deployment returns nonzero
 when protected identities are unavailable or SQLite normalization fails; a
 caller must never report those cases as a successful rollout. It also reads
-SQLite and the active Gateway back after reconciliation and rejects any
-canonical-field drift, so successful-but-no-op RPC responses cannot mask stale
-prompts.
+SQLite and the active Gateway back after reconciliation and requires both live
+ID sets to match the deployable canonical set exactly, then verifies every
+canonical field. Missing, extra, or field-drifted jobs therefore fail the
+deployment instead of letting a successful-but-no-op RPC mask stale work. The
+script reports extra IDs but does not silently remove them; inspect an unknown
+job before removing it through the cron API and the canonical file.
 
 ### CLI commands
 
 > - **Edit:** `openclaw cron edit <id> ...` — updates gateway memory and SQLite immediately; mirror the change in repo `jobs.json`.
 > - **Read:** `openclaw cron list --all --json` — authoritative for the current scheduler cycle.
 > - **Add / disable / enable / remove:** `openclaw cron add|disable|enable|rm` — also make the corresponding repo change.
+> - **Deploy canonical definitions:** `~/dotfiles/openclaw/sync-cron-jobs.sh deploy` — jobs only; it does not deploy restaurant scopes.
+> - **Snapshot live definitions:** `~/dotfiles/openclaw/sync-cron-jobs.sh save` — copies the current executable definition set with runtime state stripped and protected identities redacted, so already-consumed one-shots are normally absent. Always review the resulting diff; live drift is not automatically canonical intent.
 
 ### Every change still has two durable planes
 
@@ -196,7 +201,10 @@ successful-run tombstone requirements below.
    for an `ok` record at or after the one-shot's scheduled time. When found,
    it refuses to copy that completed repo definition back into the live file.
    This makes repeated daily or manual deployments safe. After verifying the
-   side effect, remove the stale definition from the repo for clarity:
+   side effect, remove the stale definition from the repo for clarity. For a
+   canonical restaurant job, remove the same ID from the paired scope registry
+   in the same commit so the completed standing authorization is no longer
+   callable:
 
    ```bash
    # Live state (normally already absent after deleteAfterRun)
@@ -204,12 +212,20 @@ successful-run tombstone requirements below.
 
    # Repo source of truth
    $EDITOR ~/dotfiles/openclaw/cron/jobs.json   # delete the entry
-   cd ~/dotfiles && git add openclaw/cron/jobs.json && git commit -m "..." && git push
+   # Restaurant jobs only: delete the same ID from this file too
+   $EDITOR ~/dotfiles/openclaw/cron/restaurant-booking-scopes.json
+   cd ~/dotfiles && git add openclaw/cron/jobs.json openclaw/cron/restaurant-booking-scopes.json
+   git commit -m "..." && git push
+
+   # Restaurant job/scope changes require the full deployment, not cron-only sync
+   ~/dotfiles/openclaw/bin/dotfiles-pull.command
    ```
 
    Do not delete the successful `cron_run_logs` row while the definition still
    exists in the repo. Removing that tombstone makes the next deployment
-   eligible to restore the one-shot.
+   eligible to restore the one-shot. Keep protected booking-attempt and receipt
+   state as investigation/idempotency evidence; removing the job and scope does
+   not authorize deleting that state.
 
 ## Historical incident record (legacy JSON / BlueBubbles era)
 
@@ -339,9 +355,10 @@ June 25 through the July 19 final. Each is an `at` job with
 `deleteAfterRun: true`, announces one read-only briefing to Dylan, and follows
 `openclaw/prompts/world-cup-2026-briefing.md`. Successful run history acts as a
 tombstone, so daily cron deployment skips consumed definitions even before
-they are removed from the repo. The June 25-27 runs each completed and
-delivered once; their definitions have been removed from the repo while their
-SQLite run history remains.
+they are removed from the repo. Successful past slots should be pruned from the
+canonical file during routine cleanup; SQLite run history remains the
+authoritative audit record, and only future or unresolved slots should remain
+deployable.
 
 The jobs use lightweight context, minimal thinking, the canonical
 `openai/gpt-5.5` model alias (resolved at runtime through the `openai-codex`
@@ -367,8 +384,11 @@ temporary definition.
 
 All current definitions use `payload.kind: agentTurn`; none sets a restrictive
 `toolsAllow` list. Prompts may still invoke shell commands through the exec
-tool. Isolated cron sessions do not have `~/.openclaw/bin` on `PATH`, so custom
-CLI commands must use explicit home-qualified paths.
+tool. The generated gateway service `PATH` includes `~/.openclaw/bin`, and the
+daily deployment verifies required restaurant wrappers against that live
+gateway environment. Canonical cron prompts still use explicit home-qualified
+paths so the reviewed definition is bound to the intended deployed wrapper
+rather than whichever same-named executable appears first in a future `PATH`.
 
 ### Canonical restaurant coordinator
 
@@ -387,6 +407,13 @@ optional structured minimum price tier, idempotency window, execution window,
 deterministic selection, and a maximum of one total mutation attempt. The
 December upscale scope requires provider price tier 3 or higher; missing or
 malformed price metadata is ineligible.
+
+`sync-cron-jobs.sh deploy` reconciles job definitions only; it does not install
+the protected scope registry. Both `dotfiles-pull.command` and the initial
+installer atomically install the scope file; only `dotfiles-pull.command` then
+reconciles cron and checks the active gateway skill catalog. After changing a
+restaurant job or scope, run the full dotfiles deployment. A manual cron-only
+sync can otherwise leave the live job paired with an older scope.
 
 The current standing scopes set deposit, prepayment, due-now, cancellation,
 and no-show fee caps to `$0`. A card guarantee is eligible only when the
@@ -415,6 +442,36 @@ that a reservation may exist and attended review is needed. The coordinator
 intentionally withholds Resy cancellation-capable tokens. A calendar event may
 include a confirmation/reference only when the safe coordinator result
 explicitly supplies one; the cron agent must never fetch, derive, or invent it.
+
+### Coordinator operator checks and recovery
+
+Use `plan` for a read-only end-to-end rehearsal; never invoke `run` as a health
+check because an active scope is authorization to make one live booking:
+
+```bash
+~/.openclaw/bin/restaurant-book plan --job-id <canonical-job-id>
+~/.openclaw/bin/opentable-reservations --json
+~/.openclaw/bin/resy-read reservations
+```
+
+Interpret coordinator statuses conservatively:
+
+| Status | Meaning and required action |
+|---|---|
+| `ready` | Read-only proposal from `plan`; no reservation exists yet |
+| `confirmed` | One new reservation was strictly confirmed and read back |
+| `already_reserved` | Stop; an account reservation or durable local receipt already covers the scope |
+| `no_availability` | Stop for this run; do not broaden the tracked scope |
+| `blocked`, `guard_unavailable`, or `busy` | Stop for this run; do not work around the coordinator or call a provider directly |
+| `unknown` or `manual_review_required` | A reservation may exist or durable state is unresolved; attended account review is required before any later action |
+
+Durable run state lives under
+`~/.openclaw/restaurant-snipes/state/cron-<job-id>/`. A
+`booking-attempt.json` deliberately blocks later overlapping work after an
+ambiguous boundary; `confirmed.json` is the token-free local receipt. Never
+delete or edit either merely to make a job run again. Reconcile both provider
+accounts first, preserve the files for investigation, and change state only as
+an attended recovery with a documented outcome.
 
 ## One-Shot Date Night Bookings
 
@@ -469,7 +526,7 @@ after a new `confirmed` reservation and only when no matching event exists.
 |----|---------|--------|
 | `datenight-jul-japanese` | 2026-07-05 | Completed successfully on July 1; run-history tombstone retained and canonical one-shot removed |
 | `doubledate-q3-jul-korean` | 2026-07-05 | Completed successfully on July 1; run-history tombstone retained and canonical one-shot removed |
-| `world-cup-briefing-2026-06-25` through `-06-27` | 2026-06-27 | Each completed once and delivered through native iMessage; SQLite run history retained |
+| `world-cup-briefing-2026-06-25` through `-07-05` | 2026-07-05 | Each completed once and delivered through native iMessage; SQLite run history retained |
 | `qd-booking-2026-07-june15` | 2026-06-21 | Completed job repeatedly redeployed; removed after tombstone hardening and duplicate cleanup |
 | `datenight-jun-tapas` | 2026-06-21 | Completed June one-shot |
 | `doubledate-q2-apr-thai` | 2026-06-21 | Completed Q2 one-shot |

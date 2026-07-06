@@ -1,6 +1,6 @@
 ---
 name: resy
-description: Search Resy, inspect availability, and book reservations, including intentionally surprise-driven date cron jobs with standing authorization. Use for Resy discovery, availability, reservations, and booking. Use restaurant-snipe only for bounded cancellation monitoring; never use this skill for unattended cancellation.
+description: Search Resy, inspect availability, and handle attended ad-hoc Resy booking. Route canonical recurring date-night, double-date, and quarterly-dinner jobs to restaurant-book, and use restaurant-snipe only for bounded cancellation monitoring. Never use this skill for unattended cancellation.
 allowed-tools: Bash(resy-read:*) Bash(resy:*)
 metadata: {"openclaw":{"emoji":"R","requires":{"bins":["resy-read","resy"]}}}
 ---
@@ -14,13 +14,16 @@ Use raw `resy` only when a booking is authorized. Never reproduce config,
 booking, reservation, authentication, or payment tokens in messages, calendar
 events, logs, or the final response.
 
+For a tracked canonical date-night, double-date, or quarterly-dinner job, stop
+and use `restaurant-book`. Its deployed scope is the standing authorization
+and its coordinator owns both providers; never reproduce that workflow with
+provider-specific Resy commands.
+
 ## Authorization model
 
-- A canonical date, double-date, or quarterly-dinner cron whose prompt says to
-  book is standing user authorization for one reservation within that prompt's
-  cuisine, location, date, time, party-size, and payment-policy constraints.
-  The venue choice is intentionally delegated: the surprise is part of the
-  experience. Do not pause for exact-venue confirmation.
+- A canonical date-night, double-date, or quarterly-dinner scope is standing
+  authorization only through `restaurant-book`; this skill must not execute
+  or reimplement that cron booking.
 - A direct user request to book may also delegate venue choice through broad
   constraints. A request only to search or check availability is not booking
   authorization.
@@ -39,13 +42,13 @@ resy-read reservations
 
 Venue IDs must be numeric. Dates use `YYYY-MM-DD`; party size is 1–20.
 
-## Authorized booking workflow
+## Attended ad-hoc booking workflow
 
-1. Run the prompt's idempotency check before searching. If a matching booking
-   or calendar event already exists, report it and stop.
-2. In an unattended run, export `RESY_CACHE_ONLY=1` for every raw `resy`
-   command. Never run `resy auth` or `op`; fail closed if cached authentication
-   is unavailable.
+1. Read current reservations before searching. If the authorized request would
+   duplicate an existing booking, report it and stop.
+2. In any OpenClaw or gateway child, export `RESY_CACHE_ONLY=1` for every raw
+   `resy` command. Never run `resy auth` or `op`; fail closed if cached
+   authentication is unavailable.
 3. Search and inspect availability within the authorized constraints:
 
    ```bash
@@ -64,18 +67,18 @@ Venue IDs must be numeric. Dates use `YYYY-MM-DD`; party size is 1–20.
 
 6. Read reservations back once and report only the human-readable booking
    facts. If the live call returns a transport error or any ambiguous result,
-   never retry it. Reconcile with `resy reservations` and report the outcome as
-   unknown if confirmation cannot be established.
+   never retry it. Reconcile with `resy-read reservations` and report the
+   outcome as unknown if confirmation cannot be established.
 
 ## Standing safeguards
 
 - One authorized reservation means one live booking attempt. Never pivot to a
   second booking after an attempted mutation.
 - Do not book a deposit, prepayment, nonrefundable reservation, or unfamiliar
-  cancellation/no-show fee unless the standing prompt explicitly permits it.
-  Venue uncertainty does not imply payment-term authorization.
-- Canonical booking one-shots must retain `deleteAfterRun: true`,
-  `delivery.mode: none`, a leading idempotency check, cache-only execution, and
-  the successful-run tombstone used by cron deployment.
+  cancellation/no-show fee unless the fresh user authorization explicitly
+  permits it. Venue uncertainty does not imply payment-term authorization.
+- Canonical booking one-shots are outside this skill. They must use
+  `restaurant-book` and retain its paired job/scope contract,
+  `deleteAfterRun: true`, `delivery.mode: none`, and successful-run tombstone.
 - The CLI enforces dates, party-size limits, and request rate limits. Do not
   bypass those checks.
