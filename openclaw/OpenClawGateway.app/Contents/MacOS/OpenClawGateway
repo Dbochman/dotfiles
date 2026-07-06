@@ -1,7 +1,7 @@
 #!/bin/bash
 
 export HOME="/Users/dbochman"
-export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$HOME/.openclaw/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 CACHE="$HOME/.openclaw/.secrets-cache"
 

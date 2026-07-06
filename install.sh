@@ -795,9 +795,14 @@ install_openclaw_guarded_helpers() {
   local spec src_rel dst_rel mode label src dst
   local helper_specs=(
     "bin/august|bin/august|755|August guarded unlock wrapper"
+    "bin/pinchtab-headless-instance|bin/pinchtab-headless-instance|755|managed PinchTab instance helper"
     "bin/opentable-book|bin/opentable-book|755|OpenTable guarded booking wrapper"
+    "bin/opentable-reservations|bin/opentable-reservations|755|OpenTable read-only reservations wrapper"
+    "bin/restaurant-book|bin/restaurant-book|755|dual-provider restaurant booking wrapper"
+    "bin/restaurant-book.py|bin/restaurant-book.py|755|dual-provider restaurant booking coordinator"
     "bin/restaurant-snipe|bin/restaurant-snipe|755|restaurant snipe guarded wrapper"
     "bin/resy-read|bin/resy-read|755|Resy read-only wrapper"
+    "cron/restaurant-booking-scopes.json|restaurant-bookings/scopes.json|600|restaurant booking scope registry"
     "workspace/scripts/opentable-book.sh|workspace/scripts/opentable-book.sh|755|OpenTable guarded booking helper"
     "workspace/scripts/opentable-book-state.py|workspace/scripts/opentable-book-state.py|755|OpenTable approval state helper"
   )

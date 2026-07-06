@@ -363,8 +363,8 @@ PINCHTAB_INSTANCE_STARTED=0
 TAB_ID=""
 
 cleanup() {
-  if [[ -n "$TAB_ID" ]]; then
-    pinchtab close "$TAB_ID" >/dev/null 2>&1 || true
+  if [[ -n "$PINCHTAB_INSTANCE_ID" && -n "$TAB_ID" && -x "$PINCHTAB_INSTANCE_HELPER" ]]; then
+    "$PINCHTAB_INSTANCE_HELPER" close "$PINCHTAB_INSTANCE_ID" "$TAB_ID" >/dev/null 2>&1 || true
   fi
   if [[ -n "$PINCHTAB_INSTANCE_ID" && -x "$PINCHTAB_INSTANCE_HELPER" ]]; then
     "$PINCHTAB_INSTANCE_HELPER" release "$PINCHTAB_INSTANCE_ID" "$PINCHTAB_INSTANCE_STARTED" >/dev/null 2>&1 || true
@@ -388,7 +388,7 @@ if [[ -z "$PINCHTAB_INSTANCE_ID" || ! "$PINCHTAB_INSTANCE_STARTED" =~ ^[01]$ ]];
 fi
 
 pt() {
-  pinchtab eval "$1" --tab "$TAB_ID" --json 2>/dev/null
+  "$PINCHTAB_INSTANCE_HELPER" eval "$PINCHTAB_INSTANCE_ID" "$TAB_ID" "$1" 2>/dev/null
 }
 
 SEARCH_URL="https://www.opentable.com/s?covers=${PARTY}&dateTime=${ENCODED_DATETIME}&metroId=7&term=${ENCODED_SEARCH}"
@@ -403,7 +403,26 @@ fi
 sleep 8
 
 if [[ "${OPENTABLE_BROWSER_SMOKE_TEST:-0}" == "1" ]]; then
-  emit_json success bool true mode str smoke_test status str browser_opened
+  if ! SMOKE_RAW=$(pt "(function(){
+    /* OT_STEP_SMOKE */
+    return JSON.stringify({origin:window.location.origin,path:window.location.pathname});
+  })()"); then
+    emit_error smoke_test browser_smoke_failed "Could not verify the OpenTable browser context"
+    exit 1
+  fi
+  SMOKE=$(printf '%s' "$SMOKE_RAW" | normalize_eval_json)
+  SMOKE_ORIGIN=$(json_field "$SMOKE" origin)
+  SMOKE_PATH=$(json_field "$SMOKE" path)
+  if [[ "$SMOKE_ORIGIN" != "https://www.opentable.com" || "$SMOKE_PATH" != "/s" ]]; then
+    emit_error smoke_test invalid_browser_context "OpenTable smoke test left the approved HTTPS origin or route"
+    exit 1
+  fi
+  emit_json \
+    success bool true \
+    mode str smoke_test \
+    status str browser_ready \
+    origin str "$SMOKE_ORIGIN" \
+    path str "$SMOKE_PATH"
   exit 0
 fi
 
@@ -428,7 +447,18 @@ if ! SLOT_RAW=$(pt "(function(){
   if(context.origin !== 'https://www.opentable.com' || context.path !== '/s') return result({status:'invalid_context'});
   const elements=Array.from(document.querySelectorAll('main a[role=button]'));
   const timeElements=elements.filter(element => /\\d{1,2}:\\d{2} [AP]M/.test(element.textContent.trim()) && element.getBoundingClientRect().width > 0);
-  if(!timeElements.length) return result({status:'no_slots'});
+  if(!timeElements.length) {
+    const cardHosts=Array.from(document.querySelectorAll('[data-test="restaurant-card"]'));
+    const opaqueCards=cardHosts.filter(card => {
+      const rect=card.getBoundingClientRect();
+      const visible=rect.width > 0 && rect.height > 0;
+      const inspectableText=clean(card.innerText || card.textContent || card.getAttribute('aria-label'));
+      const inspectableControl=card.querySelector('a, button, [role="button"], [href], [aria-label]');
+      return visible && !inspectableText && !inspectableControl;
+    });
+    if(opaqueCards.length) return result({status:'renderer_unavailable'});
+    return result({status:'no_slots'});
+  }
   const target='${TIME}'.split(':');
   const targetMinutes=parseInt(target[0], 10) * 60 + parseInt(target[1], 10);
   const maxDiff=${MAX_TIME_DELTA};
@@ -474,6 +504,10 @@ fi
 case "$SLOT_STATUS" in
   invalid_context)
     emit_error "$MODE" invalid_browser_context "OpenTable search left the approved HTTPS origin or route"
+    exit 1
+    ;;
+  renderer_unavailable)
+    emit_error "$MODE" "availability_renderer_unavailable" "OpenTable result cards could not be safely inspected"
     exit 1
     ;;
   no_slots)

@@ -132,13 +132,101 @@ PY
 # binary so this test never contacts the real gateway.
 mkdir -p "$TEST_HOME/fake-bin" "$TEST_HOME/.openclaw/state"
 OPENCLAW_CALL_LOG="$TEST_HOME/openclaw.calls"
-export OPENCLAW_CALL_LOG
-printf '%s\n' \
-  '#!/bin/bash' \
-  'printf "%s\n" "$*" >> "$OPENCLAW_CALL_LOG"' \
-  'if [ "$1" = "doctor" ]; then echo "Cron store migrated"; fi' \
-  > "$TEST_HOME/fake-bin/openclaw"
-chmod +x "$TEST_HOME/fake-bin/openclaw"
+FAKE_OPENCLAW_DRIVER="$TEST_HOME/fake-openclaw.py"
+export OPENCLAW_CALL_LOG FAKE_OPENCLAW_DRIVER
+cat > "$FAKE_OPENCLAW_DRIVER" <<'PY'
+#!/usr/bin/env python3
+import datetime
+import json
+import os
+import sqlite3
+import sys
+
+
+def load_live_jobs():
+    with open(os.environ["LIVE_JOBS"], encoding="utf-8") as handle:
+        return json.load(handle)["jobs"]
+
+
+def scheduled_ms(job):
+    schedule = job.get("schedule", {})
+    if schedule.get("kind") != "at" or not job.get("enabled", True):
+        return None
+    return int(
+        datetime.datetime.fromisoformat(
+            schedule["at"].replace("Z", "+00:00")
+        ).timestamp()
+        * 1000
+    )
+
+
+args = sys.argv[1:]
+database = os.environ["SQLITE_DB"]
+if args[:3] == ["gateway", "call", "cron.update"]:
+    params = json.loads(args[args.index("--params") + 1])
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT job_json, state_json, next_run_at_ms, last_run_at_ms "
+            "FROM cron_jobs WHERE job_id = ?",
+            (params["id"],),
+        ).fetchone()
+        if row is None:
+            raise SystemExit(1)
+        job = json.loads(row[0])
+        job.update(params["patch"])
+        next_run = scheduled_ms(job) if "schedule" in params["patch"] or "enabled" in params["patch"] else row[2]
+        connection.execute(
+            "UPDATE cron_jobs SET job_json = ?, next_run_at_ms = ? WHERE job_id = ?",
+            (json.dumps(job), next_run, params["id"]),
+        )
+    print("{}")
+elif args and args[0] == "doctor":
+    with sqlite3.connect(database) as connection:
+        for source in load_live_jobs():
+            job = dict(source)
+            state = job.pop("state", {})
+            exists = connection.execute(
+                "SELECT 1 FROM cron_jobs WHERE job_id = ?", (job["id"],)
+            ).fetchone()
+            if exists is None:
+                connection.execute(
+                    "INSERT INTO cron_jobs VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        os.environ["LIVE_JOBS"],
+                        job["id"],
+                        json.dumps(state),
+                        json.dumps(job),
+                        scheduled_ms(job),
+                        None,
+                    ),
+                )
+    print("Cron store migrated")
+elif args[:2] == ["cron", "list"]:
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT job_json FROM cron_jobs WHERE store_key = ? ORDER BY job_id",
+            (os.environ["LIVE_JOBS"],),
+        ).fetchall()
+        if not rows:
+            rows = connection.execute(
+                "SELECT job_json FROM cron_jobs ORDER BY job_id"
+            ).fetchall()
+    print(json.dumps({"jobs": [json.loads(row[0]) for row in rows]}))
+else:
+    raise SystemExit(1)
+PY
+chmod +x "$FAKE_OPENCLAW_DRIVER"
+
+write_fake_openclaw() {
+  printf '%s\n' \
+    '#!/bin/bash' \
+    'printf "%s\n" "$*" >> "$OPENCLAW_CALL_LOG"' \
+    'exec python3 "$FAKE_OPENCLAW_DRIVER" "$@"' \
+    > "$TEST_HOME/fake-bin/openclaw"
+  chmod +x "$TEST_HOME/fake-bin/openclaw"
+}
+
+write_fake_openclaw
 TEST_PATH="$TEST_HOME/fake-bin:$PATH"
 
 HOME="$TEST_HOME" python3 <<'PY'
@@ -242,7 +330,7 @@ PY
 
 : > "$OPENCLAW_CALL_LOG"
 deploy
-EXPECTED_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"enabled":true,"schedule":{"kind":"at","at":"2030-01-01T00:00:00.000Z"}}}'
+EXPECTED_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"schedule":{"kind":"at","at":"2030-01-01T00:00:00.000Z"}}}'
 if ! grep -Fxq "$EXPECTED_UPDATE" "$OPENCLAW_CALL_LOG"; then
   echo "stale SQLite next_run_at_ms did not produce the expected cron.update" >&2
   cat "$OPENCLAW_CALL_LOG" >&2
@@ -281,6 +369,137 @@ if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_UPDATE" ] || \
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
 fi
+
+# Definition drift must also flow through cron.update. A payload-only repair
+# must omit schedule/enabled so a failed one-shot's retry backoff is preserved.
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+import sqlite3
+
+home = os.path.expanduser("~")
+source_path = os.path.join(home, "dotfiles/openclaw/cron/jobs.json")
+sqlite_path = os.path.join(home, ".openclaw/state/openclaw.sqlite")
+with open(source_path) as source_file:
+    desired = json.load(source_file)["jobs"][0]
+live = dict(desired)
+live["payload"] = {"kind": "agentTurn", "message": "stale payload"}
+with sqlite3.connect(sqlite_path) as conn:
+    conn.execute(
+        "UPDATE cron_jobs SET job_json = ?, next_run_at_ms = ?, last_run_at_ms = ?, state_json = ? WHERE job_id = 'future'",
+        (
+            json.dumps(live),
+            1893452400000,
+            1893456000000,
+            '{"nextRunAtMs":1893452400000,"lastRunAtMs":1893456000000}',
+        ),
+    )
+PY
+
+: > "$OPENCLAW_CALL_LOG"
+deploy
+EXPECTED_PAYLOAD_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"payload":{"kind":"agentTurn","message":"test"}}}'
+if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_PAYLOAD_UPDATE" ] || \
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
+  echo "payload drift did not run the smallest cron.update before doctor" >&2
+  cat "$OPENCLAW_CALL_LOG" >&2
+  exit 1
+fi
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+
+path = os.path.expanduser("~/.openclaw/cron/jobs.json")
+with open(path) as jobs_file:
+    job = json.load(jobs_file)["jobs"][0]
+state = job.get("state", {})
+if state.get("nextRunAtMs") != 1893452400000:
+    raise SystemExit("payload-only drift discarded the retry backoff")
+if state.get("lastRunAtMs") != 1893456000000:
+    raise SystemExit("payload-only drift discarded last-run state")
+PY
+
+# Exercise the rest of the canonical fields as one exact patch. The matching
+# schedule must stay out of the patch; its independent assertions remain above.
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+import sqlite3
+
+home = os.path.expanduser("~")
+source_path = os.path.join(home, "dotfiles/openclaw/cron/jobs.json")
+sqlite_path = os.path.join(home, ".openclaw/state/openclaw.sqlite")
+with open(source_path) as source_file:
+    desired = json.load(source_file)["jobs"][0]
+live = dict(desired)
+live.update({
+    "name": "Stale name",
+    "enabled": False,
+    "deleteAfterRun": False,
+    "sessionTarget": "current",
+    "wakeMode": "now",
+    "payload": {"kind": "agentTurn", "message": "stale payload"},
+    "delivery": {"mode": "announce"},
+})
+with sqlite3.connect(sqlite_path) as conn:
+    conn.execute(
+        "UPDATE cron_jobs SET job_json = ?, next_run_at_ms = ?, last_run_at_ms = NULL, state_json = ? WHERE job_id = 'future'",
+        (json.dumps(live), 1893542400000, '{"nextRunAtMs":1893542400000}'),
+    )
+PY
+
+: > "$OPENCLAW_CALL_LOG"
+deploy
+EXPECTED_DEFINITION_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"name":"Future one-shot","enabled":true,"deleteAfterRun":true,"sessionTarget":"isolated","wakeMode":"next-heartbeat","payload":{"kind":"agentTurn","message":"test"},"delivery":{"mode":"none"}}}'
+if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_DEFINITION_UPDATE" ] || \
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
+  echo "canonical definition drift did not run the expected cron.update before doctor" >&2
+  cat "$OPENCLAW_CALL_LOG" >&2
+  exit 1
+fi
+
+# A failed SQLite migration/normalization must fail the deployment. Returning
+# success here would let callers report a rollout even though SQLite could
+# still contain stale or missing cron definitions.
+printf '%s\n' \
+  '#!/bin/bash' \
+  'printf "%s\n" "$*" >> "$OPENCLAW_CALL_LOG"' \
+  'if [ "$1" = "doctor" ]; then echo "doctor failed" >&2; exit 1; fi' \
+  > "$TEST_HOME/fake-bin/openclaw"
+chmod +x "$TEST_HOME/fake-bin/openclaw"
+if deploy 2>/dev/null; then
+  echo "cron deployment reported success after OpenClaw doctor failed" >&2
+  exit 1
+fi
+write_fake_openclaw
+
+# Successful exit codes are not enough: a no-op gateway/doctor pair must fail
+# the post-deploy SQLite/Gateway parity read-back.
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+
+path = os.path.expanduser("~/dotfiles/openclaw/cron/jobs.json")
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["jobs"][0]["payload"]["message"] = "new canonical payload"
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle, indent=2)
+    handle.write("\n")
+PY
+printf '%s\n' \
+  '#!/bin/bash' \
+  'printf "%s\n" "$*" >> "$OPENCLAW_CALL_LOG"' \
+  'if [ "$1" = "doctor" ]; then echo "Cron store migrated"; exit 0; fi' \
+  'if [ "$1" = "cron" ] && [ "$2" = "list" ]; then exec python3 "$FAKE_OPENCLAW_DRIVER" "$@"; fi' \
+  'exit 0' \
+  > "$TEST_HOME/fake-bin/openclaw"
+chmod +x "$TEST_HOME/fake-bin/openclaw"
+if deploy 2>/dev/null; then
+  echo "cron deployment reported success after no-op gateway reconciliation" >&2
+  exit 1
+fi
+write_fake_openclaw
 
 # Private identities remain placeholders in dotfiles, expand only into the
 # machine-local live store, and are re-redacted by save.
@@ -329,17 +548,20 @@ fi
 
 chmod 644 "$TEST_HOME/.openclaw/.secrets-cache"
 before_insecure=$(cksum "$PRIVATE_LIVE")
-insecure_output=$(HOME="$TEST_HOME" \
-  DOTFILES_JOBS="$PRIVATE_DOTFILES" \
-  LIVE_JOBS="$PRIVATE_LIVE" \
-  SQLITE_DB="$PRIVATE_SQLITE" \
-    "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh" deploy 2>&1)
+if insecure_output=$(HOME="$TEST_HOME" \
+    DOTFILES_JOBS="$PRIVATE_DOTFILES" \
+    LIVE_JOBS="$PRIVATE_LIVE" \
+    SQLITE_DB="$PRIVATE_SQLITE" \
+      "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh" deploy 2>&1); then
+  echo "cron deployment reported success with an insecure identity cache" >&2
+  exit 1
+fi
 after_insecure=$(cksum "$PRIVATE_LIVE")
 if [[ "$before_insecure" != "$after_insecure" ]]; then
   echo "cron deploy changed live definitions with an insecure identity cache" >&2
   exit 1
 fi
-grep -q 'live definitions preserved' <<< "$insecure_output"
+grep -q 'live cron definitions were not deployed' <<< "$insecure_output"
 chmod 600 "$TEST_HOME/.openclaw/.secrets-cache"
 
 echo "test-sync-cron-jobs: PASS"

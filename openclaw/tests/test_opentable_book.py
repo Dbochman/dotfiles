@@ -32,15 +32,28 @@ class OpenTableBookTests(unittest.TestCase):
             self.home / ".openclaw" / "bin" / "pinchtab-headless-instance",
             r'''#!/usr/bin/env bash
 set -euo pipefail
-printf 'helper:%s\n' "${1:-missing}" >> "$FAKE_LOG"
 case "${1:-}" in
   acquire)
+    printf 'helper:acquire\n' >> "$FAKE_LOG"
     printf 'fake-instance\t1\n'
     ;;
   open)
+    [[ "${2:-}" == "fake-instance" ]]
+    printf 'helper:open:%s\n' "$2" >> "$FAKE_LOG"
     printf 'fake-tab\n'
     ;;
+  eval)
+    [[ "${2:-}" == "fake-instance" && "${3:-}" == "fake-tab" && $# -eq 4 ]]
+    printf 'helper:eval:%s:%s\n' "$2" "$3" >> "$FAKE_LOG"
+    exec pinchtab eval "$4" --tab "$3" --json
+    ;;
+  close)
+    [[ "${2:-}" == "fake-instance" && "${3:-}" == "fake-tab" && $# -eq 3 ]]
+    printf 'helper:close:%s:%s\n' "$2" "$3" >> "$FAKE_LOG"
+    exec pinchtab close "$3" --json
+    ;;
   release)
+    printf 'helper:release\n' >> "$FAKE_LOG"
     ;;
   *)
     exit 2
@@ -67,6 +80,23 @@ fi
 
 javascript="${2:-}"
 case "$javascript" in
+  *OT_STEP_SMOKE*)
+    printf 'pinchtab:smoke\n' >> "$FAKE_LOG"
+    case "${FAKE_MODE:-}" in
+      cross-origin-smoke)
+        printf '%s\n' '{"result":"{\"origin\":\"https://evil.example\",\"path\":\"/s\",\"query\":\"SENSITIVE-SMOKE\"}"}'
+        ;;
+      wrong-path-smoke)
+        printf '%s\n' '{"result":"{\"origin\":\"https://www.opentable.com\",\"path\":\"/booking/details\",\"query\":\"SENSITIVE-SMOKE\"}"}'
+        ;;
+      tab-not-found-smoke)
+        printf '%s\n' 'Error 404: tab fake-tab not found' >&2
+        ;;
+      *)
+        printf '%s\n' '{"result":"{\"origin\":\"https://www.opentable.com\",\"path\":\"/s\",\"query\":\"SENSITIVE-SMOKE\"}"}'
+        ;;
+    esac
+    ;;
   *OT_STEP_COOKIE*)
     printf 'pinchtab:cookie\n' >> "$FAKE_LOG"
     printf '%s\n' '{"result":null}'
@@ -79,6 +109,14 @@ case "$javascript" in
     case "${FAKE_MODE:-}" in
       outside)
         printf '%s\n' '{"result":"{\"origin\":\"https://www.opentable.com\",\"path\":\"/s\",\"status\":\"outside_window\",\"closestTime\":\"8:00 PM\",\"diffMinutes\":60,\"secret\":\"SENSITIVE-SLOT\"}"}'
+        ;;
+      opaque-renderer)
+        [[ "$javascript" == *'[data-test="restaurant-card"]'* ]]
+        [[ "$javascript" == *"status:'renderer_unavailable'"* ]]
+        printf '%s\n' '{"result":"{\"origin\":\"https://www.opentable.com\",\"path\":\"/s\",\"status\":\"renderer_unavailable\",\"secret\":\"SENSITIVE-OPAQUE-CARD\"}"}'
+        ;;
+      no-slots)
+        printf '%s\n' '{"result":"{\"origin\":\"https://www.opentable.com\",\"path\":\"/s\",\"status\":\"no_slots\"}"}'
         ;;
       cross-origin-slot)
         printf '%s\n' '{"result":"{\"origin\":\"https://evil.example\",\"path\":\"/s\",\"status\":\"selected\",\"selectedTime\":\"7:15 PM\",\"diffMinutes\":15}"}'
@@ -147,6 +185,7 @@ esac
         fake_mode: str = "",
         details_variant: str = "",
         expected_max_delta: str = "",
+        browser_smoke: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env.update(
@@ -159,6 +198,7 @@ esac
                 "EXPECT_MAX_DELTA": expected_max_delta,
                 "OPENTABLE_APPROVAL_CACHE_DIR": str(self.approval_cache),
                 "OPENTABLE_APPROVAL_TTL_SECONDS": "300",
+                "OPENTABLE_BROWSER_SMOKE_TEST": "1" if browser_smoke else "0",
             }
         )
         return subprocess.run(
@@ -213,6 +253,55 @@ esac
         state = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["status"], "pending")
         self.assertEqual(state["facts"]["location"], "123 Main St, Boston, MA")
+
+    def test_all_tab_operations_use_the_managed_instance_scope(self) -> None:
+        self.preview()
+
+        calls = self.calls()
+        self.assertIn("helper:open:fake-instance", calls)
+        self.assertIn("helper:eval:fake-instance:fake-tab", calls)
+        self.assertIn("helper:close:fake-instance:fake-tab", calls)
+
+    def test_browser_smoke_validates_only_sanitized_origin_and_path(self) -> None:
+        result = self.run_script(
+            "Italian Brookline",
+            "2099-08-15",
+            "19:00",
+            "2",
+            browser_smoke=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.parse_output(result)
+        self.assertEqual(output["status"], "browser_ready")
+        self.assertEqual(output["origin"], "https://www.opentable.com")
+        self.assertEqual(output["path"], "/s")
+        self.assertNotIn("SENSITIVE-SMOKE", result.stdout)
+        self.assertNotIn("term=", result.stdout)
+        self.assertIn("helper:eval:fake-instance:fake-tab", self.calls())
+        self.assertIn("helper:close:fake-instance:fake-tab", self.calls())
+
+    def test_browser_smoke_rejects_unapproved_contexts(self) -> None:
+        for fake_mode in (
+            "cross-origin-smoke",
+            "wrong-path-smoke",
+            "tab-not-found-smoke",
+        ):
+            with self.subTest(fake_mode=fake_mode):
+                result = self.run_script(
+                    "Italian Brookline",
+                    "2099-08-15",
+                    "19:00",
+                    "2",
+                    fake_mode=fake_mode,
+                    browser_smoke=True,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(
+                    self.parse_output(result)["error_code"],
+                    {"invalid_browser_context", "browser_smoke_failed"},
+                )
+                self.assertNotIn("SENSITIVE-SMOKE", result.stdout)
 
     def test_direct_confirm_without_approval_is_rejected(self) -> None:
         result = self.run_script("--confirm")
@@ -336,6 +425,29 @@ esac
                 self.assertEqual(result.returncode, 1)
                 self.assertEqual(self.parse_output(result)["error_code"], expected_code)
                 self.assertNotIn("pinchtab:complete", self.calls())
+
+    def test_opaque_renderer_is_distinct_from_true_no_availability(self) -> None:
+        cases = (
+            ("opaque-renderer", "availability_renderer_unavailable"),
+            ("no-slots", "no_available_times"),
+        )
+        for fake_mode, expected_code in cases:
+            with self.subTest(fake_mode=fake_mode):
+                calls_before = list(self.calls())
+                result = self.run_script(
+                    "Italian Brookline",
+                    "2099-08-15",
+                    "19:00",
+                    "2",
+                    fake_mode=fake_mode,
+                )
+                self.assertEqual(result.returncode, 1)
+                output = self.parse_output(result)
+                self.assertEqual(output["error_code"], expected_code)
+                self.assertNotIn("SENSITIVE", result.stdout)
+                new_calls = self.calls()[len(calls_before) :]
+                self.assertNotIn("pinchtab:details", new_calls)
+                self.assertNotIn("pinchtab:complete", new_calls)
 
     def test_post_click_transport_failure_is_non_retryable_unknown(self) -> None:
         preview, _ = self.preview()

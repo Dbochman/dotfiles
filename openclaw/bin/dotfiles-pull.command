@@ -82,6 +82,22 @@ if [ "$PULL_STATUS" -ne 0 ]; then
   exit 1
 fi
 
+GATEWAY_APP_WRAPPER="$REPO/openclaw/OpenClawGateway.app/Contents/MacOS/OpenClawGateway"
+GATEWAY_WRAPPER_HASH_STATE="$HOME/.openclaw/state/gateway-wrapper.sha256"
+GATEWAY_WRAPPER_HASH=""
+if [ -f "$GATEWAY_APP_WRAPPER" ]; then
+  GATEWAY_WRAPPER_HASH=$(/usr/bin/shasum -a 256 "$GATEWAY_APP_WRAPPER" | /usr/bin/awk '{print $1}')
+fi
+GATEWAY_ACTIVATED_HASH=""
+if [ -f "$GATEWAY_WRAPPER_HASH_STATE" ] && [ ! -L "$GATEWAY_WRAPPER_HASH_STATE" ] \
+  && [ "$(/usr/bin/stat -f '%u %Lp' "$GATEWAY_WRAPPER_HASH_STATE" 2>/dev/null || true)" = "$(/usr/bin/id -u) 600" ]; then
+  IFS= read -r GATEWAY_ACTIVATED_HASH < "$GATEWAY_WRAPPER_HASH_STATE" || true
+fi
+GATEWAY_RESTART_REQUIRED=0
+if [ -n "$GATEWAY_WRAPPER_HASH" ] && [ "$GATEWAY_ACTIVATED_HASH" != "$GATEWAY_WRAPPER_HASH" ]; then
+  GATEWAY_RESTART_REQUIRED=1
+fi
+
 # shellcheck source=../lib/deployment.sh
 source "$REPO/openclaw/lib/deployment.sh"
 
@@ -213,6 +229,25 @@ fi
 # Deploy CLI wrappers and scripts to ~/.openclaw/bin/
 BIN_SRC="$REPO/openclaw/bin"
 BIN_DST="$HOME/.openclaw/bin"
+
+atomic_install_managed_file() {
+  local src="$1"
+  local dst="$2"
+  local mode="$3"
+  local tmp
+
+  tmp=$(mktemp "$(dirname "$dst")/.${dst##*/}.XXXXXX")
+  if cp "$src" "$tmp" && chmod "$mode" "$tmp" && mv -f "$tmp" "$dst"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+atomic_install_executable() {
+  atomic_install_managed_file "$1" "$2" 755
+}
+
 WRAPPER_DEPLOYED=0
 DEPLOYED_WRAPPERS=""
 for wrapper in "$BIN_SRC"/*; do
@@ -223,8 +258,7 @@ for wrapper in "$BIN_SRC"/*; do
     *.py|*.sh|*.command|*.md|*.json|*.yaml) continue ;;
   esac
   [ -x "$wrapper" ] || continue
-  cp "$wrapper" "$BIN_DST/$fname"
-  chmod +x "$BIN_DST/$fname"
+  atomic_install_executable "$wrapper" "$BIN_DST/$fname"
   WRAPPER_DEPLOYED=$((WRAPPER_DEPLOYED + 1))
   DEPLOYED_WRAPPERS="$DEPLOYED_WRAPPERS $fname"
 done
@@ -245,11 +279,24 @@ SCRIPTS_DEPLOYED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
-  cp "$script" "$BIN_DST/$fname"
-  chmod +x "$BIN_DST/$fname"
+  atomic_install_executable "$script" "$BIN_DST/$fname"
   SCRIPTS_DEPLOYED=$((SCRIPTS_DEPLOYED + 1))
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) scripts: deployed $SCRIPTS_DEPLOYED to $BIN_DST" >> "$LOG"
+
+# Deploy the standing-authorized restaurant scopes as a protected regular
+# file. The coordinator rejects symlinks, loose permissions, and unknown job
+# IDs, so the runtime registry must move atomically with the public wrapper.
+RESTAURANT_SCOPES_SRC="$REPO/openclaw/cron/restaurant-booking-scopes.json"
+RESTAURANT_SCOPES_DST="$HOME/.openclaw/restaurant-bookings/scopes.json"
+if [ -f "$RESTAURANT_SCOPES_SRC" ] && [ ! -L "$RESTAURANT_SCOPES_SRC" ]; then
+  mkdir -p "$(dirname "$RESTAURANT_SCOPES_DST")"
+  atomic_install_managed_file "$RESTAURANT_SCOPES_SRC" "$RESTAURANT_SCOPES_DST" 600
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) restaurant-book: deployed protected scope registry" >> "$LOG"
+else
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) restaurant-book: FATAL scope registry is unavailable" >> "$LOG"
+  exit 1
+fi
 
 # Keep the reboot recovery LaunchAgent synchronized. Most OpenClaw plists are
 # deployed manually because they carry service-specific state; this watchdog
@@ -300,9 +347,13 @@ if [ -d "$TOP_BIN_SRC" ]; then
 fi
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) top-bin: linked $TOP_BIN_LINKED to $TOP_BIN_DST" >> "$LOG"
 
-# Smoke test — verify deployed wrappers resolve on PATH
-export PATH="$BIN_DST:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
+# Smoke test under the final PATH exported by OpenClawGateway.app. Keep this
+# literal synchronized with the app wrapper: it is the last PATH authority in
+# both the generated service-env and recovery-plist launch chains.
+GATEWAY_RUNTIME_PATH="$HOME/.openclaw/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$GATEWAY_RUNTIME_PATH"
 SMOKE_FAIL=0
+DEPLOYMENT_SMOKE_FAILED=0
 for cmd in $DEPLOYED_WRAPPERS; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: $cmd not on PATH" >> "$LOG"
@@ -316,8 +367,10 @@ for cmd in hue speaker goplaces; do
     SMOKE_FAIL=$((SMOKE_FAIL + 1))
   fi
 done
+
 if [ $SMOKE_FAIL -gt 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: smoke test FAILED ($SMOKE_FAIL missing)" >> "$LOG"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: smoke test FAILED ($SMOKE_FAIL failures)" >> "$LOG"
+  DEPLOYMENT_SMOKE_FAILED=1
 else
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: smoke test PASSED" >> "$LOG"
 fi
@@ -368,8 +421,7 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
       [ -f "$script" ] || continue
       fname=$(basename "$script")
       [ -L "$SCRIPTS_DST/$fname" ] && rm -f "$SCRIPTS_DST/$fname"
-      cp "$script" "$SCRIPTS_DST/$fname"
-      chmod +x "$SCRIPTS_DST/$fname"
+      atomic_install_executable "$script" "$SCRIPTS_DST/$fname"
       WS_SCRIPTS_DEPLOYED=$((WS_SCRIPTS_DEPLOYED + 1))
     done
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed $WS_SCRIPTS_DEPLOYED scripts to $SCRIPTS_DST" >> "$LOG"
@@ -394,6 +446,117 @@ if [ -f "$SELF_SRC" ] && ! cmp -s "$SELF_SRC" "$SELF_DST"; then
   chmod +x "$SELF_DST.new"
   mv "$SELF_DST.new" "$SELF_DST"
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) self: updated $SELF_DST from repo" >> "$LOG"
+fi
+
+# A running gateway retains the old process environment. Reload only when the
+# final app wrapper changed, then require the replacement process to become
+# healthy before inspecting its live skill catalog.
+GATEWAY_READY=1
+if [ "$GATEWAY_RESTART_REQUIRED" -ne 0 ]; then
+  GATEWAY_LABEL="ai.openclaw.gateway"
+  GATEWAY_DOMAIN="gui/$(/usr/bin/id -u)"
+  GATEWAY_READY=0
+  GATEWAY_PID_BEFORE=$(/bin/launchctl print "$GATEWAY_DOMAIN/$GATEWAY_LABEL" 2>/dev/null \
+    | /usr/bin/awk '/^[[:space:]]*pid = [0-9]+$/ { print $3; exit }' || true)
+  if /bin/launchctl kickstart -k "$GATEWAY_DOMAIN/$GATEWAY_LABEL"; then
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      GATEWAY_PID_AFTER=$(/bin/launchctl print "$GATEWAY_DOMAIN/$GATEWAY_LABEL" 2>/dev/null \
+        | /usr/bin/awk '/^[[:space:]]*pid = [0-9]+$/ { print $3; exit }' || true)
+      if [ -n "$GATEWAY_PID_AFTER" ] && [ "$GATEWAY_PID_AFTER" != "$GATEWAY_PID_BEFORE" ] \
+        && GATEWAY_HEALTH=$(/usr/bin/curl -fsS --max-time 2 http://127.0.0.1:18789/health 2>/dev/null); then
+        case "$GATEWAY_HEALTH" in
+          *'"ok":true'*)
+            GATEWAY_READY=1
+            break
+            ;;
+        esac
+      fi
+      /bin/sleep 1
+    done
+    if [ "$GATEWAY_READY" -ne 1 ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: gateway app wrapper changed but replacement did not become healthy" >> "$LOG"
+      DEPLOYMENT_SMOKE_FAILED=1
+    fi
+  else
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: gateway app wrapper changed but restart failed" >> "$LOG"
+    DEPLOYMENT_SMOKE_FAILED=1
+  fi
+fi
+
+# Query the active Gateway explicitly. `openclaw skills check` can silently
+# fall back to a local-process report, which does not prove that the service
+# inherited the deployed PATH. The RPC is evaluated by the active Gateway and
+# therefore exercises its own PATH-based `requires.bins` checks.
+GATEWAY_REQUIRED_SKILLS=(opentable restaurant-book restaurant-snipe resy)
+GATEWAY_SECRETS_CACHE="$HOME/.openclaw/.secrets-cache"
+
+read_active_gateway_skills() {
+  local cache_owner_mode
+
+  [ -f "$GATEWAY_SECRETS_CACHE" ] && [ ! -L "$GATEWAY_SECRETS_CACHE" ] || return 1
+  cache_owner_mode=$(/usr/bin/stat -f '%u %Lp' "$GATEWAY_SECRETS_CACHE" 2>/dev/null) || return 1
+  [ "$cache_owner_mode" = "$(/usr/bin/id -u) 600" ] || return 1
+
+  (
+    set +a
+    # The generated cache contains plain shell assignments. Export only the
+    # Gateway token to the read-only RPC child, not the other cached values.
+    # shellcheck disable=SC1090
+    if ! . "$GATEWAY_SECRETS_CACHE" >/dev/null 2>&1; then
+      exit 1
+    fi
+    [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || exit 1
+    export OPENCLAW_GATEWAY_TOKEN
+    /opt/homebrew/bin/openclaw gateway call skills.status --json --timeout 5000
+  )
+}
+
+GATEWAY_SKILLS_READY=0
+GATEWAY_SKILLS_FAILURE="gateway RPC unavailable"
+if [ "$GATEWAY_READY" -eq 1 ]; then
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if GATEWAY_SKILLS_JSON=$(read_active_gateway_skills 2>/dev/null); then
+      if GATEWAY_MISSING_SKILLS=$(printf '%s' "$GATEWAY_SKILLS_JSON" \
+        | openclaw_gateway_missing_skills_from_status "${GATEWAY_REQUIRED_SKILLS[@]}"); then
+        if [ -z "$GATEWAY_MISSING_SKILLS" ]; then
+          GATEWAY_SKILLS_READY=1
+          break
+        fi
+        GATEWAY_SKILLS_FAILURE="not eligible/model-visible: $GATEWAY_MISSING_SKILLS"
+      else
+        GATEWAY_SKILLS_FAILURE="invalid skills.status response"
+      fi
+    fi
+    /bin/sleep 1
+  done
+fi
+
+if [ "$GATEWAY_SKILLS_READY" -eq 1 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) gateway: active restaurant skill catalog passed" >> "$LOG"
+  if [ "$GATEWAY_RESTART_REQUIRED" -ne 0 ]; then
+    GATEWAY_HASH_STATE_DIR=$(dirname "$GATEWAY_WRAPPER_HASH_STATE")
+    mkdir -p "$GATEWAY_HASH_STATE_DIR"
+    GATEWAY_HASH_STATE_TMP=$(mktemp "$GATEWAY_HASH_STATE_DIR/.gateway-wrapper.sha256.XXXXXX")
+    if printf '%s\n' "$GATEWAY_WRAPPER_HASH" > "$GATEWAY_HASH_STATE_TMP" \
+      && chmod 600 "$GATEWAY_HASH_STATE_TMP" \
+      && mv -f "$GATEWAY_HASH_STATE_TMP" "$GATEWAY_WRAPPER_HASH_STATE"; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) gateway: activated changed app wrapper after live skill verification" >> "$LOG"
+    else
+      rm -f "$GATEWAY_HASH_STATE_TMP"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: gateway live skills passed but activated-wrapper state could not be recorded" >> "$LOG"
+      DEPLOYMENT_SMOKE_FAILED=1
+    fi
+  fi
+else
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: active gateway restaurant skill catalog failed: $GATEWAY_SKILLS_FAILURE" >> "$LOG"
+  DEPLOYMENT_SMOKE_FAILED=1
+fi
+
+# Finish deployment and self-update before surfacing a smoke failure, otherwise
+# a stale deployed copy could never install the fix for its own failing check.
+if [ "$DEPLOYMENT_SMOKE_FAILED" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ABORT: deployment completed with a failed gateway wrapper/skill smoke test" >> "$LOG"
+  exit 1
 fi
 
 # Close this Terminal window after completion

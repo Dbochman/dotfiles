@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import plistlib
+import re
 import stat
 import subprocess
 import tempfile
@@ -14,6 +17,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOYMENT_LIB = REPO_ROOT / "openclaw" / "lib" / "deployment.sh"
 INSTALLER = REPO_ROOT / "install.sh"
 DOTFILES_PULL = REPO_ROOT / "openclaw" / "bin" / "dotfiles-pull.command"
+GATEWAY_APP_WRAPPER = (
+    REPO_ROOT
+    / "openclaw"
+    / "OpenClawGateway.app"
+    / "Contents"
+    / "MacOS"
+    / "OpenClawGateway"
+)
+GATEWAY_RECOVERY_PLIST = (
+    REPO_ROOT / "openclaw" / "launchagents" / "ai.openclaw.gateway.plist"
+)
 TOP_LEVEL_NEST = REPO_ROOT / "bin" / "nest"
 OPENCLAW_NEST = REPO_ROOT / "openclaw" / "bin" / "nest"
 NEST_SNAPSHOT_PLIST = (
@@ -22,12 +36,29 @@ NEST_SNAPSHOT_PLIST = (
 
 REQUIRED_HELPERS = {
     "bin/august": "august wrapper\n",
+    "bin/pinchtab-headless-instance": "pinchtab helper\n",
     "bin/opentable-book": "opentable wrapper\n",
+    "bin/opentable-reservations": "opentable reservations wrapper\n",
+    "bin/restaurant-book": "restaurant coordinator wrapper\n",
+    "bin/restaurant-book.py": "restaurant coordinator\n",
     "bin/restaurant-snipe": "snipe wrapper\n",
     "bin/resy-read": "resy wrapper\n",
     "workspace/scripts/opentable-book.sh": "opentable helper\n",
     "workspace/scripts/opentable-book-state.py": "state helper\n",
 }
+REQUIRED_PROTECTED_FILES = {
+    "cron/restaurant-booking-scopes.json": (
+        "restaurant-bookings/scopes.json",
+        '{"schema_version":1,"jobs":{}}\n',
+    ),
+}
+GATEWAY_RESTAURANT_COMMANDS = (
+    "opentable-book",
+    "opentable-reservations",
+    "restaurant-book",
+    "restaurant-snipe",
+    "resy-read",
+)
 
 
 class DeploymentContractTests(unittest.TestCase):
@@ -125,6 +156,10 @@ class DeploymentContractTests(unittest.TestCase):
             path = openclaw_source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
+        for relative, (_, contents) in REQUIRED_PROTECTED_FILES.items():
+            path = openclaw_source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents, encoding="utf-8")
 
     def test_fresh_install_copies_required_guarded_helpers(self) -> None:
         source = self.root / "openclaw-source"
@@ -152,6 +187,10 @@ class DeploymentContractTests(unittest.TestCase):
             deployed = destination / relative
             self.assertEqual(deployed.read_text(encoding="utf-8"), contents)
             self.assertEqual(stat.S_IMODE(deployed.stat().st_mode), 0o755)
+        for _, (destination_relative, contents) in REQUIRED_PROTECTED_FILES.items():
+            deployed = destination / destination_relative
+            self.assertEqual(deployed.read_text(encoding="utf-8"), contents)
+            self.assertEqual(stat.S_IMODE(deployed.stat().st_mode), 0o600)
 
     def test_guarded_helper_dry_run_reports_every_copy_without_writing(self) -> None:
         source = self.root / "openclaw-source"
@@ -176,9 +215,180 @@ class DeploymentContractTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertFalse(destination.exists())
-        self.assertEqual(completed.stdout.count("[dry-run] Would install"), len(REQUIRED_HELPERS))
+        self.assertEqual(
+            completed.stdout.count("[dry-run] Would install"),
+            len(REQUIRED_HELPERS) + len(REQUIRED_PROTECTED_FILES),
+        )
         for relative in REQUIRED_HELPERS:
             self.assertIn(str(destination / relative), completed.stdout)
+        for _, (destination_relative, _) in REQUIRED_PROTECTED_FILES.items():
+            self.assertIn(str(destination / destination_relative), completed.stdout)
+
+    def test_real_gateway_path_exposes_guarded_restaurant_wrappers(self) -> None:
+        source = self.root / "openclaw-source"
+        home = self.root / "home"
+        destination = home / ".openclaw"
+        self.make_guarded_helper_fixture(source)
+
+        completed = self.run_bash(
+            "\n".join(
+                (
+                    'source "$1"',
+                    "DRY_RUN=false",
+                    "QUIET=true",
+                    "ITEMS_LINKED=1",
+                    'install_openclaw_guarded_helpers "$2" "$3"',
+                    "true",
+                )
+            ),
+            INSTALLER,
+            source,
+            destination,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+        app_text = GATEWAY_APP_WRAPPER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        app_match = re.search(r'^export PATH="([^"]+)"$', app_text, re.MULTILINE)
+        pull_match = re.search(
+            r'^GATEWAY_RUNTIME_PATH="([^"]+)"$', pull_text, re.MULTILINE
+        )
+        self.assertIsNotNone(app_match)
+        self.assertIsNotNone(pull_match)
+        path_expression = app_match.group(1)
+        self.assertEqual(path_expression, pull_match.group(1))
+        self.assertTrue(path_expression.startswith("$HOME/.openclaw/bin:"))
+        self.assertIn("/opt/homebrew/opt/node@22/bin", path_expression)
+        self.assertIn('export PATH="$GATEWAY_RUNTIME_PATH"', pull_text)
+        self.assertNotIn('export PATH="$BIN_DST:', pull_text)
+
+        with GATEWAY_RECOVERY_PLIST.open("rb") as plist_file:
+            recovery_plist = plistlib.load(plist_file)
+        recovery_path = recovery_plist["EnvironmentVariables"]["PATH"]
+        self.assertEqual(
+            path_expression.replace("$HOME", "/Users/dbochman"), recovery_path
+        )
+
+        gateway_path = path_expression.replace("$HOME", str(home))
+        command_check = subprocess.run(
+            [
+                "/bin/sh",
+                "-c",
+                "set -e\n"
+                + "\n".join(
+                    f'command -v "{name}"' for name in GATEWAY_RESTAURANT_COMMANDS
+                ),
+            ],
+            env={**os.environ, "HOME": str(home), "PATH": gateway_path},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(command_check.returncode, 0, command_check.stderr)
+        self.assertEqual(
+            command_check.stdout.splitlines(),
+            [str(destination / "bin" / name) for name in GATEWAY_RESTAURANT_COMMANDS],
+        )
+        self.assertIn(
+            "GATEWAY_REQUIRED_SKILLS=(opentable restaurant-book restaurant-snipe resy)",
+            pull_text,
+        )
+        self.assertIn("gateway call skills.status --json", pull_text)
+        self.assertIn("openclaw_gateway_missing_skills_from_status", pull_text)
+        self.assertIn("active restaurant skill catalog passed", pull_text)
+        self.assertNotIn("openclaw skills check --json", pull_text)
+        self.assertIn('if [ "$DEPLOYMENT_SMOKE_FAILED" -ne 0 ]', pull_text)
+        self.assertIn("GATEWAY_WRAPPER_HASH_STATE", pull_text)
+        self.assertIn("GATEWAY_ACTIVATED_HASH", pull_text)
+        self.assertIn("GATEWAY_RESTART_REQUIRED=1", pull_text)
+        self.assertIn("GATEWAY_PID_AFTER", pull_text)
+        self.assertIn(
+            'mv -f "$GATEWAY_HASH_STATE_TMP" "$GATEWAY_WRAPPER_HASH_STATE"',
+            pull_text,
+        )
+        self.assertIn(
+            '/bin/launchctl kickstart -k "$GATEWAY_DOMAIN/$GATEWAY_LABEL"', pull_text
+        )
+        self.assertIn(
+            'atomic_install_executable "$wrapper" "$BIN_DST/$fname"', pull_text
+        )
+        self.assertIn(
+            'atomic_install_managed_file "$RESTAURANT_SCOPES_SRC" "$RESTAURANT_SCOPES_DST" 600',
+            pull_text,
+        )
+        self.assertNotIn('cp "$wrapper" "$BIN_DST/$fname"', pull_text)
+
+        live_check_index = pull_text.index("# Query the active Gateway explicitly")
+        activated_state_index = pull_text.index(
+            'mv -f "$GATEWAY_HASH_STATE_TMP" "$GATEWAY_WRAPPER_HASH_STATE"'
+        )
+        self.assertGreater(activated_state_index, live_check_index)
+
+    def test_gateway_skill_status_parser_is_authoritative_and_fails_closed(self) -> None:
+        required = ("opentable", "restaurant-book", "restaurant-snipe", "resy")
+
+        def parse(payload: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    'source "$1"\n'
+                    'openclaw_gateway_missing_skills_from_status "${@:2}"',
+                    "deployment-test",
+                    str(DEPLOYMENT_LIB),
+                    *required,
+                ],
+                cwd=REPO_ROOT,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        ready = parse(
+            {
+                "agentId": "main",
+                "skills": [
+                    {"name": name, "eligible": True, "modelVisible": True}
+                    for name in required
+                ],
+            }
+        )
+        self.assertEqual(ready.returncode, 0, ready.stderr)
+        self.assertEqual(ready.stdout, "\n")
+
+        missing = parse(
+            {
+                "agentId": "main",
+                "skills": [
+                    {"name": "opentable", "eligible": True, "modelVisible": True},
+                    {
+                        "name": "restaurant-book",
+                        "eligible": False,
+                        "modelVisible": False,
+                    },
+                    {
+                        "name": "restaurant-snipe",
+                        "eligible": True,
+                        "modelVisible": False,
+                    },
+                ],
+            }
+        )
+        self.assertEqual(missing.returncode, 0, missing.stderr)
+        self.assertEqual(
+            missing.stdout.strip(), "restaurant-book,restaurant-snipe,resy"
+        )
+
+        local_fallback_shape = parse(
+            {
+                "eligible": list(required),
+                "modelVisible": list(required),
+            }
+        )
+        self.assertEqual(local_fallback_shape.returncode, 2)
+        self.assertEqual(local_fallback_shape.stdout, "")
 
     def test_both_deployers_use_the_shared_filter_and_fresh_install_hook(self) -> None:
         install_text = INSTALLER.read_text(encoding="utf-8")

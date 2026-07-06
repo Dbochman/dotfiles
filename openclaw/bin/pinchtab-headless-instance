@@ -10,11 +10,18 @@ usage() {
 Usage:
   pinchtab-headless-instance acquire [profile]
   pinchtab-headless-instance open INSTANCE_ID URL
+  pinchtab-headless-instance navigate INSTANCE_ID TAB_ID URL
+  pinchtab-headless-instance snap INSTANCE_ID TAB_ID
+  pinchtab-headless-instance click INSTANCE_ID TAB_ID REF
+  pinchtab-headless-instance fill INSTANCE_ID TAB_ID REF VALUE
+  pinchtab-headless-instance eval INSTANCE_ID TAB_ID JAVASCRIPT
+  pinchtab-headless-instance close INSTANCE_ID TAB_ID
   pinchtab-headless-instance release INSTANCE_ID STARTED
 
 acquire prints: INSTANCE_ID<TAB>STARTED
 STARTED is 1 only when this invocation created the instance.
 Missing named profiles are created through the local PinchTab API.
+Tab operations are sent directly to the acquired instance's loopback server.
 EOF
 }
 
@@ -155,6 +162,80 @@ print(next((item.get("status", "") for item in instances if item.get("id") == in
   return 1
 }
 
+instance_endpoint() {
+  local instance_id="$1"
+
+  "$PINCHTAB" instances --json | python3 -c '
+import json
+import re
+import sys
+
+instance_id = sys.argv[1]
+try:
+    instances = json.load(sys.stdin)
+except (json.JSONDecodeError, TypeError):
+    raise SystemExit(1)
+
+instance = next(
+    (
+        item
+        for item in instances
+        if item.get("id") == instance_id
+        and item.get("status") == "running"
+        and item.get("mode") == "headless"
+    ),
+    None,
+)
+if not instance:
+    raise SystemExit(1)
+
+port = str(instance.get("port", ""))
+if not re.fullmatch(r"[0-9]{1,5}", port) or not 1 <= int(port) <= 65535:
+    raise SystemExit(1)
+print(f"http://127.0.0.1:{port}")
+' "$instance_id"
+}
+
+pinchtab_reported_error() {
+  python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+pattern = r"(?im)^\s*(?:error\s+[45][0-9]{2}:|error:)"
+raise SystemExit(0 if re.search(pattern, text) else 1)
+'
+}
+
+run_instance_cli() {
+  local operation="$1"
+  local instance_id="$2"
+  local endpoint=""
+  local stderr_file=""
+  local output=""
+  local stderr_output=""
+  local status=0
+  shift 2
+
+  if ! endpoint=$(instance_endpoint "$instance_id"); then
+    echo "PinchTab $operation failed: managed instance is unavailable" >&2
+    return 1
+  fi
+
+  stderr_file=$(mktemp "${TMPDIR:-/tmp}/pinchtab-headless-instance.XXXXXX")
+  output=$("$PINCHTAB" --server "$endpoint" "$@" 2>"$stderr_file") || status=$?
+  stderr_output=$(<"$stderr_file")
+  rm -f "$stderr_file"
+
+  if [[ "$status" -ne 0 ]] || \
+      printf '%s\n%s\n' "$output" "$stderr_output" | pinchtab_reported_error; then
+    echo "PinchTab $operation failed" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$output"
+}
+
 acquire() {
   local profile="${1:-$PROFILE}"
   local instance_id=""
@@ -205,19 +286,87 @@ open_tab() {
   local output
   local tab_id
 
-  output=$("$PINCHTAB" instance navigate "$instance_id" "$url")
+  output=$(run_instance_cli open "$instance_id" nav "$url" --new-tab --print-tab-id)
   tab_id=$(printf '%s' "$output" | python3 -c '
+import json
 import re
 import sys
 
-match = re.search(r"\"tabId\"\s*:\s*\"([^\"]+)\"", sys.stdin.read())
-print(match.group(1) if match else "")
+text = sys.stdin.read().strip()
+tab_id = ""
+try:
+    payload = json.loads(text)
+except (json.JSONDecodeError, TypeError):
+    payload = None
+if isinstance(payload, dict):
+    tab_id = payload.get("tabId") or payload.get("id") or ""
+if not tab_id and re.fullmatch(r"[A-Za-z0-9_.:-]{4,160}", text):
+    tab_id = text
+if not tab_id:
+    match = re.search(r"\"tabId\"\s*:\s*\"([^\"]+)\"", text)
+    tab_id = match.group(1) if match else ""
+print(tab_id if isinstance(tab_id, str) else "")
 ')
   if [[ -z "$tab_id" ]]; then
     echo "PinchTab did not return a tab id" >&2
     return 1
   fi
   printf '%s\n' "$tab_id"
+}
+
+navigate_tab() {
+  local instance_id="$1"
+  local tab_id="$2"
+  local url="$3"
+
+  run_instance_cli navigate "$instance_id" nav "$url" --tab "$tab_id" --json >/dev/null
+}
+
+snap_tab() {
+  local instance_id="$1"
+  local tab_id="$2"
+
+  run_instance_cli snap "$instance_id" snap --tab "$tab_id" -i -c --max-tokens 6000
+}
+
+click_tab() {
+  local instance_id="$1"
+  local tab_id="$2"
+  local ref="$3"
+
+  if [[ ! "$ref" =~ ^e[0-9]+$ ]]; then
+    echo "PinchTab click failed: invalid accessibility reference" >&2
+    return 2
+  fi
+  run_instance_cli click "$instance_id" click "$ref" --tab "$tab_id" --json >/dev/null
+}
+
+fill_tab() {
+  local instance_id="$1"
+  local tab_id="$2"
+  local ref="$3"
+  local value="$4"
+
+  if [[ ! "$ref" =~ ^e[0-9]+$ ]]; then
+    echo "PinchTab fill failed: invalid accessibility reference" >&2
+    return 2
+  fi
+  run_instance_cli fill "$instance_id" fill "$ref" "$value" --tab "$tab_id" --json >/dev/null
+}
+
+eval_tab() {
+  local instance_id="$1"
+  local tab_id="$2"
+  local javascript="$3"
+
+  run_instance_cli eval "$instance_id" eval "$javascript" --tab "$tab_id" --json
+}
+
+close_tab() {
+  local instance_id="$1"
+  local tab_id="$2"
+
+  run_instance_cli close "$instance_id" close "$tab_id" --json >/dev/null
 }
 
 release() {
@@ -240,6 +389,36 @@ case "$action" in
     shift
     [[ $# -eq 2 ]] || { usage >&2; exit 2; }
     open_tab "$1" "$2"
+    ;;
+  navigate)
+    shift
+    [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+    navigate_tab "$1" "$2" "$3"
+    ;;
+  snap)
+    shift
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    snap_tab "$1" "$2"
+    ;;
+  click)
+    shift
+    [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+    click_tab "$1" "$2" "$3"
+    ;;
+  fill)
+    shift
+    [[ $# -eq 4 ]] || { usage >&2; exit 2; }
+    fill_tab "$1" "$2" "$3" "$4"
+    ;;
+  eval)
+    shift
+    [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+    eval_tab "$1" "$2" "$3"
+    ;;
+  close)
+    shift
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    close_tab "$1" "$2"
     ;;
   release)
     shift

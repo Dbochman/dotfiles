@@ -3,7 +3,7 @@
 #
 # Usage:
 #   sync-cron-jobs.sh save    — Save SQLite definitions to dotfiles (legacy JSON fallback)
-#   sync-cron-jobs.sh deploy  — Stage definitions, preserve state, repair schedules, skip completed one-shots
+#   sync-cron-jobs.sh deploy  — Reconcile definitions, preserve state, skip completed one-shots
 #
 # Files:
 #   dotfiles/openclaw/cron/jobs.json  — Job definitions (no state), tracked in git
@@ -180,12 +180,15 @@ PY
     # Stage definitions for the SQLite migration bridge, preserving safe state.
     [ -f "$DOTFILES_JOBS" ] || { echo "Error: $DOTFILES_JOBS not found" >&2; exit 1; }
     if ! source_openclaw_secrets; then
-      echo "Skipped cron deployment: protected identities are not ready; live definitions preserved" >&2
-      exit 0
+      echo "Error: protected identities are not ready; live cron definitions were not deployed" >&2
+      exit 1
     fi
-    SCHEDULE_REPAIR_PLAN=$(mktemp "${TMPDIR:-/tmp}/openclaw-cron-schedule-repair.XXXXXX")
-    export SCHEDULE_REPAIR_PLAN
-    trap 'rm -f "$SCHEDULE_REPAIR_PLAN"' EXIT
+    CRON_UPDATE_PLAN=$(mktemp "${TMPDIR:-/tmp}/openclaw-cron-update.XXXXXX")
+    CRON_GATEWAY_SNAPSHOT=$(mktemp "${TMPDIR:-/tmp}/openclaw-cron-list.XXXXXX")
+    CRON_EXPECTED_SNAPSHOT=$(mktemp "${TMPDIR:-/tmp}/openclaw-cron-expected.XXXXXX")
+    chmod 600 "$CRON_UPDATE_PLAN" "$CRON_GATEWAY_SNAPSHOT" "$CRON_EXPECTED_SNAPSHOT"
+    export CRON_UPDATE_PLAN CRON_GATEWAY_SNAPSHOT CRON_EXPECTED_SNAPSHOT
+    trap 'rm -f "$CRON_UPDATE_PLAN" "$CRON_GATEWAY_SNAPSHOT" "$CRON_EXPECTED_SNAPSHOT"' EXIT
     python3 <<'PY'
 import json
 import os
@@ -300,18 +303,92 @@ new_defs['jobs'] = [
     job for job in new_defs['jobs'] if job['id'] not in completed_ids
 ]
 
-# Load existing state from live file (if it exists)
+# Load existing definitions and state from the legacy bridge (if it exists),
+# then let SQLite override them because it is the executable source of truth.
 state_by_id = {}
-scheduling_inputs_by_id = {}
+live_jobs_by_id = {}
+sqlite_job_ids = set()
 next_run_by_id = {}
 last_run_by_id = {}
 
 
-def scheduling_inputs(job):
-    return {
-        'enabled': job.get('enabled', True),
-        'schedule': job.get('schedule'),
-    }
+def effective_delete_after_run(job):
+    if isinstance(job.get('deleteAfterRun'), bool):
+        return job['deleteAfterRun']
+    return job.get('schedule', {}).get('kind') == 'at'
+
+
+def schedules_equal(desired, live):
+    if not isinstance(desired, dict) or not isinstance(live, dict):
+        return desired == live
+    if desired.get('kind') != live.get('kind'):
+        return False
+    if desired.get('kind') == 'at':
+        return desired.get('at') == live.get('at')
+    if desired.get('kind') == 'every':
+        if desired.get('everyMs') != live.get('everyMs'):
+            return False
+        return 'anchorMs' not in desired or desired.get('anchorMs') == live.get('anchorMs')
+    if desired.get('kind') == 'cron':
+        if desired.get('expr') != live.get('expr') or desired.get('tz') != live.get('tz'):
+            return False
+        # OpenClaw may persist its computed default stagger. An omitted
+        # canonical stagger delegates to that default and is not drift.
+        return 'staggerMs' not in desired or desired.get('staggerMs') == live.get('staggerMs')
+    return desired == live
+
+
+def definition_patch(desired, live):
+    """Return only changed public cron.update fields.
+
+    Omitting unchanged schedule/enabled fields is important: their mere
+    presence makes the gateway recompute nextRunAtMs and would erase a valid
+    failed-run retry backoff. Nested payload and delivery values are supplied
+    in full when either differs so their canonical content wins.
+    """
+    patch = {}
+
+    for key in ('name', 'agentId', 'sessionKey', 'description'):
+        desired_value = desired.get(key)
+        live_value = live.get(key)
+        if desired_value == live_value:
+            continue
+        if key in ('agentId', 'sessionKey'):
+            patch[key] = desired_value
+        elif key == 'description' and desired_value is None:
+            # The update schema accepts an empty description, which the
+            # gateway normalizes back to an absent optional value.
+            patch[key] = ''
+        elif desired_value is not None:
+            patch[key] = desired_value
+
+    desired_enabled = desired.get('enabled', True)
+    if desired_enabled != live.get('enabled', True):
+        patch['enabled'] = desired_enabled
+
+    desired_delete = effective_delete_after_run(desired)
+    if desired_delete != effective_delete_after_run(live):
+        patch['deleteAfterRun'] = desired_delete
+
+    if not schedules_equal(desired.get('schedule'), live.get('schedule')):
+        patch['schedule'] = desired.get('schedule')
+
+    for key in ('sessionTarget', 'wakeMode', 'payload', 'delivery'):
+        if desired.get(key) != live.get(key) and key in desired:
+            patch[key] = desired[key]
+
+    desired_failure_alert = desired.get('failureAlert')
+    live_failure_alert = live.get('failureAlert')
+    failure_alert_matches = desired_failure_alert == live_failure_alert or (
+        desired_failure_alert is None and live_failure_alert is False
+    )
+    if not failure_alert_matches:
+        # `false` is the public update contract's explicit disabled value.
+        patch['failureAlert'] = (
+            desired_failure_alert if desired_failure_alert is not None else False
+        )
+
+    return patch
 
 
 def scheduled_at_ms(schedule):
@@ -332,7 +409,7 @@ if os.path.exists(live_path):
     for job in live_data.get('jobs', []):
         if not isinstance(job, dict) or not isinstance(job.get('id'), str):
             continue
-        scheduling_inputs_by_id[job['id']] = scheduling_inputs(job)
+        live_jobs_by_id[job['id']] = job
         next_run_by_id[job['id']] = job.get('state', {}).get('nextRunAtMs')
         last_run_by_id[job['id']] = job.get('state', {}).get('lastRunAtMs')
         if 'state' in job:
@@ -369,23 +446,24 @@ if os.path.isfile(sqlite_path):
         except json.JSONDecodeError:
             live_job = {}
         if isinstance(live_job, dict):
-            scheduling_inputs_by_id[job_id] = scheduling_inputs(live_job)
+            live_jobs_by_id[job_id] = live_job
+            sqlite_job_ids.add(job_id)
         next_run_by_id[job_id] = next_run_at_ms
         last_run_by_id[job_id] = last_run_at_ms
 
-# Merge definitions from dotfiles with non-scheduling runtime state. A changed
-# schedule or enabled flag must never retain nextRunAtMs/runningAtMs from the
-# previous schedule. On SQLite, also ask the live gateway to apply the schedule
-# patch so its in-memory timer and flattened runtime columns are recalculated.
-schedule_repairs = []
+# Merge definitions from dotfiles with non-scheduling runtime state. Existing
+# SQLite definitions are reconciled through the gateway before doctor imports
+# newly staged IDs. A changed schedule or enabled flag must never retain
+# nextRunAtMs/runningAtMs from the previous schedule.
+cron_updates = []
 for job in new_defs['jobs']:
     job_id = job['id']
-    live_inputs = scheduling_inputs_by_id.get(job_id)
-    desired_inputs = scheduling_inputs(job)
-    scheduling_changed = live_inputs is not None and live_inputs != desired_inputs
+    live_job = live_jobs_by_id.get(job_id)
+    patch = definition_patch(job, live_job) if live_job is not None else {}
+    scheduling_changed = 'enabled' in patch or 'schedule' in patch
     expected_at_ms = scheduled_at_ms(job.get('schedule'))
     stale_at_runtime = (
-        live_inputs is not None
+        live_job is not None
         and job.get('enabled', True)
         and expected_at_ms is not None
         and next_run_by_id.get(job_id) != expected_at_ms
@@ -401,17 +479,30 @@ for job in new_defs['jobs']:
             state.pop('runningAtMs', None)
         job['state'] = state
 
-    if scheduling_changed or stale_at_runtime:
-        schedule_repairs.append({
+    if stale_at_runtime and 'enabled' not in patch and 'schedule' not in patch:
+        patch['schedule'] = job.get('schedule')
+
+    # Doctor imports newly staged IDs. Only IDs already present in SQLite can
+    # be updated through cron.update without an "id not found" failure.
+    if patch and job_id in sqlite_job_ids:
+        cron_updates.append({
             'id': job_id,
-            'patch': desired_inputs,
+            'patch': patch,
         })
 
-with open(os.environ['SCHEDULE_REPAIR_PLAN'], 'w') as repair_file:
-    for params in schedule_repairs:
-        repair_file.write(
+with open(os.environ['CRON_UPDATE_PLAN'], 'w') as update_file:
+    for params in cron_updates:
+        update_file.write(
             params['id'] + '\t' + json.dumps(params, separators=(',', ':')) + '\n'
         )
+
+# Doctor may archive the legacy bridge after importing it. Keep an owner-only
+# expected-definition snapshot for the mandatory post-deploy parity read-back.
+with open(os.environ['CRON_EXPECTED_SNAPSHOT'], 'w') as expected_file:
+    json.dump(new_defs, expected_file, separators=(',', ':'))
+    expected_file.write('\n')
+    expected_file.flush()
+    os.fsync(expected_file.fileno())
 
 # Atomic write: write to sibling tmp, fsync, rename. os.replace is a directory
 # entry swap and doesn't need extra filesystem space, so tight-disk conditions
@@ -433,31 +524,35 @@ except Exception:
 
 preserved = sum(1 for j in new_defs['jobs'] if 'state' in j)
 completed_summary = ', '.join(completed_ids) if completed_ids else 'none'
-schedule_summary = ', '.join(item['id'] for item in schedule_repairs) if schedule_repairs else 'none'
+update_summary = ', '.join(item['id'] for item in cron_updates) if cron_updates else 'none'
 print(
     f'Deployed {len(new_defs["jobs"])} jobs to {live_path} '
     f'({preserved} with preserved state; completed one-shots skipped: {completed_summary}; '
-    f'schedule repairs planned: {schedule_summary})'
+    f'gateway reconciliations planned: {update_summary})'
 )
 PY
-    if [ -s "$SCHEDULE_REPAIR_PLAN" ] && [ -f "$SQLITE_DB" ]; then
+    if [ -s "$CRON_UPDATE_PLAN" ] && [ -f "$SQLITE_DB" ]; then
       command -v openclaw >/dev/null 2>&1 || {
-        echo "Error: schedule repair required but openclaw is not on PATH" >&2
+        echo "Error: cron definition reconciliation required but openclaw is not on PATH" >&2
         exit 1
       }
       source_openclaw_secrets
       while IFS=$'\t' read -r JOB_ID UPDATE_PARAMS; do
         if UPDATE_OUT=$(openclaw gateway call cron.update --json --timeout 30000 \
           --params "$UPDATE_PARAMS" 2>&1); then
-          echo "Recalculated cron schedule state through gateway: $JOB_ID"
+          echo "Reconciled cron definition through gateway: $JOB_ID"
         else
-          echo "Error: could not recalculate cron schedule state for $JOB_ID:" >&2
+          echo "Error: could not reconcile cron definition for $JOB_ID:" >&2
           printf '%s\n' "$UPDATE_OUT" >&2
           exit 1
         fi
-      done < "$SCHEDULE_REPAIR_PLAN"
+      done < "$CRON_UPDATE_PLAN"
     fi
-    if [ -f "$SQLITE_DB" ] && command -v openclaw >/dev/null 2>&1; then
+    if [ -f "$SQLITE_DB" ]; then
+      command -v openclaw >/dev/null 2>&1 || {
+        echo "Error: OpenClaw SQLite cron store exists but openclaw is not on PATH" >&2
+        exit 1
+      }
       source_openclaw_secrets
       if DOCTOR_OUT=$(openclaw doctor --fix --non-interactive --yes 2>&1); then
         if printf '%s\n' "$DOCTOR_OUT" | grep -q "Cron store migrated"; then
@@ -466,8 +561,148 @@ PY
           echo "OpenClaw doctor completed; SQLite cron store already normalized"
         fi
       else
-        echo "WARNING: OpenClaw doctor could not normalize cron store:" >&2
+        echo "Error: OpenClaw doctor could not normalize cron store:" >&2
         printf '%s\n' "$DOCTOR_OUT" >&2
+        exit 1
+      fi
+
+      # Exit status alone cannot prove that a gateway update or doctor import
+      # changed the executable store. Read both SQLite and the active Gateway
+      # back and compare every canonical definition field before reporting a
+      # successful deployment.
+      if ! openclaw cron list --all --json > "$CRON_GATEWAY_SNAPSHOT" 2>/dev/null; then
+        echo "Error: could not read the active Gateway cron definitions after deployment" >&2
+        exit 1
+      fi
+      if ! python3 <<'PY'
+import json
+import os
+import sqlite3
+import sys
+
+live_path = os.environ["LIVE_JOBS"]
+expected_path = os.environ["CRON_EXPECTED_SNAPSHOT"]
+sqlite_path = os.environ["SQLITE_DB"]
+gateway_path = os.environ["CRON_GATEWAY_SNAPSHOT"]
+
+
+def load_jobs(path):
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    jobs = payload.get("jobs") if isinstance(payload, dict) else None
+    if not isinstance(jobs, list):
+        raise ValueError("jobs list is missing")
+    return jobs
+
+
+def by_id(jobs):
+    result = {}
+    for job in jobs:
+        if not isinstance(job, dict) or not isinstance(job.get("id"), str):
+            raise ValueError("job definition is malformed")
+        if job["id"] in result:
+            raise ValueError("duplicate job definition")
+        result[job["id"]] = job
+    return result
+
+
+def schedules_equal(desired, actual):
+    if not isinstance(desired, dict) or not isinstance(actual, dict):
+        return desired == actual
+    if desired.get("kind") != actual.get("kind"):
+        return False
+    if desired.get("kind") == "at":
+        return desired.get("at") == actual.get("at")
+    if desired.get("kind") == "every":
+        return desired.get("everyMs") == actual.get("everyMs") and (
+            "anchorMs" not in desired
+            or desired.get("anchorMs") == actual.get("anchorMs")
+        )
+    if desired.get("kind") == "cron":
+        return (
+            desired.get("expr") == actual.get("expr")
+            and desired.get("tz") == actual.get("tz")
+            and (
+                "staggerMs" not in desired
+                or desired.get("staggerMs") == actual.get("staggerMs")
+            )
+        )
+    return desired == actual
+
+
+def effective_delete_after_run(job):
+    if isinstance(job.get("deleteAfterRun"), bool):
+        return job["deleteAfterRun"]
+    return isinstance(job.get("schedule"), dict) and job["schedule"].get("kind") == "at"
+
+
+def definitions_equal(desired, actual):
+    if desired.get("id") != actual.get("id"):
+        return False
+    for key in ("name", "agentId", "sessionKey"):
+        if desired.get(key) != actual.get(key):
+            return False
+    desired_description = desired.get("description") or None
+    actual_description = actual.get("description") or None
+    if desired_description != actual_description:
+        return False
+    if desired.get("enabled", True) != actual.get("enabled", True):
+        return False
+    if effective_delete_after_run(desired) != effective_delete_after_run(actual):
+        return False
+    if not schedules_equal(desired.get("schedule"), actual.get("schedule")):
+        return False
+    for key in ("sessionTarget", "wakeMode", "payload", "delivery"):
+        if desired.get(key) != actual.get(key):
+            return False
+    desired_alert = desired.get("failureAlert")
+    actual_alert = actual.get("failureAlert")
+    if not (
+        desired_alert == actual_alert
+        or desired_alert is None and actual_alert is False
+    ):
+        return False
+    return True
+
+
+try:
+    desired = by_id(load_jobs(expected_path))
+    gateway = by_id(load_jobs(gateway_path))
+    uri = "file:" + sqlite_path + "?mode=ro"
+    with sqlite3.connect(uri, uri=True) as connection:
+        rows = connection.execute(
+            "SELECT job_id, job_json FROM cron_jobs WHERE store_key = ?",
+            (live_path,),
+        ).fetchall()
+        if not rows:
+            rows = connection.execute(
+                "SELECT job_id, job_json FROM cron_jobs"
+            ).fetchall()
+    sqlite_jobs = []
+    for job_id, raw_job in rows:
+        job = json.loads(raw_job)
+        if not isinstance(job, dict) or job.get("id") != job_id:
+            raise ValueError("SQLite job definition is malformed")
+        sqlite_jobs.append(job)
+    sqlite_defs = by_id(sqlite_jobs)
+except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error) as exc:
+    print("Error: post-deploy cron definition verification could not read a valid store", file=sys.stderr)
+    raise SystemExit(1) from exc
+
+for job_id, definition in desired.items():
+    sqlite_definition = sqlite_defs.get(job_id)
+    gateway_definition = gateway.get(job_id)
+    if sqlite_definition is None or not definitions_equal(definition, sqlite_definition):
+        print(f"Error: post-deploy SQLite cron definition mismatch: {job_id}", file=sys.stderr)
+        raise SystemExit(1)
+    if gateway_definition is None or not definitions_equal(definition, gateway_definition):
+        print(f"Error: post-deploy Gateway cron definition mismatch: {job_id}", file=sys.stderr)
+        raise SystemExit(1)
+
+print(f"Verified {len(desired)} cron definitions in SQLite and the active Gateway")
+PY
+      then
+        exit 1
       fi
     fi
     ;;

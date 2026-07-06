@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "jobs": {
+    "datenight-aug-farmtotable": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-08-01T12:00:00Z", "expires_at": "2026-08-22T03:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["Farm-to-Table Newton", "Farm-to-Table Brookline"],
+        "eligible_cuisine_terms": ["Farm-to-Table"],
+        "eligible_locality_terms": ["Newton", "Brookline"],
+        "preferred_venues": [],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 6,
+        "max_search_attempts_per_provider": 8
+      },
+      "reservation": {"dates": ["2026-08-07", "2026-08-14", "2026-08-21"], "party_size": 2, "target_time": "19:00", "window_start": "18:30", "window_end": "19:30", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2026-08-01", "date_end": "2026-08-31", "party_size": null, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "datenight-sep-steakhouse": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-09-01T12:00:00Z", "expires_at": "2026-09-26T03:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["American Steakhouse Newton", "American Steakhouse Brookline"],
+        "eligible_cuisine_terms": ["Steakhouse", "American"],
+        "eligible_locality_terms": ["Newton", "Brookline"],
+        "preferred_venues": [],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 6,
+        "max_search_attempts_per_provider": 8
+      },
+      "reservation": {"dates": ["2026-09-11", "2026-09-18", "2026-09-25"], "party_size": 2, "target_time": "19:00", "window_start": "18:30", "window_end": "19:30", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2026-09-01", "date_end": "2026-09-30", "party_size": null, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "datenight-oct-indian": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-10-01T12:00:00Z", "expires_at": "2026-10-24T03:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["Indian Newton", "Indian Brookline"],
+        "eligible_cuisine_terms": ["Indian"],
+        "eligible_locality_terms": ["Newton", "Brookline"],
+        "preferred_venues": [],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 6,
+        "max_search_attempts_per_provider": 8
+      },
+      "reservation": {"dates": ["2026-10-09", "2026-10-16", "2026-10-23"], "party_size": 2, "target_time": "19:00", "window_start": "18:30", "window_end": "19:30", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2026-10-01", "date_end": "2026-10-31", "party_size": null, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "datenight-nov-american": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-11-01T12:00:00Z", "expires_at": "2026-11-21T04:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["Modern American Newton", "Modern American Brookline"],
+        "eligible_cuisine_terms": ["Modern American", "New American"],
+        "eligible_locality_terms": ["Newton", "Brookline"],
+        "preferred_venues": [],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 6,
+        "max_search_attempts_per_provider": 8
+      },
+      "reservation": {"dates": ["2026-11-06", "2026-11-13", "2026-11-20"], "party_size": 2, "target_time": "19:00", "window_start": "18:30", "window_end": "19:30", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2026-11-01", "date_end": "2026-11-30", "party_size": null, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "datenight-dec-upscale": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-12-01T12:00:00Z", "expires_at": "2026-12-19T04:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["Upscale French Italian Contemporary Newton", "Upscale French Italian Contemporary Brookline"],
+        "eligible_cuisine_terms": ["French", "Italian", "Contemporary"],
+        "eligible_locality_terms": ["Newton", "Brookline"],
+        "preferred_venues": [],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": 3,
+        "max_candidates_per_provider": 6,
+        "max_search_attempts_per_provider": 8
+      },
+      "reservation": {"dates": ["2026-12-04", "2026-12-11", "2026-12-18"], "party_size": 2, "target_time": "19:00", "window_start": "18:30", "window_end": "19:30", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2026-12-01", "date_end": "2026-12-31", "party_size": null, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "doubledate-q4-oct-mexican": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-10-01T14:00:00Z", "expires_at": "2026-10-17T03:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["Mexican Brookline"],
+        "eligible_cuisine_terms": ["Mexican"],
+        "eligible_locality_terms": ["Brookline"],
+        "preferred_venues": [],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 6,
+        "max_search_attempts_per_provider": 6
+      },
+      "reservation": {"dates": ["2026-10-15", "2026-10-16"], "party_size": 4, "target_time": "19:00", "window_start": "18:30", "window_end": "19:30", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2026-10-15", "date_end": "2026-10-17", "party_size": 4, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "doubledate-q1-jan27-french": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2027-01-02T12:00:00Z", "expires_at": "2027-01-16T04:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["French Brookline"],
+        "eligible_cuisine_terms": ["French"],
+        "eligible_locality_terms": ["Brookline"],
+        "preferred_venues": [],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 6,
+        "max_search_attempts_per_provider": 6
+      },
+      "reservation": {"dates": ["2027-01-14", "2027-01-15"], "party_size": 4, "target_time": "19:00", "window_start": "18:30", "window_end": "19:30", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2027-01-14", "date_end": "2027-01-15", "party_size": 4, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "qd-booking-2026-10-sep15": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-09-15T14:00:00Z", "expires_at": "2026-10-31T03:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["Tapas Jamaica Plain", "Italian Jamaica Plain", "New American Jamaica Plain", "Indian Brookline", "Japanese Brookline", "Gastropub Brookline"],
+        "eligible_cuisine_terms": ["Tapas", "Italian", "New American", "American", "Indian", "Japanese", "Gastropub"],
+        "eligible_locality_terms": ["Brookline", "Jamaica Plain"],
+        "preferred_venues": ["Tres Gatos", "Tonino", "The Clocktower Kitchen + Bar", "Ssaanjh", "Maguro", "Washington Square Tavern", "La Morra"],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 8,
+        "max_search_attempts_per_provider": 8
+      },
+      "reservation": {"dates": ["2026-10-09", "2026-10-16", "2026-10-23", "2026-10-30"], "party_size": 4, "target_time": "18:30", "window_start": "18:00", "window_end": "19:00", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2026-10-01", "date_end": "2026-10-31", "party_size": 4, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    },
+    "qd-booking-2027-01-dec15": {
+      "authorization": {"kind": "canonical-cron-standing", "not_before": "2026-12-15T15:00:00Z", "expires_at": "2027-01-30T04:59:59Z", "max_mutation_attempts": 1},
+      "providers": ["resy", "opentable"],
+      "search": {
+        "queries": ["Japanese Brookline", "Indian Brookline", "New American Jamaica Plain", "Italian Jamaica Plain"],
+        "eligible_cuisine_terms": ["Japanese", "Indian", "New American", "American", "Italian"],
+        "eligible_locality_terms": ["Brookline", "Jamaica Plain"],
+        "preferred_venues": ["Akami Omakase", "Maguro", "Ssaanjh", "The Clocktower Kitchen + Bar", "Tonino", "La Morra"],
+        "excluded_venues": [],
+        "allow_discovery": true,
+        "minimum_price_tier": null,
+        "max_candidates_per_provider": 8,
+        "max_search_attempts_per_provider": 8
+      },
+      "reservation": {"dates": ["2027-01-08", "2027-01-15", "2027-01-22", "2027-01-29"], "party_size": 4, "target_time": "18:30", "window_start": "18:00", "window_end": "19:00", "max_delta_minutes": 30},
+      "idempotency": {"match": "any-active", "date_start": "2027-01-01", "date_end": "2027-01-31", "party_size": 4, "time_start": null, "time_end": null},
+      "fees": {"currency": "USD", "max_due_now_minor": 0, "max_deposit_minor": 0, "max_prepayment_minor": 0, "max_cancellation_fee_minor": 0, "max_no_show_fee_minor": 0, "allow_nonrefundable": false, "allow_card_guarantee": true, "unknown_terms": "reject"},
+      "selection": {"platform_tiebreak": ["resy", "opentable"], "sort": ["date_rank", "time_delta", "preferred_venue_rank", "platform_rank", "provider_rank", "restaurant_name"]}
+    }
+  }
+}

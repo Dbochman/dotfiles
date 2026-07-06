@@ -360,13 +360,8 @@ class ResyAPI:
                     break
 
         if not resp.ok:
-            log.error("API error %d: %s", resp.status_code, _redact(resp.text[:500]))
-            try:
-                err = resp.json()
-                msg = err.get("message", resp.text[:200])
-            except Exception:
-                msg = resp.text[:200]
-            print(f"Error: API returned {resp.status_code}: {msg}", file=sys.stderr)
+            log.error("API error method=%s path=%s status=%d", method, path, resp.status_code)
+            print(f"Error: API returned HTTP {resp.status_code}.", file=sys.stderr)
             sys.exit(1)
 
         if resp.headers.get("content-type", "").startswith("application/json"):
@@ -394,7 +389,7 @@ class ResyAPI:
 
         if not token:
             print("Error: Login failed — no token in response", file=sys.stderr)
-            log.error("Login failed: %s", _redact(json.dumps(data)[:500]))
+            log.error("Login failed: provider response did not contain an auth token")
             sys.exit(1)
 
         self.creds.set("auth_token", token)
@@ -434,7 +429,11 @@ class ResyAPI:
         }, headers={"Content-Type": "application/x-www-form-urlencoded"})
 
     def get_reservations(self):
-        return self._request("GET", "/3/user/reservations")
+        return self._request(
+            "GET",
+            "/3/user/reservations",
+            params={"limit": 100, "offset": 0},
+        )
 
     def cancel(self, resy_token):
         return self._request("POST", "/3/cancel", data={

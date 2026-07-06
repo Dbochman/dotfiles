@@ -1,0 +1,762 @@
+#!/usr/bin/env python3
+"""Read upcoming OpenTable reservations through the managed browser profile.
+
+The command intentionally emits only normalized reservation facts. Browser
+responses, page text, URLs, cookies, and authentication material are never
+included in stdout or stderr.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import hmac
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+
+PROVIDER = "opentable"
+DASHBOARD_URL = "https://www.opentable.com/user/dining-dashboard"
+DEFAULT_HELPER = Path.home() / ".openclaw" / "bin" / "pinchtab-headless-instance"
+DEFAULT_BINDING_FILE = Path.home() / ".cache" / "openclaw-gateway" / "opentable_account_binding.json"
+DEFAULT_EXPECTED_ACCOUNT_FILE = Path.home() / ".cache" / "openclaw-gateway" / "opentable_expected_account.sha256"
+ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{3,160}$")
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{20,512}$")
+SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+STATUSES = {"confirmed", "pending", "cancelled"}
+
+ERROR_MESSAGES = {
+    "usage": "Usage: opentable-reservations [--json]",
+    "browser_helper_unavailable": "Managed OpenTable browser helper is unavailable",
+    "browser_acquire_failed": "Could not acquire the managed OpenTable browser",
+    "browser_open_failed": "Could not open the OpenTable reservations page",
+    "browser_read_failed": "Could not safely read OpenTable reservations",
+    "authentication_required": "The managed OpenTable profile requires attended sign-in",
+    "invalid_browser_context": "OpenTable left the approved HTTPS reservations route",
+    "reservations_loading_timeout": "OpenTable reservations did not finish loading",
+    "reservations_unrecognized": "OpenTable reservations could not be verified",
+    "reservations_incomplete": "OpenTable could not prove the full reservation list was loaded",
+    "reservations_malformed": "OpenTable returned incomplete reservation facts",
+    "account_identity_unverified": "OpenTable account identity could not be verified",
+}
+
+
+EXTRACT_SCRIPT = r"""(() => {
+  /* OT_STEP_UPCOMING_RESERVATIONS */
+  const result = value => JSON.stringify(value);
+  const clean = (value, limit = 200) => String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
+  const visible = element => {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+  };
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (window.location.origin !== 'https://www.opentable.com') {
+    return result({status: 'invalid_context'});
+  }
+  if (/^\/(?:authenticate|login|sign-in)(?:\/|$)/i.test(path)) {
+    return result({status: 'authentication_required'});
+  }
+  if (path !== '/user/dining-dashboard') {
+    return result({status: 'invalid_context'});
+  }
+  if (document.readyState !== 'complete') return result({status: 'loading'});
+
+  const main = document.querySelector('main');
+  if (!main) return result({status: 'loading'});
+  const mainText = clean(main.innerText, 12000);
+  const authSurface = Array.from(document.querySelectorAll(
+    '[role="dialog"], form[action*="auth" i], form[action*="login" i], [data-test*="auth" i], [data-testid*="auth" i]'
+  )).filter(visible).some(element => {
+    const text = clean(element.innerText || element.textContent, 2000);
+    return /\b(?:sign in|log in|verification code)\b/i.test(text) && /\b(?:email|continue|account)\b/i.test(text);
+  });
+  if (authSurface || (/\b(?:sign in|log in)\b/i.test(mainText) && /\b(?:reservation|account)\b/i.test(mainText))) {
+    return result({status: 'authentication_required'});
+  }
+  const spinner = Array.from(main.querySelectorAll(
+    '[data-test="spinner"], [data-testid="spinner"], [aria-busy="true"], [role="progressbar"]'
+  )).some(visible);
+  if (spinner) return result({status: 'loading'});
+  const browserIdentityHash = String(
+    window.__INITIAL_STATE__?.header?.userProfile?.emailHash || ''
+  ).trim().toLowerCase();
+  const authCookie = document.cookie.match(/(?:^|;\s*)authCke=([^;]*)/);
+  let browserToken = '';
+  if (authCookie) {
+    try {
+      const cookieValue = decodeURIComponent(authCookie[1]);
+      browserToken = cookieValue.match(/(?:^|&)atk=([^&]+)/)?.[1] || '';
+    } catch (_) {}
+  }
+  if (!/^[a-f0-9]{64}$/.test(browserIdentityHash) || !/^[A-Za-z0-9_-]{20,512}$/.test(browserToken)) {
+    return result({status: 'identity_unavailable'});
+  }
+
+  const parseDate = values => {
+    for (const raw of values) {
+      const value = clean(raw, 120);
+      let match = value.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+      if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+      match = value.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
+      if (match) return `${match[3]}-${String(match[1]).padStart(2, '0')}-${String(match[2]).padStart(2, '0')}`;
+      match = value.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2})(?:,\s*|\s+)(20\d{2})\b/i);
+      if (match) {
+        const months = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+        const month = months[match[1].slice(0, 4).toLowerCase()] || months[match[1].slice(0, 3).toLowerCase()];
+        if (month) return `${match[3]}-${String(month).padStart(2, '0')}-${String(match[2]).padStart(2, '0')}`;
+      }
+      match = value.match(/\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\s+(\d{1,2})\b/i);
+      if (match) {
+        const months = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+        const month = months[match[1].slice(0, 4).toLowerCase()] || months[match[1].slice(0, 3).toLowerCase()];
+        const day = Number(match[2]);
+        const now = new Date();
+        let year = now.getFullYear();
+        const candidate = new Date(year, month - 1, day);
+        const today = new Date(year, now.getMonth(), now.getDate());
+        if (month && day >= 1 && day <= 31 && candidate < today) year += 1;
+        if (month && day >= 1 && day <= 31) {
+          return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        }
+      }
+    }
+    return '';
+  };
+  const parseTime = values => {
+    for (const raw of values) {
+      const value = clean(raw, 120);
+      let match = value.match(/(?:T|\b)([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?\b/);
+      if (match) return `${match[1]}:${match[2]}`;
+      match = value.match(/\b(\d{1,2}):([0-5]\d)\s*([AP])\.?M\.?\b/i);
+      if (match && Number(match[1]) >= 1 && Number(match[1]) <= 12) {
+        let hour = Number(match[1]) % 12;
+        if (match[3].toUpperCase() === 'P') hour += 12;
+        return `${String(hour).padStart(2, '0')}:${match[2]}`;
+      }
+    }
+    return '';
+  };
+  const parseParty = values => {
+    for (const raw of values) {
+      const value = clean(raw, 120);
+      const match = value.match(/\b([1-9]|1\d|20)\s*(?:people|persons?|guests?|covers?|top)\b/i);
+      if (match) return Number(match[1]);
+      if (/^(?:[1-9]|1\d|20)$/.test(value)) return Number(value);
+    }
+    return 0;
+  };
+  const attributeValues = (root, selectors, attributes) => {
+    const values = [];
+    for (const selector of selectors) {
+      for (const element of root.querySelectorAll(selector)) {
+        if (!visible(element)) continue;
+        for (const attribute of attributes) values.push(element.getAttribute(attribute) || '');
+        values.push(element.textContent || '');
+      }
+    }
+    return values;
+  };
+  const reservationId = root => {
+    const idAttributes = [
+      'data-reservation-id', 'data-reservationid', 'data-confirmation-id',
+      'data-confirmation-number', 'data-booking-id'
+    ];
+    for (const element of [root, ...root.querySelectorAll('*')]) {
+      for (const attribute of idAttributes) {
+        const candidate = clean(element.getAttribute?.(attribute), 160);
+        if (/^[A-Za-z0-9_.:-]{3,160}$/.test(candidate)) return candidate;
+      }
+    }
+    for (const anchor of root.querySelectorAll('a[href]')) {
+      try {
+        const url = new URL(anchor.getAttribute('href'), window.location.origin);
+        if (url.origin !== window.location.origin) continue;
+        for (const key of ['reservationId', 'reservationID', 'confirmationNumber', 'confirmationId', 'bookingId']) {
+          const candidate = clean(url.searchParams.get(key), 160);
+          if (/^[A-Za-z0-9_.:-]{3,160}$/.test(candidate)) return candidate;
+        }
+        const match = url.pathname.match(/\/(?:reservations?|bookings?)\/([A-Za-z0-9_.:-]{3,160})(?:\/|$)/i);
+        if (match) return match[1];
+      } catch (_) {}
+    }
+    return '';
+  };
+  const restaurantName = root => {
+    const selectors = [
+      '[data-test*="restaurant-name" i]', '[data-testid*="restaurant-name" i]',
+      '[itemprop="name"]', 'h1', 'h2', 'h3', 'h4'
+    ];
+    for (const selector of selectors) {
+      for (const element of root.querySelectorAll(selector)) {
+        if (!visible(element)) continue;
+        const value = clean(element.textContent, 160);
+        if (value && !/^(?:upcoming|reservation|details|modify|cancel)$/i.test(value)) return value;
+      }
+    }
+    return '';
+  };
+  const locationName = root => {
+    const selectors = [
+      '[data-test*="location" i]', '[data-testid*="location" i]',
+      '[data-test*="address" i]', '[data-testid*="address" i]', '[itemprop="address"]'
+    ];
+    for (const selector of selectors) {
+      for (const element of root.querySelectorAll(selector)) {
+        if (!visible(element)) continue;
+        const value = clean(element.textContent, 200);
+        if (value) return value;
+      }
+    }
+    return '';
+  };
+  const statusName = (root, inUpcomingScope) => {
+    const values = attributeValues(
+      root,
+      ['[data-test*="status" i]', '[data-testid*="status" i]', '[aria-label*="status" i]'],
+      ['data-status', 'aria-label']
+    ).map(value => clean(value, 80)).join(' ');
+    const text = `${values} ${clean(root.textContent, 1500)}`;
+    if (/\bcancel(?:led|ed)\b/i.test(text)) return 'cancelled';
+    if (/\bpending\b/i.test(text)) return 'pending';
+    if (/\bconfirmed\b/i.test(text) || inUpcomingScope) return 'confirmed';
+    return '';
+  };
+
+  const dashboard = window.__INITIAL_STATE__?.diningDashboard;
+  if (!dashboard || typeof dashboard !== 'object' || Array.isArray(dashboard)) {
+    return result({status: 'loading'});
+  }
+  if (typeof dashboard.hasError !== 'boolean' || typeof dashboard.isUserActive !== 'boolean') {
+    return result({status: 'incomplete'});
+  }
+  if (dashboard.hasError !== false) return result({status: 'incomplete'});
+  if (dashboard.isUserActive !== true) return result({status: 'authentication_required'});
+  if (!Array.isArray(dashboard.upcomingReservations) || !Array.isArray(dashboard.upcomingInvites)) {
+    return result({status: 'incomplete'});
+  }
+  if (dashboard.upcomingReservations.length > 100 || dashboard.upcomingInvites.length > 0) {
+    return result({status: 'incomplete'});
+  }
+  const upcomingPaginationKey = Object.keys(dashboard).find(key => (
+    /upcoming.*(?:pagination|next|previous|page|cursor|hasmore|loadmore|url)/i.test(key) ||
+    /(?:pagination|next|previous|page|cursor|hasmore|loadmore|url).*upcoming/i.test(key)
+  ));
+  if (upcomingPaginationKey) return result({status: 'incomplete'});
+
+  const stateReservationId = item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+    const candidates = [
+      item.reservationId, item.reservationID, item.confirmationNumber,
+      item.confirmationId, item.bookingId, item.reservation?.reservationId,
+      item.reservation?.confirmationNumber, item.reservation?.confirmationId
+    ];
+    for (const value of candidates) {
+      const candidate = clean(value, 160);
+      if (/^[A-Za-z0-9_.:-]{3,160}$/.test(candidate)) return candidate;
+    }
+    return '';
+  };
+  const expectedIds = dashboard.upcomingReservations.map(stateReservationId);
+  if (expectedIds.some(value => !value) || new Set(expectedIds).size !== expectedIds.length) {
+    return result({status: 'malformed'});
+  }
+  const expectedCount = expectedIds.length;
+
+  const headings = Array.from(main.querySelectorAll('h1,h2,h3,[role="heading"],[role="tab"]')).filter(visible);
+  const upcomingHeading = headings.find(element => /^upcoming(?: reservations?)?(?:\s*[([]\d+[)\]])?$/i.test(clean(element.textContent, 80)));
+  const upcomingTab = headings.find(element => element.getAttribute('role') === 'tab' && /^upcoming(?: reservations?)?/i.test(clean(element.textContent, 80)));
+  if (upcomingTab && upcomingTab.getAttribute('aria-selected') === 'false') {
+    return result({status: 'unrecognized'});
+  }
+  const listSelector = [
+    '[data-test*="upcoming-reservation-list" i]',
+    '[data-testid*="upcoming-reservation-list" i]',
+    '[data-test="reservation-list" i]',
+    '[data-testid="reservation-list" i]',
+    '[aria-label="Upcoming reservations" i]'
+  ].join(',');
+  const explicitList = main.querySelector(listSelector);
+  const upcomingSection = upcomingHeading && upcomingHeading.getAttribute('role') !== 'tab'
+    ? upcomingHeading.closest('section, [data-test*="upcoming" i], [data-testid*="upcoming" i]')
+    : null;
+  const selectedUpcomingTab = upcomingTab?.getAttribute('aria-selected') === 'true';
+  const scopeAffirmed = Boolean(explicitList || upcomingSection || selectedUpcomingTab);
+  const scope = explicitList || upcomingSection || main;
+  const selectors = [
+    '[data-test*="upcoming-reservation" i]', '[data-testid*="upcoming-reservation" i]',
+    '[data-test*="reservation-card" i]', '[data-testid*="reservation-card" i]',
+    '[data-reservation-id]', '[data-confirmation-id]', '[data-confirmation-number]'
+  ];
+  const roots = [];
+  const addRoot = element => {
+    if (!element || !visible(element) || roots.includes(element)) return;
+    if (roots.some(existing => existing.contains(element))) return;
+    for (let index = roots.length - 1; index >= 0; index -= 1) {
+      if (element.contains(roots[index])) roots.splice(index, 1);
+    }
+    roots.push(element);
+  };
+  for (const selector of selectors) {
+    for (const element of scope.querySelectorAll(selector)) addRoot(element);
+  }
+  for (const anchor of scope.querySelectorAll('a[href*="reservation" i], a[href*="booking" i]')) {
+    let root = anchor.closest('article, li, [data-test*="reservation" i], [data-testid*="reservation" i]');
+    if (!root) {
+      let candidate = anchor.parentElement;
+      for (let depth = 0; candidate && candidate !== main && depth < 6; depth += 1) {
+        const text = clean(candidate.textContent, 2000);
+        const hasHeading = Boolean(candidate.querySelector('h1,h2,h3,h4,[role="heading"]'));
+        const hasDate = /\b(?:20\d{2}-\d{2}-\d{2}|Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b/i.test(text);
+        const hasTime = /\b\d{1,2}:\d{2}\s*(?:[AP]M)?\b/i.test(text);
+        if (hasHeading && hasDate && hasTime) {
+          root = candidate;
+          break;
+        }
+        candidate = candidate.parentElement;
+      }
+    }
+    if (root) addRoot(root);
+  }
+
+  const paginationPattern = /^(?:load|show|view) more(?: reservations?)?$|^(?:next|previous)(?: page)?$/i;
+  const paginationSelectors = [
+    '[data-test*="pagination" i]', '[data-testid*="pagination" i]',
+    '[data-test*="load-more" i]', '[data-testid*="load-more" i]',
+    '[data-test*="sentinel" i]', '[data-testid*="sentinel" i]',
+    '[data-infinite-scroll]',
+    '[aria-label*="pagination" i]', 'a[rel="next"]', 'a[rel="prev"]'
+  ].join(',');
+  const paginationElements = Array.from(scope.querySelectorAll(paginationSelectors));
+  const paginationControls = Array.from(scope.querySelectorAll('button,a,[role="button"]'))
+    .filter(element => visible(element) && paginationPattern.test(clean(element.textContent || element.getAttribute('aria-label'), 100)));
+  const hasPagination = paginationElements.length > 0 || paginationControls.length > 0;
+  const hasVirtualizedList = scope.querySelectorAll(
+    '[data-virtualized="true"], [data-virtualized-list], [data-test*="virtualized" i], [data-testid*="virtualized" i]'
+  ).length > 0;
+
+  const semanticList = explicitList && (
+    ['UL', 'OL'].includes(explicitList.tagName) ||
+    explicitList.getAttribute('role') === 'list' ||
+    explicitList.hasAttribute('data-test') ||
+    explicitList.hasAttribute('data-testid')
+  );
+  const units = semanticList
+    ? Array.from(explicitList.children).filter(element => visible(element) && clean(element.textContent, 2000))
+    : [];
+  const opaqueCount = units.filter(unit => !roots.some(root => (
+    unit === root || unit.contains(root) || root.contains(unit)
+  ))).length;
+  if (hasPagination || hasVirtualizedList || opaqueCount > 0) {
+    return result({status: 'incomplete'});
+  }
+  if (roots.length !== expectedCount) return result({status: 'incomplete'});
+  if (expectedCount > 0 && !scopeAffirmed) return result({status: 'incomplete'});
+
+  if (expectedCount === 0) {
+    return result({
+      status: 'ready',
+      complete: true,
+      completeness_evidence: 'dashboard_state',
+      expected_count: 0,
+      rendered_count: 0,
+      opaque_count: 0,
+      has_pagination: false,
+      browser_identity_hash: browserIdentityHash,
+      browser_token: browserToken,
+      reservations: []
+    });
+  }
+
+  const reservations = [];
+  for (const root of roots) {
+    const id = reservationId(root);
+    const restaurant = restaurantName(root);
+    const dateValues = attributeValues(
+      root,
+      ['time[datetime]', '[data-date]', '[data-reservation-date]', '[data-test*="date" i]', '[data-testid*="date" i]'],
+      ['datetime', 'data-date', 'data-reservation-date', 'aria-label']
+    );
+    const timeValues = attributeValues(
+      root,
+      ['time[datetime]', '[data-time]', '[data-reservation-time]', '[data-test*="time" i]', '[data-testid*="time" i]'],
+      ['datetime', 'data-time', 'data-reservation-time', 'aria-label']
+    );
+    const partyValues = attributeValues(
+      root,
+      ['[data-party-size]', '[data-covers]', '[data-test*="party" i]', '[data-testid*="party" i]', '[aria-label*="guest" i]'],
+      ['data-party-size', 'data-covers', 'aria-label']
+    );
+    const text = clean(root.textContent, 2000);
+    const date = parseDate([...dateValues, text]);
+    const reservationTime = parseTime([...timeValues, text]);
+    const partySize = parseParty([...partyValues, text]);
+    const status = statusName(root, Boolean(upcomingHeading || upcomingTab));
+    if (!id || !restaurant || !date || !reservationTime || !partySize || !status) {
+      return result({status: 'malformed', candidateCount: roots.length});
+    }
+    const reservation = {
+      platform: 'opentable',
+      reservation_id: id,
+      restaurant,
+      date,
+      time: reservationTime,
+      party_size: partySize,
+      status
+    };
+    const location = locationName(root);
+    if (location) reservation.location = location;
+    reservations.push(reservation);
+  }
+  if (reservations.length !== roots.length) return result({status: 'incomplete'});
+  const parsedIds = reservations.map(reservation => reservation.reservation_id);
+  if (
+    new Set(parsedIds).size !== parsedIds.length ||
+    parsedIds.some(value => !expectedIds.includes(value)) ||
+    expectedIds.some(value => !parsedIds.includes(value))
+  ) return result({status: 'incomplete'});
+  return result({
+    status: 'ready',
+    complete: true,
+    completeness_evidence: 'dashboard_state',
+    expected_count: expectedCount,
+    rendered_count: roots.length,
+    opaque_count: 0,
+    has_pagination: false,
+    browser_identity_hash: browserIdentityHash,
+    browser_token: browserToken,
+    reservations
+  });
+})()"""
+
+
+class LookupError(Exception):
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def emit(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+
+
+def fail(code: str, exit_code: int = 1) -> int:
+    emit(
+        {
+            "success": False,
+            "provider": PROVIDER,
+            "error_code": code,
+            "message": ERROR_MESSAGES[code],
+        }
+    )
+    return exit_code
+
+
+def run_helper(helper: Path, *args: str, timeout: int = 30) -> str:
+    try:
+        completed = subprocess.run(
+            [str(helper), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise LookupError("browser_read_failed") from exc
+    if completed.returncode != 0:
+        raise LookupError("browser_read_failed")
+    return completed.stdout.strip()
+
+
+def parse_lease(raw: str) -> tuple[str, str]:
+    parts = raw.split("\t")
+    if len(parts) != 2 or not re.fullmatch(r"inst_[A-Za-z0-9_-]+", parts[0]):
+        raise LookupError("browser_acquire_failed")
+    if parts[1] not in {"0", "1"}:
+        raise LookupError("browser_acquire_failed")
+    return parts[0], parts[1]
+
+
+def parse_tab(raw: str) -> str:
+    tab_id = raw.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{3,160}", tab_id):
+        raise LookupError("browser_open_failed")
+    return tab_id
+
+
+def parse_eval(raw: str) -> dict[str, Any]:
+    try:
+        outer = json.loads(raw)
+        value: Any = outer.get("result") if isinstance(outer, dict) else None
+        if isinstance(value, str):
+            value = json.loads(value)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise LookupError("browser_read_failed") from exc
+    if not isinstance(value, dict):
+        raise LookupError("browser_read_failed")
+    return value
+
+
+def read_protected_file(path: Path) -> str:
+    try:
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+            raise LookupError("account_identity_unverified")
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise LookupError("account_identity_unverified")
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise LookupError("account_identity_unverified") from exc
+
+
+def load_account_binding() -> tuple[str, str]:
+    binding_path = Path(
+        os.environ.get("OPENTABLE_ACCOUNT_BINDING_FILE", str(DEFAULT_BINDING_FILE))
+    )
+    expected_path = Path(
+        os.environ.get(
+            "OPENTABLE_EXPECTED_ACCOUNT_FILE", str(DEFAULT_EXPECTED_ACCOUNT_FILE)
+        )
+    )
+    expected_hash = read_protected_file(expected_path).strip()
+    if not SHA256_RE.fullmatch(expected_hash):
+        raise LookupError("account_identity_unverified")
+    try:
+        binding = json.loads(read_protected_file(binding_path))
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise LookupError("account_identity_unverified") from exc
+    if not isinstance(binding, dict):
+        raise LookupError("account_identity_unverified")
+    token_hash = binding.get("token_sha256")
+    if (
+        binding.get("schema_version") != 1
+        or binding.get("profile") != PROVIDER
+        or binding.get("verified_via") not in {"email_otp", "browser_email_hash"}
+        or binding.get("account_sha256") != expected_hash
+        or not isinstance(token_hash, str)
+        or not SHA256_RE.fullmatch(token_hash)
+    ):
+        raise LookupError("account_identity_unverified")
+    return expected_hash, token_hash
+
+
+def require_bound_browser_identity(
+    payload: dict[str, Any], expected_hash: str, token_hash: str
+) -> None:
+    browser_identity_hash = payload.get("browser_identity_hash")
+    browser_token = payload.get("browser_token")
+    if (
+        not isinstance(browser_identity_hash, str)
+        or not SHA256_RE.fullmatch(browser_identity_hash)
+        or not hmac.compare_digest(browser_identity_hash, expected_hash)
+        or not isinstance(browser_token, str)
+        or not TOKEN_RE.fullmatch(browser_token)
+    ):
+        raise LookupError("account_identity_unverified")
+    candidate_hash = hashlib.sha256(browser_token.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(candidate_hash, token_hash):
+        raise LookupError("account_identity_unverified")
+
+
+def clean_string(value: Any, *, maximum: int, required: bool = True) -> str:
+    if not isinstance(value, str):
+        if required:
+            raise LookupError("reservations_malformed")
+        return ""
+    cleaned = " ".join(value.replace("\x00", " ").split())
+    if (required and not cleaned) or len(cleaned) > maximum:
+        raise LookupError("reservations_malformed")
+    if any(ord(character) < 32 or ord(character) == 127 for character in cleaned):
+        raise LookupError("reservations_malformed")
+    return cleaned
+
+
+def complete_reservation_items(payload: dict[str, Any]) -> list[Any]:
+    evidence = payload.get("completeness_evidence")
+    expected_count = payload.get("expected_count")
+    rendered_count = payload.get("rendered_count")
+    opaque_count = payload.get("opaque_count")
+    reservations = payload.get("reservations")
+    counts = (expected_count, rendered_count, opaque_count)
+
+    if payload.get("complete") is not True or payload.get("has_pagination") is not False:
+        raise LookupError("reservations_incomplete")
+    if any(not isinstance(value, int) or isinstance(value, bool) for value in counts):
+        raise LookupError("reservations_incomplete")
+    if not 0 <= expected_count <= 100 or rendered_count != expected_count or opaque_count != 0:
+        raise LookupError("reservations_incomplete")
+    if not isinstance(reservations, list) or len(reservations) != expected_count:
+        raise LookupError("reservations_incomplete")
+    if evidence != "dashboard_state":
+        raise LookupError("reservations_incomplete")
+    return reservations
+
+
+def normalize_reservations(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list) or len(raw) > 100:
+        raise LookupError("reservations_malformed")
+    normalized: list[dict[str, Any]] = []
+    by_id: dict[str, dict[str, Any]] = {}
+    today = dt.date.today()
+
+    for item in raw:
+        if not isinstance(item, dict) or item.get("platform") != PROVIDER:
+            raise LookupError("reservations_malformed")
+        reservation_id = clean_string(item.get("reservation_id"), maximum=160)
+        if not ID_RE.fullmatch(reservation_id):
+            raise LookupError("reservations_malformed")
+        restaurant = clean_string(item.get("restaurant"), maximum=160)
+        date_value = clean_string(item.get("date"), maximum=10)
+        time_value = clean_string(item.get("time"), maximum=5)
+        status = clean_string(item.get("status"), maximum=16).lower()
+        party_size = item.get("party_size")
+        if not DATE_RE.fullmatch(date_value) or not TIME_RE.fullmatch(time_value):
+            raise LookupError("reservations_malformed")
+        try:
+            reservation_date = dt.date.fromisoformat(date_value)
+        except ValueError as exc:
+            raise LookupError("reservations_malformed") from exc
+        if reservation_date < today or status not in STATUSES:
+            raise LookupError("reservations_malformed")
+        if not isinstance(party_size, int) or isinstance(party_size, bool) or not 1 <= party_size <= 20:
+            raise LookupError("reservations_malformed")
+
+        reservation: dict[str, Any] = {
+            "platform": PROVIDER,
+            "reservation_id": reservation_id,
+            "restaurant": restaurant,
+            "date": date_value,
+            "time": time_value,
+            "party_size": party_size,
+            "status": status,
+        }
+        if "location" in item:
+            location = clean_string(item.get("location"), maximum=200, required=False)
+            if location:
+                reservation["location"] = location
+
+        previous = by_id.get(reservation_id)
+        if previous is not None:
+            raise LookupError("reservations_malformed")
+        by_id[reservation_id] = reservation
+        normalized.append(reservation)
+
+    normalized.sort(key=lambda item: (item["date"], item["time"], item["reservation_id"]))
+    return normalized
+
+
+def settle_seconds() -> float:
+    try:
+        value = float(os.environ.get("OPENTABLE_RESERVATIONS_POLL_SECONDS", "2"))
+    except ValueError:
+        return 2.0
+    return value if 0 <= value <= 10 else 2.0
+
+
+def main(argv: list[str]) -> int:
+    if argv not in ([], ["--json"]):
+        return fail("usage", 2)
+
+    helper = Path(os.environ.get("OPENTABLE_PINCHTAB_INSTANCE_HELPER", str(DEFAULT_HELPER)))
+    if not helper.is_file() or helper.is_symlink() or not os.access(helper, os.X_OK):
+        return fail("browser_helper_unavailable")
+
+    instance_id = ""
+    started = "0"
+    tab_id = ""
+    try:
+        expected_account_hash, bound_token_hash = load_account_binding()
+        try:
+            instance_id, started = parse_lease(run_helper(helper, "acquire", PROVIDER))
+        except LookupError as exc:
+            raise LookupError("browser_acquire_failed") from exc
+        try:
+            tab_id = parse_tab(run_helper(helper, "open", instance_id, DASHBOARD_URL))
+        except LookupError as exc:
+            raise LookupError("browser_open_failed") from exc
+
+        poll_delay = settle_seconds()
+        for attempt in range(6):
+            try:
+                payload = parse_eval(
+                    run_helper(helper, "eval", instance_id, tab_id, EXTRACT_SCRIPT)
+                )
+            except LookupError as exc:
+                if exc.code == "browser_read_failed" and attempt < 5:
+                    time.sleep(poll_delay)
+                    continue
+                raise
+            status = payload.get("status")
+            if status == "loading":
+                if attempt < 5:
+                    time.sleep(poll_delay)
+                    continue
+                raise LookupError("reservations_loading_timeout")
+            if status == "authentication_required":
+                raise LookupError("authentication_required")
+            if status == "invalid_context":
+                raise LookupError("invalid_browser_context")
+            if status == "identity_unavailable":
+                raise LookupError("account_identity_unverified")
+            if status == "malformed":
+                raise LookupError("reservations_malformed")
+            if status == "incomplete":
+                raise LookupError("reservations_incomplete")
+            if status != "ready":
+                raise LookupError("reservations_unrecognized")
+
+            require_bound_browser_identity(
+                payload, expected_account_hash, bound_token_hash
+            )
+            complete_items = complete_reservation_items(payload)
+            reservations = normalize_reservations(complete_items)
+            if len(reservations) != payload["expected_count"]:
+                raise LookupError("reservations_incomplete")
+            emit(
+                {
+                    "success": True,
+                    "provider": PROVIDER,
+                    "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+                    "reservations": [
+                        {
+                            key: value
+                            for key, value in reservation.items()
+                            if key != "reservation_id"
+                        }
+                        for reservation in reservations
+                    ],
+                }
+            )
+            return 0
+        raise LookupError("reservations_loading_timeout")
+    except LookupError as exc:
+        return fail(exc.code)
+    finally:
+        if instance_id and tab_id:
+            try:
+                run_helper(helper, "close", instance_id, tab_id, timeout=10)
+            except LookupError:
+                pass
+        if instance_id:
+            try:
+                run_helper(helper, "release", instance_id, started, timeout=10)
+            except LookupError:
+                pass
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

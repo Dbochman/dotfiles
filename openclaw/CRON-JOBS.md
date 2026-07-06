@@ -24,11 +24,16 @@ shortcut.
 The repository remains the durable definition record, but SQLite changes how
 deployment works. `sync-cron-jobs.sh deploy` filters completed
 `deleteAfterRun` jobs using `cron_run_logs`, stages the remaining definitions,
-imports new IDs through `openclaw doctor`, and reconciles schedule/enabled
-changes through the live gateway so `nextRunAtMs` is recalculated. Existing
-payload/delivery edits and removals still require the matching cron API command
-as well as the repo edit. The daily deployment runs at 6 AM; a manual
-`dotfiles-pull.command` deploys immediately.
+reconciles changed existing definitions through the live gateway, then imports
+new IDs through `openclaw doctor`. Only drifted fields are patched, so payload
+or delivery edits preserve runtime state and retry backoff while schedule or
+enabled edits recalculate `nextRunAtMs`. The daily deployment runs at 6 AM; a
+manual `dotfiles-pull.command` deploys immediately. Deployment returns nonzero
+when protected identities are unavailable or SQLite normalization fails; a
+caller must never report those cases as a successful rollout. It also reads
+SQLite and the active Gateway back after reconciliation and rejects any
+canonical-field drift, so successful-but-no-op RPC responses cannot mask stale
+prompts.
 
 ### CLI commands
 
@@ -131,11 +136,13 @@ or it can run multiple times and create duplicates:
 
 The canonical date-night, double-date, and quarterly-dinner jobs are a
 deliberate exception to exact-venue confirmation: their enabled definitions
-are standing user authorization to choose and book one surprise restaurant
-within the prompt's cuisine, location, date, time, party-size, and fee-policy
-constraints. The uncertainty is part of the experience. Do not disable these
-jobs or convert them to proposal-only work merely because the exact venue is
-unknown. This does not waive the idempotency, cache-only, one-attempt,
+and tracked restaurant-booking scopes are standing user authorization to
+choose and book one surprise restaurant within the cuisine, location, date,
+time, party-size, and fee-policy constraints. The uncertainty is part of the
+experience. No durable exact-restaurant or exact-platform approval is
+required. Do not disable these jobs or convert them to proposal-only work
+merely because the venue is unknown. This does not waive dual-provider
+idempotency, cache-only credentials, the one-total-mutation limit,
 no-unattended-cancellation, `delivery.mode: none`, `deleteAfterRun`, or
 successful-run tombstone requirements below.
 
@@ -149,26 +156,36 @@ successful-run tombstone requirements below.
 
 2. **Idempotency check at the top of the prompt.** Even with delivery
    disabled, a worker crash, gateway restart, or manual re-run could
-   re-fire the agent. Make the agent check whether the side effect was
-   already done before doing it. For Resy/OpenTable bookings:
+   re-fire the agent. The nine canonical restaurant one-shots must use the
+   deployed `restaurant-book` scope as the sole reservation-account check,
+   search, ranking, and booking path. The coordinator reads both Resy and
+   OpenTable before search and again at the mutation boundary; the prompt
+   must not reproduce provider-specific commands. Calendar-bearing jobs do
+   their calendar precheck first, then invoke the coordinator only when clear.
+   Clear means the Calendar read succeeded, covered the complete interval,
+   and every returned record was parseable. An unavailable, incomplete,
+   malformed, or otherwise inconclusive Calendar read stops the run before
+   the coordinator:
 
    ```
-   IDEMPOTENCY CHECK FIRST: Run `resy reservations` and look for any
-   existing upcoming booking in <month> 2026 (any date, any time, any
-   restaurant — not just the specific Friday). If ANY May 2026 booking
-   exists, send chat-id ${HOUSEHOLD_CHAT_ID} a status message ("<month> date night
-   already booked: [restaurant], [date]") and STOP — do NOT book
-   another.
+   IDEMPOTENCY CHECK FIRST: The deployed scope treats any active booking
+   in the scope's idempotency window on either Resy or OpenTable as already
+   booked. Do not pivot around it.
 
-   Otherwise: <original task prompt>
+   Run `~/.openclaw/bin/restaurant-book run --job-id <canonical-job-id>`
+   exactly once. Across both providers, at most one total reservation
+   mutation is allowed. After an attempted or possibly attempted mutation,
+   or any ambiguous/unknown outcome, do not retry or fall back to another
+   provider, restaurant, date, or time.
    ```
 
-   **Critical wording**: the check must say "any booking in <month>",
-   not "the specific Friday at 7 PM". If the prompt also says "try around
-   May 8-16", an agent that finds a May 8 conflict will helpfully pivot
-   to May 15 — which is exactly what happened on 2026-05-02 with La Morra
-   (post-mortem below). Make the idempotency window match the agent's
-   own search window, or it'll book around the conflict.
+   **Critical scope rule**: date nights use any active reservation in the
+   target month, regardless of date, time, restaurant, or party size. Double
+   dates and quarterly group dinners use their tracked party-of-four windows.
+   The idempotency window must contain every candidate date. A stopped,
+   blocked, `already_reserved`, `manual_review_required`, or ambiguous result
+   is final for that run; the agent reports it and performs no alternate
+   reservation action.
 
 3. **`deleteAfterRun: true`** (set via `--delete-after-run`). After the
    first successful return, OpenClaw removes the live definition and keeps
@@ -351,15 +368,64 @@ temporary definition.
 All current definitions use `payload.kind: agentTurn`; none sets a restrictive
 `toolsAllow` list. Prompts may still invoke shell commands through the exec
 tool. Isolated cron sessions do not have `~/.openclaw/bin` on `PATH`, so custom
-CLI commands must use full absolute paths.
+CLI commands must use explicit home-qualified paths.
+
+### Canonical restaurant coordinator
+
+The nine enabled restaurant one-shots call exactly one public entry point:
+
+```bash
+~/.openclaw/bin/restaurant-book run --job-id <canonical-job-id>
+```
+
+Their bounded authorizations live in
+`openclaw/cron/restaurant-booking-scopes.json` and deploy as the protected
+runtime registry `~/.openclaw/restaurant-bookings/scopes.json`. A job ID must
+exist in both `jobs.json` and that registry. The scope fixes both providers,
+candidate dates, time window, party size, cuisine/locality filters, fee policy,
+optional structured minimum price tier, idempotency window, execution window,
+deterministic selection, and a maximum of one total mutation attempt. The
+December upscale scope requires provider price tier 3 or higher; missing or
+malformed price metadata is ineligible.
+
+The current standing scopes set deposit, prepayment, due-now, cancellation,
+and no-show fee caps to `$0`. A card guarantee is eligible only when the
+provider affirmatively reports no monetary hold or fee; unknown terms fail
+closed. Raising any cap is a separate payment-authorization change.
+
+`restaurant-book run` reads both reservation accounts fail-closed, searches
+both Resy and OpenTable under strict call budgets, and selects one eligible
+candidate only when both searches complete. A partial provider result blocks
+mutation. The OpenTable browser guard and API token must carry the same
+protected account/token attestation. The coordinator repeats both account
+guards next to the mutation boundary, requires exact provider read-back after
+booking, and never tries the other provider after a mutation is attempted or
+its outcome is ambiguous. Its `plan` subcommand is read-only rehearsal only
+and must not appear in a live cron prompt. Cron agents must not invoke
+provider-specific reservation/search/booking commands or ask for an
+exact-restaurant approval around the coordinator.
+
+Every prompt sends exactly one status message because cron delivery is
+disabled. A `confirmed` result may create the requested calendar event only
+after a second complete and conclusive calendar check. If that repeat check is
+unavailable or uncertain, the reservation remains confirmed but no event is
+created or updated. No non-confirmed result creates a new calendar event;
+`mutation_attempted` or `reservation_may_exist` requires an explicit warning
+that a reservation may exist and attended review is needed. The coordinator
+intentionally withholds Resy cancellation-capable tokens. A calendar event may
+include a confirmation/reference only when the safe coordinator result
+explicitly supplies one; the cron agent must never fetch, derive, or invent it.
 
 ## One-Shot Date Night Bookings
 
 Monthly date nights for Dylan and Julia (2 people, Fridays at 7 PM,
-Newton/Brookline area via Resy). All `deleteAfterRun: true`, agent
+Newton/Brookline area across Resy and OpenTable through `restaurant-book`). All
+`deleteAfterRun: true`, agent
 self-delivers to group chat (chat-id ${HOUSEHOLD_CHAT_ID}) via the `message` tool —
 `delivery.mode: "none"` at the cron layer (see "Safe one-shots" above).
-Each prompt opens with an idempotency check against `resy reservations`.
+Each scope treats any active reservation in the target month on either
+platform as already booked. Calendar creation is optional and only follows a
+new `confirmed` result.
 
 | ID | Fires On | Cuisine |
 |----|----------|---------|
@@ -371,7 +437,12 @@ Each prompt opens with an idempotency check against `resy reservations`.
 
 ## One-Shot Double Date Bookings
 
-Quarterly double dates for 4 (Dylan, Julia, Will, Ayesha). Thursdays or Fridays at 7 PM, Brookline, via OpenTable or Resy. All use `deleteAfterRun: true`, `delivery.mode: none`, and reservation plus calendar idempotency checks; the agent sends exactly one group-chat status itself.
+Quarterly double dates for 4 (Dylan, Julia, Will, Ayesha). Thursdays or
+Fridays at 7 PM, Brookline, across Resy and OpenTable through
+`restaurant-book`. All use `deleteAfterRun: true`, `delivery.mode: none`, and
+reservation plus calendar idempotency checks. The agent sends exactly one
+group-chat status itself and creates a calendar event only after a new
+`confirmed` result.
 
 | ID | Fires On | Cuisine |
 |----|----------|---------|
@@ -380,7 +451,12 @@ Quarterly double dates for 4 (Dylan, Julia, Will, Ayesha). Thursdays or Fridays 
 
 ## One-Shot Quarterly Group Dinner Bookings
 
-Quarterly group dinners for 4 via Resy. Party of 4 at 6:30 PM on Fridays, Brookline/JP area. Booked ~2 weeks before the target month. All use `deleteAfterRun: true`, `delivery.mode: none`, and reservation plus calendar idempotency checks. The agent sends one group-chat status and creates a calendar event on Julia's calendar only when no matching event exists.
+Quarterly group dinners for 4 across Resy and OpenTable through
+`restaurant-book`. Party of 4 at 6:30 PM on Fridays in the Brookline/JP area,
+booked before the target month. All use `deleteAfterRun: true`,
+`delivery.mode: none`, and reservation plus calendar idempotency checks. The
+agent sends one group-chat status and creates an event on Julia's calendar only
+after a new `confirmed` reservation and only when no matching event exists.
 
 | ID | Fires On | Target Month |
 |----|----------|--------------|

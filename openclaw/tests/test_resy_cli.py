@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 import tempfile
 import types
@@ -26,9 +27,7 @@ class FakeResponse:
         self.headers = {"content-type": "application/json"}
 
     def json(self) -> object:
-        if self.ok:
-            return self.payload
-        return {"message": "fake error"}
+        return self.payload
 
 
 class FakeSession:
@@ -178,6 +177,25 @@ class ResyCliTests(unittest.TestCase):
                 self.assertEqual(session.calls, 1)
                 self.assertIs(session.call_kwargs[0]["allow_redirects"], False)
 
+    def test_reservations_requests_one_complete_page_with_exact_pagination(self) -> None:
+        module = self.load_module(RESY_CACHE_ONLY="1")
+        payload = {
+            "metadata": {"limit": 100, "offset": 0, "total": 0},
+            "reservations": [],
+            "venues": {},
+        }
+        session = FakeSession([FakeResponse(payload=payload)])
+        api = self.api_with_session(module, session)
+        api._restaurant_snipe_final_guard = True
+
+        self.assertEqual(api.get_reservations(), payload)
+        self.assertEqual(session.calls, 1)
+        self.assertEqual(
+            session.call_kwargs[0]["params"],
+            {"limit": 100, "offset": 0},
+        )
+        self.assertIs(session.call_kwargs[0]["allow_redirects"], False)
+
     def test_booking_401_and_rate_limit_are_never_retried(self) -> None:
         module = self.load_module(RESY_CACHE_ONLY="1")
         for status_code in (401, 429):
@@ -216,6 +234,23 @@ class ResyCliTests(unittest.TestCase):
 
         self.assertEqual(result, {"ok": True})
         self.assertEqual(session.calls, 2)
+
+    def test_non_2xx_body_is_never_logged_or_printed(self) -> None:
+        module = self.load_module(RESY_CACHE_ONLY="1")
+        canary = "PRIVATE-CONTACT-SLOT-ID-CANARY"
+        response = FakeResponse(500, {"message": canary})
+        response.text = canary
+        api = self.api_with_session(module, FakeSession([response]))
+        stderr = io.StringIO()
+
+        with mock.patch.object(module.log, "error") as logged, mock.patch.object(
+            module.sys, "stderr", stderr
+        ):
+            with self.assertRaises(SystemExit):
+                api._request("GET", "/4/find", auth_required=False)
+
+        self.assertNotIn(canary, str(logged.call_args))
+        self.assertNotIn(canary, stderr.getvalue())
 
 
 if __name__ == "__main__":

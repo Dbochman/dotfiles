@@ -1,19 +1,45 @@
 ---
 name: opentable
-description: Search restaurants, safely preview availability, and explicitly confirm reservations on OpenTable. Use when asked about OpenTable reservations, restaurant availability on OpenTable, booking a table via OpenTable, or searching for restaurants by cuisine/location.
-allowed-tools: Bash(opentable-book:*)
-metadata: {"openclaw":{"emoji":"O","requires":{"bins":["pinchtab","opentable-book"]}}}
+description: Read upcoming OpenTable reservations or handle attended ad-hoc OpenTable availability and exact-approval booking. Use for OpenTable account reads, attended restaurant searches, or a user-confirmed one-off reservation; route canonical recurring date-night, double-date, and quarterly-group jobs to the restaurant-book skill instead.
+allowed-tools: Bash(opentable-book:*) Bash(opentable-reservations:*)
+metadata: {"openclaw":{"emoji":"O","requires":{"bins":["pinchtab","opentable-book","opentable-reservations"]}}}
 ---
 
 # OpenTable Reservations
 
-Use only the approval-gated `opentable-book` command. Direct OpenTable CLI
-access is intentionally outside this skill because its mutation commands do
-not enforce the one-use approval binding below.
+Use `opentable-reservations` for a fail-closed read of upcoming reservations
+and the approval-gated `opentable-book` command for attended ad-hoc
+availability or booking. Route every canonical recurring date-night,
+double-date, or quarterly-group job to `restaurant-book`; its deployed scope
+is the standing authorization and its coordinator owns both providers. Direct
+OpenTable CLI access is intentionally outside this skill because its mutation
+commands do not enforce the one-use approval binding below.
+
+## Upcoming reservations
+
+```bash
+opentable-reservations --json
+```
+
+This read-only command uses the dedicated authenticated `opentable` PinchTab
+profile. It succeeds only when that browser token matches the protected
+expected-account binding and the page proves the entire upcoming list is
+loaded. Pagination, virtualization, opaque cards, count mismatches, login
+overlays, and parsing uncertainty fail closed. A successful response contains
+only `provider`, `checked_at`, and normalized platform, restaurant, date, time,
+party-size, status, and optional-location facts; reservation IDs remain
+internal for duplicate detection. It never invokes `op`, exposes page text or
+URLs, or prints browser, identity, or authentication data.
 
 ## Approval-gated Pinchtab booking
 
-The `opentable-book.sh` script uses Pinchtab (headless browser automation) to search OpenTable, select a timeslot, and complete the reservation using the card on file.
+The `opentable-book.sh` script uses Pinchtab (headless browser automation) for
+an attended, approval-gated OpenTable flow. It proceeds only when the search
+renderer exposes an inspectable timeslot control. Current OpenTable result
+cards can render visually inside an opaque component; when that happens the
+wrapper returns `availability_renderer_unavailable` before any mutation. It
+does not use coordinate clicks, infer availability from pixels, or silently
+switch providers.
 
 ### Usage
 
@@ -62,6 +88,7 @@ checkout data, booking URLs, cookies, or authentication tokens.
 {"success":true,"mode":"commit","status":"confirmed","approval_id":"...","confirmation_id":"...","restaurant":"Example Restaurant","confirmed_date":"2026-08-15","confirmed_time":"7:15 PM","party_size":2}
 {"success":false,"mode":"commit","status":"unknown","error_code":"reservation_status_unknown","non_retryable":true,"mutation_attempted":true,"reservation_may_exist":true}
 {"success":false,"mode":"preview","error_code":"outside_time_window","message":"Closest available time exceeds the configured maximum delta","requested_time":"19:00","closest_time":"8:00 PM","time_delta_minutes":60,"max_time_delta_minutes":30}
+{"success":false,"mode":"preview","error_code":"availability_renderer_unavailable","message":"OpenTable result cards could not be safely inspected"}
 ```
 
 ### How it works
@@ -69,7 +96,7 @@ checkout data, booking URLs, cookies, or authentication tokens.
 2. Navigates to OpenTable search with cuisine, date, time, party size
 3. Dismisses cookie consent overlay
 4. Validates the date, requested time, party size, and maximum time delta
-5. Finds the closest available timeslot and rejects it when it exceeds the maximum delta
+5. Selects the closest inspectable timeslot within the maximum delta, or fails closed when result-card contents are opaque
 6. Validates the exact OpenTable HTTPS origin/route and one scoped final button
 7. Extracts the complete booking and policy facts; unknown terms are not approvable
 8. Stores complete preview facts atomically in a mode-`0700` cache with mode-`0600` state
@@ -79,7 +106,7 @@ checkout data, booking URLs, cookies, or authentication tokens.
 12. Returns a non-retryable unknown/may-exist result after any ambiguous post-click failure
 
 ### Tips
-- If no slots found, retry with a different search term (just the cuisine, or a different neighborhood)
+- Treat `no_available_times` as an inspectable empty result; never reinterpret `availability_renderer_unavailable` as no availability
 - Try multiple dates: e.g. both Fridays and Saturdays in the target week
 - Treat every successful preview as a proposal, not a reservation
 - Show every preview fact, including payment and policy terms, before asking for approval
@@ -89,11 +116,11 @@ checkout data, booking URLs, cookies, or authentication tokens.
 
 ## Typical Workflow
 
-1. Preview: `opentable-book "cuisine area" DATE TIME PARTY`
+1. For a canonical recurring date-night, double-date, or quarterly-group job, stop here and use `restaurant-book`; otherwise preview with `opentable-book "cuisine area" DATE TIME PARTY`
 2. Show the user every returned restaurant, location, date, time, party, seating, payment, cancellation, and no-show fact
 3. Continue only when `approvable` is `true`; if any detail is unsuitable or unknown, change the request and preview again
 4. After explicit approval of those exact facts, run `--confirm <approval-id>` with no other arguments
-5. If Pinchtab keeps failing, fall back to Resy
+5. If the renderer is unavailable, report that safe inspection is blocked and stop without mutation; do not silently switch providers
 
 For a specific restaurant, use its exact name and location as the search term.
 Do not switch to the direct CLI when the search is inconvenient or incomplete.
@@ -106,6 +133,8 @@ Do not switch to the direct CLI when the search is inconvenient or incomplete.
 - **Background monitoring belongs to `restaurant-snipe`** — do not bypass this gate with direct CLI or cron booking
 - **Unknown terms block booking** — missing payment, cancellation, or no-show facts never produce an approval ID
 - **Post-click unknown means may exist** — never retry it; reconcile reservations first
+- **No post-attempt fallback** — after an attempted, possibly attempted, or unknown mutation, never try Resy, another restaurant, another date, or another time
+- **Reconcile before mutation** — require a fresh successful `opentable-reservations` result; a failed lookup is never an empty account
 - **Validate dates** — must be YYYY-MM-DD and not in the past
 - **Party size** — must be 1-20
 - **Time** — must be 24-hour HH:MM; never accept a selected or confirmed time outside `--max-time-delta`
@@ -120,4 +149,5 @@ this skill.
 ## Notes
 
 - Pinchtab booking script: `~/.openclaw/workspace/scripts/opentable-book.sh`
-- Pinchtab uses the real OpenTable website — more resilient to API changes
+- Upcoming-reservations reader: `~/.openclaw/bin/opentable-reservations`
+- The attended browser path fails closed when OpenTable exposes only opaque result cards; it has no coordinate-click or provider-fallback mode

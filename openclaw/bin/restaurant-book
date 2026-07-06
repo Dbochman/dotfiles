@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+exec "$HOME/.openclaw/bin/restaurant-book.py" "$@"
