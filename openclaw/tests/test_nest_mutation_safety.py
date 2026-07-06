@@ -297,6 +297,32 @@ class NestMutationSafetyTests(unittest.TestCase):
         self.assertIn("latitude=40.1234", request["url"])
         self.assertIn("longitude=-70.5678", request["url"])
 
+    def test_snapshot_keeps_cielo_and_mysa_sources(self) -> None:
+        self._write_executable(
+            self.fake_bin / "cielo",
+            """#!/bin/sh
+printf '%s\n' '[{"deviceName":"Bedroom","deviceStatus":1,"latEnv":{"temp":76,"humidity":55},"latestAction":{"temp":"72","mode":"cool","power":"on"}}]'
+""",
+        )
+        self._write_executable(
+            self.fake_bin / "mysa",
+            """#!/bin/sh
+printf '%s\n' '{"devices":[{"name":"Cat Room","temp_f":71.5,"humidity":42,"setpoint_f":68,"duty_pct":15}]}'
+""",
+        )
+
+        result = self.run_nest("snapshot")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        history_files = list((self.home / ".openclaw" / "nest-history").glob("*.jsonl"))
+        self.assertEqual(len(history_files), 1)
+        snapshot = json.loads(history_files[0].read_text(encoding="utf-8"))
+        rooms = {room["room"]: room for room in snapshot["rooms"]}
+        self.assertEqual(rooms["19Crosstown Bedroom"]["source"], "cielo")
+        self.assertEqual(rooms["19Crosstown Bedroom"]["temp_f"], 76.0)
+        self.assertEqual(rooms["19Crosstown Cat Room"]["source"], "mysa")
+        self.assertEqual(rooms["19Crosstown Cat Room"]["duty_pct"], 15.0)
+
     def test_secure_location_file_overrides_protected_cache(self) -> None:
         self._write_assignments(
             self.location_file,

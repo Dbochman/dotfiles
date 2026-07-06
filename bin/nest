@@ -396,6 +396,30 @@ _get_all_weather() {
   echo "{$joined}"
 }
 
+_get_cielo_status() {
+  # Returns a JSON array of Cielo device statuses; [] on failure.
+  local cielo_bin out
+  cielo_bin=$(command -v cielo || true)
+  if [[ -z "$cielo_bin" ]]; then
+    echo '[]'
+    return
+  fi
+  out=$("$cielo_bin" status --json 2>/dev/null) || true
+  if [[ -z "$out" ]]; then echo '[]'; else echo "$out"; fi
+}
+
+_get_mysa_status() {
+  # Returns the Mysa status object; {} on failure.
+  local mysa_bin out
+  mysa_bin=$(command -v mysa || true)
+  if [[ -z "$mysa_bin" ]]; then
+    echo '{}'
+    return
+  fi
+  out=$("$mysa_bin" 2>/dev/null) || true
+  if [[ -z "$out" ]]; then echo '{}'; else echo "$out"; fi
+}
+
 _c_to_f() {
   python3 -c 'import sys; print(round(float(sys.argv[1]) * 9/5 + 32, 1))' "$1"
 }
@@ -723,11 +747,15 @@ cmd_snapshot() {
   fi
 
   weather=$(_get_all_weather)
+  local cielo mysa
+  cielo=$(_get_cielo_status)
+  mysa=$(_get_mysa_status)
   ts=$(date -u +%FT%TZ)
   today=$(date +%Y-%m-%d)
 
   _build_structure_map
-  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" python3 -c "
+  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" \
+    CIELO_JSON="$cielo" MYSA_JSON="$mysa" python3 -c "
 import json, sys, os
 data = json.load(sys.stdin)
 ts = os.environ['SNAP_TS']
@@ -772,6 +800,60 @@ for d in data.get('devices', []):
         'setpoint_c': round(set_c, 2),
         'setpoint_f': round(set_c * 9/5 + 32, 1),
         'connectivity': conn,
+        'source': 'nest',
+    })
+# Inject Cielo devices (all at Crosstown).
+try:
+    cielo_devices = json.loads(os.environ.get('CIELO_JSON', '[]'))
+except (TypeError, ValueError, json.JSONDecodeError):
+    cielo_devices = []
+for cd in cielo_devices if isinstance(cielo_devices, list) else []:
+    env = cd.get('latEnv', {})
+    action = cd.get('latestAction', {})
+    c_temp_f = float(env.get('temp', 0))
+    c_humidity = env.get('humidity', 0)
+    c_mode = action.get('mode', '?')
+    c_power = action.get('power', 'off')
+    hvac_map = {'heat': 'HEATING', 'cool': 'COOLING', 'auto': 'AUTO', 'fan': 'FAN', 'dry': 'DRY'}
+    c_hvac = hvac_map.get(c_mode, 'ON') if c_power == 'on' else 'OFF'
+    c_set_f = float(action.get('temp', 0))
+    snapshot['rooms'].append({
+        'room': '19Crosstown ' + cd.get('deviceName', 'Unknown'),
+        'temp_f': round(c_temp_f, 1),
+        'temp_c': round((c_temp_f - 32) * 5 / 9, 2),
+        'humidity': c_humidity,
+        'mode': c_mode,
+        'hvac': c_hvac,
+        'eco': 'OFF',
+        'setpoint_f': round(c_set_f, 1),
+        'setpoint_c': round((c_set_f - 32) * 5 / 9, 2),
+        'connectivity': 'ONLINE' if cd.get('deviceStatus', 0) == 1 else 'OFFLINE',
+        'source': 'cielo',
+    })
+# Inject Mysa baseboard heaters (all at Crosstown).
+try:
+    mysa_data = json.loads(os.environ.get('MYSA_JSON', '{}'))
+except (TypeError, ValueError, json.JSONDecodeError):
+    mysa_data = {}
+if not isinstance(mysa_data, dict):
+    mysa_data = {}
+for md in mysa_data.get('devices', []):
+    m_temp_f = float(md.get('temp_f') or md.get('sensor_temp_f') or 0)
+    m_set_f = float(md.get('setpoint_f', 0))
+    m_duty = float(md.get('duty_pct', 0))
+    snapshot['rooms'].append({
+        'room': '19Crosstown ' + md.get('name', 'Unknown'),
+        'temp_f': round(m_temp_f, 1),
+        'temp_c': round((m_temp_f - 32) * 5 / 9, 2),
+        'humidity': md.get('humidity', 0),
+        'mode': 'heat' if m_duty > 0 else 'off',
+        'hvac': 'HEATING' if m_duty > 0 else 'OFF',
+        'eco': 'OFF',
+        'setpoint_f': round(m_set_f, 1),
+        'setpoint_c': round((m_set_f - 32) * 5 / 9, 2),
+        'connectivity': 'ONLINE',
+        'duty_pct': m_duty,
+        'source': 'mysa',
     })
 print(json.dumps(snapshot))
 " <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"

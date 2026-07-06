@@ -416,10 +416,15 @@ class DeploymentContractTests(unittest.TestCase):
 
     def test_scheduled_nest_path_uses_the_hardened_cli(self) -> None:
         plist_text = NEST_SNAPSHOT_PLIST.read_text(encoding="utf-8")
+        nest_text = TOP_LEVEL_NEST.read_text(encoding="utf-8")
 
         self.assertIn("/opt/homebrew/bin/nest snapshot", plist_text)
         self.assertEqual(TOP_LEVEL_NEST.read_bytes(), OPENCLAW_NEST.read_bytes())
-        self.assertIn("NEST_CLIENT_ID", TOP_LEVEL_NEST.read_text(encoding="utf-8"))
+        self.assertIn("NEST_CLIENT_ID", nest_text)
+        self.assertIn("_get_cielo_status", nest_text)
+        self.assertIn("_get_mysa_status", nest_text)
+        self.assertIn("'source': 'cielo'", nest_text)
+        self.assertIn("'source': 'mysa'", nest_text)
 
 
 if __name__ == "__main__":
