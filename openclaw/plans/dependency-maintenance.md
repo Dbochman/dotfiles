@@ -93,6 +93,14 @@ Touches an auth chain that takes meaningful effort to repair if it
 breaks (browser OAuth re-auth, scp dance, etc).
 
 Examples:
+- `@openai/codex` — this is not only an interactive CLI on the Mini.
+  OpenClaw runs the configured global binary as a shared Codex app-server, so
+  an app-server that was already running can keep the old executable after npm
+  replaces it. After an actual Codex version change, restart
+  `ai.openclaw.gateway`, wait for gateway health, and run the live no-delivery
+  OpenAI smoke check documented in `LAUNCHAGENTS.md`. `codex --version` and a
+  model-list check only validate the replacement binary on disk; they do not
+  prove that the gateway retired its previous child process.
 - `@anthropic-ai/claude-code` — powers the `claude` CLI used by
   `ai.openclaw.oauth-refresh` LaunchAgent. If the refresh agent
   stops working, OAuth tokens age out and `openclaw` agent calls
@@ -166,6 +174,41 @@ gws auth still works.
 | Both | `@googleworkspace/cli` | 0.4.4 | **Tier 4 / pinned** — see migration plan |
 
 ## Deferred procedures
+
+### Codex CLI on Mini (Tier 2)
+
+The gateway must recycle its shared Codex app-server after a real CLI version
+change. On 2026-07-09, npm installed Codex `0.144.0` while the running gateway
+continued using a shared `0.142.5` app-server; later `gpt-5.6-sol` turns failed
+with a newer-Codex requirement and fell back to Anthropic. The stale child
+eventually retired, but the upgrade procedure must not depend on that cleanup.
+
+```bash
+# 1. Snapshot the installed version
+export PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH
+before=$(codex --version)
+
+# 2. Upgrade
+npm install -g @openai/codex@latest
+
+# 3. Restart only when the installed version actually changed
+after=$(codex --version)
+if [[ "$before" != "$after" ]]; then
+  launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+fi
+
+# 4. Require the local health endpoint to recover
+for _ in {1..30}; do
+  curl -fsS http://127.0.0.1:18789/health >/dev/null && break
+  sleep 1
+done
+curl -fsS http://127.0.0.1:18789/health >/dev/null
+```
+
+Then run the **OpenAI verification** no-delivery smoke request in
+`LAUNCHAGENTS.md`. Require `agentMeta.provider=openai`,
+`agentMeta.model=gpt-5.6-sol`, and `executionTrace.fallbackUsed=false`. A
+successful fallback response is not a passing smoke test.
 
 ### Claude Code on Mini (Tier 2)
 
