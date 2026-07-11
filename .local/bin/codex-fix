@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# codex-fix — repair Homebrew/npm binaries deleted by a SentinelOne (or other
+# EDR) false-positive quarantine sweep.
+#
+# Recognisable symptoms:
+#   zsh: killed codex                              (EDR SIGKILL'd the process)
+#   command not found: codex                       (EDR also deleted the binary)
+#   env: node: No such file or directory           (node's native binary deleted)
+#   dyld: Library not loaded ... libcrypto.3.dylib (openssl dylib deleted)
+#
+# The tell that it's an EDR quarantine and not real corruption: only native
+# Mach-O binaries and .dylibs disappear; scripts, JS, and symlinks survive.
+# This restores Homebrew's own files, reinstalls every formula whose binaries
+# or dylibs were deleted (found via the broken symlinks they leave behind),
+# reinstalls node + the codex CLI, and verifies. Safe to run repeatedly.
+#
+# NOTE: this is a mop, not a fix. It recurs on every codex self-update (each
+# ships a fresh unsigned ~260MB Rust binary the EDR re-convicts). The durable
+# fix is a SentinelOne path exclusion — ask NVIDIA IT to allowlist
+# /opt/homebrew, ~/.npm-global, and ~/.codex, and mark codex a false positive.
+set -uo pipefail
+
+BREW_PREFIX="${HOMEBREW_PREFIX:-/opt/homebrew}"
+BREW="$BREW_PREFIX/bin/brew"
+export PATH="$BREW_PREFIX/bin:$HOME/.npm-global/bin:$PATH"
+export HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+
+# Scan bin/sbin/lib for symlinks whose targets were deleted.
+broken_links() {
+  local d l
+  for d in bin sbin lib; do
+    for l in "$BREW_PREFIX/$d"/*; do
+      [ -L "$l" ] && [ ! -e "$l" ] && printf '%s\n' "$l"
+    done
+  done 2>/dev/null
+}
+
+echo "==> Restoring Homebrew's own files if the sweep took them"
+git -C "$BREW_PREFIX" restore \
+  bin/brew Library/Homebrew/brew.rb Library/Homebrew/brew.sh \
+  Library/Homebrew/shims/shared/curl Library/Homebrew/shims/shared/git 2>/dev/null || true
+
+echo "==> Detecting formulae with deleted binaries/dylibs"
+damaged="$(broken_links | xargs -I{} readlink {} 2>/dev/null \
+  | grep -oE 'Cellar/[^/]+' | sed 's#Cellar/##' | sort -u)"
+echo "    Damaged: ${damaged:-none}"
+
+if [ -n "$damaged" ]; then
+  echo "==> Reinstalling damaged formulae"
+  # shellcheck disable=SC2086
+  "$BREW" reinstall $damaged
+  hash -r
+fi
+
+if ! node --version >/dev/null 2>&1; then
+  echo "==> Reinstalling node"
+  "$BREW" reinstall node && hash -r
+fi
+
+echo "==> Reinstalling the codex CLI"
+npm install -g @openai/codex
+
+echo "==> Verifying"
+hash -r
+ok=1
+node --version  || ok=0
+codex --version || ok=0
+remaining="$(broken_links | grep -v steamcmd || true)"
+if [ -n "$remaining" ]; then
+  echo "    Still-broken links (reinstall their cask/formula manually):"
+  printf '      %s\n' $remaining
+  ok=0
+fi
+
+if [ "$ok" = 1 ]; then
+  echo "==> Done — codex, node, and Homebrew binaries restored."
+else
+  echo "==> Finished with items still needing attention (see above)."
+  exit 1
+fi

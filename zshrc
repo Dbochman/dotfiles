@@ -15,6 +15,9 @@ export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agen
 alias codex-quick='codex -c model_reasoning_effort="medium"'
 alias cq='codex-quick review'
 
+# Repair codex/node/brew binaries deleted by a SentinelOne EDR quarantine sweep
+alias codex-fix="$HOME/.local/bin/codex-fix"
+
 _cmux_ensure_running() {
   if ! command -v cmux >/dev/null 2>&1; then
     echo "cmux not found. Install cmux.app or add its CLI to PATH." >&2
