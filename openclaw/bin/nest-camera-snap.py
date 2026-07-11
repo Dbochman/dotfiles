@@ -11,7 +11,7 @@ import json
 import sys
 import urllib.request
 import urllib.error
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCRtpReceiver, RTCSessionDescription
 
 
 async def capture_frame(device_id: str, access_token: str, project_id: str, output_path: str, timeout: float = 15.0):
@@ -19,7 +19,21 @@ async def capture_frame(device_id: str, access_token: str, project_id: str, outp
 
     # Nest requires m-lines in order: audio, video, application (data channel)
     pc.addTransceiver("audio", direction="recvonly")
-    pc.addTransceiver("video", direction="recvonly")
+    video_transceiver = pc.addTransceiver("video", direction="recvonly")
+    # Nest can duplicate H.264 payload entries in its answer when aiortc offers
+    # both baseline profiles. That leaves RTP connected but prevents frame
+    # assembly. Offer only the profile Nest selects for this stream.
+    h264_codecs = [
+        codec
+        for codec in RTCRtpReceiver.getCapabilities("video").codecs
+        if codec.mimeType.lower() == "video/h264"
+        and codec.parameters.get("profile-level-id") == "42e01f"
+    ]
+    if not h264_codecs:
+        print("Required H.264 codec profile is unavailable", file=sys.stderr)
+        await pc.close()
+        return False
+    video_transceiver.setCodecPreferences(h264_codecs)
     dc = pc.createDataChannel("data")
 
     frame_received = asyncio.Event()
@@ -37,7 +51,7 @@ async def capture_frame(device_id: str, access_token: str, project_id: str, outp
             container[0] = img
             event.set()
         except Exception as e:
-            print(f"Error receiving frame: {e}", file=sys.stderr)
+            print(f"Error receiving frame: {e!r}", file=sys.stderr)
             event.set()
 
     # Create SDP offer
