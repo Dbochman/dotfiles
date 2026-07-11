@@ -135,6 +135,10 @@ PY"
 
 ### Authentication and Offline Devices
 
+- A Nest snapshot that reaches `connected` and receives video RTP packets but
+  never produces a JPEG is a codec-negotiation failure, not an offline camera.
+  Keep `nest-camera-snap.py` pinned to H.264 profile `42e01f`; advertising both
+  aiortc baseline profiles can produce duplicated payload IDs in Nest's answer.
 - Cielo and Mysa status collectors never prompt from the dashboard process. An expired provider session is shown as an actionable reauthentication state rather than raw CLI output.
 - The `Mysa` item in the `OpenClaw` 1Password vault, with `username` and `password` fields, is cached as `MYSA_USERNAME` and `MYSA_PASSWORD` by `openclaw-refresh-secrets`. When present, those values renew an expired Mysa token without an interactive prompt.
 - Cielo's 30-minute refresher uses a dedicated PinchTab tab and restores the previously active tab. It refreshes an existing browser session, but does not repeatedly submit credentials through reCAPTCHA; a logged-out Cielo session requires a manual sign-in.

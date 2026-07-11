@@ -373,6 +373,9 @@ nest camera snap [room] [output_path]
 
 - **Implementation:** `~/.openclaw/bin/nest-camera-snap.py`
 - **Protocol:** WebRTC via Nest SDM `CameraLiveStream` trait
+- **Video codec:** Offer only H.264 profile `42e01f`. Offering both aiortc
+  baseline profiles can make Nest duplicate payload IDs in its SDP answer;
+  ICE/DTLS and inbound RTP then succeed, but no complete frame is decoded.
 - **Process:** Create RTCPeerConnection → POST SDP offer to SDM API → receive answer → wait for first video frame (15s timeout) → save JPEG (quality=90) → POST stop command
 - **Requirements:** Python aiortc, Pillow
 
@@ -418,6 +421,9 @@ scp bin/nest dbochman@dylans-mac-mini:~/dotfiles/bin/nest
 
 # Mysa wrapper
 scp openclaw/bin/mysa-status.py dbochman@dylans-mac-mini:~/.openclaw/bin/
+
+# Nest WebRTC camera capture helper
+scp openclaw/bin/nest-camera-snap.py dbochman@dylans-mac-mini:~/.openclaw/bin/
 
 # Restart dashboard
 ssh dbochman@dylans-mac-mini "launchctl kickstart -k gui/501/ai.openclaw.nest-dashboard"
