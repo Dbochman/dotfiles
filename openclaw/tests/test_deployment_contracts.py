@@ -9,6 +9,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -32,6 +33,24 @@ TOP_LEVEL_NEST = REPO_ROOT / "bin" / "nest"
 OPENCLAW_NEST = REPO_ROOT / "openclaw" / "bin" / "nest"
 NEST_SNAPSHOT_PLIST = (
     REPO_ROOT / "openclaw" / "launchagents" / "ai.openclaw.nest-snapshot.plist"
+)
+NEST_EVENT_LISTENER_WRAPPER = (
+    REPO_ROOT / "openclaw" / "bin" / "nest-event-listener-wrapper.sh"
+)
+NEST_EVENT_LISTENER_PLIST = (
+    REPO_ROOT
+    / "openclaw"
+    / "launchagents"
+    / "ai.openclaw.nest-event-listener.plist"
+)
+NEST_ACTIVITY_REVIEWER_WRAPPER = (
+    REPO_ROOT / "openclaw" / "bin" / "nest-activity-reviewer-wrapper.sh"
+)
+NEST_ACTIVITY_REVIEWER_PLIST = (
+    REPO_ROOT
+    / "openclaw"
+    / "launchagents"
+    / "ai.openclaw.nest-activity-reviewer.plist"
 )
 
 REQUIRED_HELPERS = {
@@ -425,6 +444,391 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("_get_mysa_status", nest_text)
         self.assertIn("'source': 'cielo'", nest_text)
         self.assertIn("'source': 'mysa'", nest_text)
+
+    def test_nest_event_listener_deployment_is_private_and_explicit(self) -> None:
+        wrapper_text = NEST_EVENT_LISTENER_WRAPPER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        with NEST_EVENT_LISTENER_PLIST.open("rb") as plist_file:
+            listener_plist = plistlib.load(plist_file)
+
+        self.assertEqual(
+            listener_plist["Label"], "ai.openclaw.nest-event-listener"
+        )
+        self.assertTrue(listener_plist["RunAtLoad"])
+        self.assertTrue(listener_plist["KeepAlive"])
+        self.assertEqual(listener_plist["ThrottleInterval"], 60)
+        self.assertEqual(listener_plist["Umask"], 0o77)
+        self.assertEqual(listener_plist["StandardOutPath"], "/dev/null")
+        self.assertEqual(listener_plist["StandardErrorPath"], "/dev/null")
+        environment = listener_plist["EnvironmentVariables"]
+        self.assertEqual(environment["NEST_EVENT_MODE"], "shadow")
+        self.assertEqual(
+            environment["NEST_EVENT_SUBSCRIPTION"], "openclaw-nest-events"
+        )
+        self.assertNotIn("GOOGLE_APPLICATION_CREDENTIALS", environment)
+
+        self.assertIn("umask 077", wrapper_text)
+        self.assertIn(".openclaw/venvs/nest-events/bin/python", wrapper_text)
+        self.assertIn(
+            'CREDENTIAL_FILE="$CREDENTIAL_DIR/subscriber-service-account.json"',
+            wrapper_text,
+        )
+        self.assertIn('CONFIG_FILE="$CONFIG_DIR/cameras.json"', wrapper_text)
+        self.assertIn('require_private_dir "$STATE_DIR"', wrapper_text)
+        self.assertIn('require_private_file "$CREDENTIAL_FILE"', wrapper_text)
+        self.assertIn('require_private_file "$CONFIG_FILE"', wrapper_text)
+        self.assertIn(
+            'GOOGLE_APPLICATION_CREDENTIALS="$CREDENTIAL_FILE"', wrapper_text
+        )
+        self.assertIn("exec /usr/bin/env -i", wrapper_text)
+        self.assertIn("LOG_LIMIT_BYTES=262144", wrapper_text)
+        self.assertIn("bounded_log_stream", wrapper_text)
+        self.assertIn("/usr/bin/mkfifo -m 600", wrapper_text)
+        self.assertNotIn("/opt/homebrew/bin/uv", wrapper_text)
+        self.assertNotIn("gcloud", wrapper_text)
+        self.assertNotRegex(wrapper_text, r"(?:^|[ /])op(?:[ \"']|$)")
+
+        self.assertIn(
+            'NEST_EVENT_AGENT_LABEL="ai.openclaw.nest-event-listener"', pull_text
+        )
+        self.assertIn(
+            'if [ -e "$NEST_EVENT_AGENT_DST" ] || [ -L "$NEST_EVENT_AGENT_DST" ]',
+            pull_text,
+        )
+        self.assertIn(
+            "LaunchAgent remains unloaded pending explicit bootstrap", pull_text
+        )
+        self.assertIn("NEST_EVENT_RUNTIME_CHANGED=0", pull_text)
+        self.assertIn(
+            "nest-event-listener.py|nest-event-listener-wrapper.sh", pull_text
+        )
+        self.assertIn(
+            '[ "$NEST_EVENT_AGENT_CHANGED" -eq 1 ] || [ "$NEST_EVENT_RUNTIME_CHANGED" -eq 1 ]',
+            pull_text,
+        )
+        self.assertIn("NEST_EVENT_RELOAD_OK=0", pull_text)
+        self.assertIn("NEST_EVENT_RELOAD_ATTEMPT in 1 2 3 4 5", pull_text)
+        self.assertIn("FATAL listener reload failed", pull_text)
+        self.assertNotIn('mkdir -p "$HOME/.openclaw/nest-events', pull_text)
+
+    def test_nest_event_wrapper_uses_only_protected_runtime_inputs(self) -> None:
+        home = self.root / "home"
+        base = home / ".openclaw" / "nest-events"
+        credential_dir = base / "credentials"
+        config_dir = base / "config"
+        state_dir = base / "state"
+        log_dir = home / ".openclaw" / "logs"
+        bin_dir = home / ".openclaw" / "bin"
+        venv_bin = home / ".openclaw" / "venvs" / "nest-events" / "bin"
+        for directory in (base, credential_dir, config_dir, state_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+            directory.chmod(0o700)
+        for directory in (log_dir, bin_dir, venv_bin):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        credential = credential_dir / "subscriber-service-account.json"
+        config = config_dir / "cameras.json"
+        credential.write_text("{}\n", encoding="utf-8")
+        config.write_text("{}\n", encoding="utf-8")
+        credential.chmod(0o600)
+        config.chmod(0o600)
+        listener = bin_dir / "nest-event-listener.py"
+        listener.write_text("# fixture\n", encoding="utf-8")
+        listener.chmod(0o755)
+        interpreter = venv_bin / "python"
+        interpreter.write_text(
+            "#!/bin/bash\n"
+            "printf 'args=%s\\n' \"$*\"\n"
+            "printf 'credential=%s\\n' \"$GOOGLE_APPLICATION_CREDENTIALS\"\n"
+            "printf 'leaked=%s\\n' \"${UNRELATED_SECRET-unset}\"\n",
+            encoding="utf-8",
+        )
+        interpreter.chmod(0o755)
+
+        environment = {
+            **os.environ,
+            "HOME": str(home),
+            "UNRELATED_SECRET": "must-not-reach-child",
+        }
+        for key in (
+            "NEST_EVENT_MODE",
+            "NEST_EVENT_SUBSCRIPTION",
+            "NEST_EVENT_CONFIG",
+            "NEST_EVENT_STATE_DIR",
+        ):
+            environment.pop(key, None)
+        credential.chmod(0o644)
+        config.chmod(0o644)
+        completed = subprocess.run(
+            [str(NEST_EVENT_LISTENER_WRAPPER), "status"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("args=" + str(listener) + " status", completed.stdout)
+        self.assertIn("credential=" + str(credential), completed.stdout)
+        self.assertIn("leaked=unset", completed.stdout)
+        self.assertFalse((log_dir / "nest-event-listener.log").exists())
+        self.assertFalse((log_dir / "nest-event-listener.err.log").exists())
+
+        config.chmod(0o600)
+        state_dir.rmdir()
+        checked = subprocess.run(
+            [str(NEST_EVENT_LISTENER_WRAPPER), "check-config"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertIn("args=" + str(listener) + " check-config", checked.stdout)
+        self.assertIn("leaked=unset", checked.stdout)
+
+        state_dir.mkdir(mode=0o700)
+        failed = subprocess.run(
+            [str(NEST_EVENT_LISTENER_WRAPPER), "run", "--once"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(failed.returncode, 0)
+        log_path = log_dir / "nest-event-listener.log"
+        self.assertEqual(stat.S_IMODE(log_path.stat().st_mode), 0o600)
+        error_text = (log_dir / "nest-event-listener.err.log").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("private file ownership or mode is invalid", error_text)
+        self.assertNotIn(str(credential), error_text)
+
+        credential.chmod(0o600)
+        mismatched = subprocess.run(
+            [str(NEST_EVENT_LISTENER_WRAPPER), "check-config"],
+            env={**environment, "NEST_EVENT_MODE": "active"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(mismatched.returncode, 0)
+        self.assertIn("event mode is invalid", mismatched.stderr)
+
+    def test_nest_activity_reviewer_deployment_is_private_and_attended(self) -> None:
+        wrapper_text = NEST_ACTIVITY_REVIEWER_WRAPPER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        with NEST_ACTIVITY_REVIEWER_PLIST.open("rb") as plist_file:
+            reviewer_plist = plistlib.load(plist_file)
+
+        self.assertEqual(
+            reviewer_plist["Label"], "ai.openclaw.nest-activity-reviewer"
+        )
+        self.assertTrue(reviewer_plist["RunAtLoad"])
+        self.assertTrue(reviewer_plist["KeepAlive"])
+        self.assertEqual(reviewer_plist["ThrottleInterval"], 60)
+        self.assertEqual(reviewer_plist["Umask"], 0o77)
+        self.assertEqual(reviewer_plist["StandardOutPath"], "/dev/null")
+        self.assertEqual(reviewer_plist["StandardErrorPath"], "/dev/null")
+        environment = reviewer_plist["EnvironmentVariables"]
+        self.assertEqual(environment["NEST_ACTIVITY_MODE"], "cabin-commentary")
+        self.assertNotIn("OPENCLAW_DYLAN_IMESSAGE_TARGET", environment)
+        self.assertNotIn("DYLAN_CHAT_ID", environment)
+        self.assertNotIn("GOOGLE_APPLICATION_CREDENTIALS", environment)
+
+        self.assertIn("umask 077", wrapper_text)
+        self.assertIn('SECRETS_CACHE="$HOME/.openclaw/.secrets-cache"', wrapper_text)
+        self.assertIn('require_private_file "$SECRETS_CACHE"', wrapper_text)
+        self.assertIn("resolve_chat_target", wrapper_text)
+        self.assertIn("exec /usr/bin/env -i", wrapper_text)
+        self.assertIn("LOG_LIMIT_BYTES=262144", wrapper_text)
+        self.assertIn("bounded_log_stream", wrapper_text)
+        self.assertIn("/usr/bin/mkfifo -m 600", wrapper_text)
+        self.assertNotRegex(wrapper_text, r"(?:^|[ /])op(?:[ \"']|$)")
+        self.assertNotIn("OPENCLAW_GATEWAY_TOKEN", wrapper_text)
+
+        self.assertIn(
+            'NEST_ACTIVITY_AGENT_LABEL="ai.openclaw.nest-activity-reviewer"',
+            pull_text,
+        )
+        self.assertIn("NEST_ACTIVITY_RUNTIME_CHANGED=0", pull_text)
+        self.assertIn(
+            "nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh",
+            pull_text,
+        )
+        self.assertIn("NEST_ACTIVITY_RELOAD_ATTEMPT in 1 2 3 4 5", pull_text)
+        self.assertIn("FATAL reviewer reload failed", pull_text)
+        self.assertIn(
+            "LaunchAgent remains unloaded pending explicit bootstrap", pull_text
+        )
+
+    def test_nest_activity_wrapper_exports_only_validated_chat_target(self) -> None:
+        home = self.root / "reviewer-home"
+        base = home / ".openclaw" / "nest-events"
+        state_dir = base / "state"
+        log_dir = home / ".openclaw" / "logs"
+        bin_dir = home / ".openclaw" / "bin"
+        workspace_scripts = home / ".openclaw" / "workspace" / "scripts"
+        for directory in (base, state_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+            directory.chmod(0o700)
+        for directory in (log_dir, bin_dir, workspace_scripts):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        database = state_dir / "events.sqlite3"
+        database.write_bytes(b"fixture")
+        database.chmod(0o600)
+        cache = home / ".openclaw" / ".secrets-cache"
+        cache.write_text(
+            "DYLAN_CHAT_ID=7\nUNRELATED_CACHE_SECRET=cache-secret\n",
+            encoding="utf-8",
+        )
+        cache.chmod(0o600)
+        reviewer = bin_dir / "nest-activity-reviewer.py"
+        reviewer.write_text(
+            "#!/usr/bin/python3\n"
+            "import os, sys\n"
+            "print('args=' + ' '.join(sys.argv[1:]))\n"
+            "print('target=' + os.environ.get('OPENCLAW_DYLAN_IMESSAGE_TARGET', 'unset'))\n"
+            "print('outer=' + os.environ.get('UNRELATED_OUTER_SECRET', 'unset'))\n"
+            "print('cache=' + os.environ.get('UNRELATED_CACHE_SECRET', 'unset'))\n",
+            encoding="utf-8",
+        )
+        reviewer.chmod(0o755)
+        presence_observer = workspace_scripts / "presence-detect.sh"
+        presence_observer.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        presence_observer.chmod(0o755)
+
+        environment = {
+            **os.environ,
+            "HOME": str(home),
+            "UNRELATED_OUTER_SECRET": "outer-secret",
+        }
+        for key in (
+            "NEST_ACTIVITY_MODE",
+            "NEST_EVENT_STATE_DIR",
+            "NEST_EVENT_DATABASE",
+            "NEST_ACTIVITY_STATE_FILE",
+            "NEST_ACTIVITY_IMAGE_DIR",
+            "NEST_ACTIVITY_LOCK_FILE",
+            "OPENCLAW_PRESENCE_STATE",
+            "OPENCLAW_PRESENCE_CABIN_SCAN",
+            "OPENCLAW_PRESENCE_CROSSTOWN_SCAN",
+            "OPENCLAW_PRESENCE_OBSERVER",
+            "OPENCLAW_DYLAN_IMESSAGE_TARGET",
+            "DYLAN_CHAT_ID",
+        ):
+            environment.pop(key, None)
+
+        completed = subprocess.run(
+            [str(NEST_ACTIVITY_REVIEWER_WRAPPER), "status"],
+            env={
+                **environment,
+                "OPENCLAW_DYLAN_IMESSAGE_TARGET": "chat_id:8",
+                "DYLAN_CHAT_ID": "9",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("args=status", completed.stdout)
+        self.assertIn("target=chat_id:7", completed.stdout)
+        self.assertIn("outer=unset", completed.stdout)
+        self.assertIn("cache=unset", completed.stdout)
+        self.assertNotIn("cache-secret", completed.stdout + completed.stderr)
+        self.assertNotIn("outer-secret", completed.stdout + completed.stderr)
+        self.assertFalse((log_dir / "nest-activity-reviewer.log").exists())
+
+        cache.chmod(0o644)
+        failed = subprocess.run(
+            [str(NEST_ACTIVITY_REVIEWER_WRAPPER), "status"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("private file ownership or mode is invalid", failed.stderr)
+        self.assertNotIn("chat_id:7", failed.stdout + failed.stderr)
+
+    def test_nest_event_run_logs_stay_bounded_while_listener_is_healthy(self) -> None:
+        home = self.root / "bounded-home"
+        base = home / ".openclaw" / "nest-events"
+        credential_dir = base / "credentials"
+        config_dir = base / "config"
+        state_dir = base / "state"
+        log_dir = home / ".openclaw" / "logs"
+        bin_dir = home / ".openclaw" / "bin"
+        venv_bin = home / ".openclaw" / "venvs" / "nest-events" / "bin"
+        for directory in (base, credential_dir, config_dir, state_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+            directory.chmod(0o700)
+        for directory in (log_dir, bin_dir, venv_bin):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        credential = credential_dir / "subscriber-service-account.json"
+        config = config_dir / "cameras.json"
+        credential.write_text("{}\n", encoding="utf-8")
+        config.write_text("{}\n", encoding="utf-8")
+        credential.chmod(0o600)
+        config.chmod(0o600)
+        listener = bin_dir / "nest-event-listener.py"
+        listener.write_text("# fixture\n", encoding="utf-8")
+        listener.chmod(0o755)
+        interpreter = venv_bin / "python"
+        interpreter.write_text(
+            "#!/bin/bash\n"
+            "i=0\n"
+            "while [ \"$i\" -lt 600 ]; do\n"
+            "  printf '%09000d\\n' \"$i\"\n"
+            "  i=$((i + 1))\n"
+            "done\n"
+            "printf 'final-marker\\n'\n"
+            ': > "$HOME/.openclaw/nest-events/state/producer-ready"\n'
+            "while :; do /bin/sleep 1; done\n",
+            encoding="utf-8",
+        )
+        interpreter.chmod(0o755)
+
+        environment = {**os.environ, "HOME": str(home)}
+        for key in (
+            "NEST_EVENT_MODE",
+            "NEST_EVENT_SUBSCRIPTION",
+            "NEST_EVENT_CONFIG",
+            "NEST_EVENT_STATE_DIR",
+        ):
+            environment.pop(key, None)
+        process = subprocess.Popen(
+            [str(NEST_EVENT_LISTENER_WRAPPER), "run"],
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+
+        log_path = log_dir / "nest-event-listener.log"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if log_path.exists() and "final-marker" in log_path.read_text(
+                encoding="utf-8"
+            ):
+                break
+            if process.poll() is not None:
+                self.fail(f"listener wrapper exited early with {process.returncode}")
+            time.sleep(0.05)
+        else:
+            self.fail("listener did not finish its bounded-log fixture output")
+
+        self.assertIsNone(process.poll())
+        self.assertLessEqual(log_path.stat().st_size, 262144)
+        self.assertEqual(stat.S_IMODE(log_path.stat().st_mode), 0o600)
+        self.assertIn("[line truncated]", log_path.read_text(encoding="utf-8"))
+
+        process.terminate()
+        process.wait(timeout=5)
+        self.assertEqual(list(state_dir.glob(".listener-run.*")), [])
 
 
 if __name__ == "__main__":

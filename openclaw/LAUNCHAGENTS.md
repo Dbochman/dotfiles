@@ -18,6 +18,38 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
 | `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
+| `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
+| `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary, hard-limited to one send attempt/hour |
+
+### Nest Event Listener and Cabin Reviewer
+
+`ai.openclaw.nest-event-listener` is a Mac Mini service with one pull
+subscription covering the authorized Cabin and Crosstown cameras. It remains
+shadow-only: motion/person deliveries are validated,
+deduplicated in protected SQLite, and acknowledged after the durable commit;
+the listener itself produces no image or notification. The wrapper reads a dedicated owner-only
+service-account file, runs a frozen venv, sanitizes its environment, and never
+invokes `op`, `gcloud`, or a package installer.
+
+`ai.openclaw.nest-activity-reviewer` is an independent consumer of that shadow
+outbox. Only exact Kitchen/Cabin events may trigger a fresh live frame and
+stateless OpenClaw vision request. Empty or uncertain frames are silent;
+meaningful observations may produce a text-only iMessage after a send slot is
+durably reserved. The rolling cap is one send attempt per hour across restarts,
+and send failures also consume the slot. Capture is additionally allowed only
+when canonical cached presence is fresh and says `confirmed_vacant`, followed
+by a side-effect-free live Cabin network observation; occupied, stale,
+ambiguous, or failed presence checks remain shadow. Presence is rechecked
+before delivery. Crosstown never captures, analyzes, or sends. Temporary frames
+are owner-only and deleted after analysis.
+
+Initial config, credential materialization, venv creation, and LaunchAgent
+bootstrap are attended deployment steps. Reviewer baseline initialization and
+bootstrap are separately attended so old outbox rows cannot activate it. Daily
+dotfiles pulls update and reload either job only after its installed plist
+exists. See
+[`NEST-EVENTS.md`](NEST-EVENTS.md) for the cloud IAM contract, protected
+runtime layout, checks, and rollout gates.
 
 ### Financial Dashboard LaunchAgents
 

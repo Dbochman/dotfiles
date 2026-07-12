@@ -1,13 +1,13 @@
 ---
 name: nest-thermostat
-description: Control Nest thermostats, check home climate status, view temperature history, check outdoor weather, and capture camera snapshots. Use when asked about home temperature, thermostat settings, heating, cooling, room climate, temperature history/trends, outdoor weather, or camera/what does the kitchen look like.
+description: Control Nest thermostats, check home climate status, view temperature history, and check outdoor weather. Use when asked about home temperature, thermostat settings, heating, cooling, room climate, temperature history or trends, or outdoor weather.
 allowed-tools: Bash(nest:*)
 metadata: {"openclaw":{"emoji":"T","requires":{"bins":["nest"]}}}
 ---
 
-# Nest Thermostat & Camera Control
+# Nest Thermostat Control
 
-Control Google Nest thermostats and cameras via the `nest` CLI. Unattended commands use the protected OpenClaw cache; 1Password access is attended and exact-field only.
+Control Google Nest thermostats via the `nest` CLI. Unattended commands use the protected OpenClaw cache; 1Password access is attended and exact-field only.
 
 ## Available Commands
 
@@ -40,17 +40,6 @@ nest eco <room> on
 nest eco <room> off
 ```
 
-### Capture a camera snapshot
-```bash
-nest camera snap [room] [output_path]
-```
-Examples:
-- `nest camera snap` — Kitchen camera, saves to `~/.openclaw/workspace/camera-snap.jpg`
-- `nest camera snap kitchen /tmp/snap.jpg` — Kitchen camera, custom output path
-
-The output path is printed to stdout. The image can be viewed by the agent (Claude is multimodal).
-**Note:** Camera must be online and streaming enabled. Takes ~5-10 seconds.
-
 ### Record a snapshot to history
 ```bash
 nest snapshot
@@ -81,11 +70,9 @@ There are two homes. Rooms are prefixed with home name in the Nest API.
 - **Philly Solarium** (matches: solar, sol)
 - **Philly Living Room** (matches: philly living)
 - **Philly Bedroom** (matches: bed, bedroom)
-- **Kitchen** camera (matches: kitchen, kit)
 
 ### Crosstown (Boston — Crosstown residence)
 - **19Crosstown Living Room** (matches: crosstown)
-- **Cat room** cameras x2
 
 Room names are fuzzy-matched — use any substring. "crosstown" matches the Crosstown thermostat, "solar" matches Philly Solarium, etc.
 
@@ -102,8 +89,6 @@ Room names are fuzzy-matched — use any substring. "crosstown" matches the Cros
 - Weather data comes from Open-Meteo (no API key needed), fetched per-structure using `NEST_LOCATIONS` in `~/.openclaw/nest-location.conf`
 - `nest weather` and `nest status` show weather for each structure (Philly + 19Crosstown)
 - Snapshots store weather as `{"Philly": {...}, "19Crosstown": {...}}` — old single-location snapshots still render fine
-- Camera snapshots use WebRTC via the SDM API. Requires `aiortc` and `Pillow` Python packages.
-- When asked "what does the kitchen look like?" or similar, use `nest camera snap` and then view the image
 
 ## Troubleshooting
 

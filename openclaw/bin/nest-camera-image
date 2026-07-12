@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""Create and retire short-lived Nest camera images for OpenClaw replies.
+
+The public interface deliberately exposes only canonical camera aliases and an
+opaque cleanup token.  Device identifiers and credentials remain inside the
+deployed ``nest camera snap-config`` command.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import stat
+import subprocess
+import sys
+import time
+from typing import Callable
+
+
+ALLOWED_ALIASES = frozenset(("Kitchen", "Living Room", "Living Room Wired"))
+DEFAULT_TTL_SECONDS = 15 * 60
+MAX_IMAGE_BYTES = 16 * 1024 * 1024
+CAPTURE_TIMEOUT_SECONDS = 90
+FRESHNESS_SLOP_NS = 2 * 1_000_000_000
+TOKEN_PATTERN = re.compile(r"\A[0-9a-f]{48}\Z")
+IMAGE_NAME_PATTERN = re.compile(r"\A([0-9a-f]{48})\.jpg\Z")
+TEMP_NAME_PATTERN = re.compile(
+    r"\A\.([0-9a-f]{48})\.jpg\.[A-Za-z0-9_-]+\.tmp\Z"
+)
+
+
+class PublicError(RuntimeError):
+    """An error with a fixed, non-sensitive message suitable for stderr."""
+
+
+def _media_directory() -> Path:
+    return Path.home() / ".openclaw" / "media" / "nest-camera-requests"
+
+
+def _nest_binary() -> Path:
+    path = Path.home() / ".openclaw" / "bin" / "nest"
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise PublicError("Camera image capture is unavailable") from error
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or not os.access(path, os.X_OK)
+    ):
+        raise PublicError("Camera image capture is unavailable")
+    return path
+
+
+def _open_media_directory(path: Path, *, create: bool) -> int | None:
+    """Open the protected media directory without following its final path."""
+    try:
+        parent_metadata = path.parent.lstat()
+    except FileNotFoundError:
+        if not create:
+            return None
+        previous_umask = os.umask(0o077)
+        try:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError as error:
+            raise PublicError("Camera image directory is unavailable") from error
+        finally:
+            os.umask(previous_umask)
+        try:
+            parent_metadata = path.parent.lstat()
+        except OSError as error:
+            raise PublicError("Camera image directory is unavailable") from error
+    except OSError as error:
+        raise PublicError("Camera image directory is unavailable") from error
+    if (
+        stat.S_ISLNK(parent_metadata.st_mode)
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(parent_metadata.st_mode) != 0o700
+    ):
+        raise PublicError("Camera image directory is unavailable")
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        if not create:
+            return None
+        previous_umask = os.umask(0o077)
+        try:
+            path.mkdir(mode=0o700, parents=True, exist_ok=False)
+        except FileExistsError:
+            # A concurrent helper may have created it; validate it below.
+            pass
+        except OSError as error:
+            raise PublicError("Camera image directory is unavailable") from error
+        finally:
+            os.umask(previous_umask)
+        try:
+            metadata = path.lstat()
+        except OSError as error:
+            raise PublicError("Camera image directory is unavailable") from error
+    except OSError as error:
+        raise PublicError("Camera image directory is unavailable") from error
+
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise PublicError("Camera image directory is unavailable")
+
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise PublicError("Camera image directory is unavailable") from error
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or stat.S_IMODE(opened.st_mode) != 0o700
+        or (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+    ):
+        os.close(descriptor)
+        raise PublicError("Camera image directory is unavailable")
+    return descriptor
+
+
+def _directory_identity_is_current(path: Path, descriptor: int) -> bool:
+    try:
+        named = path.lstat()
+        opened = os.fstat(descriptor)
+    except OSError:
+        return False
+    return (
+        not stat.S_ISLNK(named.st_mode)
+        and stat.S_ISDIR(named.st_mode)
+        and named.st_uid == os.geteuid()
+        and stat.S_IMODE(named.st_mode) == 0o700
+        and (named.st_dev, named.st_ino) == (opened.st_dev, opened.st_ino)
+    )
+
+
+def _safe_unlink(descriptor: int, filename: str) -> None:
+    try:
+        os.unlink(filename, dir_fd=descriptor)
+    except FileNotFoundError:
+        pass
+
+
+def _new_token(descriptor: int) -> str:
+    for _ in range(32):
+        token = secrets.token_hex(24)
+        try:
+            os.stat(token + ".jpg", dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return token
+        except OSError as error:
+            raise PublicError("Camera image capture failed") from error
+    raise PublicError("Camera image capture failed")
+
+
+def _looks_like_jpeg(payload: bytes) -> bool:
+    """Perform bounded structural checks without depending on an image library."""
+    if len(payload) < 16 or payload[:2] != b"\xff\xd8" or payload[-2:] != b"\xff\xd9":
+        return False
+
+    saw_frame = False
+    position = 2
+    frame_markers = set(range(0xC0, 0xC4)) | set(range(0xC5, 0xC8))
+    frame_markers |= set(range(0xC9, 0xCC)) | set(range(0xCD, 0xD0))
+    while position < len(payload) - 2:
+        if payload[position] != 0xFF:
+            return False
+        while position < len(payload) and payload[position] == 0xFF:
+            position += 1
+        if position >= len(payload):
+            return False
+        marker = payload[position]
+        position += 1
+        if marker == 0xDA:  # Start of scan; entropy data runs through EOI.
+            if position + 2 > len(payload):
+                return False
+            segment_length = int.from_bytes(payload[position : position + 2], "big")
+            if segment_length < 2 or position + segment_length > len(payload) - 2:
+                return False
+            return saw_frame
+        if marker in (0xD8, 0xD9, 0x00) or 0xD0 <= marker <= 0xD7:
+            return False
+        if position + 2 > len(payload):
+            return False
+        segment_length = int.from_bytes(payload[position : position + 2], "big")
+        if segment_length < 2 or position + segment_length > len(payload):
+            return False
+        if marker in frame_markers:
+            saw_frame = True
+        position += segment_length
+    return False
+
+
+def _verify_image(
+    descriptor: int, filename: str, capture_started_ns: int
+) -> None:
+    try:
+        metadata = os.stat(filename, dir_fd=descriptor, follow_symlinks=False)
+    except OSError as error:
+        raise PublicError("Captured camera image is invalid") from error
+    now_ns = time.time_ns()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size <= 0
+        or metadata.st_size > MAX_IMAGE_BYTES
+        or metadata.st_mtime_ns + FRESHNESS_SLOP_NS < capture_started_ns
+        or metadata.st_mtime_ns > now_ns + FRESHNESS_SLOP_NS
+    ):
+        raise PublicError("Captured camera image is invalid")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        image_descriptor = os.open(filename, flags, dir_fd=descriptor)
+        try:
+            opened = os.fstat(image_descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or stat.S_IMODE(opened.st_mode) != 0o600
+                or opened.st_size != metadata.st_size
+                or (opened.st_dev, opened.st_ino)
+                != (metadata.st_dev, metadata.st_ino)
+            ):
+                raise PublicError("Captured camera image is invalid")
+            payload = b""
+            remaining = MAX_IMAGE_BYTES + 1
+            while remaining:
+                chunk = os.read(image_descriptor, min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                payload += chunk
+                remaining -= len(chunk)
+            after_read = os.fstat(image_descriptor)
+            if (
+                after_read.st_size != opened.st_size
+                or after_read.st_mtime_ns != opened.st_mtime_ns
+            ):
+                raise PublicError("Captured camera image is invalid")
+        finally:
+            os.close(image_descriptor)
+    except OSError as error:
+        raise PublicError("Captured camera image is invalid") from error
+    if len(payload) != metadata.st_size or not _looks_like_jpeg(payload):
+        raise PublicError("Captured camera image is invalid")
+
+
+def _sanitized_subprocess_environment() -> dict[str, str]:
+    return {
+        "HOME": str(Path.home()),
+        "LANG": "C.UTF-8",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    }
+
+
+def spawn_cleanup_reaper(
+    token: str,
+    media_directory: Path,
+    *,
+    ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
+) -> None:
+    """Start a detached, secret-free process that retires one captured image."""
+    if not TOKEN_PATTERN.fullmatch(token) or ttl_seconds <= 0:
+        raise PublicError("Camera image cleanup could not be scheduled")
+    helper = Path(__file__).resolve()
+    environment = {
+        "HOME": str(Path.home()),
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+    }
+    if media_directory != _media_directory():
+        raise PublicError("Camera image cleanup could not be scheduled")
+    # Values are positional shell parameters, never interpolated into the
+    # program.  The detached shell becomes the cleanup helper after sleeping.
+    command = 'sleep "$1"; exec "$2" "$3" cleanup "$4"'
+    try:
+        popen_factory(
+            [
+                "/bin/sh",
+                "-c",
+                command,
+                "nest-camera-image-reaper",
+                str(ttl_seconds),
+                sys.executable,
+                str(helper),
+                token,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd="/",
+            env=environment,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise PublicError("Camera image cleanup could not be scheduled") from error
+
+
+def _sweep_open_directory(
+    descriptor: int,
+    *,
+    now: float | None = None,
+    ttl_seconds: int = DEFAULT_TTL_SECONDS,
+) -> int:
+    if ttl_seconds <= 0:
+        raise PublicError("Camera image sweep failed")
+    cutoff = (time.time() if now is None else now) - ttl_seconds
+    removed = 0
+    try:
+        filenames = os.listdir(descriptor)
+    except OSError as error:
+        raise PublicError("Camera image sweep failed") from error
+    for filename in filenames:
+        if not (
+            IMAGE_NAME_PATTERN.fullmatch(filename)
+            or TEMP_NAME_PATTERN.fullmatch(filename)
+        ):
+            continue
+        try:
+            metadata = os.stat(filename, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise PublicError("Camera image sweep failed") from error
+        if metadata.st_mtime > cutoff:
+            continue
+        if metadata.st_uid != os.geteuid() or not (
+            stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)
+        ):
+            continue
+        try:
+            os.unlink(filename, dir_fd=descriptor)
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise PublicError("Camera image sweep failed") from error
+    return removed
+
+
+def sweep_images(
+    *,
+    media_directory: Path | None = None,
+    now: float | None = None,
+    ttl_seconds: int = DEFAULT_TTL_SECONDS,
+) -> int:
+    directory = media_directory or _media_directory()
+    descriptor = _open_media_directory(directory, create=False)
+    if descriptor is None:
+        return 0
+    try:
+        return _sweep_open_directory(
+            descriptor, now=now, ttl_seconds=ttl_seconds
+        )
+    finally:
+        os.close(descriptor)
+
+
+def cleanup_image(token: str, *, media_directory: Path | None = None) -> None:
+    if not TOKEN_PATTERN.fullmatch(token):
+        raise PublicError("Invalid camera image cleanup token")
+    directory = media_directory or _media_directory()
+    descriptor = _open_media_directory(directory, create=False)
+    if descriptor is None:
+        return
+    try:
+        _safe_unlink(descriptor, token + ".jpg")
+    except OSError as error:
+        raise PublicError("Camera image cleanup failed") from error
+    finally:
+        os.close(descriptor)
+
+
+def capture_image(
+    alias: str,
+    *,
+    media_directory: Path | None = None,
+    nest_binary: Path | None = None,
+    reaper: Callable[[str, Path], None] = spawn_cleanup_reaper,
+) -> dict[str, str]:
+    if alias not in ALLOWED_ALIASES:
+        raise PublicError("Unknown camera alias")
+    directory = media_directory or _media_directory()
+    binary = nest_binary or _nest_binary()
+    descriptor = _open_media_directory(directory, create=True)
+    assert descriptor is not None
+    token = _new_token(descriptor)
+    filename = token + ".jpg"
+    output_path = directory / filename
+    try:
+        _sweep_open_directory(descriptor)
+        capture_started_ns = time.time_ns()
+        try:
+            result = subprocess.run(
+                [
+                    str(binary),
+                    "camera",
+                    "snap-config",
+                    alias,
+                    str(output_path),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd="/",
+                env=_sanitized_subprocess_environment(),
+                timeout=CAPTURE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise PublicError("Camera image capture failed") from error
+        if result.returncode != 0 or not _directory_identity_is_current(
+            directory, descriptor
+        ):
+            raise PublicError("Camera image capture failed")
+        _verify_image(descriptor, filename, capture_started_ns)
+        try:
+            reaper(token, directory)
+        except PublicError:
+            raise
+        except Exception as error:
+            raise PublicError("Camera image cleanup could not be scheduled") from error
+        return {
+            "alias": alias,
+            "mediaPath": str(output_path),
+            "cleanupToken": token,
+        }
+    except Exception:
+        _safe_unlink(descriptor, filename)
+        raise
+    finally:
+        os.close(descriptor)
+
+
+def _usage() -> PublicError:
+    return PublicError(
+        "Usage: nest-camera-image capture <alias> | cleanup <token> | sweep"
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    try:
+        if len(arguments) == 2 and arguments[0] == "capture":
+            result = capture_image(arguments[1])
+            print(json.dumps(result, separators=(",", ":"), sort_keys=True))
+            return 0
+        if len(arguments) == 2 and arguments[0] == "cleanup":
+            cleanup_image(arguments[1])
+            return 0
+        if arguments == ["sweep"]:
+            sweep_images()
+            return 0
+        raise _usage()
+    except PublicError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    except (KeyboardInterrupt, SystemExit):
+        print("Camera image request interrupted", file=sys.stderr)
+        return 1
+    except Exception:
+        print("Camera image request failed", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

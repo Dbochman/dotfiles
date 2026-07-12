@@ -373,7 +373,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | `8sleep status` | CLI | Pod temp, both sides |
 | `ring status` | CLI | Doorbell battery, motion |
 | `ring snapshot <path> [id]` | CLI | Doorbell camera snapshot (JPEG) |
-| `nest camera snap <room> <path>` | CLI | Nest camera snapshot via WebRTC (JPEG) |
+| `nest camera snap-config <alias> <path>` | CLI | Exact-resource Nest camera snapshot via WebRTC (JPEG); generic display-name lookup is attended-only |
 | `~/.openclaw/camera-snaps/*.jpg` | File | Cached camera/doorbell snapshots |
 | `~/.openclaw/dog-walk/state.json` | File | Walk state |
 

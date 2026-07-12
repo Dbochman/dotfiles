@@ -276,7 +276,8 @@ nest weather                   Show current outdoor weather only
 nest set <room> <temp°F>       Set temperature (e.g. nest set bedroom 72)
 nest mode <room> <HEAT|OFF>    Set thermostat mode
 nest eco <room> [on|off]       Toggle eco mode
-nest camera snap [room] [out]  Capture camera snapshot (WebRTC, default: kitchen)
+nest camera snap [room] [out]  Attended display-name camera diagnostic
+nest camera snap-config <alias> <out>  Exact protected camera capture
 nest snapshot                  Record current state + weather to history
 nest history [hours] [room]    Show history summary (default: 24h, all rooms)
 nest dashboard [open|start|stop|restart|status]
@@ -367,9 +368,18 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 ## Camera Snapshots
 
 ```bash
+# Attended display-name diagnostic only:
 nest camera snap [room] [output_path]
 # Defaults: room=kitchen, output=~/.openclaw/workspace/camera-snap.jpg
+
+# Automation and agent boundary (exact canonical alias only):
+nest camera snap-config <alias> <output_path>
 ```
+
+Unattended callers must use `snap-config`; mutable Google display-name lookup
+fails closed without an interactive terminal. The on-demand agent flow wraps
+this command with `nest-camera-image` to stage, deliver, and clean up an
+ephemeral owner-only image.
 
 - **Implementation:** `~/.openclaw/bin/nest-camera-snap.py`
 - **Protocol:** WebRTC via Nest SDM `CameraLiveStream` trait

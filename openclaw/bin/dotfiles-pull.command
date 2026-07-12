@@ -276,9 +276,23 @@ fi
 
 # Deploy dashboard and utility scripts to ~/.openclaw/bin/
 SCRIPTS_DEPLOYED=0
+NEST_EVENT_RUNTIME_CHANGED=0
+NEST_ACTIVITY_RUNTIME_CHANGED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
+  case "$fname" in
+    nest-event-listener.py|nest-event-listener-wrapper.sh)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        NEST_EVENT_RUNTIME_CHANGED=1
+      fi
+      ;;
+    nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        NEST_ACTIVITY_RUNTIME_CHANGED=1
+      fi
+      ;;
+  esac
   atomic_install_executable "$script" "$BIN_DST/$fname"
   SCRIPTS_DEPLOYED=$((SCRIPTS_DEPLOYED + 1))
 done
@@ -323,6 +337,95 @@ if [ -f "$IMSG_WATCHDOG_SRC" ]; then
   else
     launchctl bootstrap "$IMSG_WATCHDOG_DOMAIN" "$IMSG_WATCHDOG_DST"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) launchagent: bootstrapped $IMSG_WATCHDOG_LABEL" >> "$LOG"
+  fi
+fi
+
+# Refresh the Nest event listener plist only after its attended bootstrap has
+# installed it. The first bootstrap also owns the private config, credential,
+# state directories, and dedicated Python environment; daily pulls must never
+# synthesize those prerequisites or silently activate this listener.
+NEST_EVENT_AGENT_LABEL="ai.openclaw.nest-event-listener"
+NEST_EVENT_AGENT_SRC="$REPO/openclaw/launchagents/$NEST_EVENT_AGENT_LABEL.plist"
+NEST_EVENT_AGENT_DST="$HOME/Library/LaunchAgents/$NEST_EVENT_AGENT_LABEL.plist"
+if [ -e "$NEST_EVENT_AGENT_DST" ] || [ -L "$NEST_EVENT_AGENT_DST" ]; then
+  if [ ! -f "$NEST_EVENT_AGENT_SRC" ] || [ -L "$NEST_EVENT_AGENT_SRC" ] \
+    || [ ! -f "$NEST_EVENT_AGENT_DST" ] || [ -L "$NEST_EVENT_AGENT_DST" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-events: FATAL installed LaunchAgent is unavailable or unsafe" >> "$LOG"
+    exit 1
+  fi
+
+  NEST_EVENT_AGENT_CHANGED=0
+  if ! cmp -s "$NEST_EVENT_AGENT_SRC" "$NEST_EVENT_AGENT_DST"; then
+    atomic_install_managed_file "$NEST_EVENT_AGENT_SRC" "$NEST_EVENT_AGENT_DST" 644
+    NEST_EVENT_AGENT_CHANGED=1
+  fi
+
+  NEST_EVENT_AGENT_DOMAIN="gui/$(id -u)"
+  if launchctl print "$NEST_EVENT_AGENT_DOMAIN/$NEST_EVENT_AGENT_LABEL" >/dev/null 2>&1; then
+    if [ "$NEST_EVENT_AGENT_CHANGED" -eq 1 ] || [ "$NEST_EVENT_RUNTIME_CHANGED" -eq 1 ]; then
+      launchctl bootout "$NEST_EVENT_AGENT_DOMAIN/$NEST_EVENT_AGENT_LABEL" >/dev/null 2>&1 || true
+      # The supervised listener may need a moment to close its private log
+      # FIFOs after bootout. launchd can otherwise return a transient EIO even
+      # though the old job is already absent. Keep this retry bounded and fail
+      # the pull rather than silently leaving the event consumer unloaded.
+      NEST_EVENT_RELOAD_OK=0
+      for NEST_EVENT_RELOAD_ATTEMPT in 1 2 3 4 5; do
+        if launchctl bootstrap "$NEST_EVENT_AGENT_DOMAIN" "$NEST_EVENT_AGENT_DST"; then
+          NEST_EVENT_RELOAD_OK=1
+          break
+        fi
+        sleep 1
+      done
+      if [ "$NEST_EVENT_RELOAD_OK" -ne 1 ]; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-events: FATAL listener reload failed" >> "$LOG"
+        exit 1
+      fi
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-events: reloaded installed listener" >> "$LOG"
+    fi
+  elif [ "$NEST_EVENT_AGENT_CHANGED" -eq 1 ] || [ "$NEST_EVENT_RUNTIME_CHANGED" -eq 1 ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-events: refreshed installed files; LaunchAgent remains unloaded pending explicit bootstrap" >> "$LOG"
+  fi
+fi
+
+# Refresh the Cabin activity reviewer only after an attended initialization and
+# bootstrap have installed its plist.  Daily pulls must never activate image
+# analysis or messaging merely because the tracked implementation changed.
+NEST_ACTIVITY_AGENT_LABEL="ai.openclaw.nest-activity-reviewer"
+NEST_ACTIVITY_AGENT_SRC="$REPO/openclaw/launchagents/$NEST_ACTIVITY_AGENT_LABEL.plist"
+NEST_ACTIVITY_AGENT_DST="$HOME/Library/LaunchAgents/$NEST_ACTIVITY_AGENT_LABEL.plist"
+if [ -e "$NEST_ACTIVITY_AGENT_DST" ] || [ -L "$NEST_ACTIVITY_AGENT_DST" ]; then
+  if [ ! -f "$NEST_ACTIVITY_AGENT_SRC" ] || [ -L "$NEST_ACTIVITY_AGENT_SRC" ] \
+    || [ ! -f "$NEST_ACTIVITY_AGENT_DST" ] || [ -L "$NEST_ACTIVITY_AGENT_DST" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-activity: FATAL installed LaunchAgent is unavailable or unsafe" >> "$LOG"
+    exit 1
+  fi
+
+  NEST_ACTIVITY_AGENT_CHANGED=0
+  if ! cmp -s "$NEST_ACTIVITY_AGENT_SRC" "$NEST_ACTIVITY_AGENT_DST"; then
+    atomic_install_managed_file "$NEST_ACTIVITY_AGENT_SRC" "$NEST_ACTIVITY_AGENT_DST" 644
+    NEST_ACTIVITY_AGENT_CHANGED=1
+  fi
+
+  NEST_ACTIVITY_AGENT_DOMAIN="gui/$(id -u)"
+  if launchctl print "$NEST_ACTIVITY_AGENT_DOMAIN/$NEST_ACTIVITY_AGENT_LABEL" >/dev/null 2>&1; then
+    if [ "$NEST_ACTIVITY_AGENT_CHANGED" -eq 1 ] || [ "$NEST_ACTIVITY_RUNTIME_CHANGED" -eq 1 ]; then
+      launchctl bootout "$NEST_ACTIVITY_AGENT_DOMAIN/$NEST_ACTIVITY_AGENT_LABEL" >/dev/null 2>&1 || true
+      NEST_ACTIVITY_RELOAD_OK=0
+      for NEST_ACTIVITY_RELOAD_ATTEMPT in 1 2 3 4 5; do
+        if launchctl bootstrap "$NEST_ACTIVITY_AGENT_DOMAIN" "$NEST_ACTIVITY_AGENT_DST"; then
+          NEST_ACTIVITY_RELOAD_OK=1
+          break
+        fi
+        sleep 1
+      done
+      if [ "$NEST_ACTIVITY_RELOAD_OK" -ne 1 ]; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-activity: FATAL reviewer reload failed" >> "$LOG"
+        exit 1
+      fi
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-activity: reloaded installed reviewer" >> "$LOG"
+    fi
+  elif [ "$NEST_ACTIVITY_AGENT_CHANGED" -eq 1 ] || [ "$NEST_ACTIVITY_RUNTIME_CHANGED" -eq 1 ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-activity: refreshed installed files; LaunchAgent remains unloaded pending explicit bootstrap" >> "$LOG"
   fi
 fi
 

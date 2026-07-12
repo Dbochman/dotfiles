@@ -26,6 +26,14 @@ import sys
 
 args = sys.argv[1:]
 url = next((arg for arg in args if arg.startswith("https://")), "")
+if "--config" in args and args[args.index("--config") + 1] == "-":
+    for line in sys.stdin.read().splitlines():
+        if line.startswith('url = "') and line.endswith('"'):
+            url = line[len('url = "'):-1]
+            break
+elif "--data-binary" in args and args[args.index("--data-binary") + 1] == "@-":
+    # Consume the private OAuth form so the producer has a real pipe reader.
+    sys.stdin.read()
 method = args[args.index("-X") + 1] if "-X" in args else "GET"
 body = args[args.index("-d") + 1] if "-d" in args else None
 record = {"url": url, "method": method, "body": body, "args": args}

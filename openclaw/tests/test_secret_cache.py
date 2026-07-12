@@ -77,6 +77,8 @@ FINANCE_VAULT_KEYS = [
     "FINANCE_BOA_USERNAME",
     "FINANCE_BOA_PASSWORD",
 ]
+NEST_EVENTS_VAULT_KEYS = ["NEST_EVENTS_SERVICE_ACCOUNT_JSON"]
+
 
 class SecretCacheTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -92,6 +94,13 @@ class SecretCacheTests(unittest.TestCase):
             / "financial-dashboard"
             / "scraper-credentials.json"
         )
+        self.nest_events_service_account = (
+            self.home
+            / ".openclaw"
+            / "nest-events"
+            / "credentials"
+            / "subscriber-service-account.json"
+        )
         self.seed = self.home / ".openclaw" / ".secrets-refresh.env"
         self.op_log = self.root / "op.log"
         self.http_log = self.root / "http.log"
@@ -106,6 +115,15 @@ set -euo pipefail
 printf 'read:%s\n' "$2" >> "$FAKE_OP_LOG"
 key="${2#ref://}"
 [[ "$key" != "${FAKE_OP_FAIL_KEY:-}" ]] || exit 92
+if [[ "$key" == "NEST_EVENTS_SERVICE_ACCOUNT_JSON" ]]; then
+  [[ -n "${FAKE_NEST_EVENTS_SERVICE_ACCOUNT_JSON:-}" ]] || exit 93
+  printf '%s' "$FAKE_NEST_EVENTS_SERVICE_ACCOUNT_JSON"
+  exit 0
+fi
+if [[ "$key" == NEST_* ]]; then
+  printf 'fake-vault-%s' "${key//_/-}"
+  exit 0
+fi
 printf 'fake-vault-%s with spaces and symbols-$-#-!' "$key"
 ''',
         )
@@ -113,7 +131,15 @@ printf 'fake-vault-%s with spaces and symbols-$-#-!' "$key"
             self.fake_bin / "curl",
             r'''#!/usr/bin/env bash
 set -euo pipefail
-case "$*" in
+# The hardened Nest client streams OAuth form data and SDM curl configuration
+# through stdin. Consume those pipes so the producer observes a real reader
+# instead of failing under pipefail with a synthetic BrokenPipe.
+stdin_payload=""
+case " $* " in
+  *" --data-binary @- "*) cat >/dev/null ;;
+  *" --config - "*) stdin_payload=$(cat) ;;
+esac
+case "$* $stdin_payload" in
   *oauth2/v4/token*)
     printf 'oauth\n' >> "$FAKE_HTTP_LOG"
     printf '%s\n' '{"access_token":"fake-access-token"}'
@@ -149,6 +175,32 @@ esac
                 f"OP_REF_{key}": f"ref://{key}"
                 for key in VAULT_KEYS + FINANCE_VAULT_KEYS
             }
+        )
+        return values
+
+    @staticmethod
+    def nest_events_service_account_payload() -> dict[str, str]:
+        project_id = "fake-nest-events"
+        return {
+            "type": "service_account",
+            "project_id": project_id,
+            "private_key_id": "fake-private-key-id",
+            "private_key": (
+                "-----BEGIN PRIVATE KEY-----\n"
+                "fake-test-private-key\n"
+                "-----END PRIVATE KEY-----\n"
+            ),
+            "client_email": (
+                f"openclaw-nest-events@{project_id}.iam.gserviceaccount.com"
+            ),
+            "client_id": "123456789012345678901",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+
+    def seed_values_with_nest_events(self) -> dict[str, str]:
+        values = self.seed_values()
+        values["OP_REF_NEST_EVENTS_SERVICE_ACCOUNT_JSON"] = (
+            "ref://NEST_EVENTS_SERVICE_ACCOUNT_JSON"
         )
         return values
 
@@ -286,6 +338,7 @@ esac
         self.assertNotIn("fake-vault-", refresh_output)
         self.assertNotIn("ref://", refresh_output)
         self.assertEqual(stat.S_IMODE(self.finance_cache.stat().st_mode), 0o600)
+        self.assertFalse(self.nest_events_service_account.exists())
         finance_payload = json.loads(self.finance_cache.read_text(encoding="utf-8"))
         self.assertEqual(
             set(finance_payload),
@@ -307,6 +360,154 @@ esac
             check=False,
         )
         self.assertEqual(check.returncode, 0)
+
+    def test_nest_event_credential_is_optional_isolated_and_atomic(self) -> None:
+        self._write_assignments(self.seed, self.seed_values_with_nest_events())
+        credential = self.nest_events_service_account_payload()
+
+        returncode, output = self.run_refresh_in_pty(
+            "--interactive",
+            FAKE_NEST_EVENTS_SERVICE_ACCOUNT_JSON=json.dumps(credential),
+        )
+
+        self.assertEqual(returncode, 0, output)
+        credential_stat = self.nest_events_service_account.lstat()
+        self.assertTrue(stat.S_ISREG(credential_stat.st_mode))
+        self.assertEqual(credential_stat.st_uid, os.getuid())
+        self.assertEqual(stat.S_IMODE(credential_stat.st_mode), 0o600)
+        self.assertEqual(
+            stat.S_IMODE(self.nest_events_service_account.parent.stat().st_mode),
+            0o700,
+        )
+        self.assertEqual(
+            stat.S_IMODE(
+                self.nest_events_service_account.parent.parent.stat().st_mode
+            ),
+            0o700,
+        )
+        self.assertEqual(
+            json.loads(self.nest_events_service_account.read_text(encoding="utf-8")),
+            credential,
+        )
+        self.assertEqual(
+            list(
+                self.nest_events_service_account.parent.glob(
+                    ".subscriber-service-account.json.*"
+                )
+            ),
+            [],
+        )
+
+        cache_text = self.cache.read_text(encoding="utf-8")
+        self.assertNotIn("NEST_EVENTS_SERVICE_ACCOUNT_JSON", cache_text)
+        self.assertNotIn("fake-test-private-key", cache_text)
+        self.assertNotIn(credential["client_email"], cache_text)
+        self.assertNotIn("fake-test-private-key", output)
+        self.assertNotIn(credential["client_email"], output)
+        self.assertNotIn("ref://", output)
+        self.assertEqual(
+            self.op_log.read_text(encoding="utf-8").splitlines(),
+            [
+                *(f"read:ref://{key}" for key in VAULT_KEYS),
+                *(f"read:ref://{key}" for key in FINANCE_VAULT_KEYS),
+                "read:ref://NEST_EVENTS_SERVICE_ACCOUNT_JSON",
+            ],
+        )
+
+    def test_invalid_nest_event_credential_preserves_last_good_file(self) -> None:
+        self._write_assignments(self.seed, self.seed_values_with_nest_events())
+        self.nest_events_service_account.parent.mkdir(parents=True)
+        self.nest_events_service_account.parent.parent.chmod(0o700)
+        self.nest_events_service_account.parent.chmod(0o700)
+        original = b'{"last_good":true}\n'
+        self.nest_events_service_account.write_bytes(original)
+        self.nest_events_service_account.chmod(0o600)
+        invalid = self.nest_events_service_account_payload()
+        invalid["client_email"] = "unexpected-account@example.invalid"
+
+        returncode, output = self.run_refresh_in_pty(
+            "--interactive",
+            FAKE_NEST_EVENTS_SERVICE_ACCOUNT_JSON=json.dumps(invalid),
+        )
+
+        self.assertNotEqual(returncode, 0, output)
+        self.assertEqual(self.nest_events_service_account.read_bytes(), original)
+        self.assertFalse(self.cache.exists())
+        self.assertFalse(self.finance_cache.exists())
+        self.assertEqual(
+            list(
+                self.nest_events_service_account.parent.glob(
+                    ".subscriber-service-account.json.*"
+                )
+            ),
+            [],
+        )
+        self.assertNotIn("unexpected-account", output)
+        self.assertNotIn("fake-test-private-key", output)
+        self.assertNotIn("ref://", output)
+
+    def test_nest_event_field_read_failure_preserves_last_good_file(self) -> None:
+        self._write_assignments(self.seed, self.seed_values_with_nest_events())
+        self.nest_events_service_account.parent.mkdir(parents=True)
+        self.nest_events_service_account.parent.parent.chmod(0o700)
+        self.nest_events_service_account.parent.chmod(0o700)
+        original = b'{"last_good":"preserve exactly"}\n'
+        self.nest_events_service_account.write_bytes(original)
+        self.nest_events_service_account.chmod(0o600)
+
+        returncode, output = self.run_refresh_in_pty(
+            "--interactive",
+            FAKE_OP_FAIL_KEY="NEST_EVENTS_SERVICE_ACCOUNT_JSON",
+        )
+
+        self.assertNotEqual(returncode, 0, output)
+        self.assertEqual(self.nest_events_service_account.read_bytes(), original)
+        self.assertFalse(self.cache.exists())
+        self.assertFalse(self.finance_cache.exists())
+        self.assertNotIn("ref://", output)
+        self.assertNotIn("fake-vault-", output)
+
+    def test_nest_event_credential_refuses_symlink_destination(self) -> None:
+        self._write_assignments(self.seed, self.seed_values_with_nest_events())
+        self.nest_events_service_account.parent.mkdir(parents=True)
+        self.nest_events_service_account.parent.parent.chmod(0o700)
+        self.nest_events_service_account.parent.chmod(0o700)
+        symlink_target = self.root / "last-good-service-account.json"
+        original = b'{"last_good":"symlink target"}\n'
+        symlink_target.write_bytes(original)
+        symlink_target.chmod(0o600)
+        self.nest_events_service_account.symlink_to(symlink_target)
+
+        returncode, output = self.run_refresh_in_pty(
+            "--interactive",
+            FAKE_NEST_EVENTS_SERVICE_ACCOUNT_JSON=json.dumps(
+                self.nest_events_service_account_payload()
+            ),
+        )
+
+        self.assertNotEqual(returncode, 0, output)
+        self.assertTrue(self.nest_events_service_account.is_symlink())
+        self.assertEqual(symlink_target.read_bytes(), original)
+        self.assertFalse(self.cache.exists())
+        self.assertFalse(self.finance_cache.exists())
+        self.assertNotIn("fake-test-private-key", output)
+        self.assertNotIn("ref://", output)
+
+    def test_nest_event_materialization_requires_attended_terminal(self) -> None:
+        self._write_assignments(self.seed, self.seed_values_with_nest_events())
+
+        result = self.run_refresh(
+            "--interactive",
+            FAKE_NEST_EVENTS_SERVICE_ACCOUNT_JSON=json.dumps(
+                self.nest_events_service_account_payload()
+            ),
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("interactive terminal", result.stderr)
+        self.assertFalse(self.op_log.exists())
+        self.assertFalse(self.nest_events_service_account.exists())
+        self.assertNotIn("ref://", result.stdout + result.stderr)
 
     def test_refresh_failure_preserves_last_good_cache_byte_for_byte(self) -> None:
         self._write_assignments(self.seed, self.seed_values())
@@ -437,7 +638,12 @@ esac
         source = REFRESH.read_text(encoding="utf-8")
         self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN=", source)
         self.assertNotIn("op item get", source)
-        for key in CACHE_ONLY_KEYS + VAULT_KEYS + FINANCE_VAULT_KEYS:
+        for key in (
+            CACHE_ONLY_KEYS
+            + VAULT_KEYS
+            + FINANCE_VAULT_KEYS
+            + NEST_EVENTS_VAULT_KEYS
+        ):
             literal_assignment = re.compile(
                 rf"^\s*(?:export\s+)?{re.escape(key)}\s*=\s*(?![\"']?\$)",
                 re.MULTILINE,

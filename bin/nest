@@ -28,6 +28,11 @@ DASHBOARD_PORT=8550
 # Protected location config (lat/lon for weather)
 LOCATION_FILE="${HOME}/.openclaw/nest-location.conf"
 
+# Exact camera/resource policy shared with the Nest event listener. The
+# unattended capture path reads this protected file instead of mutable Google
+# room or custom display names.
+NEST_EVENT_CAMERA_CONFIG="${NEST_EVENT_CONFIG:-${HOME}/.openclaw/nest-events/config/cameras.json}"
+
 _validate_coordinates() {
   python3 - "$1" "$2" <<'PY'
 import math
@@ -261,11 +266,37 @@ _get_access_token() {
   refresh_token=$(_nest_credential NEST_REFRESH_TOKEN)
 
   local resp token
-  if ! resp=$(curl -sS --fail-with-body -X POST "https://www.googleapis.com/oauth2/v4/token" \
-    -d "client_id=${client_id}" \
-    -d "client_secret=${client_secret}" \
-    -d "refresh_token=${refresh_token}" \
-    -d "grant_type=refresh_token"); then
+  # Keep OAuth credentials out of the process table.  The form body is built
+  # from NUL-delimited stdin and streamed directly to curl rather than being
+  # expanded into either process's argv.
+  if ! resp=$(
+    printf '%s\0%s\0%s\0' "$client_id" "$client_secret" "$refresh_token" \
+      | /usr/bin/python3 -c '
+import sys
+import urllib.parse
+
+values = sys.stdin.buffer.read().split(b"\0")
+if len(values) != 4 or values[-1] != b"":
+    raise SystemExit(1)
+try:
+    client_id, client_secret, refresh_token = (
+        value.decode("utf-8") for value in values[:3]
+    )
+except UnicodeDecodeError:
+    raise SystemExit(1)
+if not all((client_id, client_secret, refresh_token)):
+    raise SystemExit(1)
+sys.stdout.write(urllib.parse.urlencode({
+    "client_id": client_id,
+    "client_secret": client_secret,
+    "refresh_token": refresh_token,
+    "grant_type": "refresh_token",
+}))
+' 2>/dev/null \
+      | curl -sS --fail-with-body -X POST \
+          "https://www.googleapis.com/oauth2/v4/token" \
+          --data-binary @- 2>/dev/null
+  ); then
     echo "Error refreshing Nest access token" >&2
     return 1
   fi
@@ -295,17 +326,28 @@ _project_id() {
   _nest_credential NEST_PROJECT_ID
 }
 
-_api() {
+_api() (
   local method="$1" path="$2"
   shift 2
   local token project_id response validated
   token=$(_get_access_token)
   project_id=$(_project_id)
-  if ! response=$(curl -sS --fail-with-body -X "$method" \
-    "https://smartdevicemanagement.googleapis.com/v1/enterprises/${project_id}${path}" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${token}" \
-    "$@"); then
+
+  # These values are streamed to curl as config on stdin so neither the bearer
+  # token nor the private Device Access project ID appears in curl's argv or a
+  # temporary file. Strict validation prevents config/header injection from a
+  # damaged cache file.
+  if [[ ! "$token" =~ ^[-A-Za-z0-9._~+/=]+$ ]] \
+    || [[ ! "$project_id" =~ ^[-A-Za-z0-9._~]+$ ]] \
+    || [[ ! "$path" =~ ^/[-A-Za-z0-9._~:/=]+$ ]]; then
+    echo "Nest API credentials or request path are invalid" >&2
+    return 1
+  fi
+  if ! response=$(
+    printf 'url = "https://smartdevicemanagement.googleapis.com/v1/enterprises/%s%s"\nheader = "Content-Type: application/json"\nheader = "Authorization: Bearer %s"\n' \
+      "$project_id" "$path" "$token" \
+      | curl -sS --fail-with-body -X "$method" --config - "$@" 2>/dev/null
+  ); then
     echo "Nest API request failed" >&2
     return 1
   fi
@@ -325,7 +367,7 @@ sys.stdout.write(json.dumps(data, separators=(",", ":")))
     return 1
   fi
   printf '%s\n' "$validated"
-}
+)
 
 _get_weather() {
   # Returns JSON: {"temp_f":12.0,"feels_like_f":4.7,"humidity":73,"wind_mph":1.9,"code":3,"description":"Overcast"}
@@ -1026,7 +1068,9 @@ Commands:
   set <room> <temp°F>       Set temperature (e.g. nest set bedroom 72)
   mode <room> <HEAT|OFF>    Set thermostat mode
   eco <room> [on|off]       Toggle eco mode
-  camera snap [room] [out]  Capture camera snapshot (default: kitchen)
+  camera snap [room] [out]  Attended display-name camera diagnostic
+  camera snap-config <alias> <out>
+                            Capture an exact protected camera resource
   snapshot                  Record current state + weather to history
   history [hours] [room]    Show history summary (default: 24h, all rooms)
   dashboard                 Open dashboard in browser
@@ -1146,40 +1190,252 @@ for d in data.get('devices', []):
 "
 }
 
+_capture_camera_id() {
+  local camera_id="$1" output="$2" project_id="${3:-}"
+  local token camera_python camera_helper
+  if [[ -z "$project_id" ]]; then
+    project_id=$(_project_id)
+  fi
+  token=$(_get_access_token)
+  camera_python="${NEST_CAMERA_PYTHON:-/usr/bin/python3}"
+  camera_helper="${NEST_CAMERA_HELPER:-${HOME}/.openclaw/bin/nest-camera-snap.py}"
+
+  if [[ ! -x "$camera_python" || ! -f "$camera_helper" ]]; then
+    echo "Nest camera capture helper is unavailable" >&2
+    return 1
+  fi
+
+  # Pass camera identifiers and credentials only through a pipe. The helper
+  # creates the destination and atomically replaces it with a mode-0600 JPEG.
+  printf '%s\0%s\0%s\0%s\0' "$camera_id" "$token" "$project_id" "$output" \
+    | /usr/bin/python3 -c '
+import json
+import sys
+
+values = sys.stdin.buffer.read().split(b"\0")
+if len(values) != 5 or values[-1] != b"":
+    raise SystemExit(1)
+try:
+    device_id, access_token, project_id, output_path = (
+        value.decode("utf-8") for value in values[:4]
+    )
+except UnicodeDecodeError:
+    raise SystemExit(1)
+sys.stdout.write(json.dumps({
+    "device_id": device_id,
+    "access_token": access_token,
+    "project_id": project_id,
+    "output_path": output_path,
+}, separators=(",", ":")))
+' 2>/dev/null \
+    | "$camera_python" "$camera_helper"
+}
+
+_configured_camera_id() {
+  local alias="$1" project_id="$2"
+  # The alias and private project ID also stay off argv. Python opens the
+  # listener's config with O_NOFOLLOW, validates its complete fixed policy,
+  # and emits only the selected device ID into this shell's private pipe.
+  printf '%s\0%s\0' "$alias" "$project_id" \
+    | NEST_CAMERA_CONFIG_PATH="$NEST_EVENT_CAMERA_CONFIG" /usr/bin/python3 -c '
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+MAX_CONFIG_BYTES = 64 * 1024
+RESOURCE_RE = re.compile(
+    r"^enterprises/([-A-Za-z0-9._~]+)/devices/([-A-Za-z0-9._~]+)$"
+)
+EXPECTED_POLICIES = {
+    "Kitchen": ("Cabin", "live"),
+    "Living Room": ("Crosstown", "event"),
+    "Living Room Wired": ("Crosstown", "event"),
+}
+
+private_input = sys.stdin.buffer.read(4097).split(b"\0")
+if len(private_input) != 3 or private_input[-1] != b"":
+    raise SystemExit(1)
+try:
+    alias, project_id = (value.decode("utf-8") for value in private_input[:2])
+except UnicodeDecodeError:
+    raise SystemExit(1)
+if alias not in EXPECTED_POLICIES or not re.fullmatch(
+    r"[-A-Za-z0-9._~]+", project_id
+):
+    raise SystemExit(1)
+
+config_path = Path(os.environ.get("NEST_CAMERA_CONFIG_PATH", "")).expanduser()
+if not config_path.is_absolute() or not hasattr(os, "O_NOFOLLOW"):
+    raise SystemExit(1)
+try:
+    parent_metadata = config_path.parent.lstat()
+except OSError:
+    raise SystemExit(1)
+if (
+    not stat.S_ISDIR(parent_metadata.st_mode)
+    or stat.S_ISLNK(parent_metadata.st_mode)
+    or parent_metadata.st_uid != os.geteuid()
+    or stat.S_IMODE(parent_metadata.st_mode) & 0o077
+):
+    raise SystemExit(1)
+
+try:
+    descriptor = os.open(
+        config_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    )
+except OSError:
+    raise SystemExit(1)
+try:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+        or metadata.st_size <= 0
+        or metadata.st_size > MAX_CONFIG_BYTES
+    ):
+        raise SystemExit(1)
+    chunks = []
+    remaining = MAX_CONFIG_BYTES + 1
+    while remaining:
+        chunk = os.read(descriptor, min(65536, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+finally:
+    os.close(descriptor)
+raw = b"".join(chunks)
+if len(raw) > MAX_CONFIG_BYTES:
+    raise SystemExit(1)
+try:
+    config = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+if not isinstance(config, dict) or set(config) != {"version", "cameras"}:
+    raise SystemExit(1)
+if config.get("version") != 1:
+    raise SystemExit(1)
+cameras = config.get("cameras")
+if not isinstance(cameras, list) or len(cameras) != len(EXPECTED_POLICIES):
+    raise SystemExit(1)
+
+by_alias = {}
+resources = set()
+for camera in cameras:
+    if not isinstance(camera, dict) or set(camera) != {
+        "alias", "site", "resource", "capture"
+    }:
+        raise SystemExit(1)
+    camera_alias = camera.get("alias")
+    site = camera.get("site")
+    resource = camera.get("resource")
+    capture = camera.get("capture")
+    if not all(
+        isinstance(value, str)
+        for value in (camera_alias, site, resource, capture)
+    ):
+        raise SystemExit(1)
+    if camera_alias in by_alias or resource in resources:
+        raise SystemExit(1)
+    if EXPECTED_POLICIES.get(camera_alias) != (site, capture):
+        raise SystemExit(1)
+    resource_match = RESOURCE_RE.fullmatch(resource)
+    if resource_match is None or resource_match.group(1) != project_id:
+        raise SystemExit(1)
+    resources.add(resource)
+    by_alias[camera_alias] = resource_match.group(2)
+
+if set(by_alias) != set(EXPECTED_POLICIES):
+    raise SystemExit(1)
+sys.stdout.write(by_alias[alias])
+' 2>/dev/null
+}
+
 cmd_camera_snap() {
   # Capture a single frame from a camera via WebRTC
   local room="${1:-kitchen}"
   local output="${2:-${HOME}/.openclaw/workspace/camera-snap.jpg}"
 
+  # Mutable display-name lookup is retained for attended diagnostics only.
+  # Agents and services must cross the protected exact-resource boundary.
+  if [[ "$INTERACTIVE_TERMINAL" -ne 1 ]]; then
+    echo "Unattended camera capture requires a protected exact alias" >&2
+    return 1
+  fi
+
   # Find camera device ID
   local data camera_id
   data=$(_api GET /devices)
-  camera_id=$(NEST_CAMERA_QUERY="$room" python3 -c "
-import json, sys
+  if ! camera_id=$(NEST_CAMERA_QUERY="$room" python3 -c '
+import json
 import os
-query = os.environ['NEST_CAMERA_QUERY'].lower()
-data = json.load(sys.stdin)
-for d in data.get('devices', []):
-    if 'CAMERA' not in d.get('type', '') and 'DOORBELL' not in d.get('type', ''):
-        continue
-    room_name = d.get('parentRelations', [{}])[0].get('displayName', '').lower()
-    custom_name = d.get('traits', {}).get('sdm.devices.traits.Info', {}).get('customName', '').lower()
-    if query in room_name or (custom_name and query in custom_name):
-        print(d['name'].split('/')[-1])
-        break
-" <<< "$data")
+import sys
+import unicodedata
 
-  if [[ -z "$camera_id" ]]; then
-    echo "No camera matching '$room'" >&2
-    exit 1
+def normalize(value):
+    if not isinstance(value, str):
+        return ""
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+query = normalize(os.environ.get("NEST_CAMERA_QUERY", ""))
+if not query:
+    raise SystemExit(2)
+try:
+    data = json.load(sys.stdin)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    raise SystemExit(2)
+
+matches = []
+for device in data.get("devices", []):
+    if not isinstance(device, dict):
+        continue
+    device_type = device.get("type", "")
+    device_kind = device_type.rsplit(".", 1)[-1] if isinstance(device_type, str) else ""
+    if device_kind not in ("CAMERA", "DOORBELL"):
+        continue
+    relations = device.get("parentRelations", [])
+    room_name = relations[0].get("displayName", "") if (
+        isinstance(relations, list)
+        and relations
+        and isinstance(relations[0], dict)
+    ) else ""
+    traits = device.get("traits", {})
+    info = traits.get("sdm.devices.traits.Info", {}) if isinstance(traits, dict) else {}
+    custom_name = info.get("customName", "") if isinstance(info, dict) else ""
+    if query not in (normalize(room_name), normalize(custom_name)):
+        continue
+    resource_name = device.get("name", "")
+    device_id = resource_name.rsplit("/", 1)[-1] if isinstance(resource_name, str) else ""
+    if not device_id:
+        raise SystemExit(2)
+    matches.append(device_id)
+
+if len(matches) != 1:
+    raise SystemExit(1)
+sys.stdout.write(matches[0])
+' <<< "$data" 2>/dev/null); then
+    echo "Camera selection requires exactly one exact name match" >&2
+    return 1
   fi
 
-  local token project_id
-  token=$(_get_access_token)
-  project_id=$(_project_id)
+  _capture_camera_id "$camera_id" "$output"
+}
 
-  mkdir -p "$(dirname "$output")"
-  /usr/bin/python3 "${HOME}/.openclaw/bin/nest-camera-snap.py" "$camera_id" "$token" "$project_id" "$output"
+cmd_camera_snap_config() {
+  local alias="$1" output="$2" project_id camera_id
+  # This command is an automation boundary even when invoked from a terminal.
+  # It must use only the protected local cache and must never fall back to op.
+  INTERACTIVE_TERMINAL=0
+  project_id=$(_project_id)
+  if ! camera_id=$(_configured_camera_id "$alias" "$project_id"); then
+    echo "Protected camera configuration does not authorize capture" >&2
+    return 1
+  fi
+  _capture_camera_id "$camera_id" "$output" "$project_id"
 }
 
 cmd_raw() {
@@ -1210,6 +1466,13 @@ case "${1:-help}" in
   camera)
     case "${2:-}" in
       snap)  cmd_camera_snap "${3:-kitchen}" "${4:-}" ;;
+      snap-config)
+        [[ "$#" -eq 4 ]] || {
+          echo "Usage: nest camera snap-config <alias> <output_path>" >&2
+          exit 2
+        }
+        cmd_camera_snap_config "$3" "$4"
+        ;;
       *)     echo "Usage: nest camera snap [room] [output_path]" >&2; exit 1 ;;
     esac
     ;;

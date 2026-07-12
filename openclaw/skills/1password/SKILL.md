@@ -130,11 +130,19 @@ The helper:
 - never prints field references or values;
 - requires every configured field before changing the cache;
 - shell-quotes every general-cache value, writes mode-`0600` temporary files,
-  fsyncs them, and atomically renames the general and optional dedicated
-  finance cache independently; and
-- leaves both previous caches byte-for-byte intact on field-read, validation,
-  or temporary-write errors; each cache is then installed with its own atomic
+  fsyncs them, and atomically renames the general, optional finance, and
+  optional Nest-event targets independently; and
+- leaves every previous target byte-for-byte intact on field-read, validation,
+  or temporary-write errors; each target is installed with its own atomic
   rename.
+
+The Nest Pub/Sub listener may also configure the optional exact field reference
+`OP_REF_NEST_EVENTS_SERVICE_ACCOUNT_JSON`. The helper validates that complete
+Google service-account document and materializes it only at
+`~/.openclaw/nest-events/credentials/subscriber-service-account.json` under
+mode-`0700` directories with file mode `0600`. The JSON is never added to the
+general shell cache. The listener and its LaunchAgent read only that dedicated
+file and must never invoke `op`; see `NEST-EVENTS.md` for rotation order.
 
 Restart only services that need rotated values after a successful refresh.
 
