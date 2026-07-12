@@ -221,6 +221,7 @@ fs.renameSync = function (...args) {
 
     def write_config(self, content: object | str, mode: int = 0o600) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.parent.chmod(0o700)
         text = content if isinstance(content, str) else json.dumps(content)
         self.config_path.write_text(text, encoding="utf-8")
         self.config_path.chmod(mode)
@@ -310,8 +311,18 @@ fs.renameSync = function (...args) {
         self.assertEqual(result.returncode, 0, result.stderr)
         ssh_args = json.loads(self.ssh_log.read_text(encoding="utf-8"))
         self.assertEqual(
-            ssh_args[:5],
-            ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "dylans-macbook-pro"],
+            ssh_args[:9],
+            [
+                "-i",
+                str(self.home / ".ssh" / "id_mini_to_mbp"),
+                "-o",
+                "IdentityAgent=none",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "dylans-macbook-pro",
+            ],
         )
         remote_command = ssh_args[-1]
         self.assertNotIn(LOCK_ID, remote_command)
@@ -555,6 +566,74 @@ fs.renameSync = function (...args) {
             ["constructor", "status"],
         )
 
+    def test_observe_returns_only_sanitized_bound_state(self) -> None:
+        config = {
+            **self.valid_config(),
+            "observeLockId": LOCK_ID,
+            "observeAlias": "front_door",
+        }
+        self.write_config(config)
+        observed = {**LOCKED_OPEN, "batteryPercentage": 19}
+
+        result = self.run_node(
+            "observe", FAKE_STATUS_SEQUENCE=json.dumps([observed])
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(
+            set(output),
+            {
+                "ok",
+                "alias",
+                "observed_at",
+                "lock_state",
+                "door_state",
+                "battery_percent",
+            },
+        )
+        self.assertEqual(output["alias"], "front_door")
+        self.assertEqual(output["lock_state"], "locked")
+        self.assertEqual(output["door_state"], "open")
+        self.assertEqual(output["battery_percent"], 19)
+        self.assertNotIn(LOCK_ID, result.stdout)
+        self.assertEqual(
+            self.api_calls()[-1], {"method": "status", "lockId": LOCK_ID}
+        )
+
+    def test_observe_requires_exact_protected_binding(self) -> None:
+        self.write_config(self.valid_config())
+
+        result = self.run_node("observe")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            self.error_output(result)["error_code"], "observe_binding_missing"
+        )
+        self.assertEqual(
+            [entry["method"] for entry in self.api_calls()], ["constructor"]
+        )
+
+        self.write_config(
+            {
+                **self.valid_config(),
+                "observeLockId": LOCK_ID,
+                "observeAlias": "another_safe_alias",
+            }
+        )
+        result = self.run_node("observe")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            self.error_output(result)["error_code"], "observe_binding_missing"
+        )
+        self.assertEqual(self.api_calls()[-1]["method"], "constructor")
+
+    def test_wrapper_observe_uses_read_only_remote_command(self) -> None:
+        result = self.run_wrapper("observe")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.decoded_remote_calls(), [["observe"]])
+
     def test_lock_retries_then_returns_verified_safe_state(self) -> None:
         self.write_config(self.valid_config())
         sequence = json.dumps([UNLOCKED_CLOSED, UNLOCKED_CLOSED, LOCKED_CLOSED])
@@ -744,6 +823,13 @@ fs.renameSync = function (...args) {
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.error_output(result)["error_code"], "insecure_config")
         self.assertEqual(stat.S_IMODE(self.config_path.stat().st_mode), 0o644)
+
+        self.write_config(self.valid_config())
+        self.config_path.parent.chmod(0o755)
+        result = self.run_node("status")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.error_output(result)["error_code"], "insecure_config")
+        self.assertEqual(self.api_calls(), [])
 
     def test_atomic_save_failure_is_nonzero_and_cleans_temp_file(self) -> None:
         result = self.run_node(

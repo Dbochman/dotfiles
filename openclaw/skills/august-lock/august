@@ -9,6 +9,7 @@ MACBOOK="dylans-macbook-pro"
 NODE="/opt/homebrew/bin/node"
 CMD_SCRIPT='${HOME}/.openclaw/august/august-cmd.js'
 SSH_BIN="${AUGUST_SSH_BIN:-ssh}"
+SSH_KEY="${AUGUST_SSH_KEY:-$HOME/.ssh/id_mini_to_mbp}"
 PYTHON_BIN="${AUGUST_PYTHON_BIN:-python3}"
 APPROVAL_HELPER="${AUGUST_APPROVAL_HELPER:-$SCRIPT_DIR/august-approval.py}"
 APPROVAL_CACHE_DIR="${AUGUST_APPROVAL_CACHE_DIR:-$HOME/.cache/openclaw-gateway/august-unlock-approvals}"
@@ -22,6 +23,7 @@ Usage: august <command> [args]
 
 Commands:
   status [lock-id]               Lock state, door position, battery
+  observe                        Sanitized read-only bound lock observation
   lock [lock-id]                 Lock and verify the door
   unlock [lock-id]               Preview exact state and create one-use approval
   unlock --confirm <approval-id> Consume approval, recheck state, unlock once
@@ -94,7 +96,8 @@ remote_command_for() {
 remote_call() {
   local remote_command
   remote_command=$(remote_command_for "$@")
-  "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=5 "$MACBOOK" "$remote_command"
+  "$SSH_BIN" -i "$SSH_KEY" -o IdentityAgent=none -o BatchMode=yes \
+    -o ConnectTimeout=5 "$MACBOOK" "$remote_command"
 }
 
 claim_field() {
@@ -191,7 +194,7 @@ case "$COMMAND" in
       REMOTE_ARGS+=("$1")
     fi
     ;;
-  authorize|locks)
+  authorize|locks|observe)
     [[ $# -eq 0 ]] || usage
     ;;
   validate)
@@ -208,4 +211,5 @@ esac
 # static command plus base64, so user-controlled values are never interpolated
 # as shell syntax.
 REMOTE_COMMAND=$(remote_command_for "${REMOTE_ARGS[@]}")
-exec "$SSH_BIN" -o BatchMode=yes -o ConnectTimeout=5 "$MACBOOK" "$REMOTE_COMMAND"
+exec "$SSH_BIN" -i "$SSH_KEY" -o IdentityAgent=none -o BatchMode=yes \
+  -o ConnectTimeout=5 "$MACBOOK" "$REMOTE_COMMAND"

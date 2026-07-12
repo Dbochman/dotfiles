@@ -7,6 +7,7 @@
 # re-evaluates correlated presence.
 
 set -euo pipefail
+umask 077
 
 LOG_FILE="${PRESENCE_LOG_FILE:-$HOME/.openclaw/logs/presence-detect.log}"
 STATE_DIR="${PRESENCE_STATE_DIR:-$HOME/.openclaw/presence}"
@@ -15,6 +16,14 @@ EVALUATOR="${PRESENCE_EVALUATOR:-$HOME/.openclaw/workspace/scripts/presence-dete
 CANONICAL_FILE="${STATE_DIR}/crosstown-scan.json"
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"
+/bin/chmod 700 "$STATE_DIR" "$(dirname "$LOG_FILE")"
+[ ! -L "$LOG_FILE" ] || exit 1
+if [ ! -e "$LOG_FILE" ]; then
+  (set -o noclobber; : > "$LOG_FILE") 2>/dev/null || exit 1
+fi
+[ -f "$LOG_FILE" ] && [ ! -L "$LOG_FILE" ] || exit 1
+[ "$(/usr/bin/stat -f '%u' "$LOG_FILE")" = "$(/usr/bin/id -u)" ] || exit 1
+/bin/chmod 600 "$LOG_FILE"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
@@ -156,7 +165,8 @@ if [ "${PRESENCE_RECEIVE_EVALUATE:-1}" = "0" ]; then
   exit 0
 fi
 
-if ! "$EVALUATOR" evaluate >> "$LOG_FILE" 2>&1; then
+if ! "$EVALUATOR" evaluate >/dev/null 2>&1; then
   log "ERROR: Presence evaluation failed after Crosstown scan ingestion"
   exit 1
 fi
+log "Presence evaluation completed after Crosstown scan ingestion"
