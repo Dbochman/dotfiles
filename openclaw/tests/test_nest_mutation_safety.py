@@ -143,6 +143,15 @@ class NestMutationSafetyTests(unittest.TestCase):
 
     def environment(self, **overrides: str) -> dict[str, str]:
         env = os.environ.copy()
+        for key in (
+            "NEST_CLIENT_ID",
+            "NEST_CLIENT_SECRET",
+            "NEST_REFRESH_TOKEN",
+            "NEST_PROJECT_ID",
+            "CROSSTOWN_LAT",
+            "CROSSTOWN_LON",
+        ):
+            env.pop(key, None)
         env.update(
             {
                 "HOME": str(self.home),

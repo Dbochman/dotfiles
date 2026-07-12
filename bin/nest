@@ -1071,6 +1071,8 @@ Commands:
   camera snap [room] [out]  Attended display-name camera diagnostic
   camera snap-config <alias> <out>
                             Capture an exact protected camera resource
+  camera clip-config <alias> <seconds> <out>
+                            Record 1-30s from an exact protected camera
   snapshot                  Record current state + weather to history
   history [hours] [room]    Show history summary (default: 24h, all rooms)
   dashboard                 Open dashboard in browser
@@ -1192,6 +1194,7 @@ for d in data.get('devices', []):
 
 _capture_camera_id() {
   local camera_id="$1" output="$2" project_id="${3:-}"
+  local capture_kind="${4:-image}" duration_seconds="${5:-0}"
   local token camera_python camera_helper
   if [[ -z "$project_id" ]]; then
     project_id=$(_project_id)
@@ -1206,26 +1209,36 @@ _capture_camera_id() {
   fi
 
   # Pass camera identifiers and credentials only through a pipe. The helper
-  # creates the destination and atomically replaces it with a mode-0600 JPEG.
-  printf '%s\0%s\0%s\0%s\0' "$camera_id" "$token" "$project_id" "$output" \
+  # creates the destination and atomically replaces it with mode-0600 media.
+  printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+    "$camera_id" "$token" "$project_id" "$output" \
+    "$capture_kind" "$duration_seconds" \
     | /usr/bin/python3 -c '
 import json
 import sys
 
 values = sys.stdin.buffer.read().split(b"\0")
-if len(values) != 5 or values[-1] != b"":
+if len(values) != 7 or values[-1] != b"":
     raise SystemExit(1)
 try:
-    device_id, access_token, project_id, output_path = (
-        value.decode("utf-8") for value in values[:4]
+    device_id, access_token, project_id, output_path, capture_kind, duration = (
+        value.decode("utf-8") for value in values[:6]
     )
 except UnicodeDecodeError:
+    raise SystemExit(1)
+if capture_kind not in ("image", "video"):
+    raise SystemExit(1)
+try:
+    duration_seconds = int(duration)
+except ValueError:
     raise SystemExit(1)
 sys.stdout.write(json.dumps({
     "device_id": device_id,
     "access_token": access_token,
     "project_id": project_id,
     "output_path": output_path,
+    "capture_kind": capture_kind,
+    "duration_seconds": duration_seconds,
 }, separators=(",", ":")))
 ' 2>/dev/null \
     | "$camera_python" "$camera_helper"
@@ -1438,6 +1451,29 @@ cmd_camera_snap_config() {
   _capture_camera_id "$camera_id" "$output" "$project_id"
 }
 
+cmd_camera_clip_config() {
+  local alias="$1" duration_seconds="$2" output="$3"
+  local project_id camera_id
+  case "$duration_seconds" in
+    ''|*[!0-9]*)
+      echo "Camera video duration must be 1-30 seconds" >&2
+      return 1
+      ;;
+  esac
+  if (( duration_seconds < 1 || duration_seconds > 30 )); then
+    echo "Camera video duration must be 1-30 seconds" >&2
+    return 1
+  fi
+  INTERACTIVE_TERMINAL=0
+  project_id=$(_project_id)
+  if ! camera_id=$(_configured_camera_id "$alias" "$project_id"); then
+    echo "Protected camera configuration does not authorize capture" >&2
+    return 1
+  fi
+  _capture_camera_id \
+    "$camera_id" "$output" "$project_id" "video" "$duration_seconds"
+}
+
 cmd_raw() {
   _api GET /devices | python3 -m json.tool
 }
@@ -1472,6 +1508,13 @@ case "${1:-help}" in
           exit 2
         }
         cmd_camera_snap_config "$3" "$4"
+        ;;
+      clip-config)
+        [[ "$#" -eq 5 ]] || {
+          echo "Usage: nest camera clip-config <alias> <seconds> <output_path>" >&2
+          exit 2
+        }
+        cmd_camera_clip_config "$3" "$4" "$5"
         ;;
       *)     echo "Usage: nest camera snap [room] [output_path]" >&2; exit 1 ;;
     esac

@@ -241,23 +241,37 @@ be active while occupied Crosstown remains shadow. Future Crosstown activation
 must use its own presence gate and camera-specific acceptance test; vacancy at
 one home never enables cameras at the other.
 
-## Explicit on-demand images
+## Explicit on-demand camera media
 
-Trusted owners may explicitly request a fresh still from any of the three
-configured cameras, independently of presence and proactive monitoring mode.
-The `nest-camera` skill resolves natural language to one of the three canonical
-aliases, while `nest-camera-image` captures only the corresponding protected
-exact resource. It stages a mode-`0600` JPEG in the owner-only OpenClaw media
-tree, sends it through the current conversation's native message-tool route,
-and deletes it immediately after that synchronous send returns. A fixed TTL
-reaper and a startup sweep remove crash orphans.
+Trusted owners may explicitly request a fresh still or a 1-30 second live clip
+from any of the three configured cameras, independently of presence and
+proactive monitoring mode. The `nest-camera` skill resolves natural language
+to one of the three canonical aliases, while `nest-camera-image` captures only
+the corresponding protected exact resource. A clip request records the live
+WebRTC video track into an H.264/yuv420p MP4; it does not retrieve historical
+Nest Aware footage. Unspecified short clips default to 10 seconds.
+
+The helper stages mode-`0600` JPEG or MP4 media in the owner-only OpenClaw
+media tree, validates its structure and freshness, sends it through the
+current conversation's native message-tool route, and deletes it immediately
+after that synchronous send returns. A fixed TTL reaper and startup sweep
+remove crash orphans.
 
 This path never reuses the activity reviewer's image, fuzzy-matches a mutable
-Google display name, or retrieves a historical event frame. Requests must be
-private, one-to-one, explicitly current, and attributable to Dylan or Julia;
-group, third-party, and unverified requests are refused before capture. Asking
-for an old monitoring frame gets an explanation that frames are not retained
-and an offer to capture a fresh image.
+Google display name, or retrieves a historical event frame or recording.
+Requests must be private, one-to-one, explicitly current, and attributable to
+Dylan or Julia; group, third-party, and unverified requests are refused before
+capture. Asking for old media gets an explanation that monitoring frames are
+not retained and an offer to capture a fresh image or live clip.
+
+```bash
+nest-camera-image capture 'Kitchen'
+nest-camera-image capture-video 'Kitchen' 10
+nest-camera-image cleanup '<opaque-token>'
+```
+
+The cleanup command is mandatory after delivery, delivery failure, or timeout.
+Callers pass only the helper-returned opaque token, never an arbitrary path.
 
 ### Attended reviewer activation
 

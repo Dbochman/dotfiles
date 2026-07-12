@@ -30,6 +30,11 @@ JPEG = bytes.fromhex(
     "00"
     "ffd9"
 )
+MP4 = (
+    b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
+    b"\x00\x00\x00\x0cmdatdata"
+    b"\x00\x00\x00\x0cmoovmeta"
+)
 
 
 def load_helper():
@@ -132,6 +137,58 @@ class NestCameraImageTests(unittest.TestCase):
                             reaper=lambda _token, _path: None,
                         )
             self.assertFalse(fake.with_suffix(".log").exists())
+
+    def test_video_capture_is_bounded_private_and_returns_safe_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            fake = self.make_fake_nest(root, payload=MP4)
+            media = root / "media"
+            reaper_calls = []
+
+            result = self.helper.capture_video(
+                "Kitchen",
+                5,
+                media_directory=media,
+                nest_binary=fake,
+                reaper=lambda token, path: reaper_calls.append((token, path)),
+            )
+
+            self.assertEqual(
+                set(result),
+                {"alias", "durationSeconds", "mediaPath", "cleanupToken"},
+            )
+            self.assertEqual(result["durationSeconds"], 5)
+            token = result["cleanupToken"]
+            video = Path(result["mediaPath"])
+            self.assertEqual(video, media / f"{token}.mp4")
+            self.assertEqual(video.read_bytes(), MP4)
+            self.assertEqual(stat.S_IMODE(video.stat().st_mode), 0o600)
+            argv = json.loads(fake.with_suffix(".log").read_text())
+            self.assertEqual(
+                argv,
+                ["camera", "clip-config", "Kitchen", "5", str(video)],
+            )
+            self.assertEqual(reaper_calls, [(token, media)])
+            self.helper.cleanup_image(token, media_directory=media)
+            self.assertFalse(video.exists())
+
+    def test_video_duration_is_strictly_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            fake = self.make_fake_nest(root, payload=MP4)
+            for duration in (0, 31, True, 5.0, "5"):
+                with self.subTest(duration=duration):
+                    with self.assertRaisesRegex(
+                        self.helper.PublicError,
+                        "^Invalid camera video duration$",
+                    ):
+                        self.helper.capture_video(
+                            "Kitchen",
+                            duration,
+                            media_directory=root / "media",
+                            nest_binary=fake,
+                            reaper=lambda _token, _path: None,
+                        )
 
     def test_media_directory_must_be_real_owner_only_and_mode_0700(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -236,20 +293,23 @@ class NestCameraImageTests(unittest.TestCase):
             old_image = media / (("b" * 48) + ".jpg")
             old_temp = media / ("." + ("c" * 48) + ".jpg.partial.tmp")
             fresh_image = media / (("d" * 48) + ".jpg")
+            old_video = media / (("e" * 48) + ".mp4")
             unrelated = media / "notes.txt"
-            for path in (old_image, old_temp, fresh_image, unrelated):
+            for path in (old_image, old_temp, fresh_image, old_video, unrelated):
                 path.write_bytes(b"data")
                 path.chmod(0o600)
             os.utime(old_image, (now - 1000, now - 1000))
             os.utime(old_temp, (now - 1000, now - 1000))
+            os.utime(old_video, (now - 1000, now - 1000))
 
             removed = self.helper.sweep_images(
                 media_directory=media, now=now, ttl_seconds=900
             )
 
-            self.assertEqual(removed, 2)
+            self.assertEqual(removed, 3)
             self.assertFalse(old_image.exists())
             self.assertFalse(old_temp.exists())
+            self.assertFalse(old_video.exists())
             self.assertTrue(fresh_image.exists())
             self.assertTrue(unrelated.exists())
 
@@ -307,7 +367,11 @@ class NestCameraImageTests(unittest.TestCase):
             "nest-camera-image cleanup '<cleanupToken>'",
             "Treat cleanup as a `finally` step",
             "return only `NO_REPLY`",
-            "monitoring frames are deliberately not retained",
+            "monitoring frames are deliberately not",
+            "retained and offer a fresh snapshot or live clip",
+            "nest-camera-image capture-video '<exact alias>' '<seconds>'",
+            "whole-second durations from 1 through 30",
+            "historical Nest Aware recordings",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, text)

@@ -150,11 +150,19 @@ print(destination)
 
 def load_camera_helper():
     fake_aiortc = types.ModuleType("aiortc")
+    fake_aiortc.__path__ = []
     fake_aiortc.RTCPeerConnection = object
     fake_aiortc.RTCSessionDescription = object
     fake_aiortc.RTCRtpReceiver = object
-    previous = sys.modules.get("aiortc")
+    fake_contrib = types.ModuleType("aiortc.contrib")
+    fake_contrib.__path__ = []
+    fake_media = types.ModuleType("aiortc.contrib.media")
+    fake_media.MediaRecorder = object
+    module_names = ("aiortc", "aiortc.contrib", "aiortc.contrib.media")
+    previous = {name: sys.modules.get(name) for name in module_names}
     sys.modules["aiortc"] = fake_aiortc
+    sys.modules["aiortc.contrib"] = fake_contrib
+    sys.modules["aiortc.contrib.media"] = fake_media
     try:
         spec = importlib.util.spec_from_file_location(
             "nest_camera_snap_for_test", CAMERA_HELPER
@@ -164,10 +172,11 @@ def load_camera_helper():
         spec.loader.exec_module(module)
         return module
     finally:
-        if previous is None:
-            sys.modules.pop("aiortc", None)
-        else:
-            sys.modules["aiortc"] = previous
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 class FakeImage:
@@ -194,6 +203,8 @@ class CameraHelperSafetyTests(unittest.TestCase):
             "access_token": "token._~+/=",
             "project_id": "project-1",
             "output_path": "relative/frame.jpg",
+            "capture_kind": "image",
+            "duration_seconds": 0,
         }
         parsed = self.helper.read_capture_request(
             io.BytesIO(json.dumps(request).encode("utf-8"))
@@ -205,6 +216,9 @@ class CameraHelperSafetyTests(unittest.TestCase):
             {**request, "unexpected": "private"},
             {**request, "access_token": "token\nheader-injection"},
             {**request, "output_path": "bad\npath.jpg"},
+            {**request, "capture_kind": "video", "duration_seconds": 0},
+            {**request, "capture_kind": "video", "duration_seconds": 31},
+            {**request, "capture_kind": "image", "duration_seconds": 5},
         )
         for invalid in invalid_requests:
             with self.subTest(invalid=invalid):
@@ -337,7 +351,7 @@ class CameraHelperSafetyTests(unittest.TestCase):
         try:
             with redirect_stderr(stderr):
                 ok = asyncio.run(
-                    self.helper.capture_frame(
+                    self.helper.capture_media(
                         "private-device",
                         "private-token",
                         "private-project",
@@ -406,6 +420,13 @@ class NestCameraWrapperSafetyTests(unittest.TestCase):
 
     def environment(self, **overrides: str) -> dict[str, str]:
         environment = os.environ.copy()
+        for key in (
+            "NEST_CLIENT_ID",
+            "NEST_CLIENT_SECRET",
+            "NEST_REFRESH_TOKEN",
+            "NEST_PROJECT_ID",
+        ):
+            environment.pop(key, None)
         environment.update(
             {
                 "HOME": str(self.home),

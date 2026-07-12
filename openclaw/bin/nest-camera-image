@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create and retire short-lived Nest camera images for OpenClaw replies.
+"""Create and retire short-lived Nest camera media for OpenClaw replies.
 
 The public interface deliberately exposes only canonical camera aliases and an
 opaque cleanup token.  Device identifiers and credentials remain inside the
@@ -23,12 +23,15 @@ from typing import Callable
 ALLOWED_ALIASES = frozenset(("Kitchen", "Living Room", "Living Room Wired"))
 DEFAULT_TTL_SECONDS = 15 * 60
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
+MAX_VIDEO_BYTES = 64 * 1024 * 1024
+MIN_VIDEO_SECONDS = 1
+MAX_VIDEO_SECONDS = 30
 CAPTURE_TIMEOUT_SECONDS = 90
 FRESHNESS_SLOP_NS = 2 * 1_000_000_000
 TOKEN_PATTERN = re.compile(r"\A[0-9a-f]{48}\Z")
-IMAGE_NAME_PATTERN = re.compile(r"\A([0-9a-f]{48})\.jpg\Z")
+MEDIA_NAME_PATTERN = re.compile(r"\A([0-9a-f]{48})\.(jpg|mp4)\Z")
 TEMP_NAME_PATTERN = re.compile(
-    r"\A\.([0-9a-f]{48})\.jpg\.[A-Za-z0-9_-]+\.tmp\Z"
+    r"\A\.([0-9a-f]{48})\.(jpg|mp4)\.[A-Za-z0-9_.-]+\.tmp(?:\.mp4)?\Z"
 )
 
 
@@ -159,13 +162,19 @@ def _safe_unlink(descriptor: int, filename: str) -> None:
 def _new_token(descriptor: int) -> str:
     for _ in range(32):
         token = secrets.token_hex(24)
-        try:
-            os.stat(token + ".jpg", dir_fd=descriptor, follow_symlinks=False)
-        except FileNotFoundError:
+        exists = False
+        for extension in (".jpg", ".mp4"):
+            try:
+                os.stat(token + extension, dir_fd=descriptor, follow_symlinks=False)
+                exists = True
+                break
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                raise PublicError("Camera media capture failed") from error
+        if not exists:
             return token
-        except OSError as error:
-            raise PublicError("Camera image capture failed") from error
-    raise PublicError("Camera image capture failed")
+    raise PublicError("Camera media capture failed")
 
 
 def _looks_like_jpeg(payload: bytes) -> bool:
@@ -262,6 +271,85 @@ def _verify_image(
         raise PublicError("Captured camera image is invalid")
 
 
+def _looks_like_mp4(payload: bytes) -> bool:
+    """Validate the bounded top-level ISO BMFF box structure."""
+    position = 0
+    box_types = set()
+    while position < len(payload):
+        if len(payload) - position < 8:
+            return False
+        size = int.from_bytes(payload[position : position + 4], "big")
+        box_type = payload[position + 4 : position + 8]
+        header_size = 8
+        if size == 1:
+            if len(payload) - position < 16:
+                return False
+            size = int.from_bytes(payload[position + 8 : position + 16], "big")
+            header_size = 16
+        elif size == 0:
+            size = len(payload) - position
+        if size < header_size or position + size > len(payload):
+            return False
+        box_types.add(box_type)
+        position += size
+    return position == len(payload) and {b"ftyp", b"moov", b"mdat"} <= box_types
+
+
+def _verify_video(descriptor: int, filename: str, capture_started_ns: int) -> None:
+    try:
+        metadata = os.stat(filename, dir_fd=descriptor, follow_symlinks=False)
+    except OSError as error:
+        raise PublicError("Captured camera video is invalid") from error
+    now_ns = time.time_ns()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_size <= 0
+        or metadata.st_size > MAX_VIDEO_BYTES
+        or metadata.st_mtime_ns + FRESHNESS_SLOP_NS < capture_started_ns
+        or metadata.st_mtime_ns > now_ns + FRESHNESS_SLOP_NS
+    ):
+        raise PublicError("Captured camera video is invalid")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        video_descriptor = os.open(filename, flags, dir_fd=descriptor)
+        try:
+            opened = os.fstat(video_descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or stat.S_IMODE(opened.st_mode) != 0o600
+                or opened.st_size != metadata.st_size
+                or (opened.st_dev, opened.st_ino)
+                != (metadata.st_dev, metadata.st_ino)
+            ):
+                raise PublicError("Captured camera video is invalid")
+            chunks = []
+            remaining = MAX_VIDEO_BYTES + 1
+            while remaining:
+                chunk = os.read(video_descriptor, min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            after_read = os.fstat(video_descriptor)
+            if (
+                after_read.st_size != opened.st_size
+                or after_read.st_mtime_ns != opened.st_mtime_ns
+            ):
+                raise PublicError("Captured camera video is invalid")
+        finally:
+            os.close(video_descriptor)
+    except OSError as error:
+        raise PublicError("Captured camera video is invalid") from error
+    payload = b"".join(chunks)
+    if len(payload) != metadata.st_size or not _looks_like_mp4(payload):
+        raise PublicError("Captured camera video is invalid")
+
+
 def _sanitized_subprocess_environment() -> dict[str, str]:
     return {
         "HOME": str(Path.home()),
@@ -330,7 +418,7 @@ def _sweep_open_directory(
         raise PublicError("Camera image sweep failed") from error
     for filename in filenames:
         if not (
-            IMAGE_NAME_PATTERN.fullmatch(filename)
+            MEDIA_NAME_PATTERN.fullmatch(filename)
             or TEMP_NAME_PATTERN.fullmatch(filename)
         ):
             continue
@@ -383,6 +471,7 @@ def cleanup_image(token: str, *, media_directory: Path | None = None) -> None:
         return
     try:
         _safe_unlink(descriptor, token + ".jpg")
+        _safe_unlink(descriptor, token + ".mp4")
     except OSError as error:
         raise PublicError("Camera image cleanup failed") from error
     finally:
@@ -450,9 +539,77 @@ def capture_image(
         os.close(descriptor)
 
 
+def capture_video(
+    alias: str,
+    duration_seconds: int,
+    *,
+    media_directory: Path | None = None,
+    nest_binary: Path | None = None,
+    reaper: Callable[[str, Path], None] = spawn_cleanup_reaper,
+) -> dict[str, str | int]:
+    if alias not in ALLOWED_ALIASES:
+        raise PublicError("Unknown camera alias")
+    if isinstance(duration_seconds, bool) or not isinstance(duration_seconds, int):
+        raise PublicError("Invalid camera video duration")
+    if not MIN_VIDEO_SECONDS <= duration_seconds <= MAX_VIDEO_SECONDS:
+        raise PublicError("Invalid camera video duration")
+    directory = media_directory or _media_directory()
+    binary = nest_binary or _nest_binary()
+    descriptor = _open_media_directory(directory, create=True)
+    assert descriptor is not None
+    token = _new_token(descriptor)
+    filename = token + ".mp4"
+    output_path = directory / filename
+    try:
+        _sweep_open_directory(descriptor)
+        capture_started_ns = time.time_ns()
+        try:
+            result = subprocess.run(
+                [
+                    str(binary),
+                    "camera",
+                    "clip-config",
+                    alias,
+                    str(duration_seconds),
+                    str(output_path),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd="/",
+                env=_sanitized_subprocess_environment(),
+                timeout=CAPTURE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise PublicError("Camera video capture failed") from error
+        if result.returncode != 0 or not _directory_identity_is_current(
+            directory, descriptor
+        ):
+            raise PublicError("Camera video capture failed")
+        _verify_video(descriptor, filename, capture_started_ns)
+        try:
+            reaper(token, directory)
+        except PublicError:
+            raise
+        except Exception as error:
+            raise PublicError("Camera video cleanup could not be scheduled") from error
+        return {
+            "alias": alias,
+            "durationSeconds": duration_seconds,
+            "mediaPath": str(output_path),
+            "cleanupToken": token,
+        }
+    except Exception:
+        _safe_unlink(descriptor, filename)
+        raise
+    finally:
+        os.close(descriptor)
+
+
 def _usage() -> PublicError:
     return PublicError(
-        "Usage: nest-camera-image capture <alias> | cleanup <token> | sweep"
+        "Usage: nest-camera-image capture <alias> | capture-video <alias> <seconds> | cleanup <token> | sweep"
     )
 
 
@@ -461,6 +618,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if len(arguments) == 2 and arguments[0] == "capture":
             result = capture_image(arguments[1])
+            print(json.dumps(result, separators=(",", ":"), sort_keys=True))
+            return 0
+        if len(arguments) == 3 and arguments[0] == "capture-video":
+            try:
+                duration_seconds = int(arguments[2])
+            except ValueError:
+                raise PublicError("Invalid camera video duration")
+            result = capture_video(arguments[1], duration_seconds)
             print(json.dumps(result, separators=(",", ":"), sort_keys=True))
             return 0
         if len(arguments) == 2 and arguments[0] == "cleanup":

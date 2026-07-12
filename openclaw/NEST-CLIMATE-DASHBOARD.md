@@ -25,7 +25,7 @@ Mac Mini (dylans-mac-mini)
 ├── CLI: /opt/homebrew/bin/nest → ~/dotfiles/bin/nest
 ├── Dashboard Server: ~/.openclaw/bin/nest-dashboard.py (port 8550)
 ├── Mysa Wrapper: ~/.openclaw/bin/mysa-status.py
-├── Camera Snap: ~/.openclaw/bin/nest-camera-snap.py
+├── Camera Media: ~/.openclaw/bin/nest-camera-snap.py
 ├── History: ~/.openclaw/nest-history/YYYY-MM-DD.jsonl
 ├── Presence: ~/.openclaw/presence/state.json + history/
 ├── Token Cache: ~/.cache/nest-sdm/ (access_token, credentials)
@@ -278,6 +278,7 @@ nest mode <room> <HEAT|OFF>    Set thermostat mode
 nest eco <room> [on|off]       Toggle eco mode
 nest camera snap [room] [out]  Attended display-name camera diagnostic
 nest camera snap-config <alias> <out>  Exact protected camera capture
+nest camera clip-config <alias> <seconds> <out>  Exact 1-30s live clip
 nest snapshot                  Record current state + weather to history
 nest history [hours] [room]    Show history summary (default: 24h, all rooms)
 nest dashboard [open|start|stop|restart|status]
@@ -365,7 +366,7 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 
 ---
 
-## Camera Snapshots
+## Camera Stills and Live Clips
 
 ```bash
 # Attended display-name diagnostic only:
@@ -374,20 +375,25 @@ nest camera snap [room] [output_path]
 
 # Automation and agent boundary (exact canonical alias only):
 nest camera snap-config <alias> <output_path>
+nest camera clip-config <alias> <seconds> <output_path>  # 1-30 seconds
 ```
 
-Unattended callers must use `snap-config`; mutable Google display-name lookup
-fails closed without an interactive terminal. The on-demand agent flow wraps
-this command with `nest-camera-image` to stage, deliver, and clean up an
-ephemeral owner-only image.
+Unattended callers must use the exact-resource `*-config` commands; mutable
+Google display-name lookup fails closed without an interactive terminal. The
+on-demand agent flow wraps these commands with `nest-camera-image` to stage,
+validate, deliver, and clean up ephemeral owner-only JPEG or MP4 media.
+`capture-video` measures the requested duration from the first received video
+frame and writes an iMessage-compatible H.264/yuv420p MP4. It records only the
+live stream and cannot retrieve historical Nest Aware footage.
 
 - **Implementation:** `~/.openclaw/bin/nest-camera-snap.py`
 - **Protocol:** WebRTC via Nest SDM `CameraLiveStream` trait
 - **Video codec:** Offer only H.264 profile `42e01f`. Offering both aiortc
   baseline profiles can make Nest duplicate payload IDs in its SDP answer;
   ICE/DTLS and inbound RTP then succeed, but no complete frame is decoded.
-- **Process:** Create RTCPeerConnection → POST SDP offer to SDM API → receive answer → wait for first video frame (15s timeout) → save JPEG (quality=90) → POST stop command
-- **Requirements:** Python aiortc, Pillow
+- **Still process:** Create RTCPeerConnection → POST SDP offer to SDM API → receive answer → wait for first video frame (15s timeout) → save JPEG (quality=90) → POST stop command
+- **Clip process:** Use the same protected WebRTC negotiation → begin timing on the first decoded frame → record 1-30 seconds through PyAV/libx264 → atomically publish MP4 → POST stop command
+- **Requirements:** Python aiortc, PyAV/libx264, Pillow
 
 ---
 
@@ -412,7 +418,7 @@ ephemeral owner-only image.
 | `bin/nest` | Dotfiles repo + `/opt/homebrew/bin/nest` (symlink) | Main CLI (status, set, snapshot, dashboard mgmt) |
 | `openclaw/bin/nest-dashboard.py` | `~/.openclaw/bin/` on Mini | HTTP server + embedded HTML/JS dashboard |
 | `openclaw/bin/mysa-status.py` | `~/.openclaw/bin/` on Mini | Mysa API wrapper (JSON output) |
-| `openclaw/bin/nest-camera-snap.py` | `~/.openclaw/bin/` on Mini | WebRTC camera snapshot capture |
+| `openclaw/bin/nest-camera-snap.py` | `~/.openclaw/bin/` on Mini | WebRTC camera still and short-clip capture |
 | `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
 | `openclaw/launchagents/ai.openclaw.nest-snapshot.plist` | `~/Library/LaunchAgents/` on Mini | 30-min snapshot cron |
 
@@ -434,6 +440,11 @@ scp openclaw/bin/mysa-status.py dbochman@dylans-mac-mini:~/.openclaw/bin/
 
 # Nest WebRTC camera capture helper
 scp openclaw/bin/nest-camera-snap.py dbochman@dylans-mac-mini:~/.openclaw/bin/
+
+# Protected on-demand media wrapper and skill
+scp openclaw/bin/nest-camera-image dbochman@dylans-mac-mini:~/.openclaw/bin/
+scp openclaw/skills/nest-camera/SKILL.md \
+  dbochman@dylans-mac-mini:~/.openclaw/skills/nest-camera/SKILL.md
 
 # Restart dashboard
 ssh dbochman@dylans-mac-mini "launchctl kickstart -k gui/501/ai.openclaw.nest-dashboard"

@@ -55,9 +55,9 @@ active post-deploy checks.
 
 | Script | Description |
 |--------|-------------|
-| `nest` | CLI wrapper for Google Nest SDM API + Open-Meteo weather. Handles OAuth token refresh, 1Password credential caching, thermostat status, camera snapshots, history recording, and dashboard management. |
-| `nest-camera-snap.py` | Captures a single JPEG frame from a Nest camera via WebRTC (SDM API). Uses `aiortc` for WebRTC peer connection. Patches Nest's non-standard ICE candidates. |
-| `nest-camera-image` | Creates exact-resource, owner-only, short-lived Nest request images for native OpenClaw media delivery; validates the JPEG and exposes token-scoped cleanup without arbitrary paths. |
+| `nest` | CLI wrapper for Google Nest SDM API + Open-Meteo weather. Handles OAuth token refresh, protected exact-resource still/video capture, thermostat status, history recording, and dashboard management. |
+| `nest-camera-snap.py` | Captures a JPEG frame or bounded H.264 MP4 from a Nest camera via WebRTC (SDM API). Uses `aiortc`, pins the working H.264 profile, and patches Nest's non-standard ICE candidates. |
+| `nest-camera-image` | Creates exact-resource, owner-only, short-lived Nest request stills or 1-30 second videos for native OpenClaw delivery; validates JPEG/MP4 structure and exposes token-scoped cleanup without arbitrary paths. |
 
 ### Usage Metrics
 

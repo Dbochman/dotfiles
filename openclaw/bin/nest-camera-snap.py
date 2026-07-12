@@ -1,10 +1,10 @@
 #!/usr/bin/python3
-"""Capture one JPEG frame from a Nest camera through the SDM WebRTC API.
+"""Capture a JPEG frame or short MP4 from a Nest camera via SDM WebRTC.
 
 The helper accepts a single JSON object on stdin with ``device_id``,
-``access_token``, ``project_id``, and ``output_path`` fields.  Credentials are
-never accepted on the command line.  The destination is replaced atomically
-with an owner-only file.
+``access_token``, ``project_id``, ``output_path``, ``capture_kind``, and
+``duration_seconds`` fields.  Credentials are never accepted on the command
+line.  The destination is replaced atomically with an owner-only file.
 
 Requires: aiortc, Pillow (installed for /usr/bin/python3 on the Mac Mini).
 """
@@ -14,19 +14,31 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 import urllib.error
 import urllib.request
 
 from aiortc import RTCPeerConnection, RTCRtpReceiver, RTCSessionDescription
+from aiortc.contrib.media import MediaRecorder
 
 
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 RESOURCE_ID_PATTERN = re.compile(r"^[-A-Za-z0-9._~]+$")
 ACCESS_TOKEN_PATTERN = re.compile(r"^[-A-Za-z0-9._~+/=]+$")
-REQUEST_FIELDS = {"device_id", "access_token", "project_id", "output_path"}
+REQUEST_FIELDS = {
+    "device_id",
+    "access_token",
+    "project_id",
+    "output_path",
+    "capture_kind",
+    "duration_seconds",
+}
+CAPTURE_KINDS = frozenset(("image", "video"))
+MIN_VIDEO_SECONDS = 1
+MAX_VIDEO_SECONDS = 30
 
 
 class CaptureRequestError(ValueError):
@@ -49,7 +61,8 @@ def read_capture_request(stream):
     access_token = request.get("access_token")
     project_id = request.get("project_id")
     output_path = request.get("output_path")
-    if not all(isinstance(value, str) and value for value in request.values()):
+    string_fields = (device_id, access_token, project_id, output_path)
+    if not all(isinstance(value, str) and value for value in string_fields):
         raise CaptureRequestError
     if not RESOURCE_ID_PATTERN.fullmatch(device_id):
         raise CaptureRequestError
@@ -60,8 +73,28 @@ def read_capture_request(stream):
     if len(output_path) > 4096 or any(ord(character) < 32 for character in output_path):
         raise CaptureRequestError
 
+    capture_kind = request.get("capture_kind")
+    duration_seconds = request.get("duration_seconds")
+    if capture_kind not in CAPTURE_KINDS or isinstance(duration_seconds, bool):
+        raise CaptureRequestError
+    if not isinstance(duration_seconds, int):
+        raise CaptureRequestError
+    if capture_kind == "image" and duration_seconds != 0:
+        raise CaptureRequestError
+    if capture_kind == "video" and not (
+        MIN_VIDEO_SECONDS <= duration_seconds <= MAX_VIDEO_SECONDS
+    ):
+        raise CaptureRequestError
+
     normalized_output = os.path.abspath(os.path.expanduser(output_path))
-    return device_id, access_token, project_id, normalized_output
+    return (
+        device_id,
+        access_token,
+        project_id,
+        normalized_output,
+        capture_kind,
+        duration_seconds,
+    )
 
 
 def clean_answer_sdp(answer_sdp):
@@ -121,6 +154,43 @@ def save_frame_atomic(image, output_path):
                 pass
 
 
+def prepare_destination(output_path):
+    """Create a private temporary path beside output_path for atomic media."""
+    destination = Path(output_path)
+    previous_umask = os.umask(0o077)
+    try:
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    finally:
+        os.umask(previous_umask)
+    descriptor, temporary_path = tempfile.mkstemp(
+        prefix="." + destination.name + ".",
+        suffix=".tmp.mp4",
+        dir=str(destination.parent),
+    )
+    os.fchmod(descriptor, 0o600)
+    os.close(descriptor)
+    return destination, Path(temporary_path)
+
+
+def publish_video_atomic(temporary_path, destination):
+    """Fsync and atomically publish a completed owner-only MP4."""
+    descriptor = os.open(temporary_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise OSError("invalid temporary video")
+        os.fchmod(descriptor, 0o600)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary_path, destination)
+    directory_descriptor = os.open(str(destination.parent), os.O_RDONLY)
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
 def post_json(url, body, access_token, timeout):
     """POST JSON and return a bounded body without disclosing request details."""
     request = urllib.request.Request(
@@ -139,11 +209,19 @@ def post_json(url, body, access_token, timeout):
     return payload
 
 
-async def capture_frame(
-    device_id, access_token, project_id, output_path, timeout=15.0
+async def capture_media(
+    device_id,
+    access_token,
+    project_id,
+    output_path,
+    capture_kind="image",
+    duration_seconds=0,
+    timeout=15.0,
 ):
-    """Negotiate a Nest WebRTC stream and save its first decoded frame."""
+    """Negotiate a Nest WebRTC stream and save a frame or short clip."""
     pc = None
+    recorder = None
+    temporary_video = None
     media_session_id = None
     command_url = (
         "https://smartdevicemanagement.googleapis.com/v1/enterprises/"
@@ -176,8 +254,10 @@ async def capture_frame(
         video_transceiver.setCodecPreferences(h264_codecs)
         pc.createDataChannel("data")
 
+        video_received = asyncio.Event()
         frame_received = asyncio.Event()
         saved_frame = [None]
+        video_track = [None]
 
         async def receive_first_frame(track):
             try:
@@ -192,7 +272,12 @@ async def capture_frame(
         @pc.on("track")
         def on_track(track):
             if track.kind == "video":
-                receive_tasks.append(asyncio.ensure_future(receive_first_frame(track)))
+                video_track[0] = track
+                video_received.set()
+                if capture_kind == "image":
+                    receive_tasks.append(
+                        asyncio.ensure_future(receive_first_frame(track))
+                    )
 
         offer = await pc.createOffer()
         await pc.setLocalDescription(offer)
@@ -237,23 +322,71 @@ async def capture_frame(
         await pc.setRemoteDescription(answer)
 
         try:
-            await asyncio.wait_for(frame_received.wait(), timeout=timeout)
+            await asyncio.wait_for(video_received.wait(), timeout=timeout)
         except asyncio.TimeoutError:
-            pass
-        if saved_frame[0] is None:
-            print("Could not receive a camera frame", file=sys.stderr)
+            print("Could not receive a camera video track", file=sys.stderr)
             return False
 
-        try:
-            save_frame_atomic(saved_frame[0], output_path)
-        except Exception:
-            print("Camera frame could not be saved", file=sys.stderr)
-            return False
+        if capture_kind == "image":
+            try:
+                await asyncio.wait_for(frame_received.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                pass
+            if saved_frame[0] is None:
+                print("Could not receive a camera frame", file=sys.stderr)
+                return False
+            try:
+                save_frame_atomic(saved_frame[0], output_path)
+            except Exception:
+                print("Camera frame could not be saved", file=sys.stderr)
+                return False
+        else:
+            destination, temporary_video = prepare_destination(output_path)
+            try:
+                first_recorded_frame = asyncio.Event()
+
+                class SignalingVideoTrack:
+                    kind = "video"
+
+                    def __init__(self, source):
+                        self.source = source
+
+                    async def recv(self):
+                        frame = await self.source.recv()
+                        first_recorded_frame.set()
+                        return frame
+
+                recorder = MediaRecorder(
+                    str(temporary_video),
+                    format="mp4",
+                    options={"movflags": "+faststart"},
+                )
+                recorder.addTrack(SignalingVideoTrack(video_track[0]))
+                await recorder.start()
+                await asyncio.wait_for(first_recorded_frame.wait(), timeout=timeout)
+                await asyncio.sleep(duration_seconds)
+                await recorder.stop()
+                recorder = None
+                publish_video_atomic(temporary_video, destination)
+                temporary_video = None
+            except Exception:
+                print("Camera video could not be saved", file=sys.stderr)
+                return False
         return True
     except Exception:
         print("Camera stream negotiation failed", file=sys.stderr)
         return False
     finally:
+        if recorder is not None:
+            try:
+                await recorder.stop()
+            except Exception:
+                pass
+        if temporary_video is not None:
+            try:
+                os.unlink(temporary_video)
+            except FileNotFoundError:
+                pass
         if media_session_id is not None:
             stop_body = {
                 "command": "sdm.devices.commands.CameraLiveStream.StopWebRtcStream",
@@ -280,16 +413,28 @@ def main():
         print("Camera capture request must be provided on stdin", file=sys.stderr)
         return 2
     try:
-        device_id, access_token, project_id, output_path = read_capture_request(
-            sys.stdin.buffer
-        )
+        (
+            device_id,
+            access_token,
+            project_id,
+            output_path,
+            capture_kind,
+            duration_seconds,
+        ) = read_capture_request(sys.stdin.buffer)
     except CaptureRequestError:
         print("Invalid camera capture request", file=sys.stderr)
         return 2
 
     try:
         ok = asyncio.run(
-            capture_frame(device_id, access_token, project_id, output_path)
+            capture_media(
+                device_id,
+                access_token,
+                project_id,
+                output_path,
+                capture_kind,
+                duration_seconds,
+            )
         )
     except (KeyboardInterrupt, SystemExit):
         print("Camera capture interrupted", file=sys.stderr)
