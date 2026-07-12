@@ -199,6 +199,12 @@ directory must remain an owner-only, non-symlink `0700` directory. The command
 binds that exact lock and returns only the alias, observation time, unambiguous
 lock/door state, and optional validated battery percentage.
 
+The attended binding must preserve the provider's lock-map key byte-for-byte:
+lock IDs are case-sensitive. Never case-normalize the key or select a nested
+house, MAC, or account field. Validate the exact candidate with a read-only
+status call before atomically replacing the protected config, without printing
+the identifier.
+
 `august-event-adapter.py` has no mutation entry point. It is disabled unless
 `HOME_EVENTS_AUGUST_ENABLED=1`, baselines the first good observation silently,
 and then publishes only lock, door, battery-threshold, unavailable, and
