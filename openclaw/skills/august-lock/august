@@ -100,6 +100,64 @@ remote_call() {
     -o ConnectTimeout=5 "$MACBOOK" "$remote_command"
 }
 
+validate_observation_output() {
+  "$PYTHON_BIN" -c '
+import datetime
+import json
+import sys
+
+maximum = 4096
+raw = sys.stdin.buffer.read(maximum + 1)
+if not raw or len(raw) > maximum:
+    raise SystemExit(1)
+try:
+    value = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+required = {"ok", "alias", "observed_at", "lock_state", "door_state"}
+allowed = required | {"battery_percent"}
+if (not isinstance(value, dict) or not required.issubset(value)
+        or set(value) - allowed):
+    raise SystemExit(1)
+if value.get("ok") is not True or value.get("alias") != "front_door":
+    raise SystemExit(1)
+if value.get("lock_state") not in {"locked", "unlocked"}:
+    raise SystemExit(1)
+if value.get("door_state") not in {"open", "closed"}:
+    raise SystemExit(1)
+observed_at = value.get("observed_at")
+if not isinstance(observed_at, str) or not observed_at or len(observed_at) > 64:
+    raise SystemExit(1)
+try:
+    parsed = datetime.datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+except ValueError:
+    raise SystemExit(1)
+if parsed.tzinfo is None:
+    raise SystemExit(1)
+battery = value.get("battery_percent")
+if "battery_percent" in value and (type(battery) is not int or not 0 <= battery <= 100):
+    raise SystemExit(1)
+
+print(json.dumps(value, separators=(",", ":"), sort_keys=True))
+'
+}
+
+observe_bound_lock() {
+  local observation
+
+  # The remote provider is an untrusted stream producer.  It may write account
+  # or device material before the Node command can convert an exception into
+  # its safe JSON error.  Never forward its stderr, and release stdout only
+  # after a bounded exact-contract validation and canonical re-serialization.
+  if ! observation=$(remote_call observe 2>/dev/null \
+      | validate_observation_output 2>/dev/null); then
+    emit_error "observation_unavailable" "Sanitized August observation is unavailable"
+    return 1
+  fi
+  printf '%s\n' "$observation"
+}
+
 claim_field() {
   "$PYTHON_BIN" -c 'import json,sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$1" "$2"
 }
@@ -206,6 +264,11 @@ case "$COMMAND" in
     fail "unsupported command"
     ;;
 esac
+
+if [[ "$COMMAND" == "observe" ]]; then
+  observe_bound_lock
+  exit $?
+fi
 
 # Encode argv as one JSON/base64 token. The remote shell receives only a
 # static command plus base64, so user-controlled values are never interpolated

@@ -124,6 +124,14 @@ unlocked_closed = {
     "doorState": "kAugDoorState_Closed",
     "state": {"locked": False, "unlocked": True, "closed": True, "open": False},
 }
+sanitized_observation = {
+    "ok": True,
+    "alias": "front_door",
+    "observed_at": "2026-01-01T12:00:00.000Z",
+    "lock_state": "locked",
+    "door_state": "closed",
+    "battery_percent": 75,
+}
 
 if remote_args[0] == "status":
     if os.environ.get("FAKE_STATUS_FAIL") == "1":
@@ -135,6 +143,13 @@ elif remote_args[0] == "unlock":
         print("RAW_SSH_UNLOCK_CANARY", file=sys.stderr)
         raise SystemExit(72)
     print(os.environ.get("FAKE_UNLOCK_RESULT", json.dumps(unlocked_closed)))
+elif remote_args[0] == "observe":
+    if os.environ.get("FAKE_OBSERVE_STDERR") == "1":
+        print("RAW_SSH_OBSERVE_STDERR_CANARY_7EDFA965E0AE0CE19772AFA435364295", file=sys.stderr)
+    if os.environ.get("FAKE_OBSERVE_FAIL") == "1":
+        print("RAW_SSH_OBSERVE_STDOUT_CANARY_7EDFA965E0AE0CE19772AFA435364295")
+        raise SystemExit(73)
+    print(os.environ.get("FAKE_REMOTE_OBSERVE", json.dumps(sanitized_observation)))
 else:
     print('{"fake_ssh":true}')
 ''',
@@ -629,10 +644,54 @@ fs.renameSync = function (...args) {
         self.assertEqual(self.api_calls()[-1]["method"], "constructor")
 
     def test_wrapper_observe_uses_read_only_remote_command(self) -> None:
-        result = self.run_wrapper("observe")
+        result = self.run_wrapper("observe", FAKE_OBSERVE_STDERR="1")
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "ok": True,
+                "alias": "front_door",
+                "observed_at": "2026-01-01T12:00:00.000Z",
+                "lock_state": "locked",
+                "door_state": "closed",
+                "battery_percent": 75,
+            },
+        )
+        self.assertEqual(result.stderr, "")
+        self.assertNotIn("7EDFA965E0AE0CE19772AFA435364295", result.stdout)
         self.assertEqual(self.decoded_remote_calls(), [["observe"]])
+
+    def test_wrapper_observe_quarantines_remote_stdout_and_stderr(self) -> None:
+        cases = (
+            {
+                "FAKE_OBSERVE_FAIL": "1",
+                "FAKE_OBSERVE_STDERR": "1",
+            },
+            {
+                "FAKE_REMOTE_OBSERVE": (
+                    '{"ok":true,"alias":"front_door",'
+                    '"observed_at":"2026-01-01T12:00:00.000Z",'
+                    '"lock_state":"locked","door_state":"closed",'
+                    f'"provider_lock_id":"{LOCK_ID}"}}'
+                ),
+                "FAKE_OBSERVE_STDERR": "1",
+            },
+        )
+
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                result = self.run_wrapper("observe", **overrides)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(
+                    self.wrapper_output(result)["error_code"],
+                    "observation_unavailable",
+                )
+                self.assertEqual(result.stderr, "")
+                combined = result.stdout + result.stderr
+                self.assertNotIn("RAW_SSH_OBSERVE", combined)
+                self.assertNotIn(LOCK_ID, combined)
 
     def test_lock_retries_then_returns_verified_safe_state(self) -> None:
         self.write_config(self.valid_config())
