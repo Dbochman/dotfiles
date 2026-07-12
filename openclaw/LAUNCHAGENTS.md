@@ -143,12 +143,30 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
+| `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, and August spools into the shadow-only SQLite journal. |
+| `ai.openclaw.home-event-correlator` | 5s | `home-event-service-wrapper.sh correlate` | Records site-scoped incidents and rate-limited shadow decisions; no delivery or camera path. |
+| `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer; tracked enable flag remains `0`. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's `default` profile |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
+
+The three home-event jobs are **attended-install only**. A routine dotfiles
+pull may refresh their files only after an installed plist exists; it must not
+create the runtime, run `home-eventctl init`, bootstrap a job, or enable Ring,
+presence, or August publication. All producers default off and the correlator
+can only create `shadowed` decisions. The shared wrapper uses a sanitized
+environment and one bounded owner-only log, and neither it nor its children
+call `op`.
+
+Create and validate the protected runtime before bootstrapping the ingester or
+correlator. Configure the exact August observe binding separately on the
+MacBook Pro, baseline it without events, and change its enable flag only during
+an attended shadow soak. Restart only these jobs when their code changes; home
+events does not require an OpenClaw gateway restart. See
+[`HOME-EVENTS.md`](HOME-EVENTS.md).
 
 ### Native iMessage Reboot Recovery
 

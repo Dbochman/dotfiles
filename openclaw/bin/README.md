@@ -59,6 +59,21 @@ active post-deploy checks.
 | `nest-camera-snap.py` | Captures a JPEG frame or bounded H.264 MP4 from a Nest camera via WebRTC (SDM API). Uses `aiortc`, pins the working H.264 profile, and patches Nest's non-standard ICE candidates. |
 | `nest-camera-image` | Creates exact-resource, owner-only, short-lived Nest request stills or 1-30 second videos for native OpenClaw delivery; validates JPEG/MP4 structure and exposes token-scoped cleanup without arbitrary paths. |
 
+### Home Events
+
+| Script | Description |
+|--------|-------------|
+| `home_event_bus.py` | Durable shadow-only household event journal: strict source validation, HMAC-minimized atomic spools, single-writer SQLite ingestion, retention, safe status, and bounded read queries. |
+| `home-eventctl` | Operator-only wrapper for `init`, `check-config`, producer `enqueue`, `ingest-once`, `status`, and `prune`; producers send strict JSON on stdin. |
+| `home-events` | Fixed-root, read-only JSON CLI exposed to the OpenClaw `home-events` skill for status, recent activity, incidents, and explanations. |
+| `home-event-correlator.py` | Persistent shadow-only correlator that claims durable consumer rows, applies fail-closed canonical presence context, groups site incidents, and records rate-limited shadow decisions without delivery or camera work. |
+| `home-event-service-wrapper.sh` | LaunchAgent boundary for ingestion, correlation, and August polling; sanitizes the environment and writes one bounded owner-only operational log. |
+| `august-event-adapter.py` | Disabled-by-default read-only August transition poller. Uses the exact protected MBP observe binding, baselines silently, and publishes through `home-eventctl` without a mutation path. |
+
+See [`../HOME-EVENTS.md`](../HOME-EVENTS.md) for the protected runtime,
+producer contracts, shadow rollout, and rollback procedure. The subsystem does
+not require an OpenClaw gateway restart.
+
 ### Usage Metrics
 
 | Script | Description |

@@ -22,7 +22,7 @@
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/dbochman/.openclaw/logs/presence-crosstown.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
     <string>/Users/dbochman/.openclaw/logs/presence-crosstown.log</string>
     <key>ProcessType</key>

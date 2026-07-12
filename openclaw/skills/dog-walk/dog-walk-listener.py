@@ -11,7 +11,9 @@ import asyncio
 import faulthandler
 import json
 import os
+import queue
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -191,6 +193,16 @@ from ring_doorbell.listen.listenerconfig import RingEventListenerConfig
 CONFIG_DIR = Path.home() / ".config" / "ring"
 TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 FCM_CREDS_FILE = Path.home() / ".openclaw/dog-walk/fcm-credentials.json"
+HOME_EVENTCTL = os.environ.get(
+    "HOME_EVENTCTL", str(Path.home() / ".openclaw/bin/home-eventctl")
+).strip() or str(Path.home() / ".openclaw/bin/home-eventctl")
+HOME_EVENTS_RING_ENABLED = os.environ.get("HOME_EVENTS_RING_ENABLED", "0") == "1"
+RING_HOME_EVENT_STATUS = Path(
+    os.environ.get(
+        "HOME_EVENTS_RING_STATUS",
+        str(Path.home() / ".openclaw/home-events/state/ring-producer.json"),
+    )
+)
 
 IMSG_BIN = "/opt/homebrew/bin/imsg"
 _dylan_chat_id = os.environ.get("DYLAN_CHAT_ID", "").strip()
@@ -199,10 +211,15 @@ if not DYLAN_IMESSAGE_TARGET and _dylan_chat_id.isdigit():
     DYLAN_IMESSAGE_TARGET = f"chat_id:{_dylan_chat_id}"
 USER_AGENT = "OpenClaw/1.0"
 
-# Doorbell ID → location mapping
+# Ring provider IDs are used only to bind events to safe local aliases. They
+# must never appear in logs or normalized home-event fields.
+RING_EVENT_DEVICES = {
+    684794187: {"site": "crosstown", "entity_alias": "front_door"},
+    697442349: {"site": "cabin", "entity_alias": "front_door"},
+}
 DOORBELL_LOCATIONS = {
-    684794187: "crosstown",
-    697442349: "cabin",
+    doorbot_id: binding["site"]
+    for doorbot_id, binding in RING_EVENT_DEVICES.items()
 }
 
 # Roomba commands per location
@@ -266,6 +283,262 @@ _main_loop: asyncio.AbstractEventLoop | None = None
 # Dedup: track recent Ring event IDs
 _recent_events: dict[int, float] = {}
 _DEDUP_WINDOW = 300  # 5 minutes
+
+# The FCM callback and asyncio event loop only perform a nonblocking memory
+# enqueue. A dedicated daemon thread owns all home-event subprocess I/O.
+_RING_HOME_EVENT_QUEUE_MAX = 256
+_RING_HOME_EVENT_PUBLISH_TIMEOUT = 10
+_RING_BACKFILL_AFTER_SECONDS = 60
+_RING_BACKFILL_MAX_SECONDS = 15 * 60
+
+
+class _RingHomeEventPublisher:
+    """Nonblocking Ring-to-home-events handoff with safe operational counters."""
+
+    def __init__(
+        self,
+        command: str,
+        *,
+        runner=None,
+        status_path: Path | None = None,
+    ) -> None:
+        self._command = command
+        self._runner = runner or subprocess.run
+        self._status_path = status_path or RING_HOME_EVENT_STATUS
+        self._queue: queue.Queue[dict] = queue.Queue(
+            maxsize=_RING_HOME_EVENT_QUEUE_MAX
+        )
+        self._thread: threading.Thread | None = None
+        self._start_lock = threading.Lock()
+        self._counter_lock = threading.Lock()
+        self._dirty = threading.Event()
+        self._generation = 0
+        self._health = "unknown"
+        self._status_loaded = False
+        self._counters = {
+            "accepted": 0,
+            "published": 0,
+            "failed": 0,
+            "dropped": 0,
+            "quarantined": 0,
+        }
+
+    def start(self) -> None:
+        """Start the single publisher worker once."""
+        with self._start_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(
+                target=self._run,
+                name="ring-home-event-publisher",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def submit(self, payload: dict) -> bool:
+        """Accept one event without blocking the callback/event-loop path."""
+        try:
+            self._queue.put_nowait(payload)
+        except queue.Full:
+            self._increment("dropped")
+            return False
+        self._increment("accepted")
+        return True
+
+    def quarantine_unknown_device(self) -> None:
+        """Count an event whose provider device has no safe local binding."""
+        self._increment("quarantined")
+
+    def counters(self) -> dict[str, int]:
+        with self._counter_lock:
+            return dict(self._counters)
+
+    def _increment(self, name: str) -> None:
+        with self._counter_lock:
+            self._counters[name] += 1
+            self._generation += 1
+            if name in {"failed", "dropped", "quarantined"}:
+                self._health = "degraded"
+            elif name == "published" and self._health == "unknown":
+                self._health = "ok"
+            self._dirty.set()
+
+    def _load_status(self) -> None:
+        if self._status_loaded:
+            return
+        self._status_loaded = True
+        path = self._status_path
+        if not path.exists() and not path.is_symlink():
+            return
+        metadata = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_size <= 0
+            or metadata.st_size > 16 * 1024
+        ):
+            raise ValueError("unsafe_ring_status")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"schema_version", "updated_at", "health", "counters"}
+            or value.get("schema_version") != 1
+            or value.get("health") not in {"ok", "degraded"}
+            or not isinstance(value.get("updated_at"), str)
+            or not isinstance(value.get("counters"), dict)
+            or set(value["counters"]) != set(self._counters)
+            or any(
+                not isinstance(counter, int)
+                or isinstance(counter, bool)
+                or counter < 0
+                or counter > 10**12
+                for counter in value["counters"].values()
+            )
+        ):
+            raise ValueError("invalid_ring_status")
+        updated_at = datetime.fromisoformat(
+            value["updated_at"].replace("Z", "+00:00")
+        )
+        if updated_at.tzinfo is None:
+            raise ValueError("invalid_ring_status_time")
+        with self._counter_lock:
+            for name, counter in value["counters"].items():
+                self._counters[name] += counter
+            if value["health"] == "degraded" or self._health == "unknown":
+                self._health = value["health"]
+
+    def _persist_status(self) -> None:
+        path = self._status_path
+        directory = path.parent
+        directory_metadata = directory.lstat()
+        if (
+            directory.is_symlink()
+            or not stat.S_ISDIR(directory_metadata.st_mode)
+            or directory_metadata.st_uid != os.getuid()
+            or stat.S_IMODE(directory_metadata.st_mode) != 0o700
+        ):
+            raise ValueError("unsafe_ring_status_directory")
+        if path.exists() or path.is_symlink():
+            metadata = path.lstat()
+            if (
+                path.is_symlink()
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise ValueError("unsafe_ring_status")
+        with self._counter_lock:
+            generation = self._generation
+            counters = dict(self._counters)
+            health = self._health if self._health != "unknown" else "ok"
+        value = {
+            "schema_version": 1,
+            "updated_at": datetime.now(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "health": health,
+            "counters": counters,
+        }
+        encoded = (
+            json.dumps(value, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode("utf-8")
+        temporary = directory / f".{path.name}.{uuid.uuid4().hex}.tmp"
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                temporary,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            os.fchmod(descriptor, 0o600)
+            view = memoryview(encoded)
+            while view:
+                written = os.write(descriptor, view)
+                view = view[written:]
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = -1
+            os.replace(temporary, path)
+            directory_descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+            with self._counter_lock:
+                if self._generation == generation:
+                    self._dirty.clear()
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
+
+    def _log_result(self, result: str) -> None:
+        counters = self.counters()
+        try:
+            log(
+                "HOME EVENTS: ring publisher "
+                f"result={result} accepted={counters['accepted']} "
+                f"published={counters['published']} failed={counters['failed']} "
+                f"dropped={counters['dropped']} "
+                f"quarantined={counters['quarantined']}"
+            )
+        except Exception:
+            # Logging must not terminate the publisher worker.
+            pass
+
+    def _publish(self, payload: dict) -> bool:
+        try:
+            completed = self._runner(
+                [self._command, "enqueue", "--source", "ring"],
+                input=json.dumps(
+                    payload, separators=(",", ":"), sort_keys=True
+                ) + "\n",
+                text=True,
+                capture_output=True,
+                timeout=_RING_HOME_EVENT_PUBLISH_TIMEOUT,
+                check=False,
+            )
+            return completed.returncode == 0
+        except Exception:
+            return False
+
+    def _run(self) -> None:
+        try:
+            self._load_status()
+        except Exception:
+            self._health = "degraded"
+            self._log_result("status_load_failure")
+        while True:
+            try:
+                payload = self._queue.get(timeout=5)
+            except queue.Empty:
+                if self._dirty.is_set():
+                    try:
+                        self._persist_status()
+                    except Exception:
+                        self._log_result("status_persist_failure")
+                continue
+            try:
+                if self._publish(payload):
+                    self._increment("published")
+                    self._log_result("success")
+                else:
+                    self._increment("failed")
+                    self._log_result("failure")
+                try:
+                    self._persist_status()
+                except Exception:
+                    self._log_result("status_persist_failure")
+            finally:
+                self._queue.task_done()
+
+
+_ring_home_event_publisher = _RingHomeEventPublisher(HOME_EVENTCTL)
 
 # Roomba cooldown: prevent re-triggering within 2 hours per location
 _roomba_last_action: dict[str, float] = {}
@@ -2436,6 +2709,7 @@ def on_event(event: RingEvent) -> None:
         event.device_name,
         event.doorbot_id,
         event.state or "",
+        event.now,
     )
 
 
@@ -2445,6 +2719,7 @@ def _process_ring_event_on_loop(
     device: str,
     doorbot_id: int,
     state: str,
+    occurred_at_epoch: float,
 ) -> None:
     """Process a Ring event on the asyncio loop thread.
 
@@ -2462,18 +2737,118 @@ def _process_ring_event_on_loop(
         return
     _recent_events[event_id] = now
 
-    log(f"Event: kind={kind} device={device} doorbot_id={doorbot_id} state={state}")
+    home_event = _normalize_ring_home_event(
+        event_id=event_id,
+        kind=kind,
+        doorbot_id=doorbot_id,
+        state=state,
+        occurred_at_epoch=occurred_at_epoch,
+        observed_at_epoch=now,
+    )
+    backfill = _ring_event_age_seconds(occurred_at_epoch, now) > _RING_BACKFILL_AFTER_SECONDS
+    if home_event is not None and HOME_EVENTS_RING_ENABLED:
+        _ring_home_event_publisher.submit(home_event)
+        log(
+            "Event: source=ring "
+            f"type={home_event['event_type']} site={home_event['site']} "
+            f"entity={home_event['entity_alias']}"
+        )
+    elif home_event is not None:
+        log(
+            "Event: source=ring "
+            f"type={home_event['event_type']} site={home_event['site']} "
+            "result=legacy_only reason=producer_disabled"
+        )
+    elif backfill and doorbot_id in RING_EVENT_DEVICES and kind in {"ding", "motion"}:
+        log("Event: source=ring result=legacy_only reason=stale_backfill")
+    elif doorbot_id not in RING_EVENT_DEVICES and kind in {"ding", "motion"}:
+        if HOME_EVENTS_RING_ENABLED:
+            _ring_home_event_publisher.quarantine_unknown_device()
+        log("Event: source=ring result=legacy_only reason=unknown_device")
+    else:
+        log("Event: source=ring result=legacy_only reason=unsupported_event")
 
-    if kind == "ding":
+    if kind == "ding" and not backfill:
         asyncio.create_task(_handle_ding(device, doorbot_id, event_id))
-    elif kind == "motion":
+    elif kind == "motion" and not backfill:
         _handle_motion(doorbot_id, state)
 
 
 async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
     msg = f"\U0001f514 {device}: Doorbell rang!"
-    log(f"NOTIFY: {msg}")
+    log("NOTIFY: Ring doorbell message queued")
     await _send_imessage_async(msg)
+
+
+def _utc_timestamp(epoch: float) -> str:
+    return (
+        datetime.fromtimestamp(float(epoch), tz=timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _ring_event_age_seconds(occurred_at_epoch: float, observed_at_epoch: float) -> float:
+    try:
+        return max(0.0, float(observed_at_epoch) - float(occurred_at_epoch))
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def _normalize_ring_home_event(
+    *,
+    event_id: int,
+    kind: str,
+    doorbot_id: int,
+    state: str,
+    occurred_at_epoch: float,
+    observed_at_epoch: float | None = None,
+) -> dict | None:
+    """Return the strict, privacy-minimized home-event producer envelope."""
+    binding = RING_EVENT_DEVICES.get(doorbot_id)
+    if binding is None:
+        return None
+
+    attributes: dict[str, str | bool] = {}
+    if kind == "ding":
+        event_type = "entry.doorbell_rang"
+    elif kind == "motion":
+        if state.casefold() == "human":
+            event_type = "entry.person_detected"
+            attributes["classification"] = "person"
+        else:
+            event_type = "entry.motion_detected"
+            attributes["classification"] = "motion"
+    else:
+        return None
+
+    observed_epoch = time.time() if observed_at_epoch is None else observed_at_epoch
+    observed_at = _utc_timestamp(observed_epoch)
+    try:
+        occurred_at = _utc_timestamp(occurred_at_epoch)
+    except (OverflowError, TypeError, ValueError, OSError):
+        occurred_at = observed_at
+    age = _ring_event_age_seconds(occurred_at_epoch, observed_epoch)
+    if age > _RING_BACKFILL_MAX_SECONDS:
+        return None
+    time_precision = "source"
+    if age > _RING_BACKFILL_AFTER_SECONDS:
+        time_precision = "backfill"
+        attributes["backfill"] = True
+
+    return {
+        "schema_version": 1,
+        # The bus hashes and discards this composite raw source identity.
+        "source_event_id": f"{doorbot_id}:{event_id}",
+        "event_type": event_type,
+        "site": binding["site"],
+        "entity_kind": "doorbell",
+        "entity_alias": binding["entity_alias"],
+        "occurred_at": occurred_at,
+        "observed_at": observed_at,
+        "time_precision": time_precision,
+        "attributes": attributes,
+    }
 
 
 def _handle_motion(doorbot_id: int, state: str) -> None:
@@ -2510,6 +2885,8 @@ _ring: Ring | None = None
 async def main() -> None:
     global _ring, _main_loop
     _main_loop = asyncio.get_running_loop()
+    if HOME_EVENTS_RING_ENABLED:
+        _ring_home_event_publisher.start()
 
     log("Dog walk listener starting...")
 
@@ -2544,7 +2921,7 @@ async def main() -> None:
 
     devices = ring.devices()
     doorbells = list(devices.doorbots) + list(devices.authorized_doorbots)
-    log(f"Monitoring {len(doorbells)} doorbell(s): {', '.join(db.name + ' (id=' + str(db.id) + ')' for db in doorbells)}")
+    log(f"Monitoring {len(doorbells)} Ring doorbell(s)")
 
     # FCM credentials
     fcm_creds = load_fcm_credentials()

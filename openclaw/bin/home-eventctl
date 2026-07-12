@@ -1,0 +1,20 @@
+#!/bin/sh
+
+set -eu
+
+umask 077
+
+readonly SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+readonly PYTHON=/opt/homebrew/bin/python3
+readonly BUS="$SCRIPT_DIR/home_event_bus.py"
+
+[ -x "$PYTHON" ] || {
+  printf '%s\n' '{"error":"python_unavailable","ok":false}' >&2
+  exit 1
+}
+[ -f "$BUS" ] && [ ! -L "$BUS" ] || {
+  printf '%s\n' '{"error":"bus_unavailable","ok":false}' >&2
+  exit 1
+}
+
+exec "$PYTHON" -I "$BUS" operator "$@"

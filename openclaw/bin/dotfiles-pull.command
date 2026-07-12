@@ -250,6 +250,9 @@ atomic_install_executable() {
 
 WRAPPER_DEPLOYED=0
 DEPLOYED_WRAPPERS=""
+HOME_EVENT_INGEST_CHANGED=0
+HOME_EVENT_CORRELATOR_CHANGED=0
+HOME_EVENT_AUGUST_CHANGED=0
 for wrapper in "$BIN_SRC"/*; do
   [ -f "$wrapper" ] || continue
   fname=$(basename "$wrapper")
@@ -258,6 +261,14 @@ for wrapper in "$BIN_SRC"/*; do
     *.py|*.sh|*.command|*.md|*.json|*.yaml) continue ;;
   esac
   [ -x "$wrapper" ] || continue
+  case "$fname" in
+    home-eventctl)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$wrapper" "$BIN_DST/$fname"; then
+        HOME_EVENT_INGEST_CHANGED=1
+        HOME_EVENT_AUGUST_CHANGED=1
+      fi
+      ;;
+  esac
   atomic_install_executable "$wrapper" "$BIN_DST/$fname"
   WRAPPER_DEPLOYED=$((WRAPPER_DEPLOYED + 1))
   DEPLOYED_WRAPPERS="$DEPLOYED_WRAPPERS $fname"
@@ -290,6 +301,29 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
     nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         NEST_ACTIVITY_RUNTIME_CHANGED=1
+      fi
+      ;;
+    home_event_bus.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_INGEST_CHANGED=1
+        HOME_EVENT_CORRELATOR_CHANGED=1
+      fi
+      ;;
+    home-event-correlator.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_CORRELATOR_CHANGED=1
+      fi
+      ;;
+    august-event-adapter.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_AUGUST_CHANGED=1
+      fi
+      ;;
+    home-event-service-wrapper.sh)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_INGEST_CHANGED=1
+        HOME_EVENT_CORRELATOR_CHANGED=1
+        HOME_EVENT_AUGUST_CHANGED=1
       fi
       ;;
   esac
@@ -428,6 +462,90 @@ if [ -e "$NEST_ACTIVITY_AGENT_DST" ] || [ -L "$NEST_ACTIVITY_AGENT_DST" ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-activity: refreshed installed files; LaunchAgent remains unloaded pending explicit bootstrap" >> "$LOG"
   fi
 fi
+
+# Refresh home-event LaunchAgents only after an attended install has placed
+# each plist. Daily pulls may update or reload an installed shadow service, but
+# must never initialize private state or silently bootstrap a new producer.
+for HOME_EVENT_AGENT_LABEL in \
+  ai.openclaw.home-event-ingest \
+  ai.openclaw.home-event-correlator \
+  ai.openclaw.august-event-adapter; do
+  HOME_EVENT_AGENT_SRC="$REPO/openclaw/launchagents/$HOME_EVENT_AGENT_LABEL.plist"
+  HOME_EVENT_AGENT_DST="$HOME/Library/LaunchAgents/$HOME_EVENT_AGENT_LABEL.plist"
+  if [ -e "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]; then
+    if [ ! -f "$HOME_EVENT_AGENT_SRC" ] || [ -L "$HOME_EVENT_AGENT_SRC" ] \
+      || [ ! -f "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL installed LaunchAgent is unavailable or unsafe" >> "$LOG"
+      exit 1
+    fi
+    HOME_EVENT_AGENT_CHANGED=0
+    HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_SRC"
+    HOME_EVENT_AGENT_CANDIDATE_TMP=""
+    if [ "$HOME_EVENT_AGENT_LABEL" = "ai.openclaw.august-event-adapter" ]; then
+      HOME_EVENT_AUGUST_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_AUGUST_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      case "$HOME_EVENT_AUGUST_ENABLED" in
+        0|1) ;;
+        *)
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL installed August enable flag is invalid" >> "$LOG"
+          exit 1
+          ;;
+      esac
+      HOME_EVENT_AGENT_CANDIDATE_TMP=$(mktemp \
+        "$HOME/Library/LaunchAgents/.${HOME_EVENT_AGENT_LABEL}.candidate.XXXXXX")
+      if ! cp "$HOME_EVENT_AGENT_SRC" "$HOME_EVENT_AGENT_CANDIDATE_TMP" \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_AUGUST_ENABLED $HOME_EVENT_AUGUST_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null; then
+        rm -f "$HOME_EVENT_AGENT_CANDIDATE_TMP"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL could not preserve installed August enable flag" >> "$LOG"
+        exit 1
+      fi
+      HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
+    fi
+    if ! cmp -s "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST"; then
+      atomic_install_managed_file "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST" 644
+      HOME_EVENT_AGENT_CHANGED=1
+    fi
+    [ -z "$HOME_EVENT_AGENT_CANDIDATE_TMP" ] \
+      || rm -f "$HOME_EVENT_AGENT_CANDIDATE_TMP"
+    HOME_EVENT_AGENT_DOMAIN="gui/$(id -u)"
+    case "$HOME_EVENT_AGENT_LABEL" in
+      ai.openclaw.home-event-ingest)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_INGEST_CHANGED"
+        ;;
+      ai.openclaw.home-event-correlator)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_CORRELATOR_CHANGED"
+        ;;
+      ai.openclaw.august-event-adapter)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_AUGUST_CHANGED"
+        ;;
+    esac
+    if launchctl print "$HOME_EVENT_AGENT_DOMAIN/$HOME_EVENT_AGENT_LABEL" >/dev/null 2>&1; then
+      if [ "$HOME_EVENT_AGENT_CHANGED" -eq 1 ] || [ "$HOME_EVENT_RUNTIME_CHANGED" -eq 1 ]; then
+        launchctl bootout "$HOME_EVENT_AGENT_DOMAIN/$HOME_EVENT_AGENT_LABEL" >/dev/null 2>&1 || true
+        HOME_EVENT_RELOAD_OK=0
+        for HOME_EVENT_RELOAD_ATTEMPT in 1 2 3 4 5; do
+          if launchctl bootstrap "$HOME_EVENT_AGENT_DOMAIN" "$HOME_EVENT_AGENT_DST"; then
+            HOME_EVENT_RELOAD_OK=1
+            break
+          fi
+          sleep 1
+        done
+        if [ "$HOME_EVENT_RELOAD_OK" -ne 1 ]; then
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL $HOME_EVENT_AGENT_LABEL reload failed" >> "$LOG"
+          exit 1
+        fi
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: reloaded $HOME_EVENT_AGENT_LABEL" >> "$LOG"
+      fi
+    elif [ "$HOME_EVENT_AGENT_CHANGED" -eq 1 ] || [ "$HOME_EVENT_RUNTIME_CHANGED" -eq 1 ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: refreshed $HOME_EVENT_AGENT_LABEL; remains unloaded pending explicit bootstrap" >> "$LOG"
+    fi
+  fi
+done
 
 # Symlink top-level bin/ scripts into /opt/homebrew/bin/ so they track dotfiles HEAD.
 # Matches the pattern set by install.sh for hue/nest/speaker — replaces any stale

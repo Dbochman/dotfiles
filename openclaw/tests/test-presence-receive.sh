@@ -23,6 +23,7 @@ JSON
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'printf "%s\n" "$1" >> "$HOME/evaluator-calls"' \
+  'printf "%s\n" "RAW_CANONICAL_OUTPUT_SHOULD_NOT_BE_LOGGED"' \
   > "$TEST_HOME/.openclaw/workspace/scripts/presence-detect.sh"
 chmod +x "$TEST_HOME/.openclaw/workspace/scripts/presence-detect.sh"
 
@@ -64,6 +65,9 @@ if not all(state["presence"][person]["present"] for person in ("Dylan", "Julia")
 PY
 
 test "$(cat "$TEST_HOME/evaluator-calls")" = "evaluate"
+! grep -q 'RAW_CANONICAL_OUTPUT_SHOULD_NOT_BE_LOGGED' \
+  "$TEST_HOME/.openclaw/logs/presence-detect.log"
+test "$(stat -f '%Lp' "$TEST_HOME/.openclaw/logs/presence-detect.log")" = "600"
 test ! -e "$TEST_HOME/Downloads/crosstown-scan.json"
 test ! -e "$TEST_HOME/Downloads/crosstown-scan (1).json"
 test -e "$TEST_HOME/Downloads/stdin.txt"

@@ -16,17 +16,25 @@ const CONFIG_FILE = path.join(
   process.env.HOME || '/tmp',
   '.openclaw/august/config.json'
 )
-const CONFIG_KEYS = new Set(['installId', 'augustId', 'password'])
+const CONFIG_KEYS = new Set([
+  'installId',
+  'augustId',
+  'password',
+  'observeLockId',
+  'observeAlias',
+])
 const COMMANDS = new Set([
   'authorize',
   'validate',
   'locks',
   'status',
+  'observe',
   'lock',
   'unlock',
   'details',
 ])
 const LOCK_ID_PATTERN = /^[a-fA-F0-9]{32}$/
+const SAFE_ALIAS_PATTERN = /^[a-z][a-z0-9_]{0,63}$/
 const VERIFY_ATTEMPTS = 5
 const DEFAULT_VERIFY_DELAY_MS = 1000
 
@@ -77,6 +85,7 @@ function validateInvocation(argv) {
   switch (command) {
     case 'authorize':
     case 'locks':
+    case 'observe':
       if (args.length !== 0) fail('invalid_arguments', `${command} does not accept arguments`)
       break
     case 'validate':
@@ -116,7 +125,33 @@ function validateConfigObject(value) {
   return { ...value }
 }
 
+function requireConfigDirectory(create = false) {
+  const directory = path.dirname(CONFIG_FILE)
+  let metadata
+  try {
+    metadata = fs.lstatSync(directory)
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT' || !create) {
+      if (error && error.code === 'ENOENT') return false
+      fail('insecure_config', 'August config directory is unavailable or unsafe')
+    }
+    try {
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+      metadata = fs.lstatSync(directory)
+    } catch {
+      fail('config_save_failed', 'Could not securely create the August config directory')
+    }
+  }
+  if (!metadata.isDirectory() || metadata.isSymbolicLink() ||
+      (typeof process.getuid === 'function' && metadata.uid !== process.getuid()) ||
+      (metadata.mode & 0o777) !== 0o700) {
+    fail('insecure_config', 'August config directory must be owner-only mode 0700')
+  }
+  return true
+}
+
 function readStoredConfig() {
+  requireConfigDirectory(false)
   let stat
   try {
     stat = fs.lstatSync(CONFIG_FILE)
@@ -125,7 +160,9 @@ function readStoredConfig() {
     fail('invalid_config', 'August config is unreadable; repair it manually')
   }
   try {
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o600) {
+    if (!stat.isFile() || stat.isSymbolicLink() ||
+        (typeof process.getuid === 'function' && stat.uid !== process.getuid()) ||
+        (stat.mode & 0o777) !== 0o600) {
       fail('insecure_config', 'August config must be a regular file with mode 0600')
     }
     return validateConfigObject(JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')))
@@ -144,8 +181,7 @@ function saveConfig(config) {
   )
   let descriptor
   try {
-    fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
-    fs.chmodSync(directory, 0o700)
+    requireConfigDirectory(true)
     descriptor = fs.openSync(temporary, 'wx', 0o600)
     fs.fchmodSync(descriptor, 0o600)
     fs.writeFileSync(descriptor, `${JSON.stringify(validated, null, 2)}\n`, 'utf8')
@@ -179,6 +215,16 @@ function loadConfig() {
     saveConfig({ ...stored, installId: config.installId })
   }
   return { config, stored }
+}
+
+function observeBinding(config) {
+  if (!LOCK_ID_PATTERN.test(config.observeLockId || '')) {
+    fail('observe_binding_missing', 'Protected August observe lock binding is unavailable')
+  }
+  if (!SAFE_ALIAS_PATTERN.test(config.observeAlias || '') || config.observeAlias !== 'front_door') {
+    fail('observe_binding_missing', 'Protected August observe alias is unavailable')
+  }
+  return { lockId: config.observeLockId, alias: config.observeAlias }
 }
 
 function verificationDelay() {
@@ -257,6 +303,36 @@ function statusSummary(status) {
   }
 }
 
+function batteryPercentage(status) {
+  for (const candidate of [
+    status && status.batteryPercentage,
+    status && status.batteryLevel,
+    status && status.battery,
+    status && status.state && status.state.batteryPercentage,
+  ]) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) &&
+        candidate >= 0 && candidate <= 100) {
+      return Math.round(candidate)
+    }
+  }
+  return undefined
+}
+
+function sanitizedObservation(status, alias) {
+  const summary = statusSummary(status)
+  if (!summary) fail('status_invalid', 'Current August state is ambiguous or malformed')
+  const output = {
+    ok: true,
+    alias,
+    observed_at: new Date().toISOString(),
+    lock_state: summary.state.locked ? 'locked' : 'unlocked',
+    door_state: summary.state.closed ? 'closed' : 'open',
+  }
+  const battery = batteryPercentage(status)
+  if (battery !== undefined) output.battery_percent = battery
+  return output
+}
+
 function matchesPostcondition(summary, action) {
   if (!summary) return false
   if (action === 'lock') {
@@ -323,7 +399,11 @@ async function main() {
   }
 
   const August = require('august-api')
-  const august = new August(config)
+  const august = new August({
+    installId: config.installId,
+    augustId: config.augustId,
+    password: config.password,
+  })
   const { command, args, lockId } = invocation
 
   switch (command) {
@@ -342,6 +422,12 @@ async function main() {
     case 'status':
       console.log(JSON.stringify(await august.status(lockId)))
       return
+    case 'observe': {
+      const binding = observeBinding(config)
+      const status = await august.status(binding.lockId)
+      console.log(JSON.stringify(sanitizedObservation(status, binding.alias)))
+      return
+    }
     case 'details':
       console.log(JSON.stringify(await august.details(lockId), null, 2))
       return
