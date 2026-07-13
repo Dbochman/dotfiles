@@ -16,6 +16,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -78,6 +79,12 @@ FINANCE_VAULT_KEYS = [
     "FINANCE_BOA_PASSWORD",
 ]
 NEST_EVENTS_VAULT_KEYS = ["NEST_EVENTS_SERVICE_ACCOUNT_JSON"]
+NEST_RUNTIME_CREDENTIAL_KEYS = [
+    "NEST_CLIENT_ID",
+    "NEST_CLIENT_SECRET",
+    "NEST_REFRESH_TOKEN",
+    "NEST_PROJECT_ID",
+]
 
 
 class SecretCacheTests(unittest.TestCase):
@@ -206,6 +213,12 @@ esac
 
     def environment(self, **overrides: str) -> dict[str, str]:
         env = os.environ.copy()
+        # The gateway process normally exports live Nest credentials. Tests
+        # must exercise only their fake cache or explicit fake OP_REF values,
+        # never inherit those real runtime credentials from the parent.
+        for key in NEST_RUNTIME_CREDENTIAL_KEYS:
+            env.pop(key, None)
+            env.pop(f"OP_REF_{key}", None)
         env.update(
             {
                 "HOME": str(self.home),
@@ -220,6 +233,29 @@ esac
         )
         env.update(overrides)
         return env
+
+    def test_environment_scrubs_inherited_nest_credentials(self) -> None:
+        inherited = {
+            **{key: f"live-{key.lower()}" for key in NEST_RUNTIME_CREDENTIAL_KEYS},
+            **{
+                f"OP_REF_{key}": f"op://live/{key}"
+                for key in NEST_RUNTIME_CREDENTIAL_KEYS
+            },
+        }
+
+        with mock.patch.dict(os.environ, inherited, clear=False):
+            isolated = self.environment()
+            explicit = self.environment(
+                NEST_CLIENT_ID="fake-explicit-client",
+                OP_REF_NEST_CLIENT_ID="ref://NEST_CLIENT_ID",
+            )
+
+        for key in inherited:
+            self.assertNotIn(key, isolated)
+        self.assertEqual(explicit["NEST_CLIENT_ID"], "fake-explicit-client")
+        self.assertEqual(
+            explicit["OP_REF_NEST_CLIENT_ID"], "ref://NEST_CLIENT_ID"
+        )
 
     def run_refresh(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
