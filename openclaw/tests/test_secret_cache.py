@@ -695,6 +695,13 @@ esac
         self.assertNotIn("TRYFI_EMAIL", briefing)
         self.assertNotIn("GWS_DYLAN_ACCOUNT", briefing)
 
+        julia_briefing = (
+            REPO_ROOT / "openclaw/bin/julia-morning-briefing-data.py"
+        ).read_text()
+        self.assertIn('os.environ.get("JULIA_EMAIL", "")', julia_briefing)
+        self.assertNotIn("TRYFI_EMAIL", julia_briefing)
+        self.assertNotIn("STARMARKET_GMAIL", julia_briefing)
+
         opentable_refresh = (
             REPO_ROOT / "openclaw/bin/opentable-refresh-token.sh"
         ).read_text(encoding="utf-8")

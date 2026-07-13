@@ -116,13 +116,24 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertEqual(job["schedule"]["expr"], "45 6 * * *")
         self.assertEqual(job["schedule"]["tz"], "America/New_York")
 
-    def test_julia_briefing_uses_general_identity_and_environment_routing(self) -> None:
-        prompt = self.jobs["gws-julia-morning-briefing-0001"]["payload"]["message"]
+    def test_julia_briefing_uses_only_deterministic_collector(self) -> None:
+        job = self.jobs["gws-julia-morning-briefing-0001"]
+        prompt = job["payload"]["message"]
+        helper = (
+            "/usr/bin/python3 /Users/dbochman/dotfiles/openclaw/bin/"
+            "julia-morning-briefing-data.py"
+        )
 
-        self.assertIn("GOOGLE_WORKSPACE_CLI_ACCOUNT=${JULIA_EMAIL}", prompt)
-        self.assertNotIn("--account", prompt)
+        self.assertEqual(prompt.count(helper), 1)
+        self.assertNotIn("GOOGLE_WORKSPACE_CLI_ACCOUNT", prompt)
+        self.assertNotIn("gws calendar", prompt)
+        self.assertNotIn("gws gmail", prompt)
+        self.assertNotIn("set +e", prompt)
+        self.assertNotIn("status=$?", prompt)
+        self.assertIn("do not make any other tool calls", prompt)
         self.assertNotIn("STARMARKET_GMAIL", prompt)
         self.assertNotIn("TRYFI_EMAIL", prompt)
+        self.assertEqual(job["payload"]["timeoutSeconds"], 240)
 
     def test_double_date_invites_use_general_identity_keys(self) -> None:
         for job_id in (

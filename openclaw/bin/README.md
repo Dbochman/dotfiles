@@ -33,6 +33,7 @@ active post-deploy checks.
 | `restaurant-book` / `restaurant-book.py` | `~/.openclaw/bin/` | Runs a tracked standing-authorized dinner scope across both Resy and OpenTable with dual-account idempotency guards, deterministic selection, one total mutation boundary, and token-free receipts. The protected scope registry is deployed to `~/.openclaw/restaurant-bookings/scopes.json`. |
 | `openclaw-weekly-report.py` | `~/.openclaw/bin/` | Generates the weekly cron report from durable session/cron records and live service checks; avoids obsolete transient gateway-log parsing. |
 | `dylan-morning-briefing-data.py` | repo path (cron invokes it directly) | Collects a bounded seven-day Calendar agenda and 24-hour Gmail metadata for Dylan's briefing. Owns GWS account routing, token-race retry, local header filtering, and privacy-safe partial-failure output. |
+| `julia-morning-briefing-data.py` | repo path (cron invokes it directly) | Collects Julia's validated same-day triage handoff, current Calendar, cached sleep, aggregate finances, and bounded post-triage unread metadata. Owns raw GWS account routing, pagination, retries, deadlines, and section-level failure handling. |
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
 | `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as an iMessage attachment via `imsg`, plus optional summary text. Used by Julia's morning briefing cron job. |
 

@@ -315,7 +315,7 @@ and perform reservation plus calendar idempotency checks before acting.
 | ID | Schedule | Payload | Delivery | Description |
 |----|----------|---------|----------|-------------|
 | `gws-julia-morning-triage-0001` | Daily 6:45 AM ET | `agentTurn` | `none` | Silent, fully paginated Gmail triage: labels, thread-aware reply drafts, read-state cleanup, archiving, and conservative spam trashing |
-| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `agentTurn` | announce to Julia via iMessage | Read-only, high-signal briefing from the triage handoff, today's calendar, cached Eight Sleep, and live household net worth/FIRE aggregates |
+| `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `agentTurn` | announce to Julia via iMessage | Read-only, high-signal briefing from the deterministic `julia-morning-briefing-data.py` collector |
 | `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `agentTurn` | announce to Dylan via iMessage | Read-only seven-day calendar and 24-hour inbox briefing from the deterministic `dylan-morning-briefing-data.py` collector |
 | `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via iMessage | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
 | `financial-scrape-0001` | Sundays 4:05 AM ET | `agentTurn` | `none` (agent self-messages on failure only) | Invokes the deterministic cache-only `openclaw/bin/weekly-financial-scrape.py` helper: validates five protected credential profiles without `op`, preflights the dedicated headless PinchTab `finance` profile without credentials or navigation; runs Tesla Solar (API), Tier 2 self-healing utilities and PennyMac, plus BoA cookie replay/exact-profile raw CDP with one guarded re-auth only after explicit `not_authenticated`; imports only current-run successes, with mortgage run-ID validation and a weekly-gated authorized Redfin refresh. Production Plaid sync is a separate daily cache-only LaunchAgent. |
@@ -333,6 +333,20 @@ cache race. Treat a preflight `No credentials provided` response as a
 non-retryable routing/configuration error and return an `auth_error` handoff
 before any mailbox mutation. Later per-message failures retain the prompt's
 existing leave-unread-and-record-error behavior.
+
+### Julia morning briefing data path
+
+`gws-julia-morning-briefing-0001` must call
+`/Users/dbochman/dotfiles/openclaw/bin/julia-morning-briefing-data.py` exactly
+once and must not synthesize `gws`, retry, SQLite, HTTP, or shell control-flow
+commands itself. The helper owns Julia's raw-API environment routing, the
+single token-cache retry, same-day triage validation, Calendar and Gmail
+pagination, cached sleep validation, and aggregate finance reads. It emits
+only bounded fields and omits message, thread, event, and pagination IDs.
+Expected source failures become section-level `unavailable`, `partial`, or
+`skipped` objects while the process exits zero, so one unavailable source does
+not suppress the rest of the briefing. The helper has a 150-second global
+deadline and the agent turn has a 240-second timeout.
 
 ### Dylan morning briefing data path
 
