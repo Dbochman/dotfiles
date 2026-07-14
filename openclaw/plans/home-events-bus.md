@@ -1,29 +1,39 @@
-# Durable Home Events — Bus, Ring, Presence, August, and Agent Skill
+# Durable Home Events — Bus, Presence, Nest, Ring, August, and Agent Skill
 
-## Status: IMPLEMENTED ON BRANCH — shadow-only v1; not deployed
+## Status: DEPLOYED IN SHADOW MODE
+
+Canonical presence normalization and the metadata-only Nest bridge are
+enabled. Ring and August are implemented and installed but remain disabled and
+unobserved. Cabin presence still comes from the preserved legacy Starlink
+scanner; production activation of the strict exact-ID scanner is gated by the
+attended enrollment and canary in
+[`cabin-starlink-presence-enrollment.md`](cabin-starlink-presence-enrollment.md).
+There is no user-facing delivery or physical-mutation path in this bus.
 
 ## Overview
 
-Build a private SQLite-backed event journal on the Mac Mini, with Ring and
-canonical presence feeding it first in shadow mode. August then becomes the
-first genuinely new adapter. Nest, dog-walk, vacancy actions, camera policy,
-and August's guarded mutation workflow remain independent until deliberately
-migrated.
+Operate a private SQLite-backed event journal on the Mac Mini. Canonical
+presence and already-committed Nest person/motion metadata feed it today in
+shadow mode. Ring is the next producer to soak, followed by the read-only
+August observer as the first new provider adapter. The Nest listener/reviewer,
+Ring dog-walk and direct ding behavior, vacancy actions, camera policy, and
+August's guarded mutation workflow remain independent.
 
 ```text
-Existing Ring FCM callback ───────────────┐
-Canonical presence evaluation (Mini) ────┼─→ protected atomic spool
-August read-only status via MBP ──────────┘              │
-                                                         ▼
-                                               SQLite event journal
-                                                         │
-                                        durable consumer queues/leases
-                                                         │
-                                               correlation + policy
-                                                         │
-                                         notification/camera outbox
+Ring FCM tee (disabled) ----------------\
+Canonical presence normalization (enabled) ----+--> protected atomic spools
+August read-only observer (disabled) -----------/              |
+Nest listener outbox -> metadata bridge (enabled) -------------/
+                                                               v
+                                                     SQLite event journal
+                                                               |
+                                              durable queues and leases
+                                                               |
+                                              shadow incidents/decisions
+                                                               |
+                                               read-only agent queries
 
-Nest SDM → existing listener/reviewer remains unchanged
+Nest SDM -> listener/reviewer acknowledgement and camera path stay independent
 ```
 
 This design does not introduce MQTT, NATS, another cloud Pub/Sub topic, or a
@@ -32,12 +42,12 @@ the durability pattern proven by the existing Nest event store.
 
 ## Goals
 
-1. Durably normalize Ring and canonical presence events without changing their
-   current behavior.
+1. Durably normalize canonical presence, Nest metadata, Ring, and August
+   observations without changing their existing paths.
 2. Correlate multiple sources into site-scoped activity incidents instead of
    sending one message per raw event.
-3. Add August as the first new, read-only adapter after Ring and presence prove
-   the bus contract.
+3. Add August as the first new, read-only provider adapter after the deployed
+   presence/Nest path and Ring tee prove the bus contract.
 4. Preserve presence as the hard policy gate for active versus shadow camera
    monitoring.
 5. Make every producer, consumer, and outbound policy independently reversible.
@@ -48,7 +58,8 @@ the durability pattern proven by the existing Nest event store.
 
 - Republishing into Google's SDM topic.
 - Adding an internet-facing or LAN-facing broker.
-- Migrating the existing Nest subscriber or Cabin camera reviewer.
+- Migrating or placing the bus in front of the existing Nest subscriber or
+  Cabin camera reviewer; the bridge is downstream and metadata-only.
 - Replacing canonical presence state or vacancy actions.
 - Replacing Ring dog-walk behavior or its direct ding notification in the
   initial build.
@@ -71,7 +82,9 @@ the durability pattern proven by the existing Nest event store.
   mode.
 - No raw provider payloads, IDs, image paths, coordinates, credentials,
   recipients, or message bodies enter the database.
-- Nest stays isolated for this build; a read-only bridge can be added later.
+- Nest bridging is downstream-only: bus failure cannot delay Pub/Sub
+  acknowledgement or the existing reviewer, and no media or model output
+  enters the journal.
 
 ## Normalized event contract
 
@@ -113,6 +126,11 @@ Presence:
 - `presence.occupancy_changed`
 - `presence.person_relocated`
 
+Nest:
+
+- `camera.person_detected` — site-scoped incident evidence
+- `camera.motion_detected` — queryable metadata only; non-actionable
+
 August:
 
 - `lock.locked`
@@ -139,16 +157,22 @@ Derived later:
 ├── spool/                         0700
 │   ├── ring/
 │   ├── presence/
-│   └── august/
+│   ├── august/
+│   └── nest/
 └── state/                         0700
     ├── events.sqlite3            0600
     ├── events.sqlite3-wal/-shm   0600 while SQLite is open
     ├── ingest.lock               0600
     ├── ring-producer.json        0600 safe worker health/counters
-    └── status.json               0600
+    ├── status.json               0600
+    ├── august-adapter.json       0600 after first observation
+    ├── august-adapter.pending.json 0600 only during retry/recovery
+    ├── august-adapter.lock       0600
+    ├── nest-bridge.json          0600 outbox cursor + DB identity
+    └── nest-bridge.lock          0600
 ```
 
-## Work package 0: freeze the contracts
+## Work package 0: freeze the contracts — complete
 
 Before runtime coding:
 
@@ -165,24 +189,36 @@ Before runtime coding:
    - `HOME_EVENTS_RING_ENABLED`
    - `HOME_EVENTS_PRESENCE_ENABLED`
    - `HOME_EVENTS_AUGUST_ENABLED`
-6. Record that v1 has no delivery path and all correlation remains shadow-only.
+   - `HOME_EVENTS_NEST_ENABLED`
+6. Distinguish SQLite schema version 2 from normalized event-envelope schema
+   version 1.
+7. Record that the current phase has no delivery path and all correlation
+   remains shadow-only.
 
 Exit gate: schema, privacy rules, aliases, and failure semantics can be reviewed
 without running anything.
 
-## Work package 1: durable bus core
+## Work package 1: durable bus core — deployed
 
-### Suggested tracked components
+### Tracked components
 
 - `openclaw/bin/home_event_bus.py`
 - `openclaw/bin/home-eventctl`
 - `openclaw/bin/home-events`
 - `openclaw/bin/home-event-correlator.py`
 - `openclaw/bin/august-event-adapter.py`
+- `openclaw/bin/nest-home-event-bridge.py`
+- `openclaw/bin/presence-cabin-enroll`
 - `openclaw/bin/home-event-service-wrapper.sh`
-- attended-install LaunchAgents for ingestion, correlation, and August polling
+- attended-install LaunchAgents for ingestion, correlation, August polling,
+  and Nest bridging
 - `openclaw/tests/test_home_event_bus.py`
+- `openclaw/tests/test_home_event_correlator.py`
+- `openclaw/tests/test_august_event_adapter.py`
+- `openclaw/tests/test_nest_home_event_bridge.py`
+- `openclaw/tests/test_presence_cabin_enroll.py`
 - `openclaw/HOME-EVENTS.md`
+- `openclaw/plans/cabin-starlink-presence-enrollment.md`
 
 ### Publisher semantics
 
@@ -204,6 +240,10 @@ without running anything.
 6. Commit.
 7. Remove the spool file and fsync the directory.
 8. Update safe `status.json` best-effort.
+9. Opportunistically prune retained metadata only when a durable SQLite marker
+   is at least 24 hours old. The due check, deletes, marker update, and
+   `prune_runs` increment share one `BEGIN IMMEDIATE` transaction, so restarts
+   and concurrent five-second workers cannot multiply maintenance writes.
 
 A crash after database commit but before spool deletion replays the file and
 hits the unique dedupe key.
@@ -214,6 +254,12 @@ producer/consumer concurrency. Use `AUTOINCREMENT` so pruning cannot reuse
 event IDs. WAL permits concurrent readers; it does not create concurrent
 writers. One ingester must serially drain every producer spool and own all
 normal ingestion writes under `BEGIN IMMEDIATE`.
+
+An automatic prune does not checkpoint the WAL. The explicit operator
+`home-eventctl prune` command is always forced, resets the daily maintenance
+gate, writes status, and requests a truncating checkpoint. Missing, invalid,
+or future maintenance markers fail toward one immediate prune; the internal
+marker is excluded from public status counters.
 
 ### Core tables
 
@@ -238,14 +284,18 @@ transaction, and acknowledge using the same token. External sends use
 reserve-before-send; if the send result becomes unknown after a crash, burn the
 delivery slot rather than risk duplicate household messages.
 
-Exit gate: concurrency, crash-boundary, restart-dedupe, permissions, schema
-corruption, pruning, and privacy-sentinel tests pass before any live producer
-is enabled.
+Exit gate met: concurrency, crash-boundary, restart-dedupe, permissions,
+schema-corruption, pruning, and privacy-sentinel tests passed before the live
+presence and Nest producers were enabled.
 
-## Work package 2: Ring durable tee
+## Work package 2: Ring durable tee — implemented, rollout pending
 
-Modify the existing Ring callback path; do not add another Ring service or FCM
-registration.
+The tee and its tests are installed, but production
+`HOME_EVENTS_RING_ENABLED=0`; the bus has not observed Ring evidence yet. The
+existing FCM, direct-ding, and dog-walk paths remain authoritative.
+
+The implementation modifies the existing Ring callback path and does not add
+another Ring service or FCM registration.
 
 Implementation:
 
@@ -259,11 +309,11 @@ Implementation:
 4. Preserve existing direct ding and dog-walk behavior unchanged.
 5. If bus publication fails completely, record a safe health error and continue
    the legacy path.
-6. Replace current raw-ID/display-name log entries with alias, canonical event
-   type, opaque key, and result.
-7. If backfill is implemented, limit it to approximately 15 minutes, mark it as
-   backfill, and forbid it from generating doorbell messages or satisfying
-   stale dog-walk motion windows.
+6. Logs use the alias, canonical event type, opaque key, and result rather than
+   raw IDs or display names.
+7. Backfill is limited to approximately 15 minutes, marked as backfill, and
+   forbidden from generating doorbell messages or satisfying stale dog-walk
+   motion windows.
 
 The worker queue is bounded to 256 records. Queue overflow or worker failure
 increments a safe health counter but never blocks or changes the legacy Ring
@@ -277,7 +327,7 @@ Dedupe identity:
 HMAC(source + bound device alias + provider event ID + kind + classification)
 ```
 
-### Ring shadow gate
+### Remaining Ring shadow gate
 
 - At least 48 hours.
 - One attended ding and person-motion test at each configured site.
@@ -287,7 +337,13 @@ HMAC(source + bound device alias + provider event ID + kind + classification)
   unavailable.
 - No additional messages are sent.
 
-## Work package 3: canonical presence normalization
+## Work package 3: canonical presence normalization — partially deployed
+
+Canonical normalization is enabled and has produced live transition events.
+The deployed Cabin network scan is still the deliberately preserved legacy
+name-based scanner. Do not install or activate the tracked exact-ID scanner
+until the attended enrollment proves both phones and completes its
+downstream-disabled production canary.
 
 Only the Mini publishes canonical presence. The Crosstown MacBook continues
 supplying observations through the existing validated Taildrop receiver.
@@ -327,20 +383,34 @@ Existing JSON projections and vacancy actions remain in place. The bus is
 observational and cannot trigger a fresh scan or roll back canonical presence
 if publication fails.
 
-### Presence shadow gate
+### Remaining Cabin enrollment and presence gate
 
-- 48–72 hours plus one controlled relocation.
-- One real transition produces the expected occupancy and person events
-  exactly once.
-- Repeated evaluations produce no events.
-- Concurrent Cabin and Taildrop evaluation still serializes correctly.
-- Crash injection at every source-outbox boundary loses nothing and duplicates
-  nothing.
-- All existing presence, Taildrop, and vacancy-action tests remain green.
+The authoritative procedure is
+[`cabin-starlink-presence-enrollment.md`](cabin-starlink-presence-enrollment.md).
+Its evidence gate replaces the older blanket 48–72-hour soak:
 
-## Work package 4: combined Ring and presence correlation
+- Prove two reconnect cycles and complete 5-, 10-, and 20-minute idle profiles
+  for each phone.
+- Collect at least eight read-only samples spanning at least one hour, with at
+  least three 14–16-minute intervals and all five ground-truth scenarios.
+- Require zero mismatches or incomplete evidence. Add an optional 24–48-hour
+  extension only when identity, lease, or idle evidence is inconsistent.
+- Promote the exact bindings only after downstream jobs are stopped, then run
+  four real scheduled ticks with vacancy actions, the Nest reviewer, and
+  outbound effects still disabled.
+- Verify the first true transition normalizes exactly once, repeated
+  evaluations remain silent, and all presence, Taildrop, recovery, and vacancy
+  tests remain green before restoring downstream jobs in order.
 
-Run the correlator in shadow for at least seven days before adding August.
+## Work package 4: shadow correlation — deployed, multi-source soak pending
+
+The durable correlator is deployed and consumes presence and Nest evidence in
+shadow mode. Ring participation and a live multi-source parity soak remain
+pending; no delivery or camera-capture path exists in the correlator.
+
+Complete the Ring-plus-presence shadow soak for at least seven days before
+enabling August. The already-enabled Nest bridge remains active and
+shadow-only throughout this soak.
 
 Policy:
 
@@ -355,8 +425,8 @@ Policy:
   silently.
 - Ring bursts collapse into one incident.
 - No model participates in event validation or hard security decisions.
-- Shadow mode records counters only—no proposed message text and no extra image
-  capture.
+- Shadow mode records durable incidents, decisions, and safe counters only—no
+  proposed message text, outbound delivery, or extra image capture.
 - Routine incidents resolve after 15 quiet minutes. Door or lock incidents
   persist until resolved, or become `expired_unresolved` after 24 hours and
   degrade health without inventing a resolution.
@@ -369,38 +439,80 @@ Policy:
 Exit gate: no unexplained parity gaps, unbounded backlog, cross-site
 correlation, duplicate incidents, or outbound delivery attempts.
 
-## Work package 5: August as the first new adapter
+## Work package 5: Nest downstream metadata bridge — deployed
+
+`nest-home-event-bridge.py` reads only committed rows from the existing Nest
+listener's SQLite outbox. It runs after Pub/Sub acknowledgement and outside the
+Cabin reviewer, so a bridge or home-event failure cannot delay either path.
+
+Implementation:
+
+1. `HOME_EVENTS_NEST_ENABLED=0` is the install default; the attended production
+   flag is independently preserved across routine pulls.
+2. First enable records the current listener outbox watermark without replaying
+   historical camera activity.
+3. Exact configured resources map only to `kitchen`, `living_room`, and
+   `living_room_wired` plus their fixed sites. Unknown resources fail closed.
+4. Committed person and motion rows normalize to `camera.person_detected` and
+   `camera.motion_detected`. Person evidence may open or extend a shadow
+   incident; motion remains queryable metadata and is non-actionable.
+5. The cursor advances only after the bus durably accepts the normalized
+   event. Listener database replacement, schema mismatch, or rewind fails
+   closed instead of silently rebasing an established cursor.
+6. Camera resources, raw SDM identifiers, images, model output, messages, and
+   provider payloads never enter the bridge state, spool, or journal.
+
+Completed operational evidence:
+
+- The first enabled run baselined the committed outbox without replaying
+  historical camera rows.
+- Later `living_room_wired` person metadata normalized to the fixed Crosstown
+  site while listener acknowledgement and reviewer behavior remained
+  independent.
+
+Remaining operational evidence:
+
+- After Cabin enrollment, correlate a later organic or attended person event
+  against the corrected canonical presence state.
+- Exercise the other configured aliases as organic or attended events arrive,
+  and verify cursor recovery during the next safe affected-service restart.
+- Keep Nest bridging independently reversible; disabling it must leave the
+  listener, reviewer, and explicit on-demand camera skill untouched.
+
+## Work package 6: August as the first new adapter — implemented, rollout pending
+
+The read-only observe command, adapter, protected state contract, and tests are
+implemented. `HOME_EVENTS_AUGUST_ENABLED=0` in production, so the source is
+correctly reported as unobserved/unknown and has not begun its shadow gate.
 
 Given the current local integration and lack of a documented personal consumer
 webhook in August's public developer materials, the first adapter polls
 read-only status through the existing MBP boundary.
 
-### On the MBP
+### Implemented MBP contract
 
-1. Add a separate sanitized `observe` or `status-summary` command beside
-   `august-cmd.js`.
-2. Bind one exact configured lock rather than using the first lock on the
-   account.
-3. Return only:
+1. `august observe` is a separate sanitized command beside `august-cmd.js`.
+2. It requires one exact configured lock rather than selecting the first lock
+   on the account.
+3. It returns only:
    - safe alias
    - `locked|unlocked|unknown`
    - `open|closed|unknown`
    - optional validated battery percentage
    - observation timestamp
-4. Never return lock/account IDs or the raw API response.
-5. Keep existing lock/unlock approval code unchanged.
+4. It never returns lock/account IDs or the raw API response.
+5. Existing lock/unlock approval code remains unchanged.
 
-### On the Mini
+### Implemented Mini contract
 
-1. Poll through the existing protected August wrapper.
-2. Use a separate read-only adapter whose code path cannot invoke mutation
-   commands.
-3. Treat the first good observation as baseline-only.
-4. Store each successful safe observation; compare and checkpoint state
+1. The adapter polls through the existing protected August wrapper.
+2. Its separate read-only code path cannot invoke mutation commands.
+3. The first good observation is baseline-only.
+4. Each successful safe observation is stored, compared, and checkpointed
    transactionally during ingestion.
-5. Represent simultaneous unlock and door-open as two events in one
-   observation. Do not invent an ordering.
-6. Because polling cannot know the physical event time, record:
+5. Simultaneous unlock and door-open state becomes two events in one
+   observation without inventing an ordering.
+6. Because polling cannot know the physical event time, it records:
    - `time_precision=observed_interval`
    - `not_before=previous_good_poll`
    - `not_after=current_poll`
@@ -426,7 +538,7 @@ read-only status through the existing MBP boundary.
 - Existing August mutation and approval suite remains unchanged.
 - No automated unlock occurs in any test.
 
-## Work package 6: limited policy activation
+## Work package 7: limited policy activation — future, not authorized
 
 Only after all shadow gates pass:
 
@@ -456,7 +568,7 @@ row immediately degrades the responsible source or consumer health.
 
 ## OpenClaw `home-events` skill
 
-Deploy a read-only `home-events` CLI and a skill limited to
+The deployed read-only `home-events` CLI and skill are limited to
 `Bash(home-events:*)`. The CLI exposes structured JSON only:
 
 ```text
@@ -505,6 +617,10 @@ Provide `home-eventctl status` and `check-config`. Safe status may contain:
 - last safe error code
 - database size and retention setting
 
+The durable automatic-prune timestamp is internal maintenance state, not a
+public operational counter. Safe status exposes the resulting `prune_runs`
+count but not the epoch marker.
+
 Status and dashboards must not depend on parsing logs.
 
 The operator CLI is deliberately unavailable to the agent skill. The separate
@@ -522,7 +638,10 @@ incident identifiers, and no database path or provider identity.
 - Out-of-order, stale, and future events.
 - Symlink, wrong-owner, wrong-mode, corrupt-schema, read-only-disk, and full-disk
   behavior.
-- Transactional migration and retention pruning.
+- Transactional migration and retention pruning, including restart-durable
+  24-hour cadence, the exact due boundary, manual forced pruning, invalid/future
+  marker recovery, concurrent-worker serialization, and no automatic WAL
+  checkpoint.
 - Status projection failure after durable commit.
 - First-run consumer baselines at the current tail without historical replay.
 - Database growth and WAL checkpointing at ten times expected household event
@@ -550,6 +669,21 @@ incident identifiers, and no database path or provider identity.
 - Ordinary repeated evaluation emits nothing.
 - Source-outbox recovery at every crash boundary.
 - The normalizer never invokes a live scan.
+- Cabin exact-ID enrollment proves reconnect and idle behavior for both phones,
+  five ground-truth scenarios at the real cadence, zero mismatches, and a
+  four-tick downstream-disabled canary before activation.
+
+### Nest
+
+- First enable baselines the committed listener outbox with zero historical
+  replay.
+- Exact camera aliases and sites normalize person and motion metadata once.
+- Motion remains non-actionable; person evidence remains shadow-only.
+- Listener database replacement, rewind, and incompatible schema fail closed.
+- Bridge failure or disablement cannot delay Pub/Sub acknowledgement, camera
+  review, or explicit on-demand image capture.
+- Privacy sentinels prove no camera resource, provider ID, media, model output,
+  or message text enters bridge or bus state.
 
 ### Correlation
 
@@ -576,7 +710,10 @@ incident identifiers, and no database path or provider identity.
 ### Attended physical tests
 
 - Ring ding and person motion at each site.
-- One presence relocation.
+- Cabin exact-ID reconnect, idle, all-scenario, and canary procedure followed by
+  one controlled presence relocation.
+- One later Nest person event correlated against corrected presence without
+  changing reviewer behavior.
 - August manual lock, unlock, door open, and door close.
 - One combined Ring, presence, and August sequence.
 - Service restart while events are queued.
@@ -588,24 +725,32 @@ incident identifiers, and no database path or provider identity.
   happened today,” “why didn't you alert,” “show me a current image,” and an
   attempted lock or policy command.
 - Confirm that only an explicit current-image request invokes `nest-camera`.
-- Healthy Ring and presence events become queryable within five seconds.
+- Healthy Ring, presence, and bridged Nest events become queryable within five
+  seconds of durable publication.
 - Ring incident decisions complete within 120 seconds, including the arrival
   grace period. Initial August detection may take up to seven minutes.
 - At ten times expected volume, the retained 30-day database plus WAL remains
   below 100 MiB after pruning and checkpointing.
 
-## Deployment
+## Deployment and remaining rollout
 
-New services follow the attended Nest deployment pattern:
+The bus core, correlator, read-only skill, adapters, bridges, and LaunchAgents
+are installed on the Mac Mini with SQLite schema 2 in shadow mode. Presence and
+Nest are enabled; Ring and August remain disabled. The remaining order is:
 
-1. Verify the Mac Mini host, user, and home directory.
-2. Create protected runtime paths.
-3. Install scripts and LaunchAgents as regular files.
-4. Run unit and integration tests, Python compilation, `check-config`, and
-   `plutil -lint`.
-5. Initialize producer and consumer baselines.
-6. Bootstrap in shadow mode.
-7. Verify status, permissions, process state, and zero delivery attempts.
+1. Complete the attended Cabin exact-ID enrollment and four-tick canary.
+2. Verify one true normalized presence transition and correlate a later Nest
+   person event against the corrected canonical state.
+3. Enable Ring alone, complete its 48-hour attended source gate, then complete
+   the Ring-plus-presence correlation soak.
+4. Bind and enable the read-only August observer, perform its attended cycle,
+   and complete its seven-day shadow soak.
+5. Consider any limited delivery only under separate explicit authorization;
+   it is not part of the current rollout.
+
+At each gate, run unit/integration tests, Python compilation, `check-config`,
+plist validation when applicable, permissions checks, safe health/backlog
+inspection, and verification of zero delivery attempts.
 
 Daily dotfiles pulls may refresh an already installed service but must never
 silently create state, initialize a baseline, bootstrap a new job, or enable
@@ -618,11 +763,13 @@ an OpenClaw Gateway restart.
    ingestion.
 2. Stop the August adapter independently; the existing August CLI remains
    available.
-3. Disable Ring and presence producer hooks independently.
-4. Restore prior tracked scripts and restart only affected jobs.
-5. Preserve the database, checkpoints, spool, and source outboxes for diagnosis.
-6. Never delete state or credentials as part of rollback.
-7. Make migrations transactional and require an older binary to understand or
+3. Disable the Nest bridge independently without stopping the listener,
+   reviewer, or on-demand camera path.
+4. Disable Ring and presence producer hooks independently.
+5. Restore prior tracked scripts and restart only affected jobs.
+6. Preserve the database, checkpoints, spool, and source outboxes for diagnosis.
+7. Never delete state or credentials as part of rollback.
+8. Make migrations transactional and require an older binary to understand or
    explicitly refuse the newer schema.
 
 ## Decisions required before activation
@@ -637,17 +784,23 @@ These do not block the core build or shadow rollout:
 
 ## Definition of done
 
-- Ring and presence survive restarts without duplicate normalized events.
-- Existing Ring, dog-walk, presence, vacancy, Nest, camera, and August mutation
-  behavior remains unchanged during the shadow build.
-- August is demonstrably read-only and reports timing honestly as an observed
-  interval.
-- All privacy and permissions tests pass.
-- One real multi-source sequence becomes one site-scoped incident.
-- OpenClaw can query recent events, open incidents, explanations, and safe
-  health through the read-only skill without access to operator mutations.
-- V1 performs no user-facing delivery; its durable shadow decisions enforce
-  the one-per-site-per-hour policy that a separately authorized future
-  delivery phase must preserve.
-- Every producer, consumer, and delivery policy can be disabled independently
-  without touching canonical presence or existing household automation.
+The core shadow deployment is operational. Its acceptance remains:
+
+- Presence and Nest survive restarts without duplicate normalized events, and
+  all privacy, permissions, durability, and maintenance-cadence tests pass.
+- Existing Ring, dog-walk, presence, vacancy, Nest camera/reviewer, and August
+  mutation behavior remain independent and unchanged.
+- OpenClaw can query recent events, incidents, explanations, and safe health
+  through the read-only skill without operator mutations or implicit capture.
+- The bus performs no user-facing delivery; durable shadow decisions preserve
+  the one-per-site-per-hour policy for any separately authorized future phase.
+- Every producer and consumer can be disabled independently without touching
+  canonical presence or existing household automation.
+
+Remaining rollout is complete when:
+
+- Cabin exact-ID enrollment and its production canary pass.
+- Ring proves restart/dedupe and legacy-path parity, then one real multi-source
+  sequence becomes one site-scoped shadow incident.
+- August is demonstrated read-only, reports observed-interval timing honestly,
+  and completes its attended seven-day shadow gate.

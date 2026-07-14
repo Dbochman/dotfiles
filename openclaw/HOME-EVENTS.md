@@ -14,6 +14,12 @@ observation, message body, camera resource, or provider payload. Ring dog-walk
 behavior, the direct doorbell message, vacancy actions, and the August
 approval/mutation workflow also remain independent.
 
+The current production flags enable canonical presence and the Nest bridge.
+Ring and August remain installed but disabled and unobserved. Cabin presence
+still uses the preserved legacy scanner until the attended exact-ID enrollment
+and downstream-disabled canary in
+`plans/cabin-starlink-presence-enrollment.md` are complete.
+
 ## Data flow
 
 ```text
@@ -101,10 +107,15 @@ status projection, and logs.
 SQLite is authoritative. `status.json` is a privacy-safe operational
 projection and must not be used as an acknowledgement boundary. Accepted
 metadata is retained for 30 days and dead-letter metadata for 90 days; pending
-or leased work is never pruned. Status includes bus-observed per-source health
-and safe failure state, consumer depth and oldest unfinished time, retention,
-and database size. A source with no evidence remains `unknown`; this does not
-claim that its process is running.
+or leased work is never pruned. The five-second ingester checks a durable
+SQLite maintenance marker and normally runs automatic retention at most once
+every 24 hours; a missing, invalid, or future marker triggers one immediate
+repair prune. Process restarts do not reset the gate. An explicit
+`home-eventctl prune` remains a forced maintenance operation and checkpoints
+the WAL. The internal maintenance marker is not exposed through safe status.
+Status includes bus-observed per-source health and safe failure state, consumer
+depth and oldest unfinished time, retention, and database size. A source with
+no evidence remains `unknown`; this does not claim that its process is running.
 
 ## Commands
 
@@ -206,15 +217,17 @@ third-state batch untouched and fails health closed. The first enabled
 evaluation baselines silently, and repeated identical evaluations publish
 nothing.
 
-Network identity now comes only from each host's protected, site-scoped
-`~/.openclaw/presence-devices.json`. Cabin uses exact Starlink captive client
-IDs and counts a match only when `dhcpLeaseFound` and `dhcpLeaseActive` are
-true, the remaining lease time is positive, and data idle time is no more than
-five minutes. Crosstown uses exact site-private MACs with fresh inbound ARP
-reachability. Names, hostnames, generic iPhone matches, and IP addresses are
-not fallbacks; missing, insecure, or malformed bindings fail the scan closed.
-The strict Cabin scanner cannot be activated until an attended on-site session
-binds and validates both phones without printing the identifiers.
+The tracked strict scanner reads identities only from each host's protected,
+site-scoped `~/.openclaw/presence-devices.json`. Once activated, Cabin will use
+exact Starlink captive client IDs and count a match only when
+`dhcpLeaseFound` and `dhcpLeaseActive` are true, the remaining lease time is
+positive, and data idle time is no more than five minutes. Crosstown already
+uses exact site-private MACs with fresh inbound ARP reachability. Names,
+hostnames, generic iPhone matches, and IP addresses are not strict-scanner
+fallbacks; missing, insecure, or malformed bindings fail the scan closed.
+Current Cabin production remains on the preserved legacy name-based scanner
+until an attended on-site session binds and validates both phones without
+printing the identifiers.
 
 ### August
 
@@ -261,8 +274,10 @@ instead of silently rebasing an existing cursor.
 
 ## Attended rollout
 
-The tracked build must remain unloaded and shadow-only until an attended
-session:
+The bus core, correlator, skill, adapters, bridge, and LaunchAgents are already
+installed in shadow mode. Canonical presence and Nest metadata are enabled;
+Ring and August remain disabled. The Nest listener schema-v2 migration and
+bridge baseline are complete. A fresh or rebuilt installation must first:
 
 1. Confirm the target is the Mac Mini user `dbochman` with
    `HOME=/Users/dbochman`.
@@ -273,36 +288,38 @@ session:
    and every runtime regular file is `0600`.
 4. Run `home-eventctl check-config`, compilation/tests, and `plutil -lint` for
    each installed plist.
-5. Configure the protected August observe binding on the MBP without printing
-   it, then verify `august observe` returns only the sanitized contract.
-6. Enable and baseline presence and Ring one at a time. Presence requires
-   changing `HOME_EVENTS_PRESENCE_ENABLED` in both the Cabin evaluator and
-   Taildrop receiver plists and reloading them together so every serialized
-   evaluation uses the same outbox contract.
-7. Soak presence for 48–72 hours with one controlled relocation, and soak Ring
-   for at least 48 hours with one attended ding and person-motion test at each
-   configured site. Verify legacy Ring/dog-walk output is unchanged before
-   proceeding.
-8. Run Ring plus presence correlation in shadow for at least seven days. Stop
-   if there is a parity gap, unbounded backlog, duplicate/cross-site incident,
-   or any outbound delivery attempt.
-9. Back up and upgrade the Nest listener first with
-   `nest-event-listener-wrapper.sh migrate` and confirm its database schema is
-   v2; the bridge rejects the old listener schema. Enable the Nest bridge
-   separately. Its first enabled run must report a baseline with zero
-   published events; verify the stored cursor matches the current listener
-   outbox watermark and that no historical camera row was replayed. Then use
-   the next organic or attended camera event to verify normalized metadata,
-   site mapping, and person/motion correlation. Routine pulls preserve the
-   installed `HOME_EVENTS_NEST_ENABLED` value.
-10. Only after the earlier gates pass, enable August and perform an attended
-    lock, unlock, door-open, and door-close cycle. Soak August in shadow for
-    seven days before considering any later policy activation. Routine pulls
-    preserve the installed `HOME_EVENTS_AUGUST_ENABLED` value rather than
-    reverting it.
+
+The remaining attended rollout is:
+
+5. For Cabin identity, follow
+   `plans/cabin-starlink-presence-enrollment.md`: prove two reconnect cycles and
+   complete 5-, 10-, and 20-minute idle evidence per phone, then collect at
+   least eight correct samples over at least one hour with three real-cadence
+   intervals and all five occupancy scenarios. Require zero mismatches and a
+   four-tick downstream-disabled production canary. Use an extra 24–48-hour
+   soak only when the evidence is inconsistent.
+6. After enrollment, verify one true presence transition is normalized once,
+   then correlate a later organic or attended Nest person event against the
+   corrected canonical state without changing listener or reviewer behavior.
+7. Enable and baseline Ring separately. Soak it for at least 48 hours with one
+   attended ding and person-motion test at each configured site, verifying
+   legacy Ring/dog-walk output is unchanged.
+8. Run Ring plus presence correlation in shadow for at least seven days while
+   the deployed Nest bridge remains active and shadow-only. Stop if there is a
+   parity gap, unbounded backlog, duplicate/cross-site incident, or any
+   outbound delivery attempt.
+9. Configure the protected August observe binding on the MBP without printing
+   it and verify `august observe` returns only the sanitized contract. Then
+   enable August, perform an attended lock/unlock and door open/close cycle,
+   and soak it in shadow for seven days.
+10. Consider delivery only under separate explicit authorization; it is not
+    part of this rollout.
 11. Throughout every gate, verify `home-eventctl status`, source spool depth,
-   SQLite health, shadow decisions, and zero outbound delivery attempts
-   throughout the soak.
+    SQLite health, shadow decisions, and zero outbound delivery attempts.
+
+Routine pulls preserve the installed `HOME_EVENTS_NEST_ENABLED` and
+`HOME_EVENTS_AUGUST_ENABLED` values rather than reverting them to source
+defaults.
 
 Routine dotfiles pulls may update a service only after its plist is already
 installed. They must not create runtime secrets, initialize the database,

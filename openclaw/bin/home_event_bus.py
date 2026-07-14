@@ -40,6 +40,8 @@ MAX_ATTRIBUTES_BYTES = 2 * 1024
 MAX_QUERY_LIMIT = 100
 ACCEPTED_RETENTION_DAYS = 30
 DEAD_LETTER_RETENTION_DAYS = 90
+AUTO_PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
+MAINTENANCE_LAST_PRUNE_EPOCH = "maintenance_last_prune_epoch"
 RING_LIVE_MAX_AGE = dt.timedelta(seconds=60)
 RING_BACKFILL_MAX_AGE = dt.timedelta(minutes=15)
 
@@ -1522,6 +1524,31 @@ class EventStore:
         )
 
     @staticmethod
+    def _set_counter(connection: sqlite3.Connection, name: str, value: int) -> None:
+        connection.execute(
+            """
+            INSERT INTO service_counters(name, value) VALUES (?, ?)
+            ON CONFLICT(name) DO UPDATE SET value = excluded.value
+            """,
+            (name, value),
+        )
+
+    @staticmethod
+    def _automatic_prune_state(
+        connection: sqlite3.Connection, now_epoch: int
+    ) -> Tuple[bool, Any]:
+        row = connection.execute(
+            "SELECT value FROM service_counters WHERE name = ?",
+            (MAINTENANCE_LAST_PRUNE_EPOCH,),
+        ).fetchone()
+        if row is None:
+            return True, None
+        last_epoch = row["value"]
+        if type(last_epoch) is not int or last_epoch < 0 or last_epoch > now_epoch:
+            return True, last_epoch
+        return now_epoch - last_epoch >= AUTO_PRUNE_INTERVAL_SECONDS, last_epoch
+
+    @staticmethod
     def _touch_status(
         connection: sqlite3.Connection,
         now: str,
@@ -1912,13 +1939,33 @@ class EventStore:
                 )
             connection.commit()
 
-    def prune(self, *, checkpoint: bool = True) -> Mapping[str, int]:
-        now = self._now()
+    def _prune(
+        self,
+        *,
+        now: str,
+        checkpoint: bool,
+        only_if_due: bool,
+        write_status: bool,
+        expected_prune_marker: Any = None,
+    ) -> Optional[Mapping[str, int]]:
+        now_epoch = int(_parse_now(now).timestamp())
         accepted_cutoff = _cutoff(now, ACCEPTED_RETENTION_DAYS)
         dead_cutoff = _cutoff(now, DEAD_LETTER_RETENTION_DAYS)
         deleted: Dict[str, int] = {}
         with contextlib.closing(self.connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if only_if_due:
+                prune_due, current_marker = self._automatic_prune_state(
+                    connection,
+                    now_epoch,
+                )
+                marker_unchanged = (
+                    type(current_marker) is type(expected_prune_marker)
+                    and current_marker == expected_prune_marker
+                )
+                if not marker_unchanged or not prune_due:
+                    connection.rollback()
+                    return None
             cursor = connection.execute(
                 """
                 DELETE FROM notification_outbox
@@ -2010,13 +2057,56 @@ class EventStore:
                 (dead_cutoff, accepted_cutoff),
             )
             deleted["producer_inbox"] = cursor.rowcount
+            self._set_counter(
+                connection,
+                MAINTENANCE_LAST_PRUNE_EPOCH,
+                now_epoch,
+            )
             self._increment(connection, "prune_runs")
             connection.commit()
         if checkpoint:
-            with contextlib.closing(self.connect()) as connection:
-                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        self.write_status_best_effort()
+            self._checkpoint_wal()
+        if write_status:
+            self.write_status_best_effort()
         return deleted
+
+    def _checkpoint_wal(self) -> None:
+        with contextlib.closing(self.connect()) as connection:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def prune(self, *, checkpoint: bool = True) -> Mapping[str, int]:
+        result = self._prune(
+            now=self._now(),
+            checkpoint=checkpoint,
+            only_if_due=False,
+            write_status=True,
+        )
+        if result is None:
+            raise StateError("prune_state_invalid")
+        return result
+
+    def prune_if_due(self, *, checkpoint: bool = False) -> bool:
+        now = self._now()
+        now_epoch = int(_parse_now(now).timestamp())
+        # Keep the five-second fast path read-only. The write transaction
+        # compares this exact marker again so an overlapping worker wins once.
+        with contextlib.closing(self.connect(read_only=True)) as connection:
+            prune_due, observed_marker = self._automatic_prune_state(
+                connection,
+                now_epoch,
+            )
+            if not prune_due:
+                return False
+        return (
+            self._prune(
+                now=now,
+                checkpoint=checkpoint,
+                only_if_due=True,
+                write_status=False,
+                expected_prune_marker=observed_marker,
+            )
+            is not None
+        )
 
     def status_snapshot(self) -> Mapping[str, Any]:
         with contextlib.closing(self.connect(read_only=True)) as connection:
@@ -2081,7 +2171,11 @@ class EventStore:
             counters = {
                 row["name"]: row["value"]
                 for row in connection.execute(
-                    "SELECT name, value FROM service_counters ORDER BY name"
+                    """
+                    SELECT name, value FROM service_counters
+                    WHERE name != ? ORDER BY name
+                    """,
+                    (MAINTENANCE_LAST_PRUNE_EPOCH,),
                 )
             }
             ring_publisher = _ring_producer_status(self.paths)
@@ -2335,7 +2429,7 @@ def ingest_once(
             except StateError:
                 cleanup_pending = True
             result = result.incremented(outcome, cleanup_pending)
-        store.prune(checkpoint=False)
+        store.prune_if_due(checkpoint=False)
         store.write_status_best_effort()
         return result
     finally:

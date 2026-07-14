@@ -9,7 +9,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
-| [home-events-bus](home-events-bus.md) | Durable local event bus: normalize Ring and presence, then add August |
+| [home-events-bus](home-events-bus.md) | Deployed shadow bus: presence and Nest active; Ring and August rollout pending |
 | [cabin-starlink-presence-enrollment](cabin-starlink-presence-enrollment.md) | Safely attribute, verify, shadow-soak, and activate exact Cabin Starlink phone bindings |
 
 ## Archive
