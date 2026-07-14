@@ -80,11 +80,13 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             else "adapter"
             if event_type.startswith("source.")
             else "lock",
+            "nest": "camera",
         }[source]
         time_precision = {
             "ring": "source",
             "presence": "evaluation",
             "august": "observed_interval",
+            "nest": "source",
         }
         payload = {
             "schema_version": 1,
@@ -92,7 +94,11 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             "event_type": event_type,
             "site": site,
             "entity_kind": entity_kind,
-            "entity_alias": "front_door" if source != "presence" else site,
+            "entity_alias": "kitchen"
+            if source == "nest"
+            else "front_door"
+            if source != "presence"
+            else site,
             "occurred_at": occurred_at or observed_at,
             "observed_at": observed_at,
             "time_precision": precision or time_precision[source],
@@ -100,9 +106,9 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             if attributes is not None
             else (
                 {"classification": "person"}
-                if event_type == "entry.person_detected"
+                if event_type in {"entry.person_detected", "camera.person_detected"}
                 else {"classification": "motion"}
-                if event_type == "entry.motion_detected"
+                if event_type in {"entry.motion_detected", "camera.motion_detected"}
                 else {}
             ),
         }
@@ -195,6 +201,32 @@ class HomeEventCorrelatorTests(unittest.TestCase):
 
     def test_generic_ring_motion_is_stored_but_not_actionable(self) -> None:
         self.enqueue("ring", "entry.motion_detected")
+        self.ingest()
+
+        result = self.run_correlator()
+
+        self.assertEqual(result["acknowledged"], 1)
+        self.assertEqual(self.rows("SELECT * FROM incidents"), [])
+        self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
+
+    def test_nest_person_joins_ring_site_activity_incident(self) -> None:
+        self.enqueue("ring", "entry.person_detected", sequence="ring")
+        self.enqueue("nest", "camera.person_detected", sequence="nest")
+        self.ingest()
+
+        result = self.run_correlator()
+
+        self.assertEqual(result["acknowledged"], 2)
+        self.assertEqual(result["shadow_decisions"], 1)
+        incidents = self.rows("SELECT * FROM incidents")
+        self.assertEqual(len(incidents), 1)
+        self.assertEqual(
+            len(self.rows("SELECT * FROM incident_events WHERE incident_id = 1")),
+            2,
+        )
+
+    def test_nest_motion_is_journaled_but_not_actionable(self) -> None:
+        self.enqueue("nest", "camera.motion_detected")
         self.ingest()
 
         result = self.run_correlator()

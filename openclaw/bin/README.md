@@ -59,17 +59,19 @@ active post-deploy checks.
 | `nest` | CLI wrapper for Google Nest SDM API + Open-Meteo weather. Handles OAuth token refresh, protected exact-resource still/video capture, thermostat status, history recording, and dashboard management. |
 | `nest-camera-snap.py` | Captures a JPEG frame or bounded H.264 MP4 from a Nest camera via WebRTC (SDM API). Uses `aiortc`, pins the working H.264 profile, and patches Nest's non-standard ICE candidates. |
 | `nest-camera-image` | Creates exact-resource, owner-only, short-lived Nest request stills or 1-30 second videos for native OpenClaw delivery; validates JPEG/MP4 structure and exposes token-scoped cleanup without arbitrary paths. |
+| `nest-activity-reviewer.py` | Presence-gated Cabin reviewer. Captures a temporary live frame, retains only privacy-safe analysis diagnostics, and sends qualifying text through explicit `imsg rpc` bridge transport with a validated receipt and one-attempt-per-hour limit. |
 
 ### Home Events
 
 | Script | Description |
 |--------|-------------|
-| `home_event_bus.py` | Durable shadow-only household event journal: strict source validation, HMAC-minimized atomic spools, single-writer SQLite ingestion, retention, safe status, and bounded read queries. |
+| `home_event_bus.py` | Durable shadow-only Ring, presence, August, and Nest household event journal: strict source validation, HMAC-minimized atomic spools, single-writer SQLite ingestion, retention, safe status, and bounded read queries. |
 | `home-eventctl` | Operator-only wrapper for `init`, `check-config`, producer `enqueue`, `ingest-once`, `status`, and `prune`; producers send strict JSON on stdin. |
 | `home-events` | Fixed-root, read-only JSON CLI exposed to the OpenClaw `home-events` skill for status, recent activity, incidents, and explanations. |
 | `home-event-correlator.py` | Persistent shadow-only correlator that claims durable consumer rows, applies fail-closed canonical presence context, groups site incidents, and records rate-limited shadow decisions without delivery or camera work. |
-| `home-event-service-wrapper.sh` | LaunchAgent boundary for ingestion, correlation, and August polling; sanitizes the environment and writes one bounded owner-only operational log. |
+| `home-event-service-wrapper.sh` | LaunchAgent boundary for ingestion, correlation, August polling, and Nest bridging; sanitizes the environment and writes one bounded owner-only operational log. |
 | `august-event-adapter.py` | Disabled-by-default read-only August transition poller. Uses the exact protected MBP observe binding, baselines silently, and publishes through `home-eventctl` without a mutation path. |
+| `nest-home-event-bridge.py` | Disabled-by-default downstream reader of committed Nest listener rows. The first enabled run silently baselines prior rows; later person/motion records publish only normalized aliases, sites, times, and classifications, never media or model text. |
 
 See [`../HOME-EVENTS.md`](../HOME-EVENTS.md) for the protected runtime,
 producer contracts, shadow rollout, and rollback procedure. The subsystem does
@@ -124,3 +126,4 @@ qmd mcp                                       # start MCP server for AI agents
 | Script | Description |
 |--------|-------------|
 | `mysa-status.py` | Queries Mysa baseboard heater API for device status (temp, setpoint, mode). Outputs JSON. Uses Cognito auth cached at `~/.config/mysotherm`; an optional cached `Mysa` vault credential renews expired sessions automatically, or run `mysa --login` interactively. |
+| `presence-cabin-enroll` | Operator-only, attended Starlink enrollment and shadow-verification helper. It attributes one phone at a time without printing names, IDs, MACs, IPs, or raw rows; stages protected bindings separately; and refuses production activation until reconnect, idle-profile, multi-scenario, and real-cadence gates pass. It never writes canonical presence state or invokes vacancy, camera, messaging, or home-event paths. |

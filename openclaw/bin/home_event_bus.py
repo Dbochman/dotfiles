@@ -27,12 +27,12 @@ import sys
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STATUS_SCHEMA_VERSION = 1
 EVENT_SCHEMA_VERSION = 1
 SERVICE_NAME = "home-events"
 DEFAULT_ROOT = Path("~/.openclaw/home-events").expanduser()
-SOURCES = ("ring", "presence", "august")
+SOURCES = ("ring", "presence", "august", "nest")
 SITES = ("cabin", "crosstown")
 MAX_STDIN_BYTES = 64 * 1024
 MAX_SPOOL_BYTES = 32 * 1024
@@ -96,6 +96,10 @@ EVENT_RULES: Mapping[str, Mapping[str, Tuple[str, ...]]] = {
         "source.unavailable": ("failure_count", "reason_code"),
         "source.recovered": ("outage_seconds",),
     },
+    "nest": {
+        "camera.person_detected": ("classification",),
+        "camera.motion_detected": ("classification",),
+    },
 }
 
 EVENT_REQUIRED_ATTRIBUTES: Mapping[str, Mapping[str, frozenset[str]]] = {
@@ -111,6 +115,10 @@ EVENT_REQUIRED_ATTRIBUTES: Mapping[str, Mapping[str, frozenset[str]]] = {
     "august": {
         event_type: frozenset(attributes)
         for event_type, attributes in EVENT_RULES["august"].items()
+    },
+    "nest": {
+        event_type: frozenset(attributes)
+        for event_type, attributes in EVENT_RULES["nest"].items()
     },
 }
 
@@ -134,11 +142,16 @@ EVENT_ENTITY_KIND: Mapping[str, Mapping[str, str]] = {
         "source.unavailable": "adapter",
         "source.recovered": "adapter",
     },
+    "nest": {
+        "camera.person_detected": "camera",
+        "camera.motion_detected": "camera",
+    },
 }
 
 SAFE_DEVICE_ALIASES: Mapping[str, frozenset[str]] = {
     "ring": frozenset({"front_door"}),
     "august": frozenset({"front_door"}),
+    "nest": frozenset({"kitchen", "living_room", "living_room_wired"}),
 }
 SAFE_PERSON_ALIASES = frozenset({"dylan", "julia"})
 
@@ -146,12 +159,14 @@ ENTITY_KINDS: Mapping[str, Tuple[str, ...]] = {
     "ring": ("doorbell",),
     "presence": ("site", "person"),
     "august": ("lock", "door", "battery", "adapter"),
+    "nest": ("camera",),
 }
 
 TIME_PRECISIONS: Mapping[str, Tuple[str, ...]] = {
     "ring": ("source", "backfill"),
     "presence": ("evaluation",),
     "august": ("observed_interval",),
+    "nest": ("source",),
 }
 
 INPUT_REQUIRED_FIELDS = frozenset(
@@ -585,6 +600,21 @@ def _validate_event_contract(
             or attributes["battery_percent"] < 25
         ):
             raise PayloadError("battery_transition_mismatch")
+
+    if source == "nest":
+        expected_classification = {
+            "camera.person_detected": "person",
+            "camera.motion_detected": "motion",
+        }[event_type]
+        if attributes.get("classification") != expected_classification:
+            raise PayloadError("classification_mismatch")
+        expected_site = {
+            "kitchen": "cabin",
+            "living_room": "crosstown",
+            "living_room_wired": "crosstown",
+        }[entity_alias]
+        if site != expected_site:
+            raise PayloadError("unbound_entity_site")
 
 
 def _opaque_hmac(secret: bytes, namespace: str, value: str) -> str:
@@ -1033,7 +1063,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 CREATE TABLE IF NOT EXISTS producer_inbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     receipt_uid TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august')),
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest')),
     event_uid TEXT,
     received_at TEXT NOT NULL,
     outcome TEXT NOT NULL CHECK(outcome IN ('accepted', 'duplicate', 'dead_letter')),
@@ -1044,7 +1074,7 @@ CREATE TABLE IF NOT EXISTS events (
     producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox(id),
     event_uid TEXT NOT NULL UNIQUE,
     dedupe_key TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august')),
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest')),
     event_type TEXT NOT NULL,
     site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
     entity_kind TEXT NOT NULL,
@@ -1056,7 +1086,7 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS producer_state (
-    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august')),
+    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august', 'nest')),
     last_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
     last_observed_at TEXT,
     last_ingested_at TEXT,
@@ -1267,6 +1297,67 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
 }
 
 
+MIGRATION_V2_TABLE_SQL = (
+    """
+    CREATE TABLE producer_inbox_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        receipt_uid TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest')),
+        event_uid TEXT,
+        received_at TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('accepted', 'duplicate', 'dead_letter')),
+        error_code TEXT
+    )
+    """,
+    """
+    CREATE TABLE events_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox_v2(id),
+        event_uid TEXT NOT NULL UNIQUE,
+        dedupe_key TEXT NOT NULL UNIQUE,
+        source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest')),
+        event_type TEXT NOT NULL,
+        site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+        entity_kind TEXT NOT NULL,
+        entity_alias TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        time_precision TEXT NOT NULL,
+        attributes_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE producer_state_v2 (
+        source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august', 'nest')),
+        last_event_id INTEGER REFERENCES events_v2(id) ON DELETE SET NULL,
+        last_observed_at TEXT,
+        last_ingested_at TEXT,
+        accepted_count INTEGER NOT NULL DEFAULT 0,
+        duplicate_count INTEGER NOT NULL DEFAULT 0,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        health TEXT NOT NULL DEFAULT 'unknown'
+            CHECK(health IN ('unknown', 'ok', 'degraded')),
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_error_code TEXT
+    )
+    """,
+)
+
+MIGRATION_V2_COPY_SQL = (
+    "INSERT INTO producer_inbox_v2 SELECT * FROM producer_inbox",
+    "INSERT INTO events_v2 SELECT * FROM events",
+    "INSERT INTO producer_state_v2 SELECT * FROM producer_state",
+)
+
+MIGRATION_V2_INDEX_SQL = (
+    "CREATE INDEX producer_inbox_received_idx ON producer_inbox(received_at)",
+    "CREATE INDEX events_created_idx ON events(created_at)",
+    "CREATE INDEX events_site_occurred_idx ON events(site, occurred_at DESC)",
+    "CREATE INDEX events_type_occurred_idx ON events(event_type, occurred_at DESC)",
+)
+
+
 class EventStore:
     """SQLite store with one explicit writer boundary and safe read queries."""
 
@@ -1318,6 +1409,8 @@ class EventStore:
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (SCHEMA_VERSION, now),
                 )
+            elif [row["version"] for row in versions] == [1]:
+                self._migrate_v1_to_v2(connection, now)
             elif [row["version"] for row in versions] != [SCHEMA_VERSION]:
                 raise ConfigError("database_schema")
             for source in SOURCES:
@@ -1343,6 +1436,49 @@ class EventStore:
             )
             connection.commit()
         self.check_schema()
+
+    @staticmethod
+    def _migrate_v1_to_v2(connection: sqlite3.Connection, now: str) -> None:
+        """Expand the source allowlist without changing durable event identity.
+
+        SQLite cannot alter a CHECK constraint in place.  Rebuild only the
+        three source-constrained tables, preserve their integer primary keys,
+        then verify every existing foreign key before committing.
+        """
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in MIGRATION_V2_TABLE_SQL:
+                connection.execute(statement)
+            for statement in MIGRATION_V2_COPY_SQL:
+                connection.execute(statement)
+            connection.execute("DROP TABLE producer_state")
+            connection.execute("DROP TABLE events")
+            connection.execute("DROP TABLE producer_inbox")
+            connection.execute(
+                "ALTER TABLE producer_inbox_v2 RENAME TO producer_inbox"
+            )
+            connection.execute("ALTER TABLE events_v2 RENAME TO events")
+            connection.execute(
+                "ALTER TABLE producer_state_v2 RENAME TO producer_state"
+            )
+            for statement in MIGRATION_V2_INDEX_SQL:
+                connection.execute(statement)
+            connection.execute(
+                "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 1",
+                (SCHEMA_VERSION, now),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ConfigError("database_foreign_keys")
 
     def check_schema(self) -> None:
         with contextlib.closing(self.connect(read_only=True)) as connection:

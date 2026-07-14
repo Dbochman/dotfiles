@@ -282,7 +282,11 @@ class ShadowCorrelator:
             connection.execute("BEGIN IMMEDIATE")
             if delivery.get("time_precision") == "backfill":
                 self._increment(connection, "ring_backfill_shadowed")
-            elif event_type in {"entry.doorbell_rang", "entry.person_detected"}:
+            elif event_type in {
+                "entry.doorbell_rang",
+                "entry.person_detected",
+                "camera.person_detected",
+            }:
                 incident = self._ensure_incident(
                     connection,
                     site=site,
@@ -290,8 +294,13 @@ class ShadowCorrelator:
                     summary_code=self._presence_summary(mode, "activity"),
                     event_time=event_time,
                 )
-                self._attach(connection, incident["id"], event_id, "activity")
-            elif event_type == "entry.motion_detected":
+                relation = (
+                    "camera_activity"
+                    if event_type == "camera.person_detected"
+                    else "activity"
+                )
+                self._attach(connection, incident["id"], event_id, relation)
+            elif event_type in {"entry.motion_detected", "camera.motion_detected"}:
                 self._increment(connection, "generic_motion_shadowed")
             elif event_type in {"lock.unlocked", "door.opened"}:
                 incident = self._ensure_incident(

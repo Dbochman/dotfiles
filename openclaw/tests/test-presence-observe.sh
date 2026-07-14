@@ -14,11 +14,29 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$FAKE_BIN"
-printf '%s\n' \
-  'CROSSTOWN_DYLAN_MAC=02:00:00:00:00:11' \
-  'CROSSTOWN_JULIA_MAC=02:00:00:00:00:22' \
-  > "$TEST_ROOT/presence-devices.env"
-chmod 600 "$TEST_ROOT/presence-devices.env"
+cat > "$TEST_ROOT/cabin-presence-devices.json" <<'JSON'
+{
+  "schema_version": 1,
+  "site": "cabin",
+  "people": {
+    "Dylan": {"kind": "starlink_captive_client_id", "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+    "Julia": {"kind": "starlink_captive_client_id", "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  }
+}
+JSON
+cat > "$TEST_ROOT/crosstown-presence-devices.json" <<'JSON'
+{
+  "schema_version": 1,
+  "site": "crosstown",
+  "people": {
+    "Dylan": {"kind": "mac", "value": "02:00:00:00:00:11"},
+    "Julia": {"kind": "mac", "value": "02:00:00:00:00:22"}
+  }
+}
+JSON
+chmod 600 \
+  "$TEST_ROOT/cabin-presence-devices.json" \
+  "$TEST_ROOT/crosstown-presence-devices.json"
 
 cat > "$FAKE_BIN/grpcurl" <<'SH'
 #!/usr/bin/env bash
@@ -26,7 +44,7 @@ if [[ "${FAKE_GRPC_MODE:-valid}" == "malformed" ]]; then
   printf '%s\n' 'not-json'
   exit 0
 fi
-printf '%s\n' '{"wifiGetClients":{"clients":[{"name":"Dylan iPhone","ipAddress":"192.168.1.20","macAddress":"02:00:00:00:00:33"}]}}'
+printf '%s\n' '{"wifiGetClients":{"clients":[{"name":"Untrusted label","ipAddress":"192.168.1.20","macAddress":"02:00:00:00:00:33","captiveClientId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dhcpLeaseFound":true,"dhcpLeaseActive":true,"secondsUntilDhcpLeaseExpires":1200,"noDataIdleS":20}]}}'
 SH
 
 cat > "$FAKE_BIN/ping" <<'SH'
@@ -72,6 +90,9 @@ if observation.get("location") != expected_location:
 actual = observation.get("presence", {}).get("Dylan", {}).get("present")
 if actual is not (expected_dylan == "true"):
     raise SystemExit(f"wrong Dylan presence: {actual!r}")
+for person, details in observation.get("presence", {}).items():
+    if set(details) != {"present"}:
+        raise SystemExit(f"unsanitized {person} presence details: {details!r}")
 PY
 }
 
@@ -85,7 +106,7 @@ run_observe() {
     PRESENCE_PING_BIN="$FAKE_BIN/ping" \
     PRESENCE_ARP_BIN="$FAKE_BIN/arp" \
     PRESENCE_TAILSCALE_BIN="$FAKE_BIN/tailscale" \
-    PRESENCE_CROSSTOWN_DEVICE_CONFIG="$TEST_ROOT/presence-devices.env" \
+    PRESENCE_DEVICE_CONFIG="$TEST_ROOT/$location-presence-devices.json" \
     PRESENCE_CROSSTOWN_SWEEP_HOSTS="" \
     FAKE_TAILSCALE_CALLS="$TAILSCALE_CALLS" \
     /bin/bash "$SCANNER" observe "$location" > "$output" 2> "$TEST_ROOT/$location.err"
@@ -98,26 +119,53 @@ run_observe() {
 run_observe cabin
 run_observe crosstown
 
-# First-rollout compatibility is hostname-only when the private config has not
-# been provisioned; it remains read-only and does not infer identity from IP.
+# The deployment preflight validates only protected bindings and must remain
+# read-only: no scan, state directory, log, or Taildrop side effect.
+VALIDATE_HOME="$TEST_ROOT/home-validate"
+mkdir -p "$VALIDATE_HOME"
+for location in cabin crosstown; do
+  HOME="$VALIDATE_HOME" \
+    PRESENCE_DEVICE_CONFIG="$TEST_ROOT/$location-presence-devices.json" \
+    /bin/bash "$SCANNER" validate-config "$location" \
+    > "$TEST_ROOT/validate-$location.json" \
+    2> "$TEST_ROOT/validate-$location.err"
+  grep -q "{\"ok\":true,\"site\":\"$location\"}" \
+    "$TEST_ROOT/validate-$location.json"
+done
+[[ ! -e "$VALIDATE_HOME/.openclaw" ]]
+[[ ! -e "$TAILSCALE_CALLS" ]]
+if HOME="$VALIDATE_HOME" \
+    PRESENCE_DEVICE_CONFIG="$TEST_ROOT/cabin-presence-devices.json" \
+    /bin/bash "$SCANNER" validate-config crosstown \
+    > "$TEST_ROOT/validate-wrong-site.json" \
+    2> "$TEST_ROOT/validate-wrong-site.err"; then
+  echo "wrong-site presence config unexpectedly validated" >&2
+  exit 1
+fi
+grep -q '"error":"device_config_invalid"' "$TEST_ROOT/validate-wrong-site.json"
+
+# Missing private bindings fail closed instead of falling back to names or IPs.
 NO_CONFIG_HOME="$TEST_ROOT/home-no-config"
 mkdir -p "$NO_CONFIG_HOME"
-HOME="$NO_CONFIG_HOME" \
-  PRESENCE_PING_BIN="$FAKE_BIN/ping" \
-  PRESENCE_ARP_BIN="$FAKE_BIN/arp" \
-  PRESENCE_TAILSCALE_BIN="$FAKE_BIN/tailscale" \
-  PRESENCE_CROSSTOWN_SWEEP_HOSTS="" \
-  FAKE_TAILSCALE_CALLS="$TAILSCALE_CALLS" \
-  /bin/bash "$SCANNER" observe crosstown \
-  > "$TEST_ROOT/no-config.json" 2> "$TEST_ROOT/no-config.err"
-assert_observation "$TEST_ROOT/no-config.json" crosstown true
-grep -q 'hostname-only matching' "$TEST_ROOT/no-config.err"
+if HOME="$NO_CONFIG_HOME" \
+    PRESENCE_PING_BIN="$FAKE_BIN/ping" \
+    PRESENCE_ARP_BIN="$FAKE_BIN/arp" \
+    PRESENCE_TAILSCALE_BIN="$FAKE_BIN/tailscale" \
+    PRESENCE_CROSSTOWN_SWEEP_HOSTS="" \
+    FAKE_TAILSCALE_CALLS="$TAILSCALE_CALLS" \
+    /bin/bash "$SCANNER" observe crosstown \
+    > "$TEST_ROOT/no-config.json" 2> "$TEST_ROOT/no-config.err"; then
+  echo "unconfigured read-only presence scan unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -q '"error":"observation_failed"' "$TEST_ROOT/no-config.json"
+grep -q 'Protected presence device config is unavailable or invalid' "$TEST_ROOT/no-config.err"
 [[ ! -e "$NO_CONFIG_HOME/.openclaw" ]]
 
-ln -s "$TEST_ROOT/presence-devices.env" "$TEST_ROOT/insecure-presence.env"
+ln -s "$TEST_ROOT/crosstown-presence-devices.json" "$TEST_ROOT/insecure-presence.json"
 if HOME="$NO_CONFIG_HOME" \
     PRESENCE_ARP_BIN="$FAKE_BIN/arp" \
-    PRESENCE_CROSSTOWN_DEVICE_CONFIG="$TEST_ROOT/insecure-presence.env" \
+    PRESENCE_DEVICE_CONFIG="$TEST_ROOT/insecure-presence.json" \
     /bin/bash "$SCANNER" observe crosstown \
     > "$TEST_ROOT/insecure-config.json" 2> "$TEST_ROOT/insecure-config.err"; then
   echo "symlinked presence device config unexpectedly succeeded" >&2
@@ -131,13 +179,14 @@ mkdir -p "$MALFORMED_HOME"
 if HOME="$MALFORMED_HOME" \
     PRESENCE_GRPCURL_BIN="$FAKE_BIN/grpcurl" \
     PRESENCE_TAILSCALE_BIN="$FAKE_BIN/tailscale" \
+    PRESENCE_DEVICE_CONFIG="$TEST_ROOT/cabin-presence-devices.json" \
     FAKE_GRPC_MODE=malformed \
     FAKE_TAILSCALE_CALLS="$TAILSCALE_CALLS" \
     /bin/bash "$SCANNER" observe cabin > "$TEST_ROOT/malformed.json" 2> "$TEST_ROOT/malformed.err"; then
   echo "malformed read-only observation unexpectedly succeeded" >&2
   exit 1
 fi
-grep -q '"error":"invalid_observation"' "$TEST_ROOT/malformed.json"
+grep -q '"error":"observation_failed"' "$TEST_ROOT/malformed.json"
 [[ ! -e "$MALFORMED_HOME/.openclaw" ]]
 [[ ! -e "$TAILSCALE_CALLS" ]]
 

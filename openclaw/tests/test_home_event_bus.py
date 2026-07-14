@@ -78,6 +78,27 @@ def august_payload(*, source_event_id: str = "private-transition-id") -> dict:
     }
 
 
+def nest_payload(
+    *,
+    source_event_id: str = "opaque-nest-event",
+    event_type: str = "camera.person_detected",
+    site: str = "cabin",
+    alias: str = "kitchen",
+) -> dict:
+    classification = "person" if event_type == "camera.person_detected" else "motion"
+    return {
+        "source_event_id": source_event_id,
+        "event_type": event_type,
+        "site": site,
+        "entity_kind": "camera",
+        "entity_alias": alias,
+        "occurred_at": "2026-07-12T14:59:55Z",
+        "observed_at": "2026-07-12T14:59:56Z",
+        "time_precision": "source",
+        "attributes": {"classification": classification},
+    }
+
+
 def encode(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
@@ -195,6 +216,122 @@ class RuntimeSecurityTests(HomeEventTestCase):
             status["retention_days"], {"accepted": 30, "dead_letter": 90}
         )
         self.assertGreater(status["database_bytes"], 0)
+
+    def test_v1_source_constraint_migration_preserves_existing_delivery_state(self) -> None:
+        self.enqueue(ring_payload())
+        self.ingest()
+        with self.connection() as connection:
+            before = {
+                "events": connection.execute(
+                    "SELECT id, event_uid, dedupe_key FROM events"
+                ).fetchall(),
+                "deliveries": connection.execute(
+                    "SELECT id, consumer_name, event_id, status FROM consumer_deliveries"
+                ).fetchall(),
+                "ring": connection.execute(
+                    "SELECT accepted_count, last_event_id FROM producer_state WHERE source='ring'"
+                ).fetchone(),
+            }
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+                CREATE TABLE producer_inbox_v1 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_uid TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august')),
+                    event_uid TEXT,
+                    received_at TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('accepted', 'duplicate', 'dead_letter')),
+                    error_code TEXT
+                );
+                CREATE TABLE events_v1 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox_v1(id),
+                    event_uid TEXT NOT NULL UNIQUE,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august')),
+                    event_type TEXT NOT NULL,
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    entity_kind TEXT NOT NULL,
+                    entity_alias TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    time_precision TEXT NOT NULL,
+                    attributes_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE producer_state_v1 (
+                    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august')),
+                    last_event_id INTEGER REFERENCES events_v1(id) ON DELETE SET NULL,
+                    last_observed_at TEXT,
+                    last_ingested_at TEXT,
+                    accepted_count INTEGER NOT NULL DEFAULT 0,
+                    duplicate_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    health TEXT NOT NULL DEFAULT 'unknown'
+                        CHECK(health IN ('unknown', 'ok', 'degraded')),
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_error_code TEXT
+                );
+                INSERT INTO producer_inbox_v1 SELECT * FROM producer_inbox;
+                INSERT INTO events_v1 SELECT * FROM events;
+                INSERT INTO producer_state_v1
+                    SELECT * FROM producer_state WHERE source != 'nest';
+                DROP TABLE producer_state;
+                DROP TABLE events;
+                DROP TABLE producer_inbox;
+                ALTER TABLE producer_inbox_v1 RENAME TO producer_inbox;
+                ALTER TABLE events_v1 RENAME TO events;
+                ALTER TABLE producer_state_v1 RENAME TO producer_state;
+                CREATE INDEX producer_inbox_received_idx ON producer_inbox(received_at);
+                CREATE INDEX events_created_idx ON events(created_at);
+                CREATE INDEX events_site_occurred_idx ON events(site, occurred_at DESC);
+                CREATE INDEX events_type_occurred_idx ON events(event_type, occurred_at DESC);
+                UPDATE schema_migrations SET version = 1;
+                COMMIT;
+                """
+            )
+            connection.execute("PRAGMA foreign_keys = ON")
+            for table in ("producer_inbox", "events", "producer_state"):
+                schema = connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()[0]
+                self.assertIn("'august'", schema)
+                self.assertNotIn("'nest'", schema)
+
+        self.store.initialize()
+
+        with self.connection() as connection:
+            self.assertEqual(
+                connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
+                2,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT id, event_uid, dedupe_key FROM events"
+                ).fetchall(),
+                before["events"],
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT id, consumer_name, event_id, status FROM consumer_deliveries"
+                ).fetchall(),
+                before["deliveries"],
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT accepted_count, last_event_id FROM producer_state WHERE source='ring'"
+                ).fetchone(),
+                before["ring"],
+            )
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT source FROM producer_state WHERE source='nest'"
+                ).fetchone()
+            )
 
     def test_ring_worker_health_projection_is_bounded_and_explicit(self) -> None:
         self.paths.ring_producer_status.write_text(
@@ -395,6 +532,24 @@ class EnqueueValidationTests(HomeEventTestCase):
         payload["attributes"]["state_hash"] = "private-state-value"
         with self.assertRaisesRegex(home_events.PayloadError, "invalid_state_hash"):
             self.enqueue(payload, source="presence")
+
+    def test_nest_contract_accepts_only_bound_camera_metadata(self) -> None:
+        event = self.enqueue(nest_payload(), source="nest")
+        self.assertEqual(event.event_type, "camera.person_detected")
+        self.assertEqual(event.entity_alias, "kitchen")
+
+        wrong_site = nest_payload(source_event_id="wrong-site", site="crosstown")
+        with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_site"):
+            self.enqueue(wrong_site, source="nest")
+
+        wrong_classification = nest_payload(source_event_id="wrong-classification")
+        wrong_classification["attributes"]["classification"] = "motion"
+        with self.assertRaisesRegex(home_events.PayloadError, "classification_mismatch"):
+            self.enqueue(wrong_classification, source="nest")
+
+        unknown_alias = nest_payload(source_event_id="unknown-alias", alias="garage")
+        with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_alias"):
+            self.enqueue(unknown_alias, source="nest")
 
 
 class IngestDurabilityTests(HomeEventTestCase):

@@ -1,0 +1,1898 @@
+#!/usr/bin/env python3
+"""Attended, privacy-safe enrollment for Cabin Starlink presence bindings.
+
+The helper reads Starlink's local ``wifiGetClients`` response but never emits
+or logs provider names, client IDs, MAC addresses, IP addresses, or raw rows.
+It keeps only the two selected captive-client IDs in an owner-only session and
+uses session-keyed fingerprints for the pre-identification baseline.
+
+This is an operator tool.  It never writes canonical presence state, invokes
+vacancy automation, publishes a home event, captures an image, or sends a
+message.  The production binding file is a separate, explicitly confirmed
+activation boundary after a read-only shadow soak.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import contextlib
+import datetime as dt
+import fcntl
+import hashlib
+import hmac
+import json
+import math
+import os
+import re
+import select
+import secrets
+import stat
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Iterator, Mapping, Sequence
+
+
+SCHEMA_VERSION = 1
+PEOPLE = ("Dylan", "Julia")
+CYCLES = (1, 2)
+IDLE_MINUTES = (5, 10, 20)
+SHADOW_SCENARIOS: Mapping[str, Mapping[str, bool]] = {
+    "both-present": {"Dylan": True, "Julia": True},
+    "dylan-only": {"Dylan": True, "Julia": False},
+    "julia-only": {"Dylan": False, "Julia": True},
+    "both-away": {"Dylan": False, "Julia": False},
+    "return-both": {"Dylan": True, "Julia": True},
+}
+REQUIRED_SHADOW_SCENARIOS = frozenset(SHADOW_SCENARIOS)
+
+GRPCURL = Path("/opt/homebrew/bin/grpcurl")
+LAUNCHCTL = Path("/bin/launchctl")
+STARLINK_ENDPOINT = "192.168.1.1:9000"
+STARLINK_METHOD = "SpaceX.API.Device.Device/Handle"
+STARLINK_REQUEST = '{"wifiGetClients":{}}'
+
+MAX_GRPC_BYTES = 4 * 1024 * 1024
+MAX_SESSION_BYTES = 1024 * 1024
+MAX_SAMPLES = 256
+QUERY_TIMEOUT_SECONDS = 12
+IDENTIFY_SAMPLE_COUNT = 3
+IDENTIFY_SAMPLE_DELAY_SECONDS = 1.0
+IDENTIFY_FRESH_SECONDS = 60
+RESET_DELTA_SECONDS = 30
+CURRENT_IDLE_THRESHOLD_SECONDS = 300
+MINIMUM_DISCONNECT_SECONDS = 5
+IDLE_CHECK_EARLY_TOLERANCE_SECONDS = 15
+IDLE_CHECK_LATE_TOLERANCE_SECONDS = 120
+MINIMUM_SHADOW_SECONDS = 60 * 60
+MINIMUM_SHADOW_SAMPLES = 8
+MINIMUM_CADENCE_GAP_SECONDS = 14 * 60
+MAXIMUM_CADENCE_GAP_SECONDS = 16 * 60
+MINIMUM_CADENCE_INTERVALS = 3
+MUTATION_JOB_LABELS = (
+    "com.openclaw.presence-cabin",
+    "com.openclaw.presence-receive",
+    "com.openclaw.vacancy-actions",
+    "ai.openclaw.nest-activity-reviewer",
+)
+
+ID_RE = re.compile(r"^[0-9a-f]{64}$")
+SESSION_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
+LABEL_RE = re.compile(r"^candidate-[0-9a-f]{12}$")
+
+
+class EnrollmentError(RuntimeError):
+    """A bounded error whose code is safe for stdout/stderr."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    """Reject invalid arguments without echoing attacker-controlled values."""
+
+    def error(self, _message: str) -> None:
+        raise EnrollmentError("arguments_invalid")
+
+
+@dataclass(frozen=True)
+class Settings:
+    home: Path
+    grpcurl: Path = GRPCURL
+    endpoint: str = STARLINK_ENDPOINT
+    timeout_seconds: int = QUERY_TIMEOUT_SECONDS
+    max_grpc_bytes: int = MAX_GRPC_BYTES
+
+    @property
+    def openclaw_dir(self) -> Path:
+        return self.home / ".openclaw"
+
+    @property
+    def session_dir(self) -> Path:
+        return self.openclaw_dir / "presence-enrollment"
+
+    @property
+    def session_file(self) -> Path:
+        return self.session_dir / "session.json"
+
+    @property
+    def lock_file(self) -> Path:
+        return self.session_dir / "session.lock"
+
+    @property
+    def staged_config(self) -> Path:
+        return self.session_dir / "candidate-config.json"
+
+    @property
+    def safe_report(self) -> Path:
+        return self.session_dir / "safe-shadow-report.json"
+
+    @property
+    def production_config(self) -> Path:
+        return self.openclaw_dir / "presence-devices.json"
+
+
+@dataclass(frozen=True)
+class Evidence:
+    complete: bool
+    lease_found: bool | None
+    lease_active: bool | None
+    lease_seconds: float | None
+    idle_seconds: int | None
+
+    @property
+    def lease_valid(self) -> bool:
+        return bool(
+            self.complete
+            and self.lease_found is True
+            and self.lease_active is True
+            and self.lease_seconds is not None
+            and self.lease_seconds > 0
+        )
+
+    @property
+    def strict_present(self) -> bool:
+        return bool(
+            self.lease_valid
+            and self.idle_seconds is not None
+            and self.idle_seconds <= CURRENT_IDLE_THRESHOLD_SECONDS
+        )
+
+    @property
+    def identify_fresh(self) -> bool:
+        return bool(
+            self.lease_valid
+            and self.idle_seconds is not None
+            and self.idle_seconds <= IDENTIFY_FRESH_SECONDS
+        )
+
+    def private_json(self) -> dict[str, Any]:
+        return {
+            "complete": self.complete,
+            "lease_found": self.lease_found,
+            "lease_active": self.lease_active,
+            "lease_seconds": self.lease_seconds,
+            "idle_seconds": self.idle_seconds,
+        }
+
+    def safe_json(self) -> dict[str, Any]:
+        return {
+            "lease_state": (
+                "valid"
+                if self.lease_valid
+                else "invalid"
+                if self.complete
+                else "incomplete"
+            ),
+            "idle_bucket": _idle_bucket(self.idle_seconds),
+            "current_rule_present": self.strict_present if self.complete else None,
+        }
+
+    @classmethod
+    def from_private_json(cls, value: Any) -> "Evidence":
+        if not isinstance(value, dict) or set(value) != {
+            "complete",
+            "lease_found",
+            "lease_active",
+            "lease_seconds",
+            "idle_seconds",
+        }:
+            raise EnrollmentError("session_invalid")
+        complete = value["complete"]
+        lease_found = value["lease_found"]
+        lease_active = value["lease_active"]
+        lease_seconds = value["lease_seconds"]
+        idle_seconds = value["idle_seconds"]
+        if type(complete) is not bool:
+            raise EnrollmentError("session_invalid")
+        if lease_found is not None and type(lease_found) is not bool:
+            raise EnrollmentError("session_invalid")
+        if lease_active is not None and type(lease_active) is not bool:
+            raise EnrollmentError("session_invalid")
+        if lease_seconds is not None and (
+            isinstance(lease_seconds, bool)
+            or not isinstance(lease_seconds, (int, float))
+            or not math.isfinite(float(lease_seconds))
+        ):
+            raise EnrollmentError("session_invalid")
+        if idle_seconds is not None and (
+            type(idle_seconds) is not int or idle_seconds < 0
+        ):
+            raise EnrollmentError("session_invalid")
+        if complete:
+            if (
+                type(lease_found) is not bool
+                or type(lease_active) is not bool
+                or lease_seconds is None
+                or idle_seconds is None
+            ):
+                raise EnrollmentError("session_invalid")
+        elif any(
+            field is not None
+            for field in (lease_found, lease_active, lease_seconds, idle_seconds)
+        ):
+            raise EnrollmentError("session_invalid")
+        return cls(
+            complete=complete,
+            lease_found=lease_found,
+            lease_active=lease_active,
+            lease_seconds=float(lease_seconds) if lease_seconds is not None else None,
+            idle_seconds=idle_seconds,
+        )
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    clients: Mapping[str, Evidence]
+    total_clients: int
+    missing_ids: int
+    malformed_ids: int
+
+    def safe_counts(self) -> dict[str, int]:
+        return {
+            "total_clients": self.total_clients,
+            "eligible_ids": len(self.clients),
+            "missing_ids": self.missing_ids,
+            "malformed_ids": self.malformed_ids,
+            "complete_liveness": sum(e.complete for e in self.clients.values()),
+            "current_rule_present": sum(
+                e.strict_present for e in self.clients.values()
+            ),
+        }
+
+
+def _utc_iso(epoch: float | None = None) -> str:
+    moment = dt.datetime.fromtimestamp(
+        time.time() if epoch is None else epoch, tz=dt.timezone.utc
+    )
+    return moment.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _idle_bucket(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    if value <= 30:
+        return "fresh_0_30s"
+    if value <= 300:
+        return "recent_31_300s"
+    if value <= 900:
+        return "idle_5_15m"
+    if value <= 1800:
+        return "idle_15_30m"
+    return "idle_30m_plus"
+
+
+def _private_metadata(path: Path, *, directory: bool, code: str) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise EnrollmentError(code) from exc
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if path.is_symlink() or not expected(metadata.st_mode):
+        raise EnrollmentError(code)
+    expected_mode = 0o700 if directory else 0o600
+    if (
+        metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) != expected_mode
+        or (not directory and metadata.st_nlink != 1)
+    ):
+        raise EnrollmentError(code)
+    return metadata
+
+
+def _require_private_openclaw(settings: Settings) -> None:
+    if not settings.home.is_absolute():
+        raise EnrollmentError("home_invalid")
+    _private_metadata(
+        settings.openclaw_dir, directory=True, code="openclaw_permissions_invalid"
+    )
+
+
+def _ensure_session_dir(settings: Settings, *, create: bool) -> None:
+    _require_private_openclaw(settings)
+    if create and not settings.session_dir.exists():
+        try:
+            settings.session_dir.mkdir(mode=0o700)
+        except OSError as exc:
+            raise EnrollmentError("session_directory_unavailable") from exc
+    _private_metadata(
+        settings.session_dir, directory=True, code="session_permissions_invalid"
+    )
+
+
+def _bounded_read(path: Path) -> bytes:
+    metadata = _private_metadata(path, directory=False, code="session_permissions_invalid")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise EnrollmentError("session_unavailable") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+        ):
+            raise EnrollmentError("session_permissions_invalid")
+        if opened.st_size > MAX_SESSION_BYTES:
+            raise EnrollmentError("session_oversized")
+        payload = bytearray()
+        while True:
+            chunk = os.read(descriptor, min(8192, MAX_SESSION_BYTES + 1 - len(payload)))
+            if not chunk:
+                break
+            payload.extend(chunk)
+            if len(payload) > MAX_SESSION_BYTES:
+                raise EnrollmentError("session_oversized")
+        return bytes(payload)
+    finally:
+        os.close(descriptor)
+
+
+def _read_private_json(path: Path) -> Any:
+    try:
+        return json.loads(_bounded_read(path).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EnrollmentError("session_invalid") from exc
+
+
+def _encoded_json(value: Mapping[str, Any]) -> bytes:
+    payload = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode(
+        "utf-8"
+    )
+    if len(payload) > MAX_SESSION_BYTES:
+        raise EnrollmentError("session_oversized")
+    return payload
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("short write")
+        view = view[written:]
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_replace_json(path: Path, value: Mapping[str, Any]) -> None:
+    if path.exists() or path.is_symlink():
+        _private_metadata(path, directory=False, code="session_permissions_invalid")
+    payload = _encoded_json(value)
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(temporary, flags, 0o600)
+        try:
+            _write_all(descriptor, payload)
+            os.fchmod(descriptor, 0o600)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+        os.chmod(path, 0o600, follow_symlinks=False)
+        _fsync_directory(path.parent)
+    except OSError as exc:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
+        raise EnrollmentError("session_write_failed") from exc
+
+
+def _atomic_create_json(path: Path, value: Mapping[str, Any], *, code: str) -> None:
+    """Create ``path`` without replacing anything already at that name."""
+
+    if path.exists() or path.is_symlink():
+        raise EnrollmentError(code)
+    payload = _encoded_json(value)
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    linked_identity: tuple[int, int] | None = None
+    target_linked = False
+    try:
+        descriptor = os.open(temporary, flags, 0o600)
+        try:
+            _write_all(descriptor, payload)
+            os.fchmod(descriptor, 0o600)
+            os.fsync(descriptor)
+            metadata = os.fstat(descriptor)
+            linked_identity = (metadata.st_dev, metadata.st_ino)
+        finally:
+            os.close(descriptor)
+        os.link(temporary, path, follow_symlinks=False)
+        target_linked = True
+        temporary.unlink()
+        _private_metadata(path, directory=False, code=code)
+        _fsync_directory(path.parent)
+    except (EnrollmentError, OSError) as exc:
+        rollback_failed = False
+        if target_linked and linked_identity is not None:
+            try:
+                target = path.lstat()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                rollback_failed = True
+            else:
+                if (
+                    not path.is_symlink()
+                    and stat.S_ISREG(target.st_mode)
+                    and (target.st_dev, target.st_ino) == linked_identity
+                ):
+                    try:
+                        path.unlink()
+                    except OSError:
+                        rollback_failed = True
+                else:
+                    rollback_failed = True
+        with contextlib.suppress(OSError):
+            temporary.unlink()
+        with contextlib.suppress(OSError):
+            _fsync_directory(path.parent)
+        if rollback_failed:
+            raise EnrollmentError(f"{code}_rollback_failed") from exc
+        if isinstance(exc, EnrollmentError):
+            raise
+        raise EnrollmentError(code) from exc
+
+
+@contextlib.contextmanager
+def _session_lock(settings: Settings, *, create: bool) -> Iterator[None]:
+    _ensure_session_dir(settings, create=create)
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        flags |= os.O_CREAT
+    try:
+        descriptor = os.open(settings.lock_file, flags, 0o600)
+    except OSError as exc:
+        raise EnrollmentError("session_lock_unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+        ):
+            raise EnrollmentError("session_lock_invalid")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _evidence_from_client(client: Mapping[str, Any]) -> Evidence:
+    lease_found = client.get("dhcpLeaseFound")
+    lease_active = client.get("dhcpLeaseActive")
+    lease_seconds = client.get("secondsUntilDhcpLeaseExpires")
+    idle_seconds = client.get("noDataIdleS")
+    complete = bool(
+        type(lease_found) is bool
+        and type(lease_active) is bool
+        and not isinstance(lease_seconds, bool)
+        and isinstance(lease_seconds, (int, float))
+        and math.isfinite(float(lease_seconds))
+        and type(idle_seconds) is int
+        and idle_seconds >= 0
+    )
+    if not complete:
+        return Evidence(False, None, None, None, None)
+    return Evidence(
+        True,
+        lease_found,
+        lease_active,
+        float(lease_seconds),
+        idle_seconds,
+    )
+
+
+def parse_starlink_payload(payload: Any) -> Snapshot:
+    if not isinstance(payload, dict):
+        raise EnrollmentError("starlink_schema_invalid")
+    wifi = payload.get("wifiGetClients")
+    if not isinstance(wifi, dict) or not isinstance(wifi.get("clients"), list):
+        raise EnrollmentError("starlink_schema_invalid")
+    rows = wifi["clients"]
+    clients: dict[str, Evidence] = {}
+    missing_ids = 0
+    malformed_ids = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            malformed_ids += 1
+            continue
+        raw_id = row.get("captiveClientId")
+        if raw_id is None or raw_id == "":
+            missing_ids += 1
+            continue
+        if not isinstance(raw_id, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", raw_id):
+            malformed_ids += 1
+            continue
+        normalized = raw_id.lower()
+        if normalized in clients:
+            raise EnrollmentError("starlink_duplicate_id")
+        clients[normalized] = _evidence_from_client(row)
+    return Snapshot(
+        clients=clients,
+        total_clients=len(rows),
+        missing_ids=missing_ids,
+        malformed_ids=malformed_ids,
+    )
+
+
+def query_starlink(settings: Settings) -> Snapshot:
+    if not settings.grpcurl.is_file() or not os.access(settings.grpcurl, os.X_OK):
+        raise EnrollmentError("grpcurl_unavailable")
+    deadline = time.monotonic() + settings.timeout_seconds
+    try:
+        process = subprocess.Popen(
+            [
+                str(settings.grpcurl),
+                "-plaintext",
+                "-d",
+                STARLINK_REQUEST,
+                settings.endpoint,
+                STARLINK_METHOD,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"HOME": str(settings.home), "PATH": "/usr/bin:/bin"},
+        )
+    except OSError as exc:
+        raise EnrollmentError("starlink_unavailable") from exc
+
+    response = bytearray()
+    try:
+        if process.stdout is None:
+            raise EnrollmentError("starlink_unavailable")
+        descriptor = process.stdout.fileno()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise EnrollmentError("starlink_unavailable")
+            try:
+                readable, _, _ = select.select([descriptor], [], [], remaining)
+            except OSError as exc:
+                raise EnrollmentError("starlink_unavailable") from exc
+            if not readable:
+                raise EnrollmentError("starlink_unavailable")
+            try:
+                chunk = os.read(
+                    descriptor,
+                    min(65536, settings.max_grpc_bytes + 1 - len(response)),
+                )
+            except OSError as exc:
+                raise EnrollmentError("starlink_unavailable") from exc
+            if not chunk:
+                break
+            response.extend(chunk)
+            if len(response) > settings.max_grpc_bytes:
+                raise EnrollmentError("starlink_response_oversized")
+        try:
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as exc:
+            raise EnrollmentError("starlink_unavailable") from exc
+        if returncode != 0:
+            raise EnrollmentError("starlink_unavailable")
+    except EnrollmentError:
+        with contextlib.suppress(OSError):
+            process.kill()
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            process.wait(timeout=1)
+        raise
+    finally:
+        if process.stdout is not None:
+            process.stdout.close()
+
+    try:
+        payload = json.loads(bytes(response).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EnrollmentError("starlink_schema_invalid") from exc
+    return parse_starlink_payload(payload)
+
+
+def mutation_jobs_stopped() -> bool:
+    """Return whether the activation-sensitive LaunchAgents are unloaded."""
+
+    if not LAUNCHCTL.is_file() or not os.access(LAUNCHCTL, os.X_OK):
+        raise EnrollmentError("launchctl_unavailable")
+
+    def print_status(target: str) -> int:
+        try:
+            completed = subprocess.run(
+                [str(LAUNCHCTL), "print", target],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5,
+                env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise EnrollmentError("launchctl_check_failed") from exc
+        return completed.returncode
+
+    domain = f"gui/{os.getuid()}"
+    if print_status(domain) != 0:
+        raise EnrollmentError("launchctl_domain_unavailable")
+    for label in MUTATION_JOB_LABELS:
+        status = print_status(f"{domain}/{label}")
+        if status == 0:
+            return False
+        if status != 113:
+            raise EnrollmentError("launchctl_check_failed")
+    return True
+
+
+def _new_person_state() -> dict[str, Any]:
+    return {
+        "baseline": None,
+        "selected_id": None,
+        "selected_label": None,
+        "identified_at": None,
+        "identify_method": None,
+        "reconnect": {
+            "1": {"off": None, "on": None, "proven": False},
+            "2": {"off": None, "on": None, "proven": False},
+        },
+        "idle": {"start": None, "checks": {}},
+    }
+
+
+def _new_session(now: float) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "created_at": _utc_iso(now),
+        "created_epoch": now,
+        "updated_at": _utc_iso(now),
+        "session_key": secrets.token_hex(32),
+        "people": {person: _new_person_state() for person in PEOPLE},
+        "shadow_samples": [],
+        "activated_at": None,
+    }
+
+
+def _assert_record(value: Any) -> Mapping[str, Any]:
+    if not isinstance(value, dict):
+        raise EnrollmentError("session_invalid")
+    return value
+
+
+def _validate_timestamp(value: Any, *, allow_none: bool = False) -> None:
+    if value is None and allow_none:
+        return
+    if not isinstance(value, str) or len(value) > 32 or not value.endswith("Z"):
+        raise EnrollmentError("session_invalid")
+    try:
+        parsed = dt.datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise EnrollmentError("session_invalid") from exc
+    if parsed.tzinfo is None:
+        raise EnrollmentError("session_invalid")
+
+
+def _validate_epoch(value: Any) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) < 0
+    ):
+        raise EnrollmentError("session_invalid")
+
+
+def _validate_observation(
+    value: Any, *, allow_none: bool = True
+) -> Evidence | None:
+    if value is None and allow_none:
+        return None
+    record = _assert_record(value)
+    if set(record) != {"captured_at", "captured_epoch", "seen", "evidence"}:
+        raise EnrollmentError("session_invalid")
+    _validate_timestamp(record["captured_at"])
+    _validate_epoch(record["captured_epoch"])
+    if type(record["seen"]) is not bool:
+        raise EnrollmentError("session_invalid")
+    if record["seen"] is True:
+        return Evidence.from_private_json(record["evidence"])
+    elif record["evidence"] is not None:
+        raise EnrollmentError("session_invalid")
+    return None
+
+
+def _observation_proves_off(value: Mapping[str, Any]) -> bool:
+    if value.get("seen") is not True:
+        return True
+    evidence = Evidence.from_private_json(value.get("evidence"))
+    return bool(evidence.complete and not evidence.lease_valid)
+
+
+def _validate_safe_evidence(value: Any) -> None:
+    record = _assert_record(value)
+    if set(record) != {"lease_state", "idle_bucket", "current_rule_present"}:
+        raise EnrollmentError("session_invalid")
+    if record["lease_state"] not in {"valid", "invalid", "incomplete", "missing"}:
+        raise EnrollmentError("session_invalid")
+    if record["idle_bucket"] not in {
+        "unknown",
+        "fresh_0_30s",
+        "recent_31_300s",
+        "idle_5_15m",
+        "idle_15_30m",
+        "idle_30m_plus",
+    }:
+        raise EnrollmentError("session_invalid")
+    if record["current_rule_present"] is not None and type(
+        record["current_rule_present"]
+    ) is not bool:
+        raise EnrollmentError("session_invalid")
+
+
+def _validate_shadow_sample(value: Any) -> None:
+    sample = _assert_record(value)
+    if set(sample) != {
+        "captured_at",
+        "captured_epoch",
+        "scenario",
+        "expected",
+        "observed",
+        "liveness_complete",
+        "evidence",
+        "matches",
+    }:
+        raise EnrollmentError("session_invalid")
+    _validate_timestamp(sample["captured_at"])
+    _validate_epoch(sample["captured_epoch"])
+    scenario = sample["scenario"]
+    if scenario not in SHADOW_SCENARIOS:
+        raise EnrollmentError("session_invalid")
+    for key in ("expected", "observed", "liveness_complete", "evidence"):
+        record = _assert_record(sample[key])
+        if set(record) != set(PEOPLE):
+            raise EnrollmentError("session_invalid")
+    if sample["expected"] != dict(SHADOW_SCENARIOS[scenario]):
+        raise EnrollmentError("session_invalid")
+    for person in PEOPLE:
+        if type(sample["observed"][person]) is not bool or type(
+            sample["liveness_complete"][person]
+        ) is not bool:
+            raise EnrollmentError("session_invalid")
+        _validate_safe_evidence(sample["evidence"][person])
+        safe = sample["evidence"][person]
+        lease_state = safe["lease_state"]
+        complete = lease_state in {"valid", "invalid"}
+        if sample["liveness_complete"][person] is not complete:
+            raise EnrollmentError("session_invalid")
+        current = safe["current_rule_present"]
+        if lease_state == "incomplete" and current is not None:
+            raise EnrollmentError("session_invalid")
+        if lease_state in {"invalid", "missing"} and current is not False:
+            raise EnrollmentError("session_invalid")
+        if lease_state in {"incomplete", "missing"} and safe["idle_bucket"] != "unknown":
+            raise EnrollmentError("session_invalid")
+        if lease_state == "valid" and current is not (
+            safe["idle_bucket"] in {"fresh_0_30s", "recent_31_300s"}
+        ):
+            raise EnrollmentError("session_invalid")
+        if sample["observed"][person] is not (current is True):
+            raise EnrollmentError("session_invalid")
+    if type(sample["matches"]) is not bool:
+        raise EnrollmentError("session_invalid")
+    derived_match = all(
+        (
+            sample["observed"][person] is True
+            and sample["liveness_complete"][person] is True
+        )
+        if sample["expected"][person]
+        else (
+            sample["observed"][person] is False
+            and sample["evidence"][person]["lease_state"] != "incomplete"
+        )
+        for person in PEOPLE
+    )
+    if sample["matches"] is not derived_match:
+        raise EnrollmentError("session_invalid")
+
+
+def _validate_session(session: Any) -> dict[str, Any]:
+    if (
+        not isinstance(session, dict)
+        or set(session)
+        != {
+            "schema_version",
+            "created_at",
+            "created_epoch",
+            "updated_at",
+            "session_key",
+            "people",
+            "shadow_samples",
+            "activated_at",
+        }
+        or session.get("schema_version") != SCHEMA_VERSION
+    ):
+        raise EnrollmentError("session_invalid")
+    _validate_timestamp(session["created_at"])
+    _validate_epoch(session["created_epoch"])
+    _validate_timestamp(session["updated_at"])
+    _validate_timestamp(session["activated_at"], allow_none=True)
+    key = session.get("session_key")
+    if not isinstance(key, str) or not SESSION_KEY_RE.fullmatch(key):
+        raise EnrollmentError("session_invalid")
+    people = session.get("people")
+    if not isinstance(people, dict) or set(people) != set(PEOPLE):
+        raise EnrollmentError("session_invalid")
+    selected: list[str] = []
+    for person in PEOPLE:
+        state = _assert_record(people[person])
+        if set(state) != {
+            "baseline",
+            "selected_id",
+            "selected_label",
+            "identified_at",
+            "identify_method",
+            "reconnect",
+            "idle",
+        }:
+            raise EnrollmentError("session_invalid")
+        selected_id = state.get("selected_id")
+        label = state.get("selected_label")
+        if selected_id is not None:
+            if not isinstance(selected_id, str) or not ID_RE.fullmatch(selected_id):
+                raise EnrollmentError("session_invalid")
+            if not isinstance(label, str) or not LABEL_RE.fullmatch(label):
+                raise EnrollmentError("session_invalid")
+            if label != _label(session, selected_id):
+                raise EnrollmentError("session_invalid")
+            selected.append(selected_id)
+        elif label is not None:
+            raise EnrollmentError("session_invalid")
+        _validate_timestamp(state.get("identified_at"), allow_none=True)
+        if state.get("identify_method") not in {None, "new", "idle_reset"}:
+            raise EnrollmentError("session_invalid")
+        if selected_id is None and (
+            state.get("identified_at") is not None
+            or state.get("identify_method") is not None
+        ):
+            raise EnrollmentError("session_invalid")
+        baseline = state.get("baseline")
+        if baseline is not None:
+            baseline_record = _assert_record(baseline)
+            if set(baseline_record) != {
+                "captured_at",
+                "captured_epoch",
+                "fingerprints",
+                "sample_count",
+                "safe_counts",
+            }:
+                raise EnrollmentError("session_invalid")
+            _validate_timestamp(baseline_record["captured_at"])
+            _validate_epoch(baseline_record["captured_epoch"])
+            if (
+                type(baseline_record["sample_count"]) is not int
+                or baseline_record["sample_count"] != IDENTIFY_SAMPLE_COUNT
+            ):
+                raise EnrollmentError("session_invalid")
+            safe_counts = _assert_record(baseline_record["safe_counts"])
+            if set(safe_counts) != {
+                "total_clients",
+                "eligible_ids",
+                "missing_ids",
+                "malformed_ids",
+                "complete_liveness",
+                "current_rule_present",
+            } or any(type(count) is not int or count < 0 for count in safe_counts.values()):
+                raise EnrollmentError("session_invalid")
+            fingerprints = baseline_record.get("fingerprints")
+            if not isinstance(fingerprints, dict):
+                raise EnrollmentError("session_invalid")
+            for fingerprint, evidence in fingerprints.items():
+                if not isinstance(fingerprint, str) or not FINGERPRINT_RE.fullmatch(
+                    fingerprint
+                ):
+                    raise EnrollmentError("session_invalid")
+                Evidence.from_private_json(evidence)
+        reconnect = state.get("reconnect")
+        if not isinstance(reconnect, dict) or set(reconnect) != {"1", "2"}:
+            raise EnrollmentError("session_invalid")
+        reconnect_records: dict[str, Mapping[str, Any]] = {}
+        for cycle in ("1", "2"):
+            cycle_record = _assert_record(reconnect[cycle])
+            if set(cycle_record) != {"off", "on", "proven"} or type(
+                cycle_record["proven"]
+            ) is not bool:
+                raise EnrollmentError("session_invalid")
+            off_evidence = _validate_observation(cycle_record["off"])
+            on_evidence = _validate_observation(cycle_record["on"])
+            if cycle_record["on"] is not None and cycle_record["off"] is None:
+                raise EnrollmentError("session_invalid")
+            off_proven = bool(
+                cycle_record["off"] is not None
+                and _observation_proves_off(cycle_record["off"])
+            )
+            on_proven = bool(
+                on_evidence is not None
+                and on_evidence.identify_fresh
+                and cycle_record["on"]["captured_epoch"]
+                - cycle_record["off"]["captured_epoch"]
+                >= MINIMUM_DISCONNECT_SECONDS
+            ) if cycle_record["on"] is not None and cycle_record["off"] is not None else False
+            if cycle_record["proven"] is not (off_proven and on_proven):
+                raise EnrollmentError("session_invalid")
+            reconnect_records[cycle] = cycle_record
+        if (
+            reconnect_records["2"]["off"] is not None
+            and reconnect_records["1"]["proven"] is not True
+        ):
+            raise EnrollmentError("session_invalid")
+        idle = state.get("idle")
+        if not isinstance(idle, dict) or not isinstance(idle.get("checks"), dict):
+            raise EnrollmentError("session_invalid")
+        if set(idle) not in ({"start", "checks"}, {"start", "start_epoch", "checks"}):
+            raise EnrollmentError("session_invalid")
+        idle_start_evidence = _validate_observation(idle.get("start"))
+        if idle.get("start") is not None:
+            if "start_epoch" not in idle:
+                raise EnrollmentError("session_invalid")
+            _validate_epoch(idle["start_epoch"])
+            if (
+                idle_start_evidence is None
+                or not idle_start_evidence.identify_fresh
+                or reconnect_records["1"]["proven"] is not True
+                or reconnect_records["2"]["proven"] is not True
+            ):
+                raise EnrollmentError("session_invalid")
+        elif "start_epoch" in idle:
+            raise EnrollmentError("session_invalid")
+        checkpoint_keys = set(idle["checks"])
+        allowed_prefixes = [
+            {str(value) for value in IDLE_MINUTES[:count]}
+            for count in range(len(IDLE_MINUTES) + 1)
+        ]
+        if checkpoint_keys not in allowed_prefixes:
+            raise EnrollmentError("session_invalid")
+        previous_epoch = float(idle.get("start_epoch", 0))
+        for minutes in IDLE_MINUTES:
+            observation = idle["checks"].get(str(minutes))
+            if observation is None:
+                break
+            _validate_observation(observation, allow_none=False)
+            captured_epoch = float(observation["captured_epoch"])
+            elapsed = captured_epoch - float(idle["start_epoch"])
+            if (
+                elapsed < minutes * 60 - IDLE_CHECK_EARLY_TOLERANCE_SECONDS
+                or elapsed > minutes * 60 + IDLE_CHECK_LATE_TOLERANCE_SECONDS
+                or captured_epoch <= previous_epoch
+            ):
+                raise EnrollmentError("session_invalid")
+            previous_epoch = captured_epoch
+        if selected_id is None and (
+            any(
+                record["off"] is not None or record["on"] is not None
+                for record in reconnect_records.values()
+            )
+            or idle.get("start") is not None
+            or idle["checks"]
+        ):
+            raise EnrollmentError("session_invalid")
+    if len(selected) != len(set(selected)):
+        raise EnrollmentError("session_duplicate_binding")
+    shadow = session.get("shadow_samples")
+    if not isinstance(shadow, list) or len(shadow) > MAX_SAMPLES:
+        raise EnrollmentError("session_invalid")
+    previous_sample: Mapping[str, Any] | None = None
+    for sample in shadow:
+        _validate_shadow_sample(sample)
+        if previous_sample is not None and float(sample["captured_epoch"]) <= float(
+            previous_sample["captured_epoch"]
+        ):
+            raise EnrollmentError("session_invalid")
+        if sample["scenario"] == "return-both" and (
+            previous_sample is None
+            or previous_sample["scenario"] != "both-away"
+            or previous_sample["matches"] is not True
+        ):
+            raise EnrollmentError("session_invalid")
+        previous_sample = sample
+    return session
+
+
+def _fingerprint(session: Mapping[str, Any], raw_id: str) -> str:
+    key = bytes.fromhex(str(session["session_key"]))
+    return hmac.new(key, raw_id.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def _label(session: Mapping[str, Any], raw_id: str) -> str:
+    return f"candidate-{_fingerprint(session, raw_id)[:12]}"
+
+
+def _private_observation(
+    snapshot: Snapshot, raw_id: str, captured_at: float
+) -> dict[str, Any]:
+    evidence = snapshot.clients.get(raw_id)
+    return {
+        "captured_at": _utc_iso(captured_at),
+        "captured_epoch": captured_at,
+        "seen": evidence is not None,
+        "evidence": evidence.private_json() if evidence is not None else None,
+    }
+
+
+def _safe_observation(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    seen = value.get("seen") is True
+    evidence_value = value.get("evidence")
+    evidence = Evidence.from_private_json(evidence_value) if seen else None
+    return {
+        "captured_at": value.get("captured_at"),
+        "seen": seen,
+        "evidence": evidence.safe_json() if evidence is not None else None,
+    }
+
+
+def _config_payload(session: Mapping[str, Any]) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for person in PEOPLE:
+        raw_id = session["people"][person].get("selected_id")
+        if not isinstance(raw_id, str) or not ID_RE.fullmatch(raw_id):
+            raise EnrollmentError("enrollment_incomplete")
+        values[person] = {"kind": "starlink_captive_client_id", "value": raw_id}
+    if values["Dylan"]["value"] == values["Julia"]["value"]:
+        raise EnrollmentError("session_duplicate_binding")
+    return {"schema_version": 1, "site": "cabin", "people": values}
+
+
+def _config_matches_session(path: Path, session: Mapping[str, Any]) -> bool:
+    try:
+        return _read_private_json(path) == _config_payload(session)
+    except EnrollmentError:
+        return False
+
+
+def _candidate_method(previous: Evidence | None, current: Evidence) -> str | None:
+    if not current.identify_fresh:
+        return None
+    if previous is None:
+        return "new"
+    if (
+        not previous.lease_valid
+        or previous.idle_seconds is None
+        or current.idle_seconds is None
+        or previous.idle_seconds - current.idle_seconds >= RESET_DELTA_SECONDS
+    ):
+        return "idle_reset"
+    return None
+
+
+class EnrollmentApp:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        snapshot_provider: Callable[[], Snapshot] | None = None,
+        mutation_jobs_stopped_provider: Callable[[], bool] = mutation_jobs_stopped,
+        clock: Callable[[], float] = time.time,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.settings = settings
+        self.snapshot_provider = snapshot_provider or (lambda: query_starlink(settings))
+        self.mutation_jobs_stopped_provider = mutation_jobs_stopped_provider
+        self.clock = clock
+        self.sleeper = sleeper
+
+    def _require_jobs_stopped(self) -> None:
+        if not self.mutation_jobs_stopped_provider():
+            raise EnrollmentError("mutation_jobs_still_loaded")
+
+    @staticmethod
+    def _require_enrollment_mutable(session: Mapping[str, Any]) -> None:
+        if session.get("activated_at") is not None:
+            raise EnrollmentError("activation_already_started")
+
+    def _load(self) -> dict[str, Any]:
+        if not self.settings.session_file.exists():
+            raise EnrollmentError("session_not_started")
+        return _validate_session(_read_private_json(self.settings.session_file))
+
+    def _save(self, session: dict[str, Any]) -> None:
+        session["updated_at"] = _utc_iso(self.clock())
+        _validate_session(session)
+        _atomic_replace_json(self.settings.session_file, session)
+
+    def _repeated_snapshots(self) -> list[Snapshot]:
+        snapshots: list[Snapshot] = []
+        for index in range(IDENTIFY_SAMPLE_COUNT):
+            snapshots.append(self.snapshot_provider())
+            if index + 1 < IDENTIFY_SAMPLE_COUNT:
+                self.sleeper(IDENTIFY_SAMPLE_DELAY_SECONDS)
+        return snapshots
+
+    def preflight(self) -> dict[str, Any]:
+        _require_private_openclaw(self.settings)
+        snapshot = self.snapshot_provider()
+        return {
+            "ok": True,
+            "command": "preflight",
+            "starlink": snapshot.safe_counts(),
+            "production_config_exists": self.settings.production_config.exists(),
+            "next_action": "start_attended_session",
+        }
+
+    def start(self) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        now = self.clock()
+        with _session_lock(self.settings, create=True):
+            if self.settings.session_file.exists() or self.settings.session_file.is_symlink():
+                raise EnrollmentError("session_already_exists")
+            if self.settings.staged_config.exists() or self.settings.staged_config.is_symlink():
+                raise EnrollmentError("staged_config_already_exists")
+            session = _new_session(now)
+            _atomic_create_json(
+                self.settings.session_file, session, code="session_create_failed"
+            )
+        return {
+            "ok": True,
+            "command": "start",
+            "session": "created",
+            "next_action": "baseline_dylan_with_target_wifi_off",
+        }
+
+    def baseline(self, person: str) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            if state["selected_id"] is not None:
+                raise EnrollmentError("person_already_identified")
+            snapshots = self._repeated_snapshots()
+            fingerprints: dict[str, Any] = {}
+            for snapshot in snapshots:
+                for raw_id, evidence in snapshot.clients.items():
+                    fingerprints[_fingerprint(session, raw_id)] = evidence.private_json()
+            now = self.clock()
+            state["baseline"] = {
+                "captured_at": _utc_iso(now),
+                "captured_epoch": now,
+                "fingerprints": fingerprints,
+                "sample_count": len(snapshots),
+                "safe_counts": snapshots[-1].safe_counts(),
+            }
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "baseline",
+            "person": person,
+            "samples": len(snapshots),
+            "eligible_fingerprints": len(fingerprints),
+            "next_action": f"connect_{person.lower()}_and_generate_traffic",
+        }
+
+    def identify(self, person: str) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            if state["selected_id"] is not None:
+                raise EnrollmentError("person_already_identified")
+            baseline = state.get("baseline")
+            if not isinstance(baseline, dict):
+                raise EnrollmentError("baseline_required")
+            baseline_values = baseline.get("fingerprints")
+            if not isinstance(baseline_values, dict):
+                raise EnrollmentError("session_invalid")
+            baseline_evidence = {
+                fingerprint: Evidence.from_private_json(value)
+                for fingerprint, value in baseline_values.items()
+            }
+            snapshots = self._repeated_snapshots()
+            candidates_per_sample: list[dict[str, str]] = []
+            for snapshot in snapshots:
+                candidates: dict[str, str] = {}
+                for raw_id, current in snapshot.clients.items():
+                    fingerprint = _fingerprint(session, raw_id)
+                    method = _candidate_method(
+                        baseline_evidence.get(fingerprint), current
+                    )
+                    if method is not None:
+                        candidates[fingerprint] = method
+                candidates_per_sample.append(candidates)
+            common = set(candidates_per_sample[0])
+            for candidates in candidates_per_sample[1:]:
+                common.intersection_update(candidates)
+            if not common:
+                raise EnrollmentError("identity_not_isolated")
+            if len(common) != 1:
+                raise EnrollmentError("identity_ambiguous")
+            fingerprint = next(iter(common))
+            final_ids = {
+                _fingerprint(session, raw_id): raw_id
+                for raw_id in snapshots[-1].clients
+            }
+            raw_id = final_ids.get(fingerprint)
+            if raw_id is None:
+                raise EnrollmentError("identity_not_isolated")
+            for other in PEOPLE:
+                if other != person and session["people"][other]["selected_id"] == raw_id:
+                    raise EnrollmentError("session_duplicate_binding")
+            method = candidates_per_sample[-1][fingerprint]
+            now = self.clock()
+            state["selected_id"] = raw_id
+            state["selected_label"] = _label(session, raw_id)
+            state["identified_at"] = _utc_iso(now)
+            state["identify_method"] = method
+            self._save(session)
+            label = state["selected_label"]
+        return {
+            "ok": True,
+            "command": "identify",
+            "person": person,
+            "candidate": label,
+            "method": method,
+            "stable_samples": len(snapshots),
+            "next_action": f"disconnect_{person.lower()}_cycle_1",
+        }
+
+    def disconnect(self, person: str, cycle: int) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            raw_id = state.get("selected_id")
+            if not isinstance(raw_id, str):
+                raise EnrollmentError("identify_required")
+            cycle_state = state["reconnect"][str(cycle)]
+            if cycle_state.get("on") is not None:
+                raise EnrollmentError("reconnect_cycle_already_complete")
+            if cycle == 2 and state["reconnect"]["1"].get("proven") is not True:
+                raise EnrollmentError("reconnect_cycle_1_required")
+            snapshot = self.snapshot_provider()
+            now = self.clock()
+            observation = _private_observation(snapshot, raw_id, now)
+            if not _observation_proves_off(observation):
+                raise EnrollmentError("disconnect_not_observed")
+            cycle_state["off"] = observation
+            cycle_state["proven"] = False
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "disconnect",
+            "person": person,
+            "cycle": cycle,
+            "observation": _safe_observation(observation),
+            "next_action": f"reconnect_{person.lower()}_cycle_{cycle}_and_generate_traffic",
+        }
+
+    def reconnect(self, person: str, cycle: int) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            raw_id = state.get("selected_id")
+            if not isinstance(raw_id, str):
+                raise EnrollmentError("identify_required")
+            cycle_state = state["reconnect"][str(cycle)]
+            off = cycle_state.get("off")
+            if not isinstance(off, dict):
+                raise EnrollmentError("disconnect_sample_required")
+            if not _observation_proves_off(off):
+                raise EnrollmentError("disconnect_not_observed")
+            if self.clock() - float(off["captured_epoch"]) < MINIMUM_DISCONNECT_SECONDS:
+                raise EnrollmentError("disconnect_interval_too_short")
+            snapshots = self._repeated_snapshots()
+            baseline = _assert_record(state.get("baseline"))
+            baseline_fingerprints = baseline.get("fingerprints")
+            if not isinstance(baseline_fingerprints, dict):
+                raise EnrollmentError("session_invalid")
+            baseline_evidence = {
+                fingerprint: Evidence.from_private_json(value)
+                for fingerprint, value in baseline_fingerprints.items()
+            }
+            evidence_values: list[Evidence] = []
+            for snapshot in snapshots:
+                evidence = snapshot.clients.get(raw_id)
+                if evidence is None:
+                    raise EnrollmentError("identity_changed_or_missing")
+                if not evidence.identify_fresh:
+                    raise EnrollmentError("reconnect_not_fresh")
+                if any(
+                    other_id != raw_id
+                    and _candidate_method(
+                        baseline_evidence.get(_fingerprint(session, other_id)),
+                        other_evidence,
+                    )
+                    is not None
+                    for other_id, other_evidence in snapshot.clients.items()
+                ):
+                    raise EnrollmentError("unexpected_fresh_identity")
+                evidence_values.append(evidence)
+            now = self.clock()
+            observation = _private_observation(snapshots[-1], raw_id, now)
+            cycle_state["on"] = observation
+            cycle_state["proven"] = True
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "reconnect",
+            "person": person,
+            "cycle": cycle,
+            "same_identity": True,
+            "observable_off_and_same_id_proven": True,
+            "observation": _safe_observation(observation),
+            "next_action": (
+                f"disconnect_{person.lower()}_cycle_2"
+                if cycle == 1
+                else f"start_{person.lower()}_idle_profile"
+            ),
+        }
+
+    def idle_start(self, person: str) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            raw_id = state.get("selected_id")
+            if not isinstance(raw_id, str):
+                raise EnrollmentError("identify_required")
+            if any(
+                state["reconnect"][str(cycle)].get("proven") is not True
+                for cycle in CYCLES
+            ):
+                raise EnrollmentError("reconnect_proof_required")
+            snapshot = self.snapshot_provider()
+            evidence = snapshot.clients.get(raw_id)
+            if evidence is None or not evidence.identify_fresh:
+                raise EnrollmentError("idle_start_not_fresh")
+            now = self.clock()
+            observation = _private_observation(snapshot, raw_id, now)
+            state["idle"] = {
+                "start": observation,
+                "start_epoch": now,
+                "checks": {},
+            }
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "idle-start",
+            "person": person,
+            "observation": _safe_observation(observation),
+            "next_action": f"lock_{person.lower()}_phone_then_idle_check_5m",
+        }
+
+    def idle_check(self, person: str, minutes: int) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            raw_id = state.get("selected_id")
+            if not isinstance(raw_id, str):
+                raise EnrollmentError("identify_required")
+            idle = state.get("idle")
+            if not isinstance(idle, dict) or not isinstance(
+                idle.get("start_epoch"), (int, float)
+            ):
+                raise EnrollmentError("idle_start_required")
+            expected_index = len(idle["checks"])
+            if expected_index >= len(IDLE_MINUTES) or IDLE_MINUTES[expected_index] != minutes:
+                raise EnrollmentError("idle_checkpoint_out_of_order")
+            now = self.clock()
+            elapsed = now - float(idle["start_epoch"])
+            if elapsed < minutes * 60 - IDLE_CHECK_EARLY_TOLERANCE_SECONDS:
+                raise EnrollmentError("idle_checkpoint_too_early")
+            if elapsed > minutes * 60 + IDLE_CHECK_LATE_TOLERANCE_SECONDS:
+                raise EnrollmentError("idle_checkpoint_too_late")
+            snapshot = self.snapshot_provider()
+            observation = _private_observation(snapshot, raw_id, now)
+            idle["checks"][str(minutes)] = observation
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "idle-check",
+            "person": person,
+            "minutes": minutes,
+            "observation": _safe_observation(observation),
+            "next_action": (
+                f"idle_check_{IDLE_MINUTES[IDLE_MINUTES.index(minutes) + 1]}m"
+                if minutes != IDLE_MINUTES[-1]
+                else f"review_{person.lower()}_idle_profile"
+            ),
+        }
+
+    def _person_status(self, session: Mapping[str, Any], person: str) -> dict[str, Any]:
+        state = session["people"][person]
+        reconnect = state["reconnect"]
+        idle = state["idle"]
+        checks = idle.get("checks", {}) if isinstance(idle, dict) else {}
+        reconnect_proven = [
+            int(cycle) for cycle in ("1", "2") if reconnect[cycle].get("proven") is True
+        ]
+        idle_complete = True
+        idle_profile: dict[str, Any] = {}
+        for minutes in IDLE_MINUTES:
+            observation = checks.get(str(minutes))
+            safe = _safe_observation(observation) if isinstance(observation, dict) else None
+            idle_profile[f"{minutes}m"] = safe
+            if (
+                safe is None
+                or not safe["seen"]
+                or safe["evidence"]["current_rule_present"] is not True
+            ):
+                idle_complete = False
+        ready = bool(
+            state.get("baseline") is not None
+            and state.get("selected_id") is not None
+            and reconnect_proven == [1, 2]
+            and idle.get("start") is not None
+            and idle_complete
+        )
+        return {
+            "baseline": state.get("baseline") is not None,
+            "identified": state.get("selected_id") is not None,
+            "candidate": state.get("selected_label"),
+            "identify_method": state.get("identify_method"),
+            "reconnect_cycles_proven": reconnect_proven,
+            "idle_profile": idle_profile,
+            "ready": ready,
+        }
+
+    def _status_from_session(self, session: Mapping[str, Any]) -> dict[str, Any]:
+        people = {person: self._person_status(session, person) for person in PEOPLE}
+        distinct = bool(
+            session["people"]["Dylan"].get("selected_id")
+            and session["people"]["Julia"].get("selected_id")
+            and session["people"]["Dylan"]["selected_id"]
+            != session["people"]["Julia"]["selected_id"]
+        )
+        enrollment_ready = bool(distinct and all(value["ready"] for value in people.values()))
+        activation_prepared = session.get("activated_at") is not None
+        activated = bool(
+            activation_prepared
+            and _config_matches_session(self.settings.production_config, session)
+        )
+        return {
+            "people": people,
+            "distinct_bindings": distinct,
+            "enrollment_ready": enrollment_ready,
+            "candidate_config_staged": self.settings.staged_config.exists(),
+            "production_config_exists": self.settings.production_config.exists(),
+            "activation_prepared": activation_prepared,
+            "activated": activated,
+        }
+
+    def status(self) -> dict[str, Any]:
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            status = self._status_from_session(session)
+        return {"ok": True, "command": "status", **status}
+
+    def seal_candidate(self) -> dict[str, Any]:
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            status = self._status_from_session(session)
+            if not status["enrollment_ready"]:
+                raise EnrollmentError("enrollment_incomplete")
+            if (
+                self.settings.production_config.exists()
+                or self.settings.production_config.is_symlink()
+            ):
+                raise EnrollmentError("production_config_already_exists")
+            _atomic_create_json(
+                self.settings.staged_config,
+                _config_payload(session),
+                code="staged_config_create_failed",
+            )
+        return {
+            "ok": True,
+            "command": "seal-candidate",
+            "candidate_config": "staged",
+            "production_config_written": False,
+            "next_action": "begin_read_only_shadow_soak",
+        }
+
+    def shadow_sample(self, scenario: str) -> dict[str, Any]:
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            status = self._status_from_session(session)
+            if not status["enrollment_ready"]:
+                raise EnrollmentError("enrollment_incomplete")
+            if not _config_matches_session(self.settings.staged_config, session):
+                raise EnrollmentError("staged_config_invalid")
+            samples = session["shadow_samples"]
+            if scenario == "return-both" and (
+                not samples
+                or samples[-1]["scenario"] != "both-away"
+                or samples[-1]["matches"] is not True
+            ):
+                raise EnrollmentError("return_requires_matching_both_away")
+            snapshot = self.snapshot_provider()
+            expected = SHADOW_SCENARIOS[scenario]
+            observed: dict[str, bool] = {}
+            liveness_complete: dict[str, bool] = {}
+            evidence_safe: dict[str, Any] = {}
+            for person in PEOPLE:
+                raw_id = session["people"][person]["selected_id"]
+                evidence = snapshot.clients.get(raw_id)
+                observed[person] = bool(evidence and evidence.strict_present)
+                liveness_complete[person] = bool(evidence and evidence.complete)
+                evidence_safe[person] = (
+                    evidence.safe_json()
+                    if evidence is not None
+                    else {
+                        "lease_state": "missing",
+                        "idle_bucket": "unknown",
+                        "current_rule_present": False,
+                    }
+                )
+            matches = all(
+                observed[person] is True and liveness_complete[person] is True
+                if expected[person]
+                else (
+                    observed[person] is False
+                    and evidence_safe[person]["lease_state"] != "incomplete"
+                )
+                for person in PEOPLE
+            )
+            now = self.clock()
+            record = {
+                "captured_at": _utc_iso(now),
+                "captured_epoch": now,
+                "scenario": scenario,
+                "expected": dict(expected),
+                "observed": observed,
+                "liveness_complete": liveness_complete,
+                "evidence": evidence_safe,
+                "matches": matches,
+            }
+            if len(samples) >= MAX_SAMPLES:
+                raise EnrollmentError("shadow_sample_limit")
+            samples.append(record)
+            self._save(session)
+            report = self._shadow_report_data(session)
+            _atomic_replace_json(self.settings.safe_report, report)
+        return {
+            "ok": True,
+            "command": "shadow-sample",
+            "scenario": scenario,
+            "observed": observed,
+            "evidence": evidence_safe,
+            "matches_ground_truth": matches,
+            "shadow_sample_count": report["sample_count"],
+            "ready_for_activation": report["ready_for_activation"],
+        }
+
+    def _shadow_report_data(self, session: Mapping[str, Any]) -> dict[str, Any]:
+        samples = session["shadow_samples"]
+        timestamps = [float(sample["captured_epoch"]) for sample in samples]
+        span_seconds = max(timestamps) - min(timestamps) if len(timestamps) > 1 else 0.0
+        ordered_timestamps = sorted(timestamps)
+        cadence_intervals = sum(
+            MINIMUM_CADENCE_GAP_SECONDS
+            <= later - earlier
+            <= MAXIMUM_CADENCE_GAP_SECONDS
+            for earlier, later in zip(ordered_timestamps, ordered_timestamps[1:])
+        )
+        scenarios = sorted({str(sample["scenario"]) for sample in samples})
+        return_transition_proven = any(
+            previous["scenario"] == "both-away"
+            and previous["matches"] is True
+            and current["scenario"] == "return-both"
+            and current["matches"] is True
+            for previous, current in zip(samples, samples[1:])
+        )
+        mismatch_count = sum(sample.get("matches") is not True for sample in samples)
+        missing_scenarios = sorted(REQUIRED_SHADOW_SCENARIOS - set(scenarios))
+        enrollment_ready = self._status_from_session(session)["enrollment_ready"]
+        ready = bool(
+            enrollment_ready
+            and len(samples) >= MINIMUM_SHADOW_SAMPLES
+            and span_seconds >= MINIMUM_SHADOW_SECONDS
+            and cadence_intervals >= MINIMUM_CADENCE_INTERVALS
+            and not missing_scenarios
+            and return_transition_proven
+            and mismatch_count == 0
+        )
+        return {
+            "schema_version": 1,
+            "generated_at": _utc_iso(self.clock()),
+            "sample_count": len(samples),
+            "span_hours": round(span_seconds / 3600, 2),
+            "scenarios": scenarios,
+            "missing_scenarios": missing_scenarios,
+            "return_transition_proven": return_transition_proven,
+            "mismatch_count": mismatch_count,
+            "minimum_samples": MINIMUM_SHADOW_SAMPLES,
+            "minimum_span_hours": MINIMUM_SHADOW_SECONDS // 3600,
+            "cadence_intervals": cadence_intervals,
+            "minimum_cadence_intervals": MINIMUM_CADENCE_INTERVALS,
+            "cadence_window_minutes": [
+                MINIMUM_CADENCE_GAP_SECONDS // 60,
+                MAXIMUM_CADENCE_GAP_SECONDS // 60,
+            ],
+            "enrollment_ready": enrollment_ready,
+            "ready_for_activation": ready,
+        }
+
+    def shadow_report(self) -> dict[str, Any]:
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            report = self._shadow_report_data(session)
+        return {"ok": True, "command": "shadow-report", **report}
+
+    def activate(self) -> dict[str, Any]:
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            report = self._shadow_report_data(session)
+            if not report["ready_for_activation"]:
+                raise EnrollmentError("shadow_gate_incomplete")
+            self._require_jobs_stopped()
+            already_active = bool(
+                session.get("activated_at") is not None
+                and _config_matches_session(self.settings.production_config, session)
+            )
+            if not already_active:
+                if not _config_matches_session(self.settings.staged_config, session):
+                    raise EnrollmentError("staged_config_invalid")
+                if (
+                    self.settings.production_config.exists()
+                    or self.settings.production_config.is_symlink()
+                ):
+                    raise EnrollmentError("production_config_already_exists")
+                if session.get("activated_at") is None:
+                    session["activated_at"] = _utc_iso(self.clock())
+                    self._save(session)
+                _atomic_create_json(
+                    self.settings.production_config,
+                    _config_payload(session),
+                    code="production_config_create_failed",
+                )
+            staged_removed = True
+            try:
+                if (
+                    self.settings.staged_config.exists()
+                    or self.settings.staged_config.is_symlink()
+                ):
+                    _private_metadata(
+                        self.settings.staged_config,
+                        directory=False,
+                        code="staged_config_invalid",
+                    )
+                    self.settings.staged_config.unlink()
+                    _fsync_directory(self.settings.session_dir)
+            except (EnrollmentError, OSError):
+                staged_removed = False
+        return {
+            "ok": True,
+            "command": "activate",
+            "production_config_written": True,
+            "already_active": already_active,
+            "staged_config_removed": staged_removed,
+            "mode": "0600",
+            "next_action": "validate_then_deploy_strict_scanner_with_mutations_stopped",
+        }
+
+    def _close_session(self, *, outcome: str) -> dict[str, Any]:
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            if outcome == "aborted" and (
+                session.get("activated_at") is not None
+                or _config_matches_session(self.settings.production_config, session)
+            ):
+                raise EnrollmentError("activation_already_started")
+            if outcome == "completed":
+                if session.get("activated_at") is None or not _config_matches_session(
+                    self.settings.production_config, session
+                ):
+                    raise EnrollmentError("activation_not_complete")
+            report = self._shadow_report_data(session)
+            safe_close = {
+                **report,
+                "session_outcome": outcome,
+                "production_config_preserved": self.settings.production_config.exists(),
+            }
+            for path in (self.settings.staged_config, self.settings.session_file):
+                if path.exists() or path.is_symlink():
+                    _private_metadata(path, directory=False, code="session_permissions_invalid")
+            _atomic_replace_json(self.settings.safe_report, safe_close)
+            for path in (self.settings.staged_config, self.settings.session_file):
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+            _fsync_directory(self.settings.session_dir)
+        return {
+            "ok": True,
+            "command": "cleanup" if outcome == "completed" else "abort",
+            "sensitive_session_removed": True,
+            "safe_report_preserved": True,
+            "production_config_preserved": self.settings.production_config.exists(),
+        }
+
+    def abort(self) -> dict[str, Any]:
+        return self._close_session(outcome="aborted")
+
+    def cleanup(self) -> dict[str, Any]:
+        return self._close_session(outcome="completed")
+
+
+def _person(value: str) -> str:
+    if value not in PEOPLE:
+        raise argparse.ArgumentTypeError("person must be Dylan or Julia")
+    return value
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = SafeArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--attended",
+        action="store_true",
+        help="required with a TTY for commands that change enrollment state",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("preflight")
+    commands.add_parser("start")
+    baseline = commands.add_parser("baseline")
+    baseline.add_argument("person", type=_person)
+    identify = commands.add_parser("identify")
+    identify.add_argument("person", type=_person)
+    disconnect = commands.add_parser("disconnect")
+    disconnect.add_argument("person", type=_person)
+    disconnect.add_argument("--cycle", type=int, choices=CYCLES, required=True)
+    reconnect = commands.add_parser("reconnect")
+    reconnect.add_argument("person", type=_person)
+    reconnect.add_argument("--cycle", type=int, choices=CYCLES, required=True)
+    idle_start = commands.add_parser("idle-start")
+    idle_start.add_argument("person", type=_person)
+    idle_check = commands.add_parser("idle-check")
+    idle_check.add_argument("person", type=_person)
+    idle_check.add_argument("--minutes", type=int, choices=IDLE_MINUTES, required=True)
+    commands.add_parser("status")
+    commands.add_parser("seal-candidate")
+    shadow_sample = commands.add_parser("shadow-sample")
+    shadow_sample.add_argument("--scenario", choices=SHADOW_SCENARIOS, required=True)
+    commands.add_parser("shadow-report")
+    activate = commands.add_parser("activate")
+    activate.add_argument("--confirm-private-address-reviewed", action="store_true")
+    activate.add_argument("--confirm-idle-policy-reviewed", action="store_true")
+    activate.add_argument("--confirm-shadow-soak-passed", action="store_true")
+    activate.add_argument("--confirm-mutation-jobs-stopped", action="store_true")
+    abort = commands.add_parser("abort")
+    abort.add_argument("--confirm-delete-sensitive-session", action="store_true")
+    cleanup = commands.add_parser("cleanup")
+    cleanup.add_argument("--confirm-delete-sensitive-session", action="store_true")
+    return parser
+
+
+MUTATING_COMMANDS = {
+    "start",
+    "baseline",
+    "identify",
+    "disconnect",
+    "reconnect",
+    "idle-start",
+    "idle-check",
+    "seal-candidate",
+    "shadow-sample",
+    "activate",
+    "abort",
+    "cleanup",
+}
+
+
+def _require_attended(args: argparse.Namespace) -> None:
+    if args.command not in MUTATING_COMMANDS:
+        return
+    if not args.attended or not sys.stdin.isatty():
+        raise EnrollmentError("attended_tty_required")
+    if args.command == "activate" and not all(
+        (
+            args.confirm_private_address_reviewed,
+            args.confirm_idle_policy_reviewed,
+            args.confirm_shadow_soak_passed,
+            args.confirm_mutation_jobs_stopped,
+        )
+    ):
+        raise EnrollmentError("activation_confirmation_required")
+    if args.command in {"abort", "cleanup"} and not args.confirm_delete_sensitive_session:
+        raise EnrollmentError("session_delete_confirmation_required")
+
+
+def _dispatch(app: EnrollmentApp, args: argparse.Namespace) -> Mapping[str, Any]:
+    if args.command == "preflight":
+        return app.preflight()
+    if args.command == "start":
+        return app.start()
+    if args.command == "baseline":
+        return app.baseline(args.person)
+    if args.command == "identify":
+        return app.identify(args.person)
+    if args.command == "disconnect":
+        return app.disconnect(args.person, args.cycle)
+    if args.command == "reconnect":
+        return app.reconnect(args.person, args.cycle)
+    if args.command == "idle-start":
+        return app.idle_start(args.person)
+    if args.command == "idle-check":
+        return app.idle_check(args.person, args.minutes)
+    if args.command == "status":
+        return app.status()
+    if args.command == "seal-candidate":
+        return app.seal_candidate()
+    if args.command == "shadow-sample":
+        return app.shadow_sample(args.scenario)
+    if args.command == "shadow-report":
+        return app.shadow_report()
+    if args.command == "activate":
+        return app.activate()
+    if args.command == "abort":
+        return app.abort()
+    if args.command == "cleanup":
+        return app.cleanup()
+    raise EnrollmentError("command_invalid")
+
+
+def _emit(value: Mapping[str, Any], *, stream: Any = sys.stdout) -> None:
+    stream.write(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    os.umask(0o077)
+    try:
+        parser = _build_parser()
+        args = parser.parse_args(argv)
+        settings = Settings(home=Path.home())
+        app = EnrollmentApp(settings)
+        _require_attended(args)
+        result = _dispatch(app, args)
+    except EnrollmentError as exc:
+        _emit({"error": exc.code, "ok": False}, stream=sys.stderr)
+        return 1
+    except Exception:
+        _emit({"error": "internal_error", "ok": False}, stream=sys.stderr)
+        return 1
+    _emit(result)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
