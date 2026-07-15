@@ -71,11 +71,14 @@ test after a ClawBody restart.
 
 OpenClaw owns every voice turn. OpenAI Realtime is only the speech transport:
 it detects speech and transcribes it without automatically responding, ClawBody
-sends the completed transcript to `agent:main:reachy`, and OpenClaw's final text
-is rendered verbatim through the dedicated OpenAI Speech endpoint and Reachy's
-speaker using the `onyx` voice. The same control socket exposes
+sends the completed transcript to `agent:main:reachy`, and sentence-complete chunks
+of OpenClaw's streamed response are rendered verbatim through the dedicated OpenAI
+Speech endpoint and Reachy's speaker using the `onyx` voice. PCM response bytes are
+played as they arrive instead of waiting for the complete audio file. Each Reachy
+`chat.send` sets minimal thinking and fast mode for that turn; other OpenClaw
+sessions retain their normal settings. The same control socket exposes
 `reachyctl speak` for proactive speech from cron or other OpenClaw sessions; the
-direct Reachy voice session must not call it because its final reply is already
+direct Reachy voice session must not call it because its reply is already
 vocalized automatically.
 
 While generated speech is playing, ClawBody suppresses microphone forwarding for
@@ -83,8 +86,10 @@ the PCM clip's measured duration plus a short tail. This prevents Reachy's speak
 from being transcribed as a new user utterance and creating an echo-response loop.
 
 After transcription completes, Reachy holds a visible thinking pose (upward side
-glance, head tilt, and asymmetric antennas) while OpenClaw reasons and while TTS is
-being prepared. The pose releases only when playable response audio is queued.
+glance, head tilt, and asymmetric antennas) while OpenClaw reasons and while the
+first TTS segment is being prepared. The pose releases when the first playable PCM
+chunk reaches the audio queue. Logs record transcription, first OpenClaw text,
+first TTS byte, and first speaker-push latency for each voice turn.
 
 Daemon face tracking is speech-gated. It runs with a strong tracking weight only
 between Realtime's `speech_started` and `speech_stopped` events, then returns to

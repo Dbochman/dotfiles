@@ -92,14 +92,26 @@ tools there. Realtime is a speech transport, not a second agent:
 3. Let OpenClaw load its canonical workspace files and use its normal skills,
    memories, and tools. Add one narrow Dylan-equivalent full-action exception for
    this exact authenticated physical session; retain messaging policy elsewhere.
-4. Render only OpenClaw's final text through the dedicated OpenAI Speech endpoint
-   with PCM output. Do not send the text to a conversational Realtime response:
-   even an out-of-band response can interpret it as a new user turn and add words.
+4. Render only OpenClaw-authored text through the dedicated OpenAI Speech endpoint
+   with PCM output. For lower latency, convert cumulative assistant events to deltas,
+   buffer them to complete sentences, and stream each Speech response's PCM bytes
+   directly to playback. Keep sentence synthesis in a separate worker so OpenClaw
+   can continue streaming while audio is generated. Do not send the text to a
+   conversational Realtime response: even an out-of-band response can interpret it
+   as a new user turn and add words.
 5. Add an owner-only control-socket `speak` command for proactive speech from other
    OpenClaw sessions. Do not call it inside `agent:main:reachy`, whose final response
    is already rendered automatically.
-6. Suppress microphone forwarding for the generated PCM duration plus a short tail;
-   otherwise Reachy's speaker can trigger VAD and feed its own words back to OpenClaw.
+6. Extend microphone suppression as each PCM chunk is queued, including all audio
+   already waiting to play plus a short tail; otherwise Reachy's speaker can trigger
+   VAD and feed its own words back to OpenClaw.
+
+For a low-latency physical session, include `thinking: "minimal"` and `fastMode: true`
+in Reachy's `chat.send` request; unlike `sessions.patch`, these per-turn fields do not
+require the bridge to request `operator.admin`. Do not lower the defaults for messaging
+or other OpenClaw sessions, and do not broaden the robot client's gateway scopes. Use a
+supported low-latency transcription model, specify the input language, and tune
+server-VAD silence conservatively so normal pauses are not clipped.
 
 This leaves one source of truth for personality and memory and prevents Realtime
 from competing with OpenClaw for a turn or altering OpenClaw's final response.
@@ -150,7 +162,7 @@ Require all of the following:
 4. Reachy's app status reports ClawBody `running`.
 5. Daemon logs contain `OpenClaw gateway connected` and report Realtime as speech transport with automatic responses disabled and zero tools.
 6. `.env` remains owned by the Reachy user and mode `0600`.
-7. A direct voice turn appears in the exact OpenClaw session and only OpenClaw's final text is spoken.
+7. A direct voice turn appears in the exact OpenClaw session and only OpenClaw-authored streamed text is spoken.
 8. Face tracking activates on speech, releases after speech, and a built-in dance then moves visibly.
 
 ## References
