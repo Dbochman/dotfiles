@@ -7,7 +7,9 @@ const config = {
   reachySession: "agent:main:reachy",
   statePath: "/tmp/test.json",
   summaryModel: "openai/gpt-5.4-mini",
+  identityPath: "/tmp/IDENTITY.md",
   soulPath: "/tmp/SOUL.md",
+  userPath: "/tmp/USER.md",
 };
 
 describe("session binding", () => {
@@ -25,15 +27,27 @@ describe("session binding", () => {
     ])).toBe("Finished safely.");
   });
 
-  it("builds a stable direct-voice snapshot from SOUL and capsule summaries", () => {
+  it("builds a stable direct-voice snapshot from identity, SOUL, user, and capsule", () => {
     const view = {
       updatedAt: 123,
       entries: [{ id: "1", ts: 123, source: "imessage" as const, summary: "Discussed dinner." }],
       handoffs: [],
     };
-    const first = buildDirectVoiceContext("  Be useful.  ", view);
-    const second = buildDirectVoiceContext("Be useful.", { ...view, updatedAt: 456 });
+    const first = buildDirectVoiceContext(
+      "  My name is Claude.  ",
+      "  Be useful.  ",
+      "  Dylan is the owner.  ",
+      view,
+    );
+    const second = buildDirectVoiceContext(
+      "My name is Claude.",
+      "Be useful.",
+      "Dylan is the owner.",
+      { ...view, updatedAt: 456 },
+    );
+    expect(first.identity).toBe("My name is Claude.");
     expect(first.soul).toBe("Be useful.");
+    expect(first.user).toBe("Dylan is the owner.");
     expect(first.capsule).toContain("Discussed dinner.");
     expect(first.revision).toBe(second.revision);
   });

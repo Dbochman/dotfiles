@@ -2,7 +2,7 @@
   "id": "reachy-continuity",
   "name": "Reachy Continuity",
   "description": "Private, session-bound continuity between one owner iMessage DM and Reachy voice.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "activation": {
     "onStartup": true
   },
@@ -26,7 +26,9 @@
       "reachySession": { "type": "string", "minLength": 1 },
       "statePath": { "type": "string", "minLength": 1 },
       "summaryModel": { "type": "string", "minLength": 1 },
-      "soulPath": { "type": "string", "minLength": 1 }
+      "identityPath": { "type": "string", "minLength": 1 },
+      "soulPath": { "type": "string", "minLength": 1 },
+      "userPath": { "type": "string", "minLength": 1 }
     }
   }
 }

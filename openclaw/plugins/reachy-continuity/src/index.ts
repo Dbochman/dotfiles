@@ -16,7 +16,9 @@ interface PluginConfig {
   reachySession: string;
   statePath: string;
   summaryModel: string;
+  identityPath: string;
   soulPath: string;
+  userPath: string;
 }
 
 interface PendingTurn {
@@ -45,7 +47,9 @@ function readConfig(value: unknown): PluginConfig {
     reachySession: config.reachySession,
     statePath: expandPath(config.statePath ?? "~/.openclaw/reachy-continuity/capsule.json"),
     summaryModel: config.summaryModel ?? "openai/gpt-5.4-mini",
+    identityPath: expandPath(config.identityPath ?? "~/.openclaw/workspace/IDENTITY.md"),
     soulPath: expandPath(config.soulPath ?? "~/.openclaw/workspace/SOUL.md"),
+    userPath: expandPath(config.userPath ?? "~/.openclaw/workspace/USER.md"),
   };
 }
 
@@ -95,18 +99,40 @@ function formatDynamicContext(view: CapsuleView): string {
   ].join("\n");
 }
 
-export function buildDirectVoiceContext(soul: string, view: CapsuleView): {
+export function buildDirectVoiceContext(
+  identity: string,
+  soul: string,
+  user: string,
+  view: CapsuleView,
+): {
   revision: string;
+  identity: string;
   soul: string;
+  user: string;
   capsule: string;
 } {
+  const normalizedIdentity = identity.replaceAll("\0", "").trim();
   const normalizedSoul = soul.replaceAll("\0", "").trim();
+  const normalizedUser = user.replaceAll("\0", "").trim();
+  if (!normalizedIdentity) throw new CapsuleError("IDENTITY.md is empty");
   if (!normalizedSoul) throw new CapsuleError("SOUL.md is empty");
+  if (!normalizedUser) throw new CapsuleError("USER.md is empty");
   const capsule = formatDynamicContext(view);
   const revision = createHash("sha256")
-    .update(JSON.stringify({ soul: normalizedSoul, capsule }))
+    .update(JSON.stringify({
+      identity: normalizedIdentity,
+      soul: normalizedSoul,
+      user: normalizedUser,
+      capsule,
+    }))
     .digest("hex");
-  return { revision, soul: normalizedSoul, capsule };
+  return {
+    revision,
+    identity: normalizedIdentity,
+    soul: normalizedSoul,
+    user: normalizedUser,
+    capsule,
+  };
 }
 
 function staticPolicy(source: ContinuitySource): string {
@@ -216,11 +242,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.registerGatewayMethod("reachy.continuity.context", async ({ respond }) => {
       try {
-        const [soul, view] = await Promise.all([
+        const [identity, soul, user, view] = await Promise.all([
+          readFile(config.identityPath, "utf8"),
           readFile(config.soulPath, "utf8"),
+          readFile(config.userPath, "utf8"),
           store.readAllFor("reachy"),
         ]);
-        respond(true, buildDirectVoiceContext(soul, view));
+        respond(true, buildDirectVoiceContext(identity, soul, user, view));
       } catch (error) {
         api.logger.warn(`direct voice context unavailable: ${(error as Error).message}`);
         respond(false, undefined, {

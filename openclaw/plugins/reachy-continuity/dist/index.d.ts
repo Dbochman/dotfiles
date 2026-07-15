@@ -5,13 +5,17 @@ interface PluginConfig {
     reachySession: string;
     statePath: string;
     summaryModel: string;
+    identityPath: string;
     soulPath: string;
+    userPath: string;
 }
 export declare function sourceForSession(config: PluginConfig, sessionKey?: string): ContinuitySource | null;
 export declare function lastAssistantText(messages: unknown[]): string;
-export declare function buildDirectVoiceContext(soul: string, view: CapsuleView): {
+export declare function buildDirectVoiceContext(identity: string, soul: string, user: string, view: CapsuleView): {
     revision: string;
+    identity: string;
     soul: string;
+    user: string;
     capsule: string;
 };
 declare const plugin: OpenClawPluginDefinition;
