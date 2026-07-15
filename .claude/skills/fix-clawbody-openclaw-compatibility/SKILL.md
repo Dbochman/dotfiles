@@ -93,10 +93,10 @@ tools there. Realtime is a speech transport, not a second agent:
    memories, and tools. Add one narrow Dylan-equivalent full-action exception for
    this exact authenticated physical session; retain messaging policy elsewhere.
 4. Render only OpenClaw-authored text through the dedicated OpenAI Speech endpoint
-   with PCM output. For lower latency, convert cumulative assistant events to deltas,
-   buffer them to complete sentences, and stream each Speech response's PCM bytes
-   directly to playback. Keep sentence synthesis in a separate worker so OpenClaw
-   can continue streaming while audio is generated. Do not send the text to a
+   with PCM output. Buffer OpenClaw's complete final response and send it through one
+   Speech request, then stream that request's PCM bytes directly to playback. Do not
+   split a response across separate TTS requests: voice cadence and prosody reset at
+   each boundary and can produce audible gaps or stutter. Do not send the text to a
    conversational Realtime response: even an out-of-band response can interpret it
    as a new user turn and add words.
 5. Add an owner-only control-socket `speak` command for proactive speech from other
@@ -162,7 +162,7 @@ Require all of the following:
 4. Reachy's app status reports ClawBody `running`.
 5. Daemon logs contain `OpenClaw gateway connected` and report Realtime as speech transport with automatic responses disabled and zero tools.
 6. `.env` remains owned by the Reachy user and mode `0600`.
-7. A direct voice turn appears in the exact OpenClaw session and only OpenClaw-authored streamed text is spoken.
+7. A direct voice turn appears in the exact OpenClaw session and only OpenClaw's completed final text is spoken.
 8. Face tracking activates on speech, releases after speech, and a built-in dance then moves visibly.
 
 ## References
