@@ -76,6 +76,27 @@ the plugin's `reachy.continuity.context` RPC. That RPC does not start an OpenCla
 agent or model turn. Native Realtime audio is held behind a 220 ms pre-roll buffer,
 then streamed into Reachy's required `(frames, 2)` float32 stereo layout.
 
+Direct voice is locally gated by the openWakeWord `Hey Claude` model. While the
+gate is sleeping, microphone frames stay on Reachy and are not forwarded to the
+Realtime session. Saying “Hey Claude” opens a 10-second window in which speech
+must *start*; the utterance itself has no 10-second limit. Once a reply finishes,
+Reachy remains open for a 20-second follow-up window before requiring the wake
+phrase again. `reachyctl status` reports `wake_word_state` as `sleeping`,
+`waiting_for_speech`, `engaged`, or `follow_up`.
+
+The pinned `hey_claude.onnx` model is bundled with ClawBody. On Reachy's Python
+3.12 ARM runtime, install openWakeWord without dependencies because its unused
+Linux `tflite-runtime` declaration has no compatible wheel; the existing ONNX
+runtime is used instead:
+
+```bash
+/venvs/apps_venv/bin/pip install --no-deps openwakeword==0.6.0
+```
+
+Enable the gate in the robot's mode-`0600` `.env` with
+`REACHY_WAKE_WORD_ENABLED=true`. The deployed threshold is `0.5`, with initial
+and follow-up timeouts of 10 and 20 seconds respectively.
+
 The direct voice model has local movement, camera, emotion, dance, and preset
 tools. Requests needing OpenClaw skills, external/current data, messages, files,
 browser work, home control, bookings, purchases, or durable memory call
