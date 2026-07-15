@@ -270,6 +270,15 @@ imsg chats --limit 10 --json
 - Native iMessage accepts handles and explicit prefixes (`imessage:`, `sms:`, `auto:`, `chat_id:`, `chat_guid:`, `chat_identifier:`), but prefer `chat_id:*` for known stable chats.
 - BlueBubbles `any;-;` and `any;+;` targets are retired and invalid.
 - Reaction types remain: `love`, `like`, `dislike`, `laugh`, `emphasize`, `question`.
+- Ordinary host tools use the trusted single-operator `tools.exec.mode: "full"`
+  posture. Remaining exec and plugin approvals are routed only to Dylan's exact
+  iMessage session. A 👍 tapback allows once, 👎 denies, and `allow-always`
+  remains available through `/approve <id> allow-always`.
+- Keep `channels.imessage.allowFrom` and `dmPolicy: "allowlist"` explicit. A
+  wildcard there would allow any sender to resolve an approval reaction. The
+  stable `chat_id:1` route keeps Julia's existing DM admitted without storing
+  her private handle in the repository; only Dylan's explicit handle can
+  resolve approval reactions.
 
 ## Native iMessage Recovery
 

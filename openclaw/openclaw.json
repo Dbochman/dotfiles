@@ -125,6 +125,33 @@
     "restart": true,
     "ownerDisplay": "raw"
   },
+  "tools": {
+    "exec": {
+      "mode": "full"
+    }
+  },
+  "approvals": {
+    "exec": {
+      "enabled": true,
+      "mode": "session",
+      "agentFilter": [
+        "main"
+      ],
+      "sessionFilter": [
+        "agent:main:imessage:direct:dylanbochman@gmail.com"
+      ]
+    },
+    "plugin": {
+      "enabled": true,
+      "mode": "session",
+      "agentFilter": [
+        "main"
+      ],
+      "sessionFilter": [
+        "agent:main:imessage:direct:dylanbochman@gmail.com"
+      ]
+    }
+  },
   "session": {
     "typingMode": "instant",
     "dmScope": "per-channel-peer",
@@ -139,10 +166,11 @@
       "enabled": true,
       "cliPath": "/opt/homebrew/bin/imsg",
       "dbPath": "/Users/dbochman/Library/Messages/chat.db",
-      "dmPolicy": "open",
+      "dmPolicy": "allowlist",
       "groupPolicy": "open",
       "allowFrom": [
-        "*"
+        "dylanbochman@gmail.com",
+        "chat_id:1"
       ],
       "groups": {
         "*": {}
