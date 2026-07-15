@@ -14,6 +14,7 @@ export interface CapsuleHandoff {
     summary: string;
 }
 export interface CapsuleView {
+    updatedAt: number;
     entries: CapsuleEntry[];
     handoffs: CapsuleHandoff[];
 }
@@ -29,6 +30,7 @@ export declare class CapsuleStore {
     private load;
     private save;
     readFor(source: ContinuitySource): Promise<CapsuleView>;
+    readAllFor(source: ContinuitySource): Promise<CapsuleView>;
     append(source: ContinuitySource, summary: string, runId?: string): Promise<void>;
     createHandoff(from: ContinuitySource, summary: string): Promise<CapsuleHandoff>;
     consume(source: ContinuitySource, id: string): Promise<void>;

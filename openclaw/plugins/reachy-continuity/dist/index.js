@@ -1,5 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { definePluginEntry, } from "openclaw/plugin-sdk/plugin-entry";
 import { CapsuleError, CapsuleStore, cleanSummary } from "./state.js";
 const TOOL_NAMES = [
@@ -20,6 +22,7 @@ function readConfig(value) {
         reachySession: config.reachySession,
         statePath: expandPath(config.statePath ?? "~/.openclaw/reachy-continuity/capsule.json"),
         summaryModel: config.summaryModel ?? "openai/gpt-5.4-mini",
+        soulPath: expandPath(config.soulPath ?? "~/.openclaw/workspace/SOUL.md"),
     };
 }
 export function sourceForSession(config, sessionKey) {
@@ -72,6 +75,16 @@ function formatDynamicContext(view) {
             handoffs: view.handoffs.map(({ id, from, summary }) => ({ id, from, summary })),
         }),
     ].join("\n");
+}
+export function buildDirectVoiceContext(soul, view) {
+    const normalizedSoul = soul.replaceAll("\0", "").trim();
+    if (!normalizedSoul)
+        throw new CapsuleError("SOUL.md is empty");
+    const capsule = formatDynamicContext(view);
+    const revision = createHash("sha256")
+        .update(JSON.stringify({ soul: normalizedSoul, capsule }))
+        .digest("hex");
+    return { revision, soul: normalizedSoul, capsule };
 }
 function staticPolicy(source) {
     const memoryPolicy = source === "reachy"
@@ -178,6 +191,40 @@ const plugin = definePluginEntry({
             })
                 .catch((error) => api.logger.warn(`continuity summary skipped safely: ${error.message}`));
         });
+        api.registerGatewayMethod("reachy.continuity.context", async ({ respond }) => {
+            try {
+                const [soul, view] = await Promise.all([
+                    readFile(config.soulPath, "utf8"),
+                    store.readAllFor("reachy"),
+                ]);
+                respond(true, buildDirectVoiceContext(soul, view));
+            }
+            catch (error) {
+                api.logger.warn(`direct voice context unavailable: ${error.message}`);
+                respond(false, undefined, {
+                    code: "REACHY_CONTINUITY_UNAVAILABLE",
+                    message: "Reachy continuity context is unavailable",
+                });
+            }
+        }, { scope: "operator.read" });
+        api.registerGatewayMethod("reachy.continuity.append", async ({ params, respond }) => {
+            try {
+                if (typeof params.summary !== "string")
+                    throw new CapsuleError("summary must be a string");
+                const turnId = typeof params.turnId === "string" && params.turnId.trim()
+                    ? `direct:${params.turnId.trim()}`
+                    : undefined;
+                await store.append("reachy", params.summary, turnId);
+                respond(true, { status: "success" });
+            }
+            catch (error) {
+                api.logger.warn(`direct voice summary rejected: ${error.message}`);
+                respond(false, undefined, {
+                    code: "REACHY_CONTINUITY_REJECTED",
+                    message: "Reachy continuity summary was rejected",
+                });
+            }
+        }, { scope: "operator.write" });
         const toolFactory = (ctx) => {
             const source = sourceForSession(config, ctx.sessionKey);
             if (!source)

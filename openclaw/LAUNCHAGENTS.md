@@ -69,31 +69,34 @@ The robot-side client talks only to ClawBody's mode-`0600` Unix socket; no robot
 control port is exposed on the LAN. Use `reachyctl status` as the read-only smoke
 test after a ClawBody restart.
 
-OpenClaw owns every voice turn. OpenAI Realtime is only the speech transport:
-it detects speech and transcribes it without automatically responding, ClawBody
-sends the completed transcript to `agent:main:reachy`, buffers OpenClaw's complete
-response, and renders it verbatim with one request to the dedicated OpenAI Speech
-endpoint using the `onyx` voice. PCM response bytes from that single request are
-buffered into one complete clip before speaker playback. Mono Speech PCM is resampled
-and duplicated into Reachy's required `(frames, 2)` float32 stereo layout so frame
-duration is preserved. Full audio buffering avoids network underruns and startup-buffer
-boundary gaps; the single Speech request avoids the gaps and prosody resets caused by
-separate sentence-level TTS requests. Each Reachy `chat.send` sets
-minimal thinking and fast mode for that turn; other
-OpenClaw sessions retain their normal settings. The same control socket exposes
-`reachyctl speak` for proactive speech from cron or other OpenClaw sessions; the
-direct Reachy voice session must not call it because its reply is already
-vocalized automatically.
+ClawBody's default `REACHY_VOICE_MODE=direct` keeps a persistent
+`gpt-realtime-2.1-mini` Cedar session for ordinary conversation. The Realtime
+model receives the live `SOUL.md` plus the expiring continuity capsule through
+the plugin's `reachy.continuity.context` RPC. That RPC does not start an OpenClaw
+agent or model turn. Native Realtime audio is held behind a 220 ms pre-roll buffer,
+then streamed into Reachy's required `(frames, 2)` float32 stereo layout.
+
+The direct voice model has local movement, camera, emotion, dance, and preset
+tools. Requests needing OpenClaw skills, external/current data, messages, files,
+browser work, home control, bookings, purchases, or durable memory call
+`ask_openclaw`; only those delegated requests enter `agent:main:reachy`. Set
+`REACHY_VOICE_MODE=openclaw` to restore the previous full-response OpenClaw/TTS
+path as a compatibility fallback.
+
+The control socket exposes `reachyctl speak` for proactive speech from cron or
+other OpenClaw sessions. Every external camera, movement, dance, emotion, and
+speech command acquires an exclusive control lease: direct Realtime output and
+microphone forwarding pause, OpenClaw owns the physical robot until the command
+finishes, and control then returns to direct voice.
 
 While generated speech is playing, ClawBody suppresses microphone forwarding for
 the PCM clip's measured duration plus a short tail. This prevents Reachy's speaker
 from being transcribed as a new user utterance and creating an echo-response loop.
 
-After transcription completes, Reachy holds a visible thinking pose (upward side
-glance, head tilt, and asymmetric antennas) while OpenClaw reasons and while the
-single TTS request is being prepared. The pose releases when the first playable PCM
-chunk reaches the audio queue. Logs record transcription, final OpenClaw text,
-first TTS byte, and first speaker-push latency for each voice turn.
+After speech stops, Reachy holds its visible thinking pose until the first native
+Realtime audio reaches the queue. Delegated OpenClaw tool calls retain the pose
+while skills run. Logs record transcription-ready, first-direct-audio, and first
+speaker-push latency.
 
 Daemon face tracking is speech-gated. It runs with a strong tracking weight only
 between Realtime's `speech_started` and `speech_stopped` events, then returns to
@@ -107,24 +110,24 @@ vocalization; `dance1`, `dance2`, and `dance3` are the vocalized dance presets. 
 separate official dance library is motion-only, and the six dependency-free built-in
 dances remain available as fallbacks.
 
-ClawBody uses the exact OpenClaw session key `agent:main:reachy`. That session is
-pinned to `openai/gpt-5.4-mini` for lower voice-response latency; the global default
-remains `openai/gpt-5.6-sol` for messaging and every other session. When the gateway
-sends assistant text without a separate completion event, ClawBody waits 350 ms for
-a follow-up event before treating the received text as complete. The live OpenClaw
-`SOUL.md` treats only that authenticated internal embodiment session as full trust,
-with Dylan-equivalent action permissions, while retaining normal trusted-contact
-checks for iMessage and every other messaging session.
+Delegated requests use the exact OpenClaw session key `agent:main:reachy`, pinned
+to `openai/gpt-5.4-mini`; the global default remains `openai/gpt-5.6-sol` for
+messaging and every other session. The live `SOUL.md` treats only that authenticated
+internal embodiment session as full trust, with Dylan-equivalent action permissions,
+while retaining normal trusted-contact checks for messaging channels.
 
 The `reachy-continuity` plugin bridges only `agent:main:reachy` and Dylan's exact
 iMessage DM. Its trusted `before_prompt_build` hook injects an owner-only capsule
 containing at most 12 four-hour semantic summaries plus explicit 24-hour handoffs.
-An asynchronous `gpt-5.4-mini` summary runs after the completed turn and therefore
-does not delay Reachy's spoken reply. The plugin derives source identity from the
-runtime session key, exposes handoff tools only in those two sessions, consumes
-handoffs by exact ID, and blocks Reachy durable-memory writes unless the current
-turn explicitly asks to remember or save the information. New deployments start
-with an empty capsule; raw transcripts are never copied into it.
+OpenClaw turns are summarized asynchronously by the plugin. Non-delegated direct
+voice turns are summarized asynchronously on Reachy and appended through the
+plugin's `reachy.continuity.append` RPC, so neither path delays spoken replies.
+The plugin also exposes SOUL/capsule snapshots only through authenticated gateway
+RPC. It derives agent-turn source identity from the runtime session key, exposes
+handoff tools only in the two configured sessions, consumes handoffs by exact ID,
+and blocks Reachy durable-memory writes unless the current turn explicitly asks
+to remember or save the information. New deployments start with an empty capsule;
+raw transcripts are never persisted.
 
 The approved `reachy-continuity` skill remains in the workspace skill location
 recorded by Skill Workshop. Its canonical source is

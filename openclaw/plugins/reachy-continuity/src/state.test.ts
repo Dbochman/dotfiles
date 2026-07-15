@@ -20,6 +20,14 @@ describe("CapsuleStore", () => {
     expect((await store.readFor("reachy")).entries).toHaveLength(0);
   });
 
+  it("returns the full capsule to the direct Reachy voice runtime", async () => {
+    const { store } = await fixture();
+    await store.append("reachy", "Reachy-side context.");
+    await store.append("imessage", "iMessage-side context.");
+    const view = await store.readAllFor("reachy");
+    expect(view.entries.map((entry) => entry.source)).toEqual(["reachy", "imessage"]);
+  });
+
   it("caps entries at twelve", async () => {
     const { store } = await fixture();
     for (let index = 0; index < 15; index += 1) await store.append("imessage", `Turn ${index}`);

@@ -29,6 +29,7 @@ interface CapsuleState {
 }
 
 export interface CapsuleView {
+  updatedAt: number;
   entries: CapsuleEntry[];
   handoffs: CapsuleHandoff[];
 }
@@ -227,7 +228,20 @@ export class CapsuleStore {
       prune(state, this.now());
       await this.save(state);
       return {
+        updatedAt: state.updatedAt,
         entries: state.entries.filter((item) => item.source !== source),
+        handoffs: state.handoffs.filter((item) => item.to === source),
+      };
+    });
+  }
+
+  async readAllFor(source: ContinuitySource): Promise<CapsuleView> {
+    return this.withLock(async () => {
+      const state = await this.load();
+      prune(state, this.now());
+      return {
+        updatedAt: state.updatedAt,
+        entries: [...state.entries],
         handoffs: state.handoffs.filter((item) => item.to === source),
       };
     });

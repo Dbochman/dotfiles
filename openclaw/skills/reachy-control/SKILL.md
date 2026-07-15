@@ -60,6 +60,11 @@ In the direct Reachy voice session (`agent:main:reachy`), do not call
 Use `speak` for proactive announcements initiated by other OpenClaw sessions,
 cron jobs, or explicit remote requests.
 
+Every command automatically acquires ClawBody's exclusive OpenClaw control lease.
+The direct Realtime voice pauses while the command runs, so it is safe to combine
+camera, movement, emotion, dance, and proactive speech commands without competing
+with an ordinary voice turn.
+
 ## Safety
 
 - Follow OpenClaw's channel trust and action-authorization rules for remote
