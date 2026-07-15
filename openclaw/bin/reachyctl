@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# reachyctl — run the deployed Reachy control skill CLI
+set -o pipefail
+
+deployed_cli="$HOME/.openclaw/skills/reachy-control/reachyctl"
+if [[ -x "$deployed_cli" ]]; then
+  exec "$deployed_cli" "$@"
+fi
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_cli="$script_dir/../skills/reachy-control/reachyctl"
+if [[ -x "$repo_cli" ]]; then
+  exec "$repo_cli" "$@"
+fi
+
+echo "reachyctl: Reachy control skill is not installed" >&2
+exit 127

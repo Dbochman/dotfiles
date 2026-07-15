@@ -20,6 +20,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary, hard-limited to one send attempt/hour |
+| `ai.openclaw.reachy-gateway-tunnel` | `ssh -R` | Reachy loopback 18789 | Keeps a token-authenticated path from Crosstown Reachy Mini to the Mac mini's loopback-only gateway |
 
 ### Nest Event Listener and Cabin Reviewer
 
@@ -50,6 +51,57 @@ dotfiles pulls update and reload either job only after its installed plist
 exists. See
 [`NEST-EVENTS.md`](NEST-EVENTS.md) for the cloud IAM contract, protected
 runtime layout, checks, and rollout gates.
+
+### Reachy Mini Gateway Tunnel
+
+The Wireless Reachy Mini at `192.168.165.129` runs ClawBody locally but reaches the Mac mini only through the mini's Tailscale subnet route. Keep `gateway.bind` set to `loopback`; `ai.openclaw.reachy-gateway-tunnel` connects from the Mac mini to Reachy and publishes the gateway only as `127.0.0.1:18789` on the robot.
+
+The service uses the dedicated Mac mini key `~/.ssh/openclaw-reachy`; its public key must be present in `pollen@192.168.165.129:~/.ssh/authorized_keys`. ClawBody's owner-only `.env` on the robot should use `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789` and the same `OPENCLAW_GATEWAY_TOKEN` held in the Mac mini's protected secrets cache. Verify the path without printing credentials:
+
+```bash
+ssh dylans-mac-mini 'launchctl print "gui/$(id -u)/ai.openclaw.reachy-gateway-tunnel" | grep -E "state =|pid =|last exit code"'
+ssh dylans-mac-mini 'ssh -i ~/.ssh/openclaw-reachy -o BatchMode=yes -o IdentityAgent=none pollen@192.168.165.129 "curl -fsS http://127.0.0.1:18789/health"'
+```
+
+The `reachy-control` skill uses `reachyctl` on the Mac mini to invoke
+`/home/pollen/clawbody/bin/clawbody-control` over the same dedicated SSH identity.
+The robot-side client talks only to ClawBody's mode-`0600` Unix socket; no robot
+control port is exposed on the LAN. Use `reachyctl status` as the read-only smoke
+test after a ClawBody restart.
+
+OpenClaw owns every voice turn. OpenAI Realtime is only the speech transport:
+it detects speech and transcribes it without automatically responding, ClawBody
+sends the completed transcript to `agent:main:reachy`, and OpenClaw's final text
+is rendered verbatim through the dedicated OpenAI Speech endpoint and Reachy's
+speaker using the `onyx` voice. The same control socket exposes
+`reachyctl speak` for proactive speech from cron or other OpenClaw sessions; the
+direct Reachy voice session must not call it because its final reply is already
+vocalized automatically.
+
+While generated speech is playing, ClawBody suppresses microphone forwarding for
+the PCM clip's measured duration plus a short tail. This prevents Reachy's speaker
+from being transcribed as a new user utterance and creating an echo-response loop.
+
+After transcription completes, Reachy holds a visible thinking pose (upward side
+glance, head tilt, and asymmetric antennas) while OpenClaw reasons and while TTS is
+being prepared. The pose releases only when playable response audio is queued.
+
+Daemon face tracking is speech-gated. It runs with a strong tracking weight only
+between Realtime's `speech_started` and `speech_stopped` events, then returns to
+weight `0.25` for subtle idle awareness while leaving OpenClaw's look, emotion,
+and built-in dance moves in control of the head.
+Manual tracking toggles are intentionally not part of the OpenClaw skill.
+
+The control socket exposes the complete live Pollen Robotics preset catalogs through
+`reachyctl presets`. Official emotion presets play their recorded motion and bundled
+vocalization; `dance1`, `dance2`, and `dance3` are the vocalized dance presets. The
+separate official dance library is motion-only, and the six dependency-free built-in
+dances remain available as fallbacks.
+
+ClawBody uses the exact OpenClaw session key `agent:main:reachy`. The live OpenClaw
+`SOUL.md` treats only that authenticated internal embodiment session as full trust,
+with Dylan-equivalent action permissions, while retaining normal trusted-contact
+checks for iMessage and every other messaging session.
 
 ### Financial Dashboard LaunchAgents
 
