@@ -239,6 +239,7 @@ export class CapsuleStore {
     return this.withLock(async () => {
       const state = await this.load();
       prune(state, this.now());
+      await this.save(state);
       return {
         updatedAt: state.updatedAt,
         entries: [...state.entries],

@@ -1,12 +1,12 @@
 {
   "name": "openclaw-plugin-reachy-continuity",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "plugin:validate": "npm run build && openclaw plugins validate --entry ./dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify": "npm test && npm run build"
   },
   "files": [
     "dist",

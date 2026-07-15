@@ -2,7 +2,7 @@
   "id": "reachy-continuity",
   "name": "Reachy Continuity",
   "description": "Private, session-bound continuity between one owner iMessage DM and Reachy voice.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "activation": {
     "onStartup": true
   },
@@ -11,18 +11,15 @@
       "reachy_continuity_handoff",
       "reachy_continuity_consume",
       "reachy_continuity_clear"
-    ],
-    "gatewayMethods": [
-      "reachy.continuity.context",
-      "reachy.continuity.append"
     ]
   },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "required": ["imessageSession", "reachySession"],
+    "required": ["imessageSession", "imessageTarget", "reachySession"],
     "properties": {
       "imessageSession": { "type": "string", "minLength": 1 },
+      "imessageTarget": { "type": "string", "minLength": 1 },
       "reachySession": { "type": "string", "minLength": 1 },
       "statePath": { "type": "string", "minLength": 1 },
       "summaryModel": { "type": "string", "minLength": 1 },

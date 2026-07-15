@@ -129,14 +129,19 @@ and blocks Reachy durable-memory writes unless the current turn explicitly asks
 to remember or save the information. New deployments start with an empty capsule;
 raw transcripts are never persisted.
 
-The approved `reachy-continuity` skill remains in the workspace skill location
-recorded by Skill Workshop. Its canonical source is
-`openclaw/skills/reachy-continuity`, while the plugin source is
-`openclaw/plugins/reachy-continuity`. Verify the live runtime with:
+The `reachy-continuity` skill is policy and operating guidance; it is not a
+Workshop-installed enforcement boundary. Its canonical source is
+`openclaw/skills/reachy-continuity`, while the gateway-enforced plugin source is
+`openclaw/plugins/reachy-continuity`. Verify the live hooks and gateway methods
+with runtime inspection:
 
 ```bash
 ssh dylans-mac-mini 'openclaw plugins inspect reachy-continuity --runtime --json'
 ```
+
+The plugin is a full gateway plugin, so the CLI's `plugins validate` command for
+simple `defineToolPlugin` entries does not apply. Run its bundled checks with
+`npm run verify` from the deployed plugin directory.
 
 ### Financial Dashboard LaunchAgents
 

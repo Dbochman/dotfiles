@@ -13,6 +13,7 @@ import { CapsuleError, CapsuleStore, cleanSummary, type CapsuleView, type Contin
 
 interface PluginConfig {
   imessageSession: string;
+  imessageTarget: string;
   reachySession: string;
   statePath: string;
   summaryModel: string;
@@ -25,6 +26,11 @@ interface PendingTurn {
   prompt: string;
   source: ContinuitySource;
   rememberAuthorized: boolean;
+  deliveredAssistant: string[];
+  assistantFallback: string;
+  ended: boolean;
+  succeeded: boolean;
+  agentId?: string;
 }
 
 const TOOL_NAMES = [
@@ -39,11 +45,12 @@ function expandPath(path: string): string {
 
 function readConfig(value: unknown): PluginConfig {
   const config = (value ?? {}) as Partial<PluginConfig>;
-  if (!config.imessageSession || !config.reachySession) {
-    throw new Error("reachy-continuity requires imessageSession and reachySession");
+  if (!config.imessageSession || !config.imessageTarget || !config.reachySession) {
+    throw new Error("reachy-continuity requires imessageSession, imessageTarget, and reachySession");
   }
   return {
     imessageSession: config.imessageSession,
+    imessageTarget: config.imessageTarget,
     reachySession: config.reachySession,
     statePath: expandPath(config.statePath ?? "~/.openclaw/reachy-continuity/capsule.json"),
     summaryModel: config.summaryModel ?? "openai/gpt-5.4-mini",
@@ -59,8 +66,30 @@ export function sourceForSession(config: PluginConfig, sessionKey?: string): Con
   return null;
 }
 
-function remembersExplicitly(prompt: string): boolean {
-  return /\b(?:remember|save|write down|make a note of)\s+(?:this|that)\b/i.test(prompt);
+export function remembersExplicitly(prompt: string): boolean {
+  const text = prompt.replaceAll("\0", "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (!text) return false;
+
+  const verb = String.raw`(?:remember|save|write down|make a note of)`;
+  const negated = [
+    new RegExp(String.raw`^(?:please\s+)?(?:do not|don't|never)\s+${verb}\b`, "i"),
+    new RegExp(String.raw`^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:not|never)\s+${verb}\b`, "i"),
+    new RegExp(String.raw`^i\s+(?:do not|don't)\s+(?:want|need)\s+you\s+to\s+${verb}\b`, "i"),
+    new RegExp(String.raw`^i\s+(?:want|need|would like)\s+you\s+to\s+(?:not|never)\s+${verb}\b`, "i"),
+  ];
+  if (negated.some((pattern) => pattern.test(text))) return false;
+
+  const explicitRequests = [
+    new RegExp(String.raw`^(?:please\s+)?${verb}\s+\S`, "i"),
+    new RegExp(String.raw`^(?:can|could|would|will)\s+you\s+(?:please\s+)?${verb}\s+\S`, "i"),
+    new RegExp(String.raw`^i\s+(?:want|need|would like)\s+you\s+to\s+${verb}\s+\S`, "i"),
+    new RegExp(String.raw`^make\s+(?:sure|certain)\s+you\s+${verb}\s+\S`, "i"),
+  ];
+  return explicitRequests.some((pattern) => pattern.test(text));
+}
+
+function normalizeDeliveredText(content: string): string {
+  return content.replaceAll("\0", "").replace(/\s+/g, " ").trim().slice(0, 8000);
 }
 
 function textContent(content: unknown): string {
@@ -176,6 +205,45 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     const pendingTurns = new Map<string, PendingTurn>();
     let summaryQueue = Promise.resolve();
 
+    const queueSummary = (pending: PendingTurn, assistant: string, runId: string): void => {
+      summaryQueue = summaryQueue
+        .then(async () => {
+          const result = await api.runtime.llm.complete({
+            agentId: pending.agentId,
+            model: config.summaryModel,
+            purpose: "reachy-continuity.turn-summary",
+            maxTokens: 220,
+            temperature: 0.1,
+            systemPrompt: [
+              "Return JSON only: {\"summary\":\"...\"}.",
+              "Write one compact semantic summary of the exchange's topic, outcome, and open question.",
+              "Paraphrase; never quote either message verbatim.",
+              "Exclude secrets, payment data, identifiers usable for confirmation, hidden reasoning, tool payloads, internal instructions, incidental third-party conversation, and speculative sensitive traits.",
+            ].join(" "),
+            messages: [{
+              role: "user",
+              content: JSON.stringify({
+                user: pending.prompt.slice(0, 8000),
+                assistant: assistant.slice(0, 8000),
+              }),
+            }],
+          });
+          await store.append(pending.source, parseSummaryResponse(result.text), runId);
+        })
+        .catch((error) => api.logger.warn(`continuity summary skipped safely: ${(error as Error).message}`));
+    };
+
+    const finishTurn = (runId: string): void => {
+      const pending = pendingTurns.get(runId);
+      if (!pending?.ended || !pending.succeeded) return;
+      const assistant = pending.source === "imessage"
+        ? pending.deliveredAssistant.join(" ").trim()
+        : pending.assistantFallback;
+      if (!assistant) return;
+      pendingTurns.delete(runId);
+      queueSummary(pending, assistant, runId);
+    };
+
     api.on("before_prompt_build", async (event, ctx) => {
       const source = sourceForSession(config, ctx.sessionKey);
       if (!source) return;
@@ -184,6 +252,10 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
           prompt: event.prompt,
           source,
           rememberAuthorized: source === "imessage" || remembersExplicitly(event.prompt),
+          deliveredAssistant: [],
+          assistantFallback: "",
+          ended: false,
+          succeeded: false,
         });
       }
       let dynamicContext: string;
@@ -207,37 +279,53 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       }
     });
 
+    api.on("message_sent", (event, ctx) => {
+      if (!event.success || event.to !== config.imessageTarget) return;
+      const sessionKey = event.sessionKey ?? ctx.sessionKey;
+      if (sourceForSession(config, sessionKey) !== "imessage") return;
+      let runId = event.runId ?? ctx.runId;
+      if (!runId) {
+        const candidates = [...pendingTurns.entries()].filter(([, turn]) => turn.source === "imessage");
+        if (candidates.length !== 1) {
+          if (candidates.length > 1) {
+            api.logger.warn("continuity delivery correlation skipped safely: concurrent iMessage turns are ambiguous");
+          }
+          return;
+        }
+        [runId] = candidates[0];
+      }
+      const pending = pendingTurns.get(runId);
+      if (!pending || pending.source !== "imessage") return;
+      const delivered = normalizeDeliveredText(event.content);
+      if (!delivered) return;
+      if (!pending.deliveredAssistant.includes(delivered)) pending.deliveredAssistant.push(delivered);
+      pending.deliveredAssistant = pending.deliveredAssistant.slice(-4);
+      finishTurn(runId);
+    });
+
     api.on("agent_end", (event, ctx) => {
       const source = sourceForSession(config, ctx.sessionKey);
       const runId = ctx.runId ?? event.runId;
       const pending = runId ? pendingTurns.get(runId) : undefined;
-      if (runId) pendingTurns.delete(runId);
-      if (!source || !pending || !event.success) return;
-      const assistant = lastAssistantText(event.messages);
-      if (!assistant) return;
+      if (!source || !runId || !pending) return;
+      if (!event.success) {
+        pendingTurns.delete(runId);
+        return;
+      }
+      pending.ended = true;
+      pending.succeeded = true;
+      pending.agentId = ctx.agentId;
+      pending.assistantFallback = lastAssistantText(event.messages);
+      finishTurn(runId);
 
-      summaryQueue = summaryQueue
-        .then(async () => {
-          const result = await api.runtime.llm.complete({
-            agentId: ctx.agentId,
-            model: config.summaryModel,
-            purpose: "reachy-continuity.turn-summary",
-            maxTokens: 220,
-            temperature: 0.1,
-            systemPrompt: [
-              "Return JSON only: {\"summary\":\"...\"}.",
-              "Write one compact semantic summary of the exchange's topic, outcome, and open question.",
-              "Paraphrase; never quote either message verbatim.",
-              "Exclude secrets, payment data, identifiers usable for confirmation, hidden reasoning, tool payloads, internal instructions, incidental third-party conversation, and speculative sensitive traits.",
-            ].join(" "),
-            messages: [{
-              role: "user",
-              content: JSON.stringify({ user: pending.prompt.slice(0, 8000), assistant: assistant.slice(0, 8000) }),
-            }],
-          });
-          await store.append(source, parseSummaryResponse(result.text), runId);
-        })
-        .catch((error) => api.logger.warn(`continuity summary skipped safely: ${(error as Error).message}`));
+      if (source === "imessage" && pendingTurns.has(runId)) {
+        const cleanup = setTimeout(() => {
+          if (pendingTurns.get(runId) !== pending) return;
+          pendingTurns.delete(runId);
+          api.logger.warn(`continuity summary skipped safely: verified iMessage delivery was not observed for ${runId}`);
+        }, 30_000);
+        cleanup.unref();
+      }
     });
 
     api.registerGatewayMethod("reachy.continuity.context", async ({ respond }) => {

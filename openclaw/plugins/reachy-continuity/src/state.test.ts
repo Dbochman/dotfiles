@@ -28,6 +28,18 @@ describe("CapsuleStore", () => {
     expect(view.entries.map((entry) => entry.source)).toEqual(["reachy", "imessage"]);
   });
 
+  it("persists expiration pruning performed by direct-voice reads", async () => {
+    let now = 1_800_000_000_000;
+    const root = await mkdtemp(join(tmpdir(), "reachy-continuity-"));
+    const path = join(root, "capsule.json");
+    const store = new CapsuleStore(path, () => now);
+    await store.append("imessage", "Temporary direct-voice context.");
+    now += 4 * 60 * 60 * 1000 + 1;
+    expect((await store.readAllFor("reachy")).entries).toHaveLength(0);
+    const persisted = JSON.parse(await readFile(path, "utf8")) as { entries: unknown[] };
+    expect(persisted.entries).toHaveLength(0);
+  });
+
   it("caps entries at twelve", async () => {
     const { store } = await fixture();
     for (let index = 0; index < 15; index += 1) await store.append("imessage", `Turn ${index}`);
