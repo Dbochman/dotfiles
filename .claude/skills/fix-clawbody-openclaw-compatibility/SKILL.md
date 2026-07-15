@@ -96,7 +96,10 @@ tools there. Realtime is a speech transport, not a second agent:
    with PCM output. Buffer OpenClaw's complete final response and send it through one
    Speech request, then stream that request's PCM bytes directly to playback. Do not
    split a response across separate TTS requests: voice cadence and prosody reset at
-   each boundary and can produce audible gaps or stutter. Do not send the text to a
+   each boundary and can produce audible gaps or stutter. Continue consuming the
+   gateway's incremental assistant events into the text buffer: some gateway runs do
+   not emit a separate completion event, so switching to a final-event-only chat path
+   can leave the robot waiting indefinitely after transcription. Do not send the text to a
    conversational Realtime response: even an out-of-band response can interpret it
    as a new user turn and add words.
 5. Add an owner-only control-socket `speak` command for proactive speech from other
