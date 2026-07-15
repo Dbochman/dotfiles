@@ -1,0 +1,76 @@
+#!/venvs/apps_venv/bin/python
+"""Send one constrained command to the running ClawBody process."""
+
+import argparse
+import base64
+import binascii
+import json
+import os
+import socket
+import sys
+
+SOCKET_PATH = os.getenv("CLAWBODY_CONTROL_SOCKET", f"/run/user/{os.getuid()}/clawbody-control.sock")
+
+
+def parse_args() -> tuple[str, dict]:
+    parser = argparse.ArgumentParser(prog="clawbody-control")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("status")
+    look = subparsers.add_parser("look")
+    look.add_argument("direction", choices=("left", "right", "up", "down", "front"))
+    emotion = subparsers.add_parser("emotion")
+    emotion.add_argument("name")
+    dance = subparsers.add_parser("dance")
+    dance.add_argument("name")
+    subparsers.add_parser("presets")
+    speak = subparsers.add_parser("speak")
+    speak.add_argument("text", nargs="+")
+    speak_b64 = subparsers.add_parser("speak-b64", help=argparse.SUPPRESS)
+    speak_b64.add_argument("encoded_text")
+    subparsers.add_parser("see")
+    subparsers.add_parser("stop")
+    subparsers.add_parser("idle")
+    args = parser.parse_args()
+    if args.command == "look":
+        return "look", {"direction": args.direction}
+    if args.command == "emotion":
+        return "emotion", {"emotion_name": args.name}
+    if args.command == "dance":
+        return "dance", {"dance_name": args.name}
+    if args.command == "speak":
+        return "speak", {"text": " ".join(args.text)}
+    if args.command == "speak-b64":
+        try:
+            text = base64.b64decode(args.encoded_text, validate=True).decode("utf-8")
+        except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
+            parser.error(f"invalid encoded speech text: {exc}")
+        return "speak", {"text": text}
+    return args.command, {}
+
+
+def main() -> int:
+    command, arguments = parse_args()
+    request = json.dumps({"command": command, "arguments": arguments}).encode() + b"\n"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(110)
+            client.connect(SOCKET_PATH)
+            client.sendall(request)
+            response = client.makefile("rb").readline(65536)
+    except (OSError, TimeoutError) as exc:
+        print(json.dumps({"error": f"ClawBody control unavailable: {exc}"}))
+        return 1
+    if not response:
+        print(json.dumps({"error": "ClawBody returned no response"}))
+        return 1
+    try:
+        payload = json.loads(response)
+    except json.JSONDecodeError:
+        print(json.dumps({"error": "ClawBody returned invalid JSON"}))
+        return 1
+    print(json.dumps(payload, separators=(",", ":")))
+    return 1 if payload.get("error") else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

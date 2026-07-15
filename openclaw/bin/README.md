@@ -35,6 +35,7 @@ active post-deploy checks.
 | `dylan-morning-briefing-data.py` | repo path (cron invokes it directly) | Collects a bounded seven-day Calendar agenda and 24-hour Gmail metadata for Dylan's briefing. Owns GWS account routing, token-race retry, local header filtering, and privacy-safe partial-failure output. |
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
 | `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as an iMessage attachment via `imsg`, plus optional summary text. Used by Julia's morning briefing cron job. |
+| `reachyctl` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Sends constrained status, movement, proactive speech, and camera commands to ClawBody over the dedicated Reachy SSH identity and its owner-only Unix control socket. Face tracking is automatic while the user speaks. |
 
 ### Dashboards
 
@@ -76,7 +77,7 @@ active post-deploy checks.
 
 | Script | Description |
 |--------|-------------|
-| `dotfiles-pull.command` | Daily git pull and deployment on Mini. Stashes local changes, pulls `--ff-only`, restores the stash, copies skills/wrappers/scripts, atomically installs the protected restaurant scope registry, reconciles cron, activates a changed gateway wrapper, and verifies restaurant skills through the active gateway before succeeding. Auto-closes its Terminal window and runs via Terminal.app for git credential access. |
+| `dotfiles-pull.command` | Daily git pull and deployment on Mini. Stashes local changes, pulls `--ff-only`, restores the stash, copies skills/wrappers/scripts, publishes required skill wrappers such as `reachyctl` into Homebrew's PATH, atomically installs the protected restaurant scope registry, reconciles cron, activates a changed gateway wrapper, and verifies restaurant skills through the active gateway before succeeding. Auto-closes its Terminal window and runs via Terminal.app for git credential access. |
 
 ### Markdown Search (qmd)
 

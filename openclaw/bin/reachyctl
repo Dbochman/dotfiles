@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# reachyctl — run the deployed Reachy control skill CLI
+SKILL_DIR="$HOME/.openclaw/skills/reachy-control"
+exec "$SKILL_DIR/reachyctl" "$@"

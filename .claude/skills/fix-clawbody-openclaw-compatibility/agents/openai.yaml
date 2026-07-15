@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fix ClawBody Compatibility"
+  short_description: "Repair current OpenClaw and Realtime handshakes"
+  default_prompt: "Use $fix-clawbody-openclaw-compatibility to connect ClawBody to current OpenClaw and OpenAI Realtime APIs."

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# reachyctl — constrained OpenClaw control for the Crosstown Reachy Mini
+set -o pipefail
+
+usage() {
+  echo 'usage: reachyctl status|presets|see|stop|idle|look <direction>|emotion <preset>|dance <preset>|speak <text>' >&2
+  exit 2
+}
+
+case "${1:-}" in
+  status|presets|see|stop|idle)
+    [[ "$#" -eq 1 ]] || usage
+    ;;
+  look)
+    [[ "$#" -eq 2 ]] || usage
+    case "$2" in left|right|up|down|front) ;; *) usage ;; esac
+    ;;
+  emotion)
+    [[ "$#" -eq 2 ]] || usage
+    [[ "$2" =~ ^[a-z0-9_-]+$ ]] || usage
+    ;;
+  dance)
+    [[ "$#" -eq 2 ]] || usage
+    [[ "$2" =~ ^[a-z0-9_-]+$ ]] || usage
+    ;;
+  speak)
+    [[ "$#" -ge 2 ]] || usage
+    shift
+    encoded_text="$(printf '%s' "$*" | base64 | tr -d '\n')"
+    set -- speak-b64 "$encoded_text"
+    ;;
+  *) usage ;;
+esac
+
+exec ssh \
+  -i "$HOME/.ssh/openclaw-reachy" \
+  -o BatchMode=yes \
+  -o ConnectTimeout=8 \
+  -o IdentityAgent=none \
+  -o StrictHostKeyChecking=yes \
+  pollen@192.168.165.129 \
+  /home/pollen/clawbody/bin/clawbody-control "$@"

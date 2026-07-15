@@ -264,6 +264,14 @@ for wrapper in "$BIN_SRC"/*; do
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BIN_DST" >> "$LOG"
 
+# OpenClaw's standalone skill checker does not inherit the gateway's
+# ~/.openclaw/bin PATH. Publish skill-required wrappers in Homebrew's PATH too.
+for skill_wrapper in reachyctl; do
+  if [ -x "$BIN_DST/$skill_wrapper" ]; then
+    ln -sfn "$BIN_DST/$skill_wrapper" "/opt/homebrew/bin/$skill_wrapper"
+  fi
+done
+
 # Preserve the documented maintenance path while ~/.openclaw/bin remains the
 # canonical wrapper directory. This must be a real copy because ~/bin predates
 # the current deployment layout and is still used by operator runbooks.
