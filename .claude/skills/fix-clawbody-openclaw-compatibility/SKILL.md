@@ -109,6 +109,16 @@ tools there. Realtime is a speech transport, not a second agent:
    already waiting to play plus a short tail; otherwise Reachy's speaker can trigger
    VAD and feed its own words back to OpenClaw.
 
+On Reachy Mini Wireless 1.9, the local GStreamer playback appsrc expects float32
+stereo shaped as `(frames, 2)` at 16 kHz. OpenAI Speech PCM is mono; resample the
+mono frames, duplicate them into both channels, and preserve the two-dimensional
+shape when calling `push_audio_sample`. Do not flatten the stereo buffer: the SDK
+uses `shape[0]` as the frame count, and a flattened buffer can turn 100 ms of mono
+into 50 ms of stereo data on a 100 ms timeline, producing choppy playback. Accumulate
+about one second of PCM before the first speaker push, then stream subsequent chunks
+to absorb early network and physical sink startup jitter without waiting for the
+complete audio file. Make the reserve configurable so it can be tuned against latency.
+
 For a low-latency physical session, include `thinking: "minimal"` and `fastMode: true`
 in Reachy's `chat.send` request; unlike `sessions.patch`, these per-turn fields do not
 require the bridge to request `operator.admin`. Do not lower the defaults for messaging
@@ -167,6 +177,7 @@ Require all of the following:
 6. `.env` remains owned by the Reachy user and mode `0600`.
 7. A direct voice turn appears in the exact OpenClaw session and only OpenClaw's completed final text is spoken.
 8. Face tracking activates on speech, releases after speech, and a built-in dance then moves visibly.
+9. Logs show a startup PCM buffer before the first speaker push, and playback receives `(frames, 2)` stereo without dropped GStreamer buffers.
 
 ## References
 

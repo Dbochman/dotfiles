@@ -74,9 +74,12 @@ it detects speech and transcribes it without automatically responding, ClawBody
 sends the completed transcript to `agent:main:reachy`, buffers OpenClaw's complete
 response, and renders it verbatim with one request to the dedicated OpenAI Speech
 endpoint using the `onyx` voice. PCM response bytes from that single request are
-played as they arrive instead of waiting for the complete audio file. This avoids
-the gaps and prosody resets caused by separate sentence-level TTS requests. Each
-Reachy `chat.send` sets minimal thinking and fast mode for that turn; other
+held until a one-second startup buffer is ready, then played as they continue to arrive
+instead of waiting for the complete audio file. Mono Speech PCM is resampled and
+duplicated into Reachy's required `(frames, 2)` float32 stereo layout so frame
+duration is preserved. This avoids startup underruns as well as the gaps and prosody
+resets caused by separate sentence-level TTS requests. Each Reachy `chat.send` sets
+minimal thinking and fast mode for that turn; other
 OpenClaw sessions retain their normal settings. The same control socket exposes
 `reachyctl speak` for proactive speech from cron or other OpenClaw sessions; the
 direct Reachy voice session must not call it because its reply is already
