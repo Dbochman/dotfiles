@@ -211,6 +211,11 @@
     }
   },
   "plugins": {
+    "load": {
+      "paths": [
+        "~/dotfiles/openclaw/plugins/reachy-continuity"
+      ]
+    },
     "entries": {
       "browser": {
         "enabled": true
@@ -232,6 +237,19 @@
       },
       "elevenlabs": {
         "enabled": true
+      },
+      "reachy-continuity": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true,
+          "allowPromptInjection": true
+        },
+        "config": {
+          "imessageSession": "agent:main:imessage:direct:dylanbochman@gmail.com",
+          "reachySession": "agent:main:reachy",
+          "statePath": "~/.openclaw/reachy-continuity/capsule.json",
+          "summaryModel": "openai/gpt-5.4-mini"
+        }
       }
     }
   },

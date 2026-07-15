@@ -116,6 +116,25 @@ a follow-up event before treating the received text as complete. The live OpenCl
 with Dylan-equivalent action permissions, while retaining normal trusted-contact
 checks for iMessage and every other messaging session.
 
+The `reachy-continuity` plugin bridges only `agent:main:reachy` and Dylan's exact
+iMessage DM. Its trusted `before_prompt_build` hook injects an owner-only capsule
+containing at most 12 four-hour semantic summaries plus explicit 24-hour handoffs.
+An asynchronous `gpt-5.4-mini` summary runs after the completed turn and therefore
+does not delay Reachy's spoken reply. The plugin derives source identity from the
+runtime session key, exposes handoff tools only in those two sessions, consumes
+handoffs by exact ID, and blocks Reachy durable-memory writes unless the current
+turn explicitly asks to remember or save the information. New deployments start
+with an empty capsule; raw transcripts are never copied into it.
+
+The approved `reachy-continuity` skill remains in the workspace skill location
+recorded by Skill Workshop. Its canonical source is
+`openclaw/skills/reachy-continuity`, while the plugin source is
+`openclaw/plugins/reachy-continuity`. Verify the live runtime with:
+
+```bash
+ssh dylans-mac-mini 'openclaw plugins inspect reachy-continuity --runtime --json'
+```
+
 ### Financial Dashboard LaunchAgents
 
 The financial dashboard services are Mac Mini services, not laptop services. Before installing, bootstrapping, stopping, or starting these plists, confirm the target host:

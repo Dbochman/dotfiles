@@ -1255,7 +1255,15 @@ install_dotfiles() {
           fi
           local skill_name
           skill_name=$(basename "$skill_dir")
-          deploy_openclaw_skill_copy "$skill_dir" "$HOME/.openclaw/skills/$skill_name"
+          if [[ "$skill_name" = "reachy-continuity" ]]; then
+            # This exact skill is approved through Skill Workshop and remains a
+            # workspace skill so its live location matches the approval record.
+            deploy_openclaw_skill_copy \
+              "$skill_dir" \
+              "$HOME/.openclaw/workspace/skills/$skill_name"
+          else
+            deploy_openclaw_skill_copy "$skill_dir" "$HOME/.openclaw/skills/$skill_name"
+          fi
         done
       fi
     else

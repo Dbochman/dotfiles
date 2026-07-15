@@ -26,6 +26,15 @@ You wake up fresh each session. These files are your continuity:
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
 
+### Reachy continuity boundary
+
+The `reachy-continuity` gateway plugin is the only cross-channel bridge between
+`agent:main:reachy` and Dylan's exact iMessage DM. Let it inject expiring summaries;
+never inspect either transcript or read its capsule file manually. In Reachy, write
+durable memory only when Dylan explicitly asks to remember or save something in the
+current turn. Never promote Reachy room speech during automatic memory flushes. Do
+nothing with the continuity capsule from every other session.
+
 ### 🧠 MEMORY.md - Your Long-Term Memory
 
 - **ONLY load in main session** (direct chats with your human)
