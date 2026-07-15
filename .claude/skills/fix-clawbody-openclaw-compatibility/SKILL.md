@@ -123,7 +123,13 @@ latency but removes both network underruns and the artificial prebuffer boundary
 For a low-latency physical session, include `thinking: "minimal"` and `fastMode: true`
 in Reachy's `chat.send` request; unlike `sessions.patch`, these per-turn fields do not
 require the bridge to request `operator.admin`. Do not lower the defaults for messaging
-or other OpenClaw sessions, and do not broaden the robot client's gateway scopes. Use a
+or other OpenClaw sessions, and do not broaden the robot client's gateway scopes. To use
+a smaller model only for the physical session, first add it to
+`agents.defaults.models`, then run `sessions.patch` for the exact
+`agent:main:reachy` key from a local authenticated admin client. Keep that admin action
+off the robot. If the gateway emits assistant text but no completion event, use a short,
+configurable post-text settle window based on observed event timing rather than a
+multi-second generic timeout. Use a
 supported low-latency transcription model, specify the input language, and tune
 server-VAD silence conservatively so normal pauses are not clipped.
 

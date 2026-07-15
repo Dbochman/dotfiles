@@ -107,7 +107,11 @@ vocalization; `dance1`, `dance2`, and `dance3` are the vocalized dance presets. 
 separate official dance library is motion-only, and the six dependency-free built-in
 dances remain available as fallbacks.
 
-ClawBody uses the exact OpenClaw session key `agent:main:reachy`. The live OpenClaw
+ClawBody uses the exact OpenClaw session key `agent:main:reachy`. That session is
+pinned to `openai/gpt-5.4-mini` for lower voice-response latency; the global default
+remains `openai/gpt-5.6-sol` for messaging and every other session. When the gateway
+sends assistant text without a separate completion event, ClawBody waits 350 ms for
+a follow-up event before treating the received text as complete. The live OpenClaw
 `SOUL.md` treats only that authenticated internal embodiment session as full trust,
 with Dylan-equivalent action permissions, while retaining normal trusted-contact
 checks for iMessage and every other messaging session.
