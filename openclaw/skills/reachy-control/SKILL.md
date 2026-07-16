@@ -11,8 +11,9 @@ metadata: {"openclaw":{"emoji":"🤖","requires":{"bins":["reachyctl"]}}}
 
 # Reachy control
 
-Control the Crosstown Reachy Mini through ClawBody's owner-only local socket and
-the dedicated Mac-mini-to-Reachy SSH identity.
+Control the Crosstown Reachy Mini through ClawBody's owner-only local socket.
+Commands from the Mac mini relay through the always-on Crosstown MBP; commands
+on the MBP connect directly with its dedicated Reachy SSH identity.
 
 ## Commands
 

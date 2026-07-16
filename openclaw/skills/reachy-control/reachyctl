@@ -32,6 +32,22 @@ case "${1:-}" in
   *) usage ;;
 esac
 
+relay_file="${REACHY_CONTROL_RELAY_FILE:-$HOME/.openclaw/reachy-control-relay}"
+if [[ -r "$relay_file" ]]; then
+  IFS= read -r relay_host < "$relay_file"
+  if [[ ! "$relay_host" =~ ^[A-Za-z0-9._-]+(@[A-Za-z0-9._:-]+)?$ ]]; then
+    echo "reachyctl: invalid relay host in $relay_file" >&2
+    exit 1
+  fi
+  exec ssh \
+    -o BatchMode=yes \
+    -o ConnectTimeout=8 \
+    -o IdentityAgent=none \
+    -o StrictHostKeyChecking=yes \
+    "$relay_host" \
+    "$HOME/.openclaw/bin/reachyctl" "$@"
+fi
+
 exec ssh \
   -i "$HOME/.ssh/openclaw-reachy" \
   -o BatchMode=yes \

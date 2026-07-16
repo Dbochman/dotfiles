@@ -21,6 +21,8 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary, hard-limited to one send attempt/hour |
 | `ai.openclaw.reachy-gateway-tunnel` | `ssh -R` | Reachy loopback 18789 | Keeps a token-authenticated path from Crosstown Reachy Mini to the Mac mini's loopback-only gateway |
+| `ai.openclaw.reachy-gateway-upstream` | `ssh -L` | Crosstown MBP loopback 28789 | Carries the Mac mini's loopback-only gateway to the always-on Crosstown MBP without exposing it on Tailscale or the LAN |
+| `ai.openclaw.reachy-gateway-relay` | `ssh -R` | Reachy loopback 18789 | Runs on the Crosstown MBP and publishes its private upstream gateway hop only on Reachy's loopback interface |
 
 ### Nest Event Listener and Cabin Reviewer
 
@@ -54,18 +56,37 @@ runtime layout, checks, and rollout gates.
 
 ### Reachy Mini Gateway Tunnel
 
-The Wireless Reachy Mini at `192.168.165.129` runs ClawBody locally but reaches the Mac mini only through the mini's Tailscale subnet route. Keep `gateway.bind` set to `loopback`; `ai.openclaw.reachy-gateway-tunnel` connects from the Mac mini to Reachy and publishes the gateway only as `127.0.0.1:18789` on the robot.
+The Wireless Reachy Mini at `192.168.165.129` runs ClawBody locally. Keep
+`gateway.bind` set to `loopback`. The preferred always-on path uses two SSH
+LaunchAgents on the Crosstown MBP: `ai.openclaw.reachy-gateway-upstream`
+forwards MBP loopback port `28789` to the Mac mini gateway's loopback port
+`18789`, and `ai.openclaw.reachy-gateway-relay` publishes that upstream only as
+`127.0.0.1:18789` on Reachy. The legacy
+`ai.openclaw.reachy-gateway-tunnel` is retained as a rollback configuration but
+must not run at the same time because both reverse tunnels claim the same
+Reachy loopback port. Keep AC-powered system sleep disabled on the relay MBP
+(`sudo pmset -c sleep 0`); display sleep and battery sleep may remain enabled.
 
-The service uses the dedicated Mac mini key `~/.ssh/openclaw-reachy`; its public key must be present in `pollen@192.168.165.129:~/.ssh/authorized_keys`. ClawBody's owner-only `.env` on the robot should use `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789` and the same `OPENCLAW_GATEWAY_TOKEN` held in the Mac mini's protected secrets cache. Verify the path without printing credentials:
+The relay uses the dedicated `~/.ssh/openclaw-reachy` key on the Crosstown MBP;
+its public key must be present in
+`pollen@192.168.165.129:~/.ssh/authorized_keys`. ClawBody's owner-only `.env` on
+the robot should use `OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789` and the same
+`OPENCLAW_GATEWAY_TOKEN` held in the Mac mini's protected secrets cache. Verify
+the path without printing credentials:
 
 ```bash
-ssh dylans-mac-mini 'launchctl print "gui/$(id -u)/ai.openclaw.reachy-gateway-tunnel" | grep -E "state =|pid =|last exit code"'
-ssh dylans-mac-mini 'ssh -i ~/.ssh/openclaw-reachy -o BatchMode=yes -o IdentityAgent=none pollen@192.168.165.129 "curl -fsS http://127.0.0.1:18789/health"'
+ssh dbochman@100.107.209.85 'launchctl print "gui/$(id -u)/ai.openclaw.reachy-gateway-upstream" | grep -E "state =|pid =|last exit code"'
+ssh dbochman@100.107.209.85 'launchctl print "gui/$(id -u)/ai.openclaw.reachy-gateway-relay" | grep -E "state =|pid =|last exit code"'
+ssh dbochman@100.107.209.85 'ssh -i ~/.ssh/openclaw-reachy -o BatchMode=yes -o IdentityAgent=none pollen@192.168.165.129 "curl -fsS http://127.0.0.1:18789/health"'
 ```
 
-The `reachy-control` skill uses `reachyctl` on the Mac mini to invoke
-`/home/pollen/clawbody/bin/clawbody-control` over the same dedicated SSH identity.
-The robot-side client talks only to ClawBody's mode-`0600` Unix socket; no robot
+The `reachy-control` skill uses `reachyctl` on the Mac mini, where the
+owner-only `~/.openclaw/reachy-control-relay` file contains the exact Crosstown
+MBP SSH alias. The validated command is relayed to the MBP's installed
+`reachyctl`, which invokes `/home/pollen/clawbody/bin/clawbody-control` over the
+dedicated Reachy SSH identity. With no relay file, `reachyctl` connects directly
+to Reachy, which is the MBP's configuration and the rollback behavior. The
+robot-side client talks only to ClawBody's mode-`0600` Unix socket; no robot
 control port is exposed on the LAN. Use `reachyctl status` as the read-only smoke
 test after a ClawBody restart.
 

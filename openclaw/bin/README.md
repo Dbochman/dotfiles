@@ -36,7 +36,7 @@ active post-deploy checks.
 | `julia-morning-briefing-data.py` | repo path (cron invokes it directly) | Collects Julia's validated same-day triage handoff, current Calendar, cached sleep, aggregate finances, and bounded post-triage unread metadata. Owns raw GWS account routing, pagination, retries, deadlines, and section-level failure handling. |
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
 | `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as an iMessage attachment via `imsg`, plus optional summary text. Used by Julia's morning briefing cron job. |
-| `reachyctl` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Sends constrained status, movement, proactive speech, microphone mute/unmute, and camera commands to ClawBody over the dedicated Reachy SSH identity and its owner-only Unix control socket. Face tracking is automatic while the user speaks. |
+| `reachyctl` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Sends constrained status, movement, proactive speech, microphone mute/unmute, and camera commands to ClawBody through the always-on Crosstown MBP relay. On that MBP it uses the dedicated Reachy SSH identity and owner-only Unix control socket directly. Face tracking is automatic while the user speaks. |
 
 ### Dashboards
 
