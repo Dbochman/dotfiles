@@ -97,6 +97,11 @@ Reachy's microphone mute control as the conversation gate. To opt back in, set
 the value to `true`. The configured threshold is `0.5`, with initial and follow-up
 timeouts of 10 and 20 seconds respectively.
 
+The direct voice `microphone` tool and owner-only `reachyctl mute|unmute`
+commands set Reachy's daemon-managed input volume to zero or restore its last
+nonzero value. A muted voice session cannot hear a spoken unmute request, so
+recovery must come from Reachy's UI or a trusted remote OpenClaw channel.
+
 The direct voice model has local movement, camera, emotion, dance, and preset
 tools. Requests needing OpenClaw skills, external/current data, messages, files,
 browser work, home control, bookings, purchases, or durable memory call

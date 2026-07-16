@@ -3,8 +3,8 @@ name: reachy-control
 description: >-
   Inspect and control the physically secured Reachy Mini at Crosstown through
   ClawBody. Use for requests to check Reachy, look around, express an emotion,
-  play any official emotion or dance preset, speak proactively, stop movement,
-  or describe what its camera sees.
+  play any official emotion or dance preset, speak proactively, mute or unmute
+  its microphone, stop movement, or describe what its camera sees.
 allowed-tools: Bash(reachyctl:*)
 metadata: {"openclaw":{"emoji":"🤖","requires":{"bins":["reachyctl"]}}}
 ---
@@ -30,6 +30,8 @@ reachyctl presets
 reachyctl emotion <preset>
 reachyctl dance <preset>
 reachyctl speak "Text to say aloud"
+reachyctl mute
+reachyctl unmute
 reachyctl stop
 reachyctl idle
 ```
@@ -39,6 +41,12 @@ Use the camera:
 ```bash
 reachyctl see
 ```
+
+`mute` sets Reachy's daemon-managed microphone volume to zero. `unmute` restores
+the last nonzero volume remembered by the running ClawBody process, defaulting to
+100 after a restart. Once muted, the in-person voice agent cannot hear a spoken
+request to unmute; use Reachy's UI or `reachyctl unmute` from another trusted
+OpenClaw channel.
 
 Treat JSON with `"status":"success"` as confirmation. Report an `error`
 verbatim and do not claim the robot moved or saw something when the command
@@ -62,8 +70,8 @@ cron jobs, or explicit remote requests.
 
 Every command automatically acquires ClawBody's exclusive OpenClaw control lease.
 The direct Realtime voice pauses while the command runs, so it is safe to combine
-camera, movement, emotion, dance, and proactive speech commands without competing
-with an ordinary voice turn.
+  camera, movement, emotion, dance, microphone, and proactive speech commands
+  without competing with an ordinary voice turn.
 
 ## Safety
 
@@ -81,7 +89,7 @@ with an ordinary voice turn.
 
 ```text
 OpenClaw -> reachyctl (Mac mini) -> dedicated SSH -> clawbody-control
-         -> owner-only Unix socket -> ClawBody movement/camera tools -> Reachy
+         -> owner-only Unix socket -> ClawBody local tools -> Reachy
 ```
 
 If `reachyctl status` reports that control is unavailable, verify ClawBody is

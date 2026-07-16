@@ -3,12 +3,12 @@
 set -o pipefail
 
 usage() {
-  echo 'usage: reachyctl status|presets|see|stop|idle|look <direction>|emotion <preset>|dance <preset>|speak <text>' >&2
+  echo 'usage: reachyctl status|presets|see|stop|idle|mute|unmute|look <direction>|emotion <preset>|dance <preset>|speak <text>' >&2
   exit 2
 }
 
 case "${1:-}" in
-  status|presets|see|stop|idle)
+  status|presets|see|stop|idle|mute|unmute)
     [[ "$#" -eq 1 ]] || usage
     ;;
   look)

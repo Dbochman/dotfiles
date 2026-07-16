@@ -1,4 +1,4 @@
 interface:
   display_name: "Reachy Control"
-  short_description: "Play every Reachy motion and emotion preset"
-  default_prompt: "Use $reachy-control to perform an expressive preset on the Reachy Mini."
+  short_description: "Control Reachy movement, speech, camera, and mic"
+  default_prompt: "Use $reachy-control to inspect and control the Reachy Mini safely."
