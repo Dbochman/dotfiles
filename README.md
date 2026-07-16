@@ -37,6 +37,7 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `openclaw/FINANCIAL-DASHBOARD.md` - Financial source, cache-only Plaid sync, and forecast-baseline contract
 - `openclaw/FORECAST-DASHBOARD.md` - Forecast service, current-day baseline application, and override rules
 - `openclaw/LAUNCHAGENTS.md` - Mac Mini service lifecycle, validation, and deployment ordering
+- `openclaw/REACHY.md` - Reachy Mini architecture, voice, continuity, physical controls, deployment, and recovery
 
 ### SSH & Secrets (via 1Password)
 - `ssh_config` - Uses 1Password SSH Agent by default, with dedicated on-disk keys for a few Tailscale hosts

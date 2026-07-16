@@ -49,8 +49,9 @@ the last nonzero volume remembered by the running ClawBody process, defaulting t
 pauses face tracking. Once that pose settles, Reachy relaxes only the antenna
 motors: deliberately move both antennas by about 14 degrees for roughly 300 ms
 to unmute it physically. Unmute returns Reachy to neutral and restores subtle
-face tracking. Reachy's UI and `reachyctl unmute` from another trusted OpenClaw
-channel remain recovery paths.
+face tracking. Use `reachyctl status` rather than the dashboard slider as the
+authoritative combined state; `reachyctl unmute` from another trusted OpenClaw
+channel remains the remote recovery path.
 
 Treat JSON with `"status":"success"` as confirmation. Report an `error`
 verbatim and do not claim the robot moved or saw something when the command

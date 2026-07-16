@@ -56,6 +56,9 @@ runtime layout, checks, and rollout gates.
 
 ### Reachy Mini Gateway Tunnel
 
+See [`REACHY.md`](REACHY.md) for the canonical end-to-end architecture,
+deployed voice and continuity behavior, verification, and rollback runbook.
+
 The Wireless Reachy Mini at `192.168.165.129` runs ClawBody locally. Keep
 `gateway.bind` set to `loopback`. The preferred always-on path uses two SSH
 LaunchAgents on the Crosstown MBP: `ai.openclaw.reachy-gateway-upstream`
