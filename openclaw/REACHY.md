@@ -14,6 +14,7 @@ owns the OpenClaw plugin, skills, relay services, and operating policy.
 | ClawBody | `/home/pollen/clawbody`, `main` at `8bb58bc`, installed editable in `/venvs/apps_venv` |
 | Crosstown MBP | `dbochman@100.107.209.85` (`192.168.165.111` on the Crosstown LAN), always-on relay and primary robot-control host |
 | Mac mini | `dbochman@100.104.114.1`, OpenClaw gateway and agent host |
+| Reachy Mini Control | Pollen Robotics `0.9.33`, installed on the Crosstown MBP, normally closed |
 | Voice | Direct OpenAI Realtime, `gpt-realtime-2.1-mini`, Cedar voice, 24 kHz PCM |
 | Delegation | Exact OpenClaw session `agent:main:reachy`, pinned to `openai/gpt-5.4-mini` |
 | Continuity | `reachy-continuity` gateway plugin, exact Reachy/iMessage sessions only |
@@ -232,6 +233,33 @@ reachyctl stop
 reachyctl idle
 ```
 
+## Reachy Mini Control app
+
+The notarized Pollen Robotics **Reachy Mini Control** app version `0.9.33` is
+installed at `/Applications/Reachy Mini Control.app` on the Crosstown MBP. It is
+an optional interactive management client and local proxy for Reachy's daemon
+UI; it is not part of the production voice, gateway, continuity, movement,
+audio, or `reachyctl` path.
+
+Leave the app closed during normal operation. Open it when attended access is
+useful for installing or restarting robot apps, viewing daemon logs, changing
+robot settings, or troubleshooting. Closing it does not stop ClawBody because
+ClawBody and the app manager run on Reachy itself. The dashboard volume slider
+may also lag a ClawBody-initiated mute change, so `reachyctl status` remains the
+authoritative combined control state.
+
+The app is intentionally not installed on the Mac mini. Adding another copy
+there would provide only a redundant cold-spare GUI and would not improve
+latency, voice reliability, gateway availability, or robot control. The app may
+remain on Dylan's workstation for attended use, but that copy is likewise not
+required to stay open.
+
+Verify the MBP installation without launching it:
+
+```bash
+ssh dbochman@100.107.209.85 'app="/Applications/Reachy Mini Control.app"; plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist"; codesign --verify --deep --strict "$app"; spctl -a -vv -t execute "$app"'
+```
+
 ## Security boundaries
 
 See [`../docs/ssh-host-access.md`](../docs/ssh-host-access.md) for the exact
@@ -263,6 +291,7 @@ and SSH recovery procedure.
 | MBP upstream | [`launchagents/ai.openclaw.reachy-gateway-upstream.plist`](launchagents/ai.openclaw.reachy-gateway-upstream.plist) | MBP `~/Library/LaunchAgents` |
 | MBP reverse relay | [`launchagents/ai.openclaw.reachy-gateway-relay.plist`](launchagents/ai.openclaw.reachy-gateway-relay.plist) | MBP `~/Library/LaunchAgents` |
 | Legacy rollback tunnel | [`launchagents/ai.openclaw.reachy-gateway-tunnel.plist`](launchagents/ai.openclaw.reachy-gateway-tunnel.plist) | Mac mini `~/Library/LaunchAgents` (not loaded) |
+| Reachy Mini Control | Pollen Robotics notarized application; not repository-managed | MBP `/Applications/Reachy Mini Control.app` (installed, normally closed) |
 
 ## Verification
 
