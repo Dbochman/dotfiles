@@ -234,6 +234,10 @@ reachyctl idle
 
 ## Security boundaries
 
+See [`../docs/ssh-host-access.md`](../docs/ssh-host-access.md) for the exact
+host-to-host trust matrix, identity fingerprints, machine-local key locations,
+and SSH recovery procedure.
+
 - Keep OpenClaw bound to `127.0.0.1:18789` and `::1:18789`.
 - Keep both SSH forwards bound to loopback; do not publish gateway port `18789`
   on the LAN or Tailscale.
