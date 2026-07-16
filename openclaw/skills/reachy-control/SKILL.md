@@ -44,9 +44,11 @@ reachyctl see
 
 `mute` sets Reachy's daemon-managed microphone volume to zero. `unmute` restores
 the last nonzero volume remembered by the running ClawBody process, defaulting to
-100 after a restart. Once muted, the in-person voice agent cannot hear a spoken
-request to unmute; use Reachy's UI or `reachyctl unmute` from another trusted
-OpenClaw channel.
+100 after a restart. Mute also holds a bowed quiet pose with folded antennas and
+pauses face tracking; unmute returns Reachy to neutral and restores subtle face
+tracking. Once muted, the in-person voice agent cannot hear a spoken request to
+unmute; use Reachy's UI or `reachyctl unmute` from another trusted OpenClaw
+channel.
 
 Treat JSON with `"status":"success"` as confirmation. Report an `error`
 verbatim and do not claim the robot moved or saw something when the command
