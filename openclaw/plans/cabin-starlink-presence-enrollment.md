@@ -20,6 +20,33 @@ The enrollment must never disclose a raw provider row or turn an identification
 session into a presence transition, vacancy action, camera review, home-event
 publication, or outbound message.
 
+## Interim Eight Sleep containment (2026-07-18)
+
+Until Julia's exact Cabin binding is activated, `vacancy-actions.sh` pins her
+Eight Sleep home to Crosstown even when the correlated sticky state says Cabin.
+The deployed permissive scanner falsely relocated her from Crosstown to the
+Cabin on five consecutive days, July 13–17. Each false relocation repeatedly
+called the Eight Sleep Cabin `home` operation. Eight Sleep partially changed
+the user-scoped routing but never completed the Cabin side assignment. The
+command correctly reported failure, but its durable marker remained Crosstown,
+so each new state write retried the bad Cabin move and the later Crosstown
+correction did not force a repair. Eight Sleep's device-level `awaySides` field
+is not treated as a standalone active-away signal; the authoritative repair
+readback is Julia's Crosstown `current-set` plus `away-mode = false`.
+
+This containment is deliberately narrower than presence itself: occupancy,
+vacancy, and other household actions continue to use the existing correlated
+state, while only Julia's Eight Sleep relocation is pinned. The pin releases
+automatically only when the deployed `presence-detect.sh validate-config cabin`
+command succeeds against the strict production binding. Merely staging an
+enrollment session or creating an unvalidated file does not release it.
+
+During activation, keep the mutation jobs stopped, deploy the strict scanner,
+verify that `validate-config cabin` succeeds, and then restore the jobs. The
+next genuine one-sided Cabin detection may move Julia's Eight Sleep home to the
+Cabin. Before that boundary, use an attended manual override only if Julia is
+physically at the Cabin and explicitly wants her Cabin Pod active.
+
 ## Why this is an attended migration
 
 The repository history never contained a committed exact Cabin device-ID
