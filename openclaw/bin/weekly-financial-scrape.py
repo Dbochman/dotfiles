@@ -19,6 +19,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 REPO = Path.home() / "repos" / "financial-dashboard"
@@ -33,8 +34,14 @@ FINANCE_CREDENTIAL_CACHE = (
 PINCHTAB_INSTANCE_HELPER = Path.home() / ".openclaw" / "bin" / "pinchtab-headless-instance"
 COMMAND_TIMEOUT_SECONDS = 420
 PROFILE_PREFLIGHT_TIMEOUT_SECONDS = 45
+BOA_TAB_OPERATION_TIMEOUT_SECONDS = 30
 PROCESS_GROUP_GRACE_SECONDS = 5
 TERMINATION_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+BOA_TAB_BOOTSTRAP_URL = (
+    "https://secure.bankofamerica.com/login/sign-in/"
+    "signOnV2Screen.go?request_locale=en-us"
+)
+BOA_TAB_REUSE_HOSTS = frozenset({"secure.bankofamerica.com"})
 
 
 class WrapperInterrupted(Exception):
@@ -72,6 +79,12 @@ class CommandResult:
     @property
     def output(self) -> str:
         return f"{self.stdout}\n{self.stderr}"
+
+
+@dataclass(frozen=True)
+class BoaProfileResult:
+    status: str
+    instance_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +207,7 @@ BOA_VERIFY_SAFE_STATUSES = frozenset({
     "cdp_attach_failed",
     "cdp_unavailable",
     "not_authenticated",
+    "signed_out_landing",
 })
 
 
@@ -416,24 +430,119 @@ def ensure_boa_profile(env):
 
     The helper output is treated as untrusted and never relayed. This step
     does not navigate a tab, read credentials, or weaken the exact
-    ``not_authenticated`` gate that protects BoA re-authentication.
+    ``not_authenticated`` gate that protects BoA re-authentication. The
+    instance identifier remains process-local so later tab operations cannot
+    accidentally fall back to another PinchTab profile.
     """
+    browser_env = scrub_child_environment(env)
     completed = _run_captured(
         [str(PINCHTAB_INSTANCE_HELPER), "acquire", "finance"],
-        env,
+        browser_env,
         PROFILE_PREFLIGHT_TIMEOUT_SECONDS,
     )
     if completed.timed_out:
-        return "timeout"
+        return BoaProfileResult("timeout")
     if completed.returncode != 0:
-        return "failed"
+        return BoaProfileResult("failed")
     lines = completed.stdout.splitlines()
     if len(lines) != 1 or not re.fullmatch(
         r"inst_[A-Za-z0-9]+\t[01]",
         lines[0].strip(),
     ):
-        return "failed"
-    return "ok"
+        return BoaProfileResult("failed")
+    instance_id, _started = lines[0].strip().split("\t", 1)
+    return BoaProfileResult("ok", instance_id)
+
+
+def _boa_tab_url_reusable(url):
+    """Reuse only exact secure-host HTTPS tabs without userinfo or ports."""
+    if not isinstance(url, str):
+        return False
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname in BOA_TAB_REUSE_HOSTS
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+    )
+
+
+def _boa_instance_id_allowed(instance_id):
+    """Accept only one parsed PinchTab managed-instance identifier."""
+    return isinstance(instance_id, str) and bool(
+        re.fullmatch(r"inst_[A-Za-z0-9]+", instance_id)
+    )
+
+
+def parse_pinchtab_tabs(output):
+    """Return tab URLs from one schema-safe PinchTab list response."""
+    try:
+        payload = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    tabs = payload.get("tabs") if isinstance(payload, dict) else payload
+    if not isinstance(tabs, list):
+        return None
+    urls = []
+    for tab in tabs:
+        if not isinstance(tab, dict) or not isinstance(tab.get("url"), str):
+            return None
+        urls.append(tab["url"])
+    return urls
+
+
+def ensure_boa_tab(instance_id, env):
+    """Reuse an allowlisted BoA tab or seed exactly one fixed sign-in URL.
+
+    Tab inventory and open output stay private. Both helper calls receive a
+    defensively scrubbed environment, and this function never reads or
+    selects a credential profile.
+    """
+    if not _boa_instance_id_allowed(instance_id):
+        return "profile_unavailable"
+
+    browser_env = scrub_child_environment(env)
+    listed = _run_captured(
+        [str(PINCHTAB_INSTANCE_HELPER), "tabs", instance_id],
+        browser_env,
+        BOA_TAB_OPERATION_TIMEOUT_SECONDS,
+    )
+    if listed.timed_out:
+        return "tab_list_timeout"
+    if listed.returncode != 0:
+        return "tab_list_failed"
+    tab_urls = parse_pinchtab_tabs(listed.stdout)
+    if tab_urls is None:
+        return "tab_list_failed"
+    if any(_boa_tab_url_reusable(url) for url in tab_urls):
+        return "reused"
+
+    opened = _run_captured(
+        [
+            str(PINCHTAB_INSTANCE_HELPER),
+            "open",
+            instance_id,
+            BOA_TAB_BOOTSTRAP_URL,
+        ],
+        browser_env,
+        BOA_TAB_OPERATION_TIMEOUT_SECONDS,
+    )
+    if opened.timed_out:
+        return "open_timeout"
+    if opened.returncode != 0:
+        return "open_failed"
+    lines = opened.stdout.splitlines()
+    if len(lines) != 1 or not re.fullmatch(
+        r"[A-Za-z0-9_.:-]{4,160}",
+        lines[0].strip(),
+    ):
+        return "open_failed"
+    return "opened"
 
 
 def command_status(result):
@@ -521,29 +630,64 @@ def parse_boa_reauth_status(output):
     return "reauth_failed"
 
 
-def run_boa(run_id, env, credential_store=None):
+def run_boa(
+    run_id,
+    env,
+    credential_store=None,
+    instance_id=None,
+):
+    if not _boa_instance_id_allowed(instance_id):
+        return {
+            "source": "boa",
+            "scrape": "failed",
+            "verify_auth": "not_needed",
+            "tab_bootstrap": "profile_unavailable",
+            "reauth": "not_needed",
+            "import": "skipped",
+        }
+
     scrape_args = (
         "scrape_mortgage.py", "--lender", "boa", "--headless", "--merge",
         "--run-id", run_id,
+        "--boa-pinchtab-instance", instance_id,
+    )
+    verify_args = (
+        "scrape_mortgage.py",
+        "--lender",
+        "boa",
+        "--verify-auth",
+        "--boa-pinchtab-instance",
+        instance_id,
+    )
+    reauth_args = (
+        "scrape_mortgage.py",
+        "--lender",
+        "boa",
+        "--boa-re-auth",
+        "--boa-pinchtab-instance",
+        instance_id,
     )
     scrape = run_command(scrape_args, env)
     verify_status = "not_needed"
     reauth_status = "not_needed"
+    tab_bootstrap_status = "not_needed"
+    tab_seeded = False
 
     if scrape.returncode != 0:
-        verified = run_command(
-            ("scrape_mortgage.py", "--lender", "boa", "--verify-auth"), env
-        )
+        verified = run_command(verify_args, env)
         verify_status = parse_boa_verify_status(verified.output)
+        if verify_status in {"boa_tab_unavailable", "signed_out_landing"}:
+            tab_bootstrap_status = ensure_boa_tab(instance_id, env)
+            if tab_bootstrap_status in {"opened", "reused"}:
+                tab_seeded = True
+                verified = run_command(verify_args, env)
+                verify_status = parse_boa_verify_status(verified.output)
         if verify_status == "not_authenticated":
             credential_env = credentials_for("boa", env, credential_store or {})
             if credential_env is None:
                 reauth_status = "credentials_unavailable"
             else:
-                reauth = run_command(
-                    ("scrape_mortgage.py", "--lender", "boa", "--boa-re-auth"),
-                    credential_env,
-                )
+                reauth = run_command(reauth_args, credential_env)
                 reauth_status = (
                     "timeout" if reauth.timed_out
                     else parse_boa_reauth_status(reauth.output)
@@ -555,11 +699,14 @@ def run_boa(run_id, env, credential_store=None):
                     and reauth_status in BOA_REAUTH_SUCCESS_STATUSES
                 ):
                     scrape = run_command(scrape_args, env)
+        elif tab_seeded and verify_status == "authenticated":
+            scrape = run_command(scrape_args, env)
 
     result = {
         "source": "boa",
         "scrape": command_status(scrape),
         "verify_auth": verify_status,
+        "tab_bootstrap": tab_bootstrap_status,
         "reauth": reauth_status,
         "import": "skipped",
     }
@@ -622,8 +769,13 @@ def _run_locked():
         result = run_standard_source(source, run_id, env, credential_store)
         results.append(result)
         print(json.dumps({"event": "source_complete", **result}, sort_keys=True), flush=True)
-    boa_result = run_boa(run_id, env, credential_store)
-    boa_result["profile_preflight"] = boa_profile_preflight
+    boa_result = run_boa(
+        run_id,
+        env,
+        credential_store,
+        boa_profile_preflight.instance_id,
+    )
+    boa_result["profile_preflight"] = boa_profile_preflight.status
     results.append(boa_result)
     print(json.dumps({"event": "source_complete", **boa_result}, sort_keys=True), flush=True)
     status = "ok" if all(result_ok(result) for result in results) else "failed"

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import runpy
@@ -48,6 +49,10 @@ if [[ "${FAKE_ERROR_OPERATION:-}" == "$operation" ]]; then
 fi
 
 case "$operation" in
+  tab)
+    [[ "${4:-}" == "--json" ]]
+    printf '%s\n' '[{"id":"fake-tab","url":"https://www.opentable.com/s"}]'
+    ;;
   nav)
     if [[ "${5:-}" == "--new-tab" ]]; then
       [[ "${4:-}" == "https://www.opentable.com/s" && "${6:-}" == "--print-tab-id" ]]
@@ -110,6 +115,7 @@ esac
         opened = self.run_helper(
             "open", "inst-test", "https://www.opentable.com/s"
         )
+        tabs = self.run_helper("tabs", "inst-test")
         navigated = self.run_helper(
             "navigate",
             "inst-test",
@@ -132,6 +138,11 @@ esac
 
         self.assertEqual(opened.returncode, 0, opened.stderr)
         self.assertEqual(opened.stdout.strip(), "fake-tab")
+        self.assertEqual(tabs.returncode, 0, tabs.stderr)
+        self.assertEqual(
+            json.loads(tabs.stdout),
+            [{"id": "fake-tab", "url": "https://www.opentable.com/s"}],
+        )
         self.assertEqual(navigated.returncode, 0, navigated.stderr)
         self.assertEqual(snapshot.returncode, 0, snapshot.stderr)
         self.assertIn('e42:button "Continue"', snapshot.stdout)
@@ -146,11 +157,12 @@ esac
             for line in self.log.read_text(encoding="utf-8").splitlines()
             if line.startswith("--server ")
         ]
-        self.assertEqual(len(scoped_calls), 7)
+        self.assertEqual(len(scoped_calls), 8)
         self.assertTrue(
             all("http://127.0.0.1:19868" in line for line in scoped_calls)
         )
         self.assertTrue(any(" nav " in f" {line} " for line in scoped_calls))
+        self.assertTrue(any(" tab " in f" {line} " for line in scoped_calls))
         self.assertTrue(any(" snap " in f" {line} " for line in scoped_calls))
         self.assertTrue(any(" click " in f" {line} " for line in scoped_calls))
         self.assertTrue(any(" fill " in f" {line} " for line in scoped_calls))
@@ -159,6 +171,7 @@ esac
 
     def test_zero_exit_cli_errors_fail_closed_for_every_tab_operation(self) -> None:
         cases = (
+            ("tab", "tabs", ("tabs", "inst-test")),
             (
                 "nav",
                 "open",

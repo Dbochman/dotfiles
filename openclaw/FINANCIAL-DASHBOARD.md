@@ -146,7 +146,7 @@ refresh historical Plaid descriptions after an upgrade, run
 
 ## Scraper Pipeline (Tier 1 / 2 / BoA Fallback)
 
-Seven scrapers run weekly via `financial-scrape-0001`, which invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper. The helper takes a nonblocking singleton lock, validates that all five protected finance credential profiles are present, preflights BoA's existing dedicated `finance` PinchTab profile, runs each child in a separately cleaned process group, captures child output privately, retries only recognized authentication failures, and imports only sources that succeeded during the current run. Each scraper writes its own `<source>_data.json`; `update_data.py import-json-*` upserts into `finance.db`.
+Seven scrapers run weekly via `financial-scrape-0001`, which invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper. The helper takes a nonblocking singleton lock, validates that all five protected finance credential profiles are present, preflights BoA's dedicated `finance` PinchTab instance, safely seeds an exact secure-host BoA tab when the read-only auth probe reports exact tab absence or the public signed-out landing, runs each child in a separately cleaned process group, captures child output privately, retries only recognized authentication failures, and imports only sources that succeeded during the current run. Each scraper writes its own `<source>_data.json`; `update_data.py import-json-*` upserts into `finance.db`.
 
 | # | Scraper | Tier | Mechanism | 1Password item (OpenClaw vault) | Property |
 |---|---------|------|-----------|----------------------------------|----------|
@@ -193,22 +193,28 @@ Scheduled child output is captured in memory and not relayed. Standard mortgage 
 
 ### How BoA works
 
-1. **Profile preflight.** Before any source scrape, the weekly helper calls `pinchtab-headless-instance acquire finance` with its sanitized non-credential environment. It starts or reuses only the dedicated headless profile and intentionally leaves it running. It does not navigate a tab, inspect account data, or read credentials. Malformed output, timeout, or startup failure becomes the safe `profile_preflight` failure status while the normal scrape still runs.
+1. **Profile preflight and binding.** Before any source scrape, the weekly helper calls `pinchtab-headless-instance acquire finance` with its sanitized non-credential environment. It starts or reuses only the dedicated headless profile, retains that exact process-local instance ID, and intentionally leaves the instance running. Every scheduled BoA scrape, verification, and re-authentication receives that ID through `--boa-pinchtab-instance`; a missing or malformed ID prevents all BoA children and credential selection. The preflight does not navigate a tab, inspect account data, or read credentials. Malformed output, timeout, or startup failure becomes the safe `profile_preflight` failure status while unrelated source scrapes may continue.
 2. **Cookie-replay fast path.** `scrape_mortgage.py --lender boa` first calls the BoA account API through `requests`, using the mode-`0600` cookie store at `~/.openclaw/.boa_cookies.json`. Replay preserves validated BoA domain/path/secure scope, rejects lookalike domains, and never follows redirects. A warm cookie store needs no browser.
-3. **Raw-CDP fallback.** If the API rejects replayed cookies, the scraper resolves the dedicated low-privilege PinchTab profile named `finance`, matches its exact profile ID to the root Chrome process, prefers that profile's `DevToolsActivePort`, and attaches only to the explicit HTTPS host allowlist: `secure.bankofamerica.com` for account pages or `www.bankofamerica.com` for BoA's sign-out landing. It uses `Runtime.evaluate` and `Network.getAllCookies`, not `playwright.connect_over_cdp`. Only a nonempty boundary-matched cookie set captured on the live secure account host can atomically replace the cookie store.
-4. **Auth verification.** The BoA sign-in URL can render either the account dashboard or the login form, and the title can remain "Accounts Overview" after sign-out. The scraper reads the tab URL live, checks visible login controls before using the title heuristic, and permits positive authentication/account API calls only on the exact HTTPS `secure` host; `www` remains signed-out/form-only. A JSON API response alone is not proof that the live tab remains authenticated.
-5. **Session safety.** Do not call `page.goto`, close the browser context, or kill Pinchtab Chrome after a fresh login. BoA session cookies are process-bound even though the captured cookie store can outlive Chrome for a limited time.
+3. **Raw-CDP fallback.** If the API rejects replayed cookies, the scraper validates the supplied instance ID against `pinchtab instances --json` as the exact running, headless `finance` instance, resolves that instance's exact profile ID, matches it to the root Chrome process, prefers that profile's `DevToolsActivePort`, and attaches only to the explicit HTTPS host allowlist: `secure.bankofamerica.com` for account pages or `www.bankofamerica.com` for BoA's sign-out landing. It uses `Runtime.evaluate` and `Network.getAllCookies`, not `playwright.connect_over_cdp`. Only a nonempty boundary-matched cookie set captured on the live secure account host can atomically replace the cookie store.
+4. **Tab bootstrap.** If and only if the read-only auth probe returns the exact status `boa_tab_unavailable` or `signed_out_landing`, the weekly helper privately lists tabs on the retained `finance` instance. It reuses an existing tab only when its URL has the exact HTTPS `secure.bankofamerica.com` host. The public `www.bankofamerica.com` landing, lookalike hosts, userinfo, HTTP, and nonstandard ports are never reused and instead cause the helper to open exactly one fixed `https://secure.bankofamerica.com/login/sign-in/signOnV2Screen.go?request_locale=en-us` tab. Malformed inventory, helper failure, or timeout fails closed without opening a tab. After either reuse or open, the helper runs the auth probe again before considering credentials.
+5. **Auth verification.** The BoA sign-in URL can render either the account dashboard or the login form, and the title can remain "Accounts Overview" after sign-out. The scraper reads the tab URL live, checks visible login controls before using the title heuristic, and permits positive authentication/account API calls only on the exact HTTPS `secure` host. An exact `www` public landing with no auth or form signals reports `signed_out_landing`, which can trigger secure-tab bootstrap but never credential submission itself. A JSON API response alone is not proof that the live tab remains authenticated.
+6. **Session safety.** Do not call `page.goto`, close the browser context, or kill Pinchtab Chrome after a fresh login. BoA session cookies are process-bound even though the captured cookie store can outlive Chrome for a limited time.
 
 The regular cron must never run generic `--re-auth` for BoA. It uses the
 separate `--boa-re-auth` command only after the normal scrape failed and
 `--verify-auth` reports the single exact status `not_authenticated`. The
-command uses the existing `finance` tab, requires each intended field to be
+validated acquired `finance` instance ID is required before any BoA child or
+credential selection, including when the first auth probe reports
+`not_authenticated`. The command uses the existing `finance` tab, requires each intended field to be
 visible/topmost/focused on the live exact HTTPS BoA origin, enters the user ID,
 waits for BoA to enable the password and submit controls, clicks submit once,
 saves fresh cookies on success, and stops on MFA, any challenge, an ambiguous auth state,
 a not-ready form, rejection, timeout, or CDP failure. `auth_unknown`,
 `boa_tab_unavailable`, `cdp_attach_failed`, and `cdp_unavailable` never permit
-credential submission; `host_not_allowed` aborts any in-progress raw-CDP
+credential submission; neither does `signed_out_landing`. Tab bootstrap only creates or reuses the
+allowlisted tab and must still produce an exact subsequent
+`not_authenticated` probe before the credential pair is selected;
+`host_not_allowed` aborts any in-progress raw-CDP
 recovery if the live tab leaves the exact HTTPS BoA allowlist. Do not
 substitute Playwright login or a LaunchAgent credential fetch.
 

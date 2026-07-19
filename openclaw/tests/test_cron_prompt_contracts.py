@@ -289,13 +289,40 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertNotIn("doubledate-q3-jul-korean", self.jobs)
 
     def test_weekly_finance_cron_requires_cache_only_credentials(self) -> None:
-        prompt = self.jobs["financial-scrape-0001"]["payload"]["message"]
+        job = self.jobs["financial-scrape-0001"]
+        prompt = job["payload"]["message"]
 
         self.assertIn("dedicated-cache-only credential scoping", prompt)
         self.assertIn("must never read `.env-token`", prompt)
         self.assertIn("invoke `op`", prompt)
         self.assertIn("1Password service-account token", prompt)
         self.assertIn("source finance credentials into the gateway environment", prompt)
+        self.assertIn("Cron owns delivery; do not call the `message` tool", prompt)
+        self.assertIn("complete final response must be exactly `NO_REPLY`", prompt)
+        self.assertIn("exactly one concise failure message", prompt)
+        self.assertIn(
+            "profile_preflight/scrape/verify_auth/tab_bootstrap/reauth/import",
+            prompt,
+        )
+        self.assertEqual(
+            job["delivery"],
+            {
+                "mode": "announce",
+                "channel": "imessage",
+                "to": "chat_id:${DYLAN_CHAT_ID}",
+                "bestEffort": True,
+            },
+        )
+        self.assertEqual(
+            job["failureAlert"],
+            {
+                "after": 1,
+                "mode": "announce",
+                "channel": "imessage",
+                "to": "chat_id:${DYLAN_CHAT_ID}",
+                "cooldownMs": 21_600_000,
+            },
+        )
 
 
 if __name__ == "__main__":
