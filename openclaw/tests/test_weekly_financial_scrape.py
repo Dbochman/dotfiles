@@ -23,6 +23,10 @@ SPEC.loader.exec_module(weekly_financial_scrape)
 class WeeklyFinancialScrapeTests(unittest.TestCase):
     RUN_ID = "11111111-2222-3333-4444-555555555555"
     BASE_ENV = {"PATH": "/usr/bin:/bin", "SAFE_PARENT_VALUE": "present"}
+    BOA_SIGN_ON_URL = (
+        "https://secure.bankofamerica.com/login/sign-in/"
+        "signOnV2Screen.go?request_locale=en-us"
+    )
     CREDENTIAL_STORE = {
         profile: (f"private-{profile}-user", f"private-{profile}-password")
         for profile in weekly_financial_scrape.FINANCE_CREDENTIAL_KEYS
@@ -361,9 +365,10 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             "_run_captured",
             return_value=completed,
         ) as run_captured:
-            status = weekly_financial_scrape.ensure_boa_profile(self.BASE_ENV)
+            result = weekly_financial_scrape.ensure_boa_profile(self.BASE_ENV)
 
-        self.assertEqual(status, "ok")
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.instance_id, "inst_123abc")
         run_captured.assert_called_once_with(
             [
                 str(weekly_financial_scrape.PINCHTAB_INSTANCE_HELPER),
@@ -394,10 +399,9 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                 "_run_captured",
                 return_value=completed,
             ):
-                self.assertEqual(
-                    weekly_financial_scrape.ensure_boa_profile(self.BASE_ENV),
-                    expected,
-                )
+                result = weekly_financial_scrape.ensure_boa_profile(self.BASE_ENV)
+                self.assertEqual(result.status, expected)
+                self.assertIsNone(result.instance_id)
 
     def test_boa_profile_preflight_is_part_of_source_health(self):
         result = {"scrape": "ok", "import": "ok", "profile_preflight": "ok"}
@@ -405,6 +409,281 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
 
         result["profile_preflight"] = "failed"
         self.assertFalse(weekly_financial_scrape.result_ok(result))
+
+    def test_boa_children_and_credentials_require_acquired_instance_id(self):
+        for instance_id in (None, "", "inst_wrong-format", "inst_123/path"):
+            with (
+                self.subTest(instance_id=instance_id),
+                patch.object(
+                    weekly_financial_scrape,
+                    "run_command",
+                ) as run_command,
+                patch.object(
+                    weekly_financial_scrape,
+                    "ensure_boa_tab",
+                ) as ensure_tab,
+                patch.object(
+                    weekly_financial_scrape,
+                    "credentials_for",
+                ) as credentials,
+            ):
+                result = weekly_financial_scrape.run_boa(
+                    self.RUN_ID,
+                    self.BASE_ENV,
+                    self.CREDENTIAL_STORE,
+                    instance_id=instance_id,
+                )
+
+            run_command.assert_not_called()
+            ensure_tab.assert_not_called()
+            credentials.assert_not_called()
+            self.assertEqual(result["scrape"], "failed")
+            self.assertEqual(result["verify_auth"], "not_needed")
+            self.assertEqual(result["tab_bootstrap"], "profile_unavailable")
+            self.assertEqual(result["import"], "skipped")
+
+    def test_empty_boa_tab_inventory_opens_only_the_fixed_sign_in_url(self):
+        self.assertEqual(
+            weekly_financial_scrape.BOA_TAB_BOOTSTRAP_URL,
+            self.BOA_SIGN_ON_URL,
+        )
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(0, stdout="[]\n"),
+                weekly_financial_scrape.CommandResult(0, stdout="tab-created\n"),
+            ]
+        )
+        calls = []
+
+        def fake_run(command, env, timeout, cwd=None):
+            calls.append((command, dict(env), timeout, cwd))
+            return next(responses)
+
+        with patch.object(
+            weekly_financial_scrape,
+            "_run_captured",
+            side_effect=fake_run,
+        ):
+            status = weekly_financial_scrape.ensure_boa_tab(
+                "inst_123abc",
+                self.credential_parent_environment(),
+            )
+
+        self.assertEqual(status, "opened")
+        self.assertEqual(
+            [command for command, _, _, _ in calls],
+            [
+                [
+                    str(weekly_financial_scrape.PINCHTAB_INSTANCE_HELPER),
+                    "tabs",
+                    "inst_123abc",
+                ],
+                [
+                    str(weekly_financial_scrape.PINCHTAB_INSTANCE_HELPER),
+                    "open",
+                    "inst_123abc",
+                    self.BOA_SIGN_ON_URL,
+                ],
+            ],
+        )
+        for _, child_env, timeout, cwd in calls:
+            self.assertEqual(
+                timeout,
+                weekly_financial_scrape.BOA_TAB_OPERATION_TIMEOUT_SECONDS,
+            )
+            self.assertIsNone(cwd)
+            self.assertEqual(child_env["SAFE_PARENT_VALUE"], "present")
+            for key in (
+                "OP_SERVICE_ACCOUNT_TOKEN",
+                "SCRAPER_USER",
+                "SCRAPER_PW",
+                *weekly_financial_scrape.FINANCE_CREDENTIAL_ENV_KEYS,
+            ):
+                self.assertNotIn(key, child_env)
+
+    def test_existing_exact_https_boa_tab_is_reused_without_navigation(self):
+        listed = weekly_financial_scrape.CommandResult(
+            0,
+            stdout=json.dumps(
+                {
+                    "tabs": [
+                        {
+                            "id": "tab-existing",
+                            "url": "https://secure.bankofamerica.com/myaccounts/",
+                        }
+                    ]
+                }
+            ),
+        )
+        with patch.object(
+            weekly_financial_scrape,
+            "_run_captured",
+            return_value=listed,
+        ) as run_captured:
+            status = weekly_financial_scrape.ensure_boa_tab(
+                "inst_123abc",
+                self.BASE_ENV,
+            )
+
+        self.assertEqual(status, "reused")
+        run_captured.assert_called_once()
+
+    def test_www_signed_out_inventory_opens_secure_sign_in_instead_of_reusing(self):
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout=json.dumps(
+                        [
+                            {
+                                "id": "tab-www-landing",
+                                "url": "https://www.bankofamerica.com/",
+                            }
+                        ]
+                    ),
+                ),
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="tab-created\n",
+                ),
+            ]
+        )
+        with patch.object(
+            weekly_financial_scrape,
+            "_run_captured",
+            side_effect=lambda *args, **kwargs: next(responses),
+        ) as run_captured:
+            status = weekly_financial_scrape.ensure_boa_tab(
+                "inst_123abc",
+                self.BASE_ENV,
+            )
+
+        self.assertEqual(status, "opened")
+        self.assertEqual(run_captured.call_count, 2)
+        self.assertEqual(
+            run_captured.call_args_list[1].args[0],
+            [
+                str(weekly_financial_scrape.PINCHTAB_INSTANCE_HELPER),
+                "open",
+                "inst_123abc",
+                self.BOA_SIGN_ON_URL,
+            ],
+        )
+
+    def test_wrong_host_tabs_are_never_reused_for_boa(self):
+        hostile_urls = (
+            "https://secure.bankofamerica.com.evil.invalid/login",
+            "http://secure.bankofamerica.com/myaccounts/",
+            "https://user@secure.bankofamerica.com/myaccounts/",
+            "https://secure.bankofamerica.com:8443/myaccounts/",
+        )
+        for hostile_url in hostile_urls:
+            with self.subTest(url=hostile_url):
+                responses = iter(
+                    [
+                        weekly_financial_scrape.CommandResult(
+                            0,
+                            stdout=json.dumps(
+                                [{"id": "tab-hostile", "url": hostile_url}]
+                            ),
+                        ),
+                        weekly_financial_scrape.CommandResult(
+                            0,
+                            stdout="tab-created\n",
+                        ),
+                    ]
+                )
+                with patch.object(
+                    weekly_financial_scrape,
+                    "_run_captured",
+                    side_effect=lambda *args, **kwargs: next(responses),
+                ) as run_captured:
+                    status = weekly_financial_scrape.ensure_boa_tab(
+                        "inst_123abc",
+                        self.BASE_ENV,
+                    )
+
+                self.assertEqual(status, "opened")
+                self.assertEqual(run_captured.call_count, 2)
+                self.assertEqual(
+                    run_captured.call_args_list[1].args[0][-1],
+                    self.BOA_SIGN_ON_URL,
+                )
+
+    def test_boa_tab_inventory_failures_never_open_a_tab(self):
+        cases = (
+            (
+                weekly_financial_scrape.CommandResult(1, stderr="private"),
+                "tab_list_failed",
+            ),
+            (
+                weekly_financial_scrape.CommandResult(124, timed_out=True),
+                "tab_list_timeout",
+            ),
+            (
+                weekly_financial_scrape.CommandResult(0, stdout="not-json"),
+                "tab_list_failed",
+            ),
+            (
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout='[{"url": 42}]',
+                ),
+                "tab_list_failed",
+            ),
+        )
+        for completed, expected in cases:
+            with self.subTest(expected=expected), patch.object(
+                weekly_financial_scrape,
+                "_run_captured",
+                return_value=completed,
+            ) as run_captured:
+                status = weekly_financial_scrape.ensure_boa_tab(
+                    "inst_123abc",
+                    self.BASE_ENV,
+                )
+
+            self.assertEqual(status, expected)
+            run_captured.assert_called_once()
+
+    def test_boa_tab_open_failures_fail_closed(self):
+        cases = (
+            (
+                weekly_financial_scrape.CommandResult(1, stderr="private"),
+                "open_failed",
+            ),
+            (
+                weekly_financial_scrape.CommandResult(124, timed_out=True),
+                "open_timeout",
+            ),
+            (
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="tab-one\ntab-two\n",
+                ),
+                "open_failed",
+            ),
+        )
+        for opened, expected in cases:
+            with self.subTest(expected=expected):
+                responses = iter(
+                    [
+                        weekly_financial_scrape.CommandResult(0, stdout="[]"),
+                        opened,
+                    ]
+                )
+                with patch.object(
+                    weekly_financial_scrape,
+                    "_run_captured",
+                    side_effect=lambda *args, **kwargs: next(responses),
+                ) as run_captured:
+                    status = weekly_financial_scrape.ensure_boa_tab(
+                        "inst_123abc",
+                        self.BASE_ENV,
+                    )
+
+            self.assertEqual(status, expected)
+            self.assertEqual(run_captured.call_count, 2)
 
     def test_standard_source_reauths_once_for_recognized_auth_failure(self):
         source = self.source_named("eversource")
@@ -577,6 +856,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                 self.RUN_ID,
                 self.BASE_ENV,
                 self.CREDENTIAL_STORE,
+                instance_id="inst_123abc",
             )
 
         credentials.assert_called_once_with(
@@ -590,12 +870,20 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                 (
                     "scrape_mortgage.py", "--lender", "boa", "--headless",
                     "--merge", "--run-id", self.RUN_ID,
+                    "--boa-pinchtab-instance", "inst_123abc",
                 ),
-                ("scrape_mortgage.py", "--lender", "boa", "--verify-auth"),
-                ("scrape_mortgage.py", "--lender", "boa", "--boa-re-auth"),
+                (
+                    "scrape_mortgage.py", "--lender", "boa", "--verify-auth",
+                    "--boa-pinchtab-instance", "inst_123abc",
+                ),
+                (
+                    "scrape_mortgage.py", "--lender", "boa", "--boa-re-auth",
+                    "--boa-pinchtab-instance", "inst_123abc",
+                ),
                 (
                     "scrape_mortgage.py", "--lender", "boa", "--headless",
                     "--merge", "--run-id", self.RUN_ID,
+                    "--boa-pinchtab-instance", "inst_123abc",
                 ),
                 (
                     "update_data.py", "import-json-boa-mortgage",
@@ -610,6 +898,331 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         self.assertEqual(result["reauth"], "authenticated")
         self.assertEqual(result["scrape"], "ok")
         self.assertEqual(result["import"], "ok")
+
+    def test_boa_missing_tab_is_seeded_reverified_then_guardedly_reauthed(self):
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(1, stderr="scrape failed"),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: boa_tab_unavailable",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: not_authenticated",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="boa-raw-cdp-reauth: authenticated",
+                ),
+                weekly_financial_scrape.CommandResult(0),
+                weekly_financial_scrape.CommandResult(0),
+            ]
+        )
+        calls = []
+
+        def fake_run(arguments, env, timeout=weekly_financial_scrape.COMMAND_TIMEOUT_SECONDS):
+            calls.append((arguments, dict(env)))
+            return next(responses)
+
+        credential_env = {
+            **self.BASE_ENV,
+            "SCRAPER_USER": "private-user",
+            "SCRAPER_PW": "private-password",
+        }
+        with (
+            patch.object(
+                weekly_financial_scrape,
+                "run_command",
+                side_effect=fake_run,
+            ),
+            patch.object(
+                weekly_financial_scrape,
+                "ensure_boa_tab",
+                return_value="opened",
+            ) as ensure_tab,
+            patch.object(
+                weekly_financial_scrape,
+                "credentials_for",
+                return_value=credential_env,
+            ) as credentials,
+        ):
+            result = weekly_financial_scrape.run_boa(
+                self.RUN_ID,
+                self.BASE_ENV,
+                self.CREDENTIAL_STORE,
+                instance_id="inst_123abc",
+            )
+
+        ensure_tab.assert_called_once_with("inst_123abc", self.BASE_ENV)
+        credentials.assert_called_once_with(
+            "boa",
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+        )
+        self.assertEqual(
+            [arguments for arguments, _ in calls],
+            [
+                (
+                    "scrape_mortgage.py", "--lender", "boa", "--headless",
+                    "--merge", "--run-id", self.RUN_ID,
+                    "--boa-pinchtab-instance", "inst_123abc",
+                ),
+                (
+                    "scrape_mortgage.py", "--lender", "boa", "--verify-auth",
+                    "--boa-pinchtab-instance", "inst_123abc",
+                ),
+                (
+                    "scrape_mortgage.py", "--lender", "boa", "--verify-auth",
+                    "--boa-pinchtab-instance", "inst_123abc",
+                ),
+                (
+                    "scrape_mortgage.py", "--lender", "boa", "--boa-re-auth",
+                    "--boa-pinchtab-instance", "inst_123abc",
+                ),
+                (
+                    "scrape_mortgage.py", "--lender", "boa", "--headless",
+                    "--merge", "--run-id", self.RUN_ID,
+                    "--boa-pinchtab-instance", "inst_123abc",
+                ),
+                (
+                    "update_data.py", "import-json-boa-mortgage",
+                    "--require-run-id", self.RUN_ID,
+                ),
+            ],
+        )
+        for index in (0, 1, 2, 4, 5):
+            self.assertNotIn("SCRAPER_USER", calls[index][1])
+            self.assertNotIn("SCRAPER_PW", calls[index][1])
+        self.assertEqual(calls[3][1]["SCRAPER_USER"], "private-user")
+        self.assertEqual(result["tab_bootstrap"], "opened")
+        self.assertEqual(result["verify_auth"], "not_authenticated")
+        self.assertEqual(result["reauth"], "authenticated")
+        self.assertEqual(result["import"], "ok")
+
+    def test_boa_signed_out_landing_is_seeded_then_requires_exact_reverify(self):
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(1, stderr="scrape failed"),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: signed_out_landing",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: not_authenticated",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="boa-raw-cdp-reauth: authenticated",
+                ),
+                weekly_financial_scrape.CommandResult(0),
+                weekly_financial_scrape.CommandResult(0),
+            ]
+        )
+        calls = []
+
+        def fake_run(arguments, env, timeout=weekly_financial_scrape.COMMAND_TIMEOUT_SECONDS):
+            calls.append((arguments, dict(env)))
+            return next(responses)
+
+        credential_env = {
+            **self.BASE_ENV,
+            "SCRAPER_USER": "private-user",
+            "SCRAPER_PW": "private-password",
+        }
+        with (
+            patch.object(
+                weekly_financial_scrape,
+                "run_command",
+                side_effect=fake_run,
+            ),
+            patch.object(
+                weekly_financial_scrape,
+                "ensure_boa_tab",
+                return_value="opened",
+            ) as ensure_tab,
+            patch.object(
+                weekly_financial_scrape,
+                "credentials_for",
+                return_value=credential_env,
+            ) as credentials,
+        ):
+            result = weekly_financial_scrape.run_boa(
+                self.RUN_ID,
+                self.BASE_ENV,
+                self.CREDENTIAL_STORE,
+                instance_id="inst_123abc",
+            )
+
+        ensure_tab.assert_called_once_with("inst_123abc", self.BASE_ENV)
+        credentials.assert_called_once_with(
+            "boa",
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+        )
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(
+            calls[1][0],
+            (
+                "scrape_mortgage.py",
+                "--lender",
+                "boa",
+                "--verify-auth",
+                "--boa-pinchtab-instance",
+                "inst_123abc",
+            ),
+        )
+        self.assertEqual(calls[2][0], calls[1][0])
+        self.assertNotIn("SCRAPER_USER", calls[2][1])
+        self.assertEqual(calls[3][1]["SCRAPER_USER"], "private-user")
+        self.assertEqual(result["tab_bootstrap"], "opened")
+        self.assertEqual(result["verify_auth"], "not_authenticated")
+        self.assertEqual(result["reauth"], "authenticated")
+        self.assertEqual(result["import"], "ok")
+
+    def test_boa_seeded_authenticated_tab_retries_without_credentials(self):
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(1, stderr="scrape failed"),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: boa_tab_unavailable",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="boa-tab-verify: authenticated",
+                ),
+                weekly_financial_scrape.CommandResult(0),
+                weekly_financial_scrape.CommandResult(0),
+            ]
+        )
+        with (
+            patch.object(
+                weekly_financial_scrape,
+                "run_command",
+                side_effect=lambda *args, **kwargs: next(responses),
+            ) as run_command,
+            patch.object(
+                weekly_financial_scrape,
+                "ensure_boa_tab",
+                return_value="opened",
+            ),
+            patch.object(
+                weekly_financial_scrape,
+                "credentials_for",
+            ) as credentials,
+        ):
+            result = weekly_financial_scrape.run_boa(
+                self.RUN_ID,
+                self.BASE_ENV,
+                self.CREDENTIAL_STORE,
+                instance_id="inst_123abc",
+            )
+
+        self.assertEqual(run_command.call_count, 5)
+        credentials.assert_not_called()
+        self.assertEqual(result["tab_bootstrap"], "opened")
+        self.assertEqual(result["verify_auth"], "authenticated")
+        self.assertEqual(result["scrape"], "ok")
+        self.assertEqual(result["import"], "ok")
+
+    def test_boa_tab_bootstrap_failure_never_unlocks_credentials(self):
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(1, stderr="scrape failed"),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: boa_tab_unavailable",
+                ),
+            ]
+        )
+        with (
+            patch.object(
+                weekly_financial_scrape,
+                "run_command",
+                side_effect=lambda *args, **kwargs: next(responses),
+            ) as run_command,
+            patch.object(
+                weekly_financial_scrape,
+                "ensure_boa_tab",
+                return_value="open_failed",
+            ) as ensure_tab,
+            patch.object(
+                weekly_financial_scrape,
+                "credentials_for",
+            ) as credentials,
+        ):
+            result = weekly_financial_scrape.run_boa(
+                self.RUN_ID,
+                self.BASE_ENV,
+                self.CREDENTIAL_STORE,
+                instance_id="inst_123abc",
+            )
+
+        self.assertEqual(run_command.call_count, 2)
+        ensure_tab.assert_called_once_with("inst_123abc", self.BASE_ENV)
+        credentials.assert_not_called()
+        self.assertEqual(result["tab_bootstrap"], "open_failed")
+        self.assertEqual(result["verify_auth"], "boa_tab_unavailable")
+        self.assertEqual(result["import"], "skipped")
+
+    def test_boa_post_bootstrap_probe_must_be_exact_before_credentials(self):
+        post_bootstrap_outputs = (
+            "boa-tab-verify: auth_unknown reason=no_auth_signal",
+            "boa-tab-verify: signed_out_landing",
+            "boa-tab-verify: not_authenticated_extra",
+            "not_authenticated",
+            (
+                "boa-tab-verify: not_authenticated\n"
+                "boa-tab-verify: authenticated"
+            ),
+        )
+        for verify_output in post_bootstrap_outputs:
+            with self.subTest(verify_output=verify_output):
+                responses = iter(
+                    [
+                        weekly_financial_scrape.CommandResult(
+                            1,
+                            stderr="scrape failed",
+                        ),
+                        weekly_financial_scrape.CommandResult(
+                            1,
+                            stdout="boa-tab-verify: boa_tab_unavailable",
+                        ),
+                        weekly_financial_scrape.CommandResult(
+                            1,
+                            stdout=verify_output,
+                        ),
+                    ]
+                )
+                with (
+                    patch.object(
+                        weekly_financial_scrape,
+                        "run_command",
+                        side_effect=lambda *args, **kwargs: next(responses),
+                    ) as run_command,
+                    patch.object(
+                        weekly_financial_scrape,
+                        "ensure_boa_tab",
+                        return_value="opened",
+                    ),
+                    patch.object(
+                        weekly_financial_scrape,
+                        "credentials_for",
+                    ) as credentials,
+                ):
+                    result = weekly_financial_scrape.run_boa(
+                        self.RUN_ID,
+                        self.BASE_ENV,
+                        self.CREDENTIAL_STORE,
+                        instance_id="inst_123abc",
+                    )
+
+                self.assertEqual(run_command.call_count, 3)
+                credentials.assert_not_called()
+                self.assertEqual(result["tab_bootstrap"], "opened")
+                self.assertEqual(result["import"], "skipped")
 
     def test_boa_preserves_safe_raw_cdp_reauth_failure_status(self):
         responses = iter(
@@ -648,6 +1261,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             result = weekly_financial_scrape.run_boa(
                 self.RUN_ID,
                 self.BASE_ENV,
+                instance_id="inst_123abc",
             )
 
         self.assertEqual(run_command.call_count, 3)
@@ -715,6 +1329,8 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         verify_outputs = (
             "[2026-06-28 08:00:00] boa-tab-verify: authenticated",
             "[2026-06-28 08:00:00] boa-tab-verify: cdp_unavailable",
+            "[2026-06-28 08:00:00] boa-tab-verify: boa_tab_unavailable_extra",
+            "[2026-06-28 08:00:00] boa-tab-verify: signed_out_landing_extra",
             "[2026-06-28 08:00:00] boa-tab-verify: not_authenticated_extra",
             "not_authenticated",
             (
@@ -740,13 +1356,19 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                         weekly_financial_scrape,
                         "credentials_for",
                     ) as credentials,
+                    patch.object(
+                        weekly_financial_scrape,
+                        "ensure_boa_tab",
+                    ) as ensure_tab,
                 ):
                     result = weekly_financial_scrape.run_boa(
                         self.RUN_ID,
                         self.BASE_ENV,
+                        instance_id="inst_123abc",
                     )
 
                 self.assertEqual(run_command.call_count, 2)
+                ensure_tab.assert_not_called()
                 credentials.assert_not_called()
                 self.assertEqual(result["import"], "skipped")
 
@@ -990,15 +1612,25 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         boa_calls = []
         profile_preflight_calls = []
 
-        def fake_boa(run_id, env, credential_store=None):
+        def fake_boa(run_id, env, credential_store=None, instance_id=None):
             events.append("boa")
-            boa_calls.append((run_id, dict(env), dict(credential_store or {})))
+            boa_calls.append(
+                (
+                    run_id,
+                    dict(env),
+                    dict(credential_store or {}),
+                    instance_id,
+                )
+            )
             return boa_result
 
         def fake_profile_preflight(env):
             events.append("profile_preflight")
             profile_preflight_calls.append(dict(env))
-            return "ok"
+            return weekly_financial_scrape.BoaProfileResult(
+                "ok",
+                "inst_123abc",
+            )
 
         with tempfile.TemporaryDirectory() as tempdir:
             temp_path = Path(tempdir)
@@ -1070,6 +1702,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             self.assertNotIn(key, profile_preflight_calls[0])
         boa_child_env = boa_calls[0][1]
         boa_credential_store = boa_calls[0][2]
+        self.assertEqual(boa_calls[0][3], "inst_123abc")
         self.assertNotIn("OP_SERVICE_ACCOUNT_TOKEN", boa_child_env)
         self.assertNotIn("SCRAPER_USER", boa_child_env)
         self.assertNotIn("SCRAPER_PW", boa_child_env)

@@ -9,6 +9,7 @@ usage() {
   cat <<'EOF'
 Usage:
   pinchtab-headless-instance acquire [profile]
+  pinchtab-headless-instance tabs INSTANCE_ID
   pinchtab-headless-instance open INSTANCE_ID URL
   pinchtab-headless-instance navigate INSTANCE_ID TAB_ID URL
   pinchtab-headless-instance snap INSTANCE_ID TAB_ID
@@ -314,6 +315,12 @@ print(tab_id if isinstance(tab_id, str) else "")
   printf '%s\n' "$tab_id"
 }
 
+list_tabs() {
+  local instance_id="$1"
+
+  run_instance_cli tabs "$instance_id" tab --json
+}
+
 navigate_tab() {
   local instance_id="$1"
   local tab_id="$2"
@@ -384,6 +391,11 @@ case "$action" in
     shift
     [[ $# -le 1 ]] || { usage >&2; exit 2; }
     acquire "${1:-$PROFILE}"
+    ;;
+  tabs)
+    shift
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    list_tabs "$1"
     ;;
   open)
     shift
