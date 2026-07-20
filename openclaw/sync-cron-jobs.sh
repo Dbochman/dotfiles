@@ -338,6 +338,45 @@ def schedules_equal(desired, live):
     return desired == live
 
 
+DELIVERY_NULLABLE_FIELDS = (
+    'channel',
+    'to',
+    'threadId',
+    'accountId',
+    'completionDestination',
+    'failureDestination',
+)
+
+
+def deliveries_equal(desired, live):
+    """Compare delivery policy after normalizing the false default."""
+    if desired == live:
+        return True
+    if not isinstance(desired, dict) or not isinstance(live, dict):
+        return False
+    desired = dict(desired)
+    live = dict(live)
+    if desired.get('bestEffort') is False:
+        desired.pop('bestEffort')
+    if live.get('bestEffort') is False:
+        live.pop('bestEffort')
+    return desired == live
+
+
+def delivery_patch(desired, live):
+    """Build a merge-safe patch that removes omitted stale destinations."""
+    patch = dict(desired)
+    if not isinstance(live, dict):
+        return patch
+    for key in DELIVERY_NULLABLE_FIELDS:
+        if key not in desired and key in live:
+            patch[key] = None
+    if 'bestEffort' not in desired and live.get('bestEffort') is True:
+        # OpenClaw's public update schema cannot null-clear this boolean.
+        patch['bestEffort'] = False
+    return patch
+
+
 def definition_patch(desired, live):
     """Return only changed public cron.update fields.
 
@@ -373,9 +412,18 @@ def definition_patch(desired, live):
     if not schedules_equal(desired.get('schedule'), live.get('schedule')):
         patch['schedule'] = desired.get('schedule')
 
-    for key in ('sessionTarget', 'wakeMode', 'payload', 'delivery'):
+    for key in ('sessionTarget', 'wakeMode', 'payload'):
         if desired.get(key) != live.get(key) and key in desired:
             patch[key] = desired[key]
+
+    desired_delivery = desired.get('delivery')
+    live_delivery = live.get('delivery')
+    if 'delivery' in desired and not deliveries_equal(desired_delivery, live_delivery):
+        patch['delivery'] = (
+            delivery_patch(desired_delivery, live_delivery)
+            if isinstance(desired_delivery, dict)
+            else desired_delivery
+        )
 
     desired_failure_alert = desired.get('failureAlert')
     live_failure_alert = live.get('failureAlert')
@@ -636,6 +684,20 @@ def effective_delete_after_run(job):
     return isinstance(job.get("schedule"), dict) and job["schedule"].get("kind") == "at"
 
 
+def deliveries_equal(desired, actual):
+    if desired == actual:
+        return True
+    if not isinstance(desired, dict) or not isinstance(actual, dict):
+        return False
+    desired = dict(desired)
+    actual = dict(actual)
+    if desired.get("bestEffort") is False:
+        desired.pop("bestEffort")
+    if actual.get("bestEffort") is False:
+        actual.pop("bestEffort")
+    return desired == actual
+
+
 def definitions_equal(desired, actual):
     if desired.get("id") != actual.get("id"):
         return False
@@ -652,9 +714,11 @@ def definitions_equal(desired, actual):
         return False
     if not schedules_equal(desired.get("schedule"), actual.get("schedule")):
         return False
-    for key in ("sessionTarget", "wakeMode", "payload", "delivery"):
+    for key in ("sessionTarget", "wakeMode", "payload"):
         if desired.get(key) != actual.get(key):
             return False
+    if not deliveries_equal(desired.get("delivery"), actual.get("delivery")):
+        return False
     desired_alert = desired.get("failureAlert")
     actual_alert = actual.get("failureAlert")
     if not (

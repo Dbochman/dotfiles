@@ -173,7 +173,17 @@ if args[:3] == ["gateway", "call", "cron.update"]:
         if row is None:
             raise SystemExit(1)
         job = json.loads(row[0])
-        job.update(params["patch"])
+        patch = dict(params["patch"])
+        delivery_patch = patch.pop("delivery", None)
+        job.update(patch)
+        if delivery_patch is not None:
+            delivery = dict(job.get("delivery") or {})
+            for key, value in delivery_patch.items():
+                if value is None:
+                    delivery.pop(key, None)
+                else:
+                    delivery[key] = value
+            job["delivery"] = delivery
         next_run = scheduled_ms(job) if "schedule" in params["patch"] or "enabled" in params["patch"] else row[2]
         connection.execute(
             "UPDATE cron_jobs SET job_json = ?, next_run_at_ms = ? WHERE job_id = ?",
@@ -473,6 +483,77 @@ if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_DEFINITION_UPDATE" ] ||
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
 fi
+
+# OpenClaw merges nested delivery patches. Moving an old announcing job to
+# delivery.mode=none must explicitly clear its stale route and best-effort
+# flag, or the latter suppresses the canonical job-level failure alert.
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+import sqlite3
+
+home = os.path.expanduser("~")
+source_path = os.path.join(home, "dotfiles/openclaw/cron/jobs.json")
+sqlite_path = os.path.join(home, ".openclaw/state/openclaw.sqlite")
+with open(source_path) as source_file:
+    desired = json.load(source_file)["jobs"][0]
+live = dict(desired)
+live["delivery"] = {
+    "mode": "none",
+    "channel": "imessage",
+    "to": "chat_id:2",
+    "threadId": "stale-thread",
+    "accountId": "stale-account",
+    "bestEffort": True,
+    "completionDestination": {
+        "mode": "webhook",
+        "to": "https://example.invalid/completion",
+    },
+    "failureDestination": {
+        "channel": "imessage",
+        "to": "chat_id:2",
+    },
+}
+with sqlite3.connect(sqlite_path) as conn:
+    conn.execute(
+        "UPDATE cron_jobs SET job_json = ?, next_run_at_ms = ?, last_run_at_ms = ?, state_json = ? WHERE job_id = 'future'",
+        (
+            json.dumps(live),
+            1893452400000,
+            1893456000000,
+            '{"nextRunAtMs":1893452400000,"lastRunAtMs":1893456000000}',
+        ),
+    )
+PY
+
+: > "$OPENCLAW_CALL_LOG"
+deploy
+EXPECTED_DELIVERY_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"delivery":{"mode":"none","channel":null,"to":null,"threadId":null,"accountId":null,"completionDestination":null,"failureDestination":null,"bestEffort":false}}}'
+if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_DELIVERY_UPDATE" ] || \
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
+  echo "stale delivery fields did not produce the exact clearing cron.update" >&2
+  cat "$OPENCLAW_CALL_LOG" >&2
+  exit 1
+fi
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+import sqlite3
+
+path = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
+with sqlite3.connect(path) as conn:
+    raw_job, raw_state = conn.execute(
+        "SELECT job_json, state_json FROM cron_jobs WHERE job_id = 'future'"
+    ).fetchone()
+job = json.loads(raw_job)
+state = json.loads(raw_state)
+if job.get("delivery") != {"mode": "none", "bestEffort": False}:
+    raise SystemExit("stale delivery routing survived the canonical patch")
+if state.get("nextRunAtMs") != 1893452400000:
+    raise SystemExit("delivery-only drift discarded the retry backoff")
+if state.get("lastRunAtMs") != 1893456000000:
+    raise SystemExit("delivery-only drift discarded last-run state")
+PY
 
 # A failed SQLite migration/normalization must fail the deployment. Returning
 # success here would let callers report a rollout even though SQLite could
