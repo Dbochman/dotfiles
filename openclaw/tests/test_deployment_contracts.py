@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import plistlib
@@ -19,6 +20,9 @@ DEPLOYMENT_LIB = REPO_ROOT / "openclaw" / "lib" / "deployment.sh"
 INSTALLER = REPO_ROOT / "install.sh"
 DOTFILES_PULL = REPO_ROOT / "openclaw" / "bin" / "dotfiles-pull.command"
 AUTHORING_GUIDE_PATH = REPO_ROOT / "openclaw" / "SKILL-AUTHORING.md"
+PRESENCE_SCANNER = (
+    REPO_ROOT / "openclaw" / "workspace" / "scripts" / "presence-detect.sh"
+)
 GATEWAY_APP_WRAPPER = (
     REPO_ROOT
     / "openclaw"
@@ -57,6 +61,8 @@ NEST_ACTIVITY_REVIEWER_PLIST = (
 REQUIRED_HELPERS = {
     "bin/august": "august wrapper\n",
     "bin/pinchtab-headless-instance": "pinchtab helper\n",
+    "bin/presence-cabin-enroll": "presence enrollment helper\n",
+    "bin/presence-crosstown-canary": "presence canary helper\n",
     "bin/opentable-book": "opentable wrapper\n",
     "bin/opentable-reservations": "opentable reservations wrapper\n",
     "bin/restaurant-book": "restaurant coordinator wrapper\n",
@@ -105,6 +111,13 @@ class DeploymentContractTests(unittest.TestCase):
             check=False,
         )
 
+    def pull_heredoc(self, marker: str) -> str:
+        text = DOTFILES_PULL.read_text(encoding="utf-8")
+        start_token = f"<<'{marker}'\n"
+        start = text.index(start_token) + len(start_token)
+        end = text.index(f"\n{marker}\n", start)
+        return text[start:end] + "\n"
+
     def make_skill_fixture(self, root: Path, *, include_symlink: bool = False) -> None:
         (root / "nested" / "__pycache__").mkdir(parents=True)
         (root / ".pytest_cache").mkdir()
@@ -151,6 +164,228 @@ class DeploymentContractTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assert_skill_copy_is_sanitized(destination)
+
+    def test_presence_scanner_exact_hash_approval_fails_closed(self) -> None:
+        scanner = self.root / "presence-detect.sh"
+        approval = self.root / "presence-scanner-approved.sha256"
+        scanner.write_text(
+            '#!/bin/bash\n'
+            'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"\n',
+            encoding="utf-8",
+        )
+
+        digest = subprocess.run(
+            ["/usr/bin/shasum", "-a", "256", str(scanner)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()[0]
+        check = "\n".join(
+            (
+                'source "$1"',
+                'openclaw_presence_scanner_has_strict_deployment_contract "$2"',
+                'digest=$(openclaw_presence_scanner_sha256 "$2")',
+                'openclaw_presence_scanner_approval_matches "$digest" "$3"',
+            )
+        )
+        missing = self.run_bash(check, DEPLOYMENT_LIB, scanner, approval)
+        self.assertEqual(missing.returncode, 20)
+
+        approval.write_text(digest + "\n", encoding="ascii")
+        approval.chmod(0o600)
+        valid = self.run_bash(check, DEPLOYMENT_LIB, scanner, approval)
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+
+        approval.write_text("0" * 64 + "\n", encoding="ascii")
+        wrong_hash = self.run_bash(check, DEPLOYMENT_LIB, scanner, approval)
+        self.assertEqual(wrong_hash.returncode, 20)
+
+        approval.write_text(digest + "\nextra\n", encoding="ascii")
+        malformed = self.run_bash(check, DEPLOYMENT_LIB, scanner, approval)
+        self.assertEqual(malformed.returncode, 21)
+
+        approval.write_text(digest + "\n", encoding="ascii")
+        approval.chmod(0o644)
+        insecure = self.run_bash(check, DEPLOYMENT_LIB, scanner, approval)
+        self.assertEqual(insecure.returncode, 21)
+
+        approval.chmod(0o600)
+        hardlink = self.root / "presence-scanner-approved-hardlink.sha256"
+        os.link(approval, hardlink)
+        hardlinked = self.run_bash(check, DEPLOYMENT_LIB, scanner, approval)
+        self.assertEqual(hardlinked.returncode, 21)
+        hardlink.unlink()
+
+        approval.unlink()
+        approval.symlink_to(scanner)
+        symlinked = self.run_bash(check, DEPLOYMENT_LIB, scanner, approval)
+        self.assertEqual(symlinked.returncode, 21)
+
+    def test_presence_scanner_stages_and_installs_exact_approved_bytes(self) -> None:
+        scanner = self.root / "presence-detect.sh"
+        destination = self.root / "runtime" / "presence-detect.sh"
+        destination.parent.mkdir()
+        scanner.write_text(
+            '#!/bin/bash\n'
+            'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"\n',
+            encoding="utf-8",
+        )
+        scanner.chmod(0o755)
+        destination.write_text("legacy scanner\n", encoding="utf-8")
+        destination.chmod(0o755)
+
+        install = "\n".join(
+            (
+                'source "$1"',
+                'candidate=$(openclaw_stage_presence_scanner "$2")',
+                'digest=$(openclaw_presence_scanner_sha256 "$candidate")',
+                'printf "%s\\n" "$candidate" "$digest"',
+                'openclaw_atomic_install_presence_scanner "$candidate" "$3" "$digest"',
+                'rm -f "$candidate"',
+            )
+        )
+        completed = self.run_bash(install, DEPLOYMENT_LIB, scanner, destination)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        candidate_path, digest = completed.stdout.splitlines()
+        self.assertFalse(Path(candidate_path).exists())
+        self.assertEqual(
+            hashlib.sha256(destination.read_bytes()).hexdigest(),
+            digest,
+        )
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o755)
+
+        preserved = destination.read_bytes()
+        scanner.write_text(scanner.read_text(encoding="utf-8") + "# changed\n")
+        rejected = self.run_bash(
+            "\n".join(
+                (
+                    'source "$1"',
+                    'candidate=$(openclaw_stage_presence_scanner "$2")',
+                    'openclaw_atomic_install_presence_scanner "$candidate" "$3" "$4"',
+                    'status=$?',
+                    'rm -f "$candidate"',
+                    'exit "$status"',
+                )
+            ),
+            DEPLOYMENT_LIB,
+            scanner,
+            destination,
+            Path(digest),
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertEqual(destination.read_bytes(), preserved)
+
+        destination.unlink()
+        destination.mkdir()
+        directory_target = self.run_bash(
+            "\n".join(
+                (
+                    'source "$1"',
+                    'candidate=$(openclaw_stage_presence_scanner "$2")',
+                    'digest=$(openclaw_presence_scanner_sha256 "$candidate")',
+                    'openclaw_atomic_install_presence_scanner "$candidate" "$3" "$digest"',
+                    'status=$?',
+                    'rm -f "$candidate"',
+                    'exit "$status"',
+                )
+            ),
+            DEPLOYMENT_LIB,
+            scanner,
+            destination,
+        )
+        self.assertNotEqual(directory_target.returncode, 0)
+        self.assertTrue(destination.is_dir())
+        self.assertEqual(list(destination.iterdir()), [])
+
+    def test_remote_presence_approval_payload_distinguishes_pending_and_invalid(self) -> None:
+        home = self.root / "remote-home"
+        openclaw = home / ".openclaw"
+        openclaw.mkdir(parents=True, mode=0o700)
+        approval = openclaw / "presence-scanner-approved.sha256"
+        digest = "a" * 64
+        environment = {
+            **os.environ,
+            "HOME": str(home),
+            "PRESENCE_EXPECTED_SCANNER_HASH": digest,
+        }
+        payload = self.pull_heredoc("PRESENCE_APPROVAL")
+
+        missing = subprocess.run(
+            ["/bin/bash", "-c", payload], env=environment, check=False
+        )
+        self.assertEqual(missing.returncode, 20)
+
+        approval.write_text("b" * 64 + "\n", encoding="ascii")
+        approval.chmod(0o600)
+        stale = subprocess.run(
+            ["/bin/bash", "-c", payload], env=environment, check=False
+        )
+        self.assertEqual(stale.returncode, 20)
+
+        approval.write_text("malformed\n", encoding="ascii")
+        invalid = subprocess.run(
+            ["/bin/bash", "-c", payload], env=environment, check=False
+        )
+        self.assertEqual(invalid.returncode, 21)
+
+        approval.write_text(digest + "\n", encoding="ascii")
+        approved = subprocess.run(
+            ["/bin/bash", "-c", payload], env=environment, check=False
+        )
+        self.assertEqual(approved.returncode, 0)
+
+    def test_remote_presence_finalize_is_hash_bound_and_atomic(self) -> None:
+        home = self.root / "remote-home"
+        scripts = home / ".openclaw" / "workspace" / "scripts"
+        scripts.mkdir(parents=True, mode=0o700)
+        (home / ".openclaw").chmod(0o700)
+        destination = scripts / "presence-detect.sh"
+        destination.write_text("legacy scanner\n", encoding="utf-8")
+        destination.chmod(0o755)
+        candidate = scripts / ".presence-detect.sh.ABC123"
+        candidate.write_text(
+            '#!/bin/bash\n'
+            'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"\n'
+            'test "$1" = validate-config && test "$2" = crosstown\n',
+            encoding="utf-8",
+        )
+        candidate.chmod(0o500)
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        approval = home / ".openclaw" / "presence-scanner-approved.sha256"
+        approval.write_text(digest + "\n", encoding="ascii")
+        approval.chmod(0o600)
+        environment = {
+            **os.environ,
+            "HOME": str(home),
+            "PRESENCE_EXPECTED_SCANNER_HASH": digest,
+            "PRESENCE_REMOTE_CANDIDATE": (
+                ".openclaw/workspace/scripts/.presence-detect.sh.ABC123"
+            ),
+        }
+        payload = self.pull_heredoc("PRESENCE_FINALIZE")
+
+        installed = subprocess.run(
+            ["/bin/bash", "-c", payload], env=environment, check=False
+        )
+        self.assertEqual(installed.returncode, 0)
+        self.assertFalse(candidate.exists())
+        self.assertEqual(hashlib.sha256(destination.read_bytes()).hexdigest(), digest)
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o755)
+
+        preserved = destination.read_bytes()
+        candidate.write_text(
+            '#!/bin/bash\n'
+            'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"\n'
+            '# unapproved mutation\n',
+            encoding="utf-8",
+        )
+        candidate.chmod(0o500)
+        rejected = subprocess.run(
+            ["/bin/bash", "-c", payload], env=environment, check=False
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertFalse(candidate.exists())
+        self.assertEqual(destination.read_bytes(), preserved)
 
     def test_installer_skill_copy_stays_idempotent_with_ignored_source_artifacts(self) -> None:
         source = self.root / "installer-source"
@@ -421,6 +656,8 @@ class DeploymentContractTests(unittest.TestCase):
     def test_both_deployers_use_the_shared_filter_and_fresh_install_hook(self) -> None:
         install_text = INSTALLER.read_text(encoding="utf-8")
         pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        deployment_text = DEPLOYMENT_LIB.read_text(encoding="utf-8")
+        presence_text = PRESENCE_SCANNER.read_text(encoding="utf-8")
 
         for relative in REQUIRED_HELPERS:
             self.assertTrue((REPO_ROOT / "openclaw" / relative).is_file(), relative)
@@ -440,6 +677,55 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("presence-devices.json", pull_text)
         self.assertIn("validate-config crosstown", pull_text)
         self.assertIn("validate-config cabin", pull_text)
+        strict_contract = (
+            'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"'
+        )
+        self.assertIn(strict_contract, presence_text)
+        self.assertIn(strict_contract, deployment_text)
+        self.assertIn(
+            "openclaw_presence_scanner_has_strict_deployment_contract",
+            pull_text,
+        )
+        self.assertIn("presence-scanner-approved.sha256", pull_text)
+        self.assertIn(
+            "INFO Cabin strict presence enrollment pending; preserved legacy scanner",
+            pull_text,
+        )
+        workspace_block = pull_text[pull_text.index("# Deploy workspace files") :]
+        self.assertLess(
+            workspace_block.index('[ ! -e "$PRESENCE_BINDING_CONFIG" ]'),
+            workspace_block.index("validate-config cabin"),
+        )
+        self.assertLess(
+            workspace_block.index("validate-config cabin"),
+            workspace_block.index("presence-scanner-approved.sha256"),
+        )
+        self.assertLess(
+            workspace_block.index("presence-scanner-approved.sha256"),
+            workspace_block.index("openclaw_atomic_install_presence_scanner"),
+        )
+        mbp_block = pull_text[
+            pull_text.index("# Sync files the Crosstown MBP runs") :
+            pull_text.index("# Deploy skills as real copies")
+        ]
+        self.assertLess(
+            mbp_block.index("openclaw_stage_presence_scanner"),
+            mbp_block.index("validate-config crosstown"),
+        )
+        self.assertLess(
+            mbp_block.index("presence-scanner-approved.sha256"),
+            mbp_block.index("PRESENCE_REMOTE_CANDIDATE=$(ssh"),
+        )
+        self.assertIn(
+            '"$PRESENCE_CANDIDATE" "$MBP_HOST:$PRESENCE_REMOTE_CANDIDATE"',
+            mbp_block,
+        )
+        self.assertIn("os.replace(sys.argv[1], sys.argv[2])", mbp_block)
+        self.assertIn("MBP_PRESENCE_ACTIVATION_FAILED", mbp_block)
+        self.assertIn(
+            "FATAL approved presence scanner activation failed",
+            mbp_block,
+        )
         self.assertIn("preserved prior scanner", pull_text)
         self.assertIn("HOME_EVENT_SCHEMA_DEPLOY_READY", pull_text)
         self.assertIn("NEST_EVENT_SCHEMA_DEPLOY_READY", pull_text)

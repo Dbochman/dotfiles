@@ -342,7 +342,10 @@ until the attended enrollment proves both phones and completes its
 downstream-disabled production canary.
 
 Only the Mini publishes canonical presence. The Crosstown MacBook continues
-supplying observations through the existing validated Taildrop receiver.
+supplying observations through the existing validated Taildrop receiver. Its
+strict exact-MAC scanner is separately tracked but remains behind the
+[exact-source canary and approval gate](crosstown-strict-presence-canary.md);
+the existing legacy runtime stays active until that gate passes.
 
 Preserve all current semantics:
 
@@ -393,6 +396,8 @@ the older blanket 48–72-hour soak:
 - Promote the exact bindings only after downstream jobs are stopped, then run
   four real scheduled ticks with vacancy actions, the Nest reviewer, and
   outbound effects still disabled.
+- Approve only the exact strict scanner hash after those four ticks pass; a
+  config file alone cannot authorize routine deployment.
 - Verify the first true transition normalizes exactly once, repeated
   evaluations remain silent, and all presence, Taildrop, recovery, and vacancy
   tests remain green before restoring downstream jobs in order.

@@ -308,6 +308,16 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's `default` profile |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
+Presence identities are site-local protected JSON bindings. Routine deployment
+validates the exact candidate scanner and requires a site-local mode-`0600`
+approval containing that candidate's canaried SHA-256 before replacing a
+runtime copy. Crosstown and Cabin therefore activate independently while the
+prior scanner remains operational. `presence-cabin-enroll` is an
+operator-only helper with no LaunchAgent, cron, gateway route, or unattended
+entry point. `presence-crosstown-canary` is likewise operator-only and runs
+exactly one downstream-disabled shadow sample per invocation; it has no
+scheduler or approval writer.
+
 The four home-event jobs are **attended-install only**. A routine dotfiles
 pull may refresh their files only after an installed plist exists; it must not
 create the runtime, run `home-eventctl init`, bootstrap a job, or enable Ring,

@@ -17,11 +17,18 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$FAKE_BIN" "$TEST_HOME/.openclaw/logs" "$TEST_HOME/.openclaw/presence"
-printf '%s\n' \
-  'CROSSTOWN_DYLAN_MAC=02:00:00:00:00:11' \
-  'CROSSTOWN_JULIA_MAC=02:00:00:00:00:22' \
-  > "$TEST_HOME/.openclaw/presence-devices.env"
-chmod 600 "$TEST_HOME/.openclaw/presence-devices.env"
+chmod 700 "$TEST_HOME/.openclaw"
+cat > "$TEST_HOME/.openclaw/presence-devices.json" <<'JSON'
+{
+  "schema_version": 1,
+  "site": "crosstown",
+  "people": {
+    "Dylan": {"kind": "mac", "value": "02:00:00:00:00:11"},
+    "Julia": {"kind": "mac", "value": "02:00:00:00:00:22"}
+  }
+}
+JSON
+chmod 600 "$TEST_HOME/.openclaw/presence-devices.json"
 
 cat > "$FAKE_BIN/ping" <<'SH'
 #!/bin/bash
@@ -110,6 +117,13 @@ if result.get("totalDevices") != int(expected_total):
     raise SystemExit(
         f"unexpected totalDevices: expected {expected_total}, got {result.get('totalDevices')}"
     )
+for person, details in result.get("presence", {}).items():
+    if set(details) != {"present"}:
+        raise SystemExit(f"unsanitized {person} presence details: {details!r}")
+serialized = json.dumps(result)
+for private_value in ("02:00:00:00:00:11", "02:00:00:00:00:22", "192.168.165"):
+    if private_value in serialized:
+        raise SystemExit(f"private network identifier leaked into output: {private_value!r}")
 PY
 
   cmp -s "$output" "$TEST_HOME/.openclaw/presence/crosstown-scan.json"
@@ -160,6 +174,15 @@ write_standard_row dylans-iphone.lan 192.168.165.124 02:00:00:00:00:11 > "$ARP_S
 } > "$ARP_REACHABILITY"
 run_success fresh-mac true false 2
 
+# Julia's exact protected MAC binding is authoritative without a name lookup.
+write_standard_row unrelated-name.lan 192.168.165.77 02:00:00:00:00:22 > "$ARP_STANDARD"
+{
+  write_reachability_header
+  write_live_gateway
+  printf '%s\n' '192.168.165.77         02:00:00:00:00:22 1m8s      51s            en0    1'
+} > "$ARP_REACHABILITY"
+run_success julia-fresh-mac false true 2
+
 # A complete cached row with only send-side freshness is stale and must not
 # create a second-location positive.
 write_standard_row dylans-iphone.lan 192.168.165.124 02:00:00:00:00:11 > "$ARP_STANDARD"
@@ -196,17 +219,16 @@ write_standard_row '?' 192.168.165.248 02:00:00:00:00:44 > "$ARP_STANDARD"
 } > "$ARP_REACHABILITY"
 run_success wrong-mac-on-old-ip false false 2
 
-# Exact hostname remains a live, MAC-rotation-tolerant fallback when the two
-# snapshots agree on IP, MAC, and interface.
+# Hostnames never substitute for the protected exact MAC binding.
 write_standard_row julias-iphone.lan 192.168.165.77 02:00:00:00:00:33 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
   printf '%s\n' '192.168.165.77         02:00:00:00:00:33 1m8s      51s            en0    1'
 } > "$ARP_REACHABILITY"
-run_success hostname-fallback false true 2
+run_success hostname-is-not-identity false false 2
 
-# Substring names and cross-interface joins cannot establish identity.
+# Substring names cannot establish identity.
 write_standard_row not-julias-iphone.lan 192.168.165.77 02:00:00:00:00:33 > "$ARP_STANDARD"
 {
   write_reachability_header
@@ -215,13 +237,15 @@ write_standard_row not-julias-iphone.lan 192.168.165.77 02:00:00:00:00:33 > "$AR
 } > "$ARP_REACHABILITY"
 run_success hostname-substring false false 2
 
-write_standard_row julias-iphone.lan 192.168.165.77 02:00:00:00:00:33 en1 > "$ARP_STANDARD"
+# Even an exact configured MAC on another interface cannot prove presence on
+# the gateway's active LAN.
+write_standard_row julias-iphone.lan 192.168.165.77 02:00:00:00:00:22 en1 > "$ARP_STANDARD"
 {
   write_reachability_header
   write_live_gateway
-  printf '%s\n' '192.168.165.77         02:00:00:00:00:33 1m8s      51s            en0    1'
+  printf '%s\n' '192.168.165.77         02:00:00:00:00:22 1m8s      51s            en1    1'
 } > "$ARP_REACHABILITY"
-run_success hostname-interface-mismatch false false 2
+run_success inactive-interface false false 1
 
 # Infrastructure/parser failures preserve the last good canonical snapshot by
 # exiting before the local write or Taildrop push.

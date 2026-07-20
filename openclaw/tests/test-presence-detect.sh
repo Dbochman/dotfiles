@@ -158,11 +158,15 @@ PY
 }
 
 run_vacancy_actions() {
+  # This integration fixture exercises correlation and marker behavior after
+  # strict enrollment; vacancy-actions has separate coverage for the temporary
+  # pre-enrollment Julia containment.
   /usr/bin/env -i \
     HOME="$TEST_HOME" \
     PATH="$FAKE_BIN:$SAFE_BIN" \
     FAKE_CALLS="$CALLS_FILE" \
     IMSG_BIN="$FAKE_BIN/imsg" \
+    PRESENCE_SCANNER=/usr/bin/true \
     /bin/bash "$VACANCY_ACTIONS"
 }
 

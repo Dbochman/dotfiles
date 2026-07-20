@@ -1,0 +1,834 @@
+#!/usr/bin/env python3
+"""Run one privacy-safe, downstream-disabled Crosstown presence canary.
+
+This operator tool never installs the candidate scanner.  It streams the exact
+local scanner bytes to the Crosstown host for strict config validation and one
+read-only observation.  The deployed legacy snapshot is projected to booleans
+on the remote host before it crosses SSH, and all subprocess output remains in
+memory until it has passed a narrow schema check.
+
+The tool has no scheduler, approval-file writer, or production activation
+command.  Its only network effect is the candidate scanner's ordinary
+read-only ping/ARP observation; canonical presence state and Taildrop delivery
+are isolated by the remote invocation contract.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import selectors
+import shlex
+import signal
+import stat
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+
+SCHEMA_VERSION = 1
+PEOPLE = ("Dylan", "Julia")
+SITE = "crosstown"
+DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_MAX_OUTPUT_BYTES = 128 * 1024
+DEFAULT_MAX_SCANNER_BYTES = 2 * 1024 * 1024
+DEFAULT_MAX_LEGACY_AGE_SECONDS = 180
+DEFAULT_MAX_TIMESTAMP_SKEW_SECONDS = 120
+MAX_FUTURE_SECONDS = 60
+STRICT_MAX_AGE_SECONDS = 300
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+HOST_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,255}$")
+STRICT_CONTRACT_LINE = (
+    b'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"'
+)
+
+
+class CanaryError(RuntimeError):
+    """Expected failure represented only by a fixed public code."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+class RunnerError(RuntimeError):
+    """Internal bounded-runner failure; never includes child output."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+
+
+@dataclass(frozen=True)
+class Settings:
+    scanner: Path
+    ssh_bin: Path
+    ssh_key: Path
+    ssh_host: str
+    timeout_seconds: int
+    max_output_bytes: int
+    max_scanner_bytes: int
+    max_legacy_age_seconds: int
+    max_timestamp_skew_seconds: int
+
+    @classmethod
+    def from_environment(cls) -> "Settings":
+        home = Path.home()
+        return cls(
+            scanner=Path(
+                os.environ.get(
+                    "PRESENCE_CROSSTOWN_CANARY_SCANNER",
+                    home / "dotfiles/openclaw/workspace/scripts/presence-detect.sh",
+                )
+            ),
+            ssh_bin=Path(
+                os.environ.get("PRESENCE_CROSSTOWN_CANARY_SSH_BIN", "/usr/bin/ssh")
+            ),
+            ssh_key=Path(
+                os.environ.get(
+                    "PRESENCE_CROSSTOWN_CANARY_SSH_KEY",
+                    home / ".ssh/id_mini_to_mbp",
+                )
+            ),
+            ssh_host=os.environ.get(
+                "PRESENCE_CROSSTOWN_CANARY_SSH_HOST", "dylans-macbook-pro"
+            ),
+            timeout_seconds=_bounded_environment_int(
+                "PRESENCE_CROSSTOWN_CANARY_TIMEOUT_SECONDS",
+                DEFAULT_TIMEOUT_SECONDS,
+                minimum=1,
+                maximum=120,
+            ),
+            max_output_bytes=_bounded_environment_int(
+                "PRESENCE_CROSSTOWN_CANARY_MAX_OUTPUT_BYTES",
+                DEFAULT_MAX_OUTPUT_BYTES,
+                minimum=1024,
+                maximum=1024 * 1024,
+            ),
+            max_scanner_bytes=_bounded_environment_int(
+                "PRESENCE_CROSSTOWN_CANARY_MAX_SCANNER_BYTES",
+                DEFAULT_MAX_SCANNER_BYTES,
+                minimum=1024,
+                maximum=8 * 1024 * 1024,
+            ),
+            max_legacy_age_seconds=_bounded_environment_int(
+                "PRESENCE_CROSSTOWN_CANARY_MAX_LEGACY_AGE_SECONDS",
+                DEFAULT_MAX_LEGACY_AGE_SECONDS,
+                minimum=30,
+                maximum=600,
+            ),
+            max_timestamp_skew_seconds=_bounded_environment_int(
+                "PRESENCE_CROSSTOWN_CANARY_MAX_TIMESTAMP_SKEW_SECONDS",
+                DEFAULT_MAX_TIMESTAMP_SKEW_SECONDS,
+                minimum=15,
+                maximum=600,
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class Projection:
+    binding_parity: bool
+    decision: tuple[bool, bool]
+    timestamp: dt.datetime
+    fingerprint: tuple[int, int, int, int, str]
+
+
+@dataclass(frozen=True)
+class Observation:
+    decision: tuple[bool, bool]
+    timestamp: dt.datetime
+
+
+def _bounded_environment_int(
+    name: str, default: int, *, minimum: int, maximum: int
+) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise CanaryError("configuration_invalid") from exc
+    if not minimum <= value <= maximum:
+        raise CanaryError("configuration_invalid")
+    return value
+
+
+def _kill_process(process: subprocess.Popen[bytes]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=1)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def run_bounded(
+    command: Sequence[str],
+    *,
+    input_bytes: bytes = b"",
+    timeout_seconds: int,
+    max_output_bytes: int,
+    environment: Mapping[str, str],
+) -> CommandResult:
+    """Run a subprocess with bounded time, input, and combined output."""
+
+    try:
+        process = subprocess.Popen(
+            list(command),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=dict(environment),
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise RunnerError("start_failed") from exc
+
+    assert process.stdin is not None
+    assert process.stdout is not None
+    assert process.stderr is not None
+
+    selector = selectors.DefaultSelector()
+    streams = {
+        "stdin": process.stdin,
+        "stdout": process.stdout,
+        "stderr": process.stderr,
+    }
+    for stream in streams.values():
+        os.set_blocking(stream.fileno(), False)
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    selector.register(process.stdin, selectors.EVENT_WRITE, "stdin")
+
+    input_offset = 0
+    output = {"stdout": bytearray(), "stderr": bytearray()}
+    deadline = time.monotonic() + timeout_seconds
+
+    def close_registered(stream: Any) -> None:
+        try:
+            selector.unregister(stream)
+        except (KeyError, ValueError):
+            pass
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _kill_process(process)
+                raise RunnerError("timeout")
+            events = selector.select(timeout=min(remaining, 0.25))
+            if not events and process.poll() is not None:
+                close_registered(process.stdin)
+                continue
+
+            for key, _mask in events:
+                stream = key.fileobj
+                role = key.data
+                if role == "stdin":
+                    if input_offset >= len(input_bytes):
+                        close_registered(stream)
+                        continue
+                    try:
+                        written = os.write(
+                            stream.fileno(),
+                            input_bytes[input_offset : input_offset + 65536],
+                        )
+                    except (BrokenPipeError, OSError):
+                        close_registered(stream)
+                    else:
+                        input_offset += written
+                        if input_offset >= len(input_bytes):
+                            close_registered(stream)
+                    continue
+
+                try:
+                    chunk = os.read(stream.fileno(), 65536)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    close_registered(stream)
+                    continue
+                if not chunk:
+                    close_registered(stream)
+                    continue
+                output[role].extend(chunk)
+                if len(output["stdout"]) + len(output["stderr"]) > max_output_bytes:
+                    _kill_process(process)
+                    raise RunnerError("output_oversized")
+
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            _kill_process(process)
+            raise RunnerError("timeout") from exc
+        return CommandResult(
+            returncode=returncode,
+            stdout=bytes(output["stdout"]),
+            stderr=bytes(output["stderr"]),
+        )
+    finally:
+        selector.close()
+        for stream in streams.values():
+            try:
+                stream.close()
+            except OSError:
+                pass
+        if process.poll() is None:
+            _kill_process(process)
+
+
+def _read_scanner(path: Path, maximum: int) -> tuple[bytes, str]:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise CanaryError("scanner_unavailable") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > maximum
+            or before.st_mode & 0o022
+        ):
+            raise CanaryError("scanner_unsafe")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise CanaryError("scanner_unsafe")
+        after = os.fstat(descriptor)
+        stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in stable_fields):
+            raise CanaryError("scanner_changed")
+    finally:
+        os.close(descriptor)
+    scanner = b"".join(chunks)
+    if scanner.splitlines().count(STRICT_CONTRACT_LINE) != 1:
+        raise CanaryError("scanner_contract_invalid")
+    return scanner, hashlib.sha256(scanner).hexdigest()
+
+
+def _validate_local_file(
+    path: Path, *, executable: bool, require_current_owner: bool
+) -> None:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise CanaryError("configuration_invalid") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or (
+            metadata.st_uid != os.geteuid()
+            if require_current_owner
+            else metadata.st_uid not in {0, os.geteuid()}
+        )
+        or metadata.st_mode & 0o022
+    ):
+        raise CanaryError("configuration_invalid")
+    if not executable and metadata.st_mode & 0o077:
+        raise CanaryError("configuration_invalid")
+    if executable and not os.access(path, os.X_OK):
+        raise CanaryError("configuration_invalid")
+
+
+def _strict_json(raw: bytes, error_code: str) -> Any:
+    if not raw or len(raw) > DEFAULT_MAX_OUTPUT_BYTES:
+        raise CanaryError(error_code)
+
+    def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=no_duplicates)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise CanaryError(error_code) from exc
+
+
+def _timestamp(value: Any, error_code: str) -> dt.datetime:
+    if not isinstance(value, str) or len(value) > 40:
+        raise CanaryError(error_code)
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CanaryError(error_code) from exc
+    if parsed.tzinfo is None:
+        raise CanaryError(error_code)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _parse_validate(raw: bytes) -> None:
+    value = _strict_json(raw, "strict_validate_invalid")
+    if value != {"ok": True, "site": SITE}:
+        raise CanaryError("strict_validate_invalid")
+
+
+def _parse_projection(raw: bytes) -> Projection:
+    value = _strict_json(raw, "legacy_projection_invalid")
+    expected = {
+        "binding_parity",
+        "decision",
+        "fingerprint",
+        "ok",
+        "schema_version",
+        "timestamp",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise CanaryError("legacy_projection_invalid")
+    if value["ok"] is not True or value["schema_version"] != SCHEMA_VERSION:
+        raise CanaryError("legacy_projection_invalid")
+    if type(value["binding_parity"]) is not bool:
+        raise CanaryError("legacy_projection_invalid")
+    decision = value["decision"]
+    if (
+        not isinstance(decision, list)
+        or len(decision) != len(PEOPLE)
+        or any(type(item) is not bool for item in decision)
+    ):
+        raise CanaryError("legacy_projection_invalid")
+    fingerprint = value["fingerprint"]
+    if not isinstance(fingerprint, dict) or set(fingerprint) != {
+        "device",
+        "inode",
+        "mtime_ns",
+        "sha256",
+        "size",
+    }:
+        raise CanaryError("legacy_projection_invalid")
+    for key in ("device", "inode", "mtime_ns", "size"):
+        if type(fingerprint[key]) is not int or fingerprint[key] < 0:
+            raise CanaryError("legacy_projection_invalid")
+    if not isinstance(fingerprint["sha256"], str) or not SHA256_RE.fullmatch(
+        fingerprint["sha256"]
+    ):
+        raise CanaryError("legacy_projection_invalid")
+    return Projection(
+        binding_parity=value["binding_parity"],
+        decision=(decision[0], decision[1]),
+        timestamp=_timestamp(value["timestamp"], "legacy_projection_invalid"),
+        fingerprint=(
+            fingerprint["device"],
+            fingerprint["inode"],
+            fingerprint["size"],
+            fingerprint["mtime_ns"],
+            fingerprint["sha256"],
+        ),
+    )
+
+
+def _parse_observation(raw: bytes) -> Observation:
+    value = _strict_json(raw, "strict_observation_invalid")
+    if not isinstance(value, dict) or set(value) != {
+        "location",
+        "presence",
+        "timestamp",
+        "totalDevices",
+    }:
+        raise CanaryError("strict_observation_invalid")
+    if value["location"] != SITE:
+        raise CanaryError("strict_observation_invalid")
+    total = value["totalDevices"]
+    if type(total) is not int or not 0 <= total <= 4096:
+        raise CanaryError("strict_observation_invalid")
+    presence = value["presence"]
+    if not isinstance(presence, dict) or set(presence) != set(PEOPLE):
+        raise CanaryError("strict_observation_invalid")
+    decisions: list[bool] = []
+    for person in PEOPLE:
+        details = presence[person]
+        if (
+            not isinstance(details, dict)
+            or set(details) != {"present"}
+            or type(details["present"]) is not bool
+        ):
+            raise CanaryError("strict_observation_invalid")
+        decisions.append(details["present"])
+    return Observation(
+        decision=(decisions[0], decisions[1]),
+        timestamp=_timestamp(value["timestamp"], "strict_observation_invalid"),
+    )
+
+
+REMOTE_PROJECTION_SOURCE = r'''
+# presence-canary-projection-v1
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+from pathlib import Path
+
+PEOPLE = ("Dylan", "Julia")
+KEYS = {
+    "CROSSTOWN_DYLAN_MAC": "Dylan",
+    "CROSSTOWN_JULIA_MAC": "Julia",
+}
+MAC = r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"
+ASSIGNMENT = re.compile(
+    r"^(?:export[ \t]+)?(CROSSTOWN_DYLAN_MAC|CROSSTOWN_JULIA_MAC)"
+    r"[ \t]*=[ \t]*(?:\"(" + MAC + r")\"|'(" + MAC + r")'|(" + MAC + r"))[ \t]*$"
+)
+
+def no_duplicates(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+def exact(value, keys):
+    return isinstance(value, dict) and set(value) == set(keys)
+
+def secure_directory(path):
+    metadata = path.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077):
+        raise ValueError()
+
+def secure_read(path, maximum):
+    secure_directory(path.parent)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid()
+                or before.st_nlink != 1 or (before.st_mode & 0o7777) != 0o600
+                or before.st_size <= 0 or before.st_size > maximum):
+            raise ValueError()
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum:
+                raise ValueError()
+        after = os.fstat(descriptor)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise ValueError()
+        payload = b"".join(chunks)
+        fingerprint = {
+            "device": before.st_dev,
+            "inode": before.st_ino,
+            "mtime_ns": before.st_mtime_ns,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size": before.st_size,
+        }
+        return payload, fingerprint
+    finally:
+        os.close(descriptor)
+
+def parse_env(raw):
+    result = {}
+    for raw_line in raw.decode("utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = ASSIGNMENT.fullmatch(line)
+        if not match or match.group(1) in result:
+            raise ValueError()
+        result[match.group(1)] = next(value for value in match.groups()[1:] if value is not None).lower()
+    if set(result) != set(KEYS):
+        raise ValueError()
+    return {person: result[key] for key, person in KEYS.items()}
+
+def parse_json_config(raw):
+    value = json.loads(raw.decode("utf-8"), object_pairs_hook=no_duplicates)
+    if (not exact(value, ("schema_version", "site", "people"))
+            or value["schema_version"] != 1 or value["site"] != "crosstown"
+            or not exact(value["people"], PEOPLE)):
+        raise ValueError()
+    result = {}
+    for person in PEOPLE:
+        binding = value["people"][person]
+        if (not exact(binding, ("kind", "value")) or binding["kind"] != "mac"
+                or not isinstance(binding["value"], str)
+                or re.fullmatch(MAC, binding["value"]) is None):
+            raise ValueError()
+        result[person] = binding["value"].lower()
+    if len(set(result.values())) != len(PEOPLE):
+        raise ValueError()
+    return result
+
+def parse_legacy(raw):
+    value = json.loads(raw.decode("utf-8"), object_pairs_hook=no_duplicates)
+    if not isinstance(value, dict) or value.get("location") != "crosstown":
+        raise ValueError()
+    timestamp = value.get("timestamp")
+    presence = value.get("presence")
+    if not isinstance(timestamp, str) or len(timestamp) > 40 or not isinstance(presence, dict):
+        raise ValueError()
+    decision = []
+    for person in PEOPLE:
+        details = presence.get(person)
+        if not isinstance(details, dict) or type(details.get("present")) is not bool:
+            raise ValueError()
+        decision.append(details["present"])
+    return timestamp, decision
+
+try:
+    root = Path.home() / ".openclaw"
+    secure_directory(root)
+    legacy_env, _ = secure_read(root / "presence-devices.env", 16384)
+    strict_json, _ = secure_read(root / "presence-devices.json", 16384)
+    canonical, fingerprint = secure_read(root / "presence/crosstown-scan.json", 1024 * 1024)
+    env_bindings = parse_env(legacy_env)
+    json_bindings = parse_json_config(strict_json)
+    timestamp, decision = parse_legacy(canonical)
+    result = {
+        "binding_parity": env_bindings == json_bindings,
+        "decision": decision,
+        "fingerprint": fingerprint,
+        "ok": True,
+        "schema_version": 1,
+        "timestamp": timestamp,
+    }
+    sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+except Exception:
+    raise SystemExit(1)
+'''.strip()
+
+
+REMOTE_VALIDATE_COMMAND = r'''real_home="$HOME"; exec /usr/bin/env -i HOME=/var/empty PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin PRESENCE_DEVICE_CONFIG="$real_home/.openclaw/presence-devices.json" PRESENCE_TAILSCALE_BIN=/usr/bin/false HOME_EVENTS_PRESENCE_ENABLED=0 /bin/bash -s -- validate-config crosstown'''
+REMOTE_OBSERVE_COMMAND = r'''real_home="$HOME"; exec /usr/bin/env -i HOME=/var/empty PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin PRESENCE_DEVICE_CONFIG="$real_home/.openclaw/presence-devices.json" PRESENCE_TAILSCALE_BIN=/usr/bin/false HOME_EVENTS_PRESENCE_ENABLED=0 /bin/bash -s -- observe crosstown'''
+REMOTE_PROJECTION_COMMAND = (
+    'real_home="$HOME"; exec /usr/bin/env -i '
+    'HOME="$real_home" LANG=C LC_ALL=C '
+    'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin '
+    "/usr/bin/python3 -c "
+    + shlex.quote(REMOTE_PROJECTION_SOURCE)
+)
+
+
+class CanaryApp:
+    def __init__(self, settings: Settings, *, clock: Any = time.time):
+        self.settings = settings
+        self.clock = clock
+
+    def _environment(self) -> dict[str, str]:
+        environment = {
+            "HOME": str(Path.home()),
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        }
+        for key, value in os.environ.items():
+            if key.startswith("PRESENCE_CROSSTOWN_CANARY_FAKE_"):
+                environment[key] = value
+        return environment
+
+    def _ssh_command(self, remote_command: str) -> list[str]:
+        return [
+            str(self.settings.ssh_bin),
+            "-T",
+            "-i",
+            str(self.settings.ssh_key),
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "IdentityAgent=none",
+            "-o",
+            "ConnectionAttempts=1",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ControlMaster=no",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            self.settings.ssh_host,
+            remote_command,
+        ]
+
+    def _ssh(self, remote_command: str, input_bytes: bytes, error_code: str) -> bytes:
+        try:
+            result = run_bounded(
+                self._ssh_command(remote_command),
+                input_bytes=input_bytes,
+                timeout_seconds=self.settings.timeout_seconds,
+                max_output_bytes=self.settings.max_output_bytes,
+                environment=self._environment(),
+            )
+        except RunnerError as exc:
+            raise CanaryError(error_code) from exc
+        if result.returncode != 0:
+            raise CanaryError(error_code)
+        return result.stdout
+
+    def run(self, scanner: bytes, scanner_sha256: str) -> Mapping[str, Any]:
+        validate = self._ssh(
+            REMOTE_VALIDATE_COMMAND, scanner, "strict_validate_failed"
+        )
+        _parse_validate(validate)
+
+        before = _parse_projection(
+            self._ssh(REMOTE_PROJECTION_COMMAND, b"", "legacy_projection_failed")
+        )
+        if not before.binding_parity:
+            raise CanaryError("binding_parity_failed")
+
+        now = dt.datetime.fromtimestamp(self.clock(), tz=dt.timezone.utc)
+        legacy_age = (now - before.timestamp).total_seconds()
+        if (
+            legacy_age < -MAX_FUTURE_SECONDS
+            or legacy_age > self.settings.max_legacy_age_seconds
+        ):
+            raise CanaryError("legacy_snapshot_stale")
+
+        observation = _parse_observation(
+            self._ssh(REMOTE_OBSERVE_COMMAND, scanner, "strict_observe_failed")
+        )
+        strict_age = (now - observation.timestamp).total_seconds()
+        if strict_age < -MAX_FUTURE_SECONDS or strict_age > STRICT_MAX_AGE_SECONDS:
+            raise CanaryError("strict_observation_stale")
+
+        after = _parse_projection(
+            self._ssh(REMOTE_PROJECTION_COMMAND, b"", "legacy_projection_failed")
+        )
+        if not after.binding_parity:
+            raise CanaryError("binding_parity_failed")
+        if before.fingerprint != after.fingerprint:
+            raise CanaryError("canonical_changed")
+
+        skew = abs((observation.timestamp - before.timestamp).total_seconds())
+        if skew > self.settings.max_timestamp_skew_seconds:
+            raise CanaryError("timestamp_skew_exceeded")
+        mismatch_count = sum(
+            legacy != strict
+            for legacy, strict in zip(before.decision, observation.decision)
+        )
+        summary = {
+            "binding_parity": True,
+            "canonical_unchanged": True,
+            "config_valid": True,
+            "decision_parity": mismatch_count == 0,
+            "legacy_snapshot_fresh": True,
+            "mismatch_count": mismatch_count,
+            "ok": mismatch_count == 0,
+            "scanner_sha256": scanner_sha256,
+            "site": SITE,
+            "strict_output_sanitized": True,
+            "timestamp_skew_bucket": _skew_bucket(skew),
+        }
+        if mismatch_count:
+            raise CanarySummaryFailure(summary)
+        return summary
+
+
+class CanarySummaryFailure(CanaryError):
+    def __init__(self, summary: Mapping[str, Any]):
+        super().__init__("decision_mismatch")
+        self.summary = dict(summary)
+
+
+def _skew_bucket(seconds: float) -> str:
+    if seconds <= 30:
+        return "le_30s"
+    if seconds <= 60:
+        return "le_60s"
+    if seconds <= 120:
+        return "le_2m"
+    if seconds <= 300:
+        return "le_5m"
+    return "gt_5m"
+
+
+def _emit(value: Mapping[str, Any], *, stream: Any = sys.stdout) -> None:
+    stream.write(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    os.umask(0o077)
+    scanner_sha256: str | None = None
+    try:
+        if list(sys.argv[1:] if argv is None else argv):
+            raise CanaryError("arguments_invalid")
+        settings = Settings.from_environment()
+        if settings.ssh_host.startswith("-") or not HOST_RE.fullmatch(
+            settings.ssh_host
+        ):
+            raise CanaryError("configuration_invalid")
+        _validate_local_file(
+            settings.ssh_bin, executable=True, require_current_owner=False
+        )
+        _validate_local_file(
+            settings.ssh_key, executable=False, require_current_owner=True
+        )
+        scanner, scanner_sha256 = _read_scanner(
+            settings.scanner, settings.max_scanner_bytes
+        )
+        result = CanaryApp(settings).run(scanner, scanner_sha256)
+    except CanarySummaryFailure as exc:
+        _emit(exc.summary)
+        return 1
+    except CanaryError as exc:
+        _emit(
+            {
+                "error_code": exc.code,
+                "ok": False,
+                "scanner_sha256": scanner_sha256,
+            },
+            stream=sys.stderr,
+        )
+        return 1
+    except Exception:
+        _emit(
+            {
+                "error_code": "internal_error",
+                "ok": False,
+                "scanner_sha256": scanner_sha256,
+            },
+            stream=sys.stderr,
+        )
+        return 1
+    _emit(result)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

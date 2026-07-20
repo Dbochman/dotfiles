@@ -115,6 +115,7 @@ MBP_SYNC_PAIRS=(
   "openclaw/rest980/start-j5.sh:.openclaw/rest980/start-j5.sh"
   "openclaw/rest980/roomba-cmd.js:.openclaw/rest980/roomba-cmd.js"
 )
+
 HOST_KEY=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 IS_GATEWAY_HOST=0
 case "$HOST_KEY" in
@@ -126,9 +127,11 @@ if [ "$IS_GATEWAY_HOST" -eq 1 ] && [ ! -f "$MBP_SSH_KEY" ]; then
 fi
 if [ -f "$MBP_SSH_KEY" ]; then
   MBP_PROTOCOL_SYNC_FAILED=0
+  MBP_PRESENCE_ACTIVATION_FAILED=0
   MBP_SYNC_OK=0
   MBP_SYNC_TOTAL=0
   MBP_SYNC_ERR=""
+  MBP_SYNC_LEVEL="WARN"
   for pair in "${MBP_SYNC_PAIRS[@]}"; do
     src_rel="${pair%%:*}"
     dst_rel="${pair##*:}"
@@ -142,15 +145,169 @@ if [ -f "$MBP_SSH_KEY" ]; then
         ;;
     esac
     if [ "$src_rel" = "openclaw/workspace/scripts/presence-detect.sh" ]; then
+      if ! PRESENCE_CANDIDATE=$(openclaw_stage_presence_scanner "$src"); then
+        MBP_SYNC_ERR="Tracked presence scanner could not be staged safely; preserved prior scanner"
+        MBP_SYNC_LEVEL="WARN"
+        continue
+      fi
+      if ! openclaw_presence_scanner_has_strict_deployment_contract "$PRESENCE_CANDIDATE"; then
+        /bin/rm -f "$PRESENCE_CANDIDATE"
+        MBP_SYNC_ERR="Tracked presence scanner lacks the strict binding contract; preserved prior scanner"
+        MBP_SYNC_LEVEL="WARN"
+        continue
+      fi
+      if ! PRESENCE_SCANNER_HASH=$(openclaw_presence_scanner_sha256 "$PRESENCE_CANDIDATE"); then
+        /bin/rm -f "$PRESENCE_CANDIDATE"
+        MBP_SYNC_ERR="Tracked presence scanner hash is unavailable; preserved prior scanner"
+        MBP_SYNC_LEVEL="WARN"
+        continue
+      fi
       if ! ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
                -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
                "$MBP_HOST" \
                'PRESENCE_DEVICE_CONFIG="$HOME/.openclaw/presence-devices.json" /bin/bash -s -- validate-config crosstown' \
-               < "$src" \
+               < "$PRESENCE_CANDIDATE" \
                >/dev/null 2>&1; then
+        /bin/rm -f "$PRESENCE_CANDIDATE"
         MBP_SYNC_ERR="Crosstown presence bindings missing or invalid; preserved prior scanner"
+        MBP_SYNC_LEVEL="WARN"
         continue
       fi
+
+      PRESENCE_APPROVAL_STATUS=0
+      if ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+             -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+             "$MBP_HOST" \
+             "PRESENCE_EXPECTED_SCANNER_HASH=$PRESENCE_SCANNER_HASH /bin/bash -s" \
+             >/dev/null 2>&1 <<'PRESENCE_APPROVAL'
+set -u
+approval_file="$HOME/.openclaw/presence-scanner-approved.sha256"
+expected_hash="${PRESENCE_EXPECTED_SCANNER_HASH:-}"
+[[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || exit 21
+if [ ! -e "$approval_file" ] && [ ! -L "$approval_file" ]; then
+  exit 20
+fi
+[ -f "$approval_file" ] && [ ! -L "$approval_file" ] || exit 21
+metadata=$(/usr/bin/stat -f '%u %Lp %l %z' "$approval_file" 2>/dev/null) || exit 21
+[ "$metadata" = "$(/usr/bin/id -u) 600 1 65" ] || exit 21
+line_count=$(/usr/bin/wc -l < "$approval_file" | /usr/bin/tr -d '[:space:]') || exit 21
+[ "$line_count" = "1" ] || exit 21
+IFS= read -r approved < "$approval_file" || exit 21
+[[ "$approved" =~ ^[0-9a-f]{64}$ ]] || exit 21
+[ "$approved" = "$expected_hash" ] || exit 20
+PRESENCE_APPROVAL
+      then
+        :
+      else
+        PRESENCE_APPROVAL_STATUS=$?
+      fi
+      if [ "$PRESENCE_APPROVAL_STATUS" -ne 0 ]; then
+        /bin/rm -f "$PRESENCE_CANDIDATE"
+        if [ "$PRESENCE_APPROVAL_STATUS" -eq 20 ]; then
+          MBP_SYNC_ERR="Crosstown strict presence scanner awaits exact canary approval; preserved legacy scanner"
+          MBP_SYNC_LEVEL="INFO"
+        else
+          MBP_SYNC_ERR="Crosstown presence scanner approval is invalid or could not be verified; preserved legacy scanner"
+          MBP_SYNC_LEVEL="WARN"
+        fi
+        continue
+      fi
+
+      if ! PRESENCE_REMOTE_CANDIDATE=$(ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+               -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+               "$MBP_HOST" \
+               'umask 077; cd "$HOME" && /usr/bin/mktemp ".openclaw/workspace/scripts/.presence-detect.sh.XXXXXX"' \
+               2>/dev/null) \
+          || [[ ! "$PRESENCE_REMOTE_CANDIDATE" =~ ^\.openclaw/workspace/scripts/\.presence-detect\.sh\.[A-Za-z0-9]+$ ]]; then
+        /bin/rm -f "$PRESENCE_CANDIDATE"
+        MBP_SYNC_ERR="Crosstown approved scanner could not create a protected staging file; preserved legacy scanner"
+        MBP_SYNC_LEVEL="WARN"
+        MBP_PRESENCE_ACTIVATION_FAILED=1
+        continue
+      fi
+      if ! scp -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+               -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -q \
+               "$PRESENCE_CANDIDATE" "$MBP_HOST:$PRESENCE_REMOTE_CANDIDATE" \
+               >/dev/null 2>&1; then
+        ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+            -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+            "$MBP_HOST" \
+            "PRESENCE_REMOTE_CANDIDATE=$PRESENCE_REMOTE_CANDIDATE /bin/bash -s" \
+            >/dev/null 2>&1 <<'PRESENCE_CLEANUP' || true
+case "${PRESENCE_REMOTE_CANDIDATE:-}" in
+  .openclaw/workspace/scripts/.presence-detect.sh.*)
+    /bin/rm -f "$HOME/$PRESENCE_REMOTE_CANDIDATE"
+    ;;
+esac
+PRESENCE_CLEANUP
+        /bin/rm -f "$PRESENCE_CANDIDATE"
+        MBP_SYNC_ERR="Crosstown approved scanner upload failed; preserved legacy scanner"
+        MBP_SYNC_LEVEL="WARN"
+        MBP_PRESENCE_ACTIVATION_FAILED=1
+        continue
+      fi
+      if ! ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
+               -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+               "$MBP_HOST" \
+               "PRESENCE_EXPECTED_SCANNER_HASH=$PRESENCE_SCANNER_HASH PRESENCE_REMOTE_CANDIDATE=$PRESENCE_REMOTE_CANDIDATE /bin/bash -s" \
+               >/dev/null 2>&1 <<'PRESENCE_FINALIZE'
+set -euo pipefail
+expected_hash="${PRESENCE_EXPECTED_SCANNER_HASH:-}"
+relative_candidate="${PRESENCE_REMOTE_CANDIDATE:-}"
+[[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]]
+[[ "$relative_candidate" =~ ^\.openclaw/workspace/scripts/\.presence-detect\.sh\.[A-Za-z0-9]+$ ]]
+candidate="$HOME/$relative_candidate"
+destination="$HOME/.openclaw/workspace/scripts/presence-detect.sh"
+approval_file="$HOME/.openclaw/presence-scanner-approved.sha256"
+cleanup() { /bin/rm -f "$candidate"; }
+trap cleanup EXIT
+
+[ -f "$candidate" ] && [ ! -L "$candidate" ]
+metadata=$(/usr/bin/stat -f '%u %Lp %l %z' "$candidate")
+read -r owner mode links size <<< "$metadata"
+[ "$owner" = "$(/usr/bin/id -u)" ] && [ "$links" = "1" ]
+[ "$size" -gt 0 ] && [ "$size" -le 2097152 ]
+(( (8#$mode & 0022) == 0 ))
+actual_hash=$(/usr/bin/shasum -a 256 "$candidate" | /usr/bin/awk 'NR == 1 { print $1 }')
+[ "$actual_hash" = "$expected_hash" ]
+/usr/bin/grep -Fqx \
+  'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"' \
+  "$candidate"
+
+[ -f "$approval_file" ] && [ ! -L "$approval_file" ]
+[ "$(/usr/bin/stat -f '%u %Lp %l %z' "$approval_file")" \
+  = "$(/usr/bin/id -u) 600 1 65" ]
+[ "$(/usr/bin/wc -l < "$approval_file" | /usr/bin/tr -d '[:space:]')" = "1" ]
+IFS= read -r approved < "$approval_file"
+[ "$approved" = "$expected_hash" ]
+
+PRESENCE_DEVICE_CONFIG="$HOME/.openclaw/presence-devices.json" \
+  /bin/bash "$candidate" validate-config crosstown >/dev/null 2>&1
+if [ -e "$destination" ] || [ -L "$destination" ]; then
+  [ -f "$destination" ] && [ ! -L "$destination" ]
+  [ "$(/usr/bin/stat -f '%u %l' "$destination")" \
+    = "$(/usr/bin/id -u) 1" ]
+fi
+/bin/chmod 755 "$candidate"
+/usr/bin/python3 -c \
+  'import os, sys; os.replace(sys.argv[1], sys.argv[2])' \
+  "$candidate" "$destination"
+[ "$(/usr/bin/stat -f '%u %Lp %l' "$destination")" \
+  = "$(/usr/bin/id -u) 755 1" ]
+[ "$(/usr/bin/shasum -a 256 "$destination" | /usr/bin/awk 'NR == 1 { print $1 }')" \
+  = "$expected_hash" ]
+trap - EXIT
+PRESENCE_FINALIZE
+      then
+        /bin/rm -f "$PRESENCE_CANDIDATE"
+        MBP_SYNC_ERR="Crosstown approved scanner failed final verification; inspect the last atomic runtime before retry"
+        MBP_SYNC_LEVEL="WARN"
+        MBP_PRESENCE_ACTIVATION_FAILED=1
+        continue
+      fi
+      /bin/rm -f "$PRESENCE_CANDIDATE"
+      MBP_SYNC_OK=$((MBP_SYNC_OK + 1))
+      continue
     fi
     if [ "$src_rel" = "openclaw/skills/august-lock/august-cmd.js" ]; then
       if ! ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
@@ -159,6 +316,7 @@ if [ -f "$MBP_SSH_KEY" ]; then
                'p="$HOME/.openclaw/august/config.json"; [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -f "%u %Lp" "$p")" = "$(id -u) 600" ]' \
                >/dev/null 2>&1; then
         MBP_SYNC_ERR="August config missing or insecure"
+        MBP_SYNC_LEVEL="WARN"
         MBP_PROTOCOL_SYNC_FAILED=1
         continue
       fi
@@ -170,6 +328,7 @@ if [ -f "$MBP_SSH_KEY" ]; then
                'for p in "$HOME/.openclaw/rest980/env-10max" "$HOME/.openclaw/rest980/env-j5"; do [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -f "%u %Lp" "$p")" = "$(id -u) 600" ] || exit 1; done' \
                >/dev/null 2>&1; then
         MBP_SYNC_ERR="Roomba credential files missing or insecure"
+        MBP_SYNC_LEVEL="WARN"
         MBP_PROTOCOL_SYNC_FAILED=1
         continue
       fi
@@ -181,6 +340,7 @@ if [ -f "$MBP_SSH_KEY" ]; then
       MBP_SYNC_OK=$((MBP_SYNC_OK + 1))
     else
       MBP_SYNC_ERR="$scp_err"
+      MBP_SYNC_LEVEL="WARN"
       if [ "$PROTOCOL_PAIR" -eq 1 ]; then
         MBP_PROTOCOL_SYNC_FAILED=1
       fi
@@ -190,10 +350,14 @@ if [ -f "$MBP_SSH_KEY" ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: FATAL protocol counterpart was not synchronized: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
     exit 1
   fi
+  if [ "$MBP_PRESENCE_ACTIVATION_FAILED" -ne 0 ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: FATAL approved presence scanner activation failed: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
+    exit 1
+  fi
   if [ "$MBP_SYNC_OK" -eq "$MBP_SYNC_TOTAL" ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL files to $MBP_HOST" >> "$LOG"
   else
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: WARN synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL files to $MBP_HOST: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) mbp-sync: $MBP_SYNC_LEVEL synced $MBP_SYNC_OK/$MBP_SYNC_TOTAL files to $MBP_HOST: ${MBP_SYNC_ERR:-unknown error}" >> "$LOG"
   fi
 fi
 
@@ -770,11 +934,62 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
       [ -f "$script" ] || continue
       fname=$(basename "$script")
       if [ "$fname" = "presence-detect.sh" ] && [ "$IS_GATEWAY_HOST" -eq 1 ]; then
-        if ! PRESENCE_DEVICE_CONFIG="$HOME/.openclaw/presence-devices.json" \
-             /bin/bash "$script" validate-config cabin >/dev/null 2>&1; then
-          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: Cabin presence bindings missing or invalid; preserved prior scanner" >> "$LOG"
+        if ! openclaw_presence_scanner_has_strict_deployment_contract "$script"; then
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN tracked presence scanner lacks the strict binding contract; preserved prior scanner" >> "$LOG"
           continue
         fi
+        PRESENCE_BINDING_CONFIG="$HOME/.openclaw/presence-devices.json"
+        if [ ! -e "$PRESENCE_BINDING_CONFIG" ] \
+            && [ ! -L "$PRESENCE_BINDING_CONFIG" ]; then
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: INFO Cabin strict presence enrollment pending; preserved legacy scanner" >> "$LOG"
+          continue
+        fi
+        if ! PRESENCE_CANDIDATE=$(openclaw_stage_presence_scanner "$script"); then
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN tracked presence scanner could not be staged safely; preserved prior scanner" >> "$LOG"
+          continue
+        fi
+        if ! openclaw_presence_scanner_has_strict_deployment_contract "$PRESENCE_CANDIDATE"; then
+          /bin/rm -f "$PRESENCE_CANDIDATE"
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN staged presence scanner lacks the strict binding contract; preserved prior scanner" >> "$LOG"
+          continue
+        fi
+        if ! PRESENCE_DEVICE_CONFIG="$PRESENCE_BINDING_CONFIG" \
+             /bin/bash "$PRESENCE_CANDIDATE" validate-config cabin >/dev/null 2>&1; then
+          /bin/rm -f "$PRESENCE_CANDIDATE"
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN Cabin strict presence bindings invalid or insecure; preserved prior scanner" >> "$LOG"
+          continue
+        fi
+        if ! PRESENCE_SCANNER_HASH=$(openclaw_presence_scanner_sha256 "$PRESENCE_CANDIDATE"); then
+          /bin/rm -f "$PRESENCE_CANDIDATE"
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN tracked presence scanner hash is unavailable; preserved prior scanner" >> "$LOG"
+          continue
+        fi
+        PRESENCE_SCANNER_APPROVAL="$HOME/.openclaw/presence-scanner-approved.sha256"
+        PRESENCE_APPROVAL_STATUS=0
+        if openclaw_presence_scanner_approval_status \
+            "$PRESENCE_SCANNER_HASH" "$PRESENCE_SCANNER_APPROVAL"; then
+          :
+        else
+          PRESENCE_APPROVAL_STATUS=$?
+        fi
+        if [ "$PRESENCE_APPROVAL_STATUS" -ne 0 ]; then
+          /bin/rm -f "$PRESENCE_CANDIDATE"
+          if [ "$PRESENCE_APPROVAL_STATUS" -eq 20 ]; then
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: INFO Cabin strict presence scanner awaits exact canary approval; preserved legacy scanner" >> "$LOG"
+          else
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN Cabin presence scanner approval is invalid; preserved prior scanner" >> "$LOG"
+          fi
+          continue
+        fi
+        if ! openclaw_atomic_install_presence_scanner \
+            "$PRESENCE_CANDIDATE" "$SCRIPTS_DST/$fname" "$PRESENCE_SCANNER_HASH"; then
+          /bin/rm -f "$PRESENCE_CANDIDATE"
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: FATAL approved Cabin presence scanner failed exact-byte installation; inspect the last atomic runtime before retry" >> "$LOG"
+          exit 1
+        fi
+        /bin/rm -f "$PRESENCE_CANDIDATE"
+        WS_SCRIPTS_DEPLOYED=$((WS_SCRIPTS_DEPLOYED + 1))
+        continue
       fi
       [ -L "$SCRIPTS_DST/$fname" ] && rm -f "$SCRIPTS_DST/$fname"
       atomic_install_executable "$script" "$SCRIPTS_DST/$fname"

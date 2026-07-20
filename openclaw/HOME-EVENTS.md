@@ -226,7 +226,10 @@ hostnames, generic iPhone matches, and IP addresses are not strict-scanner
 fallbacks; missing, insecure, or malformed bindings fail the scan closed.
 Current Cabin production remains on the preserved legacy name-based scanner
 until an attended on-site session binds and validates both phones without
-printing the identifiers.
+printing the identifiers. Crosstown's strict JSON binding is ready, but its
+legacy runtime remains preserved until the
+[exact-source shadow canary](plans/crosstown-strict-presence-canary.md) passes;
+config validity alone cannot activate either site's new scanner.
 
 ### August
 
@@ -290,7 +293,8 @@ bridge baseline are complete. A fresh or rebuilt installation must first:
 
 The remaining attended rollout is:
 
-5. For Cabin identity, complete the separately planned attended enrollment:
+5. For Cabin identity, complete the separately planned
+   [attended enrollment](plans/cabin-starlink-presence-enrollment.md):
    prove two reconnect cycles and complete 5-, 10-, and 20-minute idle
    evidence per phone, then collect at
    least eight correct samples over at least one hour with three real-cadence

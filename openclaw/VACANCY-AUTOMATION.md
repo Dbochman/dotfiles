@@ -50,7 +50,7 @@ present. It vetoes `confirmed_vacant` for safety, but does not prove a return.
 
 | System | CLI | Action |
 |--------|-----|--------|
-| Eight Sleep Pods | Presence-driven `home` reconciliation | Each returning person's detected location becomes current independently |
+| Eight Sleep Pods | Presence-driven `home` reconciliation | Dylan follows his detected location; Julia follows only after strict Cabin enrollment is active |
 
 Lights, thermostat, and Cielos are NOT automatically restored — welcome-home routines handle those contextually.
 
@@ -98,6 +98,13 @@ cloud on every 15-minute state write. The per-person marker records the last
 verified location. While the location is unchanged, manual Eight Sleep app
 overrides are preserved; the next positive relocation re-applies automation.
 Invalid or unknown locations preserve the marker and perform no device action.
+
+Until the deployed Cabin scanner validates the protected exact-ID binding,
+Julia's Eight Sleep side remains pinned to Crosstown even if legacy Cabin
+presence reports her there. This temporary containment blocks the permissive
+generic-iPhone fallback from moving her bed automation. It releases
+automatically after the attended enrollment activates the strict scanner;
+Dylan's reconciliation is unchanged.
 
 ## Files
 

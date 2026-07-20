@@ -25,9 +25,16 @@
 set -euo pipefail
 umask 077
 
+# dotfiles-pull reads this exact marker before treating this source as a strict
+# binding-aware scanner. Keep it coupled to the validate-config command and its
+# fail-closed protected-file validation below.
+PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"
+
 REQUESTED_MODE="${1:-}"
 READ_ONLY_OBSERVATION=0
-[ "$REQUESTED_MODE" = "observe" ] && READ_ONLY_OBSERVATION=1
+case "$REQUESTED_MODE" in
+  observe|validate-config) READ_ONLY_OBSERVATION=1 ;;
+esac
 
 LOG_FILE="$HOME/.openclaw/logs/presence-detect.log"
 if [ -x "/opt/homebrew/opt/node@22/bin/node" ]; then
@@ -148,64 +155,109 @@ try {
 CABIN_TRACKED='["Dylan","Julia"]'
 CROSSTOWN_TRACKED='["Dylan","Julia"]'
 
-CABIN_DEVICES='[
-  {"person":"Dylan","match":"name","pattern":"Dylan","require":"iPhone"},
-  {"person":"Dylan","match":"name","pattern":"Dylan","require":"phone"},
-  {"person":"Julia","match":"name","pattern":"Julia"},
-  {"person":"Julia","match":"name_fallback","pattern":"iPhone","excludeNames":["Dylan"]}
-]'
+# Device identities are site-local private configuration. Each host stores only
+# the bindings required for its own network; the raw values never enter logs or
+# persisted scan output. Missing or malformed bindings fail the scan closed.
+PRESENCE_DEVICE_CONFIG="${PRESENCE_DEVICE_CONFIG:-$HOME/.openclaw/presence-devices.json}"
+SITE_DEVICES=""
 
-# Crosstown MAC identities are machine-local private configuration on the MBP.
-CROSSTOWN_DEVICE_CONFIG="${PRESENCE_CROSSTOWN_DEVICE_CONFIG:-$HOME/.openclaw/presence-devices.env}"
-CROSSTOWN_DEVICES=""
+load_site_devices() {
+  local expected_site="$1" parsed
 
-load_crosstown_devices() {
-  if [[ -z "${CROSSTOWN_DYLAN_MAC:-}" || -z "${CROSSTOWN_JULIA_MAC:-}" ]]; then
-    if [[ ! -e "$CROSSTOWN_DEVICE_CONFIG" && ! -L "$CROSSTOWN_DEVICE_CONFIG" ]]; then
-      log "WARN: Crosstown device config is not provisioned; using exact hostname-only matching"
-      CROSSTOWN_DEVICES='[
-  {"person":"Dylan","match":"hostname","pattern":"dylans-iphone"},
-  {"person":"Julia","match":"hostname","pattern":"julias-iphone"}
-]'
-      return 0
-    fi
-    if [[ ! -f "$CROSSTOWN_DEVICE_CONFIG" || -L "$CROSSTOWN_DEVICE_CONFIG" ]]; then
-      log "ERROR: Crosstown device config must be a regular non-symlink file"
-      return 1
-    fi
-    local owner mode
-    read -r owner mode < <(stat -f '%u %Lp' "$CROSSTOWN_DEVICE_CONFIG")
-    if [[ "$owner" != "$(id -u)" || "$mode" != "600" ]]; then
-      log "ERROR: Crosstown device config must be owned by the current user with mode 0600"
-      return 1
-    fi
-    set -a
-    if ! . "$CROSSTOWN_DEVICE_CONFIG" >/dev/null 2>&1; then
-      set +a
-      log "ERROR: Crosstown device config could not be loaded"
-      return 1
-    fi
-    set +a
-  fi
+  if ! parsed=$("$NODE" - "$PRESENCE_DEVICE_CONFIG" "$expected_site" <<'NODE'
+"use strict";
+const fs = require("fs");
+const path = require("path");
 
-  local mac_pattern='^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$'
-  if [[ ! "${CROSSTOWN_DYLAN_MAC:-}" =~ $mac_pattern ||
-        ! "${CROSSTOWN_JULIA_MAC:-}" =~ $mac_pattern ]]; then
-    log "ERROR: Crosstown device config contains an invalid MAC address"
+const [configPath, expectedSite] = process.argv.slice(2);
+const expectedPeople = ["Dylan", "Julia"];
+
+function fail() {
+  process.exit(2);
+}
+
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExactKeys(value, expected) {
+  if (!isObject(value)) return false;
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+if (!configPath || !["cabin", "crosstown"].includes(expectedSite)) fail();
+
+let descriptor;
+try {
+  const directory = path.dirname(configPath);
+  const directoryMetadata = fs.lstatSync(directory);
+  const owner = typeof process.getuid === "function" ? process.getuid() : null;
+  if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink() ||
+      (owner !== null && directoryMetadata.uid !== owner) ||
+      (directoryMetadata.mode & 0o077) !== 0) fail();
+
+  descriptor = fs.openSync(
+    configPath,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW
+  );
+  const metadata = fs.fstatSync(descriptor);
+  if (!metadata.isFile() || metadata.nlink !== 1 || metadata.size < 2 || metadata.size > 16384 ||
+      (owner !== null && metadata.uid !== owner) ||
+      (metadata.mode & 0o7777) !== 0o600) fail();
+
+  const raw = fs.readFileSync(descriptor, "utf8");
+  const config = JSON.parse(raw);
+  if (!hasExactKeys(config, ["schema_version", "site", "people"]) ||
+      config.schema_version !== 1 || config.site !== expectedSite ||
+      !hasExactKeys(config.people, expectedPeople)) fail();
+
+  const devices = [];
+  const identities = new Set();
+  for (const person of expectedPeople) {
+    const binding = config.people[person];
+    if (!hasExactKeys(binding, ["kind", "value"]) || typeof binding.value !== "string") fail();
+
+    let value = binding.value;
+    if (expectedSite === "cabin") {
+      if (binding.kind !== "starlink_captive_client_id" ||
+          !/^[0-9a-fA-F]{64}$/.test(value)) fail();
+      value = value.toLowerCase();
+    } else {
+      if (binding.kind !== "mac" ||
+          !/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(value)) fail();
+      value = value.toLowerCase();
+    }
+    if (identities.has(value)) fail();
+    identities.add(value);
+    devices.push({ person, kind: binding.kind, value });
+  }
+  process.stdout.write(JSON.stringify(devices));
+} catch {
+  fail();
+} finally {
+  if (descriptor !== undefined) {
+    try { fs.closeSync(descriptor); } catch {}
+  }
+}
+NODE
+  ); then
+    log "ERROR: Protected presence device config is unavailable or invalid for $expected_site"
     return 1
   fi
-
-  CROSSTOWN_DEVICES=$(printf '%s' "[
-  {\"person\":\"Dylan\",\"match\":\"mac\",\"pattern\":\"$CROSSTOWN_DYLAN_MAC\"},
-  {\"person\":\"Julia\",\"match\":\"mac\",\"pattern\":\"$CROSSTOWN_JULIA_MAC\"},
-  {\"person\":\"Julia\",\"match\":\"hostname\",\"pattern\":\"julias-iphone\"}
-]")
+  SITE_DEVICES="$parsed"
 }
 
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
 
 scan_cabin() {
-  local grpc_response
+  local grpc_response parsed
+  if ! load_site_devices cabin; then
+    echo '{"error":"cabin_device_config_unavailable","location":"cabin"}'
+    return 1
+  fi
+
   grpc_response=$($GRPCURL -plaintext -d '{"wifiGetClients":{}}' \
     192.168.1.1:9000 SpaceX.API.Device.Device/Handle 2>/dev/null || echo '{}')
 
@@ -215,58 +267,43 @@ scan_cabin() {
     return 1
   fi
 
-  { printf '%s\0%s' "$CABIN_DEVICES" "$grpc_response"; } | "$NODE" -e "
+  if ! parsed=$({ printf '%s\0%s' "$SITE_DEVICES" "$grpc_response"; } | "$NODE" -e "
 const input = require('fs').readFileSync(0);
 const separator = input.indexOf(0);
 if (separator < 0) process.exit(2);
 const devices = JSON.parse(input.subarray(0, separator).toString('utf8'));
 const response = JSON.parse(input.subarray(separator + 1).toString('utf8'));
-const clients = response?.wifiGetClients?.clients || [];
+const clients = response?.wifiGetClients?.clients;
+if (!Array.isArray(clients)) process.exit(2);
 const results = {};
 
-for (const dev of devices) {
-  if (results[dev.person]) continue;
-  for (const client of clients) {
-    const name = (client.name || '').toLowerCase();
-    const pattern = dev.pattern.toLowerCase();
-    let matched = false;
-
-    if (dev.match === 'name') {
-      matched = name.includes(pattern);
-      if (matched && dev.require && !name.includes(dev.require.toLowerCase())) matched = false;
-    } else if (dev.match === 'name_fallback') {
-      matched = name.includes(pattern);
-      if (matched && dev.excludeNames) {
-        for (const excl of dev.excludeNames) {
-          if (name.includes(excl.toLowerCase())) { matched = false; break; }
-        }
-        if (matched) {
-          for (const [, info] of Object.entries(results)) {
-            if (info.present && info.mac === (client.macAddress || '').toLowerCase()) { matched = false; break; }
-          }
-        }
-      }
-    } else if (dev.match === 'mac') {
-      matched = (client.macAddress || '').toLowerCase() === pattern.toLowerCase();
-    }
-
-    if (matched) {
-      results[dev.person] = {
-        present: true,
-        device: client.name || 'unknown',
-        ip: client.ipAddress || '',
-        mac: client.macAddress || '',
-        signal: client.signalStrength || 0,
-        connectedMinutes: Math.round((client.associatedTimeS || 0) / 60),
-        interface: client.iface || ''
-      };
-      break;
-    }
-  }
+function validLivenessShape(client) {
+  return typeof client.dhcpLeaseFound === 'boolean' &&
+    typeof client.dhcpLeaseActive === 'boolean' &&
+    Number.isFinite(client.secondsUntilDhcpLeaseExpires) &&
+    Number.isInteger(client.noDataIdleS) && client.noDataIdleS >= 0;
 }
 
 for (const dev of devices) {
-  if (!results[dev.person]) results[dev.person] = { present: false };
+  if (dev.kind !== 'starlink_captive_client_id') process.exit(2);
+  const matches = clients.filter(client => client &&
+    typeof client === 'object' && !Array.isArray(client) &&
+    typeof client.captiveClientId === 'string' &&
+    /^[0-9a-fA-F]{64}$/.test(client.captiveClientId) &&
+    client.captiveClientId.toLowerCase() === dev.value);
+  if (matches.length > 1) process.exit(2);
+  if (matches.length === 0) {
+    results[dev.person] = { present: false };
+    continue;
+  }
+  const client = matches[0];
+  if (!validLivenessShape(client)) process.exit(2);
+  results[dev.person] = {
+    present: client.dhcpLeaseFound === true &&
+      client.dhcpLeaseActive === true &&
+      client.secondsUntilDhcpLeaseExpires > 0 &&
+      client.noDataIdleS <= 300
+  };
 }
 
 console.log(JSON.stringify({
@@ -275,13 +312,18 @@ console.log(JSON.stringify({
   totalClients: clients.length,
   presence: results
 }, null, 2));
-" 2>/dev/null || echo '{"error":"parse_failed","location":"cabin"}'
+" 2>/dev/null); then
+    log "ERROR: Starlink client response failed strict parsing"
+    echo '{"error":"parse_failed","location":"cabin"}'
+    return 1
+  fi
+  printf '%s\n' "$parsed"
 }
 
 # ── Crosstown: ARP scan ─────────────────────────────────────────────────────
 
 scan_crosstown() {
-  if ! load_crosstown_devices; then
+  if ! load_site_devices crosstown; then
     echo '{"error":"crosstown_device_config_unavailable","location":"crosstown"}'
     return 1
   fi
@@ -306,19 +348,14 @@ scan_crosstown() {
   wait
 
   # Step 2: Re-probe tracked IPs, then require fresh inbound link-layer
-  # reachability from `arp -anl`. Plain `arp -a` retains complete entries after
-  # a device leaves, and deleting those entries requires root on macOS.
+  # reachability from `arp -anl`; cached/static rows cannot prove presence.
   sleep 1
   for ip in $probe_ips; do
     "$PING" -c2 -W3 "$ip" >/dev/null 2>&1 &
   done
   wait
 
-  local arp_all reachability_all
-  if ! arp_all=$("$ARP" -a 2>/dev/null); then
-    log "WARN: ARP hostname query failed; continuing with numeric reachability"
-    arp_all=""
-  fi
+  local reachability_all
   if ! reachability_all=$("$ARP" -anl 2>/dev/null); then
     log "ERROR: Extended ARP reachability query failed"
     echo '{"error":"arp_reachability_failed","location":"crosstown"}'
@@ -331,14 +368,12 @@ scan_crosstown() {
   fi
 
   local parsed
-  if ! parsed=$({ printf '%s\0%s\0%s' "$CROSSTOWN_DEVICES" "$arp_all" "$reachability_all"; } | "$NODE" -e "
+  if ! parsed=$({ printf '%s\0%s' "$SITE_DEVICES" "$reachability_all"; } | "$NODE" -e "
 const input = require('fs').readFileSync(0);
 const firstSeparator = input.indexOf(0);
-const secondSeparator = input.indexOf(0, firstSeparator + 1);
-if (firstSeparator < 0 || secondSeparator < 0) process.exit(2);
+if (firstSeparator < 0) process.exit(2);
 const devices = JSON.parse(input.subarray(0, firstSeparator).toString('utf8'));
-const arpLines = input.subarray(firstSeparator + 1, secondSeparator).toString('utf8').split('\n').filter(Boolean);
-const rawReachabilityLines = input.subarray(secondSeparator + 1).toString('utf8').split('\n').map(line => line.trim()).filter(Boolean);
+const rawReachabilityLines = input.subarray(firstSeparator + 1).toString('utf8').split('\n').map(line => line.trim()).filter(Boolean);
 const results = {};
 
 function fail(message) {
@@ -390,46 +425,11 @@ if (gatewayRows.length !== 1) fail('gateway lacks unambiguous fresh inbound reac
 const activeInterface = gatewayRows[0].iface;
 const activeRows = liveRows.filter(row => row.iface === activeInterface);
 
-function neighborKey(ip, mac, iface) {
-  return ip + '|' + mac + '|' + iface;
-}
-
-const namesByNeighbor = new Map();
-for (const line of arpLines) {
-  const match = line.match(/^(\S+)\s+\(([0-9.]+)\)\s+at\s+([0-9a-f:]+|\(incomplete\))\s+on\s+(\S+)/i);
-  if (!match) continue;
-  const [, rawName, ip, rawMac, iface] = match;
-  const mac = normalizeMac(rawMac);
-  if (!mac) continue;
-  const live = activeRows.some(row => row.ip === ip && row.mac === mac && row.iface === iface);
-  if (!live) continue;
-  const name = rawName.toLowerCase().replace(/\.$/, '');
-  if (name !== '?') namesByNeighbor.set(neighborKey(ip, mac, iface), name);
-}
-
-function hostnameMatches(name, pattern) {
-  if (!name) return false;
-  const expected = pattern.toLowerCase().replace(/\.$/, '');
-  return name === expected || name.split('.')[0] === expected;
-}
-
 for (const dev of devices) {
-  for (const row of activeRows) {
-    const name = namesByNeighbor.get(neighborKey(row.ip, row.mac, row.iface));
-    let matched = false;
-    if (dev.match === 'mac') matched = row.mac === normalizeMac(dev.pattern);
-    else if (dev.match === 'name' || dev.match === 'hostname') matched = hostnameMatches(name, dev.pattern);
-    if (matched) {
-      results[dev.person] = {
-        present: true,
-        ip: row.ip,
-        mac: row.mac,
-        device: dev.match === 'mac' ? 'phone (MAC match)' : name
-      };
-      break;
-    }
-  }
-  if (!results[dev.person]) results[dev.person] = { present: false };
+  if (dev.kind !== 'mac') fail('unexpected identity kind');
+  const expectedMac = normalizeMac(dev.value);
+  if (!expectedMac) fail('malformed configured link-layer address');
+  results[dev.person] = { present: activeRows.some(row => row.mac === expectedMac) };
 }
 
 console.log(JSON.stringify({
@@ -1326,6 +1326,17 @@ fi
 log "Running: $LOCATION"
 
 case "$LOCATION" in
+  validate-config)
+    if [ "$#" -ne 2 ] || [[ ! "$2" =~ ^(cabin|crosstown)$ ]]; then
+      echo '{"error":"usage","message":"presence-detect.sh validate-config <cabin|crosstown>"}'
+      exit 2
+    fi
+    if ! load_site_devices "$2"; then
+      echo "{\"error\":\"device_config_invalid\",\"site\":\"$2\"}"
+      exit 1
+    fi
+    echo "{\"ok\":true,\"site\":\"$2\"}"
+    ;;
   observe)
     if [ "$#" -ne 2 ]; then
       echo '{"error":"usage","message":"presence-detect.sh observe <cabin|crosstown>"}'

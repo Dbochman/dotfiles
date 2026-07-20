@@ -39,7 +39,7 @@ ssh dylans-macbook-pro "<command>"
 | .110 | mac.lan | MacBook Pro (this machine) |
 | .117 | movie-room.lan | Apple TV (Movie Room) |
 | .119 | ys-l16030313e8.lan | Yeelight / smart light |
-| .124 | dylans-iphone.lan | Dylan's iPhone (MAC: `${CROSSTOWN_DYLAN_MAC}`) |
+| .124 | dylans-iphone.lan | Dylan's iPhone (presence identity is protected separately) |
 | .129 | huesyncbox.lan | Philips Hue Sync Box |
 | .142, .162, .164, .178, .236 | espressif.lan | ESP32 smart home devices |
 | .4 | irobot-81039f...lan | iRobot Roomba Combo 10 Max |
@@ -68,21 +68,38 @@ ssh dylans-macbook-pro "ping -c3 -W2 192.168.165.124; arp -anl | grep '^192.168.
 ## Presence Detection
 
 Track phone presence by probing the LAN and requiring live receive-side
-reachability from `arp -anl` before matching a MAC or exact hostname:
+reachability from `arp -anl` before matching each resident's exact protected
+site-private MAC:
 
-| Person | Hostname | MAC (Crosstown WiFi) | IP |
-|---|---|---|---|
-| Dylan | `dylans-iphone` | `${CROSSTOWN_DYLAN_MAC}` | `192.168.165.124` |
-| Julia | `julias-iphone` | `${CROSSTOWN_JULIA_MAC}` | `192.168.165.248` |
+| Person | Presence identity |
+|---|---|
+| Dylan | Exact MAC in the protected Crosstown binding file |
+| Julia | Exact MAC in the protected Crosstown binding file |
 
-Matching priority: MAC → exact hostname (mDNS `.lan` name joined to the same
-fresh IP/MAC/interface row). IP alone is not accepted as identity. Hostname is
-the durable fallback when iOS rotates its per-network MAC.
+The bindings live only in the owner-only mode-`0600`
+`~/.openclaw/presence-devices.json` on the MacBook Pro. Never print or copy
+that file. Hostnames, display names, and IP addresses are not identity
+fallbacks; an absent, insecure, wrong-site, duplicate, or malformed binding
+fails closed.
 
 iPhones in sleep mode may ignore ICMP while still answering ARP. The presence
 scanner therefore ignores ping exit status and trusts only a live inbound
 reachability timer; cached complete rows with expired inbound reachability do
 not count.
+
+Only after the deployed scanner's strict `validate-config` command succeeds,
+use its sanitized `observe` path rather than exposing raw ARP identity data:
+
+```bash
+ssh dylans-macbook-pro \
+  '~/.openclaw/workspace/scripts/presence-detect.sh validate-config crosstown'
+ssh dylans-macbook-pro \
+  '~/.openclaw/workspace/scripts/presence-detect.sh observe crosstown'
+```
+
+Before strict activation, report cached canonical presence only. The preserved
+legacy observer can include raw device, address, and network identifiers and
+must not be printed or relayed through the agent.
 
 ## Bonjour Discovery
 

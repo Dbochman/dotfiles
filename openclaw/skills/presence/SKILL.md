@@ -1,16 +1,17 @@
 ---
 name: presence
-description: Check who is home at the cabin (Philly) or Crosstown (Boston). Use when the user asks "is anyone home", "who's home", "is Julia/Dylan home", "is anyone at the cabin", or presence detection. Cached reporting and explicit network observation are read-only; scheduled state-refresh scans can trigger separate vacancy automation.
+description: Check who is home at the cabin (Philly) or Crosstown (Boston). Use when the user asks "is anyone home", "who's home", "is Julia/Dylan home", "is anyone at the cabin", or presence detection. Cached reporting is read-only; strict network observation is allowed only after the deployed scanner contract check passes, and scheduled state-refresh scans can trigger separate vacancy automation.
 allowed-tools: Bash(presence:*)
 metadata: {"openclaw":{"emoji":"P"}}
 ---
 
 # Presence Detection
 
-Cached-state reporting is read-only. Use the explicit `observe` mode only when a
-fresh network observation is required without changing correlated state. The
-scheduled scan modes rewrite presence files; the separate vacancy WatchPaths
-automation can react to those writes.
+Cached-state reporting is read-only. A fresh `observe` is permitted only when
+the deployed runtime advertises the strict binding contract; this prevents a
+preserved legacy observer from returning private device or network fields. The
+scheduled scan modes rewrite presence files, and the separate vacancy
+WatchPaths automation can react to those writes.
 
 ## Quick Check
 
@@ -20,20 +21,29 @@ Read the cached state (updated every 15 min, no scan needed):
 cat ~/.openclaw/presence/state.json
 ```
 
-For a fresh, side-effect-free network observation:
+For a fresh, side-effect-free network observation, fail closed unless the
+deployed runtime has the exact strict contract marker:
 
 ```bash
 # Cabin (on Mac Mini)
-~/.openclaw/workspace/scripts/presence-detect.sh observe cabin
+/usr/bin/grep -Fqx \
+  'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"' \
+  ~/.openclaw/workspace/scripts/presence-detect.sh && \
+  ~/.openclaw/workspace/scripts/presence-detect.sh observe cabin
 
 # Crosstown (on MacBook Pro)
 ssh dylans-macbook-pro \
-  "~/.openclaw/workspace/scripts/presence-detect.sh observe crosstown"
+  "/usr/bin/grep -Fqx \
+    'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT=\"strict-site-bindings-v1\"' \
+    ~/.openclaw/workspace/scripts/presence-detect.sh && \
+   ~/.openclaw/workspace/scripts/presence-detect.sh observe crosstown"
 ```
 
-`observe` prints a validated, fresh scan but does not write raw/correlated
-presence state, evaluate occupancy, push Taildrop, or activate vacancy actions.
-It exits nonzero for unavailable, stale, or malformed observations.
+After that gate, `observe` prints only a validated, sanitized fresh scan and
+does not write raw/correlated presence state, evaluate occupancy, push
+Taildrop, or activate vacancy actions. Before strict activation, use only the
+cached state; do not bypass the marker check. Observation exits nonzero for an
+unavailable, stale, malformed, or legacy runtime.
 
 Scheduled/state-refresh scans are operational: they update state and may
 trigger vacancy actions. Run one manually only when that side effect is intended:
@@ -135,6 +145,12 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 | `events.json` | Rolling log of last 100 transitions |
 | `prev-evaluated.json` | Previous evaluation (for transition detection) |
 
+The tracked strict scanner requires a separate, site-local
+`~/.openclaw/presence-devices.json`. That protected identity file is not part
+of the presence state directory, must never be printed, and is described
+below. Until a site's exact source hash has passed its canary and is approved,
+deployment preserves that site's prior runtime scanner instead.
+
 ### Logs
 
 - `~/.openclaw/logs/presence-detect.log` (on both machines)
@@ -145,23 +161,74 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 ### Cabin (Philly)
 
 - **Method**: Starlink gRPC API (`grpcurl` at `192.168.1.1:9000`)
-- **Matching**: Device names reported to Starlink router (iPhones use randomized MACs per-network)
-- **Dylan**: Device name contains "Dylan" AND "iPhone" or "phone"
-- **Julia**: Device name contains "Julia", or unnamed "iPhone" not claimed by Dylan
-- **Note**: Mac Mini itself doesn't count as "Dylan present"
+- **Identity**: Each resident is bound to one exact Starlink
+  `captiveClientId` from the protected Cabin config. Display names, substrings,
+  device types, and generic iPhone fallbacks are never identity evidence.
+- **Liveness**: An exact match counts only when `dhcpLeaseFound` and
+  `dhcpLeaseActive` are true, the lease has positive remaining time, and
+  `noDataIdleS` is an integer no greater than 300. The unrelated Starlink
+  `active` field is not required. Missing matches are absent; duplicate matches
+  or malformed liveness fields fail the scan closed.
+- **Activation prerequisite**: Provisioning the two exact IDs requires an
+  attended session at the Cabin while both phones can be identified and their
+  current lease/idle evidence verified. Until that protected config exists and
+  validates and the exact scanner hash completes its canary, the strict Cabin
+  scanner must not replace the deployed legacy scanner. That legacy scanner
+  still uses permissive name matching and can include raw network details in
+  direct observation output; do not print or persist that output.
 
 ### Crosstown (Boston)
 
 - **Method**: Unprivileged ARP reachability scan of `192.168.165.0/24`. After active probes, `arp -anl` supplies receive-side reachability; only a matching device with a live inbound timer on the gateway's interface counts. This works when an iPhone answers ARP but ignores ICMP, without trusting a complete but expired cache row.
-- **Private identifiers**: Dylan and Julia MACs are loaded on the MBP from `~/.openclaw/presence-devices.env`, a regular owner-owned mode-`0600` file containing `CROSSTOWN_DYLAN_MAC` and `CROSSTOWN_JULIA_MAC`. They are never tracked in dotfiles.
-- **Migration fallback**: if that file has not yet been provisioned, scans use
-  only exact Dylan/Julia phone hostnames joined to a fresh IP/MAC/interface
-  row. An insecure or malformed config still fails closed.
+- **Identity**: Each resident is bound to one exact site-private MAC from the
+  protected Crosstown config. There is no hostname, display-name, or IP
+  fallback.
 - **Rollout guard**: dotfiles pull preserves the prior MBP scanner instead of
-  deploying this version until that protected config exists with the required
-  ownership and mode.
-- **Julia fallback**: The exact hostname fallback remains local to the scanner and is accepted only when joined to the same fresh IP/MAC/interface row. IP alone is not identity.
-- **Stale ARP defense**: Complete ARP entries can persist after a device leaves. Presence therefore requires live receive-side reachability, plus a MAC or exact hostname match; send-side freshness, `(none)`, `expired`, and `(incomplete)` rows do not count. A fresh gateway row is required so LAN failure cannot become a valid all-absent scan.
+  deploying this version until the protected config validates and the
+  candidate's exact source hash has a site-local mode-`0600` canary approval.
+- **Stale ARP defense**: Complete ARP entries can persist after a device leaves.
+  Presence therefore requires live receive-side reachability plus the exact
+  MAC; send-side freshness, `(none)`, `expired`, and `(incomplete)` rows do not
+  count. A fresh gateway row is required so LAN failure cannot become a valid
+  all-absent scan.
+
+### Protected device bindings
+
+Each host stores only its own site's identities at the same local path. The
+file must be a regular, single-link, owner-owned mode-`0600` file in an
+owner-only, non-symlink directory. Its schema and keys are exact:
+
+```json
+{
+  "schema_version": 1,
+  "site": "cabin",
+  "people": {
+    "Dylan": {
+      "kind": "starlink_captive_client_id",
+      "value": "REDACTED"
+    },
+    "Julia": {
+      "kind": "starlink_captive_client_id",
+      "value": "REDACTED"
+    }
+  }
+}
+```
+
+The MacBook Pro uses `"site": "crosstown"` and `"kind": "mac"` for both
+people. The two values must be distinct. Missing, symlinked, insecure,
+wrong-site, extra-key, malformed, or duplicate bindings fail the scan closed;
+there is no heuristic fallback. The tracked strict scanner's output, state,
+events, and logs contain only resident booleans and safe aggregate evidence,
+never the private bindings, client names, addresses, or raw Starlink records.
+
+Validate a site's protected file without scanning or writing presence state:
+
+```bash
+~/.openclaw/workspace/scripts/presence-detect.sh validate-config cabin
+ssh dylans-macbook-pro \
+  '~/.openclaw/workspace/scripts/presence-detect.sh validate-config crosstown'
+```
 
 ## Important Notes
 
@@ -169,8 +236,14 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 - **Serialized evaluation** — Cabin scans and Taildrop receipts share one evaluator lock. Each `evaluate` call holds it from the first scan read through the previous-state, event/history, and correlated-state writes; network scanning remains outside the lock.
 - **Sticky/arrival-based model** — once detected at a location, a person stays there until detected at the other location. Phone sleep, MAC rotation, or missed ARP scans don't cause flicker.
 - **Scan staleness** — only direct positives from scans under 30 minutes old can establish or change a sticky location. Stale or missing observations preserve the previous sticky location; confirmed vacancy still requires a fresh scan at the other location plus sticky assignments of every tracked person there.
+- **Strict identity is a deployment boundary** — do not activate a new scanner
+  merely because its source changed. Validate the protected site-scoped config,
+  canary the exact source bytes, and approve that hash on the target host first.
+  Cabin provisioning remains an attended prerequisite.
 - Mac Mini SSHs to MacBook Pro via Tailscale (`ssh dylans-macbook-pro`) using dedicated key `~/.ssh/id_mini_to_mbp` (bypasses 1Password agent which hangs under launchd).
-- iOS randomizes MAC addresses per-network — hostname matching is preferred over MAC matching for resilience.
+- iOS private addresses are network-specific. Bind the exact current
+  Crosstown MAC address for each phone; never compensate for rotation with a
+  hostname or generic-device fallback.
 
 ## Skill Boundaries
 

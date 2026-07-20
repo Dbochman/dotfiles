@@ -228,11 +228,15 @@ The active reviewer has a deliberately narrow contract:
   the state-writing `cabin` or `evaluate` modes. Cached presence is checked
   again after capture and immediately before delivery; a newly occupied home
   discards the frame/commentary without reserving a message slot.
-- The live Cabin observation uses protected exact Starlink captive-client
-  bindings for Dylan and Julia. A match counts only with a live unexpired DHCP
-  lease and no more than five minutes of data idle time; client-name
-  substrings, device types, and generic iPhone fallbacks are forbidden. The
-  strict scanner remains an attended Cabin activation prerequisite.
+- Until attended enrollment completes, the live Cabin observation uses the
+  preserved legacy name-based scanner and may conservatively suppress review
+  on its generic-iPhone fallback. The tracked strict scanner instead uses
+  protected exact Starlink captive-client bindings for Dylan and Julia; a
+  match counts only with a live unexpired DHCP lease and no more than five
+  minutes of data idle time. Client-name substrings, device types, and generic
+  iPhone fallbacks are forbidden after activation. The exact scanner hash must
+  pass the downstream-disabled Cabin canary before routine deployment can use
+  it.
 - A trigger waits eight seconds for the scene to settle and is discarded if it
   is over two minutes old. Repeated review work is limited to once per five
   minutes.
