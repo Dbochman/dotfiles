@@ -32,6 +32,76 @@ CAMERA_RESOURCES = {
 }
 
 
+V1_SCHEMA = """
+CREATE TABLE schema_meta (
+    version INTEGER NOT NULL
+);
+CREATE TABLE inbox (
+    id INTEGER PRIMARY KEY,
+    message_key TEXT NOT NULL UNIQUE,
+    received_at TEXT NOT NULL,
+    publish_at TEXT,
+    sdm_event_key TEXT,
+    thread_key TEXT,
+    event_at TEXT,
+    alias TEXT,
+    site TEXT,
+    outcome TEXT NOT NULL,
+    reason_code TEXT,
+    normalized_event_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE sdm_dedupe (
+    event_key TEXT PRIMARY KEY,
+    first_inbox_id INTEGER NOT NULL REFERENCES inbox(id),
+    first_seen_at TEXT NOT NULL
+);
+CREATE TABLE event_records (
+    id INTEGER PRIMARY KEY,
+    inbox_id INTEGER NOT NULL REFERENCES inbox(id),
+    dedupe_key TEXT NOT NULL UNIQUE,
+    event_key TEXT NOT NULL,
+    thread_key TEXT,
+    thread_state TEXT,
+    alias TEXT NOT NULL,
+    site TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    first_occurred_at TEXT NOT NULL,
+    last_occurred_at TEXT NOT NULL,
+    capture_strategy TEXT NOT NULL,
+    update_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE outbox (
+    id INTEGER PRIMARY KEY,
+    event_record_id INTEGER NOT NULL UNIQUE REFERENCES event_records(id),
+    alias TEXT NOT NULL,
+    site TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    event_at TEXT NOT NULL,
+    capture_strategy TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('shadowed', 'pending', 'sent', 'failed')),
+    created_at TEXT NOT NULL
+);
+CREATE TABLE service_counters (
+    name TEXT PRIMARY KEY,
+    value INTEGER NOT NULL
+);
+CREATE TABLE runtime_status (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    mode TEXT NOT NULL,
+    health TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_message_at TEXT,
+    last_accepted_event_at TEXT,
+    last_error_at TEXT,
+    last_error_code TEXT
+);
+CREATE INDEX inbox_received_at_idx ON inbox(received_at);
+CREATE INDEX event_records_inbox_id_idx ON event_records(inbox_id);
+CREATE INDEX sdm_dedupe_inbox_id_idx ON sdm_dedupe(first_inbox_id);
+"""
+
+
 def camera_config() -> dict:
     return {
         "version": 1,
@@ -168,6 +238,38 @@ class ConfigurationTests(NestEventTestCase):
         with self.assertRaises(nest_events.ConfigError):
             nest_events.validate_subscription("../not-a-subscription")
 
+    def test_migrate_command_upgrades_state_without_starting_pubsub(self) -> None:
+        output = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, self.environ, clear=True),
+            mock.patch.object(nest_events, "_create_subscriber") as subscriber,
+            contextlib.redirect_stdout(output),
+        ):
+            status = nest_events.main(["migrate"])
+
+        self.assertEqual(status, 0)
+        subscriber.assert_not_called()
+        result = json.loads(output.getvalue())
+        self.assertEqual(
+            result,
+            {
+                "databaseSchemaVersion": nest_events.SCHEMA_VERSION,
+                "schemaVersion": nest_events.STATUS_SCHEMA_VERSION,
+                "service": nest_events.SERVICE_NAME,
+                "status": "ready",
+            },
+        )
+        self.assertNotIn("enterprises/", output.getvalue())
+        self.assertNotIn(str(self.root), output.getvalue())
+        connection = sqlite3.connect(self.state_dir / nest_events.DB_FILENAME)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT version FROM schema_meta").fetchone(),
+                (nest_events.SCHEMA_VERSION,),
+            )
+        finally:
+            connection.close()
+
 
 class ParsingAndPolicyTests(NestEventTestCase):
     def test_combined_events_normalize_without_user_or_inner_ids(self) -> None:
@@ -248,6 +350,187 @@ class ParsingAndPolicyTests(NestEventTestCase):
 
 
 class DurabilityTests(NestEventTestCase):
+    def test_v1_empty_outbox_seeds_sequence_from_lifetime_event_count(self) -> None:
+        self.state_dir.mkdir(parents=True, mode=0o700)
+        os.chmod(self.state_dir, 0o700)
+        database = self.state_dir / nest_events.DB_FILENAME
+        connection = sqlite3.connect(database)
+        try:
+            connection.executescript(V1_SCHEMA)
+            connection.execute("INSERT INTO schema_meta(version) VALUES (1)")
+            connection.execute(
+                "INSERT INTO service_counters(name, value) VALUES ('accepted_events', 17)"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        os.chmod(database, 0o600)
+
+        store = self.store()
+        connection = sqlite3.connect(store.db_path)
+        try:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'outbox'"
+                ).fetchone(),
+                (17,),
+            )
+        finally:
+            connection.close()
+
+        result = store.record_delivery(event_payload(), "new-message")
+        self.assertEqual(result.outcome, "accepted")
+        connection = sqlite3.connect(store.db_path)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT id FROM outbox").fetchone(),
+                (18,),
+            )
+        finally:
+            connection.close()
+
+    def test_v1_production_schema_migrates_outbox_without_changing_rows(self) -> None:
+        self.state_dir.mkdir(parents=True, mode=0o700)
+        os.chmod(self.state_dir, 0o700)
+        database = self.state_dir / nest_events.DB_FILENAME
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.executescript(V1_SCHEMA)
+            connection.execute("INSERT INTO schema_meta(version) VALUES (1)")
+            connection.execute(
+                """
+                INSERT INTO inbox(
+                    id, message_key, received_at, publish_at, sdm_event_key,
+                    thread_key, event_at, alias, site, outcome,
+                    normalized_event_count
+                ) VALUES (7, 'message-key', '2026-07-11T18:00:00.000000Z',
+                          '2026-07-11T17:59:59.000000Z', 'event-key',
+                          'thread-key', '2026-07-11T18:00:00.000000Z',
+                          'Kitchen', 'Cabin', 'accepted', 1)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO sdm_dedupe(event_key, first_inbox_id, first_seen_at)
+                VALUES ('event-key', 7, '2026-07-11T18:00:00.000000Z')
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO event_records(
+                    id, inbox_id, dedupe_key, event_key, thread_key,
+                    thread_state, alias, site, event_type, first_occurred_at,
+                    last_occurred_at, capture_strategy, update_count
+                ) VALUES (
+                    23, 7, 'record-key', 'event-key', 'thread-key', 'STARTED',
+                    'Kitchen', 'Cabin', 'person',
+                    '2026-07-11T18:00:00.000000Z',
+                    '2026-07-11T18:00:00.000000Z', 'live', 0
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO outbox(
+                    id, event_record_id, alias, site, event_type, event_at,
+                    capture_strategy, status, created_at
+                ) VALUES (
+                    41, 23, 'Kitchen', 'Cabin', 'person',
+                    '2026-07-11T18:00:00.000000Z', 'live', 'shadowed',
+                    '2026-07-11T18:00:01.000000Z'
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO service_counters(name, value) VALUES ('accepted_events', 1)"
+            )
+            connection.execute(
+                """
+                INSERT INTO runtime_status(
+                    singleton, mode, health, started_at, updated_at,
+                    last_message_at, last_accepted_event_at
+                ) VALUES (
+                    1, 'shadow', 'ok', '2026-07-11T17:00:00.000000Z',
+                    '2026-07-11T18:00:01.000000Z',
+                    '2026-07-11T18:00:01.000000Z',
+                    '2026-07-11T18:00:00.000000Z'
+                )
+                """
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        os.chmod(database, 0o600)
+
+        store = self.store()
+
+        connection = sqlite3.connect(store.db_path)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT version FROM schema_meta").fetchall(),
+                [(nest_events.SCHEMA_VERSION,)],
+            )
+            self.assertEqual(
+                connection.execute(
+                    """
+                    SELECT id, event_record_id, alias, site, event_type,
+                           event_at, capture_strategy, status, created_at
+                    FROM outbox
+                    """
+                ).fetchall(),
+                [
+                    (
+                        41,
+                        23,
+                        "Kitchen",
+                        "Cabin",
+                        "person",
+                        "2026-07-11T18:00:00.000000Z",
+                        "live",
+                        "shadowed",
+                        "2026-07-11T18:00:01.000000Z",
+                    )
+                ],
+            )
+            outbox_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'outbox'"
+            ).fetchone()[0]
+            self.assertIn("AUTOINCREMENT", outbox_sql.upper())
+            self.assertEqual(
+                connection.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'outbox'"
+                ).fetchone(),
+                (41,),
+            )
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertEqual(connection.execute("PRAGMA quick_check").fetchone(), ("ok",))
+            self.assertEqual(
+                connection.execute(
+                    "SELECT value FROM service_counters WHERE name = 'accepted_events'"
+                ).fetchone(),
+                (1,),
+            )
+        finally:
+            connection.close()
+
+        result = store.record_delivery(
+            event_payload(
+                top_event_id="post-migration-event",
+                timestamp="2026-07-11T18:30:00Z",
+            ),
+            "post-migration-message",
+        )
+        self.assertEqual(result.outcome, "accepted")
+        connection = sqlite3.connect(store.db_path)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT id FROM outbox ORDER BY id").fetchall(),
+                [(41,), (42,)],
+            )
+        finally:
+            connection.close()
+
     def test_shadow_inbox_outbox_status_are_durable_and_privacy_safe(self) -> None:
         store = self.store()
         store.mark_running()
@@ -468,6 +751,20 @@ class DurabilityTests(NestEventTestCase):
             "aged-message",
         )
         self.assertEqual(result.outcome, "accepted")
+        connection = sqlite3.connect(restarted_store.db_path)
+        try:
+            self.assertEqual(
+                connection.execute("SELECT id FROM outbox").fetchall(),
+                [(2,)],
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'outbox'"
+                ).fetchone(),
+                (2,),
+            )
+        finally:
+            connection.close()
         status = restarted_store.status_snapshot()
         self.assertEqual(status["retentionDays"], 30)
 

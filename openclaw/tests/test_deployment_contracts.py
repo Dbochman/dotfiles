@@ -428,7 +428,18 @@ class DeploymentContractTests(unittest.TestCase):
             pull_text.index("# Deploy skills as real copies"),
         )
         self.assertIn("MBP_PROTOCOL_SYNC_FAILED", pull_text)
-        self.assertIn("presence-devices.env", pull_text)
+        self.assertIn("presence-devices.json", pull_text)
+        self.assertIn("validate-config crosstown", pull_text)
+        self.assertIn("validate-config cabin", pull_text)
+        self.assertIn("preserved prior scanner", pull_text)
+        self.assertIn("HOME_EVENT_SCHEMA_DEPLOY_READY", pull_text)
+        self.assertIn("NEST_EVENT_SCHEMA_DEPLOY_READY", pull_text)
+        self.assertIn(
+            "nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh",
+            pull_text,
+        )
+        self.assertIn("home-event migration required; preserving prior runtime", pull_text)
+        self.assertIn("Nest listener migration required; preserving prior runtime", pull_text)
         self.assertIn(".openclaw/august/config.json", pull_text)
         self.assertIn(".openclaw/rest980/env-10max", pull_text)
         self.assertIn(".openclaw/rest980/env-j5", pull_text)
@@ -588,6 +599,28 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("leaked=unset", checked.stdout)
 
         state_dir.mkdir(mode=0o700)
+        migrated = subprocess.run(
+            [str(NEST_EVENT_LISTENER_WRAPPER), "migrate"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(migrated.returncode, 0, migrated.stderr)
+        self.assertIn("args=" + str(listener) + " migrate", migrated.stdout)
+        self.assertIn("leaked=unset", migrated.stdout)
+        self.assertFalse((log_dir / "nest-event-listener.log").exists())
+
+        unbounded_migrate = subprocess.run(
+            [str(NEST_EVENT_LISTENER_WRAPPER), "migrate", "unexpected"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(unbounded_migrate.returncode, 0)
+        self.assertIn("command is invalid", unbounded_migrate.stderr)
+
         failed = subprocess.run(
             [str(NEST_EVENT_LISTENER_WRAPPER), "run", "--once"],
             env=environment,

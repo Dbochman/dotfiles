@@ -247,6 +247,16 @@ case "$COMMAND" in
     require_listener_runtime
     validate_config_environment
     ;;
+  migrate)
+    [ "$#" -eq 1 ] || fail "command is invalid"
+    require_private_dir "$BASE_DIR"
+    require_private_dir "$CONFIG_DIR"
+    require_private_dir "$STATE_DIR"
+    require_private_file "$CONFIG_FILE"
+    require_listener_runtime
+    validate_config_environment
+    validate_state_environment
+    ;;
   *) fail "command is invalid" ;;
 esac
 

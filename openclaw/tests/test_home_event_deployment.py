@@ -21,6 +21,7 @@ LABELS = (
     "ai.openclaw.home-event-ingest",
     "ai.openclaw.home-event-correlator",
     "ai.openclaw.august-event-adapter",
+    "ai.openclaw.nest-home-event-bridge",
 )
 
 
@@ -47,6 +48,12 @@ class HomeEventDeploymentTests(unittest.TestCase):
         )
         self.assertEqual(
             august["EnvironmentVariables"]["HOME_EVENTS_AUGUST_ENABLED"], "0"
+        )
+        nest = plistlib.loads(
+            (OPENCLAW / "launchagents" / "ai.openclaw.nest-home-event-bridge.plist").read_bytes()
+        )
+        self.assertEqual(
+            nest["EnvironmentVariables"]["HOME_EVENTS_NEST_ENABLED"], "0"
         )
         producer_flags = (
             (
@@ -83,6 +90,12 @@ class HomeEventDeploymentTests(unittest.TestCase):
         )
         self.assertIn(
             "Set :EnvironmentVariables:HOME_EVENTS_AUGUST_ENABLED", source
+        )
+        self.assertIn(
+            "Print :EnvironmentVariables:HOME_EVENTS_NEST_ENABLED", source
+        )
+        self.assertIn(
+            "Set :EnvironmentVariables:HOME_EVENTS_NEST_ENABLED", source
         )
         home_event_block = source[
             source.index("# Refresh home-event LaunchAgents") :

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import fcntl
 import importlib.util
@@ -14,6 +15,7 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -75,6 +77,27 @@ def august_payload(*, source_event_id: str = "private-transition-id") -> dict:
             "not_before": "2026-07-12T14:55:00Z",
             "not_after": "2026-07-12T15:00:00Z",
         },
+    }
+
+
+def nest_payload(
+    *,
+    source_event_id: str = "opaque-nest-event",
+    event_type: str = "camera.person_detected",
+    site: str = "cabin",
+    alias: str = "kitchen",
+) -> dict:
+    classification = "person" if event_type == "camera.person_detected" else "motion"
+    return {
+        "source_event_id": source_event_id,
+        "event_type": event_type,
+        "site": site,
+        "entity_kind": "camera",
+        "entity_alias": alias,
+        "occurred_at": "2026-07-12T14:59:55Z",
+        "observed_at": "2026-07-12T14:59:56Z",
+        "time_precision": "source",
+        "attributes": {"classification": classification},
     }
 
 
@@ -195,6 +218,122 @@ class RuntimeSecurityTests(HomeEventTestCase):
             status["retention_days"], {"accepted": 30, "dead_letter": 90}
         )
         self.assertGreater(status["database_bytes"], 0)
+
+    def test_v1_source_constraint_migration_preserves_existing_delivery_state(self) -> None:
+        self.enqueue(ring_payload())
+        self.ingest()
+        with self.connection() as connection:
+            before = {
+                "events": connection.execute(
+                    "SELECT id, event_uid, dedupe_key FROM events"
+                ).fetchall(),
+                "deliveries": connection.execute(
+                    "SELECT id, consumer_name, event_id, status FROM consumer_deliveries"
+                ).fetchall(),
+                "ring": connection.execute(
+                    "SELECT accepted_count, last_event_id FROM producer_state WHERE source='ring'"
+                ).fetchone(),
+            }
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.executescript(
+                """
+                BEGIN IMMEDIATE;
+                CREATE TABLE producer_inbox_v1 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_uid TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august')),
+                    event_uid TEXT,
+                    received_at TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN ('accepted', 'duplicate', 'dead_letter')),
+                    error_code TEXT
+                );
+                CREATE TABLE events_v1 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox_v1(id),
+                    event_uid TEXT NOT NULL UNIQUE,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august')),
+                    event_type TEXT NOT NULL,
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    entity_kind TEXT NOT NULL,
+                    entity_alias TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    time_precision TEXT NOT NULL,
+                    attributes_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE producer_state_v1 (
+                    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august')),
+                    last_event_id INTEGER REFERENCES events_v1(id) ON DELETE SET NULL,
+                    last_observed_at TEXT,
+                    last_ingested_at TEXT,
+                    accepted_count INTEGER NOT NULL DEFAULT 0,
+                    duplicate_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    health TEXT NOT NULL DEFAULT 'unknown'
+                        CHECK(health IN ('unknown', 'ok', 'degraded')),
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_error_code TEXT
+                );
+                INSERT INTO producer_inbox_v1 SELECT * FROM producer_inbox;
+                INSERT INTO events_v1 SELECT * FROM events;
+                INSERT INTO producer_state_v1
+                    SELECT * FROM producer_state WHERE source != 'nest';
+                DROP TABLE producer_state;
+                DROP TABLE events;
+                DROP TABLE producer_inbox;
+                ALTER TABLE producer_inbox_v1 RENAME TO producer_inbox;
+                ALTER TABLE events_v1 RENAME TO events;
+                ALTER TABLE producer_state_v1 RENAME TO producer_state;
+                CREATE INDEX producer_inbox_received_idx ON producer_inbox(received_at);
+                CREATE INDEX events_created_idx ON events(created_at);
+                CREATE INDEX events_site_occurred_idx ON events(site, occurred_at DESC);
+                CREATE INDEX events_type_occurred_idx ON events(event_type, occurred_at DESC);
+                UPDATE schema_migrations SET version = 1;
+                COMMIT;
+                """
+            )
+            connection.execute("PRAGMA foreign_keys = ON")
+            for table in ("producer_inbox", "events", "producer_state"):
+                schema = connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()[0]
+                self.assertIn("'august'", schema)
+                self.assertNotIn("'nest'", schema)
+
+        self.store.initialize()
+
+        with self.connection() as connection:
+            self.assertEqual(
+                connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
+                2,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT id, event_uid, dedupe_key FROM events"
+                ).fetchall(),
+                before["events"],
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT id, consumer_name, event_id, status FROM consumer_deliveries"
+                ).fetchall(),
+                before["deliveries"],
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT accepted_count, last_event_id FROM producer_state WHERE source='ring'"
+                ).fetchone(),
+                before["ring"],
+            )
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT source FROM producer_state WHERE source='nest'"
+                ).fetchone()
+            )
 
     def test_ring_worker_health_projection_is_bounded_and_explicit(self) -> None:
         self.paths.ring_producer_status.write_text(
@@ -395,6 +534,24 @@ class EnqueueValidationTests(HomeEventTestCase):
         payload["attributes"]["state_hash"] = "private-state-value"
         with self.assertRaisesRegex(home_events.PayloadError, "invalid_state_hash"):
             self.enqueue(payload, source="presence")
+
+    def test_nest_contract_accepts_only_bound_camera_metadata(self) -> None:
+        event = self.enqueue(nest_payload(), source="nest")
+        self.assertEqual(event.event_type, "camera.person_detected")
+        self.assertEqual(event.entity_alias, "kitchen")
+
+        wrong_site = nest_payload(source_event_id="wrong-site", site="crosstown")
+        with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_site"):
+            self.enqueue(wrong_site, source="nest")
+
+        wrong_classification = nest_payload(source_event_id="wrong-classification")
+        wrong_classification["attributes"]["classification"] = "motion"
+        with self.assertRaisesRegex(home_events.PayloadError, "classification_mismatch"):
+            self.enqueue(wrong_classification, source="nest")
+
+        unknown_alias = nest_payload(source_event_id="unknown-alias", alias="garage")
+        with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_alias"):
+            self.enqueue(unknown_alias, source="nest")
 
 
 class IngestDurabilityTests(HomeEventTestCase):
@@ -685,6 +842,127 @@ class ConsumerAndQueryTests(HomeEventTestCase):
 
 
 class RetentionAndCliTests(HomeEventTestCase):
+    def test_automatic_prune_is_daily_restart_durable_and_internal(self) -> None:
+        self.ingest()
+        self.ingest()
+        restarted = home_events.EventStore(self.paths, clock=lambda: NOW)
+        self.assertFalse(restarted.prune_if_due(checkpoint=False))
+
+        status = self.store.status_snapshot()
+        self.assertEqual(status["counters"]["prune_runs"], 1)
+        self.assertNotIn(
+            home_events.MAINTENANCE_LAST_PRUNE_EPOCH,
+            status["counters"],
+        )
+
+        before_due = "2026-07-13T14:59:59Z"
+        home_events.ingest_once(self.root, clock=lambda: before_due)
+        self.assertEqual(self.store.status_snapshot()["counters"]["prune_runs"], 1)
+
+        due = "2026-07-13T15:00:00Z"
+        home_events.ingest_once(self.root, clock=lambda: due)
+        self.assertEqual(self.store.status_snapshot()["counters"]["prune_runs"], 2)
+
+    def test_automatic_prune_deletes_due_old_acknowledged_work(self) -> None:
+        self.enqueue(ring_payload())
+        self.ingest()
+        old = "2026-05-01T00:00:00Z"
+        with self.connection() as connection:
+            connection.execute("UPDATE events SET created_at = ?", (old,))
+            connection.execute("UPDATE producer_inbox SET received_at = ?", (old,))
+            connection.execute(
+                """
+                UPDATE consumer_deliveries SET status='acknowledged', updated_at=?,
+                    lease_token=NULL, lease_until=NULL
+                """,
+                (old,),
+            )
+
+        due = home_events.EventStore(
+            self.paths,
+            clock=lambda: "2026-07-13T15:00:00Z",
+        )
+        self.assertTrue(due.prune_if_due(checkpoint=False))
+        with self.connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0], 0)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM producer_inbox").fetchone()[0],
+                0,
+            )
+
+    def test_manual_prune_forces_checkpoint_and_resets_daily_gate(self) -> None:
+        self.assertTrue(self.store.prune_if_due(checkpoint=False))
+        with mock.patch.object(self.store, "_checkpoint_wal") as checkpoint:
+            self.store.prune()
+        checkpoint.assert_called_once_with()
+        self.assertEqual(self.store.status_snapshot()["counters"]["prune_runs"], 2)
+        self.assertFalse(self.store.prune_if_due(checkpoint=False))
+
+    def test_automatic_prune_never_checkpoints_wal(self) -> None:
+        with mock.patch.object(home_events.EventStore, "_checkpoint_wal") as checkpoint:
+            home_events.ingest_once(self.root, clock=lambda: NOW)
+            home_events.ingest_once(self.root, clock=lambda: NOW)
+        checkpoint.assert_not_called()
+
+    def test_future_or_invalid_prune_marker_runs_instead_of_deferring(self) -> None:
+        for marker in ("not-an-integer", 9_999_999_999):
+            with self.subTest(marker=marker):
+                with self.connection() as connection:
+                    connection.execute(
+                        """
+                        INSERT INTO service_counters(name, value) VALUES (?, ?)
+                        ON CONFLICT(name) DO UPDATE SET value = excluded.value
+                        """,
+                        (home_events.MAINTENANCE_LAST_PRUNE_EPOCH, marker),
+                    )
+                before = self.store.status_snapshot()["counters"].get("prune_runs", 0)
+                self.assertTrue(self.store.prune_if_due(checkpoint=False))
+                after = self.store.status_snapshot()["counters"]["prune_runs"]
+                self.assertEqual(after, before + 1)
+
+    def test_concurrent_due_checks_run_one_prune_transaction(self) -> None:
+        stores = [
+            home_events.EventStore(self.paths, clock=lambda: NOW),
+            home_events.EventStore(self.paths, clock=lambda: NOW),
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda store: store.prune_if_due(), stores))
+        self.assertEqual(sorted(results), [False, True])
+        self.assertEqual(self.store.status_snapshot()["counters"]["prune_runs"], 1)
+
+    def test_older_concurrent_worker_does_not_regress_newer_marker(self) -> None:
+        older = home_events.EventStore(self.paths, clock=lambda: NOW)
+        newer_now = "2026-07-12T15:00:01Z"
+        newer = home_events.EventStore(self.paths, clock=lambda: newer_now)
+        older_prechecked = threading.Event()
+        release_older = threading.Event()
+        original_prune = older._prune
+
+        def delayed_prune(**kwargs):
+            older_prechecked.set()
+            if not release_older.wait(timeout=5):
+                raise RuntimeError("test_release_timeout")
+            return original_prune(**kwargs)
+
+        with mock.patch.object(older, "_prune", side_effect=delayed_prune):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                older_result = executor.submit(older.prune_if_due)
+                try:
+                    self.assertTrue(older_prechecked.wait(timeout=5))
+                    self.assertTrue(newer.prune_if_due())
+                finally:
+                    release_older.set()
+                self.assertFalse(older_result.result(timeout=5))
+
+        self.assertEqual(self.store.status_snapshot()["counters"]["prune_runs"], 1)
+        expected_epoch = int(home_events._parse_now(newer_now).timestamp())
+        with self.connection() as connection:
+            marker = connection.execute(
+                "SELECT value FROM service_counters WHERE name = ?",
+                (home_events.MAINTENANCE_LAST_PRUNE_EPOCH,),
+            ).fetchone()[0]
+        self.assertEqual(marker, expected_epoch)
+
     def test_prune_keeps_pending_work_then_removes_acknowledged_old_event(self) -> None:
         self.enqueue(ring_payload())
         self.ingest()
