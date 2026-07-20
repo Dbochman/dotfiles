@@ -335,9 +335,20 @@ for wrapper in "$BIN_SRC"/*; do
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BIN_DST" >> "$LOG"
 
-# OpenClaw's standalone skill checker does not inherit the gateway's
-# ~/.openclaw/bin PATH. Publish skill-required wrappers in Homebrew's PATH too.
-for skill_wrapper in reachyctl; do
+# OpenClaw's standalone skill checker and doctor do not inherit the gateway's
+# ~/.openclaw/bin PATH. Doctor persists enabled=false for skills whose required
+# binaries appear unavailable, so publish managed skill wrappers in Homebrew's
+# PATH too.
+STANDALONE_SKILL_WRAPPERS=(
+  reachyctl
+  opentable-book
+  opentable-reservations
+  pinchtab-headless-instance
+  restaurant-book
+  restaurant-snipe
+  resy-read
+)
+for skill_wrapper in "${STANDALONE_SKILL_WRAPPERS[@]}"; do
   if [ -x "$BIN_DST/$skill_wrapper" ]; then
     ln -sfn "$BIN_DST/$skill_wrapper" "/opt/homebrew/bin/$skill_wrapper"
   fi

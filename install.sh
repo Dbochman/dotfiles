@@ -393,6 +393,7 @@ link_file() {
   fi
 
   ((ITEMS_LINKED++))
+  return 0
 }
 
 discard_staging_root() {
@@ -787,6 +788,7 @@ install_managed_file_copy() {
     log "  Installed $label: $dst"
   fi
   ((ITEMS_LINKED++))
+  return 0
 }
 
 install_openclaw_guarded_helpers() {
@@ -817,6 +819,35 @@ install_openclaw_guarded_helpers() {
       return 1
     fi
     install_managed_file_copy "$src" "$dst" "$mode" "$label" || return 1
+  done
+}
+
+publish_openclaw_standalone_skill_wrappers() {
+  local openclaw_home="${1%/}"
+  local standalone_bin_dir="${OPENCLAW_STANDALONE_BIN_DIR:-/opt/homebrew/bin}"
+  local skill_wrapper src dst
+  local skill_wrappers=(
+    opentable-book
+    opentable-reservations
+    pinchtab-headless-instance
+    restaurant-book
+    restaurant-snipe
+    resy-read
+  )
+
+  for skill_wrapper in "${skill_wrappers[@]}"; do
+    src="$openclaw_home/bin/$skill_wrapper"
+    dst="$standalone_bin_dir/$skill_wrapper"
+    if [[ "$DRY_RUN" = true && ! -e "$src" ]]; then
+      log "  [dry-run] Would link: $dst -> $src"
+      continue
+    fi
+    if [[ ! -f "$src" || -L "$src" || ! -x "$src" ]]; then
+      log_error "Required standalone skill wrapper is unavailable: $src"
+      EXIT_CODE=1
+      return 1
+    fi
+    link_file "$src" "$dst" || return 1
   done
 }
 
@@ -1213,6 +1244,9 @@ install_dotfiles() {
       install_openclaw_guarded_helpers \
         "$DOTFILES_DIR/openclaw" \
         "$HOME/.openclaw"
+      if ! publish_openclaw_standalone_skill_wrappers "$HOME/.openclaw"; then
+        EXIT_CODE=1
+      fi
       install_managed_launchagent \
         "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.imsg-bridge-ensure.plist" \
         "$HOME/Library/LaunchAgents/ai.openclaw.imsg-bridge-ensure.plist" \

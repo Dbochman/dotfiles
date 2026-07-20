@@ -602,7 +602,13 @@ PY
         exit 1
       }
       source_openclaw_secrets
-      if DOCTOR_OUT=$(openclaw doctor --fix --non-interactive --yes 2>&1); then
+      # Doctor evaluates every skill requirement and persists enabled=false for
+      # unavailable skills. Scope the gateway's managed-wrapper path to this
+      # broad repair subprocess so cron migration cannot disable otherwise
+      # healthy skills, without changing command resolution for the rest of
+      # reconciliation.
+      if DOCTOR_OUT=$(PATH="$HOME/.openclaw/bin:$PATH" \
+        openclaw doctor --fix --non-interactive --yes 2>&1); then
         if printf '%s\n' "$DOCTOR_OUT" | grep -q "Cron store migrated"; then
           echo "Normalized cron store through OpenClaw doctor (SQLite)"
         else

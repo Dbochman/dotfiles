@@ -49,6 +49,11 @@ Follow these rules:
   `SCRIPT_DIR` break when invoked through a symlink.
 - Put wrappers in `openclaw/bin/`; deployment copies them to
   `~/.openclaw/bin/` on the Mini.
+- If `requires.bins` names a managed wrapper, add it to the standalone-wrapper
+  allowlists in both `install.sh` and `openclaw/bin/dotfiles-pull.command`.
+  The gateway includes `~/.openclaw/bin` in its PATH, but standalone
+  `openclaw skills` and `openclaw doctor --fix` calls may not. Doctor can
+  persistently disable a skill when its required wrapper is not visible.
 - Check for a Homebrew command collision before choosing the name:
   `brew list --formula | grep -Fx '<cli-name>'`.
 - Add the wrapper to `metadata.openclaw.requires.bins` in `SKILL.md`.
@@ -113,6 +118,8 @@ OpenClaw reads it before deciding whether to load the body.
 - [ ] High-impact actions require explicit confirmation and postcondition checks.
 - [ ] A CLI script and `openclaw/bin/` wrapper exist when needed.
 - [ ] `requires.bins` matches the wrapper name and has no Homebrew collision.
+- [ ] Managed required wrappers are published for standalone skill checks and
+      doctor runs as well as the gateway.
 - [ ] Examples use the deployed command name rather than repository paths.
 - [ ] Similar skills are disambiguated in the frontmatter description.
 - [ ] Deterministic behavior has targeted tests or a safe dry-run check.

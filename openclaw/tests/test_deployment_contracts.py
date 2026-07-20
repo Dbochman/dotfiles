@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOYMENT_LIB = REPO_ROOT / "openclaw" / "lib" / "deployment.sh"
 INSTALLER = REPO_ROOT / "install.sh"
 DOTFILES_PULL = REPO_ROOT / "openclaw" / "bin" / "dotfiles-pull.command"
+AUTHORING_GUIDE_PATH = REPO_ROOT / "openclaw" / "SKILL-AUTHORING.md"
 GATEWAY_APP_WRAPPER = (
     REPO_ROOT
     / "openclaw"
@@ -64,6 +65,14 @@ REQUIRED_HELPERS = {
     "bin/resy-read": "resy wrapper\n",
     "workspace/scripts/opentable-book.sh": "opentable helper\n",
     "workspace/scripts/opentable-book-state.py": "state helper\n",
+}
+STANDALONE_RESTAURANT_WRAPPERS = {
+    "opentable-book",
+    "opentable-reservations",
+    "pinchtab-headless-instance",
+    "restaurant-book",
+    "restaurant-snipe",
+    "resy-read",
 }
 REQUIRED_PROTECTED_FILES = {
     "cron/restaurant-booking-scopes.json": (
@@ -443,6 +452,56 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn(".openclaw/august/config.json", pull_text)
         self.assertIn(".openclaw/rest980/env-10max", pull_text)
         self.assertIn(".openclaw/rest980/env-j5", pull_text)
+
+    def test_restaurant_wrappers_are_visible_to_standalone_doctor(self) -> None:
+        install_text = INSTALLER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        guide_text = AUTHORING_GUIDE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("publish_openclaw_standalone_skill_wrappers", install_text)
+        self.assertIn("STANDALONE_SKILL_WRAPPERS=(", pull_text)
+        for wrapper in STANDALONE_RESTAURANT_WRAPPERS:
+            self.assertIn(wrapper, install_text)
+            self.assertIn(wrapper, pull_text)
+        self.assertIn("openclaw doctor --fix", guide_text)
+
+    def test_installer_publishes_every_standalone_restaurant_wrapper(self) -> None:
+        source = self.root / "openclaw-source"
+        destination = self.root / "openclaw-home"
+        standalone_bin = self.root / "standalone-bin"
+        self.make_guarded_helper_fixture(source)
+
+        completed = self.run_bash(
+            "\n".join(
+                (
+                    'source "$1"',
+                    "DRY_RUN=false",
+                    "FORCE=true",
+                    "QUIET=true",
+                    "VERBOSE=false",
+                    "ITEMS_LINKED=0",
+                    "EXIT_CODE=0",
+                    'install_openclaw_guarded_helpers "$2" "$3"',
+                    'OPENCLAW_STANDALONE_BIN_DIR="$4"',
+                    'publish_openclaw_standalone_skill_wrappers "$3"',
+                    'publish_openclaw_standalone_skill_wrappers "$3"',
+                    'test "$EXIT_CODE" -eq 0',
+                )
+            ),
+            INSTALLER,
+            source,
+            destination,
+            standalone_bin,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        for wrapper in STANDALONE_RESTAURANT_WRAPPERS:
+            published = standalone_bin / wrapper
+            self.assertTrue(published.is_symlink(), wrapper)
+            self.assertEqual(
+                published.resolve(),
+                (destination / "bin" / wrapper).resolve(),
+            )
 
     def test_scheduled_nest_path_uses_the_hardened_cli(self) -> None:
         plist_text = NEST_SNAPSHOT_PLIST.read_text(encoding="utf-8")

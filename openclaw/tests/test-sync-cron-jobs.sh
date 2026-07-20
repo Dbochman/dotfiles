@@ -132,8 +132,9 @@ PY
 # binary so this test never contacts the real gateway.
 mkdir -p "$TEST_HOME/fake-bin" "$TEST_HOME/.openclaw/state"
 OPENCLAW_CALL_LOG="$TEST_HOME/openclaw.calls"
+OPENCLAW_DOCTOR_PATH_LOG="$TEST_HOME/openclaw-doctor.path"
 FAKE_OPENCLAW_DRIVER="$TEST_HOME/fake-openclaw.py"
-export OPENCLAW_CALL_LOG FAKE_OPENCLAW_DRIVER
+export OPENCLAW_CALL_LOG OPENCLAW_DOCTOR_PATH_LOG FAKE_OPENCLAW_DRIVER
 cat > "$FAKE_OPENCLAW_DRIVER" <<'PY'
 #!/usr/bin/env python3
 import datetime
@@ -247,6 +248,7 @@ write_fake_openclaw() {
   printf '%s\n' \
     '#!/bin/bash' \
     'printf "%s\n" "$*" >> "$OPENCLAW_CALL_LOG"' \
+    'if [ "$1" = "doctor" ]; then printf "%s\n" "$PATH" > "$OPENCLAW_DOCTOR_PATH_LOG"; fi' \
     'exec python3 "$FAKE_OPENCLAW_DRIVER" "$@"' \
     > "$TEST_HOME/fake-bin/openclaw"
   chmod +x "$TEST_HOME/fake-bin/openclaw"
@@ -356,6 +358,13 @@ PY
 
 : > "$OPENCLAW_CALL_LOG"
 deploy
+case "$(cat "$OPENCLAW_DOCTOR_PATH_LOG")" in
+  "$TEST_HOME/.openclaw/bin:"*) ;;
+  *)
+    echo "cron doctor did not inherit the managed OpenClaw wrapper path" >&2
+    exit 1
+    ;;
+esac
 EXPECTED_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"schedule":{"kind":"at","at":"2030-01-01T00:00:00.000Z"}}}'
 if ! grep -Fxq "$EXPECTED_UPDATE" "$OPENCLAW_CALL_LOG"; then
   echo "stale SQLite next_run_at_ms did not produce the expected cron.update" >&2
