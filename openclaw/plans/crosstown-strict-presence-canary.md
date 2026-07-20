@@ -15,6 +15,12 @@ showed parity, confirming snapshot age rather than accepting the mismatch.
 Three real-cadence samples and the remaining scenario evidence are still
 required. Both site-local approval files remain absent.
 
+At `2026-07-20T11:32:31Z`, the one-time updater bootstrap below completed from
+clean commit `a8c945f`: the tracked and runtime updater hashes both verified as
+`0bb02acb6fab03727ea41baa70454608757aa4d77e6a92a73cc1adaf6603c6c0`, and the
+runtime gate markers were present. No scanner was deployed; both sites still
+had the same preserved legacy scanner hash and neither approval file existed.
+
 ## One-time updater bootstrap
 
 The Mini's deployed updater predates this approval gate. Its old process keeps
