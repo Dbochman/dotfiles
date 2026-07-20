@@ -636,23 +636,91 @@ class FinancialScrapeAlertNotifierTests(unittest.TestCase):
                 notifier.delete_confirmed(record)
             self.assertTrue(path.exists())
 
-    def test_imsg_requires_exact_sent_receipt_and_discards_output(self):
+    def test_imsg_requires_exact_bridge_rpc_receipt_and_discards_output(self):
         valid = notifier.CommandCapture(
-            returncode=0, stdout=b'{"status":"sent"}', stderr=b""
+            returncode=0,
+            stdout=(
+                b'{"id":"financial-scrape-alert-send","jsonrpc":"2.0",'
+                b'"result":{"ok":true,"transport":"bridge"}}'
+            ),
+            stderr=b"",
         )
         with patch.object(notifier, "run_bounded_command", return_value=valid) as run:
             notifier.send_imessage("12345", "safe message")
-        self.assertEqual(run.call_args.args[0][0], "/opt/homebrew/bin/imsg")
+        self.assertEqual(run.call_args.args[0], ["/opt/homebrew/bin/imsg", "rpc"])
         self.assertEqual(run.call_args.args[2], 20)
-
-        invalid = notifier.CommandCapture(
-            returncode=0, stdout=b'{"status":"ok"}', stderr=b""
+        request = json.loads(run.call_args.kwargs["stdin_data"])
+        self.assertEqual(
+            request,
+            {
+                "jsonrpc": "2.0",
+                "id": "financial-scrape-alert-send",
+                "method": "send",
+                "params": {
+                    "chat_id": 12345,
+                    "text": "safe message",
+                    "transport": "bridge",
+                },
+            },
         )
-        with (
-            patch.object(notifier, "run_bounded_command", return_value=invalid),
-            self.assertRaises(notifier.DeliveryError),
+
+        for result in (
+            {"ok": False, "transport": "bridge"},
+            {"ok": True},
+            {"ok": True, "transport": "applescript"},
         ):
-            notifier.send_imessage("12345", "safe message")
+            invalid = notifier.CommandCapture(
+                returncode=0,
+                stdout=json.dumps({
+                    "id": "financial-scrape-alert-send",
+                    "jsonrpc": "2.0",
+                    "result": result,
+                }).encode("utf-8"),
+                stderr=b"",
+            )
+            with (
+                self.subTest(result=result),
+                patch.object(notifier, "run_bounded_command", return_value=invalid),
+                self.assertRaisesRegex(notifier.DeliveryError, "receipt_invalid"),
+            ):
+                notifier.send_imessage("12345", "safe message")
+
+    def test_command_capture_sends_one_bounded_stdin_payload(self):
+        payload = b'{"request":"safe"}\n'
+        captured = notifier.run_bounded_command(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())",
+            ],
+            {"PATH": "/usr/bin:/bin"},
+            5,
+            stdin_data=payload,
+        )
+
+        self.assertEqual(captured.returncode, 0)
+        self.assertEqual(captured.stdout, payload)
+        self.assertFalse(captured.stderr)
+        self.assertFalse(captured.timed_out)
+        with self.assertRaises(ValueError):
+            notifier.run_bounded_command(
+                [sys.executable, "-c", "pass"],
+                {"PATH": "/usr/bin:/bin"},
+                5,
+                stdin_data=b"x" * (notifier.MAX_COMMAND_BYTES + 1),
+            )
+
+    def test_command_capture_bounds_stdin_when_child_does_not_read(self):
+        payload = b"x" * (1024 * 1024)
+        with patch.object(notifier, "MAX_COMMAND_BYTES", len(payload)):
+            captured = notifier.run_bounded_command(
+                [sys.executable, "-c", "import time; time.sleep(2)"],
+                {"PATH": "/usr/bin:/bin"},
+                0.1,
+                stdin_data=payload,
+            )
+
+        self.assertTrue(captured.timed_out)
 
     def test_command_capture_bounds_output_and_kills_on_timeout(self):
         flooded = notifier.run_bounded_command(
