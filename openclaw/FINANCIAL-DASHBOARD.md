@@ -1,8 +1,8 @@
 # Financial Dashboard — Deployment Spec
 
-## Status: v1.11 (2026-06-24)
+## Status: v1.12 (2026-07-19)
 
-Python HTTP server (threaded) serving 6 HTML dashboard pages with 33 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with home-LAN and Tailscale-tailnet access via `http://dylans-mac-mini:8585/`. A unified cache-only finance LaunchAgent starts daily at 6:15 AM, syncing production Plaid Items before the Forecast crypto cache without calling `op`. The weekly self-healing scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, solar, and authorized Redfin property values fresh. BoA has cookie replay, raw-CDP fallback, and a guarded one-attempt re-auth path; the retired interval experiment found a server-side timeout.
+Python HTTP server (threaded) serving 6 HTML dashboard pages with 33 JSON API endpoints backed by SQLite. Runs at port `8585` on the Mac Mini with home-LAN and Tailscale-tailnet access via `http://dylans-mac-mini:8585/`. A unified cache-only finance LaunchAgent starts daily at 6:15 AM, syncing production Plaid Items before the Forecast crypto cache without calling `op`. The weekly HTTP-first scrape pipeline (cron job `financial-scrape-0001`, Sundays 04:05 ET) keeps utility, mortgage, solar, and authorized Redfin property values fresh. Its cross-repository contract-v2 handshake, per-source status markers, whole-fleet run ID, guarded imports, and durable owner-only final status prevent a partially deployed or stale scraper from mutating canonical data. Browser work remains a bounded recovery path and is reported as degraded; BoA retains exact-profile raw-CDP recovery and a guarded one-attempt re-auth path.
 
 `8585` is also the canonical data source for the Forecast Dashboard on `8586`. Its owner-aware forecast baseline lets the forecast begin from the latest reconciled source snapshot rather than a wholly fixed portfolio assumption.
 
@@ -144,30 +144,73 @@ refresh historical Plaid descriptions after an upgrade, run
 
 ---
 
-## Scraper Pipeline (Tier 1 / 2 / BoA Fallback)
+## Scraper Pipeline (Contract v2 HTTP First)
 
-Seven scrapers run weekly via `financial-scrape-0001`, which invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper. The helper takes a nonblocking singleton lock, validates that all five protected finance credential profiles are present, preflights BoA's dedicated `finance` PinchTab instance, safely seeds an exact secure-host BoA tab when the read-only auth probe reports exact tab absence or the public signed-out landing, runs each child in a separately cleaned process group, captures child output privately, retries only recognized authentication failures, and imports only sources that succeeded during the current run. Each scraper writes its own `<source>_data.json`; `update_data.py import-json-*` upserts into `finance.db`.
+Seven scrapers run weekly via `financial-scrape-0001`, which invokes the deterministic `openclaw/bin/weekly-financial-scrape.py` helper. The helper takes a nonblocking singleton lock and gives the run one UUID. Before reading the credential cache, starting PinchTab, running a scraper, or touching data, it reads the verified bounded canonical private repo `.env` through one file descriptor and retains only the exact `TESLA_EMAIL` assignment, then requires both the sole `financial_scraper_contract.py --version` stdout line `FINANCE_SCRAPER_CONTRACT 2` and the exact compact `--manifest` for all seven entrypoints, imports, paths, and capabilities. A missing, extra, reformatted, or mismatched response fails the entire run closed.
 
-| # | Scraper | Tier | Mechanism | 1Password item (OpenClaw vault) | Property |
-|---|---------|------|-----------|----------------------------------|----------|
-| 1 | `scrape_tesla_solar.py` | 1 (API) | Tesla owners API + cached token | (env var) | Cabin |
-| 2 | `scrape_eversource.py` | 2 self-heal | Playwright + `--re-auth` flag | `www.eversource.com` | Crosstown |
-| 3 | `scrape_national_grid_electric.py` | 2 self-heal | Playwright + `--re-auth` (shared NG session) | `login.nationalgridus.com` | Cabin |
-| 4 | `scrape_national_grid.py` (gas) | 2 self-heal | Playwright + `--re-auth` (shared NG session) | `login.nationalgridus.com` | Crosstown |
-| 5 | `scrape_bwsc.py` | 2 self-heal | Playwright + `--re-auth` (Microsoft B2C) | `umaxcustomerportalprod.b2clogin.com` | Crosstown |
-| 6 | `scrape_mortgage.py --lender pennymac` | 2 self-heal | Playwright + `--re-auth` + email-MFA via `gws` | `PennyMac` | Cabin |
-| 7 | `scrape_mortgage.py --lender boa` | **Cookie replay + 2b fallback** | Direct `requests` cookie replay; raw CDP attach to Pinchtab Chrome; one guarded cron re-auth after explicit tab sign-out | `Bank of America` | Crosstown |
+After that handshake, the helper validates provider modes and all five protected finance credential profiles, preflights BoA's dedicated `finance` PinchTab instance, runs every normal scraper with `--wrapper-contract 2` and `--run-id`, captures child output privately, retries only exact provider-owned authentication markers, and invokes every import with the matching `--require-run-id`. Every merge entrypoint requires that exact wrapper contract before state, credential, browser, network, or artifact access. This makes an old wrapper fail safely against a new financial checkout, while the manifest makes a new wrapper fail safely against an old checkout. Each successful scraper must write a fully validated current-run artifact atomically and emit exactly one compact, data-free line with keys exactly `contract`, `source`, and `path`, for example:
+
+```text
+FINANCE_SCRAPER_STATUS {"contract":2,"source":"bwsc","path":"direct_http"}
+```
+
+A missing, duplicate, malformed, wrong-source, wrong-version, or unknown-path marker changes the scrape to failed and skips its import. A validated browser-recovery artifact may be imported, but the whole run is `degraded` and exits nonzero so cron can report the fallback without rerunning work.
+
+The wrapper's path allowlist is deliberately closed: Tesla accepts only healthy `direct_api`; Eversource, both National Grid sources, BWSC, and PennyMac accept healthy `direct_http` plus degraded `browser_recovery`, `browser_only`, or `browser_explicit`; BoA accepts healthy `direct_http` plus degraded `browser_recovery` or `browser_only`. Adding a new string requires a reviewed wrapper change.
+
+| # | Scraper | Preferred path | Auth renewal | Bounded recovery | Property |
+|---|---------|----------------|--------------|------------------|----------|
+| 1 | `scrape_tesla_solar.py` | `direct_api` via TeslaPy | Existing Tesla OAuth cache; no standard wrapper re-auth | Preserve prior artifact and fail | Cabin |
+| 2 | `scrape_eversource.py` | `direct_http` via Opower GraphQL | Portal cookies mint a short-lived JWT | One Playwright recovery, then exact-marker re-auth if required | Crosstown |
+| 3 | `scrape_national_grid_electric.py` | `direct_http` via shared OAuth-PKCE/GraphQL adapter | Saved National Grid SSO state | One Playwright recovery, then exact-marker re-auth if required | Cabin |
+| 4 | `scrape_national_grid.py` (gas) | `direct_http` via shared OAuth-PKCE/GraphQL adapter | Saved National Grid SSO state | One Playwright recovery, then exact-marker re-auth if required | Crosstown |
+| 5 | `scrape_bwsc.py` | `direct_http` via CSS API | Portal cookies mint a short-lived JWT | One Playwright confirmation/recovery, then exact-marker re-auth if required | Crosstown |
+| 6 | `scrape_mortgage.py --lender pennymac` | `direct_http` via loan-activity API | Bounded provider-only OAuth redirects | One Playwright recovery; attended email MFA remains available | Cabin |
+| 7 | `scrape_mortgage.py --lender boa` | `direct_http` via protected cookie replay | Existing exact-profile raw-CDP path | Exact-profile raw-CDP recovery; one guarded re-auth only after explicit sign-out | Crosstown |
 
 **Why BoA is different.** BoA's bot detection defeats every Playwright-launched variant tried (headless old + new, channel=chrome, ignore-default-args, navigator.webdriver hidden, and force_visible). The browser fallback must attach to a Chrome that Pinchtab, not Playwright, launched. Chrome 149 also rejects Playwright's `connect_over_cdp` during `Browser.setDownloadBehavior`, so the scraper uses a narrow raw-CDP WebSocket shim instead.
 
-### How Tier 2 self-heal works
+**How BWSC's reference hybrid path works.** The scheduled command remains
+`scrape_bwsc.py --headless --merge --wrapper-contract 2 --run-id UUID`. It first reads the owner-only mode-`0600`
+Playwright storage state, sends only secure portal-scoped cookies to the exact
+BWSC portal to mint a short-lived JWT, and calls the exact CSS API from a
+separate cookie-free HTTP session. Redirects are disabled and response size,
+schema, dates, values, freshness, and continuity are validated before an
+atomic output replacement. Unsafe local state fails closed. Direct auth
+rejection gets one Playwright confirmation; direct transport or contract
+uncertainty gets one Playwright recovery attempt. `--browser-only` is the
+operator rollback path. Only the fixed `ERROR: BWSC authentication required`
+result reaches the guarded credential flow below; other safe failures neither
+receive credentials nor import the prior artifact. On success the scraper emits
+the unified contract-v2 status marker. The wrapper retains only the allowlisted
+`direct_http`, `browser_recovery`, `browser_only`, or `browser_explicit` path,
+so persistent fallback is visible without retaining provider output.
+The attended July 2026 parity check confirmed that BWSC's authenticated SPA uses
+the exact `/account/`, `/billing/`, and `/usage/` routes and that its token
+endpoint double-encodes the JSON string for the Requests client. The scraper
+unwraps no more than two JSON-string layers and still requires a strict JWT;
+browser authentication requires a fresh exact-portal token rather than a title
+alone.
 
-When a Tier 2 scraper's session expires, the next `--headless` run exits with "Session expired and running in headless mode". The deterministic weekly helper then:
-1. Loads the five provider profiles from the dedicated owner-only mode-`0600` JSON cache at `~/.openclaw/financial-dashboard/scraper-credentials.json`, then selects only that provider's username/password pair. The attended refresh helper populated this file from exact `OP_REF_FINANCE_*` fields. The file is never sourced or exported by the gateway, and the cron process never reads `.env-token`, receives a service-account token, or invokes `op`.
+### How guarded browser self-heal works
+
+The wrapper recognizes only these exact full lines from failed normal scrapes:
+
+| Source | Credential gate |
+|---|---|
+| Eversource | `ERROR: Eversource authentication required` |
+| National Grid electric or gas | `ERROR: National Grid authentication required` |
+| BWSC | `ERROR: BWSC authentication required` |
+| PennyMac | `ERROR: PennyMac authentication required` |
+
+Tesla has no standard re-auth path. BoA uses its separate exact `--verify-auth` / `--boa-re-auth` state machine rather than a generic authentication marker. A substring, provider response body, redirect, transport error, HTML page, schema failure, or ambiguous browser state never releases credentials.
+
+All five provider profiles are loaded and validated during global preflight from the dedicated owner-only mode-`0600` JSON cache at `~/.openclaw/financial-dashboard/scraper-credentials.json`. When one of the four standard provider markers appears, the deterministic weekly helper then:
+1. Selects only that provider's already-validated username/password pair. The attended refresh helper populated the cache from exact `OP_REF_FINANCE_*` fields. The file is never sourced or exported by the gateway, and the cron process never reads `.env-token`, receives a service-account token, or invokes `op`.
 2. Runs `./venv/bin/python3 scrape_<name>.py --re-auth --headless`. This drives the login flow programmatically via Playwright, handles MFA where needed (PennyMac auto-fetches the 6-digit `PM-NNNNNNN` code from Julia's Gmail via `gws`), and saves `storage_state.json` in the scraper's `.NAME_session/` dir.
 3. Re-runs the normal scrape, which now finds fresh cookies and pulls data.
 
-The helper rejects a missing, symlinked, non-regular, non-owner, non-`0600`, malformed, partial, or extra-profile cache. It also strips any stale `FINANCE_*`, `SCRAPER_*`, and `OP_SERVICE_ACCOUNT_TOKEN` values inherited from the parent. Only the one guarded re-authentication child receives `SCRAPER_USER` and `SCRAPER_PW`. The tracked helper is `~/dotfiles/openclaw/bin/weekly-financial-scrape.py` and is deployed mode `0755` to `~/.openclaw/bin/weekly-financial-scrape.py`; the cron prompt only invokes that runtime copy and reports its safe final status on failure. `--preflight` validates repository paths and credential-profile presence without starting PinchTab, a browser, scraper, or import.
+The helper rejects a missing, symlinked, non-regular, non-owner, non-`0600`, malformed, partial, or extra-profile credential cache. Before that check, it reads the verified bounded canonical owner-only mode-`0600` repository `.env` through one file descriptor and retains only the exact `TESLA_EMAIL` assignment; missing, duplicate, malformed, oversized, symlinked, hardlinked, or insecure input fails preflight without starting source work. Every child receives only a closed runtime allowlist, and Python children additionally receive `PYTHON_DOTENV_DISABLED=1`. The Tesla identity reaches only the Tesla scrape process, and only one guarded re-authentication child receives `SCRAPER_USER` and `SCRAPER_PW`; provider entrypoints remove that pair before launching Playwright, Chromium, raw CDP, or another subprocess. The tracked helper is `~/dotfiles/openclaw/bin/weekly-financial-scrape.py` and is deployed mode `0755` to `~/.openclaw/bin/weekly-financial-scrape.py`; an exact-argv command cron pins `/opt/homebrew/bin/python3` and only that runtime copy. `--preflight` validates the Tesla identity source, exact version and seven-source capability manifest, provider-mode configuration, and credential-profile presence without starting PinchTab, a browser, normal scraper, or import.
 
 To roll out or rotate these pairs, add all ten corresponding
 `OP_REF_FINANCE_*` exact-field references to the owner-only mode-`0600`
@@ -179,17 +222,36 @@ data access:
 python3 ~/.openclaw/bin/weekly-financial-scrape.py --preflight
 ```
 
-Success reports only the five profile names. Failure reports only missing
-profile names; neither path prints keys or values. The finance cache is read
+Success reports contract `2` and only the five profile names. Failure reports
+only a safe contract/cache reason and, for an incomplete cache, missing profile
+names; neither path prints keys or values. The finance cache is read
 directly, so a gateway restart is not required for these pairs. Do not remove the legacy
 `.env-token` until a separate whole-machine reference audit confirms nothing
 else uses it, but this helper no longer reads it.
 
-Mortgage scrapes receive one UUID run ID per weekly execution. A successful atomic mode-`0600` JSON write includes safe scrape metadata (source, run ID, completion time, record count, and month coverage). The lender-specific import requires the same run ID and validates all metadata plus strict payment dates, IDs, finite numeric fields, positive payment totals, and nonnegative components before opening SQLite or triggering Redfin. Guarded imports upsert returned months and preserve older months absent from a partial API response. A failed, partial, stale, or schema-degraded scrape therefore cannot replace valid history.
+Every normal scraper receives the exact wrapper-contract flag and the same UUID run ID for one weekly execution, and every import requires that run ID. A successful atomic mode-`0600` artifact includes safe scrape metadata (contract, source, run ID, completion time, record count, and month coverage). The importer validates that metadata plus source-specific schema, freshness, coverage, continuity, dates, IDs, and finite numeric bounds before opening SQLite or triggering Redfin. Guarded mortgage imports upsert returned months and preserve older months absent from a partial API response. A failed, partial, stale, or schema-degraded scrape therefore cannot replace valid history.
+
+**Coordinated activation and rollback.** Hold `financial-scrape-0001` for the
+entire deployment window. Install the new wrapper first while the old financial
+checkout remains and confirm its version/manifest preflight fails closed. Then
+install protected runtime paths and tighten legacy utility artifacts to mode
+`0600`, update the financial checkout, verify deployed hashes, and require a
+clean wrapper `--preflight`. Run fleet no-import checks and the attended
+delivery-only notification canary before one controlled full run; re-enable the
+cron only after safe status, guarded imports, permissions, and alert health are
+verified. Roll back both the wrapper and financial checkout as a matched pair
+while the cron is held—never restore only the old wrapper against scrapers that
+require `--wrapper-contract 2`.
 
 PennyMac no longer treats a generic portal shell as authenticated. It requires a known authenticated app/navigation signal, treats visible login as explicitly signed out, and keeps blocking-loader, incomplete, and ambiguous shells inconclusive rather than authorizing re-auth. The safe Activity probe listens only to the exact HTTPS PennyMac host and loan-activity API path and waits for `domcontentloaded`; it preserves a bearer token captured before a navigation timeout and retries one transient navigation only when no token was captured.
 
-Scheduled child output is captured in memory and not relayed. Standard mortgage output contains counts and month coverage only; MFA codes, message IDs, token-bearing URL queries, API response bodies, payment amounts, balances, and debug screenshots/HTML are excluded from unattended logs.
+Scheduled child stdout/stderr is captured only in memory under one aggregate 64 KiB ceiling and is never relayed or spilled to disk. Output must decode as strict UTF-8; oversized or undecodable output is discarded and fails the child before any authentication marker, re-authentication, or import gate can use it. Only safe source/phase/path metadata is emitted by the wrapper. MFA codes, message IDs, token-bearing URL queries, API response bodies, payment amounts, balances, and debug screenshots/HTML are excluded from unattended logs. The final safe summary is atomically persisted as owner-only mode `0600` JSON at `~/.openclaw/financial-dashboard/weekly-scrape-status.json`; it contains contract/run/time and operational results, never raw child output or account data.
+
+Every nonhealthy final outcome attempts one strict alert handoff keyed by run UUID. A successful handoff creates at most one record in the mode-`0700` `~/.openclaw/financial-dashboard/weekly-scrape-alerts/` directory; each atomic mode-`0600` record contains only allowlisted operational states plus bounded retry and `pending`/`inflight`/`sent` delivery state. The final weekly status records the alert handoff as `not_required`, `pending`, `persisted`, or `failed`, so an enqueue failure remains durably diagnosable even when the first status write succeeded. A healthy run does not attempt an alert handoff.
+
+Both `financial-scrape-0001` and the 15-minute `financial-scrape-alert-delivery-0001` are exact-argv command cron jobs, not model-backed agent turns. They set overall, no-output, and output-byte limits; nonzero helper exit is a scheduler error and both jobs have an `after: 1` generic iMessage failure alert with a six-hour cooldown. Ordinary output uses `delivery.mode: none`. A failed or degraded weekly run can therefore yield one generic scheduler alert plus, when its handoff persists, the detailed outbox alert; the bounded dual path is intentional so alert-handoff failure is not silent.
+
+The notifier reads Dylan's chat ID either from the one scoped environment value or from exactly one numeric `DYLAN_CHAT_ID` assignment read through a single verified owner-only secrets-cache file descriptor; it never executes or sources cache contents. It calls fixed `/opt/homebrew/bin/imsg` in a bounded process group and accepts only a strict sent receipt. A confirmed delivery is durably marked `sent` before cleanup, so delete/fsync failure never resends it; failed delivery returns to `pending` with exponential backoff capped at six hours. Invalid and crash-orphaned queue entries move to the private sibling quarantine without blocking valid UUID alerts. Safe start/completion status and counts live in `weekly-scrape-alert-notifier-status.json`. The unavoidable crash or ambiguous-timeout window between external send and the durable sent mark remains at-least-once and can rarely duplicate because `imsg` has no idempotency key. Neither notifier retry nor canary execution can run a scraper or import. Run `--canary` only during an attended delivery test.
 
 ### How BoA works
 
@@ -277,6 +339,7 @@ Mac Mini (dylans-mac-mini)
 │   └── expenses_dashboard.html     (expenses)
 ├── Combined refresh status: ~/.openclaw/finance-refresh/status.json
 ├── Plaid component status: ~/.openclaw/financial-dashboard/plaid-sync-status.json
+├── Weekly scraper status: ~/.openclaw/financial-dashboard/weekly-scrape-status.json
 └── Logs: ~/.openclaw/logs/financial-dashboard.{log,err.log}
 ```
 
@@ -409,6 +472,12 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 | `bin/finance` | Dotfiles repo + `/opt/homebrew/bin/finance` (symlink) | CLI (dashboard management) |
 | `openclaw/launchagents/ai.openclaw.financial-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
 | `openclaw/launchagents/ai.openclaw.finance-refresh.plist` | `~/Library/LaunchAgents/` on Mini | Daily Plaid → crypto source refresh |
+| `openclaw/bin/weekly-financial-scrape.py` | `~/.openclaw/bin/weekly-financial-scrape.py` on Mini | Contract-v2 weekly scraper orchestration and durable status |
+| `openclaw/bin/financial-scrape-alert-notifier.py` | `~/.openclaw/bin/financial-scrape-alert-notifier.py` on Mini | Delivery-only durable alert consumer and attended `--canary` |
+| `~/.openclaw/financial-dashboard/weekly-scrape-status.json` | Protected runtime state on Mini | Last safe weekly run result, mode `0600` |
+| `~/.openclaw/financial-dashboard/weekly-scrape-alerts/` | Protected runtime state on Mini | Per-run pending alert outbox, directory `0700`, files `0600` |
+| `~/.openclaw/financial-dashboard/weekly-scrape-alerts-quarantine/` | Protected runtime state on Mini | Private invalid/orphan queue quarantine, directory `0700` |
+| `~/.openclaw/financial-dashboard/weekly-scrape-alert-notifier-status.json` | Protected runtime state on Mini | Safe notifier start/completion health and bounded counts, mode `0600` |
 | `~/repos/financial-dashboard/` | Cloned repo on Mini | Dashboard server + all source files |
 
 ---
@@ -423,4 +492,4 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 - **Venv required**: external deps (`pyyaml`, `plaid-python`, `PyJWT[crypto]`, `playwright`, `beautifulsoup4` for Redfin). The plist points at the venv Python, not `/usr/bin/python3`.
 - **WorkingDirectory is critical**: `SimpleHTTPRequestHandler` serves HTML files relative to CWD. The plist sets this to the repo root.
 - **Home values via authorized Redfin access**: `mortgage_accounts.redfin_url` (set in `<lender>_mortgage_data.json`) is checked after each mortgage import. `property_values.py` requests a page only when the last successful Redfin valuation is at least seven days old, promotes normalized source/date/property-ID metadata, and keeps URL-free history. A failure preserves the last known-good value and does not fail the lender-data import. The household has prior express written permission for this automation; do not reuse it elsewhere without equivalent permission.
-- **Per-property cron job ownership**: bootstrap any new Tier 2 scraper by adding (a) the 1P item to the OpenClaw vault, (b) the LENDERS / config entry in the scraper, (c) the scraper line to the cron prompt, (d) the import line. Tier 2b BoA-pattern adds a `browser.connect_cdp: True` flag.
+- **Adding a weekly source**: update the financial repository's shared contract, artifact/import validation, and status marker; add the source plus exact path allowlist, optional exact auth line, normal command, and guarded import to `weekly-financial-scrape.py`; add any credential profile to the dedicated cache schema; and extend cross-repository tests and docs. The exact-argv cron payload must continue to invoke only the wrapper, never an individual scraper or import. A BoA-pattern source additionally needs an explicitly bound browser profile and exact-origin recovery contract.

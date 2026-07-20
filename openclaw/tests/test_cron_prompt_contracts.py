@@ -288,31 +288,52 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertNotIn("datenight-jul-japanese", self.jobs)
         self.assertNotIn("doubledate-q3-jul-korean", self.jobs)
 
-    def test_weekly_finance_cron_requires_cache_only_credentials(self) -> None:
+    def test_weekly_finance_cron_is_bounded_exact_command(self) -> None:
         job = self.jobs["financial-scrape-0001"]
-        prompt = job["payload"]["message"]
-
-        self.assertIn("dedicated-cache-only credential scoping", prompt)
-        self.assertIn("must never read `.env-token`", prompt)
-        self.assertIn("invoke `op`", prompt)
-        self.assertIn("1Password service-account token", prompt)
-        self.assertIn("source finance credentials into the gateway environment", prompt)
-        self.assertIn("Cron owns delivery; do not call the `message` tool", prompt)
-        self.assertIn("complete final response must be exactly `NO_REPLY`", prompt)
-        self.assertIn("exactly one concise failure message", prompt)
-        self.assertIn(
-            "profile_preflight/scrape/verify_auth/tab_bootstrap/reauth/import",
-            prompt,
-        )
         self.assertEqual(
-            job["delivery"],
+            job["payload"],
             {
+                "kind": "command",
+                "argv": [
+                    "/opt/homebrew/bin/python3",
+                    "/Users/dbochman/.openclaw/bin/weekly-financial-scrape.py",
+                ],
+                "timeoutSeconds": 14_400,
+                "noOutputTimeoutSeconds": 3_000,
+                "outputMaxBytes": 32_768,
+            },
+        )
+        self.assertEqual(job["delivery"], {"mode": "none"})
+        self.assertEqual(
+            job["failureAlert"],
+            {
+                "after": 1,
                 "mode": "announce",
                 "channel": "imessage",
                 "to": "chat_id:${DYLAN_CHAT_ID}",
-                "bestEffort": True,
+                "cooldownMs": 21_600_000,
             },
         )
+
+    def test_weekly_finance_alert_delivery_cannot_rerun_financial_work(self) -> None:
+        job = self.jobs["financial-scrape-alert-delivery-0001"]
+
+        self.assertEqual(job["schedule"]["expr"], "*/15 * * * *")
+        self.assertEqual(job["delivery"], {"mode": "none"})
+        self.assertEqual(
+            job["payload"],
+            {
+                "kind": "command",
+                "argv": [
+                    "/opt/homebrew/bin/python3",
+                    "/Users/dbochman/.openclaw/bin/financial-scrape-alert-notifier.py",
+                ],
+                "timeoutSeconds": 600,
+                "noOutputTimeoutSeconds": 420,
+                "outputMaxBytes": 4_096,
+            },
+        )
+        self.assertNotIn("weekly-financial-scrape.py", json.dumps(job["payload"]))
         self.assertEqual(
             job["failureAlert"],
             {

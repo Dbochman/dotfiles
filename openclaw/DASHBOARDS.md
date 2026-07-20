@@ -205,7 +205,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 |--------|-----------|------|
 | SQLite database | On demand | Canonical transactions, categories, balances, holdings, and reconciliation state |
 | Plaid API | Daily 06:15 cache-only finance refresh | Bank/credit-card transactions, depository balances, investment holdings, PFC income review, and source status |
-| Weekly scraper cron | Sundays 04:05 ET | Utilities, mortgage, solar, and other statement-shaped data |
+| Weekly HTTP-first scraper cron | Sundays 04:05 ET | Contract-v2 guarded utilities, mortgage, solar, and other statement-shaped data; browser fallback is degraded |
 | Config YAML | Static | Category overrides, FIRE settings, utility accounts |
 
 ### Files
@@ -217,11 +217,17 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 | Runtime | `~/repos/financial-dashboard/venv/bin/python3` |
 | Database | `~/repos/financial-dashboard/finance.db` (gitignored) |
 | Config | `~/repos/financial-dashboard/config.yaml` |
+| Weekly scrape status | `~/.openclaw/financial-dashboard/weekly-scrape-status.json` (owner-only mode `0600`) |
+| Weekly alert outbox | `~/.openclaw/financial-dashboard/weekly-scrape-alerts/` (directory `0700`, atomic records `0600`) |
+| Weekly alert quarantine | `~/.openclaw/financial-dashboard/weekly-scrape-alerts-quarantine/` (owner-only directory `0700`) |
+| Weekly alert notifier health | `~/.openclaw/financial-dashboard/weekly-scrape-alert-notifier-status.json` (owner-only mode `0600`) |
 | Logs | `~/.openclaw/logs/financial-dashboard.{log,err.log}` |
 
 ### Runtime Notes
 
 This service runs only on the Mac Mini as user `dbochman`. The venv must be built from an installed Homebrew Python, not the Command Line Tools Python shim. Because Homebrew removes versioned formula paths during upgrades, verify that `~/repos/financial-dashboard/venv/bin/python3` resolves before restarting the LaunchAgent; rebuild the venv from `/opt/homebrew/bin/python3` if its interpreter symlink is stale. The environment was rebuilt and verified on 2026-06-27 with Python 3.14.3, OpenSSL 3.6.2, declared Playwright support, and a working Chromium runtime.
+
+The Sunday wrapper verifies `FINANCE_SCRAPER_CONTRACT 2` plus the exact compact seven-source capability manifest before credentials, browser startup, or data work. It pins every merge to `--wrapper-contract 2`, gives one run ID to every normal scraper and guarded import, and requires one exact allowlisted `FINANCE_SCRAPER_STATUS` marker from every successful source. Invalid markers skip import. A validated browser fallback can import but produces a durable `degraded` status and nonzero exit. Every nonhealthy final status attempts a protected per-run alert handoff and records whether it persisted or failed; healthy runs do not enqueue alerts. The weekly wrapper and separate 15-minute notifier are exact-argv command cron jobs whose nonzero/timeout/output-bound failures reach job-level alerts. The notifier uses bounded process-group `imsg`, marks confirmed records sent before cleanup, quarantines invalid entries without blocking valid alerts, and retains failed sends with bounded backoff without rerunning financial work. A rare send-before-sent-state crash remains explicitly at-least-once.
 
 The forecast-baseline API is the primary integration check for downstream forecast work. It reports source readiness, aggregate owner scopes, broad allocation, a cash split, account location/institution totals, direct-position concentration, location-scoped U.S./international equity geography, a safe deployable-only instrument aggregate, and cash-flow confidence without requiring the forecast service to query SQLite directly. `cash_breakdown.spendable` is depository plus taxable brokerage cash; retirement and restricted cash stay visible but must not be treated as tax, emergency, or mortgage liquidity. `implementation_holdings` contains only grouped ticker/name, bucket, geography, value, and direct-position fields; it excludes account and institution details and is withheld unless it exactly reconciles to the deployable matrices. Location and concentration are withheld if they do not reconcile to the covered scope. A pending income-source candidate is a readiness blocker: it is held out of cash-flow totals until reviewed, rather than silently changing the Forecast input. A partial, invalid, or direct-position-excluded deployable geography withholds country equity trade guidance. The detailed policy and local review commands live in [FINANCIAL-DASHBOARD.md](FINANCIAL-DASHBOARD.md#income-source-quality).
 
@@ -470,6 +476,7 @@ as running:
 
 ```bash
 ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/financial-dashboard/plaid-sync-status.json'
+ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/financial-dashboard/weekly-scrape-status.json'
 ssh dbochman@dylans-mac-mini 'cat ~/.openclaw/forecast-dashboard/crypto-sync-status.json'
 ```
 

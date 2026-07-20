@@ -717,14 +717,51 @@
       "sessionTarget": "isolated",
       "wakeMode": "next-heartbeat",
       "payload": {
-        "kind": "agentTurn",
-        "message": "Run the deterministic weekly financial scrape helper exactly:\n\n`python3 ~/.openclaw/bin/weekly-financial-scrape.py`\n\nDo not run individual scrapers, imports, Plaid sync, or browser recovery steps outside the helper. The helper owns the non-navigating BoA `finance`-profile preflight, per-source retry decisions, one guarded BoA re-auth attempt, mortgage run-ID freshness validation, conditional imports, dedicated-cache-only credential scoping, and safe redacted output. It must never read `.env-token`, invoke `op`, receive a 1Password service-account token, or source finance credentials into the gateway environment.\n\nThe helper emits safe JSON progress lines and one final JSON summary. Cron owns delivery; do not call the `message` tool. If the helper exits zero, your complete final response must be exactly `NO_REPLY`, with no other text. If it exits nonzero, your complete final response must be exactly one concise failure message. When the final JSON includes `results`, name only each failed source and its profile_preflight/scrape/verify_auth/tab_bootstrap/reauth/import status. When it has no `results`, report only its top-level safe `status` and, when present, safe `signal`. Do not expose child output, credentials, cookies, URLs, account data, payment amounts, balances, commands, reasoning, or delivery confirmation.\n\nCRITICAL: Do not use sessions_spawn, sessions_send, or sessions_yield. Run the helper directly in this session."
+        "kind": "command",
+        "argv": [
+          "/opt/homebrew/bin/python3",
+          "/Users/dbochman/.openclaw/bin/weekly-financial-scrape.py"
+        ],
+        "timeoutSeconds": 14400,
+        "noOutputTimeoutSeconds": 3000,
+        "outputMaxBytes": 32768
       },
       "delivery": {
+        "mode": "none"
+      },
+      "failureAlert": {
+        "after": 1,
         "mode": "announce",
         "channel": "imessage",
         "to": "chat_id:${DYLAN_CHAT_ID}",
-        "bestEffort": true
+        "cooldownMs": 21600000
+      }
+    },
+    {
+      "id": "financial-scrape-alert-delivery-0001",
+      "agentId": "main",
+      "name": "Financial Scrape Alert Delivery",
+      "enabled": true,
+      "createdAtMs": 1784480400000,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "command",
+        "argv": [
+          "/opt/homebrew/bin/python3",
+          "/Users/dbochman/.openclaw/bin/financial-scrape-alert-notifier.py"
+        ],
+        "timeoutSeconds": 600,
+        "noOutputTimeoutSeconds": 420,
+        "outputMaxBytes": 4096
+      },
+      "delivery": {
+        "mode": "none"
       },
       "failureAlert": {
         "after": 1,

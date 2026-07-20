@@ -244,6 +244,8 @@ The Plaid component uses the protected credential and Item-token caches directly
 
 `ai.openclaw.forecast-ledger-capture` runs daily at 7:35 AM local time after the source jobs. It calls only `http://127.0.0.1:8586/api/forecast-ledger/observations`, captures aggregate facts, retries short service outages, and writes result metadata to `~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json`. It never calls `op`, touches Plaid secrets, or copies raw account/transaction data. Identical same-day source facts are idempotent; changed facts are retained as immutable revisions in the local Forecast ledger.
 
+The separate Sunday OpenClaw cron wrapper is not a LaunchAgent, but its last safe result belongs in the same operational view at `~/.openclaw/financial-dashboard/weekly-scrape-status.json`. It verifies the financial repository's exact contract-v2 version and seven-source capability manifest before credential, PinchTab, or data work; pins every merge to `--wrapper-contract 2`; uses one run ID for every normal scraper and guarded import; and records healthy direct paths, degraded browser fallback, or failure as owner-only mode-`0600` JSON. Every nonhealthy outcome attempts one protected per-run handoff under `~/.openclaw/financial-dashboard/weekly-scrape-alerts/`; the final status records whether that alert persisted or the handoff failed. The weekly wrapper and separate 15-minute delivery notifier use exact-argv OpenClaw command cron payloads with process/output bounds, `delivery.mode: none`, and job-level failure alerts. The notifier marks strict native `imsg` success as sent before cleanup, quarantines invalid/orphan queue entries privately, writes safe notifier health, and retains failed sends with bounded backoff. Neither cron nor notifier recovery can rerun scraper/import work; a rare crash between external send and durable sent state retains explicit at-least-once semantics.
+
 ### Dashboard Health Semantics
 
 The `financial-dashboard` and `forecast-dashboard` agents are `KeepAlive` services and should report `running`. The two daily agents should normally report `not running` between their calendar triggers; use their last exit code and status files instead:
@@ -251,6 +253,9 @@ The `financial-dashboard` and `forecast-dashboard` agents are `KeepAlive` servic
 ```text
 ~/.openclaw/finance-refresh/status.json
 ~/.openclaw/financial-dashboard/plaid-sync-status.json
+~/.openclaw/financial-dashboard/weekly-scrape-status.json
+~/.openclaw/financial-dashboard/weekly-scrape-alerts/
+~/.openclaw/financial-dashboard/weekly-scrape-alert-notifier-status.json
 ~/.openclaw/forecast-dashboard/crypto-sync-status.json
 ~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json
 ```
