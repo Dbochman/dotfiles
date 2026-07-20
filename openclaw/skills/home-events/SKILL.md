@@ -43,6 +43,14 @@ Use the requested site and time window. Default to 24 hours and 20 events when
 the user does not specify them. Describe normalized evidence without exposing
 opaque keys or internal timestamps that do not help the answer.
 
+Nest rows are metadata-only `camera.person_detected` or
+`camera.motion_detected` records for an exact safe camera alias. They prove the
+normalized provider classification, not what appeared in a frame. Never claim
+that the journal contains an image, a visual description, or the Cabin
+reviewer's model output. A Nest person event may participate in a site activity
+incident; Nest motion remains recent-event context only and is deliberately
+non-actionable.
+
 ### Review incidents
 
 ```bash
@@ -55,7 +63,9 @@ Explain what evidence was correlated, the canonical presence state used by the
 policy, and why delivery or camera work was allowed, shadowed, rate-limited, or
 suppressed. The `decisions` array is durable history; prefer its reason codes
 over the incident's latest summary when the incident was later resolved. Do
-not reinterpret stale or ambiguous presence as vacancy.
+not reinterpret stale or ambiguous presence as vacancy. Do not infer the
+Cabin reviewer's capture, vision, or delivery outcome from a Nest bus row; that
+bridge operates independently and carries none of those fields.
 
 ## Fresh images
 
@@ -77,6 +87,7 @@ same-route delivery, exact-camera, and cleanup rules.
 - Never call August lock or unlock commands from an event or incident.
 - Never run a live presence scan. Read normalized events or use the `presence`
   skill for cached occupancy.
+- Never turn a raw Nest motion row into an incident or notification claim.
 - Never query raw provider payloads to embellish an explanation.
 - If the journal is unavailable or unhealthy, say so; do not reconstruct a
   confident incident from logs.

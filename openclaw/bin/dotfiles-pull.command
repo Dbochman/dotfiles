@@ -145,9 +145,10 @@ if [ -f "$MBP_SSH_KEY" ]; then
       if ! ssh -i "$MBP_SSH_KEY" -o IdentityAgent=none \
                -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
                "$MBP_HOST" \
-               'p="$HOME/.openclaw/presence-devices.env"; [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -f "%u %Lp" "$p")" = "$(id -u) 600" ]' \
+               'PRESENCE_DEVICE_CONFIG="$HOME/.openclaw/presence-devices.json" /bin/bash -s -- validate-config crosstown' \
+               < "$src" \
                >/dev/null 2>&1; then
-        MBP_SYNC_ERR="presence device config missing or insecure; preserved prior scanner"
+        MBP_SYNC_ERR="Crosstown presence bindings missing or invalid; preserved prior scanner"
         continue
       fi
     fi
@@ -230,6 +231,60 @@ fi
 BIN_SRC="$REPO/openclaw/bin"
 BIN_DST="$HOME/.openclaw/bin"
 
+# Schema changes are attended migrations. A routine pull may refresh the
+# tracked source, but it must preserve the last compatible runtime binaries
+# and loaded jobs until the protected production database has already been
+# migrated and verified by an operator.
+HOME_EVENT_SOURCE_SCHEMA=$(
+  /usr/bin/awk '$1 == "SCHEMA_VERSION" && $2 == "=" && $3 ~ /^[0-9]+$/ { print $3; exit }' \
+    "$BIN_SRC/home_event_bus.py"
+)
+NEST_EVENT_SOURCE_SCHEMA=$(
+  /usr/bin/awk '$1 == "SCHEMA_VERSION" && $2 == "=" && $3 ~ /^[0-9]+$/ { print $3; exit }' \
+    "$BIN_SRC/nest-event-listener.py"
+)
+case "$HOME_EVENT_SOURCE_SCHEMA:$NEST_EVENT_SOURCE_SCHEMA" in
+  *[!0-9:]*|:*|*:)
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) schema-guard: FATAL source schema version is invalid" >> "$LOG"
+    exit 1
+    ;;
+esac
+
+protected_sqlite_schema_matches() {
+  local database="$1"
+  local query="$2"
+  local expected="$3"
+  local actual
+
+  if [ ! -e "$database" ] && [ ! -L "$database" ]; then
+    return 0
+  fi
+  [ -f "$database" ] && [ ! -L "$database" ] \
+    && [ "$(/usr/bin/stat -f '%u %Lp' "$database" 2>/dev/null || true)" = "$(/usr/bin/id -u) 600" ] \
+    && [ -x /usr/bin/sqlite3 ] \
+    || return 1
+  actual=$(/usr/bin/sqlite3 "$database" "$query" 2>/dev/null) || return 1
+  [ "$actual" = "$expected" ]
+}
+
+HOME_EVENT_SCHEMA_DEPLOY_READY=1
+if ! protected_sqlite_schema_matches \
+    "$HOME/.openclaw/home-events/state/events.sqlite3" \
+    'SELECT group_concat(version, ",") FROM schema_migrations' \
+    "$HOME_EVENT_SOURCE_SCHEMA"; then
+  HOME_EVENT_SCHEMA_DEPLOY_READY=0
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) schema-guard: WARN home-event migration required; preserving prior runtime" >> "$LOG"
+fi
+
+NEST_EVENT_SCHEMA_DEPLOY_READY=1
+if ! protected_sqlite_schema_matches \
+    "$HOME/.openclaw/nest-events/state/events.sqlite3" \
+    'SELECT group_concat(version, ",") FROM schema_meta' \
+    "$NEST_EVENT_SOURCE_SCHEMA"; then
+  NEST_EVENT_SCHEMA_DEPLOY_READY=0
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) schema-guard: WARN Nest listener migration required; preserving prior runtime" >> "$LOG"
+fi
+
 atomic_install_managed_file() {
   local src="$1"
   local dst="$2"
@@ -253,6 +308,7 @@ DEPLOYED_WRAPPERS=""
 HOME_EVENT_INGEST_CHANGED=0
 HOME_EVENT_CORRELATOR_CHANGED=0
 HOME_EVENT_AUGUST_CHANGED=0
+HOME_EVENT_NEST_CHANGED=0
 for wrapper in "$BIN_SRC"/*; do
   [ -f "$wrapper" ] || continue
   fname=$(basename "$wrapper")
@@ -261,11 +317,15 @@ for wrapper in "$BIN_SRC"/*; do
     *.py|*.sh|*.command|*.md|*.json|*.yaml) continue ;;
   esac
   [ -x "$wrapper" ] || continue
+  if [ "$fname" = "home-eventctl" ] && [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -ne 1 ]; then
+    continue
+  fi
   case "$fname" in
     home-eventctl)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$wrapper" "$BIN_DST/$fname"; then
         HOME_EVENT_INGEST_CHANGED=1
         HOME_EVENT_AUGUST_CHANGED=1
+        HOME_EVENT_NEST_CHANGED=1
       fi
       ;;
   esac
@@ -301,6 +361,20 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
   case "$fname" in
+    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|august-event-adapter.py)
+      [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -eq 1 ] || continue
+      ;;
+    nest-home-event-bridge.py)
+      if [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -ne 1 ] \
+        || [ "$NEST_EVENT_SCHEMA_DEPLOY_READY" -ne 1 ]; then
+        continue
+      fi
+      ;;
+    nest-event-listener.py|nest-event-listener-wrapper.sh|nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh)
+      [ "$NEST_EVENT_SCHEMA_DEPLOY_READY" -eq 1 ] || continue
+      ;;
+  esac
+  case "$fname" in
     nest-event-listener.py|nest-event-listener-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         NEST_EVENT_RUNTIME_CHANGED=1
@@ -315,6 +389,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         HOME_EVENT_INGEST_CHANGED=1
         HOME_EVENT_CORRELATOR_CHANGED=1
+        HOME_EVENT_NEST_CHANGED=1
       fi
       ;;
     home-event-correlator.py)
@@ -327,11 +402,17 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_AUGUST_CHANGED=1
       fi
       ;;
+    nest-home-event-bridge.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_NEST_CHANGED=1
+      fi
+      ;;
     home-event-service-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         HOME_EVENT_INGEST_CHANGED=1
         HOME_EVENT_CORRELATOR_CHANGED=1
         HOME_EVENT_AUGUST_CHANGED=1
+        HOME_EVENT_NEST_CHANGED=1
       fi
       ;;
   esac
@@ -477,7 +558,8 @@ fi
 for HOME_EVENT_AGENT_LABEL in \
   ai.openclaw.home-event-ingest \
   ai.openclaw.home-event-correlator \
-  ai.openclaw.august-event-adapter; do
+  ai.openclaw.august-event-adapter \
+  ai.openclaw.nest-home-event-bridge; do
   HOME_EVENT_AGENT_SRC="$REPO/openclaw/launchagents/$HOME_EVENT_AGENT_LABEL.plist"
   HOME_EVENT_AGENT_DST="$HOME/Library/LaunchAgents/$HOME_EVENT_AGENT_LABEL.plist"
   if [ -e "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]; then
@@ -513,6 +595,30 @@ for HOME_EVENT_AGENT_LABEL in \
         exit 1
       fi
       HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
+    elif [ "$HOME_EVENT_AGENT_LABEL" = "ai.openclaw.nest-home-event-bridge" ]; then
+      HOME_EVENT_NEST_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_NEST_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      case "$HOME_EVENT_NEST_ENABLED" in
+        0|1) ;;
+        *)
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL installed Nest enable flag is invalid" >> "$LOG"
+          exit 1
+          ;;
+      esac
+      HOME_EVENT_AGENT_CANDIDATE_TMP=$(mktemp \
+        "$HOME/Library/LaunchAgents/.${HOME_EVENT_AGENT_LABEL}.candidate.XXXXXX")
+      if ! cp "$HOME_EVENT_AGENT_SRC" "$HOME_EVENT_AGENT_CANDIDATE_TMP" \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_NEST_ENABLED $HOME_EVENT_NEST_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null; then
+        rm -f "$HOME_EVENT_AGENT_CANDIDATE_TMP"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL could not preserve installed Nest enable flag" >> "$LOG"
+        exit 1
+      fi
+      HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
     fi
     if ! cmp -s "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST"; then
       atomic_install_managed_file "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST" 644
@@ -530,6 +636,9 @@ for HOME_EVENT_AGENT_LABEL in \
         ;;
       ai.openclaw.august-event-adapter)
         HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_AUGUST_CHANGED"
+        ;;
+      ai.openclaw.nest-home-event-bridge)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_NEST_CHANGED"
         ;;
     esac
     if launchctl print "$HOME_EVENT_AGENT_DOMAIN/$HOME_EVENT_AGENT_LABEL" >/dev/null 2>&1; then
@@ -649,6 +758,13 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
     for script in "$SCRIPTS_SRC"/*; do
       [ -f "$script" ] || continue
       fname=$(basename "$script")
+      if [ "$fname" = "presence-detect.sh" ] && [ "$IS_GATEWAY_HOST" -eq 1 ]; then
+        if ! PRESENCE_DEVICE_CONFIG="$HOME/.openclaw/presence-devices.json" \
+             /bin/bash "$script" validate-config cabin >/dev/null 2>&1; then
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: Cabin presence bindings missing or invalid; preserved prior scanner" >> "$LOG"
+          continue
+        fi
+      fi
       [ -L "$SCRIPTS_DST/$fname" ] && rm -f "$SCRIPTS_DST/$fname"
       atomic_install_executable "$script" "$SCRIPTS_DST/$fname"
       WS_SCRIPTS_DEPLOYED=$((WS_SCRIPTS_DEPLOYED + 1))

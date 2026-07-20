@@ -71,6 +71,15 @@ run_component() {
         PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
         "$BIN/august-event-adapter.py"
       ;;
+    nest)
+      /usr/bin/env -i HOME="$HOME" PATH="/opt/homebrew/bin:/usr/bin:/bin" \
+        HOME_EVENTS_ROOT="$ROOT" \
+        HOME_EVENTS_NEST_ENABLED="${HOME_EVENTS_NEST_ENABLED:-0}" \
+        NEST_EVENT_DATABASE="$HOME/.openclaw/nest-events/state/events.sqlite3" \
+        HOME_EVENTCTL="$BIN/home-eventctl" \
+        PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
+        "$BIN/nest-home-event-bridge.py"
+      ;;
     *) fail "unsupported component" ;;
   esac
 }

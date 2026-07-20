@@ -78,12 +78,13 @@ class FakeCommands:
             self.analysis_hook()
         return self.decision
 
-    def send(self, message: str) -> None:
+    def send(self, message: str) -> "review.DeliveryReceipt":
         self.messages.append(message)
         if self.crash_during_send:
             raise KeyboardInterrupt
         if self.send_error:
             raise review.ReviewerError(self.send_error)
+        return review.DeliveryReceipt("bridge", "fixture-guid")
 
 
 class ActivityReviewerTestCase(unittest.TestCase):
@@ -96,10 +97,15 @@ class ActivityReviewerTestCase(unittest.TestCase):
         self.state_dir.chmod(0o700)
         self.db_path = self.state_dir / "events.sqlite3"
         with sqlite3.connect(self.db_path) as connection:
+            connection.execute("CREATE TABLE schema_meta(version INTEGER NOT NULL)")
+            connection.execute(
+                "INSERT INTO schema_meta(version) VALUES (?)",
+                (review.NEST_LISTENER_SCHEMA_VERSION,),
+            )
             connection.execute(
                 """
                 CREATE TABLE outbox (
-                    id INTEGER PRIMARY KEY,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_record_id INTEGER NOT NULL UNIQUE,
                     alias TEXT NOT NULL,
                     site TEXT NOT NULL,
@@ -210,17 +216,18 @@ class ActivityReviewerTestCase(unittest.TestCase):
     ) -> int:
         created = review._timestamp(self.clock() - age)
         with sqlite3.connect(self.db_path) as connection:
-            row_id = connection.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM outbox").fetchone()[0]
-            connection.execute(
+            event_record_id = connection.execute(
+                "SELECT COALESCE(MAX(event_record_id), 0) + 1 FROM outbox"
+            ).fetchone()[0]
+            cursor = connection.execute(
                 """
                 INSERT INTO outbox(
-                    id, event_record_id, alias, site, event_type, event_at,
+                    event_record_id, alias, site, event_type, event_at,
                     capture_strategy, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    row_id,
-                    row_id,
+                    event_record_id,
                     alias,
                     site,
                     event_type,
@@ -230,6 +237,7 @@ class ActivityReviewerTestCase(unittest.TestCase):
                     created,
                 ),
             )
+            row_id = int(cursor.lastrowid)
         return row_id
 
 
@@ -269,6 +277,24 @@ class ConfigurationAndInitializationTests(ActivityReviewerTestCase):
         self.settings.state_path.symlink_to(self.db_path)
         with self.assertRaisesRegex(review.ReviewerError, "state_permissions_invalid"):
             reviewer.initialize()
+
+    def test_v1_state_is_migrated_atomically_to_v2(self) -> None:
+        reviewer = self.reviewer()
+        legacy = reviewer.initialize()
+        legacy["schemaVersion"] = 1
+        legacy.pop("lastAnalysis")
+        legacy.pop("lastDeliveryError")
+        self.settings.state_path.write_text(json.dumps(legacy), encoding="utf-8")
+        self.settings.state_path.chmod(0o600)
+
+        migrated = self.reviewer().initialize()
+        self.assertEqual(migrated["schemaVersion"], 2)
+        self.assertIsNone(migrated["lastAnalysis"])
+        self.assertIsNone(migrated["lastDeliveryError"])
+        persisted = json.loads(self.settings.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["schemaVersion"], 2)
+        self.assertIn("lastAnalysis", persisted)
+        self.assertIn("lastDeliveryError", persisted)
 
 
 class PolicyAndReviewTests(ActivityReviewerTestCase):
@@ -332,18 +358,25 @@ class PolicyAndReviewTests(ActivityReviewerTestCase):
         self.assertEqual(self.commands.messages, [])
         self.assertIsNone(self.worker.state()["lastMessageAttemptAt"])
 
-    def test_cursor_recovers_if_listener_pruning_resets_sqlite_row_ids(self) -> None:
+    def test_cursor_retains_listener_watermark_when_pruning_empties_outbox(self) -> None:
         first = self.add_event(alias="Living Room", site="Crosstown")
         self.assertEqual(self.worker.run_once(), "ignored")
         self.assertEqual(self.worker.state()["lastSeenOutboxId"], first)
         with sqlite3.connect(self.db_path) as connection:
             connection.execute("DELETE FROM outbox")
         self.assertEqual(self.worker.run_once(), "idle")
-        self.assertEqual(self.worker.state()["lastSeenOutboxId"], 0)
+        self.assertEqual(self.worker.state()["lastSeenOutboxId"], first)
 
-        self.add_event(event_type="person")
+        second = self.add_event(event_type="person")
+        self.assertGreater(second, first)
         self.assertEqual(self.worker.run_once(), "silent")
         self.assertEqual(len(self.commands.capture_calls), 1)
+
+    def test_listener_schema_v1_is_rejected(self) -> None:
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute("UPDATE schema_meta SET version = 1")
+        with self.assertRaisesRegex(review.ReviewerError, "database_schema_invalid"):
+            self.worker.run_once()
 
     def test_kitchen_policy_drift_fails_without_side_effects(self) -> None:
         self.add_event(status="sent")
@@ -393,9 +426,21 @@ class PolicyAndReviewTests(ActivityReviewerTestCase):
         self.assertEqual(state["lastDecision"], "sent")
         self.assertEqual(state["counters"]["messageAttempts"], 1)
         self.assertEqual(state["counters"]["messagesSent"], 1)
+        self.assertEqual(
+            state["lastAnalysis"],
+            {
+                "at": state["lastAnalysis"]["at"],
+                "shouldNotify": True,
+                "category": "person",
+                "urgency": "routine",
+                "confidence": "high",
+                "summaryCharacters": len(summary),
+            },
+        )
         persisted = self.settings.state_path.read_text(encoding="utf-8")
         self.assertNotIn(summary, persisted)
         self.assertNotIn("chat_id", persisted)
+        self.assertNotIn("fixture-guid", persisted)
         self.assertEqual(list(self.settings.image_dir.iterdir()), [])
 
     def test_hard_hour_cap_survives_restart_and_skips_model_work(self) -> None:
@@ -452,13 +497,42 @@ class PolicyAndReviewTests(ActivityReviewerTestCase):
         self.commands.send_error = "message_command_failed"
         self.add_event(event_type="person")
         self.assertEqual(self.worker.run_once(), "send_failed")
-        self.assertIsNotNone(self.worker.state()["lastMessageAttemptAt"])
+        failed = self.worker.state()
+        self.assertIsNotNone(failed["lastMessageAttemptAt"])
+        self.assertEqual(
+            failed["lastDeliveryError"]["code"], "message_command_failed"
+        )
 
         self.clock.value += 30
         self.add_event(event_type="motion")
         restarted = self.reviewer(FakeCommands(self.clock))
         self.assertEqual(restarted.run_once(), "rate_limited")
         self.assertEqual(restarted.commands.capture_calls, [])
+        self.assertIsNone(restarted.state()["lastError"])
+        self.assertEqual(
+            restarted.state()["lastDeliveryError"]["code"],
+            "message_command_failed",
+        )
+
+        self.clock.value += review.MESSAGE_INTERVAL_SECONDS
+        self.write_presence()
+        restarted.commands.decision = self.commands.decision
+        self.add_event(event_type="person")
+        self.assertEqual(restarted.run_once(), "sent")
+        self.assertIsNone(restarted.state()["lastDeliveryError"])
+
+    def test_empty_notify_summary_fails_before_send_reservation(self) -> None:
+        self.commands.decision = review.AnalysisDecision(
+            True, "person", "routine", "high", ""
+        )
+        self.add_event(event_type="person")
+        self.assertEqual(self.worker.run_once(), "analysis_failed")
+        state = self.worker.state()
+        self.assertIsNone(state["lastMessageAttemptAt"])
+        self.assertEqual(self.commands.messages, [])
+        self.assertEqual(state["lastError"]["code"], "delivery_summary_invalid")
+        self.assertEqual(state["lastAnalysis"]["summaryCharacters"], 0)
+        self.assertTrue(state["lastAnalysis"]["shouldNotify"])
 
     def test_crash_after_reservation_becomes_unknown_and_cannot_duplicate(self) -> None:
         self.commands.decision = review.AnalysisDecision(
@@ -476,6 +550,10 @@ class PolicyAndReviewTests(ActivityReviewerTestCase):
         restarted_commands = FakeCommands(self.clock)
         restarted = self.reviewer(restarted_commands)
         self.assertEqual(restarted.initialize()["lastDecision"], "delivery_unknown")
+        self.assertEqual(
+            restarted.state()["lastDeliveryError"]["code"],
+            "delivery_outcome_unknown",
+        )
         self.assertEqual(restarted.run_once(), "rate_limited")
         self.assertEqual(restarted_commands.messages, [])
 
@@ -697,6 +775,80 @@ class PresenceContractTests(ActivityReviewerTestCase):
 
 
 class ProcessCommandSafetyTests(ActivityReviewerTestCase):
+    def test_message_send_uses_bridge_rpc_and_validates_guid_receipt(self) -> None:
+        response = {
+            "jsonrpc": "2.0",
+            "id": review.RPC_REQUEST_ID,
+            "result": {"ok": True, "transport": "bridge", "guid": "guid-123"},
+        }
+        commands = review.ProcessCommands(self.settings)
+        with mock.patch.object(
+            review.ProcessCommands,
+            "_run",
+            return_value=json.dumps(response).encode("utf-8") + b"\n",
+        ) as run:
+            receipt = commands.send("Cabin kitchen: A person is by the table.")
+
+        self.assertEqual(receipt, review.DeliveryReceipt("bridge", "guid-123"))
+        self.assertEqual(run.call_args.args[0], [str(review.IMSG_BIN), "rpc"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 20)
+        request = json.loads(run.call_args.kwargs["input_bytes"])
+        self.assertEqual(
+            request,
+            {
+                "jsonrpc": "2.0",
+                "id": review.RPC_REQUEST_ID,
+                "method": "send",
+                "params": {
+                    "chat_id": 7,
+                    "text": "Cabin kitchen: A person is by the table.",
+                    "transport": "bridge",
+                },
+            },
+        )
+
+    def test_message_send_accepts_bridge_receipt_without_best_effort_guid(self) -> None:
+        response = {
+            "jsonrpc": "2.0",
+            "id": review.RPC_REQUEST_ID,
+            "result": {"ok": True, "transport": "bridge"},
+        }
+        commands = review.ProcessCommands(self.settings)
+        with mock.patch.object(
+            review.ProcessCommands,
+            "_run",
+            return_value=json.dumps(response).encode("utf-8") + b"\n",
+        ):
+            receipt = commands.send("Cabin kitchen: A person is by the table.")
+        self.assertEqual(receipt, review.DeliveryReceipt("bridge", None))
+
+    def test_message_send_rejects_ambiguous_rpc_receipts(self) -> None:
+        valid = {
+            "jsonrpc": "2.0",
+            "id": review.RPC_REQUEST_ID,
+            "result": {"ok": True, "transport": "bridge", "guid": "guid-123"},
+        }
+        cases = [
+            {**valid, "id": "other"},
+            {**valid, "error": {"code": -32603}},
+            {**valid, "result": {"ok": True, "transport": "bridge", "guid": ""}},
+            {**valid, "result": {"ok": True, "transport": "bridge", "guid": None}},
+            {**valid, "result": {"ok": True, "transport": "bridge", "guid": "   "}},
+            {**valid, "result": {"ok": True, "transport": "applescript", "guid": "guid-123"}},
+        ]
+        commands = review.ProcessCommands(self.settings)
+        for payload in cases:
+            with self.subTest(payload=payload):
+                with mock.patch.object(
+                    review.ProcessCommands,
+                    "_run",
+                    return_value=json.dumps(payload).encode("utf-8") + b"\n",
+                ):
+                    with self.assertRaisesRegex(
+                        review.ReviewerError, "message_receipt_invalid"
+                    ):
+                        commands.send("Cabin kitchen: A person is by the table.")
+
     def test_subprocess_output_and_time_are_bounded(self) -> None:
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(self.home)}
         output = review.ProcessCommands._run(
@@ -706,6 +858,15 @@ class ProcessCommandSafetyTests(ActivityReviewerTestCase):
             failure_code="fixture_failed",
         )
         self.assertEqual(output, b"ok\n")
+
+        echoed = review.ProcessCommands._run(
+            ["/usr/bin/python3", "-c", "import sys; print(sys.stdin.read(), end='')"],
+            environment=environment,
+            timeout=2,
+            failure_code="fixture_failed",
+            input_bytes=b'{"request":true}\n',
+        )
+        self.assertEqual(echoed, b'{"request":true}\n')
 
         with self.assertRaisesRegex(review.ReviewerError, "fixture_failed"):
             review.ProcessCommands._run(

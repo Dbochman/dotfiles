@@ -19,7 +19,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
-| `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary, hard-limited to one send attempt/hour |
+| `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary over explicit iMessage RPC bridge transport, hard-limited to one send attempt/hour |
 | `ai.openclaw.reachy-gateway-tunnel` | `ssh -R` | Reachy loopback 18789 | Keeps a token-authenticated path from Crosstown Reachy Mini to the Mac mini's loopback-only gateway |
 | `ai.openclaw.reachy-gateway-upstream` | `ssh -L` | Crosstown MBP loopback 28789 | Carries the Mac mini's loopback-only gateway to the always-on Crosstown MBP without exposing it on Tailscale or the LAN |
 | `ai.openclaw.reachy-gateway-relay` | `ssh -R` | Reachy loopback 18789 | Runs on the Crosstown MBP and publishes its private upstream gateway hop only on Reachy's loopback interface |
@@ -39,12 +39,16 @@ outbox. Only exact Kitchen/Cabin events may trigger a fresh live frame and
 stateless OpenClaw vision request. Empty or uncertain frames are silent;
 meaningful observations may produce a text-only iMessage after a send slot is
 durably reserved. The rolling cap is one send attempt per hour across restarts,
-and send failures also consume the slot. Capture is additionally allowed only
-when canonical cached presence is fresh and says `confirmed_vacant`, followed
-by a side-effect-free live Cabin network observation; occupied, stale,
-ambiguous, or failed presence checks remain shadow. Presence is rechecked
-before delivery. Crosstown never captures, analyzes, or sends. Temporary frames
-are owner-only and deleted after analysis.
+and send failures also consume the slot. Delivery uses a bounded `imsg rpc`
+request with explicit bridge transport and requires a validated receipt; it
+does not fall back to AppleScript. Privacy-safe analysis metadata and the last
+delivery error code remain available for diagnosis without persisting the
+description, message, target, receipt, or image. Capture is additionally
+allowed only when canonical cached presence is fresh and says
+`confirmed_vacant`, followed by a side-effect-free live Cabin network
+observation; occupied, stale, ambiguous, or failed presence checks remain
+shadow. Presence is rechecked before delivery. Crosstown never captures,
+analyzes, or sends. Temporary frames are owner-only and deleted after analysis.
 
 Initial config, credential materialization, venv creation, and LaunchAgent
 bootstrap are attended deployment steps. Reviewer baseline initialization and
@@ -293,9 +297,10 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, and August spools into the shadow-only SQLite journal. |
+| `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, August, and Nest spools into the shadow-only SQLite journal. |
 | `ai.openclaw.home-event-correlator` | 5s | `home-event-service-wrapper.sh correlate` | Records site-scoped incidents and rate-limited shadow decisions; no delivery or camera path. |
 | `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer; tracked enable flag remains `0`. |
+| `ai.openclaw.nest-home-event-bridge` | 5s | `home-event-service-wrapper.sh nest` | Mirrors only newly committed Nest person/motion metadata after a silent first-run baseline; tracked enable flag remains `0`. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
@@ -303,19 +308,22 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's `default` profile |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
-The three home-event jobs are **attended-install only**. A routine dotfiles
+The four home-event jobs are **attended-install only**. A routine dotfiles
 pull may refresh their files only after an installed plist exists; it must not
 create the runtime, run `home-eventctl init`, bootstrap a job, or enable Ring,
-presence, or August publication. All producers default off and the correlator
-can only create `shadowed` decisions. The shared wrapper uses a sanitized
-environment and one bounded owner-only log, and neither it nor its children
-call `op`.
+presence, August, or Nest publication. All producers default off and the
+correlator can only create `shadowed` decisions. The shared wrapper uses a
+sanitized environment and one bounded owner-only log, and neither it nor its
+children call `op`.
 
 Create and validate the protected runtime before bootstrapping the ingester or
 correlator. Configure the exact August observe binding separately on the
 MacBook Pro, baseline it without events, and change its enable flag only during
-an attended shadow soak. Restart only these jobs when their code changes; home
-events does not require an OpenClaw gateway restart. See
+an attended shadow soak. The Nest bridge also requires a separate attended
+enable: its first run must baseline the existing listener outbox with zero
+published events before a later event is accepted. Restart only these jobs
+when their code changes; home events does not require an OpenClaw gateway
+restart. See
 [`HOME-EVENTS.md`](HOME-EVENTS.md).
 
 ### Native iMessage Reboot Recovery

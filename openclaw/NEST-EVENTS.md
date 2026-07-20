@@ -12,6 +12,11 @@ stateless vision capability for a factual observation, and send one text-only
 iMessage only while the presence system confirms the Cabin is vacant. An
 occupied or uncertain Cabin and both Crosstown cameras remain shadow-only.
 
+A second, independent bridge mirrors newly committed person/motion metadata
+into the durable home-event bus. It is downstream of the listener's
+acknowledgement boundary and carries no image, model text, raw SDM identifier,
+or camera resource, so bus downtime cannot delay Pub/Sub or visual review.
+
 ## Data flow
 
 ```text
@@ -20,17 +25,20 @@ Living Room (Crosstown) --+-> SDM topic -> pull subscription -> Mac Mini
 Living Room Wired -------/                            |
                                                        +-> protected SQLite/status
                                                                    |
-                                      Kitchen/Cabin only -----------+
-                                                                   v
-                                         cached + live presence gate
-                                                                   |
-                                                     confirmed vacant only
-                                                                   v
-                                            fresh frame -> OpenClaw vision
-                                                                   |
-                                                meaningful + hourly slot
-                                                                   v
-                                                        text-only iMessage
+                                  +--------------------------------+----------------+
+                                  |                                                 |
+                       metadata-only home-event bridge                  Kitchen/Cabin only
+                                  |                                                 |
+                   normalized event bus + correlation                              v
+                                                                     cached + live presence gate
+                                                                                   |
+                                                                      confirmed vacant only
+                                                                                   v
+                                                                  fresh frame -> OpenClaw vision
+                                                                                   |
+                                                                      meaningful + hourly slot
+                                                                                   v
+                                                                  iMessage RPC bridge transport
 ```
 
 One Device Access topic and one pull subscription cover every camera that is
@@ -71,6 +79,11 @@ required.
 ~/.openclaw/venvs/nest-events/           dedicated locked Python environment
 ~/.openclaw/logs/nest-event-listener*    bounded 0600 operational logs
 ~/.openclaw/logs/nest-activity-reviewer* bounded 0600 operational logs
+
+~/.openclaw/home-events/spool/nest/      0700 normalized metadata only
+~/.openclaw/home-events/state/
+├── nest-bridge.json                     0600 outbox cursor + DB identity
+└── nest-bridge.lock                     0600
 ```
 
 The credential JSON is never stored in the repository, general secrets cache,
@@ -178,10 +191,15 @@ Expected values are `mac-mini`, `dbochman`, and `/Users/dbochman`.
 
    ```bash
    ~/.openclaw/bin/nest-event-listener-wrapper.sh check-config
+   ~/.openclaw/bin/nest-event-listener-wrapper.sh migrate
    plutil -lint ~/Library/LaunchAgents/ai.openclaw.nest-event-listener.plist
    launchctl bootstrap "gui/$(id -u)" \
      ~/Library/LaunchAgents/ai.openclaw.nest-event-listener.plist
    ```
+
+   `migrate` is an operator-only, bounded state upgrade. It validates the
+   protected config, initializes or migrates the listener database, prints
+   only safe schema status, and never connects to Pub/Sub.
 
 Routine dotfiles pulls update the scripts and plist and reload an already
 loaded listener. They never create the credential, config, venv, or initial
@@ -210,6 +228,11 @@ The active reviewer has a deliberately narrow contract:
   the state-writing `cabin` or `evaluate` modes. Cached presence is checked
   again after capture and immediately before delivery; a newly occupied home
   discards the frame/commentary without reserving a message slot.
+- The live Cabin observation uses protected exact Starlink captive-client
+  bindings for Dylan and Julia. A match counts only with a live unexpired DHCP
+  lease and no more than five minutes of data idle time; client-name
+  substrings, device types, and generic iPhone fallbacks are forbidden. The
+  strict scanner remains an attended Cabin activation prerequisite.
 - A trigger waits eight seconds for the scene to settle and is discarded if it
   is over two minutes old. Repeated review work is limited to once per five
   minutes.
@@ -226,11 +249,19 @@ The active reviewer has a deliberately narrow contract:
 - The hard rolling limit is one **send attempt** per 3,600 seconds. The slot is
   written and fsynced before invoking iMessage. A send failure, timeout, or
   crash therefore burns the hour rather than risking a duplicate.
+- Delivery uses one bounded `imsg rpc` request with explicit
+  `transport: "bridge"`. Success requires a matching JSON-RPC response and a
+  validated bridge receipt; there is no AppleScript fallback. A safe delivery
+  error code remains in reviewer status across unrelated later runs and is
+  cleared only after a verified successful delivery.
 - Frames use random names in the owner-only image directory, must validate as
   a fresh mode-`0600` JPEG, and are deleted on every normal outcome. Startup
   removes a crash orphan before processing another event. No model commentary,
-  message body, chat target, image path, or raw SDM identifier is persisted or
-  logged; only a one-way summary hash and safe counters remain.
+  message body, chat target, delivery receipt, image path, or raw SDM
+  identifier is persisted or logged. Reviewer status retains only the
+  analysis decision class, urgency, confidence, notify boolean, summary length,
+  a one-way summary hash when a send is reserved, safe delivery error code,
+  and counters.
 
 The wrapper reads the protected cache only in a short-lived subshell to derive
 the numeric Dylan chat target, then starts the reviewer with `env -i`. It never
@@ -304,6 +335,33 @@ The first `initialize` records the current maximum listener outbox row as its
 baseline. A routine pull updates and reloads this job only after its plist has
 already been installed; it never silently performs first activation.
 
+### Attended home-event bridge activation
+
+The bridge is a separate disabled-by-default home-event LaunchAgent. Deploy the
+new listener and run `nest-event-listener-wrapper.sh migrate` first; the bridge
+requires listener database schema v2 and rejects v1. Schema v2 gives the
+outbox a durable SQLite AUTOINCREMENT watermark, so IDs cannot restart below a
+consumer cursor after retention empties the table. Then initialize and migrate
+the home-event bus, install the bridge script/plist, and set
+`HOME_EVENTS_NEST_ENABLED=1` only during an attended session. The first enabled
+run records the current Nest outbox watermark and emits zero events, so the
+historical validation corpus is not replayed. Verify that baseline before
+allowing the next organic or attended event to exercise the bridge. Afterward,
+the cursor advances only after each normalized event is durably accepted by
+the bus; listener database replacement or rewind fails closed.
+
+Routine dotfiles pulls enforce the same ordering. If the protected listener or
+home-event database does not already match its tracked source schema, the pull
+preserves the prior compatible runtime instead of copying or reloading the new
+components.
+
+The bridge maps exact configured cameras to the safe aliases `kitchen`,
+`living_room`, and `living_room_wired`. It emits
+`camera.person_detected` or `camera.motion_detected` plus site, source and
+observation times, and classification. A person event can join a site activity
+incident with Ring or August evidence. Motion remains queryable journal
+metadata but is non-actionable and cannot open or extend an incident.
+
 ## Operations
 
 Read the safe status projection:
@@ -311,16 +369,21 @@ Read the safe status projection:
 ```bash
 ~/.openclaw/bin/nest-event-listener-wrapper.sh status | jq .
 ~/.openclaw/bin/nest-activity-reviewer-wrapper.sh status | jq .
+home-events status --json | jq '.sources.nest'
+home-events recent --type camera.person_detected --since 24h --json
 launchctl print "gui/$(id -u)/ai.openclaw.nest-event-listener" \
+  | grep -E 'state =|pid =|last exit code'
+launchctl print "gui/$(id -u)/ai.openclaw.nest-home-event-bridge" \
   | grep -E 'state =|pid =|last exit code'
 ```
 
 Status and logs may contain aliases, sites, event classes, timestamps,
 counters, and sanitized error codes. They must never contain raw payloads,
 resource names, SDM/user/event IDs, credential fields, image URLs, chat
-targets, or message bodies. `status` and `check-config` write their safe JSON to
-the invoking terminal. Only `run` writes service logs; its streaming log writer
-continuously caps each file rather than waiting for a listener restart.
+targets, or message bodies. `status`, `check-config`, and `migrate` write their
+safe JSON to the invoking terminal. Only `run` writes service logs; its
+streaming log writer continuously caps each file rather than waiting for a
+listener restart.
 
 For a controlled single pull while the long-running job is stopped:
 
@@ -337,13 +400,17 @@ Do not run the one-shot consumer concurrently with the LaunchAgent.
 2. Perform an attended motion/person test in front of each of the three
    cameras. A devices-list resource update proves Pub/Sub connectivity but not
    camera-event delivery.
-3. Keep Cabin commentary presence-gated with the fixed one-hour cap. Validate
+3. Enable the home-event bridge only after its zero-event baseline. Verify one
+   future person event reaches the correct site and can join an activity
+   incident, while motion is retained without opening or extending one. Confirm
+   the bus contains no image, model output, provider ID, or resource name.
+4. Keep Cabin commentary presence-gated with the fixed one-hour cap. Validate
    occupied presence performs zero visual work and a confirmed-vacant empty
    Cabin frame is silent before performing a meaningful physical event.
-4. Keep Crosstown shadow-only until Cabin survives restart, a failed delivery
+5. Keep Crosstown shadow-only until Cabin survives restart, a failed delivery
    simulation, and a full one-hour retrigger test. Kitchen live capture must
    preserve the required H.264 `42e01f` negotiation.
-5. The temporary July 13–17 Cabin snapshot watch was retired after the active
+6. The temporary July 13–17 Cabin snapshot watch was retired after the active
    presence gate, exact-resource capture, restart behavior, and empty-Cabin
    silence passed. Pub/Sub plus the reviewer now owns that monitoring path;
    explicit image requests use the separate ephemeral flow above.
@@ -357,15 +424,21 @@ Current physical validation:
   capture, inference, or delivery, confirming Crosstown remains shadow.
 - **Kitchen / Cabin:** the exact resource-bound live capture, correlated vacant
   gate, live network veto, Codex image route, and high-confidence empty-frame
-  silence passed on 2026-07-11. A meaningful physical event is still pending.
+  silence passed on 2026-07-11. On 2026-07-13 a meaningful person event passed
+  both presence gates and vision selected notification, but the former direct
+  iMessage subprocess timed out before a local Messages record existed. The
+  privacy contract correctly retained no description, so the observation
+  cannot be reconstructed. The explicit RPC bridge transport still needs a
+  verified organic or attended delivery after deployment.
 - **Living Room / Crosstown:** pending; the camera was unavailable during the
   first attended attempt.
 
-Pub/Sub acknowledgement occurs only after the delivery and shadow outbox
-decision commit to SQLite. Malformed or unsupported messages are safely
-tombstoned and acknowledged so they cannot become poison loops. The reviewer
-is outside that path. Its reserve-before-send rule prefers an occasional
-missed comment over a duplicate or burst of messages.
+Pub/Sub acknowledgement occurs only after the listener delivery and shadow
+outbox decision commit to SQLite. Malformed or unsupported messages are safely
+tombstoned and acknowledged so they cannot become poison loops. Both the
+reviewer and home-event bridge are outside that path. The reviewer's
+reserve-before-send rule prefers an occasional missed comment over a duplicate
+or burst of messages.
 
 ## Credential rotation
 

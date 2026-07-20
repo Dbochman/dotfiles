@@ -10,6 +10,7 @@ policy, and SQLite core so those pieces can be tested without Google packages.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import datetime as dt
 import hashlib
@@ -25,7 +26,7 @@ import threading
 from typing import Any, Callable, Mapping, Sequence
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STATUS_SCHEMA_VERSION = 1
 SERVICE_NAME = "nest-event-listener"
 RETENTION_DAYS = 30
@@ -550,7 +551,7 @@ class StateStore:
             update_count INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS outbox (
-            id INTEGER PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_record_id INTEGER NOT NULL UNIQUE REFERENCES event_records(id),
             alias TEXT NOT NULL,
             site TEXT NOT NULL,
@@ -583,13 +584,16 @@ class StateStore:
             ON sdm_dedupe(first_inbox_id);
         """
         now = self._now()
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
             connection.executescript(schema)
             versions = connection.execute("SELECT version FROM schema_meta").fetchall()
             if not versions:
                 connection.execute(
                     "INSERT INTO schema_meta(version) VALUES (?)", (SCHEMA_VERSION,)
                 )
+            elif len(versions) == 1 and versions[0]["version"] == 1:
+                self._migrate_v1_to_v2(connection)
             elif len(versions) != 1 or versions[0]["version"] != SCHEMA_VERSION:
                 raise ConfigError("database_schema")
             connection.execute(
@@ -608,7 +612,92 @@ class StateStore:
                 (self.settings.mode, now, now),
             )
             self._prune(connection, now)
+            connection.commit()
+        finally:
+            connection.close()
         self._write_status_best_effort()
+
+    @staticmethod
+    def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+        """Make outbox IDs durable high-water marks across full pruning.
+
+        The home-event bridge consumes the listener outbox by increasing ID.
+        SQLite may reuse low row IDs after an ordinary INTEGER PRIMARY KEY
+        table becomes empty, so rebuild only that table with AUTOINCREMENT.
+        Existing IDs and foreign-key relationships remain unchanged. The
+        lifetime accepted-event counter seeds the sequence when legacy
+        retention has already removed the previous highest row.
+        """
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            maximum_row = connection.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM outbox"
+            ).fetchone()
+            accepted_row = connection.execute(
+                "SELECT value FROM service_counters WHERE name = 'accepted_events'"
+            ).fetchone()
+            sequence_floor = maximum_row[0] if maximum_row is not None else 0
+            accepted_events = accepted_row[0] if accepted_row is not None else 0
+            if any(
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+                for value in (sequence_floor, accepted_events)
+            ):
+                raise ConfigError("database_migration_integrity")
+            sequence_floor = max(sequence_floor, accepted_events)
+            connection.execute(
+                """
+                CREATE TABLE outbox_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_record_id INTEGER NOT NULL UNIQUE REFERENCES event_records(id),
+                    alias TEXT NOT NULL,
+                    site TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_at TEXT NOT NULL,
+                    capture_strategy TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('shadowed', 'pending', 'sent', 'failed')),
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO outbox_v2(
+                    id, event_record_id, alias, site, event_type, event_at,
+                    capture_strategy, status, created_at
+                )
+                SELECT id, event_record_id, alias, site, event_type, event_at,
+                       capture_strategy, status, created_at
+                FROM outbox
+                ORDER BY id
+                """
+            )
+            connection.execute("DROP TABLE outbox")
+            connection.execute("ALTER TABLE outbox_v2 RENAME TO outbox")
+            connection.execute("DELETE FROM sqlite_sequence WHERE name = 'outbox'")
+            if sequence_floor:
+                connection.execute(
+                    "INSERT INTO sqlite_sequence(name, seq) VALUES ('outbox', ?)",
+                    (sequence_floor,),
+                )
+            connection.execute(
+                "UPDATE schema_meta SET version = ? WHERE version = 1",
+                (SCHEMA_VERSION,),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            integrity = connection.execute("PRAGMA quick_check").fetchone()
+            if integrity is None or integrity[0] != "ok":
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ConfigError("database_foreign_keys")
 
     @staticmethod
     def _increment(connection: sqlite3.Connection, name: str, amount: int = 1) -> None:
@@ -685,7 +774,7 @@ class StateStore:
             envelope = None
             payload_error = exc.code
 
-        with self._connect() as connection:
+        with contextlib.closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             self._prune(connection, received_at)
             self._increment(connection, "deliveries_total")
@@ -916,7 +1005,7 @@ class StateStore:
         if not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", code):
             code = "runtime_error"
         now = self._now()
-        with self._connect() as connection:
+        with contextlib.closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 UPDATE runtime_status SET
@@ -930,7 +1019,7 @@ class StateStore:
 
     def mark_running(self) -> None:
         now = self._now()
-        with self._connect() as connection:
+        with contextlib.closing(self._connect()) as connection, connection:
             connection.execute(
                 """
                 UPDATE runtime_status SET health = 'ok', updated_at = ?
@@ -941,7 +1030,7 @@ class StateStore:
         self._write_status_best_effort()
 
     def status_snapshot(self) -> dict[str, Any]:
-        with self._connect() as connection:
+        with contextlib.closing(self._connect()) as connection, connection:
             status = connection.execute(
                 "SELECT * FROM runtime_status WHERE singleton = 1"
             ).fetchone()
@@ -1356,6 +1445,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "check-config", help="validate config and print a redacted summary"
     )
+    subparsers.add_parser(
+        "migrate", help="initialize or migrate protected state without consuming events"
+    )
     return parser
 
 
@@ -1392,6 +1484,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     try:
+        if args.command == "migrate":
+            StateStore(settings)
+            print(
+                json.dumps(
+                    {
+                        "schemaVersion": STATUS_SCHEMA_VERSION,
+                        "service": SERVICE_NAME,
+                        "status": "ready",
+                        "databaseSchemaVersion": SCHEMA_VERSION,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
         return run_listener(settings, once=bool(args.once))
     except (ConfigError, RuntimeDependencyError) as exc:
         emit_log("error", "listener_failed", code=exc.code)

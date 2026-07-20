@@ -11,6 +11,7 @@ PRESENCE_DIR="$TEST_HOME/.openclaw/presence"
 MARKER_DIR="$PRESENCE_DIR/vacancy-dispatched"
 CALLS_FILE="$TEST_HOME/device-calls"
 FAKE_BIN="$TEST_HOME/fake-bin"
+FAKE_PRESENCE_SCANNER="$TEST_HOME/fake-presence-scanner"
 
 mkdir -p \
   "$PRESENCE_DIR" \
@@ -45,6 +46,12 @@ for command_name in \
   ln -s device-recorder "$FAKE_BIN/$command_name"
 done
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  '[[ "$*" == "validate-config cabin" && "${FAKE_CABIN_ENROLLMENT_ACTIVE:-0}" == "1" ]]' \
+  > "$FAKE_PRESENCE_SCANNER"
+chmod +x "$FAKE_PRESENCE_SCANNER"
+
 export FAKE_CALLS="$CALLS_FILE"
 
 write_state() {
@@ -67,6 +74,7 @@ run_vacancy_actions() {
   HOME="$TEST_HOME" \
     PATH="$FAKE_BIN:/usr/bin:/bin" \
     IMSG_BIN="$TEST_HOME/no-imsg" \
+    PRESENCE_SCANNER="$FAKE_PRESENCE_SCANNER" \
     bash "$SCRIPT"
 }
 
@@ -115,28 +123,34 @@ touch -t 202001010000 "$MARKER_DIR/8sleep-julia-home"
 run_vacancy_actions
 test ! -s "$CALLS_FILE"
 
-# A positive sticky relocation changes marker content and moves both people.
+# Before Julia's strict Cabin enrollment, a positive Cabin location moves Dylan
+# but pins Julia to Crosstown rather than trusting the permissive fallback.
 write_state possibly_vacant possibly_vacant cabin cabin
 : > "$CALLS_FILE"
 run_vacancy_actions
 
 assert_call 8sleep --location cabin home dylan
-assert_call 8sleep --location cabin home julia
-assert_call_count 2
+if grep -Fq $'8sleep\t--location\tcabin\thome\tjulia' "$CALLS_FILE"; then
+  echo "unenrolled Julia was relocated to the Cabin Pod" >&2
+  exit 1
+fi
+assert_call_count 1
 test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown"
+grep -Fq 'Pinning Eight Sleep julia to crosstown' \
+  "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
 
-# Split households reconcile each person independently to their own location.
+# The same interim pin applies when only Julia is assigned to the Cabin.
 rm -f "$MARKER_DIR/8sleep-dylan-home" "$MARKER_DIR/8sleep-julia-home"
 write_state possibly_vacant possibly_vacant crosstown cabin
 : > "$CALLS_FILE"
 run_vacancy_actions
 
 assert_call 8sleep --location crosstown home dylan
-assert_call 8sleep --location cabin home julia
+assert_call 8sleep --location crosstown home julia
 assert_call_count 2
 test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown"
 
 # Unknown locations are a no-op and preserve the last proven home assignment.
 write_state possibly_vacant possibly_vacant unknown cabin
@@ -144,12 +158,14 @@ write_state possibly_vacant possibly_vacant unknown cabin
 run_vacancy_actions
 test ! -s "$CALLS_FILE"
 test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown"
 
-# A partial per-person failure writes only the successful marker. The next
-# identical state retries only the failed person and leaves no staging files.
+# Once the deployed strict scanner validates the production enrollment, Julia
+# can move to the Cabin again. A partial failure still writes only the
+# successful marker; the next identical state retries only the failed person.
 rm -f "$MARKER_DIR/8sleep-dylan-home" "$MARKER_DIR/8sleep-julia-home"
 write_state possibly_vacant possibly_vacant cabin cabin
+export FAKE_CABIN_ENROLLMENT_ACTIVE=1
 export FAKE_8SLEEP_FAIL_ARGS="--location cabin home julia"
 : > "$CALLS_FILE"
 run_vacancy_actions
@@ -166,6 +182,7 @@ run_vacancy_actions
 assert_call 8sleep --location cabin home julia
 assert_call_count 1
 test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin"
+unset FAKE_CABIN_ENROLLMENT_ACTIVE
 if find "$MARKER_DIR" -name '8sleep-*-home.*' -print -quit | grep -q .; then
   echo "Eight Sleep home marker staging file was not cleaned up" >&2
   exit 1
@@ -218,7 +235,7 @@ grep -Fq 'cabin Roomba automation: SKIPPED (snoozed)' \
 rm -f "$MARKER_DIR/crosstown"
 write_state confirmed_vacant occupied cabin cabin
 printf '%s\n' cabin > "$MARKER_DIR/8sleep-dylan-home"
-printf '%s\n' cabin > "$MARKER_DIR/8sleep-julia-home"
+printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
 : > "$CALLS_FILE"
 run_vacancy_actions
 
