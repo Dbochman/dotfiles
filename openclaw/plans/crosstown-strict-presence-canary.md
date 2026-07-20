@@ -6,14 +6,23 @@ READY FOR READ-ONLY SHADOW SAMPLING — the protected Crosstown JSON binding
 validates, but production remains on the preserved legacy scanner until the
 exact strict source hash passes this canary and receives a site-local approval.
 
-Safe progress as of `2026-07-20T11:02:59Z`: binding parity and strict config
-validation passed; the first same-window shadow sample had sanitized output,
-unchanged canonical state, zero decision mismatches, and at most two minutes of
-timestamp skew. One comparison against an older scheduled snapshot was
-discarded because it differed by one boolean; the immediate same-window check
-showed parity, confirming snapshot age rather than accepting the mismatch.
-Three real-cadence samples and the remaining scenario evidence are still
-required. Both site-local approval files remain absent.
+Preliminary progress at `2026-07-20T11:02:59Z`: binding parity and strict
+config validation passed; a same-window shadow comparison had sanitized
+output, unchanged canonical state, zero decision mismatches, and at most two
+minutes of timestamp skew. One comparison against an older scheduled snapshot
+was discarded because it differed by one boolean outside the accepted
+comparison window. The later same-window check showed parity but did not
+explain or erase that earlier mismatch, so it is not counted as passing
+evidence.
+
+At `2026-07-20T11:41:02Z`, `presence-crosstown-canary` completed the first
+tracked real-cadence acceptance sample for strict source hash
+`d9344a286c718b049c40d665013e9c6ff224274c6048812b8bd4bb19303d1482`.
+Config and binding parity were true, strict output was sanitized, canonical
+state was unchanged, the mismatch count was zero, and timestamp skew was at
+most 30 seconds. This is sample 1 of 4; three real-cadence samples and the
+remaining scenario evidence are still required. Both site-local approval
+files remain absent.
 
 At `2026-07-20T11:32:31Z`, the one-time updater bootstrap below completed from
 clean commit `a8c945f`: the tracked and runtime updater hashes both verified as
