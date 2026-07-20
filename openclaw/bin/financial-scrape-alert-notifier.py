@@ -47,6 +47,7 @@ MAX_SENDS_PER_RUN = 16
 MESSAGE_MAX_BYTES = 1_500
 COMMAND_READ_BYTES = 4 * 1024
 SEND_TIMEOUT_SECONDS = 20
+IMSG_RPC_REQUEST_ID = "financial-scrape-alert-send"
 PROCESS_GROUP_GRACE_SECONDS = 2
 PROCESS_GROUP_POLL_SECONDS = 0.05
 SCAN_CURSOR_CONTRACT_VERSION = 1
@@ -675,7 +676,7 @@ def _signal_process_group(process, signum):
 def _close_process_pipes(process):
     if process is None:
         return
-    for stream in (process.stdout, process.stderr):
+    for stream in (process.stdin, process.stdout, process.stderr):
         if stream is not None:
             try:
                 stream.close()
@@ -731,25 +732,41 @@ def _terminate_process_group(process):
         pass
 
 
-def run_bounded_command(arguments, environment, timeout_seconds):
+def run_bounded_command(
+    arguments,
+    environment,
+    timeout_seconds,
+    *,
+    stdin_data=None,
+):
+    if stdin_data is not None and (
+        not isinstance(stdin_data, bytes)
+        or not stdin_data
+        or len(stdin_data) > MAX_COMMAND_BYTES
+    ):
+        raise ValueError("bounded command input is invalid")
     process = None
     selector = selectors.DefaultSelector()
     stdout = bytearray()
     stderr = bytearray()
+    stdin_offset = 0
     timed_out = False
     output_rejected = False
     try:
         process = subprocess.Popen(
             arguments,
             env=environment,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        selector.register(process.stdout, selectors.EVENT_READ, stdout)
-        selector.register(process.stderr, selectors.EVENT_READ, stderr)
         deadline = time.monotonic() + timeout_seconds
+        selector.register(process.stdout, selectors.EVENT_READ, ("read", stdout))
+        selector.register(process.stderr, selectors.EVENT_READ, ("read", stderr))
+        if stdin_data is not None:
+            os.set_blocking(process.stdin.fileno(), False)
+            selector.register(process.stdin, selectors.EVENT_WRITE, ("write", None))
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -763,6 +780,23 @@ def run_bounded_command(arguments, environment, timeout_seconds):
                     break
                 continue
             for key, _mask in events:
+                operation, buffer = key.data
+                if operation == "write":
+                    try:
+                        written = os.write(
+                            key.fileobj.fileno(), stdin_data[stdin_offset:]
+                        )
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                        continue
+                    stdin_offset += written
+                    if stdin_offset == len(stdin_data):
+                        selector.unregister(key.fileobj)
+                        key.fileobj.close()
+                    continue
                 try:
                     chunk = os.read(key.fileobj.fileno(), COMMAND_READ_BYTES)
                 except OSError:
@@ -770,7 +804,6 @@ def run_bounded_command(arguments, environment, timeout_seconds):
                 if not chunk:
                     selector.unregister(key.fileobj)
                     continue
-                buffer = key.data
                 if len(buffer) + len(chunk) > MAX_COMMAND_BYTES:
                     output_rejected = True
                     break
@@ -816,19 +849,25 @@ def send_imessage(chat_id, message):
         "PATH": "/opt/homebrew/bin:/usr/bin:/bin",
         "LANG": "en_US.UTF-8",
     }
+    request = {
+        "jsonrpc": "2.0",
+        "id": IMSG_RPC_REQUEST_ID,
+        "method": "send",
+        "params": {
+            "chat_id": int(chat_id),
+            "text": message,
+            "transport": "bridge",
+        },
+    }
+    encoded_request = (
+        json.dumps(request, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
     try:
         completed = run_bounded_command(
-            [
-                str(IMSG_BIN),
-                "send",
-                "--chat-id",
-                chat_id,
-                "--text",
-                message,
-                "--json",
-            ],
+            [str(IMSG_BIN), "rpc"],
             child_env,
             SEND_TIMEOUT_SECONDS,
+            stdin_data=encoded_request,
         )
     except OSError as error:
         raise DeliveryError("imsg_unavailable") from error
@@ -847,8 +886,14 @@ def send_imessage(chat_id, message):
         raise DeliveryError("receipt_invalid") from error
     if (
         not isinstance(receipt, dict)
-        or receipt.get("status") != "sent"
+        or set(receipt) != {"jsonrpc", "id", "result"}
+        or receipt.get("jsonrpc") != "2.0"
+        or receipt.get("id") != IMSG_RPC_REQUEST_ID
+        or not isinstance(receipt.get("result"), dict)
+        or receipt["result"].get("ok") is not True
+        or receipt["result"].get("transport") != "bridge"
         or any(not isinstance(key, str) for key in receipt)
+        or any(not isinstance(key, str) for key in receipt["result"])
     ):
         raise DeliveryError("receipt_invalid")
 
