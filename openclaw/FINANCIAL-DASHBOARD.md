@@ -154,15 +154,37 @@ Seven scrapers run weekly via `financial-scrape-0001`, which invokes the determi
 | 2 | `scrape_eversource.py` | 2 self-heal | Playwright + `--re-auth` flag | `www.eversource.com` | Crosstown |
 | 3 | `scrape_national_grid_electric.py` | 2 self-heal | Playwright + `--re-auth` (shared NG session) | `login.nationalgridus.com` | Cabin |
 | 4 | `scrape_national_grid.py` (gas) | 2 self-heal | Playwright + `--re-auth` (shared NG session) | `login.nationalgridus.com` | Crosstown |
-| 5 | `scrape_bwsc.py` | 2 self-heal | Playwright + `--re-auth` (Microsoft B2C) | `umaxcustomerportalprod.b2clogin.com` | Crosstown |
+| 5 | `scrape_bwsc.py` | **1/2 hybrid self-heal** | Saved-session HTTP fast path; one Playwright confirmation/recovery; guarded `--re-auth` (Microsoft B2C) | `umaxcustomerportalprod.b2clogin.com` | Crosstown |
 | 6 | `scrape_mortgage.py --lender pennymac` | 2 self-heal | Playwright + `--re-auth` + email-MFA via `gws` | `PennyMac` | Cabin |
 | 7 | `scrape_mortgage.py --lender boa` | **Cookie replay + 2b fallback** | Direct `requests` cookie replay; raw CDP attach to Pinchtab Chrome; one guarded cron re-auth after explicit tab sign-out | `Bank of America` | Crosstown |
 
 **Why BoA is different.** BoA's bot detection defeats every Playwright-launched variant tried (headless old + new, channel=chrome, ignore-default-args, navigator.webdriver hidden, and force_visible). The browser fallback must attach to a Chrome that Pinchtab, not Playwright, launched. Chrome 149 also rejects Playwright's `connect_over_cdp` during `Browser.setDownloadBehavior`, so the scraper uses a narrow raw-CDP WebSocket shim instead.
 
+**How BWSC's hybrid path works.** The scheduled command remains
+`scrape_bwsc.py --headless --merge`. It first reads the owner-only mode-`0600`
+Playwright storage state, sends only secure portal-scoped cookies to the exact
+BWSC portal to mint a short-lived JWT, and calls the exact CSS API from a
+separate cookie-free HTTP session. Redirects are disabled and response size,
+schema, dates, values, freshness, and continuity are validated before an
+atomic output replacement. Unsafe local state fails closed. Direct auth
+rejection gets one Playwright confirmation; direct transport or contract
+uncertainty gets one Playwright recovery attempt. `--browser-only` is the
+operator rollback path. Only the fixed `ERROR: BWSC authentication required`
+result reaches the guarded credential flow below; other safe failures neither
+receive credentials nor import the prior artifact. On success the scraper emits
+one fixed `BWSC_PATH` mode; the wrapper discards all other child output and
+retains only `direct_http`, `browser_recovery`, `browser_only`, or
+`browser_explicit` in its safe source status so persistent fallback is visible.
+The attended July 2026 parity check confirmed that BWSC's authenticated SPA uses
+the exact `/account/`, `/billing/`, and `/usage/` routes and that its token
+endpoint double-encodes the JSON string for the Requests client. The scraper
+unwraps no more than two JSON-string layers and still requires a strict JWT;
+browser authentication requires a fresh exact-portal token rather than a title
+alone.
+
 ### How Tier 2 self-heal works
 
-When a Tier 2 scraper's session expires, the next `--headless` run exits with "Session expired and running in headless mode". The deterministic weekly helper then:
+When a Tier 2 scraper reports a recognized authentication-required marker, the deterministic weekly helper then:
 1. Loads the five provider profiles from the dedicated owner-only mode-`0600` JSON cache at `~/.openclaw/financial-dashboard/scraper-credentials.json`, then selects only that provider's username/password pair. The attended refresh helper populated this file from exact `OP_REF_FINANCE_*` fields. The file is never sourced or exported by the gateway, and the cron process never reads `.env-token`, receives a service-account token, or invokes `op`.
 2. Runs `./venv/bin/python3 scrape_<name>.py --re-auth --headless`. This drives the login flow programmatically via Playwright, handles MFA where needed (PennyMac auto-fetches the 6-digit `PM-NNNNNNN` code from Julia's Gmail via `gws`), and saves `storage_state.json` in the scraper's `.NAME_session/` dir.
 3. Re-runs the normal scrape, which now finds fresh cookies and pulls data.

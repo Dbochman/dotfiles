@@ -149,6 +149,26 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                     )
                 )
 
+    def test_bwsc_requires_the_exact_fixed_auth_line(self):
+        exact = weekly_financial_scrape.CommandResult(
+            1,
+            stderr="ERROR: BWSC authentication required",
+        )
+        self.assertTrue(weekly_financial_scrape.is_auth_failure(exact, "bwsc"))
+
+        for stderr in (
+            "prefix ERROR: BWSC authentication required",
+            "ERROR: BWSC authentication required extra",
+            "provider says authentication required",
+        ):
+            with self.subTest(stderr=stderr):
+                self.assertFalse(
+                    weekly_financial_scrape.is_auth_failure(
+                        weekly_financial_scrape.CommandResult(1, stderr=stderr),
+                        "bwsc",
+                    )
+                )
+
     def test_credentials_are_scoped_to_one_reauth_child(self):
         credential_env = weekly_financial_scrape.credentials_for(
             "eversource",
@@ -746,6 +766,131 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         self.assertEqual(result["scrape"], "ok")
         self.assertEqual(result["reauth"], "ok")
         self.assertEqual(result["import"], "ok")
+
+    def test_bwsc_auth_marker_runs_one_guarded_reauth_retry_and_import(self):
+        source = self.source_named("bwsc")
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stderr="ERROR: BWSC authentication required",
+                ),
+                weekly_financial_scrape.CommandResult(0),
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="BWSC_PATH: direct_http",
+                ),
+                weekly_financial_scrape.CommandResult(0),
+            ]
+        )
+        calls = []
+
+        def fake_run(arguments, env, timeout=weekly_financial_scrape.COMMAND_TIMEOUT_SECONDS):
+            calls.append((arguments, dict(env)))
+            return next(responses)
+
+        credential_env = {
+            **self.BASE_ENV,
+            "SCRAPER_USER": "private-bwsc-user",
+            "SCRAPER_PW": "private-bwsc-password",
+        }
+        with (
+            patch.object(weekly_financial_scrape, "run_command", side_effect=fake_run),
+            patch.object(
+                weekly_financial_scrape,
+                "credentials_for",
+                return_value=credential_env,
+            ) as credentials,
+        ):
+            result = weekly_financial_scrape.run_standard_source(
+                source,
+                self.RUN_ID,
+                self.BASE_ENV,
+                self.CREDENTIAL_STORE,
+            )
+
+        credentials.assert_called_once_with(
+            "bwsc",
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+        )
+        self.assertEqual(
+            [arguments for arguments, _ in calls],
+            [
+                source.scrape_args,
+                source.reauth_args,
+                source.scrape_args,
+                source.import_args,
+            ],
+        )
+        self.assertTrue(all("--browser-only" not in arguments for arguments, _ in calls))
+        for index in (0, 2, 3):
+            self.assertNotIn("SCRAPER_USER", calls[index][1])
+            self.assertNotIn("SCRAPER_PW", calls[index][1])
+        self.assertEqual(calls[1][1]["SCRAPER_USER"], "private-bwsc-user")
+        self.assertEqual(calls[1][1]["SCRAPER_PW"], "private-bwsc-password")
+        self.assertEqual(
+            result,
+            {
+                "source": "bwsc",
+                "scrape": "ok",
+                "reauth": "ok",
+                "import": "ok",
+                "path": "direct_http",
+            },
+        )
+
+    def test_bwsc_non_auth_safe_failures_never_release_credentials_or_import(self):
+        source = self.source_named("bwsc")
+        for marker in (
+            "ERROR: BWSC request unavailable",
+            "ERROR: BWSC API contract validation failed",
+        ):
+            with self.subTest(marker=marker):
+                with (
+                    patch.object(
+                        weekly_financial_scrape,
+                        "run_command",
+                        return_value=weekly_financial_scrape.CommandResult(
+                            1,
+                            stderr=marker,
+                        ),
+                    ) as run_command,
+                    patch.object(
+                        weekly_financial_scrape,
+                        "credentials_for",
+                    ) as credentials,
+                ):
+                    result = weekly_financial_scrape.run_standard_source(
+                        source,
+                        self.RUN_ID,
+                        self.BASE_ENV,
+                        self.CREDENTIAL_STORE,
+                    )
+
+                run_command.assert_called_once_with(source.scrape_args, self.BASE_ENV)
+                credentials.assert_not_called()
+                self.assertEqual(result["scrape"], "failed")
+                self.assertEqual(result["reauth"], "not_needed")
+                self.assertEqual(result["import"], "skipped")
+                self.assertEqual(result["path"], "not_observed")
+
+    def test_bwsc_path_parser_rejects_unknown_or_ambiguous_markers(self):
+        self.assertEqual(
+            weekly_financial_scrape.parse_bwsc_path("BWSC_PATH: browser_recovery"),
+            "browser_recovery",
+        )
+        for output in (
+            "BWSC_PATH: provider-private-value",
+            "BWSC_PATH: direct_http\nBWSC_PATH: browser_recovery",
+            "prefix BWSC_PATH: direct_http",
+            "",
+        ):
+            with self.subTest(output=output):
+                self.assertEqual(
+                    weekly_financial_scrape.parse_bwsc_path(output),
+                    "unknown",
+                )
 
     def test_pennymac_propagates_run_id_and_guards_import(self):
         source = self.source_named("pennymac")

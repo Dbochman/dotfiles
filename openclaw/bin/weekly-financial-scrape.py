@@ -2,7 +2,8 @@
 """Deterministic weekly financial scrape orchestration.
 
 Child scraper output is captured in memory and never relayed to scheduled logs.
-Only source names, phase states, and the safe mortgage run ID are emitted.
+Only source names, phase states, BWSC's fixed path mode, and the safe mortgage
+run ID are emitted.
 """
 
 from __future__ import annotations
@@ -180,6 +181,13 @@ AUTH_FAILURE_MARKERS = (
     "please log in",
     "requires interactive login",
 )
+BWSC_AUTH_MARKER = "ERROR: BWSC authentication required"
+BWSC_PATH_MODES = frozenset({
+    "direct_http",
+    "browser_recovery",
+    "browser_only",
+    "browser_explicit",
+})
 
 BOA_REAUTH_SAFE_STATUSES = frozenset({
     "already_authenticated",
@@ -551,9 +559,27 @@ def command_status(result):
     return "ok" if result.returncode == 0 else "failed"
 
 
-def is_auth_failure(result):
+def is_auth_failure(result, source_name=None):
+    if source_name == "bwsc":
+        return any(
+            line.strip() == BWSC_AUTH_MARKER
+            for line in result.output.splitlines()
+        )
     output = result.output.lower()
     return any(marker in output for marker in AUTH_FAILURE_MARKERS)
+
+
+def parse_bwsc_path(output):
+    """Retain one exact, data-free scraper path marker and nothing else."""
+    modes = []
+    pattern = re.compile(r"^BWSC_PATH:\s*([a-z_]+)$")
+    for line in output.splitlines():
+        match = pattern.fullmatch(line.strip())
+        if match:
+            modes.append(match.group(1))
+    if len(modes) == 1 and modes[0] in BWSC_PATH_MODES:
+        return modes[0]
+    return "unknown"
 
 
 def with_run_id(arguments, run_id, mortgage_source):
@@ -573,7 +599,11 @@ def run_standard_source(source, run_id, env, credential_store=None):
     scrape = run_command(scrape_args, env)
     reauth_status = "not_needed"
 
-    if scrape.returncode != 0 and source.reauth_args and is_auth_failure(scrape):
+    if (
+        scrape.returncode != 0
+        and source.reauth_args
+        and is_auth_failure(scrape, source.name)
+    ):
         credential_env = credentials_for(
             source.credential_profile,
             env,
@@ -595,6 +625,12 @@ def run_standard_source(source, run_id, env, credential_store=None):
         "reauth": reauth_status,
         "import": "skipped",
     }
+    if source.name == "bwsc":
+        result["path"] = (
+            parse_bwsc_path(scrape.output)
+            if scrape.returncode == 0
+            else "not_observed"
+        )
     if scrape.returncode == 0:
         imported = run_command(guarded_import_args(source, run_id), env)
         result["import"] = command_status(imported)
