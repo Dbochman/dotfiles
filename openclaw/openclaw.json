@@ -218,6 +218,43 @@
       }
     }
   },
+  "mcp": {
+    "servers": {
+      "ola": {
+        "url": "https://olachat.com/mcp",
+        "transport": "streamable-http",
+        "connectTimeout": 10,
+        "timeout": 30,
+        "supportsParallelToolCalls": false,
+        "headers": {
+          "Authorization": "Bearer ${OLA_API_KEY}",
+          "User-Agent": "OpenClaw-Codex-MCP/1.0"
+        },
+        "toolFilter": {
+          "include": [
+            "get_inbox",
+            "get_messages",
+            "send_message"
+          ]
+        },
+        "codex": {
+          "agents": [
+            "main"
+          ],
+          "defaultToolsApprovalMode": "approve"
+        }
+      }
+    }
+  },
+  "hooks": {
+    "enabled": true,
+    "token": "${OLA_HOOK_TOKEN}",
+    "path": "/hooks",
+    "maxBodyBytes": 16384,
+    "defaultSessionKey": "hook:ola",
+    "allowRequestSessionKey": false,
+    "allowedAgentIds": []
+  },
   "gateway": {
     "port": 18789,
     "mode": "local",

@@ -20,6 +20,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary over explicit iMessage RPC bridge transport, hard-limited to one send attempt/hour |
+| `ai.openclaw.ola-webhook-bridge` | `ola-webhook-bridge-wrapper.sh` | 18790 loopback | Verifies Ola's public HMAC-signed wake and relays it to the private OpenClaw hook token |
 | `ai.openclaw.reachy-gateway-tunnel` | `ssh -R` | Reachy loopback 18789 | Keeps a token-authenticated path from Crosstown Reachy Mini to the Mac mini's loopback-only gateway |
 | `ai.openclaw.reachy-gateway-upstream` | `ssh -L` | Crosstown MBP loopback 28789 | Carries the Mac mini's loopback-only gateway to the always-on Crosstown MBP without exposing it on Tailscale or the LAN |
 | `ai.openclaw.reachy-gateway-relay` | `ssh -R` | Reachy loopback 18789 | Runs on the Crosstown MBP and publishes its private upstream gateway hop only on Reachy's loopback interface |
@@ -57,6 +58,24 @@ dotfiles pulls update and reload either job only after its installed plist
 exists. See
 [`NEST-EVENTS.md`](NEST-EVENTS.md) for the cloud IAM contract, protected
 runtime layout, checks, and rollout gates.
+
+### Ola Webhook Bridge
+
+`ai.openclaw.ola-webhook-bridge` is the authentication boundary between Ola's
+public callback and OpenClaw's loopback-only `/hooks/wake` endpoint. Tailscale
+Funnel exposes only the bridge path on HTTPS port 10000. The Python service
+binds to `127.0.0.1:18790`, verifies `X-Hub-Signature-256` over the raw request
+body, requires a JSON-object envelope, then discards its fields and sends a
+fixed content-free wake to `127.0.0.1:18789` with the separate private OpenClaw
+hook token. It does not inspect or log message content and never invokes `op`.
+
+Initial secret enrollment and bootstrap are attended. Routine script updates
+flow through the normal `~/.openclaw/bin` deployment, which reloads an already
+loaded bridge when its runtime changes but never performs the first bootstrap.
+The LaunchAgent must not be bootstrapped until `OLA_WEBHOOK_SECRET` and
+`OLA_HOOK_TOKEN` are both present in the protected cache. See
+[`OLA.md`](OLA.md) for enrollment, verification, rotation, Funnel routing, and
+rollback.
 
 ### Reachy Mini Gateway Tunnel
 

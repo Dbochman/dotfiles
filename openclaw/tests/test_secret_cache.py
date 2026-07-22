@@ -65,6 +65,9 @@ VAULT_KEYS = [
     "NEST_CLIENT_SECRET",
     "NEST_REFRESH_TOKEN",
     "NEST_PROJECT_ID",
+    "OLA_API_KEY",
+    "OLA_HOOK_TOKEN",
+    "OLA_WEBHOOK_SECRET",
 ]
 FINANCE_VAULT_KEYS = [
     "FINANCE_EVERSOURCE_USERNAME",
@@ -365,6 +368,8 @@ esac
         self.assertEqual(stat.S_IMODE(self.cache.stat().st_mode), 0o600)
         text = self.cache.read_text(encoding="utf-8")
         self.assertNotIn("OP_REF_", text)
+        for key in ("OLA_API_KEY", "OLA_HOOK_TOKEN", "OLA_WEBHOOK_SECRET"):
+            self.assertIn(f"{key}=", text)
         self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
         expected_calls = [
             f"read:ref://{key}"
@@ -564,6 +569,40 @@ esac
         self.assertNotEqual(returncode, 0)
         self.assertEqual(self.cache.read_bytes(), original)
         self.assertEqual(self.finance_cache.read_bytes(), original_finance)
+        self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
+        self.assertNotIn("fake-vault-", refresh_output)
+
+    def test_ola_hook_token_refresh_failure_preserves_last_good_cache(self) -> None:
+        self._write_assignments(self.seed, self.seed_values())
+        original = b"LAST_GOOD='keep the prior gateway environment'\n"
+        self.cache.parent.mkdir(parents=True, exist_ok=True)
+        self.cache.write_bytes(original)
+        self.cache.chmod(0o600)
+
+        returncode, refresh_output = self.run_refresh_in_pty(
+            "--interactive",
+            FAKE_OP_FAIL_KEY="OLA_HOOK_TOKEN",
+        )
+
+        self.assertNotEqual(returncode, 0)
+        self.assertEqual(self.cache.read_bytes(), original)
+        self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
+        self.assertNotIn("fake-vault-", refresh_output)
+
+    def test_ola_webhook_secret_refresh_failure_preserves_last_good_cache(self) -> None:
+        self._write_assignments(self.seed, self.seed_values())
+        original = b"LAST_GOOD='keep the prior gateway environment'\n"
+        self.cache.parent.mkdir(parents=True, exist_ok=True)
+        self.cache.write_bytes(original)
+        self.cache.chmod(0o600)
+
+        returncode, refresh_output = self.run_refresh_in_pty(
+            "--interactive",
+            FAKE_OP_FAIL_KEY="OLA_WEBHOOK_SECRET",
+        )
+
+        self.assertNotEqual(returncode, 0)
+        self.assertEqual(self.cache.read_bytes(), original)
         self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
         self.assertNotIn("fake-vault-", refresh_output)
 

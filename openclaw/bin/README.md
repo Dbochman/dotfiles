@@ -26,6 +26,8 @@ active post-deploy checks.
 | Script | Location on Mini | Description |
 |--------|-----------------|-------------|
 | `openclaw-refresh-secrets` | `~/bin/` | Attended exact-field refresh of `~/.openclaw/.secrets-cache` plus the optional complete dedicated finance cache; run with `--interactive` after key rotation, never from launchd/cron. |
+| `ola-webhook-bridge.py` | `~/.openclaw/bin/` | Loopback-only Ola callback boundary. Verifies the raw-body HMAC, discards the external envelope, and forwards one fixed content-free wake to OpenClaw with a separate private hook token. |
+| `ola-webhook-bridge-wrapper.sh` | `~/.openclaw/bin/` | Cache-only LaunchAgent wrapper for the Ola bridge; enforces protected-cache ownership, exports only the two required credentials into a clean environment, and never invokes `op`. |
 | `openai-memory-key` | `~/.openclaw/bin/` | Mode-restricted exec secret-provider helper for memory search. Emits the existing `openai:default` token from the agent auth database; never log or call it for diagnostics. |
 | `pinchtab-headless-instance` | `~/.openclaw/bin/` | Acquires, inventories, scopes, and releases managed headless PinchTab instances without navigating a visible browser. |
 | `presence-cabin-enroll` | `~/.openclaw/bin/` | Attended, operator-only Starlink identity enrollment and verification helper. It has no LaunchAgent or agent route, keeps raw IDs in owner-only staging, requires downstream jobs unloaded, and activates the protected Cabin binding only after the documented evidence gate. |

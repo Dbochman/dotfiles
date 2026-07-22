@@ -28,6 +28,7 @@ Each service uses one of two patterns:
 | Log file | Service | Description |
 |----------|---------|-------------|
 | `dog-walk-listener.log` | `ai.openclaw.dog-walk-listener` | Dog walk detection (Fi GPS departure, multi-signal return) |
+| `ola-webhook-bridge.log` / `.err.log` | `ai.openclaw.ola-webhook-bridge` | Owner-only operational metadata and stderr for the HMAC-verifying Ola wake bridge; never callback bodies, signatures, or credentials |
 | `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Cielo AC token refresh via pinchtab |
 | `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh; stdout and stderr share this file |
 | `~/Library/Logs/openclaw/gateway.log` | `ai.openclaw.gateway` | Current generated-service gateway output; the tracked recovery plist instead uses `~/.openclaw/logs/gateway.{log,err.log}` |
