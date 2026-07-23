@@ -122,9 +122,9 @@ if (not isinstance(value, dict) or not required.issubset(value)
     raise SystemExit(1)
 if value.get("ok") is not True or value.get("alias") != "front_door":
     raise SystemExit(1)
-if value.get("lock_state") not in {"locked", "unlocked"}:
+if value.get("lock_state") not in {"locked", "unlocked", "unknown"}:
     raise SystemExit(1)
-if value.get("door_state") not in {"open", "closed"}:
+if value.get("door_state") not in {"open", "closed", "unknown"}:
     raise SystemExit(1)
 observed_at = value.get("observed_at")
 if not isinstance(observed_at, str) or not observed_at or len(observed_at) > 64:

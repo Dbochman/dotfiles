@@ -185,9 +185,9 @@ def validate_observation(value: Any, *, allow_old: bool = False) -> dict[str, An
     alias = value.get("alias")
     if not isinstance(alias, str) or not SAFE_ALIAS_RE.fullmatch(alias):
         raise AdapterError("invalid_observation")
-    if value.get("lock_state") not in {"locked", "unlocked"}:
+    if value.get("lock_state") not in {"locked", "unlocked", "unknown"}:
         raise AdapterError("invalid_observation")
-    if value.get("door_state") not in {"open", "closed"}:
+    if value.get("door_state") not in {"open", "closed", "unknown"}:
         raise AdapterError("invalid_observation")
     observed_at = parse_timestamp(value.get("observed_at"))
     if not allow_old and observed_at > utc_now() + timedelta(minutes=5):
@@ -285,26 +285,38 @@ def transition_events(
                 attributes={"outage_seconds": outage_seconds},
             )
         )
-    if previous["lock_state"] != observation["lock_state"]:
+    previous_lock = previous["lock_state"]
+    current_lock = observation["lock_state"]
+    if (
+        previous_lock in {"locked", "unlocked"}
+        and current_lock in {"locked", "unlocked"}
+        and previous_lock != current_lock
+    ):
         events.append(
             make_event(
                 observation,
-                f"lock.{observation['lock_state']}",
+                f"lock.{current_lock}",
                 "lock",
-                previous["lock_state"],
-                observation["lock_state"],
+                previous_lock,
+                current_lock,
                 previous_good_at,
             )
         )
-    if previous["door_state"] != observation["door_state"]:
-        event_type = "door.opened" if observation["door_state"] == "open" else "door.closed"
+    previous_door = previous["door_state"]
+    current_door = observation["door_state"]
+    if (
+        previous_door in {"open", "closed"}
+        and current_door in {"open", "closed"}
+        and previous_door != current_door
+    ):
+        event_type = "door.opened" if current_door == "open" else "door.closed"
         events.append(
             make_event(
                 observation,
                 event_type,
                 "door",
-                previous["door_state"],
-                observation["door_state"],
+                previous_door,
+                current_door,
                 previous_good_at,
             )
         )

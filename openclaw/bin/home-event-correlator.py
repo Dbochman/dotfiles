@@ -34,6 +34,12 @@ ROUTINE_QUIET = timedelta(minutes=15)
 ACCESS_MAX_AGE = timedelta(hours=24)
 RATE_LIMIT = timedelta(hours=1)
 SAFE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+LOCAL_PRESENCE_SHADOW_COUNTERS = {
+    "presence.local_departure_inferred": "local_departure_inferred_shadowed",
+    "presence.local_arrival_observed": "local_arrival_observed_shadowed",
+    "presence.household_excursion_started": "household_excursion_started_shadowed",
+    "presence.household_excursion_ended": "household_excursion_ended_shadowed",
+}
 
 
 class CorrelatorError(Exception):
@@ -282,6 +288,13 @@ class ShadowCorrelator:
             connection.execute("BEGIN IMMEDIATE")
             if delivery.get("time_precision") == "backfill":
                 self._increment(connection, "ring_backfill_shadowed")
+            elif event_type in LOCAL_PRESENCE_SHADOW_COUNTERS:
+                # Local excursion observations are journal context only. In
+                # particular, a local network return is not a canonical
+                # resident arrival and must not change incident state.
+                self._increment(
+                    connection, LOCAL_PRESENCE_SHADOW_COUNTERS[event_type]
+                )
             elif event_type in {
                 "entry.doorbell_rang",
                 "entry.person_detected",
@@ -490,6 +503,12 @@ class ShadowCorrelator:
             ).fetchall()
             for incident in incidents:
                 if now - parse_time(incident["opened_at"]) < INCIDENT_GRACE:
+                    continue
+                existing_decision = connection.execute(
+                    "SELECT 1 FROM incident_decisions WHERE incident_id = ? LIMIT 1",
+                    (incident["id"],),
+                ).fetchone()
+                if existing_decision:
                     continue
                 existing = connection.execute(
                     "SELECT 1 FROM notification_outbox WHERE incident_id = ? LIMIT 1",

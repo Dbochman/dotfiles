@@ -80,6 +80,18 @@ run_component() {
         PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
         "$BIN/nest-home-event-bridge.py"
       ;;
+    presence-local)
+      /usr/bin/env -i HOME="$HOME" PATH="/opt/homebrew/bin:/usr/bin:/bin" \
+        HOME_EVENTS_ROOT="$ROOT" \
+        HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED="${HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED:-0}" \
+        HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED="${HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED:-0}" \
+        HOME_EVENTS_CABIN_SCAN="$HOME/.openclaw/presence/cabin-scan.json" \
+        HOME_EVENTS_CROSSTOWN_SCAN="$HOME/.openclaw/presence/crosstown-scan.json" \
+        HOME_EVENTS_PRESENCE_STATE="$HOME/.openclaw/presence/state.json" \
+        HOME_EVENTCTL="$BIN/home-eventctl" \
+        PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
+        "$BIN/presence-local-event-adapter.py"
+      ;;
     *) fail "unsupported component" ;;
   esac
 }

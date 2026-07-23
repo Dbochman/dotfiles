@@ -76,9 +76,10 @@ active post-deploy checks.
 | `home-eventctl` | Operator-only wrapper for `init`, `check-config`, producer `enqueue`, `ingest-once`, `status`, and `prune`; producers send strict JSON on stdin. |
 | `home-events` | Fixed-root, read-only JSON CLI exposed to the OpenClaw `home-events` skill for status, recent activity, incidents, and explanations. |
 | `home-event-correlator.py` | Persistent shadow-only correlator that claims durable consumer rows, applies fail-closed canonical presence context, groups site incidents, and records rate-limited shadow decisions without delivery or camera work. |
-| `home-event-service-wrapper.sh` | LaunchAgent boundary for ingestion, correlation, August polling, and Nest bridging; sanitizes the environment and writes one bounded owner-only operational log. |
+| `home-event-service-wrapper.sh` | LaunchAgent boundary for ingestion, correlation, August polling, Nest bridging, and local network-presence enrichment; sanitizes the environment and writes one bounded owner-only operational log. |
 | `august-event-adapter.py` | Disabled-by-default read-only August transition poller. Uses the exact protected MBP observe binding, baselines silently, and publishes through `home-eventctl` without a mutation path. |
 | `nest-home-event-bridge.py` | Disabled-by-default downstream reader of committed Nest listener rows. The first enabled run silently baselines prior rows; later person/motion records publish only normalized aliases, sites, times, and classifications, never media or model text. |
+| `presence-local-event-adapter.py` | Disabled-by-default shadow adapter for per-residence network arrivals, inferred departures, and household excursion intervals. It consumes only sanitized exact-binding booleans and cannot change canonical presence or physical state. |
 
 See [`../HOME-EVENTS.md`](../HOME-EVENTS.md) for the protected runtime,
 producer contracts, shadow rollout, and rollback procedure. The subsystem does

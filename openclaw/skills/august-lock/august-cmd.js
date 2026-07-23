@@ -262,7 +262,7 @@ function resolveExclusiveState(canonical, canonicalValues, nested, first, second
   return candidates.size === 1 ? [...candidates][0] : null
 }
 
-function statusSummary(status) {
+function observedPhysicalState(status) {
   if (!status || typeof status !== 'object' || Array.isArray(status)) return null
   if (status.state !== undefined &&
       (!status.state || typeof status.state !== 'object' || Array.isArray(status.state))) {
@@ -289,6 +289,13 @@ function statusSummary(status) {
     'closed',
     'open'
   )
+  return { lockState, doorState }
+}
+
+function statusSummary(status) {
+  const physicalState = observedPhysicalState(status)
+  if (!physicalState) return null
+  const { lockState, doorState } = physicalState
   if (!lockState || !doorState) return null
   return {
     lockID: typeof status.lockID === 'string' ? status.lockID : undefined,
@@ -319,14 +326,14 @@ function batteryPercentage(status) {
 }
 
 function sanitizedObservation(status, alias) {
-  const summary = statusSummary(status)
-  if (!summary) fail('status_invalid', 'Current August state is ambiguous or malformed')
+  const physicalState = observedPhysicalState(status)
+  if (!physicalState) fail('status_invalid', 'Current August state is malformed')
   const output = {
     ok: true,
     alias,
     observed_at: new Date().toISOString(),
-    lock_state: summary.state.locked ? 'locked' : 'unlocked',
-    door_state: summary.state.closed ? 'closed' : 'open',
+    lock_state: physicalState.lockState || 'unknown',
+    door_state: physicalState.doorState || 'unknown',
   }
   const battery = batteryPercentage(status)
   if (battery !== undefined) output.battery_percent = battery

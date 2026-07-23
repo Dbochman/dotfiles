@@ -473,6 +473,7 @@ HOME_EVENT_INGEST_CHANGED=0
 HOME_EVENT_CORRELATOR_CHANGED=0
 HOME_EVENT_AUGUST_CHANGED=0
 HOME_EVENT_NEST_CHANGED=0
+HOME_EVENT_LOCAL_PRESENCE_CHANGED=0
 for wrapper in "$BIN_SRC"/*; do
   [ -f "$wrapper" ] || continue
   fname=$(basename "$wrapper")
@@ -490,6 +491,7 @@ for wrapper in "$BIN_SRC"/*; do
         HOME_EVENT_INGEST_CHANGED=1
         HOME_EVENT_AUGUST_CHANGED=1
         HOME_EVENT_NEST_CHANGED=1
+        HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
       fi
       ;;
   esac
@@ -537,7 +539,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
   case "$fname" in
-    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|august-event-adapter.py)
+    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|august-event-adapter.py|presence-local-event-adapter.py)
       [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -eq 1 ] || continue
       ;;
     nest-home-event-bridge.py)
@@ -571,6 +573,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_INGEST_CHANGED=1
         HOME_EVENT_CORRELATOR_CHANGED=1
         HOME_EVENT_NEST_CHANGED=1
+        HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
       fi
       ;;
     home-event-correlator.py)
@@ -581,6 +584,11 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
     august-event-adapter.py)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         HOME_EVENT_AUGUST_CHANGED=1
+      fi
+      ;;
+    presence-local-event-adapter.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
       fi
       ;;
     nest-home-event-bridge.py)
@@ -594,6 +602,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_CORRELATOR_CHANGED=1
         HOME_EVENT_AUGUST_CHANGED=1
         HOME_EVENT_NEST_CHANGED=1
+        HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
       fi
       ;;
   esac
@@ -794,7 +803,8 @@ for HOME_EVENT_AGENT_LABEL in \
   ai.openclaw.home-event-ingest \
   ai.openclaw.home-event-correlator \
   ai.openclaw.august-event-adapter \
-  ai.openclaw.nest-home-event-bridge; do
+  ai.openclaw.nest-home-event-bridge \
+  ai.openclaw.presence-local-event-adapter; do
   HOME_EVENT_AGENT_SRC="$REPO/openclaw/launchagents/$HOME_EVENT_AGENT_LABEL.plist"
   HOME_EVENT_AGENT_DST="$HOME/Library/LaunchAgents/$HOME_EVENT_AGENT_LABEL.plist"
   if [ -e "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]; then
@@ -854,6 +864,38 @@ for HOME_EVENT_AGENT_LABEL in \
         exit 1
       fi
       HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
+    elif [ "$HOME_EVENT_AGENT_LABEL" = "ai.openclaw.presence-local-event-adapter" ]; then
+      HOME_EVENT_LOCAL_CABIN_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      HOME_EVENT_LOCAL_CROSSTOWN_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      case "$HOME_EVENT_LOCAL_CABIN_ENABLED:$HOME_EVENT_LOCAL_CROSSTOWN_ENABLED" in
+        0:0|0:1|1:0|1:1) ;;
+        *)
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL installed local-presence enable flag is invalid" >> "$LOG"
+          exit 1
+          ;;
+      esac
+      HOME_EVENT_AGENT_CANDIDATE_TMP=$(mktemp \
+        "$HOME/Library/LaunchAgents/.${HOME_EVENT_AGENT_LABEL}.candidate.XXXXXX")
+      if ! cp "$HOME_EVENT_AGENT_SRC" "$HOME_EVENT_AGENT_CANDIDATE_TMP" \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED $HOME_EVENT_LOCAL_CABIN_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED $HOME_EVENT_LOCAL_CROSSTOWN_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null; then
+        rm -f "$HOME_EVENT_AGENT_CANDIDATE_TMP"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL could not preserve installed local-presence enable flags" >> "$LOG"
+        exit 1
+      fi
+      HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
     fi
     if ! cmp -s "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST"; then
       atomic_install_managed_file "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST" 644
@@ -874,6 +916,9 @@ for HOME_EVENT_AGENT_LABEL in \
         ;;
       ai.openclaw.nest-home-event-bridge)
         HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_NEST_CHANGED"
+        ;;
+      ai.openclaw.presence-local-event-adapter)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_LOCAL_PRESENCE_CHANGED"
         ;;
     esac
     if launchctl print "$HOME_EVENT_AGENT_DOMAIN/$HOME_EVENT_AGENT_LABEL" >/dev/null 2>&1; then

@@ -154,6 +154,31 @@ class RingHomeEventTests(unittest.TestCase):
                 self.assertNotIn("684794187", json.dumps(sanitized))
                 self.assertNotIn("123456", json.dumps(sanitized))
 
+    def test_second_device_binding_normalizes_to_cabin(self) -> None:
+        with mock.patch.object(self.module.time, "time", return_value=1_788_000_001.0):
+            self.process(
+                event_id=123457,
+                device="Provider Cabin Door Name",
+                doorbot_id=697442349,
+            )
+
+        self.assertEqual(len(self.publisher.payloads), 1)
+        payload = self.publisher.payloads[0]
+        self.assertEqual(payload["event_type"], "entry.person_detected")
+        self.assertEqual(payload["site"], "cabin")
+        self.assertEqual(payload["entity_kind"], "doorbell")
+        self.assertEqual(payload["entity_alias"], "front_door")
+        self.assertEqual(payload["source_event_id"], "697442349:123457")
+        self.assertIn("cabin", self.module._ring_departure_motion)
+        self.assertNotIn("crosstown", self.module._ring_departure_motion)
+        self.assertEqual(self.publisher.quarantined, 0)
+
+        combined_logs = "\n".join(self.logs)
+        self.assertIn("site=cabin entity=front_door", combined_logs)
+        self.assertNotIn("Provider Cabin Door Name", combined_logs)
+        self.assertNotIn("697442349", combined_logs)
+        self.assertNotIn("123457", combined_logs)
+
     def test_dedupe_precedes_bus_tee_and_legacy_person_motion_is_preserved(self) -> None:
         self.process()
         first_departure_timestamp = self.module._ring_departure_motion["crosstown"]
@@ -194,7 +219,11 @@ class RingHomeEventTests(unittest.TestCase):
         self.assertEqual(self.publisher.payloads, [])
         self.assertEqual(self.publisher.quarantined, 1)
         self.assertTrue(self.module._ring_motion_during_walk)
+        self.assertEqual(self.module._ring_departure_motion, {})
         combined_logs = "\n".join(self.logs)
+        self.assertIn("reason=unknown_device", combined_logs)
+        self.assertNotIn("site=cabin", combined_logs)
+        self.assertNotIn("site=crosstown", combined_logs)
         self.assertNotIn("999999999", combined_logs)
         self.assertNotIn("123456", combined_logs)
 

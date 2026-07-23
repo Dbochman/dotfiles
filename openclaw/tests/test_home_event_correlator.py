@@ -30,6 +30,17 @@ correlator = load_module(
     "home_event_correlator", BIN_DIR / "home-event-correlator.py"
 )
 
+LOCAL_PRESENCE_EVENT_TYPES = (
+    "presence.local_departure_inferred",
+    "presence.local_arrival_observed",
+    "presence.household_excursion_started",
+    "presence.household_excursion_ended",
+)
+LOCAL_PRESENCE_COUNTERS = {
+    event_type: event_type.removeprefix("presence.").replace(".", "_") + "_shadowed"
+    for event_type in LOCAL_PRESENCE_EVENT_TYPES
+}
+
 
 class HomeEventCorrelatorTests(unittest.TestCase):
     NOW = "2026-07-12T15:00:00Z"
@@ -71,7 +82,12 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         entity_kind = {
             "ring": "doorbell",
             "presence": "person"
-            if event_type == "presence.person_relocated"
+            if event_type
+            in {
+                "presence.person_relocated",
+                "presence.local_departure_inferred",
+                "presence.local_arrival_observed",
+            }
             else "site",
             "august": "door"
             if event_type.startswith("door.")
@@ -98,6 +114,8 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             if source == "nest"
             else "front_door"
             if source != "presence"
+            else "dylan"
+            if entity_kind == "person"
             else site,
             "occurred_at": occurred_at or observed_at,
             "observed_at": observed_at,
@@ -118,6 +136,47 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             json.dumps(payload).encode("utf-8"),
             clock=self.clock,
         )
+
+    def local_presence_attributes(
+        self, event_type: str, sequence: str
+    ) -> dict:
+        common = {
+            "evidence_at": "2026-07-12T14:59:45Z",
+            "not_before": "2026-07-12T14:20:00Z",
+            "not_after": "2026-07-12T14:59:45Z",
+            "state_hash": sequence[0] * 64,
+        }
+        if event_type == "presence.local_departure_inferred":
+            return {
+                **common,
+                "person_alias": "dylan",
+                "confidence": "network_inference",
+                "distinct_observations": 3,
+                "observation_span_seconds": 2385,
+            }
+        if event_type == "presence.local_arrival_observed":
+            return {
+                **common,
+                "not_before": common["not_after"],
+                "person_alias": "dylan",
+                "confidence": "positive_detection",
+                "distinct_observations": 1,
+                "observation_span_seconds": 0,
+            }
+        excursion = {
+            **common,
+            "people_count": 2,
+            "excursion_id": f"exc_{sequence[0] * 32}",
+        }
+        if event_type == "presence.household_excursion_started":
+            return {**excursion, "confidence": "network_inference"}
+        if event_type == "presence.household_excursion_ended":
+            return {
+                **excursion,
+                "confidence": "positive_detection",
+                "outcome": "resident_returned",
+            }
+        raise AssertionError(f"unsupported fixture event type: {event_type}")
 
     def ingest(self) -> None:
         bus.ingest_once(self.root, clock=self.clock)
@@ -142,6 +201,27 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             connection.commit()
         finally:
             connection.close()
+
+    def incident_projection(self) -> dict[str, list[tuple]]:
+        return {
+            "incidents": [
+                tuple(row) for row in self.rows("SELECT * FROM incidents ORDER BY id")
+            ],
+            "incident_events": [
+                tuple(row)
+                for row in self.rows(
+                    "SELECT * FROM incident_events ORDER BY incident_id, event_id"
+                )
+            ],
+            "incident_decisions": [
+                tuple(row)
+                for row in self.rows("SELECT * FROM incident_decisions ORDER BY id")
+            ],
+            "notification_outbox": [
+                tuple(row)
+                for row in self.rows("SELECT * FROM notification_outbox ORDER BY id")
+            ],
+        }
 
     def test_vacant_ring_activity_creates_one_shadow_decision(self) -> None:
         self.enqueue("ring", "entry.person_detected")
@@ -199,6 +279,116 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.assertEqual(incident["summary_code"], "presence_uncertain_shadowed")
         self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
 
+    def test_occupied_decision_remains_terminal_after_site_becomes_vacant(self) -> None:
+        self.write_presence("occupied", "confirmed_vacant")
+        self.enqueue("ring", "entry.person_detected")
+        self.ingest()
+
+        first = self.run_correlator()
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        second = self.run_correlator()
+
+        self.assertEqual(first["shadow_decisions"], 0)
+        self.assertEqual(second["shadow_decisions"], 0)
+        incident = self.rows("SELECT * FROM incidents")[0]
+        self.assertEqual(incident["summary_code"], "occupied_activity_shadowed")
+        decisions = self.rows(
+            "SELECT status, reason_code FROM incident_decisions ORDER BY id"
+        )
+        self.assertEqual(
+            [tuple(row) for row in decisions],
+            [("suppressed", "occupied_activity_shadowed")],
+        )
+        self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
+
+    def test_uncertain_decision_remains_terminal_after_site_becomes_vacant(self) -> None:
+        self.write_presence("possibly_vacant", "confirmed_vacant")
+        self.enqueue("ring", "entry.doorbell_rang")
+        self.ingest()
+
+        first = self.run_correlator()
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        second = self.run_correlator()
+
+        self.assertEqual(first["shadow_decisions"], 0)
+        self.assertEqual(second["shadow_decisions"], 0)
+        incident = self.rows("SELECT * FROM incidents")[0]
+        self.assertEqual(incident["summary_code"], "presence_uncertain_shadowed")
+        decisions = self.rows(
+            "SELECT status, reason_code FROM incident_decisions ORDER BY id"
+        )
+        self.assertEqual(
+            [tuple(row) for row in decisions],
+            [("suppressed", "presence_uncertain_shadowed")],
+        )
+        self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
+
+    def test_rate_limited_decision_remains_terminal_after_window_expires(self) -> None:
+        self.enqueue(
+            "ring",
+            "entry.person_detected",
+            site="crosstown",
+            sequence="first",
+        )
+        self.ingest()
+        self.run_correlator()
+
+        self.write_presence("confirmed_vacant", "occupied")
+        self.enqueue(
+            "presence",
+            "presence.occupancy_changed",
+            site="crosstown",
+            observed_at="2026-07-12T14:59:00Z",
+            attributes={
+                "previous": "confirmed_vacant",
+                "current": "occupied",
+                "confidence": "canonical",
+                "evidence_at": "2026-07-12T14:59:00Z",
+                "state_hash": "c" * 64,
+            },
+            sequence="arrival",
+        )
+        self.ingest()
+        self.run_correlator()
+
+        self.NOW = "2026-07-12T15:02:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        self.enqueue(
+            "august",
+            "lock.unlocked",
+            site="crosstown",
+            observed_at="2026-07-12T15:00:00Z",
+            attributes={
+                "previous": "locked",
+                "current": "unlocked",
+                "not_before": "2026-07-12T14:59:00Z",
+                "not_after": "2026-07-12T15:00:00Z",
+            },
+            sequence="second",
+        )
+        self.ingest()
+        rate_limited = self.run_correlator()
+
+        self.NOW = "2026-07-12T16:02:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        after_window = self.run_correlator()
+
+        self.assertEqual(rate_limited["shadow_decisions"], 0)
+        self.assertEqual(after_window["shadow_decisions"], 0)
+        incidents = self.rows("SELECT * FROM incidents ORDER BY id")
+        self.assertEqual(incidents[1]["summary_code"], "rate_limited_shadowed")
+        decisions = self.rows(
+            """
+            SELECT status, reason_code FROM incident_decisions
+            WHERE status = 'rate_limited' ORDER BY id
+            """
+        )
+        self.assertEqual(
+            [tuple(row) for row in decisions],
+            [("rate_limited", "rate_limited_shadowed")],
+        )
+        self.assertEqual(len(self.rows("SELECT * FROM notification_outbox")), 1)
+
     def test_generic_ring_motion_is_stored_but_not_actionable(self) -> None:
         self.enqueue("ring", "entry.motion_detected")
         self.ingest()
@@ -208,6 +398,70 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.assertEqual(result["acknowledged"], 1)
         self.assertEqual(self.rows("SELECT * FROM incidents"), [])
         self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
+
+    def test_local_presence_events_are_journal_only_without_incident(self) -> None:
+        for index, event_type in enumerate(LOCAL_PRESENCE_EVENT_TYPES, start=1):
+            with self.subTest(event_type=event_type):
+                sequence = str(index)
+                before = self.incident_projection()
+                self.enqueue(
+                    "presence",
+                    event_type,
+                    observed_at="2026-07-12T14:59:45Z",
+                    attributes=self.local_presence_attributes(event_type, sequence),
+                    sequence=sequence,
+                    precision="observed_interval",
+                )
+                self.ingest()
+
+                result = self.run_correlator()
+
+                self.assertEqual(result["acknowledged"], 1)
+                self.assertEqual(result["shadow_decisions"], 0)
+                self.assertEqual(self.incident_projection(), before)
+                counter = self.rows(
+                    "SELECT value FROM service_counters WHERE name = "
+                    f"'{LOCAL_PRESENCE_COUNTERS[event_type]}'"
+                )
+                self.assertEqual([row["value"] for row in counter], [1])
+
+    def test_local_presence_events_do_not_change_open_activity_incident(self) -> None:
+        self.write_presence("occupied", "confirmed_vacant")
+        self.enqueue(
+            "ring",
+            "entry.person_detected",
+            observed_at="2026-07-12T14:59:30Z",
+            sequence="open-incident",
+        )
+        self.ingest()
+        opened = self.run_correlator()
+        self.assertEqual(opened["acknowledged"], 1)
+        self.assertEqual(self.rows("SELECT state FROM incidents")[0]["state"], "open")
+
+        for index, event_type in enumerate(LOCAL_PRESENCE_EVENT_TYPES, start=5):
+            with self.subTest(event_type=event_type):
+                sequence = str(index)
+                before = self.incident_projection()
+                self.enqueue(
+                    "presence",
+                    event_type,
+                    observed_at="2026-07-12T14:59:45Z",
+                    attributes=self.local_presence_attributes(event_type, sequence),
+                    sequence=sequence,
+                    precision="observed_interval",
+                )
+                self.ingest()
+
+                result = self.run_correlator()
+
+                self.assertEqual(result["acknowledged"], 1)
+                self.assertEqual(result["shadow_decisions"], 0)
+                self.assertEqual(self.incident_projection(), before)
+                counter = self.rows(
+                    "SELECT value FROM service_counters WHERE name = "
+                    f"'{LOCAL_PRESENCE_COUNTERS[event_type]}'"
+                )
+                self.assertEqual([row["value"] for row in counter], [1])
 
     def test_nest_person_joins_ring_site_activity_incident(self) -> None:
         self.enqueue("ring", "entry.person_detected", sequence="ring")

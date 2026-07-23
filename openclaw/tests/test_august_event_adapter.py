@@ -162,6 +162,55 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
             )
         self.assertEqual(self.calls_log.read_text().splitlines(), ["observe", "observe"])
 
+    def test_unknown_state_edges_checkpoint_silently(self) -> None:
+        baseline = self.run_adapter()
+        self.assertEqual(baseline.returncode, 0, baseline.stderr)
+        self.make_due()
+
+        ambiguous_door = {
+            "ok": True,
+            "alias": "front_door",
+            "observed_at": "2026-01-01T12:05:00Z",
+            "lock_state": "locked",
+            "door_state": "unknown",
+            "battery_percent": 30,
+        }
+        unknown_result = self.run_adapter(ambiguous_door)
+        self.assertEqual(unknown_result.returncode, 0, unknown_result.stderr)
+        self.assertEqual(json.loads(unknown_result.stdout)["event_count"], 0)
+        self.assertEqual(self.published(), [])
+        checkpoint = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(checkpoint["observation"]["door_state"], "unknown")
+        self.make_due()
+
+        known_again = {
+            **ambiguous_door,
+            "observed_at": "2026-01-01T12:10:00Z",
+            "lock_state": "unlocked",
+            "door_state": "open",
+        }
+        known_result = self.run_adapter(known_again)
+        self.assertEqual(known_result.returncode, 0, known_result.stderr)
+        self.assertEqual(json.loads(known_result.stdout)["event_count"], 1)
+        self.assertEqual(
+            [entry["payload"]["event_type"] for entry in self.published()],
+            ["lock.unlocked"],
+        )
+        self.make_due()
+
+        known_transition = {
+            **known_again,
+            "observed_at": "2026-01-01T12:15:00Z",
+            "door_state": "closed",
+        }
+        transition_result = self.run_adapter(known_transition)
+        self.assertEqual(transition_result.returncode, 0, transition_result.stderr)
+        self.assertEqual(json.loads(transition_result.stdout)["event_count"], 1)
+        self.assertEqual(
+            [entry["payload"]["event_type"] for entry in self.published()],
+            ["lock.unlocked", "door.closed"],
+        )
+
     def test_publish_failure_leaves_pending_for_idempotent_retry(self) -> None:
         self.assertEqual(self.run_adapter().returncode, 0)
         self.make_due()

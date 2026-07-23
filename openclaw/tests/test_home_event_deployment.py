@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -22,6 +23,7 @@ LABELS = (
     "ai.openclaw.home-event-correlator",
     "ai.openclaw.august-event-adapter",
     "ai.openclaw.nest-home-event-bridge",
+    "ai.openclaw.presence-local-event-adapter",
 )
 
 
@@ -54,6 +56,37 @@ class HomeEventDeploymentTests(unittest.TestCase):
         )
         self.assertEqual(
             nest["EnvironmentVariables"]["HOME_EVENTS_NEST_ENABLED"], "0"
+        )
+        local_presence = plistlib.loads(
+            (
+                OPENCLAW
+                / "launchagents"
+                / "ai.openclaw.presence-local-event-adapter.plist"
+            ).read_bytes()
+        )
+        self.assertEqual(
+            local_presence["EnvironmentVariables"][
+                "HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED"
+            ],
+            "0",
+        )
+        self.assertEqual(
+            local_presence["EnvironmentVariables"][
+                "HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED"
+            ],
+            "0",
+        )
+        self.assertEqual(
+            local_presence["ProgramArguments"][2],
+            "presence-local",
+        )
+        local_presence_adapter = (
+            OPENCLAW / "bin" / "presence-local-event-adapter.py"
+        )
+        self.assertTrue(local_presence_adapter.is_file())
+        self.assertTrue(
+            local_presence_adapter.stat().st_mode & stat.S_IXUSR,
+            "local-presence adapter must be executable for the service wrapper",
         )
         producer_flags = (
             (
@@ -97,6 +130,22 @@ class HomeEventDeploymentTests(unittest.TestCase):
         self.assertIn(
             "Set :EnvironmentVariables:HOME_EVENTS_NEST_ENABLED", source
         )
+        self.assertIn(
+            "Print :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED",
+            source,
+        )
+        self.assertIn(
+            "Set :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED",
+            source,
+        )
+        self.assertIn(
+            "Print :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED",
+            source,
+        )
+        self.assertIn(
+            "Set :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED",
+            source,
+        )
         home_event_block = source[
             source.index("# Refresh home-event LaunchAgents") :
             source.index("# Symlink top-level bin/ scripts")
@@ -139,6 +188,51 @@ class HomeEventDeploymentTests(unittest.TestCase):
             line = log_path.read_text(encoding="utf-8")
             self.assertIn("component=ingest status=0", line)
             self.assertIn(json.dumps({"ok": True})[:1], line)
+
+    def test_wrapper_runs_local_presence_disabled_without_creating_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary) / "home"
+            root = home / ".openclaw" / "home-events"
+            bin_dir = home / ".openclaw" / "bin"
+            for directory in (
+                root,
+                root / "config",
+                root / "spool",
+                root / "state",
+                bin_dir,
+                home / ".openclaw" / "logs",
+            ):
+                directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+                directory.chmod(0o700)
+            installed_adapter = bin_dir / "presence-local-event-adapter.py"
+            shutil.copy2(
+                OPENCLAW / "bin" / "presence-local-event-adapter.py",
+                installed_adapter,
+            )
+            installed_adapter.chmod(0o700)
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "presence-local"],
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "HOME_EVENTS_LOCAL_PRESENCE_CABIN_ENABLED": "0",
+                    "HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED": "0",
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(
+                (root / "state" / "presence-local-adapter.json").exists()
+            )
+            log = (home / ".openclaw" / "logs" / "home-events.log").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("component=presence-local status=0", log)
+            self.assertIn('"mode":"disabled"', log)
 
 
 if __name__ == "__main__":

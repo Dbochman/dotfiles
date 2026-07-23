@@ -51,9 +51,19 @@ INCIDENT_UID_RE = re.compile(r"^inc_[0-9a-f]{32}$")
 DEDUPE_KEY_RE = re.compile(r"^ded_[0-9a-f]{64}$")
 RECORD_MAC_RE = re.compile(r"^mac_[0-9a-f]{64}$")
 READY_NAME_RE = re.compile(r"^evt_[0-9a-f]{32}\.[0-9a-f]{32}\.ready$")
+EXCURSION_ID_RE = re.compile(r"^exc_[0-9a-f]{32}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 DURATION_RE = re.compile(r"^([1-9][0-9]{0,5})([mhd])$")
+
+LOCAL_PRESENCE_EVENT_TYPES = frozenset(
+    {
+        "presence.local_departure_inferred",
+        "presence.local_arrival_observed",
+        "presence.household_excursion_started",
+        "presence.household_excursion_ended",
+    }
+)
 
 EVENT_RULES: Mapping[str, Mapping[str, Tuple[str, ...]]] = {
     "ring": {
@@ -76,6 +86,45 @@ EVENT_RULES: Mapping[str, Mapping[str, Tuple[str, ...]]] = {
             "confidence",
             "evidence_at",
             "state_hash",
+        ),
+        "presence.local_departure_inferred": (
+            "person_alias",
+            "confidence",
+            "evidence_at",
+            "not_before",
+            "not_after",
+            "distinct_observations",
+            "observation_span_seconds",
+            "state_hash",
+        ),
+        "presence.local_arrival_observed": (
+            "person_alias",
+            "confidence",
+            "evidence_at",
+            "not_before",
+            "not_after",
+            "distinct_observations",
+            "observation_span_seconds",
+            "state_hash",
+        ),
+        "presence.household_excursion_started": (
+            "confidence",
+            "evidence_at",
+            "not_before",
+            "not_after",
+            "people_count",
+            "excursion_id",
+            "state_hash",
+        ),
+        "presence.household_excursion_ended": (
+            "confidence",
+            "evidence_at",
+            "not_before",
+            "not_after",
+            "people_count",
+            "excursion_id",
+            "state_hash",
+            "outcome",
         ),
     },
     "august": {
@@ -133,6 +182,10 @@ EVENT_ENTITY_KIND: Mapping[str, Mapping[str, str]] = {
     "presence": {
         "presence.occupancy_changed": "site",
         "presence.person_relocated": "person",
+        "presence.local_departure_inferred": "person",
+        "presence.local_arrival_observed": "person",
+        "presence.household_excursion_started": "site",
+        "presence.household_excursion_ended": "site",
     },
     "august": {
         "lock.locked": "lock",
@@ -166,7 +219,7 @@ ENTITY_KINDS: Mapping[str, Tuple[str, ...]] = {
 
 TIME_PRECISIONS: Mapping[str, Tuple[str, ...]] = {
     "ring": ("source", "backfill"),
-    "presence": ("evaluation",),
+    "presence": ("evaluation", "observed_interval"),
     "august": ("observed_interval",),
     "nest": ("source",),
 }
@@ -463,8 +516,37 @@ def _validate_attributes(source: str, event_type: str, value: Any) -> Dict[str, 
     if "confidence" in result and result["confidence"] not in (
         "canonical",
         "positive_detection",
+        "network_inference",
     ):
         raise PayloadError("invalid_confidence")
+    if "excursion_id" in result and (
+        not isinstance(result["excursion_id"], str)
+        or not EXCURSION_ID_RE.fullmatch(result["excursion_id"])
+    ):
+        raise PayloadError("invalid_excursion_id")
+    if "outcome" in result and result["outcome"] not in (
+        "resident_returned",
+        "residence_relocated",
+    ):
+        raise PayloadError("invalid_excursion_outcome")
+    if "people_count" in result and (
+        not isinstance(result["people_count"], int)
+        or isinstance(result["people_count"], bool)
+        or not 1 <= result["people_count"] <= 2
+    ):
+        raise PayloadError("invalid_people_count")
+    if "distinct_observations" in result and (
+        not isinstance(result["distinct_observations"], int)
+        or isinstance(result["distinct_observations"], bool)
+        or result["distinct_observations"] < 1
+    ):
+        raise PayloadError("invalid_distinct_observations")
+    if "observation_span_seconds" in result and (
+        not isinstance(result["observation_span_seconds"], int)
+        or isinstance(result["observation_span_seconds"], bool)
+        or result["observation_span_seconds"] < 0
+    ):
+        raise PayloadError("invalid_observation_span")
     for key in ("from_site", "to_site"):
         if key in result and result[key] is not None and result[key] not in SITES:
             raise PayloadError("invalid_attribute_site")
@@ -546,13 +628,17 @@ def _validate_event_contract(
         if evidence > observed + dt.timedelta(minutes=5):
             raise PayloadError("evidence_in_future")
         if event_type == "presence.occupancy_changed":
+            if time_precision != "evaluation":
+                raise PayloadError("invalid_time_precision")
             if entity_alias != site:
                 raise PayloadError("unbound_entity_alias")
             if attributes.get("confidence") != "canonical":
                 raise PayloadError("confidence_mismatch")
             if attributes.get("previous") == attributes.get("current"):
                 raise PayloadError("invalid_presence_transition")
-        else:
+        elif event_type == "presence.person_relocated":
+            if time_precision != "evaluation":
+                raise PayloadError("invalid_time_precision")
             if entity_alias not in SAFE_PERSON_ALIASES:
                 raise PayloadError("unbound_entity_alias")
             if attributes.get("person_alias") != entity_alias:
@@ -563,6 +649,66 @@ def _validate_event_contract(
                 raise PayloadError("confidence_mismatch")
             if attributes.get("from_site") == attributes.get("to_site"):
                 raise PayloadError("invalid_relocation")
+        else:
+            if event_type not in LOCAL_PRESENCE_EVENT_TYPES:
+                raise PayloadError("invalid_event_type")
+            if time_precision != "observed_interval":
+                raise PayloadError("invalid_time_precision")
+            not_before = attributes.get("not_before")
+            not_after = attributes.get("not_after")
+            if not isinstance(not_before, str) or not isinstance(not_after, str):
+                raise PayloadError("invalid_observed_interval")
+            _, before = _parse_timestamp(not_before, "invalid_attribute_time")
+            _, after = _parse_timestamp(not_after, "invalid_attribute_time")
+            if (
+                before > after
+                or attributes.get("evidence_at") != not_after
+                or not_after != occurred_at
+                or observed < occurred
+                or observed - occurred > dt.timedelta(minutes=30)
+            ):
+                raise PayloadError("invalid_observed_interval")
+
+            if event_type in {
+                "presence.local_departure_inferred",
+                "presence.local_arrival_observed",
+            }:
+                if entity_alias not in SAFE_PERSON_ALIASES:
+                    raise PayloadError("unbound_entity_alias")
+                if attributes.get("person_alias") != entity_alias:
+                    raise PayloadError("person_alias_mismatch")
+                span = attributes.get("observation_span_seconds")
+                if dt.timedelta(seconds=span) > after - before:
+                    raise PayloadError("invalid_observation_span")
+                if event_type == "presence.local_departure_inferred":
+                    if attributes.get("confidence") != "network_inference":
+                        raise PayloadError("confidence_mismatch")
+                    if attributes.get("distinct_observations", 0) < 3:
+                        raise PayloadError("invalid_distinct_observations")
+                    if span < 1800:
+                        raise PayloadError("invalid_observation_span")
+                else:
+                    if attributes.get("confidence") != "positive_detection":
+                        raise PayloadError("confidence_mismatch")
+                    if attributes.get("distinct_observations") != 1:
+                        raise PayloadError("invalid_distinct_observations")
+                    if span != 0:
+                        raise PayloadError("invalid_observation_span")
+            else:
+                if entity_alias != site:
+                    raise PayloadError("unbound_entity_alias")
+                if event_type == "presence.household_excursion_started":
+                    if attributes.get("confidence") != "network_inference":
+                        raise PayloadError("confidence_mismatch")
+                else:
+                    expected_confidence = {
+                        "resident_returned": "positive_detection",
+                        "residence_relocated": "canonical",
+                    }.get(attributes.get("outcome"))
+                    if expected_confidence is None:
+                        raise PayloadError("invalid_excursion_outcome")
+                    if attributes.get("confidence") != expected_confidence:
+                        raise PayloadError("confidence_mismatch")
 
     if source == "august":
         if occurred_at != observed_at or occurred != observed:

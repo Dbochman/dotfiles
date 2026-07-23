@@ -320,6 +320,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.home-event-correlator` | 5s | `home-event-service-wrapper.sh correlate` | Records site-scoped incidents and rate-limited shadow decisions; no delivery or camera path. |
 | `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer; tracked enable flag remains `0`. |
 | `ai.openclaw.nest-home-event-bridge` | 5s | `home-event-service-wrapper.sh nest` | Mirrors only newly committed Nest person/motion metadata after a silent first-run baseline; tracked enable flag remains `0`. |
+| `ai.openclaw.presence-local-event-adapter` | 60s | `home-event-service-wrapper.sh presence-local` | Derives shadow-only named local arrivals/departures and household excursion intervals from advancing sanitized scans; both tracked site flags remain `0`. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
@@ -343,7 +344,7 @@ LaunchAgent, cron, gateway route, or unattended entry point.
 downstream-disabled shadow sample per invocation; it has no scheduler or
 approval writer.
 
-The four home-event jobs are **attended-install only**. A routine dotfiles
+The five home-event jobs are **attended-install only**. A routine dotfiles
 pull may refresh their files only after an installed plist exists; it must not
 create the runtime, run `home-eventctl init`, bootstrap a job, or enable Ring,
 presence, August, or Nest publication. All producers default off and the
@@ -356,10 +357,17 @@ correlator. Configure the exact August observe binding separately on the
 MacBook Pro, baseline it without events, and change its enable flag only during
 an attended shadow soak. The Nest bridge also requires a separate attended
 enable: its first run must baseline the existing listener outbox with zero
-published events before a later event is accepted. Restart only these jobs
-when their code changes; home events does not require an OpenClaw gateway
-restart. See
+published events before a later event is accepted. The local-presence adapter
+has independent Cabin and Crosstown flags: Cabin may use the approved exact
+scanner, while Crosstown must remain disabled until its strict scanner canary
+and hash approval complete. Restart only these jobs when their code changes;
+home events does not require an OpenClaw gateway restart. See
 [`HOME-EVENTS.md`](HOME-EVENTS.md).
+
+The attended Mini runtime currently has Cabin local enrichment enabled and
+Crosstown disabled. Its first Cabin run baselined both residents with zero
+events, and the repeated scan was a no-op. The tracked plist keeps both flags
+at `0` so a fresh install cannot inherit that attended decision.
 
 ### Native iMessage Reboot Recovery
 

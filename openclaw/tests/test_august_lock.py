@@ -616,6 +616,67 @@ fs.renameSync = function (...args) {
             self.api_calls()[-1], {"method": "status", "lockId": LOCK_ID}
         )
 
+    def test_observe_sanitizes_each_ambiguous_state_independently(self) -> None:
+        self.write_config(
+            {
+                **self.valid_config(),
+                "observeLockId": LOCK_ID,
+                "observeAlias": "front_door",
+            }
+        )
+        cases = (
+            (
+                {
+                    "lockID": LOCK_ID,
+                    "status": "kAugLockState_Locked",
+                    "doorState": "kAugDoorState_Unknown",
+                    "state": {"locked": True, "unlocked": False},
+                    "batteryPercentage": 75,
+                    "provider_private_data": "must-not-escape",
+                },
+                "locked",
+                "unknown",
+            ),
+            (
+                {
+                    "lockID": LOCK_ID,
+                    "status": "kAugLockState_Unknown",
+                    "doorState": "kAugDoorState_Closed",
+                    "state": {"closed": True, "open": False},
+                    "batteryPercentage": 75,
+                    "provider_private_data": "must-not-escape",
+                },
+                "unknown",
+                "closed",
+            ),
+        )
+
+        for observed, lock_state, door_state in cases:
+            with self.subTest(lock_state=lock_state, door_state=door_state):
+                result = self.run_node(
+                    "observe", FAKE_STATUS_SEQUENCE=json.dumps([observed])
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                output = json.loads(result.stdout)
+                self.assertEqual(output["lock_state"], lock_state)
+                self.assertEqual(output["door_state"], door_state)
+                self.assertEqual(output["battery_percent"], 75)
+                self.assertEqual(
+                    set(output),
+                    {
+                        "ok",
+                        "alias",
+                        "observed_at",
+                        "lock_state",
+                        "door_state",
+                        "battery_percent",
+                    },
+                )
+                self.assertNotIn(LOCK_ID, result.stdout)
+                self.assertNotIn("provider_private_data", result.stdout)
+                self.assertNotIn("must-not-escape", result.stdout)
+
     def test_observe_requires_exact_protected_binding(self) -> None:
         self.write_config(self.valid_config())
 
@@ -661,6 +722,27 @@ fs.renameSync = function (...args) {
         self.assertEqual(result.stderr, "")
         self.assertNotIn("7EDFA965E0AE0CE19772AFA435364295", result.stdout)
         self.assertEqual(self.decoded_remote_calls(), [["observe"]])
+
+    def test_wrapper_observe_accepts_independently_unknown_states(self) -> None:
+        for lock_state, door_state in (
+            ("locked", "unknown"),
+            ("unknown", "closed"),
+        ):
+            with self.subTest(lock_state=lock_state, door_state=door_state):
+                observation = {
+                    "ok": True,
+                    "alias": "front_door",
+                    "observed_at": "2026-01-01T12:00:00.000Z",
+                    "lock_state": lock_state,
+                    "door_state": door_state,
+                }
+
+                result = self.run_wrapper(
+                    "observe", FAKE_REMOTE_OBSERVE=json.dumps(observation)
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), observation)
 
     def test_wrapper_observe_quarantines_remote_stdout_and_stderr(self) -> None:
         cases = (
@@ -849,6 +931,31 @@ fs.renameSync = function (...args) {
         self.assertTrue(output["verified"])
         self.assertTrue(output["state"]["unlocked"])
         self.assertTrue(output["state"]["closed"])
+
+    def test_unlock_rejects_unknown_door_before_mutation(self) -> None:
+        self.write_config(self.valid_config())
+        ambiguous = {
+            "lockID": LOCK_ID,
+            "status": "kAugLockState_Locked",
+            "doorState": "kAugDoorState_Unknown",
+            "state": {"locked": True, "unlocked": False},
+        }
+
+        result = self.run_node(
+            "unlock",
+            "--confirm",
+            LOCK_ID,
+            FAKE_STATUS_SEQUENCE=json.dumps([ambiguous]),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            self.error_output(result)["error_code"], "precondition_unavailable"
+        )
+        self.assertEqual(
+            [entry["method"] for entry in self.api_calls()],
+            ["constructor", "status"],
+        )
 
     def test_new_config_is_fsynced_renamed_and_mode_0600(self) -> None:
         result = self.run_node(

@@ -101,6 +101,68 @@ def nest_payload(
     }
 
 
+def local_presence_payload(
+    event_type: str,
+    *,
+    source_event_id: str | None = None,
+    site: str = "cabin",
+    person_alias: str = "dylan",
+) -> dict:
+    source_event_id = source_event_id or event_type.replace(".", "-")
+    common = {
+        "confidence": "network_inference",
+        "evidence_at": "2026-07-12T14:59:00Z",
+        "not_before": "2026-07-12T14:20:00Z",
+        "not_after": "2026-07-12T14:59:00Z",
+        "state_hash": "4" * 64,
+    }
+    entity_kind = "person"
+    entity_alias = person_alias
+    if event_type == "presence.local_departure_inferred":
+        attributes = {
+            "person_alias": person_alias,
+            **common,
+            "distinct_observations": 3,
+            "observation_span_seconds": 1800,
+        }
+    elif event_type == "presence.local_arrival_observed":
+        attributes = {
+            "person_alias": person_alias,
+            **common,
+            "confidence": "positive_detection",
+            "not_before": "2026-07-12T14:30:00Z",
+            "distinct_observations": 1,
+            "observation_span_seconds": 0,
+        }
+    else:
+        entity_kind = "site"
+        entity_alias = site
+        attributes = {
+            **common,
+            "people_count": 2,
+            "excursion_id": "exc_" + ("a" * 32),
+        }
+        if event_type == "presence.household_excursion_ended":
+            attributes.update(
+                {
+                    "confidence": "positive_detection",
+                    "outcome": "resident_returned",
+                }
+            )
+    return {
+        "schema_version": 1,
+        "source_event_id": source_event_id,
+        "event_type": event_type,
+        "site": site,
+        "entity_kind": entity_kind,
+        "entity_alias": entity_alias,
+        "occurred_at": "2026-07-12T14:59:00Z",
+        "observed_at": "2026-07-12T15:00:00Z",
+        "time_precision": "observed_interval",
+        "attributes": attributes,
+    }
+
+
 def encode(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
@@ -531,9 +593,218 @@ class EnqueueValidationTests(HomeEventTestCase):
         with self.assertRaisesRegex(home_events.PayloadError, "confidence_mismatch"):
             self.enqueue(payload, source="presence")
         payload["attributes"]["confidence"] = "canonical"
+        payload["time_precision"] = "observed_interval"
+        with self.assertRaisesRegex(home_events.PayloadError, "invalid_time_precision"):
+            self.enqueue(payload, source="presence")
+        payload["time_precision"] = "evaluation"
         payload["attributes"]["state_hash"] = "private-state-value"
         with self.assertRaisesRegex(home_events.PayloadError, "invalid_state_hash"):
             self.enqueue(payload, source="presence")
+
+    def test_local_presence_contract_accepts_all_four_safe_event_types(self) -> None:
+        event_types = (
+            "presence.local_departure_inferred",
+            "presence.local_arrival_observed",
+            "presence.household_excursion_started",
+            "presence.household_excursion_ended",
+        )
+        for event_type in event_types:
+            with self.subTest(event_type=event_type):
+                event = self.enqueue(
+                    local_presence_payload(event_type), source="presence"
+                )
+                self.assertEqual(event.event_type, event_type)
+                self.assertEqual(event.time_precision, "observed_interval")
+
+        relocated = local_presence_payload(
+            "presence.household_excursion_ended",
+            source_event_id="household-relocated",
+        )
+        relocated["attributes"].update(
+            {
+                "confidence": "canonical",
+                "outcome": "residence_relocated",
+            }
+        )
+        event = self.enqueue(relocated, source="presence")
+        self.assertEqual(event.attributes["outcome"], "residence_relocated")
+
+    def test_local_presence_rejects_wrong_entity_or_alias(self) -> None:
+        cases = []
+        wrong_kind = local_presence_payload("presence.local_departure_inferred")
+        wrong_kind["entity_kind"] = "site"
+        cases.append(("event_entity_mismatch", wrong_kind))
+
+        unknown_person = local_presence_payload("presence.local_arrival_observed")
+        unknown_person["entity_alias"] = "guest"
+        unknown_person["attributes"]["person_alias"] = "guest"
+        cases.append(("unbound_entity_alias", unknown_person))
+
+        mismatched_person = local_presence_payload(
+            "presence.local_arrival_observed",
+            source_event_id="mismatched-person",
+        )
+        mismatched_person["attributes"]["person_alias"] = "julia"
+        cases.append(("person_alias_mismatch", mismatched_person))
+
+        wrong_household_alias = local_presence_payload(
+            "presence.household_excursion_started"
+        )
+        wrong_household_alias["entity_alias"] = "crosstown"
+        cases.append(("unbound_entity_alias", wrong_household_alias))
+
+        for error, payload in cases:
+            with self.subTest(error=error):
+                with self.assertRaisesRegex(home_events.PayloadError, error):
+                    self.enqueue(payload, source="presence")
+
+    def test_local_presence_rejects_wrong_confidence_and_direction_contract(self) -> None:
+        cases = []
+        departure = local_presence_payload("presence.local_departure_inferred")
+        departure["attributes"]["confidence"] = "positive_detection"
+        cases.append(("confidence_mismatch", departure))
+
+        arrival = local_presence_payload("presence.local_arrival_observed")
+        arrival["attributes"]["confidence"] = "network_inference"
+        cases.append(("confidence_mismatch", arrival))
+
+        started = local_presence_payload("presence.household_excursion_started")
+        started["attributes"]["confidence"] = "canonical"
+        cases.append(("confidence_mismatch", started))
+
+        returned = local_presence_payload("presence.household_excursion_ended")
+        returned["attributes"]["confidence"] = "canonical"
+        cases.append(("confidence_mismatch", returned))
+
+        relocated = local_presence_payload("presence.household_excursion_ended")
+        relocated["attributes"]["outcome"] = "residence_relocated"
+        cases.append(("confidence_mismatch", relocated))
+
+        bad_outcome = local_presence_payload("presence.household_excursion_ended")
+        bad_outcome["attributes"]["outcome"] = "door_opened"
+        cases.append(("invalid_excursion_outcome", bad_outcome))
+
+        for error, payload in cases:
+            with self.subTest(error=error, event_type=payload["event_type"]):
+                with self.assertRaisesRegex(home_events.PayloadError, error):
+                    self.enqueue(payload, source="presence")
+
+    def test_local_presence_rejects_invalid_counts_and_intervals(self) -> None:
+        cases = []
+        too_few = local_presence_payload("presence.local_departure_inferred")
+        too_few["attributes"]["distinct_observations"] = 2
+        cases.append(("invalid_distinct_observations", too_few))
+
+        short_span = local_presence_payload("presence.local_departure_inferred")
+        short_span["attributes"]["not_before"] = "2026-07-12T14:29:01Z"
+        short_span["attributes"]["observation_span_seconds"] = 1799
+        cases.append(("invalid_observation_span", short_span))
+
+        mismatched_span = local_presence_payload(
+            "presence.local_departure_inferred",
+            source_event_id="mismatched-span",
+        )
+        mismatched_span["attributes"]["observation_span_seconds"] = 2341
+        cases.append(("invalid_observation_span", mismatched_span))
+
+        arrival_count = local_presence_payload("presence.local_arrival_observed")
+        arrival_count["attributes"]["distinct_observations"] = 2
+        cases.append(("invalid_distinct_observations", arrival_count))
+
+        arrival_span = local_presence_payload(
+            "presence.local_arrival_observed",
+            source_event_id="arrival-span",
+        )
+        arrival_span["attributes"]["not_before"] = "2026-07-12T14:58:59Z"
+        arrival_span["attributes"]["observation_span_seconds"] = 1
+        cases.append(("invalid_observation_span", arrival_span))
+
+        for people_count in (0, 3):
+            household = local_presence_payload(
+                "presence.household_excursion_started",
+                source_event_id=f"people-{people_count}",
+            )
+            household["attributes"]["people_count"] = people_count
+            cases.append(("invalid_people_count", household))
+
+        reversed_interval = local_presence_payload(
+            "presence.household_excursion_started",
+            source_event_id="reversed-local-interval",
+        )
+        reversed_interval["attributes"]["not_before"] = "2026-07-12T15:00:00Z"
+        cases.append(("invalid_observed_interval", reversed_interval))
+
+        for error, payload in cases:
+            with self.subTest(error=error, source_event_id=payload["source_event_id"]):
+                with self.assertRaisesRegex(home_events.PayloadError, error):
+                    self.enqueue(payload, source="presence")
+
+    def test_local_presence_requires_exact_interval_times_and_recent_observation(self) -> None:
+        cases = []
+        wrong_precision = local_presence_payload("presence.local_arrival_observed")
+        wrong_precision["time_precision"] = "evaluation"
+        cases.append(("invalid_time_precision", wrong_precision))
+
+        wrong_evidence = local_presence_payload("presence.local_departure_inferred")
+        wrong_evidence["attributes"]["evidence_at"] = "2026-07-12T14:58:59Z"
+        cases.append(("invalid_observed_interval", wrong_evidence))
+
+        wrong_occurred = local_presence_payload(
+            "presence.household_excursion_started",
+            source_event_id="wrong-occurred",
+        )
+        wrong_occurred["occurred_at"] = "2026-07-12T14:58:59Z"
+        cases.append(("invalid_observed_interval", wrong_occurred))
+
+        old_observation = local_presence_payload(
+            "presence.household_excursion_started",
+            source_event_id="old-observation",
+        )
+        old_observation["occurred_at"] = "2026-07-12T14:29:00Z"
+        old_observation["attributes"]["evidence_at"] = "2026-07-12T14:29:00Z"
+        old_observation["attributes"]["not_after"] = "2026-07-12T14:29:00Z"
+        old_observation["attributes"]["not_before"] = "2026-07-12T13:59:00Z"
+        cases.append(("invalid_observed_interval", old_observation))
+
+        for error, payload in cases:
+            with self.subTest(error=error, source_event_id=payload["source_event_id"]):
+                with self.assertRaisesRegex(home_events.PayloadError, error):
+                    self.enqueue(payload, source="presence")
+
+    def test_local_presence_rejects_bad_excursion_id_and_raw_or_unknown_fields(self) -> None:
+        bad_id = local_presence_payload("presence.household_excursion_started")
+        bad_id["attributes"]["excursion_id"] = "provider-lock-id"
+        with self.assertRaisesRegex(home_events.PayloadError, "invalid_excursion_id"):
+            self.enqueue(bad_id, source="presence")
+
+        missing = local_presence_payload("presence.local_arrival_observed")
+        del missing["attributes"]["not_before"]
+        with self.assertRaisesRegex(home_events.PayloadError, "missing_attribute"):
+            self.enqueue(missing, source="presence")
+
+        wrong_direction = local_presence_payload(
+            "presence.household_excursion_started",
+            source_event_id="start-with-end-outcome",
+        )
+        wrong_direction["attributes"]["outcome"] = "resident_returned"
+        with self.assertRaisesRegex(home_events.PayloadError, "unknown_attribute"):
+            self.enqueue(wrong_direction, source="presence")
+
+        for key, value in (
+            ("device_id", "private-device"),
+            ("ip_address", "192.0.2.1"),
+            ("raw_payload", "private-provider-data"),
+        ):
+            with self.subTest(key=key):
+                payload = local_presence_payload(
+                    "presence.local_departure_inferred",
+                    source_event_id=f"unknown-{key}",
+                )
+                payload["attributes"][key] = value
+                with self.assertRaisesRegex(
+                    home_events.PayloadError, "unknown_attribute"
+                ):
+                    self.enqueue(payload, source="presence")
 
     def test_nest_contract_accepts_only_bound_camera_metadata(self) -> None:
         event = self.enqueue(nest_payload(), source="nest")
