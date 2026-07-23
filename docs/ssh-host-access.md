@@ -2,7 +2,7 @@
 
 This document records the private SSH topology used by Dylan's workstation,
 the OpenClaw Mac mini, the always-on Crosstown MacBook Pro, and Reachy Mini. It
-describes the deployed state as verified on July 16, 2026. Private keys,
+describes the deployed state as verified on July 23, 2026. Private keys,
 `authorized_keys`, `known_hosts`, and machine-specific overrides remain local to
 their hosts and must never be committed.
 
@@ -25,6 +25,7 @@ tracked aliases, exact Tailscale IPs, or Reachy's exact LAN IP shown above.
 | --- | --- | --- | --- |
 | Dylan's workstation | Crosstown MBP | 1Password-agent ED25519 key authorized on the MBP | Direct attended administration without the Mac mini jump host |
 | Dylan's workstation | Mac mini | Existing `dylans-mac-mini` policy; dedicated local key when configured, otherwise the 1Password agent | OpenClaw administration |
+| Mac mini | Dylan's workstation | `~/.ssh/id_mini_to_mac`, selected for `dylans-mac` with `IdentitiesOnly yes` and `IdentityAgent none` | Unattended deployment verification and workstation administration |
 | Mac mini | Crosstown MBP | `~/.ssh/id_mini_to_mbp`, selected for `dylans-macbook-pro` with `IdentityAgent none` | Reachy relay control, Crosstown presence, August, Roomba, and LAN operations |
 | Crosstown MBP | Mac mini | MBP `~/.ssh/id_rsa` (an ED25519 key despite its legacy filename) to `dbochman@100.104.114.1` | Persistent loopback gateway upstream |
 | Crosstown MBP | Reachy | `~/.ssh/openclaw-reachy` to `pollen@192.168.165.129` | Primary `reachyctl` and reverse gateway relay |
@@ -69,6 +70,22 @@ No private key or `authorized_keys` content was added to Git. Only host aliases,
 key locations, operational fingerprints, and services that consume them are
 documented.
 
+## Mini-to-workstation unattended path
+
+The Mac mini uses a dedicated ED25519 identity for `dylans-mac`. This avoids
+the 1Password SSH agent's GUI approval requirement in headless OpenClaw,
+launchd, and remote Codex sessions. The public half is authorized only for
+`dylanbochman` on Dylan's workstation; the private key remains owner-readable
+only on the Mac mini.
+
+The tracked rule is existence-gated, so laptops without
+`~/.ssh/id_mini_to_mac` retain their existing attended 1Password behavior.
+Provision and verify the dedicated key before relying on the alias; never
+export a 1Password-held private key to make this path unattended.
+After the dedicated path was verified, the Crosstown-only
+`id_mini_to_mbp` identity was removed from the workstation's authorization so
+the two Mini-originated paths remain independently scoped.
+
 ## Identity fingerprints
 
 Fingerprints identify keys without publishing private material. The deployed
@@ -77,6 +94,7 @@ state is:
 | Identity | SHA256 fingerprint |
 | --- | --- |
 | Workstation agent key authorized on Crosstown MBP | `SHA256:BYtX+JUe/NAY1YDGImvODV/X0uJwemNmbV4K0un5IkU` |
+| Mac mini `id_mini_to_mac` | `SHA256:hyh/jORlARVCko5eAzL9dzqD2WJJeRA7LS8jmJGOD4c` |
 | Mac mini `id_mini_to_mbp` | `SHA256:BRLlK2OWzu+UpcPqg2JURcAcnchd0IcaFOG/22dpdNw` |
 | Crosstown MBP `id_rsa` | `SHA256:AZ9qqvjaUwLBT6gi0DEkvueE03m7LTV6gLCttHhCt/o` |
 | Shared dedicated `openclaw-reachy` identity | `SHA256:DQ3KpSgkP6Uev4zum1L4ObbOwNOyc/1cc8fb1oqHwK4` |
@@ -106,6 +124,9 @@ first-match-wins behavior:
   overrides.
 - `dylans-mac-mini` identifies the OpenClaw host.
 - `dylans-macbook-pro` identifies the Crosstown MBP.
+- On the Mac mini, a `Match originalhost dylans-mac` block selects
+  `~/.ssh/id_mini_to_mac`, restricts authentication to that identity, and
+  disables the 1Password agent.
 - On the Mac mini, a `Match originalhost dylans-macbook-pro` block selects
   `~/.ssh/id_mini_to_mbp` and disables the 1Password agent.
 - On a workstation with `~/.ssh/id_crosstown`, the matching block selects that
@@ -131,6 +152,7 @@ control path, health checks, and gateway rollback procedure.
 | Crosstown MBP | `~/.ssh/id_rsa` | Mode `0600`; authenticates the MBP to the Mac mini upstream |
 | Crosstown MBP | `~/.ssh/openclaw-reachy` | Mode `0600`; authenticates the MBP to Reachy |
 | Crosstown MBP | `~/.ssh/known_hosts` | Contains verified numeric Mac mini and Reachy host keys |
+| Mac mini | `~/.ssh/id_mini_to_mac` | Mode `0600`; authenticates unattended access to Dylan's workstation |
 | Mac mini | `~/.ssh/id_mini_to_mbp` | Mode `0600`; authenticates automation to the MBP |
 | Mac mini | `~/.ssh/openclaw-reachy` | Mode `0600`; retained for rollback |
 | Mac mini | `~/.ssh/authorized_keys` | Owner-only; includes the MBP `id_rsa.pub` identity |
@@ -147,6 +169,12 @@ Verify the workstation's direct MBP access:
 
 ```bash
 ssh -o BatchMode=yes -o ConnectTimeout=8 dbochman@100.107.209.85 'hostname; id -un'
+```
+
+Verify the Mini-to-workstation path without a GUI agent:
+
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=8 dylans-mac 'hostname -s; id -un'
 ```
 
 Verify both host-to-host directions:
