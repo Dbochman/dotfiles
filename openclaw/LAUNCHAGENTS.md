@@ -321,7 +321,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer; tracked enable flag remains `0`. |
 | `ai.openclaw.nest-home-event-bridge` | 5s | `home-event-service-wrapper.sh nest` | Mirrors only newly committed Nest person/motion metadata after a silent first-run baseline; tracked enable flag remains `0`. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
-| `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink gRPC) |
+| `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's `default` profile |
@@ -331,11 +331,17 @@ Presence identities are site-local protected JSON bindings. Routine deployment
 validates the exact candidate scanner and requires a site-local mode-`0600`
 approval containing that candidate's canaried SHA-256 before replacing a
 runtime copy. Crosstown and Cabin therefore activate independently while the
-prior scanner remains operational. `presence-cabin-enroll` is an
-operator-only helper with no LaunchAgent, cron, gateway route, or unattended
-entry point. `presence-crosstown-canary` is likewise operator-only and runs
-exactly one downstream-disabled shadow sample per invocation; it has no
-scheduler or approval writer.
+prior scanner remains operational. Cabin schema v1 remains controller-only
+migration compatibility; schema v2 unions each resident's exact,
+source-specific controller and mesh bindings, and a failed configured source
+invalidates the observation rather than becoming absence.
+`presence-cabin-enroll` establishes the initial controller binding, while
+`presence-cabin-mesh-enroll` performs the attended v1-to-v2 migration and
+retains an exact protected v1 backup. Both are operator-only helpers with no
+LaunchAgent, cron, gateway route, or unattended entry point.
+`presence-crosstown-canary` is likewise operator-only and runs exactly one
+downstream-disabled shadow sample per invocation; it has no scheduler or
+approval writer.
 
 The four home-event jobs are **attended-install only**. A routine dotfiles
 pull may refresh their files only after an installed plist exists; it must not

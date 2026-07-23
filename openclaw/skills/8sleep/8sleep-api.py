@@ -382,6 +382,93 @@ def select_current_set_with_retry(user_id, set_id, token_data, attempts=3):
     raise last_error
 
 
+def get_current_device(user_id, token_data):
+    """Return the user's exact current device and side."""
+    result = require_api_success(
+        api_get(f"users/{user_id}/current-device", token_data),
+        "reading current Pod side assignment",
+    )
+    device_id = result.get("id")
+    side = result.get("side")
+    if not isinstance(device_id, str) or not device_id:
+        raise APICommandError(
+            "current Pod side assignment did not include a device ID"
+        )
+    if not isinstance(side, str) or side.lower() not in {"left", "right", "solo"}:
+        raise APICommandError(
+            "current Pod side assignment did not include a valid side"
+        )
+    return {"id": device_id, "side": side.lower()}
+
+
+def current_device_matches(current, device_id, side):
+    """Return whether a current-device readback names one exact device/side."""
+    return current["id"] == device_id and current["side"] == side
+
+
+def target_side_available(user, location, token_data):
+    """Fail before mutation if another user owns the requested target side."""
+    target_device = LOCATIONS.get(location)
+    other_location = "cabin" if location == "crosstown" else "crosstown"
+    other_device = LOCATIONS.get(other_location)
+    if not target_device or not other_device or target_device == other_device:
+        raise APICommandError(
+            "both distinct Eight Sleep location device IDs are required for home"
+        )
+    field = f"{user['side']}UserId"
+    payload = require_api_success(
+        api_get(f"devices/{target_device}?filter={field}", token_data),
+        f"checking {location} target side",
+    )
+    target = payload.get("result")
+    if not isinstance(target, dict):
+        raise APICommandError("target side assignment response was malformed")
+    assigned = target.get(field)
+    if assigned and assigned != user["id"]:
+        raise APICommandError(
+            f"{location} {user['side']} side is assigned to another user"
+        )
+    return assigned == user["id"]
+
+
+def select_current_device(user, location, token_data):
+    """Explicitly assign one user to one device side and verify readback."""
+    target_device = LOCATIONS.get(location)
+    if not target_device:
+        raise APICommandError(
+            f"EIGHTSLEEP_{location.upper()}_DEVICE_ID is required for home"
+        )
+    require_api_success(
+        api_put(
+            f"users/{user['id']}/current-device",
+            {"id": target_device, "side": user["side"]},
+            token_data,
+        ),
+        f"assigning {location} {user['side']} side",
+    )
+    current = get_current_device(user["id"], token_data)
+    if not current_device_matches(current, target_device, user["side"]):
+        raise APICommandError(
+            "Eight Sleep did not assign the requested Pod side"
+        )
+
+
+def select_current_device_with_retry(
+    user, location, token_data, attempts=3
+):
+    """Assign a user/device side with a short retry window."""
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            select_current_device(user, location, token_data)
+            return
+        except APICommandError as exc:
+            last_error = exc
+            if attempt < attempts:
+                time.sleep(0.5 * attempt)
+    raise last_error
+
+
 def acquire_routing_lock():
     """Serialize local commands that inspect or change a user's current set."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -391,7 +478,7 @@ def acquire_routing_lock():
     return lock_file
 
 
-def run_on_current_set(user_id, location, token_data, operation, require_home=False):
+def run_on_current_set(user, location, token_data, operation, require_home=False):
     """Run a user-scoped operation only when the requested Pod is current.
 
     Selecting a household set is a semantic relocation: Eight Sleep makes that
@@ -399,14 +486,24 @@ def run_on_current_set(user_id, location, token_data, operation, require_home=Fa
     mechanism, so ordinary controls must never switch sets temporarily.
     """
     with acquire_routing_lock():
-        target_set = resolve_location_set(user_id, location, token_data)
-        if get_current_set(user_id, token_data, allow_missing=True) != target_set:
+        target_set = resolve_location_set(user["id"], location, token_data)
+        target_device = LOCATIONS.get(location)
+        if (
+            get_current_set(
+                user["id"], token_data, allow_missing=True
+            ) != target_set
+            or not current_device_matches(
+                get_current_device(user["id"], token_data),
+                target_device,
+                user["side"],
+            )
+        ):
             raise APICommandError(
                 f"{location} is not this user's current Pod; run the home command first"
             )
         if require_home:
             away = require_api_success(
-                api_get_app(f"users/{user_id}/away-mode", token_data),
+                api_get_app(f"users/{user['id']}/away-mode", token_data),
                 f"reading {location} away mode",
             )
             if away.get("isAway") is not False:
@@ -414,7 +511,16 @@ def run_on_current_set(user_id, location, token_data, operation, require_home=Fa
                     f"{location} is still away for this user; run the home command first"
                 )
         result = require_api_success(operation(), f"{location} Pod operation")
-        if get_current_set(user_id, token_data, allow_missing=True) != target_set:
+        if (
+            get_current_set(
+                user["id"], token_data, allow_missing=True
+            ) != target_set
+            or not current_device_matches(
+                get_current_device(user["id"], token_data),
+                target_device,
+                user["side"],
+            )
+        ):
             raise APICommandError("current Pod changed during the operation")
         return result
 
@@ -498,7 +604,7 @@ def cmd_temp(side_name, level, location=DEFAULT_LOCATION):
     token_data = get_token()
     try:
         result = run_on_current_set(
-            user["id"],
+            user,
             location,
             token_data,
             lambda: api_put(
@@ -586,7 +692,7 @@ def cmd_off(side_name, location=DEFAULT_LOCATION):
     token_data = get_token()
     try:
         result = run_on_current_set(
-            user["id"],
+            user,
             location,
             token_data,
             lambda: api_put(
@@ -613,7 +719,7 @@ def cmd_on(side_name, location=DEFAULT_LOCATION):
     token_data = get_token()
     try:
         result = run_on_current_set(
-            user["id"],
+            user,
             location,
             token_data,
             lambda: api_put(
@@ -629,40 +735,31 @@ def cmd_on(side_name, location=DEFAULT_LOCATION):
     print(json.dumps({"success": True, "location": location, "side": side_name, "state": "on", "response": result}))
 
 
-def verify_home_assignment(user, location, token_data, attempts=5):
-    """Verify the target side is assigned here and absent from the other Pod."""
+def verify_home_routing(user, location, target_set, token_data, attempts=5):
+    """Verify authoritative set, device/side, and away-mode readbacks."""
     target_device = LOCATIONS.get(location)
-    other_location = "cabin" if location == "crosstown" else "crosstown"
-    other_device = LOCATIONS.get(other_location)
-    if not target_device or not other_device or target_device == other_device:
+    if not target_device:
         raise APICommandError(
-            "both distinct Eight Sleep location device IDs are required for home"
+            f"EIGHTSLEEP_{location.upper()}_DEVICE_ID is required for home"
         )
 
-    field = f"{user['side']}UserId"
-    query = "?filter=leftUserId,rightUserId,awaySides"
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
-            target_payload = require_api_success(
-                api_get(f"devices/{target_device}{query}", token_data),
-                f"verifying {location} side assignment",
+            current_set = get_current_set(
+                user["id"], token_data, allow_missing=True
             )
-            other_payload = require_api_success(
-                api_get(f"devices/{other_device}{query}", token_data),
-                f"verifying {other_location} side assignment",
+            current_device = get_current_device(user["id"], token_data)
+            away = require_api_success(
+                api_get_app(f"users/{user['id']}/away-mode", token_data),
+                f"verifying {location} home state",
             )
-            target = target_payload.get("result") or {}
-            other = other_payload.get("result") or {}
-            if not isinstance(target, dict) or not isinstance(other, dict):
-                raise APICommandError("device assignment response was malformed")
-            other_away = other.get("awaySides") or {}
-            if not isinstance(other_away, dict):
-                raise APICommandError("away-side assignment response was malformed")
             if (
-                target.get(field) == user["id"]
-                and not other.get(field)
-                and other_away.get(field) == user["id"]
+                current_set == target_set
+                and current_device_matches(
+                    current_device, target_device, user["side"]
+                )
+                and away.get("isAway") is False
             ):
                 return
         except APICommandError as exc:
@@ -672,7 +769,7 @@ def verify_home_assignment(user, location, token_data, attempts=5):
     if last_error:
         raise last_error
     raise APICommandError(
-        f"Eight Sleep did not move {user['side']} assignment to {location}"
+        f"Eight Sleep did not move {user['side']} routing to {location}"
     )
 
 
@@ -691,11 +788,31 @@ def cmd_home(side_name, location=DEFAULT_LOCATION):
     try:
         with acquire_routing_lock():
             target_set = resolve_location_set(user["id"], location, token_data)
-            if get_current_set(user["id"], token_data, allow_missing=True) != target_set:
+            target_device = LOCATIONS.get(location)
+            target_assignment_current = target_side_available(
+                user, location, token_data
+            )
+            current_set = get_current_set(
+                user["id"], token_data, allow_missing=True
+            )
+            current_device = get_current_device(user["id"], token_data)
+
+            set_changed = current_set != target_set
+            if set_changed:
                 select_current_set_with_retry(user["id"], target_set, token_data)
                 changed = True
-            if get_current_set(user["id"], token_data, allow_missing=True) != target_set:
-                raise APICommandError("Eight Sleep did not keep the requested Pod current")
+
+            if (
+                set_changed
+                or not current_device_matches(
+                    current_device, target_device, user["side"]
+                )
+                or not target_assignment_current
+            ):
+                select_current_device_with_retry(
+                    user, location, token_data
+                )
+                changed = True
 
             status = require_api_success(
                 api_get_app(f"users/{user['id']}/away-mode", token_data),
@@ -722,40 +839,9 @@ def cmd_home(side_name, location=DEFAULT_LOCATION):
                 raise APICommandError(
                     f"{location} away-mode readback did not clear"
                 )
-            try:
-                verify_home_assignment(user, location, token_data)
-            except APICommandError:
-                # A stale same-set assignment can survive while current-set
-                # already names the target. Reassert the semantic relocation
-                # once, then recheck both the active and away Pods.
-                select_current_set_with_retry(user["id"], target_set, token_data)
-                changed = True
-                status = require_api_success(
-                    api_get_app(f"users/{user['id']}/away-mode", token_data),
-                    f"rechecking {location} home state",
-                )
-                if status.get("isAway") is not False:
-                    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-                    result = require_api_success(
-                        api_put(
-                            f"users/{user['id']}/away-mode",
-                            {"awayPeriod": {"end": timestamp}},
-                            token_data,
-                            use_app_api=True,
-                        ),
-                        f"ending {location} away mode after reselection",
-                    )
-                    status = require_api_success(
-                        api_get_app(f"users/{user['id']}/away-mode", token_data),
-                        f"verifying {location} home state after reselection",
-                    )
-                    if status.get("isAway") is not False:
-                        raise APICommandError(
-                            f"{location} away-mode readback did not clear after reselection"
-                        )
-                verify_home_assignment(user, location, token_data)
-            if get_current_set(user["id"], token_data, allow_missing=True) != target_set:
-                raise APICommandError("current Pod changed during the home operation")
+            verify_home_routing(
+                user, location, target_set, token_data
+            )
     except APICommandError as exc:
         command_error(exc)
 
@@ -817,7 +903,7 @@ def cmd_away(side_name, action, location=DEFAULT_LOCATION):
 
     try:
         result = run_on_current_set(
-            user["id"],
+            user,
             location,
             token_data,
             apply_and_verify_away,

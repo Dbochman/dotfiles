@@ -228,15 +228,38 @@ The active reviewer has a deliberately narrow contract:
   the state-writing `cabin` or `evaluate` modes. Cached presence is checked
   again after capture and immediately before delivery; a newly occupied home
   discards the frame/commentary without reserving a message slot.
-- Until attended enrollment completes, the live Cabin observation uses the
-  preserved legacy name-based scanner and may conservatively suppress review
-  on its generic-iPhone fallback. The tracked strict scanner instead uses
-  protected exact Starlink captive-client bindings for Dylan and Julia; a
-  match counts only with a live unexpired DHCP lease and no more than five
-  minutes of data idle time. Client-name substrings, device types, and generic
-  iPhone fallbacks are forbidden after activation. The exact scanner hash must
-  pass the downstream-disabled Cabin canary before routine deployment can use
-  it.
+- Cabin production schema v2 now binds Dylan and Julia separately on exactly
+  one controller and every configured exact-target mesh node, using the
+  node-local `captiveClientId` on each source. After two clean scheduled ticks,
+  12/12 live observations, and the full test suite, the operator explicitly
+  waived the remaining two ticks and approved the exact scanner hash. The
+  reviewer is restored; its first live event was suppressed by occupied
+  presence without capture, model review, image creation, or message attempt.
+  The tracked strict scanner retains schema v1 for controller-only
+  compatibility. The per-person result is the union of valid source-specific
+  positives.
+- A controller match counts only when its DHCP-found and DHCP-active fields
+  are booleans and true, its remaining lease is finite and positive, and its
+  non-negative integer idle time is no more than 300 seconds. A mesh match
+  requires the exact node-local ID, `role: "CLIENT"`, finite non-negative
+  association time, finite signal strength, and valid RX and TX statistics.
+  Starlink's `active` field is diagnostic-only; false or missing `active`
+  never overrides valid mesh association evidence.
+- The Cabin observation requires every configured controller and mesh query
+  plus clients array to validate. One unreachable source, missing clients
+  array, or duplicate exact match invalidates the observation. An incomplete
+  selected-row liveness tuple is per-resident unknown: another source's strict
+  positive wins that resident's union, while no positive plus unknown fails
+  closed and vetoes review. Strict output contains resident booleans and safe
+  aggregates only, never client IDs, mesh target IDs, names, addresses, or raw
+  Starlink rows.
+  Client-name substrings, device types, and generic iPhone fallbacks are
+  forbidden after activation.
+- The exact scanner bytes must pass the downstream-disabled Cabin canary
+  before routine deployment can use them. Any later byte change requires a
+  new exact-hash canary approval on the Mac Mini. The MacBook Pro has its own
+  independent Crosstown approval; neither site's approval authorizes the
+  other.
 - A trigger waits eight seconds for the scene to settle and is discarded if it
   is over two minutes old. Repeated review work is limited to once per five
   minutes.

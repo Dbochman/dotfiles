@@ -148,8 +148,9 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 The tracked strict scanner requires a separate, site-local
 `~/.openclaw/presence-devices.json`. That protected identity file is not part
 of the presence state directory, must never be printed, and is described
-below. Until a site's exact source hash has passed its canary and is approved,
-deployment preserves that site's prior runtime scanner instead.
+below. Until the candidate's exact source bytes have passed a canary and that
+hash is approved on the target host, deployment preserves that host's prior
+runtime scanner instead. Cabin and Crosstown approvals are independent.
 
 ### Logs
 
@@ -160,22 +161,46 @@ deployment preserves that site's prior runtime scanner instead.
 
 ### Cabin (Philly)
 
-- **Method**: Starlink gRPC API (`grpcurl` at `192.168.1.1:9000`)
-- **Identity**: Each resident is bound to one exact Starlink
-  `captiveClientId` from the protected Cabin config. Display names, substrings,
-  device types, and generic iPhone fallbacks are never identity evidence.
-- **Liveness**: An exact match counts only when `dhcpLeaseFound` and
-  `dhcpLeaseActive` are true, the lease has positive remaining time, and
-  `noDataIdleS` is an integer no greater than 300. The unrelated Starlink
-  `active` field is not required. Missing matches are absent; duplicate matches
-  or malformed liveness fields fail the scan closed.
-- **Activation prerequisite**: Provisioning the two exact IDs requires an
-  attended session at the Cabin while both phones can be identified and their
-  current lease/idle evidence verified. Until that protected config exists and
-  validates and the exact scanner hash completes its canary, the strict Cabin
-  scanner must not replace the deployed legacy scanner. That legacy scanner
-  still uses permissive name matching and can include raw network details in
-  direct observation output; do not print or persist that output.
+- **Method**: Starlink gRPC API (`grpcurl` at `192.168.1.1:9000`). The scanner
+  queries the primary controller and every configured mesh node; a mesh request
+  carries only that source's exact protected `target_id`.
+- **Identity and compatibility**: Cabin schema v1 remains accepted only as the
+  original controller-only compatibility format. Schema v2 has exactly one
+  `starlink_controller` source and one or more `starlink_mesh` sources, each
+  with exact, source-local `captiveClientId` bindings for both residents. A
+  resident is present when any successfully validated source has its exact
+  positive binding. Display names, substrings, device types, and generic
+  iPhone fallbacks are never identity evidence.
+- **Controller liveness**: A selected controller row must have boolean
+  `dhcpLeaseFound` and `dhcpLeaseActive`, finite
+  `secondsUntilDhcpLeaseExpires`, and a non-negative integer `noDataIdleS`.
+  It counts present only when both DHCP flags are true, the lease has positive
+  remaining time, and idle time is no greater than 300 seconds.
+- **Mesh liveness**: A selected mesh row must match the exact node-local
+  `captiveClientId`, have `role: "CLIENT"`, finite non-negative
+  `associatedTimeS`, finite `signalStrength`, and both `rxStatsValid` and
+  `txStatsValid` set to true. Starlink's `active` field is diagnostic-only: it
+  may be false or absent for a connected mesh client and never decides
+  presence.
+- **Whole-observation validity**: Every configured source must return a valid
+  clients array and every selected match must be unique. A query failure,
+  malformed source response, or duplicate exact match invalidates the entire
+  Cabin observation. Incomplete selected-row liveness is per-person unknown:
+  another source's strict positive wins the union for that resident, but no
+  positive plus unknown fails closed. Absence is authoritative only after all
+  sources succeed and none has either a strict positive or unknown evidence
+  for that resident.
+- **Sanitized output**: Strict observations, state, events, and logs expose
+  resident booleans and safe aggregate evidence only. They never emit
+  controller or mesh client IDs, mesh target IDs, names, addresses, or raw
+  Starlink rows.
+- **Activation status and future guard**: Cabin schema v2 is active with exact
+  controller and Kitchen-mesh bindings, and the installed scanner hash has a
+  site-local mode-`0600` approval. The July 23 activation used an explicit
+  operator waiver after two clean scheduled ticks plus 12/12 live
+  observations and the full test suite. Any future scanner byte change still
+  requires a fresh Cabin canary and exact-hash approval before routine
+  deployment can replace the runtime.
 
 ### Crosstown (Boston)
 
@@ -196,7 +221,8 @@ deployment preserves that site's prior runtime scanner instead.
 
 Each host stores only its own site's identities at the same local path. The
 file must be a regular, single-link, owner-owned mode-`0600` file in an
-owner-only, non-symlink directory. Its schema and keys are exact:
+owner-only, non-symlink directory. Cabin schema v1 is retained strictly for
+controller-only compatibility:
 
 ```json
 {
@@ -215,12 +241,58 @@ owner-only, non-symlink directory. Its schema and keys are exact:
 }
 ```
 
-The MacBook Pro uses `"site": "crosstown"` and `"kind": "mac"` for both
-people. The two values must be distinct. Missing, symlinked, insecure,
-wrong-site, extra-key, malformed, or duplicate bindings fail the scan closed;
-there is no heuristic fallback. The tracked strict scanner's output, state,
-events, and logs contain only resident booleans and safe aggregate evidence,
-never the private bindings, client names, addresses, or raw Starlink records.
+As soon as any mesh source is monitored, Cabin requires schema v2. Its
+closed-schema shape is:
+
+```json
+{
+  "schema_version": 2,
+  "site": "cabin",
+  "sources": [
+    {
+      "kind": "starlink_controller",
+      "bindings": {
+        "Dylan": {
+          "kind": "starlink_captive_client_id",
+          "value": "REDACTED"
+        },
+        "Julia": {
+          "kind": "starlink_captive_client_id",
+          "value": "REDACTED"
+        }
+      }
+    },
+    {
+      "kind": "starlink_mesh",
+      "target_id": "REDACTED",
+      "bindings": {
+        "Dylan": {
+          "kind": "starlink_captive_client_id",
+          "value": "REDACTED"
+        },
+        "Julia": {
+          "kind": "starlink_captive_client_id",
+          "value": "REDACTED"
+        }
+      }
+    }
+  ]
+}
+```
+
+There must be exactly one controller and at least one uniquely targeted mesh
+source, and every source must bind both people. The same phone can have a
+different exact node-local ID on each source; presence is the union of those
+source-specific positives only after every configured source validates.
+
+The MacBook Pro continues to use schema v1 with `"site": "crosstown"` and
+`"kind": "mac"` for both people. Values must be distinct within a source, and
+one exact identity cannot be assigned to different people across Cabin
+sources. Missing, symlinked, insecure, wrong-site, extra-key, malformed, or
+duplicate bindings fail the scan closed; there is no heuristic fallback. The
+tracked strict scanner's output, state, events, and logs contain only resident
+booleans and safe aggregate evidence, never the private bindings, mesh target
+IDs, client names, addresses, or raw Starlink records.
 
 Validate a site's protected file without scanning or writing presence state:
 
@@ -239,7 +311,10 @@ ssh dylans-macbook-pro \
 - **Strict identity is a deployment boundary** — do not activate a new scanner
   merely because its source changed. Validate the protected site-scoped config,
   canary the exact source bytes, and approve that hash on the target host first.
-  Cabin provisioning remains an attended prerequisite.
+  Any later scanner byte change produces a new hash and requires a new
+  per-host canary approval before routine deployment. Approval on the Cabin
+  Mac Mini never approves the Crosstown MacBook Pro, or vice versa. Cabin
+  provisioning remains an attended prerequisite.
 - Mac Mini SSHs to MacBook Pro via Tailscale (`ssh dylans-macbook-pro`) using dedicated key `~/.ssh/id_mini_to_mbp` (bypasses 1Password agent which hangs under launchd).
 - iOS private addresses are network-specific. Bind the exact current
   Crosstown MAC address for each phone; never compensate for rotation with a

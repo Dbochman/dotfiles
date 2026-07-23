@@ -95,16 +95,20 @@ invalid snooze policy fails closed for Roomba starts.
 Eight Sleep is reconciled from each person's sticky `people.<name>.location`
 when that location changes. This handles split households without polling the
 cloud on every 15-minute state write. The per-person marker records the last
-verified location. While the location is unchanged, manual Eight Sleep app
-overrides are preserved; the next positive relocation re-applies automation.
-Invalid or unknown locations preserve the marker and perform no device action.
+verified location only after Eight Sleep confirms the target household set,
+the person's exact device/side assignment, and `away-mode = false`. A failed or
+partial cloud update leaves the old marker in place so the ordinary
+reconciliation path can retry. While the location is unchanged, manual Eight
+Sleep app overrides are preserved; the next positive relocation re-applies
+automation. Invalid or unknown locations preserve the marker and perform no
+device action.
 
-Until the deployed Cabin scanner validates the protected exact-ID binding,
-Julia's Eight Sleep side remains pinned to Crosstown even if legacy Cabin
-presence reports her there. This temporary containment blocks the permissive
-generic-iPhone fallback from moving her bed automation. It releases
-automatically after the attended enrollment activates the strict scanner;
-Dylan's reconciliation is unchanged.
+The deployed Cabin scanner now validates the protected exact schema-v2
+binding, so Julia's temporary Crosstown pin is released and her Eight Sleep
+side follows canonical presence. If that protected binding or scanner later
+fails validation, the guard conservatively pins her back to Crosstown rather
+than trusting an unvalidated Cabin relocation. Dylan's reconciliation is
+unchanged.
 
 ## Files
 

@@ -2,25 +2,98 @@
 
 ## Status
 
-READY FOR ATTENDED EXECUTION — the operator helper and strict scanner exist in
-source; production Cabin activation remains gated on physical phone testing,
-multi-scenario read-only verification at the real cadence, and a downstream-
-disabled production canary.
+ACTIVATED WITH AN EXPLICIT OPERATOR CANARY WAIVER — production schema v2
+contains exact bindings for both residents on the primary controller and
+Kitchen mesh node. Two corrected real-cadence ticks passed with zero mismatch;
+the operator explicitly waived the remaining two ticks after also reviewing
+the 12/12 live observation run and full test results. The exact scanner hash is
+approved, enrollment staging is cleaned, and all protected jobs are restored.
+A natural departure/return transition remains a non-blocking follow-up.
 
 ## Outcome
 
-Safely replace the Cabin's permissive Starlink display-name matching with two
-exact, site-local `captiveClientId` bindings. Prove that each identifier belongs
-to the intended phone, remains stable across ordinary reconnects, exposes usable
-lease/idle evidence, and behaves safely at the real 15-minute scan cadence
-before the production scanner, vacancy automation, or camera reviewer can use
-it.
+Safely replace the Cabin's permissive Starlink display-name matching with exact,
+source-local `captiveClientId` bindings for both residents on every monitored
+Starlink attachment domain. Prove that each identifier belongs to the intended
+phone, remains stable across ordinary reconnects, exposes usable source-specific
+liveness evidence, and behaves safely at the real 15-minute scan cadence before
+the production scanner, vacancy automation, or camera reviewer can use it.
 
 The enrollment must never disclose a raw provider row or turn an identification
 session into a presence transition, vacancy action, camera review, home-event
 publication, or outbound message.
 
-## Interim Eight Sleep containment (2026-07-18)
+## July 23 mesh migration update
+
+The exact controller-only enrollment completed successfully and schema v1 was
+activated. The first production canary tick was correct. After an ordinary
+departure and return, however, Dylan's phone associated through the Kitchen
+Starlink Router Mini. Its controller-local row disappeared even though the
+phone was connected and producing traffic, so the canary was stopped at one of
+four ticks before any downstream service was restored or scanner hash approved.
+
+Read-only topology inspection established:
+
+- the Kitchen device is one directly attached `REPEATER`, already paired to the
+  primary controller;
+- the primary controller can proxy `wifiGetClients` to it with `targetId`;
+- a phone has a distinct, stable node-local `captiveClientId` in that targeted
+  response;
+- `active` is not authoritative: it remained false across ten connected,
+  traffic-producing samples;
+- the exact row, `CLIENT` role, finite association age and signal, and valid
+  receive/transmit statistics were stable across those samples; and
+- with Settings-level Wi-Fi off, the exact phone row was absent across four
+  consecutive successful targeted queries and remained absent in a later
+  check.
+
+Schema v2 therefore represents one controller source plus one or more explicit
+mesh sources. Presence is the union of exact per-source bindings. Controller
+rows retain the DHCP/lease/idle predicate. A selected mesh row is present when
+it has the exact node-local binding, `CLIENT` role, finite nonnegative
+association age and signal, and valid receive/transmit statistics. The
+provider's `active` field is diagnostic-only. An exact row is absent only after
+that source returns a valid targeted response. Any configured source failure
+or duplicate selected row invalidates the whole observation. Incomplete
+liveness on one successful source is per-resident unknown: another source's
+strict positive wins the union, while no positive plus unknown fails closed.
+
+The current migration adds a separate operator-only helper so the already
+activated v1 binding and the completed original enrollment session remain
+untouched until an atomic v1-to-v2 promotion. Its default attended flow captures
+an off baseline first as session-keyed fingerprints, then credits the subsequent
+stable exact-IP identification as the same off-to-on proof. This deliberately
+reuses the physical transition instead of requiring a redundant second toggle.
+
+### July 23 activation record
+
+Schema v2 was activated under the verified mesh-aware runtime. The corrected
+source-union behavior passed 12 of 12 consecutive live observations, 148
+enrollment/deployment tests, all four presence shell suites, and two clean
+scheduled production ticks. Both ticks reported Dylan and Julia at Cabin,
+Cabin occupied, no transition, unchanged vacancy markers, matching
+source/runtime bytes, and a healthy zero-backlog event bus.
+
+The operator then explicitly waived scheduled ticks three and four and approved
+the exact installed scanner hash. That hash was written atomically with mode
+`0600`. The helper revalidated the exact v1 rollback backup on an idempotent
+activation check, removed the sensitive mesh session and staged config, and
+retained the identifier-free report and exact v1 backup. The scanner, receiver,
+vacancy actions, and reviewer were restored in that order.
+
+Seven enrollment-window Kitchen triggers expired without capture or review.
+A subsequent live Nest event was suppressed by the corrected occupied presence
+state, with no image, model review, or message attempt. Restoring vacancy
+actions released Julia's temporary Eight Sleep containment and moved her
+verified home marker to Cabin. Dylan's initial move-to-Cabin attempt failed
+under the old current-set-only wrapper and correctly left its marker unchanged.
+The old verifier eventually passed after its secondary device telemetry caught
+up, allowing ordinary reconciliation to advance Dylan's marker at 17:04. The
+follow-up repair added an explicit user/device-side assignment and authoritative
+readback so future moves do not depend on that delayed telemetry. No gateway
+restart occurred.
+
+## Eight Sleep containment and routing repair (2026-07-18–23)
 
 Until Julia's exact Cabin binding is activated, `vacancy-actions.sh` pins her
 Eight Sleep home to Crosstown even when the correlated sticky state says Cabin.
@@ -30,9 +103,15 @@ called the Eight Sleep Cabin `home` operation. Eight Sleep partially changed
 the user-scoped routing but never completed the Cabin side assignment. The
 command correctly reported failure, but its durable marker remained Crosstown,
 so each new state write retried the bad Cabin move and the later Crosstown
-correction did not force a repair. Eight Sleep's device-level `awaySides` field
-is not treated as a standalone active-away signal; the authoritative repair
-readback is Julia's Crosstown `current-set` plus `away-mode = false`.
+correction did not force a repair.
+
+The repaired wrapper treats household `current-set` selection and the
+user-scoped `current-device` side assignment as distinct operations. A `home`
+move collision-checks the target side, performs both operations when needed,
+clears away mode, and succeeds only after the target set, exact target
+device/side, and `away-mode = false` all read back correctly. Eight Sleep's
+device-level `awaySides` field can lag and is retained as diagnostic telemetry,
+not authoritative move proof.
 
 This containment is deliberately narrower than presence itself: occupancy,
 vacancy, and other household actions continue to use the existing correlated
@@ -77,8 +156,10 @@ This Network.” Those are physical facts to establish, not assumptions to encod
 ## Components
 
 - Operator helper: `openclaw/bin/presence-cabin-enroll`
+- Mesh migration helper: `openclaw/bin/presence-cabin-mesh-enroll`
 - Strict scanner: `openclaw/workspace/scripts/presence-detect.sh`
 - Helper tests: `openclaw/tests/test_presence_cabin_enroll.py`
+- Mesh helper tests: `openclaw/tests/test_presence_cabin_mesh_enroll.py`
 - Scanner tests: `openclaw/tests/test-presence-cabin-scan.sh`
 - Protected enrollment runtime:
 
@@ -94,6 +175,17 @@ This Network.” Those are physical facts to establish, not assumptions to encod
 
   ```text
   ~/.openclaw/presence-devices.json  0600
+  ```
+
+- Protected mesh migration runtime:
+
+  ```text
+  ~/.openclaw/presence-mesh-enrollment/  0700
+  ├── session.lock                       0600
+  ├── session.json                       0600; sensitive until cleanup
+  ├── candidate-config-v2.json           0600; staging only
+  ├── safe-report.json                   0600; identifier-free
+  └── production-v1-backup.json          0600; retained for exact rollback
   ```
 
 - Exact-source deployment approval, created only after the downstream-disabled
@@ -119,7 +211,9 @@ permission. Deployment requires no gateway restart.
 4. Before identification, observed IDs exist in session state only as
    session-keyed fingerprints. After unique attribution, only the two selected
    raw IDs are retained in the owner-only session because they are required for
-   the eventual config.
+   the eventual config. Each reconnect off sample also retains non-target
+   clients only as session-keyed fingerprints with private liveness evidence;
+   it never stores their raw IDs.
 5. The candidate config stays outside the production path throughout the soak.
    Creating `~/.openclaw/presence-devices.json` alone does not authorize a
    routine pull to install the strict scanner: deployment also requires the
@@ -129,8 +223,10 @@ permission. Deployment requires no gateway restart.
    promotion additionally requires four explicit confirmations and refuses to
    overwrite any existing config, link, or unsafe path.
 7. Unknown, malformed, duplicated, rotating, or ambiguous identity evidence
-   fails closed. There is no name, hostname, IP, generic-iPhone, or multiple-ID
-   fallback.
+   fails closed. There is no name, hostname, recurring/production IP,
+   generic-iPhone, or multiple-ID fallback. The attended one-time IP join
+   described below is transient attribution evidence, never production
+   identity.
 8. The current five-minute idle rule is measured, not defended. If it fails
    real sleeping-phone or 15-minute-cadence tests, stop and revise the policy
    and tests before activation.
@@ -142,8 +238,14 @@ permission. Deployment requires no gateway restart.
 ## Helper contract
 
 Every command emits one bounded JSON object. Read-only commands are
-`preflight`, `status`, and `shadow-report`. Commands that change the protected
-enrollment session require `--attended` before the command name.
+`preflight`, `status`, `observe-selected`, and `shadow-report`.
+`observe-selected` is an enrollment-troubleshooting aid that returns only the
+selected candidate's safe seen/lease/idle classification plus a boolean
+indicating whether the full liveness tuple is absent and bounded categorical
+presence/type buckets for those fields and Starlink's generic `active` flag; it
+never returns raw provider values or changes session or canonical state.
+Commands that change the protected enrollment session require `--attended`
+before the command name.
 
 ### Safe preflight
 
@@ -173,20 +275,101 @@ directory or state file.
 
 Repeat that sequence for Julia. `baseline` stores keyed fingerprints only.
 `identify` takes three samples and succeeds only when one fresh new or
-idle-reset candidate remains stable across all three. Each reconnect cycle
-requires an observable off state (the row is missing or has a complete invalid
-lease), at least five seconds between the off and on observations, and the same
-selected ID in three fresh reconnect samples. A second new or baseline-reset
-fresh identity is a hard stop, covering dual-row private-address rotation. An
-idle counter reset while the selected lease remains valid is not disconnect
-proof.
+idle-reset candidate remains stable across all three.
+
+If real household traffic prevents transition-only isolation, use the attended
+exact-address fallback after the off baseline:
+
+```bash
+~/.openclaw/bin/presence-cabin-enroll --attended \
+  identify-exact-address Julia
+```
+
+The address is entered twice through fixed, hidden terminal prompts. It is
+never accepted in an argument or environment variable and never written to
+stdout, stderr, the session, a log, or Git. The helper uses it only in process
+memory to require one matching Starlink `macAddress` row, the same valid
+`captiveClientId`, a phone-off baseline that did not classify that row present,
+and fresh complete liveness in all three online samples; it then discards the
+address and persists only the existing private opaque ID. Missing, malformed,
+duplicated, stale, incomplete, changing, or already-present-at-baseline matches
+fail closed.
+This is attribution evidence only and does not bypass either reconnect cycle,
+the idle profile, shadow verification, or the production canary.
+
+The attended Cabin run on July 23 found that Starlink returned partially
+masked `macAddress` values for 17 of 19 client rows, so Julia's valid address
+could not match. When the provider masks the target row, use the separate
+exact-IP join:
+
+```bash
+~/.openclaw/bin/presence-cabin-enroll --attended \
+  identify-exact-ip Julia
+```
+
+The phone's current Cabin IPv4 address is entered twice as hidden transient
+text, immediately normalized to four bytes, and never persisted or emitted. It
+must be canonical and inside the Cabin subnet. At least three independent
+Starlink samples—and at most ten over a bounded observation window—must map it
+to exactly one row and the same valid `captiveClientId`. At least one sample
+must pass the production presence rule; any remaining sample may omit the
+entire provider lease/idle tuple, or omit only the idle counter while retaining
+an explicitly found, active DHCP lease with positive time remaining. No sample
+may be absent, stale, invalid, have any other partial shape, or map the IP to a
+different identity. The phone-off baseline must be less than 30 minutes old and
+must not have classified that opaque ID present in any of its three samples.
+The helper then discards the IP and persists only the opaque ID. DHCP
+reassignment can therefore never become production identity evidence. This is
+materially narrower than the old Crosstown production IP fallback and retains
+every later reconnect, idle, shadow, canary, and activation gate.
+
+Each reconnect cycle
+requires an attended transport-off state: the selected row is missing, has a
+complete invalid lease, or remains present with the entire lease/idle tuple
+absent after the phone's Settings-level Wi-Fi switch is off. The
+incomplete-tuple case is enrollment-only transition evidence; it is never
+production absence. Every persisted reconnect, idle, shadow, and production
+present observation still requires complete liveness. At least five seconds
+must separate the off and on observations. The off sample records a
+session-keyed liveness map for every non-target client. A peer that was already
+valid and fresh while the target phone was off may remain fresh without
+invalidating the reconnect. For transition-only `new` or `idle_reset`
+attribution, a peer that was absent, stale, incomplete, or invalid while the
+target phone was off and then becomes fresh—or whose idle counter materially
+resets only after the target reconnects—is a hard stop, covering dual-row
+private-address rotation. Independently attributed exact-address or exact-IP
+identities do not apply that peer guard: their selected opaque ID must still
+disappear while off, remain the same across at least three and at most fifteen
+reconnect samples, and pass the production presence rule in at least one.
+Other samples may use only the same narrow whole-tuple or
+valid-lease/missing-idle exceptions allowed during exact identification. The
+persisted reconnect proof is always the complete production-present
+observation, while unrelated household client activity is ignored.
+Transition-only identities retain three fresh samples and the tighter
+60-second freshness rule. An ambiguity-bearing
+transition-only reconnect attempt consumes that off context and requires a new
+attended Wi-Fi-off sample before any retry; a selected row that merely has not
+met its applicable reconnect rule remains retryable. An idle counter reset
+while the selected lease remains valid is not disconnect proof.
 
 The idle checkpoints are measured from `idle-start`; the helper requires them
-in 5-, 10-, then 20-minute order and rejects samples outside a narrow attended
-window. They record safe buckets and whether the current five-minute rule would
-classify the known-connected phone as present. Every checkpoint must classify
-the phone as present before staging is allowed. The helper does not silently
-change the threshold.
+in 5-, 10-, then 20-minute order and never accepts a checkpoint before its
+milestone. A later observation remains valid evidence for an earlier milestone,
+so operator timing cannot invalidate an otherwise stronger observation. Each
+recorded checkpoint must still be a distinct, later Starlink query. A selected
+row whose entire lease/idle tuple is temporarily absent is unknown rather than
+negative, so that checkpoint remains retryable instead of consuming the
+milestone. Checkpoints record safe buckets and whether the current five-minute
+rule would classify the known-connected phone as present. Every recorded
+checkpoint must classify the phone as present before staging is allowed. The
+helper does not silently change the threshold.
+
+For an independently attributed exact identity, `idle-start` reuses the second
+cycle's durable reconnect observation when it is no more than five minutes old
+and was fresh within 60 seconds at capture. This starts the idle clock at the
+attended `idle-start` invocation without demanding a redundant provider query;
+the phone must then be locked and left untouched as usual. Older or
+transition-derived reconnect evidence falls back to a new live snapshot.
 
 `start` and every physical enrollment command also verify that all four
 protected LaunchAgents remain unloaded. If one is restored during the attended
@@ -203,11 +386,7 @@ window, the next command fails before querying or changing enrollment state.
 ~/.openclaw/bin/presence-cabin-enroll --attended shadow-sample \
   --scenario dylan-only
 ~/.openclaw/bin/presence-cabin-enroll --attended shadow-sample \
-  --scenario julia-only
-~/.openclaw/bin/presence-cabin-enroll --attended shadow-sample \
-  --scenario both-away
-~/.openclaw/bin/presence-cabin-enroll --attended shadow-sample \
-  --scenario return-both
+  --scenario both-present
 
 ~/.openclaw/bin/presence-cabin-enroll shadow-report
 ```
@@ -216,18 +395,45 @@ window, the next command fails before querying or changing enrollment state.
 Starlink directly, compare the current rule with operator-supplied ground truth,
 and save only booleans, lease state, idle buckets, counts, and timestamps.
 
-The helper's activation gate requires:
+Every activation path requires:
 
 - both distinct identities fully enrolled;
 - two proven reconnect cycles per phone;
 - complete 5-, 10-, and 20-minute idle profiles per phone;
+- zero saved mismatches or incomplete required evidence.
+
+The default compact path additionally requires exact attribution for both
+phones, protected enrollment evidence for both-away and Julia-only, and three
+consecutive matching joint samples: both-present, Dylan-only, then both-present
+after Julia returns.
+
+The legacy alternative requires:
+
 - at least eight shadow samples;
 - at least one hour between the first and last samples;
 - at least three sample intervals between 14 and 16 minutes, exercising the
   real 15-minute cadence rather than only rapid manual queries or multi-hour
   gaps;
-- all five ground-truth scenarios, including a return after both-away;
-- zero mismatches or incomplete required evidence.
+- all five ground-truth scenarios, including a return after both-away.
+
+That legacy one-hour gate remains available for unattended soak testing. After
+both phones instead complete the attended exact-identity enrollment above, the
+helper also accepts a compact joint-classifier sequence:
+
+1. both phones present;
+2. Julia disconnected while Dylan remains present;
+3. Julia returned and both phones present again.
+
+All three samples must be consecutive matches. Every present selected row must
+have complete liveness; an expected-away row may be missing or complete
+negative. An incomplete provider snapshot is unknown and retryable rather than
+being stored as a mismatch. The helper algorithmically verifies that Julia's
+three-sample baseline classified neither selected fingerprint present and that
+a Dylan disconnect captured Dylan off while Julia was strictly present. This
+compact alternative also relies on the required per-phone reconnect cycles and
+5/10/20-minute idle profiles; it does not repeat those same tests for another
+hour. A natural whole-house departure and return remains a non-blocking
+production canary.
 
 An extended 24–48-hour soak is optional when identity, lease, or idle evidence
 is inconsistent. It is not a default gate: elapsed time alone does not prove
@@ -295,6 +501,10 @@ Run from `~/dotfiles` before visiting or changing any phone/network setting:
 
 ```bash
 python3 -m unittest openclaw/tests/test_presence_cabin_enroll.py
+python3 -m unittest openclaw/tests/test_presence_cabin_mesh_enroll.py
+python3 -m py_compile \
+  openclaw/bin/presence-cabin-enroll \
+  openclaw/bin/presence-cabin-mesh-enroll
 bash openclaw/tests/test-presence-cabin-scan.sh
 bash openclaw/tests/test-presence-observe.sh
 bash openclaw/tests/test-presence-detect.sh
@@ -304,8 +514,21 @@ bash openclaw/tests/test-vacancy-actions.sh
 python3 -m unittest openclaw/tests/test_deployment_contracts.py
 ```
 
-Install the verified helper atomically before its first runtime invocation,
-then compare source and installed hashes:
+The helper's protected session schema is versioned. Before installing a newer
+helper, preserve any older incomplete session inside the owner-only rollback
+bundle and use the still-installed old helper to run its attended
+`abort --confirm-delete-sensitive-session`. Only after the old session is
+safely closed may the new helper be installed and a clean session started.
+Never install a helper that cannot validate the active session and never
+hand-edit or synthesize reconnect context.
+
+The exact-IP fallback and any-sample off-baseline aggregation are a schema-v4
+boundary. Any v1-v3 session must be preserved and closed with its still-
+installed helper before installing v4; never downgrade while a v4 session
+exists.
+
+After satisfying that boundary, install the verified helper atomically and
+compare source and installed hashes:
 
 ```bash
 tmp="$HOME/.openclaw/bin/.presence-cabin-enroll.$$"
@@ -403,6 +626,63 @@ candidates. The first post-staging `both-present` shadow sample supplies the
 fresh live-evidence check for both phones; `status` itself does not query
 Starlink.
 
+### Mesh source enrollment after schema-v1 activation
+
+Keep the four protected jobs unloaded. Install the verified mesh helper
+atomically, compare its source/runtime hashes, and then use one off-to-on cycle
+per resident:
+
+```bash
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended init
+
+# While Dylan is disconnected:
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended baseline Dylan
+# Reconnect, generate traffic, then enter the current IPv4 twice at hidden prompts:
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended identify Dylan
+
+# Repeat the same off-baseline / reconnect / identify sequence for Julia.
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended baseline Julia
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended identify Julia
+
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended stage
+~/.openclaw/bin/presence-cabin-mesh-enroll report
+```
+
+The IPv4 address is transient attribution evidence accepted only through two
+fixed hidden prompts; any canonical RFC1918 subnet is allowed because the mesh
+node may route a different private subnet. It is never stored or emitted. A
+fresh baseline is valid for at most 30 minutes and retains only
+person/session-keyed fingerprints. Identification must prove one stable exact
+node-local ID with advancing association evidence. If no baseline is available,
+the helper retains the explicit `identify` → `disconnect` → `reconnect`
+fallback, with at least three consecutive exact-ID absences required for the
+off proof.
+
+When a targeted mesh row's exact `captiveClientId` is byte-for-byte identical
+to that resident's already-active, fully enrolled schema-v1 controller binding,
+the helper may instead use the explicit attended continuity path:
+
+```bash
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended \
+  credit-controller-identity Julia \
+  --confirm-existing-controller-identity
+```
+
+This path never selects by name, device type, or IP. It starts from the trusted
+existing controller identity, requires that exact row on the configured mesh
+target across a final consecutive strict window with advancing association
+evidence, and rejects any cross-person identity collision. It credits the
+prior controller enrollment's identity/reconnect durability and the already
+validated same-node row-removal semantics instead of interrupting the resident
+for a redundant toggle. It is allowed only when the opaque values are exactly
+equal. A Julia-specific stale row after departure would conservatively retain
+occupancy rather than create a false vacancy.
+
+`stage` writes only the protected v2 candidate. It must leave the active v1
+config and the original enrollment session byte-for-byte unchanged. Before
+activation, an attended `abort --confirm-abandon-mesh-enrollment` removes only
+the new mesh session, stage, and report.
+
 ### Private Wi-Fi Address review
 
 Record each phone's Cabin SSID Private Wi-Fi Address mode without putting the
@@ -427,7 +707,7 @@ secondsUntilDhcpLeaseExpires > 0
 noDataIdleS <= 300
 ```
 
-The post-staging shadow phase supplies at least three observations on the real
+The downstream-disabled production canary supplies observations on the real
 15-minute cadence, including:
 
 - a locked, sleeping phone;
@@ -461,13 +741,18 @@ safest camera posture is to leave the Cabin reviewer stopped or explicitly
 shadowed until strict presence passes. If legacy jobs are restored, record that
 their output is not evidence for the candidate scanner.
 
-Collect at least eight attended `shadow-sample` records over at least one hour.
-At least three gaps between samples must be 14–16 minutes. Cover both-present,
-each one-person state, both-away, and a controlled `return-both` immediately
-after a matching both-away sample. Compare every safe result with direct ground
-truth. A missing selected ID is valid only for a person known to be away; a
-present row with incomplete lease/idle evidence is always a mismatch. Any
-mismatch or schema drift resets the activation decision.
+For the default compact path, collect three consecutive attended
+`shadow-sample` records: both-present, Dylan-only after Julia turns Wi-Fi off,
+then both-present after Julia returns. The helper also verifies exact bindings
+and credits the protected enrollment evidence for both-away and Julia-only.
+Compare every safe result with direct ground truth. A missing selected ID is
+valid only for a person known to be away; incomplete selected-row evidence is
+unknown and retryable without being recorded.
+
+The legacy alternative remains at least eight attended samples over one hour,
+including at least three 14–16-minute gaps, all one-person/both-away states, and
+a controlled `return-both` immediately after matching both-away. Any recorded
+mismatch or schema drift blocks both activation paths.
 
 This evidence-based gate is deliberately narrower than a fixed multi-day soak.
 The reconnect and idle phases already stress the deterministic identity and
@@ -521,34 +806,116 @@ Only when `shadow-report` says `ready_for_activation: true`:
 
    The deployment guard rejects symlinks, extra lines, insecure mode, hard
    links, wrong length, and any hash other than the current candidate.
-9. Restore the receiver. After another correct evaluation, restore vacancy
+9. Stop the canary scanner and verify that all four protected jobs are
+   unloaded. Run `cleanup` now, while its mutation-job guard can prove the
+   session is no longer in use. Cleanup removes the redundant sensitive
+   session and retains the production binding, exact-source approval,
+   identifier-free report, and exact rollback backup.
+10. Restore the Cabin scanner and verify another correct evaluation. Restore
+   the receiver, verify canonical state again, and only then restore vacancy
    actions.
-10. Restore the Nest activity reviewer last, only after presence remains correct
+11. Restore the Nest activity reviewer last, only after presence remains correct
    and enrollment-window camera triggers are too old to review. Verify no
    delayed message or image analysis occurs.
-11. Run `cleanup` to remove the redundant sensitive session and retain the
-    production binding, exact-source approval, and safe report.
 
 There is no OpenClaw gateway restart in this procedure.
 
+### Schema-v1 to schema-v2 mesh promotion
+
+For the already-active controller-only binding, the following ordering replaces
+steps 3–5 above:
+
+1. Keep all four protected jobs unloaded.
+2. Point the exact candidate scanner at the protected staged v2 config and run
+   `validate-config cabin` plus the read-only `observe cabin`. Do not run the
+   state-writing `cabin` mode. The candidate must contain exactly one
+   `PRESENCE_SCANNER_CONFIG_CONTRACT="cabin-sources-v2"` capability marker.
+   This is intentionally separate from the unchanged
+   `strict-site-bindings-v1` deployment-protocol marker.
+3. Install those exact candidate scanner bytes atomically while production is
+   still schema v1. The scanner must validate both v1 and v2, and source/runtime
+   hashes must match.
+4. Run the mesh helper's four-confirmation `activate` command:
+
+   ```bash
+   ~/.openclaw/bin/presence-cabin-mesh-enroll --attended activate \
+     --confirm-safe-report-reviewed \
+     --confirm-mutation-jobs-stopped \
+     --confirm-v2-consumer-ready \
+     --confirm-exact-rollback-ready
+   ```
+
+   The confirmation is not trusted by itself: the helper rereads the installed
+   scanner, requires the v2 capability marker and safe executable metadata,
+   runs that runtime's `validate-config cabin` against the protected staged
+   file, and verifies the scanner did not change during the check. It then
+   retains the exact v1 bytes as a protected rollback file and atomically
+   replaces only the production binding.
+5. Validate and observe the production v2 config, then begin a new four-tick
+   downstream-disabled canary from zero. The earlier controller-only tick is
+   not credited.
+6. Freeze scanner bytes throughout the canary. Only after all four ticks pass
+   may the Mini approve that exact hash and restore receiver, vacancy actions,
+   and reviewer in the documented order.
+7. The shared scanner's changed bytes also invalidate the independent
+   Crosstown approval. Routine sync must preserve the prior MacBook Pro runtime
+   until that same source hash passes its own Crosstown canary.
+8. After the post-canary state and rollback file are verified, stop the canary
+   scanner, verify all four protected jobs are unloaded, and run:
+
+   ```bash
+   ~/.openclaw/bin/presence-cabin-mesh-enroll --attended cleanup \
+     --confirm-post-canary-success
+   ```
+
+   Cleanup removes the redundant mesh session and staged config, retains the
+   identifier-free report and exact v1 backup, and does not touch the original
+   enrollment session. Then continue with the general restoration order:
+   scanner, receiver, vacancy actions, and reviewer.
+
+If any v2 canary tick fails, keep all four protected jobs unloaded and run:
+
+```bash
+~/.openclaw/bin/presence-cabin-mesh-enroll --attended rollback \
+  --confirm-post-activation-rollback
+```
+
+Rollback accepts only the exact session-derived v2 bytes or an already-restored
+exact v1 file, validates the protected backup against the original v1 hash and
+bindings, atomically restores and rereads those exact bytes, and preserves the
+session, staged v2 config, safe report, and backup for diagnosis. It is
+idempotent after an interrupted successful restore. An unknown current config,
+backup mismatch, or uncertain restore state is a hard stop.
+
 ## Success criteria
 
-- Two distinct opaque IDs are uniquely attributed one phone at a time.
-- Each ID survives two ordinary off/on reconnect cycles with an observed off
-  state and three fresh same-ID samples after reconnect.
+- The controller and every monitored mesh source contain exact per-person
+  bindings, with distinct identities within each source and no cross-person
+  identity collision.
+- Each controller binding survives two ordinary off/on reconnect cycles with
+  an observed off state, stable same-ID samples after reconnect, and a
+  persisted complete production-present proof.
+- Each mesh binding has either a credited attended off-to-on proof or the
+  explicit trusted-controller continuity proof: byte-identical identity, a
+  final consecutive strict mesh window, advancing association evidence, and
+  collision rejection.
 - Private-address behavior is reviewed and stable under ordinary use.
-- Lease and idle fields are structurally complete for both selected phones.
+- Both controller bindings produce complete lease/idle evidence. Mesh bindings
+  instead satisfy the documented role, association, signal, and RX/TX
+  predicates; the provider's `active` field remains diagnostic-only.
 - The idle policy works at the real 15-minute cadence and errs safely for camera
   privacy.
 - No raw identity or provider value appears in output, logs, safe reports,
   command history, plans, tests, or Git.
 - Candidate bindings remain outside the production path until the final gate.
-- At least eight samples over one hour, including three 14–16-minute intervals,
-  cover every required occupancy scenario and a verified away-to-return
-  transition with zero mismatch.
-- Four scheduled strict production canary ticks create the expected presence state with
-  no spurious relocation, vacancy action, home-event anomaly, camera review, or
-  message.
+- Either the compact credited joint sequence or the legacy eight-sample,
+  one-hour path passes with zero recorded mismatch.
+- Four scheduled strict production canary ticks normally create the expected
+  presence state with no spurious relocation, vacancy action, home-event
+  anomaly, camera review, or message. The July 23 rollout records an explicit
+  operator waiver after two clean ticks plus 12/12 live observations and the
+  full test suite; this does not relax the default gate for future scanner
+  changes.
 - Routine deployment accepts only the exact scanner hash that passed the
   downstream-disabled canary.
 - The prior scanner and state remain recoverable.
@@ -561,7 +928,9 @@ Stop and preserve evidence if any of the following occurs:
 - An ID is missing, malformed, duplicated, or changes on ordinary reconnect.
 - Identification produces zero or multiple candidates.
 - Another iPhone can satisfy the selected identity.
-- Required lease/idle fields are incomplete for a selected phone.
+- Required lease/idle fields are incomplete for a selected phone outside the
+  narrowly attended transport-off observation or exact-IP identification
+  exception described above.
 - The current idle threshold fails known-present or real-cadence testing without
   a reviewed replacement.
 - Parent, session, staging, or production permissions/ownership/link counts are

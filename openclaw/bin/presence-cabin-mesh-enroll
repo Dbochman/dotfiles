@@ -1,0 +1,2181 @@
+#!/usr/bin/env python3
+"""Attended migration from a Cabin v1 binding to source-specific schema v2.
+
+This helper is deliberately separate from ``presence-cabin-enroll``.  It reads
+the active, protected schema-v1 configuration as its controller source of
+truth, discovers one directly attached Starlink repeater, and enrolls the
+node-local identities returned by targeted ``wifiGetClients`` requests.
+
+An explicitly confirmed continuity command may credit an existing controller
+identity on the mesh only when that exact trusted ID is independently proven
+through a final strict targeted sample window.  It never searches by provider
+name, IP address, or an untrusted candidate and relies on the attended,
+previously established node-absence semantics for its off/on evidence.
+
+No entered address is echoed or retained.  Provider rows, target IDs, and
+presence bindings are written only to owner-only state/configuration files and
+never appear in command output.  The active v1 file is not replaced until the
+fully confirmed activation command, which retains an exact-byte backup and
+rolls back on any observed failure.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import fcntl
+import getpass
+import hashlib
+import hmac
+import ipaddress
+import json
+import math
+import os
+import re
+import secrets
+import select
+import stat
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Iterator, Mapping
+
+
+PEOPLE = ("Dylan", "Julia")
+SESSION_SCHEMA_VERSION = 1
+PRODUCTION_SCHEMA_V1 = 1
+PRODUCTION_SCHEMA_V2 = 2
+GRPCURL = Path("/opt/homebrew/bin/grpcurl")
+LAUNCHCTL = Path("/bin/launchctl")
+STARLINK_ENDPOINT = "192.168.1.1:9000"
+STARLINK_METHOD = "SpaceX.API.Device.Device/Handle"
+QUERY_TIMEOUT_SECONDS = 12
+MAX_GRPC_BYTES = 4 * 1024 * 1024
+MAX_PRIVATE_BYTES = 1024 * 1024
+MAX_SCANNER_BYTES = 2 * 1024 * 1024
+POSITIVE_SAMPLE_LIMIT = 7
+MINIMUM_STABLE_SAMPLES = 3
+OFF_SAMPLE_LIMIT = 7
+MINIMUM_CONSECUTIVE_OFF_SAMPLES = 3
+BASELINE_SAMPLE_COUNT = 5
+MAXIMUM_BASELINE_AGE_SECONDS = 30 * 60
+SAMPLE_DELAY_SECONDS = 1.0
+MINIMUM_DISCONNECT_SECONDS = 5
+MUTATION_JOB_LABELS = (
+    "com.openclaw.presence-cabin",
+    "com.openclaw.presence-receive",
+    "com.openclaw.vacancy-actions",
+    "ai.openclaw.nest-activity-reviewer",
+)
+
+ID_RE = re.compile(r"^[0-9a-f]{64}$")
+TARGET_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+RFC1918_NETWORKS = (
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+)
+
+
+class EnrollmentError(RuntimeError):
+    """A bounded error code safe to expose to the operator."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, _message: str) -> None:
+        raise EnrollmentError("arguments_invalid")
+
+
+@dataclass(frozen=True)
+class Settings:
+    home: Path
+    grpcurl: Path = GRPCURL
+    endpoint: str = STARLINK_ENDPOINT
+    timeout_seconds: int = QUERY_TIMEOUT_SECONDS
+    max_grpc_bytes: int = MAX_GRPC_BYTES
+    scanner: Path | None = None
+
+    @property
+    def openclaw_dir(self) -> Path:
+        return self.home / ".openclaw"
+
+    @property
+    def enrollment_dir(self) -> Path:
+        return self.openclaw_dir / "presence-mesh-enrollment"
+
+    @property
+    def session_file(self) -> Path:
+        return self.enrollment_dir / "session.json"
+
+    @property
+    def lock_file(self) -> Path:
+        return self.enrollment_dir / "session.lock"
+
+    @property
+    def staged_config(self) -> Path:
+        return self.enrollment_dir / "candidate-config-v2.json"
+
+    @property
+    def safe_report(self) -> Path:
+        return self.enrollment_dir / "safe-report.json"
+
+    @property
+    def backup_file(self) -> Path:
+        return self.enrollment_dir / "production-v1-backup.json"
+
+    @property
+    def production_config(self) -> Path:
+        return self.openclaw_dir / "presence-devices.json"
+
+    @property
+    def scanner_path(self) -> Path:
+        return self.scanner or (
+            self.openclaw_dir / "workspace" / "scripts" / "presence-detect.sh"
+        )
+
+
+def _private_metadata(
+    path: Path, *, directory: bool, code: str, exact_mode: int | None = None
+) -> os.stat_result:
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise EnrollmentError(code) from exc
+    if path.is_symlink():
+        raise EnrollmentError(code)
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if not expected(metadata.st_mode):
+        raise EnrollmentError(code)
+    mode = stat.S_IMODE(metadata.st_mode)
+    required_mode = (0o700 if directory else 0o600) if exact_mode is None else exact_mode
+    if (
+        metadata.st_uid != os.geteuid()
+        or mode != required_mode
+        or (not directory and metadata.st_nlink != 1)
+    ):
+        raise EnrollmentError(code)
+    return metadata
+
+
+def _require_openclaw(settings: Settings) -> None:
+    if not settings.home.is_absolute():
+        raise EnrollmentError("home_invalid")
+    _private_metadata(
+        settings.openclaw_dir,
+        directory=True,
+        code="openclaw_permissions_invalid",
+    )
+
+
+def _ensure_enrollment_dir(settings: Settings, *, create: bool) -> None:
+    _require_openclaw(settings)
+    if create and not settings.enrollment_dir.exists():
+        try:
+            settings.enrollment_dir.mkdir(mode=0o700)
+        except OSError as exc:
+            raise EnrollmentError("enrollment_directory_unavailable") from exc
+    _private_metadata(
+        settings.enrollment_dir,
+        directory=True,
+        code="enrollment_permissions_invalid",
+    )
+
+
+def _bounded_read(path: Path, *, code: str) -> bytes:
+    before = _private_metadata(path, directory=False, code=code)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise EnrollmentError(code) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o600
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            or opened.st_size > MAX_PRIVATE_BYTES
+        ):
+            raise EnrollmentError(code)
+        payload = bytearray()
+        while True:
+            chunk = os.read(
+                descriptor, min(8192, MAX_PRIVATE_BYTES + 1 - len(payload))
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+            if len(payload) > MAX_PRIVATE_BYTES:
+                raise EnrollmentError(code)
+        return bytes(payload)
+    finally:
+        os.close(descriptor)
+
+
+def _read_runtime_scanner(path: Path) -> tuple[bytes, tuple[int, int]]:
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise EnrollmentError("runtime_consumer_not_ready") from exc
+    mode = stat.S_IMODE(before.st_mode)
+    if (
+        path.is_symlink()
+        or not stat.S_ISREG(before.st_mode)
+        or before.st_uid != os.geteuid()
+        or before.st_nlink != 1
+        or mode & 0o7022
+        or not mode & stat.S_IXUSR
+        or before.st_size < 1
+        or before.st_size > MAX_SCANNER_BYTES
+    ):
+        raise EnrollmentError("runtime_consumer_not_ready")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise EnrollmentError("runtime_consumer_not_ready") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or opened.st_nlink != 1
+            or stat.S_IMODE(opened.st_mode) != mode
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+            or opened.st_size != before.st_size
+        ):
+            raise EnrollmentError("runtime_consumer_not_ready")
+        payload = bytearray()
+        while True:
+            chunk = os.read(
+                descriptor, min(8192, MAX_SCANNER_BYTES + 1 - len(payload))
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+            if len(payload) > MAX_SCANNER_BYTES:
+                raise EnrollmentError("runtime_consumer_not_ready")
+        return bytes(payload), (opened.st_dev, opened.st_ino)
+    finally:
+        os.close(descriptor)
+
+
+def _decode_private_json(path: Path, *, code: str) -> tuple[bytes, Any]:
+    payload = _bounded_read(path, code=code)
+    return payload, _parse_json_bytes(payload, code=code)
+
+
+def _parse_json_bytes(payload: bytes, *, code: str) -> Any:
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EnrollmentError(code) from exc
+
+
+def _encode_json(value: Mapping[str, Any]) -> bytes:
+    payload = (
+        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    if len(payload) > MAX_PRIVATE_BYTES:
+        raise EnrollmentError("private_payload_oversized")
+    return payload
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("short_write")
+        view = view[written:]
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_temporary(path: Path, payload: bytes) -> Path:
+    temporary = path.parent / f".{path.name}.{secrets.token_hex(8)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        _write_all(descriptor, payload)
+        os.fchmod(descriptor, 0o600)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return temporary
+
+
+def _atomic_replace_bytes(path: Path, payload: bytes, *, code: str) -> None:
+    if path.exists() or path.is_symlink():
+        _private_metadata(path, directory=False, code=code)
+    temporary: Path | None = None
+    try:
+        temporary = _write_temporary(path, payload)
+        os.replace(temporary, path)
+        temporary = None
+        _private_metadata(path, directory=False, code=code)
+        _fsync_directory(path.parent)
+    except (EnrollmentError, OSError) as exc:
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+        if isinstance(exc, EnrollmentError):
+            raise
+        raise EnrollmentError(code) from exc
+
+
+def _atomic_create_bytes(path: Path, payload: bytes, *, code: str) -> None:
+    if path.exists() or path.is_symlink():
+        raise EnrollmentError(code)
+    temporary: Path | None = None
+    linked = False
+    identity: tuple[int, int] | None = None
+    try:
+        temporary = _write_temporary(path, payload)
+        metadata = temporary.stat()
+        identity = (metadata.st_dev, metadata.st_ino)
+        os.link(temporary, path, follow_symlinks=False)
+        linked = True
+        temporary.unlink()
+        temporary = None
+        _private_metadata(path, directory=False, code=code)
+        _fsync_directory(path.parent)
+    except (EnrollmentError, OSError) as exc:
+        rollback_failed = False
+        if linked and identity is not None:
+            try:
+                current = path.lstat()
+                if (
+                    not path.is_symlink()
+                    and stat.S_ISREG(current.st_mode)
+                    and (current.st_dev, current.st_ino) == identity
+                ):
+                    path.unlink()
+                else:
+                    rollback_failed = True
+            except FileNotFoundError:
+                pass
+            except OSError:
+                rollback_failed = True
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
+        with contextlib.suppress(OSError):
+            _fsync_directory(path.parent)
+        if rollback_failed:
+            raise EnrollmentError(f"{code}_rollback_failed") from exc
+        if isinstance(exc, EnrollmentError):
+            raise
+        raise EnrollmentError(code) from exc
+
+
+def _unlink_private(path: Path, *, code: str) -> bool:
+    if not path.exists() and not path.is_symlink():
+        return False
+    _private_metadata(path, directory=False, code=code)
+    try:
+        path.unlink()
+        _fsync_directory(path.parent)
+    except OSError as exc:
+        raise EnrollmentError(code) from exc
+    return True
+
+
+@contextlib.contextmanager
+def _lock(settings: Settings, *, create: bool) -> Iterator[None]:
+    _ensure_enrollment_dir(settings, create=create)
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    if create:
+        flags |= os.O_CREAT
+    try:
+        descriptor = os.open(settings.lock_file, flags, 0o600)
+    except OSError as exc:
+        raise EnrollmentError("enrollment_lock_unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+        ):
+            raise EnrollmentError("enrollment_lock_invalid")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _sha256(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _normalize_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.lower()
+    return normalized if ID_RE.fullmatch(normalized) else None
+
+
+def _normalize_target_id(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return value if TARGET_ID_RE.fullmatch(value) else None
+
+
+def _normalize_private_ipv4(value: Any) -> bytes | None:
+    if not isinstance(value, str) or value != value.strip():
+        return None
+    try:
+        address = ipaddress.IPv4Address(value)
+    except ipaddress.AddressValueError:
+        return None
+    if not any(address in network for network in RFC1918_NETWORKS):
+        return None
+    if (
+        address.is_unspecified
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address == ipaddress.IPv4Address("255.255.255.255")
+        or int(address) & 0xFF in {0, 255}
+    ):
+        return None
+    return address.packed
+
+
+def _read_confirmed_private_ipv4(
+    reader: Callable[[str], str] | None = None,
+) -> bytes:
+    hidden_reader = reader or getpass.getpass
+    first = _normalize_private_ipv4(hidden_reader("Current private IPv4 address: "))
+    second = _normalize_private_ipv4(
+        hidden_reader("Confirm current private IPv4 address: ")
+    )
+    if first is None or second is None:
+        raise EnrollmentError("private_ip_invalid")
+    if not hmac.compare_digest(first, second):
+        raise EnrollmentError("private_ip_confirmation_mismatch")
+    return first
+
+
+def _clients(payload: Any) -> list[Any]:
+    wifi = payload.get("wifiGetClients") if isinstance(payload, dict) else None
+    clients = wifi.get("clients") if isinstance(wifi, dict) else None
+    if not isinstance(clients, list):
+        raise EnrollmentError("starlink_schema_invalid")
+    return clients
+
+
+def _discover_repeater(payload: Any) -> tuple[str, set[bytes]]:
+    repeaters: list[Mapping[str, Any]] = []
+    for row in _clients(payload):
+        if isinstance(row, dict) and row.get("role") == "REPEATER":
+            repeaters.append(row)
+    if len(repeaters) != 1:
+        raise EnrollmentError("mesh_topology_invalid")
+    row = repeaters[0]
+    if type(row.get("hopsFromController")) is not int:
+        raise EnrollmentError("mesh_topology_invalid")
+    if row["hopsFromController"] != 1:
+        raise EnrollmentError("mesh_topology_invalid")
+    target_id = _normalize_target_id(row.get("deviceId"))
+    if target_id is None:
+        raise EnrollmentError("mesh_topology_invalid")
+    excluded: set[bytes] = set()
+    address = _normalize_private_ipv4(row.get("ipAddress"))
+    if address is not None:
+        excluded.add(address)
+    return target_id, excluded
+
+
+def _validate_v1_config(value: Any) -> dict[str, str]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "site", "people"}
+        or value.get("schema_version") != PRODUCTION_SCHEMA_V1
+        or value.get("site") != "cabin"
+        or not isinstance(value.get("people"), dict)
+        or set(value["people"]) != set(PEOPLE)
+    ):
+        raise EnrollmentError("production_v1_invalid")
+    result: dict[str, str] = {}
+    for person in PEOPLE:
+        binding = value["people"].get(person)
+        if (
+            not isinstance(binding, dict)
+            or set(binding) != {"kind", "value"}
+            or binding.get("kind") != "starlink_captive_client_id"
+        ):
+            raise EnrollmentError("production_v1_invalid")
+        normalized = _normalize_id(binding.get("value"))
+        if normalized is None:
+            raise EnrollmentError("production_v1_invalid")
+        result[person] = normalized
+    if len(set(result.values())) != len(PEOPLE):
+        raise EnrollmentError("production_v1_invalid")
+    return result
+
+
+def _validate_v2_config(value: Any) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "site", "sources"}
+        or value.get("schema_version") != PRODUCTION_SCHEMA_V2
+        or value.get("site") != "cabin"
+    ):
+        raise EnrollmentError("production_v2_invalid")
+    sources = value.get("sources")
+    if not isinstance(sources, list) or len(sources) != 2:
+        raise EnrollmentError("production_v2_invalid")
+    controller, mesh = sources
+    if (
+        not isinstance(controller, dict)
+        or set(controller) != {"kind", "bindings"}
+        or controller.get("kind") != "starlink_controller"
+        or not isinstance(mesh, dict)
+        or set(mesh) != {"kind", "target_id", "bindings"}
+        or mesh.get("kind") != "starlink_mesh"
+        or _normalize_target_id(mesh.get("target_id")) is None
+    ):
+        raise EnrollmentError("production_v2_invalid")
+    all_bindings: dict[str, dict[str, str]] = {}
+    for source_alias, source in (
+        ("controller", controller),
+        ("mesh_node", mesh),
+    ):
+        bindings = source.get("bindings")
+        if not isinstance(bindings, dict) or set(bindings) != set(PEOPLE):
+            raise EnrollmentError("production_v2_invalid")
+        for person in PEOPLE:
+            binding = bindings[person]
+            if (
+                not isinstance(binding, dict)
+                or set(binding) != {"kind", "value"}
+                or binding.get("kind") != "starlink_captive_client_id"
+            ):
+                raise EnrollmentError("production_v2_invalid")
+            normalized = _normalize_id(binding.get("value"))
+            if normalized is None:
+                raise EnrollmentError("production_v2_invalid")
+            all_bindings.setdefault(person, {})[source_alias] = normalized
+    if (
+        all_bindings[PEOPLE[0]]["controller"]
+        == all_bindings[PEOPLE[1]]["controller"]
+        or all_bindings[PEOPLE[0]]["mesh_node"]
+        == all_bindings[PEOPLE[1]]["mesh_node"]
+        or all_bindings[PEOPLE[0]]["mesh_node"]
+        == all_bindings[PEOPLE[1]]["controller"]
+        or all_bindings[PEOPLE[1]]["mesh_node"]
+        == all_bindings[PEOPLE[0]]["controller"]
+    ):
+        raise EnrollmentError("production_v2_invalid")
+    return value
+
+
+def _new_session(now: float, source_digest: str, target: str, v1: Mapping[str, str]) -> dict[str, Any]:
+    return {
+        "schema_version": SESSION_SCHEMA_VERSION,
+        "created_epoch": now,
+        "updated_epoch": now,
+        "session_key": secrets.token_hex(32),
+        "source_config_sha256": source_digest,
+        "mesh_target_id": target,
+        "people": {
+            person: {
+                "controller_id": v1[person],
+                "mesh_id": None,
+                "identified_epoch": None,
+                "baseline": None,
+                "disconnect": {"proven": False, "captured_epoch": None},
+                "reconnect": {"proven": False, "captured_epoch": None},
+            }
+            for person in PEOPLE
+        },
+        "staged_sha256": None,
+        "staged_epoch": None,
+        "activated_epoch": None,
+    }
+
+
+def _valid_epoch(value: Any, *, optional: bool = False) -> bool:
+    if value is None:
+        return optional
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and float(value) >= 0
+    )
+
+
+def _validate_session(value: Any) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {
+            "schema_version",
+            "created_epoch",
+            "updated_epoch",
+            "session_key",
+            "source_config_sha256",
+            "mesh_target_id",
+            "people",
+            "staged_sha256",
+            "staged_epoch",
+            "activated_epoch",
+        }
+        or value.get("schema_version") != SESSION_SCHEMA_VERSION
+        or not _valid_epoch(value.get("created_epoch"))
+        or not _valid_epoch(value.get("updated_epoch"))
+        or value["updated_epoch"] < value["created_epoch"]
+        or not isinstance(value.get("session_key"), str)
+        or not DIGEST_RE.fullmatch(value["session_key"])
+        or not isinstance(value.get("source_config_sha256"), str)
+        or not DIGEST_RE.fullmatch(value["source_config_sha256"])
+        or _normalize_target_id(value.get("mesh_target_id")) is None
+        or not isinstance(value.get("people"), dict)
+        or set(value["people"]) != set(PEOPLE)
+        or (
+            value.get("staged_sha256") is not None
+            and (
+                not isinstance(value["staged_sha256"], str)
+                or not DIGEST_RE.fullmatch(value["staged_sha256"])
+            )
+        )
+        or not _valid_epoch(value.get("staged_epoch"), optional=True)
+        or not _valid_epoch(value.get("activated_epoch"), optional=True)
+        or ((value.get("staged_sha256") is None) != (value.get("staged_epoch") is None))
+        or (value.get("activated_epoch") is not None and value.get("staged_epoch") is None)
+    ):
+        raise EnrollmentError("session_invalid")
+    for person in PEOPLE:
+        record = value["people"].get(person)
+        if (
+            not isinstance(record, dict)
+            or set(record)
+            != {
+                "controller_id",
+                "mesh_id",
+                "identified_epoch",
+                "baseline",
+                "disconnect",
+                "reconnect",
+            }
+            or _normalize_id(record.get("controller_id")) is None
+            or (
+                record.get("mesh_id") is not None
+                and _normalize_id(record.get("mesh_id")) is None
+            )
+            or not _valid_epoch(record.get("identified_epoch"), optional=True)
+            or ((record.get("mesh_id") is None) != (record.get("identified_epoch") is None))
+        ):
+            raise EnrollmentError("session_invalid")
+        baseline = record.get("baseline")
+        if baseline is not None:
+            if (
+                not isinstance(baseline, dict)
+                or set(baseline)
+                != {
+                    "captured_epoch",
+                    "consumed",
+                    "context_digest",
+                    "fingerprints",
+                }
+                or not _valid_epoch(baseline.get("captured_epoch"))
+                or type(baseline.get("consumed")) is not bool
+                or not isinstance(baseline.get("context_digest"), str)
+                or not DIGEST_RE.fullmatch(baseline["context_digest"])
+                or not isinstance(baseline.get("fingerprints"), list)
+                or len(baseline["fingerprints"]) > 4096
+                or any(
+                    not isinstance(item, str) or not DIGEST_RE.fullmatch(item)
+                    for item in baseline["fingerprints"]
+                )
+                or baseline["fingerprints"] != sorted(set(baseline["fingerprints"]))
+            ):
+                raise EnrollmentError("session_invalid")
+        for key in ("disconnect", "reconnect"):
+            evidence = record.get(key)
+            if (
+                not isinstance(evidence, dict)
+                or set(evidence) != {"proven", "captured_epoch"}
+                or type(evidence.get("proven")) is not bool
+                or not _valid_epoch(evidence.get("captured_epoch"), optional=True)
+                or (evidence["proven"] != (evidence["captured_epoch"] is not None))
+            ):
+                raise EnrollmentError("session_invalid")
+        if baseline is not None and not hmac.compare_digest(
+            baseline["context_digest"], _baseline_context(value, person)
+        ):
+            raise EnrollmentError("session_invalid")
+        if record["disconnect"]["proven"] and record["mesh_id"] is None:
+            raise EnrollmentError("session_invalid")
+        if record["reconnect"]["proven"]:
+            if (
+                not record["disconnect"]["proven"]
+                or record["reconnect"]["captured_epoch"]
+                < record["disconnect"]["captured_epoch"]
+            ):
+                raise EnrollmentError("session_invalid")
+    return value
+
+
+def _session_hmac(session: Mapping[str, Any], value: bytes) -> str:
+    try:
+        key = bytes.fromhex(session["session_key"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EnrollmentError("session_invalid") from exc
+    return hmac.new(key, value, hashlib.sha256).hexdigest()
+
+
+def _baseline_context(session: Mapping[str, Any], person: str) -> str:
+    if person not in PEOPLE:
+        raise EnrollmentError("session_invalid")
+    try:
+        value = (
+            "context\0"
+            + person
+            + "\0"
+            + session["source_config_sha256"]
+            + "\0"
+            + session["mesh_target_id"]
+        ).encode("utf-8")
+    except (KeyError, AttributeError) as exc:
+        raise EnrollmentError("session_invalid") from exc
+    return _session_hmac(session, value)
+
+
+def _baseline_fingerprint(
+    session: Mapping[str, Any], person: str, candidate_id: str
+) -> str:
+    normalized = _normalize_id(candidate_id)
+    if person not in PEOPLE or normalized is None:
+        raise EnrollmentError("session_invalid")
+    return _session_hmac(
+        session, ("candidate\0" + person + "\0" + normalized).encode("ascii")
+    )
+
+
+def _config_v2(session: Mapping[str, Any]) -> dict[str, Any]:
+    controller_bindings: dict[str, Any] = {}
+    mesh_bindings: dict[str, Any] = {}
+    for person in PEOPLE:
+        record = session["people"][person]
+        controller_id = _normalize_id(record.get("controller_id"))
+        mesh_id = _normalize_id(record.get("mesh_id"))
+        if controller_id is None or mesh_id is None:
+            raise EnrollmentError("enrollment_incomplete")
+        controller_bindings[person] = {
+            "kind": "starlink_captive_client_id",
+            "value": controller_id,
+        }
+        mesh_bindings[person] = {
+            "kind": "starlink_captive_client_id",
+            "value": mesh_id,
+        }
+    config = {
+        "schema_version": PRODUCTION_SCHEMA_V2,
+        "site": "cabin",
+        "sources": [
+            {
+                "kind": "starlink_controller",
+                "bindings": controller_bindings,
+            },
+            {
+                "kind": "starlink_mesh",
+                "target_id": session["mesh_target_id"],
+                "bindings": mesh_bindings,
+            },
+        ],
+    }
+    return _validate_v2_config(config)
+
+
+def _strict_mesh_observation(row: Mapping[str, Any]) -> bool:
+    signal = row.get("signalStrength")
+    associated = row.get("associatedTimeS")
+    return bool(
+        row.get("role") == "CLIENT"
+        and not isinstance(associated, bool)
+        and isinstance(associated, (int, float))
+        and math.isfinite(float(associated))
+        and float(associated) > 0
+        and not isinstance(signal, bool)
+        and isinstance(signal, (int, float))
+        and math.isfinite(float(signal))
+        and row.get("rxStatsValid") is True
+        and row.get("txStatsValid") is True
+    )
+
+
+def _match_exact_ip(payload: Any, address: bytes) -> tuple[str, bool, float]:
+    matches: list[Mapping[str, Any]] = []
+    for row in _clients(payload):
+        if not isinstance(row, dict):
+            continue
+        raw_address = _normalize_private_ipv4(row.get("ipAddress"))
+        if raw_address is not None and hmac.compare_digest(raw_address, address):
+            matches.append(row)
+    if not matches:
+        raise EnrollmentError("exact_ip_not_found")
+    if len(matches) != 1:
+        raise EnrollmentError("exact_ip_ambiguous")
+    row = matches[0]
+    raw_id = _normalize_id(row.get("captiveClientId"))
+    role = row.get("role")
+    associated = row.get("associatedTimeS")
+    if (
+        raw_id is None
+        or role != "CLIENT"
+        or isinstance(associated, bool)
+        or not isinstance(associated, (int, float))
+        or not math.isfinite(float(associated))
+        or float(associated) < 0
+    ):
+        raise EnrollmentError("mesh_client_row_invalid")
+    return raw_id, _strict_mesh_observation(row), float(associated)
+
+
+def _candidate_association(payload: Any, candidate_id: str) -> float | None:
+    matches: list[Mapping[str, Any]] = []
+    for row in _clients(payload):
+        if not isinstance(row, dict):
+            continue
+        raw_id = _normalize_id(row.get("captiveClientId"))
+        if raw_id is not None and hmac.compare_digest(raw_id, candidate_id):
+            matches.append(row)
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise EnrollmentError("mesh_client_row_invalid")
+    row = matches[0]
+    if (
+        row.get("role") != "CLIENT"
+        or isinstance(row.get("associatedTimeS"), bool)
+        or not isinstance(row.get("associatedTimeS"), (int, float))
+        or not math.isfinite(float(row["associatedTimeS"]))
+        or float(row["associatedTimeS"]) < 0
+    ):
+        raise EnrollmentError("mesh_client_row_invalid")
+    return float(row["associatedTimeS"])
+
+
+def _strict_exact_id_association(
+    payload: Any, candidate_id: str
+) -> float | None:
+    matches: list[Mapping[str, Any]] = []
+    for row in _clients(payload):
+        if not isinstance(row, dict):
+            continue
+        raw_id = _normalize_id(row.get("captiveClientId"))
+        if raw_id is not None and hmac.compare_digest(raw_id, candidate_id):
+            matches.append(row)
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise EnrollmentError("mesh_client_row_invalid")
+    row = matches[0]
+    if not _strict_mesh_observation(row):
+        return None
+    return float(row["associatedTimeS"])
+
+
+def _query_starlink(settings: Settings, target_id: str | None) -> Any:
+    if not settings.grpcurl.is_file() or not os.access(settings.grpcurl, os.X_OK):
+        raise EnrollmentError("grpcurl_unavailable")
+    request: dict[str, Any] = {"wifiGetClients": {}}
+    if target_id is not None:
+        normalized = _normalize_target_id(target_id)
+        if normalized is None:
+            raise EnrollmentError("mesh_topology_invalid")
+        request["targetId"] = normalized
+    request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
+    deadline = time.monotonic() + settings.timeout_seconds
+    try:
+        process = subprocess.Popen(
+            [
+                str(settings.grpcurl),
+                "-plaintext",
+                "-d",
+                "@",
+                settings.endpoint,
+                STARLINK_METHOD,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env={"HOME": str(settings.home), "PATH": "/usr/bin:/bin"},
+        )
+    except OSError as exc:
+        raise EnrollmentError("starlink_unavailable") from exc
+
+    response = bytearray()
+    try:
+        if process.stdin is None or process.stdout is None:
+            raise EnrollmentError("starlink_unavailable")
+        try:
+            _write_all(process.stdin.fileno(), request_bytes)
+            process.stdin.close()
+        except OSError as exc:
+            raise EnrollmentError("starlink_unavailable") from exc
+        descriptor = process.stdout.fileno()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise EnrollmentError("starlink_timeout")
+            try:
+                readable, _, _ = select.select([descriptor], [], [], remaining)
+            except OSError as exc:
+                raise EnrollmentError("starlink_unavailable") from exc
+            if not readable:
+                raise EnrollmentError("starlink_timeout")
+            try:
+                chunk = os.read(
+                    descriptor,
+                    min(65536, settings.max_grpc_bytes + 1 - len(response)),
+                )
+            except OSError as exc:
+                raise EnrollmentError("starlink_unavailable") from exc
+            if not chunk:
+                break
+            response.extend(chunk)
+            if len(response) > settings.max_grpc_bytes:
+                raise EnrollmentError("starlink_response_oversized")
+        try:
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as exc:
+            raise EnrollmentError("starlink_timeout") from exc
+        if returncode != 0:
+            raise EnrollmentError("starlink_unavailable")
+    except EnrollmentError:
+        with contextlib.suppress(OSError):
+            process.kill()
+        with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+            process.wait(timeout=1)
+        raise
+    finally:
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()
+    return _parse_json_bytes(bytes(response), code="starlink_schema_invalid")
+
+
+def mutation_jobs_stopped() -> bool:
+    if not LAUNCHCTL.is_file() or not os.access(LAUNCHCTL, os.X_OK):
+        raise EnrollmentError("launchctl_unavailable")
+
+    def probe(target: str) -> int:
+        try:
+            completed = subprocess.run(
+                [str(LAUNCHCTL), "print", target],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+                env={"HOME": str(Path.home()), "PATH": "/usr/bin:/bin"},
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise EnrollmentError("launchctl_check_failed") from exc
+        return completed.returncode
+
+    domain = f"gui/{os.getuid()}"
+    if probe(domain) != 0:
+        raise EnrollmentError("launchctl_domain_unavailable")
+    for label in MUTATION_JOB_LABELS:
+        result = probe(f"{domain}/{label}")
+        if result == 0:
+            return False
+        if result != 113:
+            raise EnrollmentError("launchctl_check_failed")
+    return True
+
+
+class MeshEnrollment:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        query: Callable[[str | None], Any] | None = None,
+        jobs_stopped: Callable[[], bool] = mutation_jobs_stopped,
+        clock: Callable[[], float] = time.time,
+        sleeper: Callable[[float], None] = time.sleep,
+    ):
+        self.settings = settings
+        self.query = query or (lambda target: _query_starlink(settings, target))
+        self.jobs_stopped = jobs_stopped
+        self.clock = clock
+        self.sleeper = sleeper
+
+    def _require_jobs_stopped(self) -> None:
+        if not self.jobs_stopped():
+            raise EnrollmentError("protected_jobs_running")
+
+    def _load(self) -> dict[str, Any]:
+        _, value = _decode_private_json(
+            self.settings.session_file, code="session_invalid"
+        )
+        return _validate_session(value)
+
+    def _save(self, session: dict[str, Any]) -> None:
+        session["updated_epoch"] = self.clock()
+        _validate_session(session)
+        _atomic_replace_bytes(
+            self.settings.session_file,
+            _encode_json(session),
+            code="session_write_failed",
+        )
+
+    def _read_v1(self) -> tuple[bytes, dict[str, str]]:
+        raw, value = _decode_private_json(
+            self.settings.production_config, code="production_v1_invalid"
+        )
+        return raw, _validate_v1_config(value)
+
+    def _topology(self, session: Mapping[str, Any] | None = None) -> tuple[str, set[bytes]]:
+        target, excluded = _discover_repeater(self.query(None))
+        if session is not None and not hmac.compare_digest(
+            target, session["mesh_target_id"]
+        ):
+            raise EnrollmentError("mesh_topology_changed")
+        return target, excluded
+
+    def init(self) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        _require_openclaw(self.settings)
+        source_raw, v1 = self._read_v1()
+        target, _ = self._topology()
+        with _lock(self.settings, create=True):
+            if self.settings.session_file.exists() or self.settings.session_file.is_symlink():
+                raise EnrollmentError("session_already_exists")
+            session = _new_session(self.clock(), _sha256(source_raw), target, v1)
+            _atomic_create_bytes(
+                self.settings.session_file,
+                _encode_json(session),
+                code="session_create_failed",
+            )
+        return {
+            "ok": True,
+            "command": "init",
+            "topology_verified": True,
+            "active_schema_preserved": True,
+            "next_action": "identify_each_phone",
+        }
+
+    def _positive_candidate(
+        self,
+        session: Mapping[str, Any],
+        address: bytes,
+        *,
+        expected_id: str | None = None,
+    ) -> str:
+        target, excluded = self._topology(session)
+        controller_address = _normalize_private_ipv4(
+            self.settings.endpoint.split(":", 1)[0]
+        )
+        if controller_address is not None:
+            excluded.add(controller_address)
+        if address in excluded:
+            raise EnrollmentError("private_ip_not_client")
+        stable_id: str | None = None
+        final_strict_associations: list[float] = []
+        for index in range(POSITIVE_SAMPLE_LIMIT):
+            try:
+                candidate_id, strict, associated = _match_exact_ip(
+                    self.query(target), address
+                )
+            except EnrollmentError as exc:
+                if exc.code != "exact_ip_not_found":
+                    raise
+                final_strict_associations = []
+            else:
+                if expected_id is not None and not hmac.compare_digest(
+                    candidate_id, expected_id
+                ):
+                    raise EnrollmentError("reconnect_identity_changed")
+                if stable_id is None:
+                    stable_id = candidate_id
+                elif not hmac.compare_digest(stable_id, candidate_id):
+                    raise EnrollmentError("exact_ip_identity_unstable")
+                if strict:
+                    final_strict_associations.append(associated)
+                else:
+                    final_strict_associations = []
+            if index + 1 < POSITIVE_SAMPLE_LIMIT:
+                self.sleeper(SAMPLE_DELAY_SECONDS)
+        if stable_id is None:
+            raise EnrollmentError("exact_ip_not_stable")
+        if (
+            len(final_strict_associations) < MINIMUM_STABLE_SAMPLES
+            or final_strict_associations[-1] <= final_strict_associations[0]
+            or any(
+                current < previous
+                for previous, current in zip(
+                    final_strict_associations, final_strict_associations[1:]
+                )
+            )
+        ):
+            raise EnrollmentError("mesh_positive_not_proven")
+        return stable_id
+
+    def baseline(self, person: str) -> dict[str, Any]:
+        if person not in PEOPLE:
+            raise EnrollmentError("person_invalid")
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            if session["activated_epoch"] is not None:
+                raise EnrollmentError("activation_already_complete")
+            _, source_unchanged = self._source_v1_unchanged(session)
+            if not source_unchanged:
+                raise EnrollmentError("production_v1_changed")
+            target, _ = self._topology(session)
+            fingerprints: set[str] = set()
+            for index in range(BASELINE_SAMPLE_COUNT):
+                for row in _clients(self.query(target)):
+                    if not isinstance(row, dict):
+                        continue
+                    candidate_id = _normalize_id(row.get("captiveClientId"))
+                    if candidate_id is not None:
+                        fingerprints.add(
+                            _baseline_fingerprint(session, person, candidate_id)
+                        )
+                if index + 1 < BASELINE_SAMPLE_COUNT:
+                    self.sleeper(SAMPLE_DELAY_SECONDS)
+            record = session["people"][person]
+            captured_epoch = self.clock()
+            record["mesh_id"] = None
+            record["identified_epoch"] = None
+            record["baseline"] = {
+                "captured_epoch": captured_epoch,
+                "consumed": False,
+                "context_digest": _baseline_context(session, person),
+                "fingerprints": sorted(fingerprints),
+            }
+            record["disconnect"] = {"proven": False, "captured_epoch": None}
+            record["reconnect"] = {"proven": False, "captured_epoch": None}
+            session["staged_sha256"] = None
+            session["staged_epoch"] = None
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "baseline",
+            "valid_samples": BASELINE_SAMPLE_COUNT,
+            "raw_identifiers_retained": False,
+            "next_action": "connect_this_phone_then_identify",
+        }
+
+    def identify(
+        self,
+        person: str,
+        *,
+        reader: Callable[[str], str] | None = None,
+    ) -> dict[str, Any]:
+        if person not in PEOPLE:
+            raise EnrollmentError("person_invalid")
+        self._require_jobs_stopped()
+        address = _read_confirmed_private_ipv4(reader)
+        try:
+            with _lock(self.settings, create=False):
+                session = self._load()
+                if session["activated_epoch"] is not None:
+                    raise EnrollmentError("activation_already_complete")
+                _, source_unchanged = self._source_v1_unchanged(session)
+                if not source_unchanged:
+                    raise EnrollmentError("production_v1_changed")
+                baseline = session["people"][person].get("baseline")
+                if baseline is not None:
+                    if baseline["consumed"]:
+                        raise EnrollmentError("off_baseline_already_consumed")
+                    baseline_age = self.clock() - float(baseline["captured_epoch"])
+                    if (
+                        baseline_age < MINIMUM_DISCONNECT_SECONDS
+                        or baseline_age > MAXIMUM_BASELINE_AGE_SECONDS
+                    ):
+                        raise EnrollmentError("off_baseline_not_fresh")
+                candidate_id = self._positive_candidate(session, address)
+                record = session["people"][person]
+                other = session["people"][PEOPLE[1] if person == PEOPLE[0] else PEOPLE[0]]
+                if (
+                    hmac.compare_digest(candidate_id, other["controller_id"])
+                    or (
+                        other["mesh_id"] is not None
+                        and hmac.compare_digest(candidate_id, other["mesh_id"])
+                    )
+                ):
+                    raise EnrollmentError("binding_collision")
+                off_on_credited = False
+                if baseline is not None:
+                    candidate_fingerprint = _baseline_fingerprint(
+                        session, person, candidate_id
+                    )
+                    if candidate_fingerprint in baseline["fingerprints"]:
+                        raise EnrollmentError("candidate_present_in_off_baseline")
+                    record["disconnect"] = {
+                        "proven": True,
+                        "captured_epoch": baseline["captured_epoch"],
+                    }
+                    record["reconnect"] = {
+                        "proven": True,
+                        "captured_epoch": self.clock(),
+                    }
+                    baseline["consumed"] = True
+                    off_on_credited = True
+                else:
+                    record["disconnect"] = {
+                        "proven": False,
+                        "captured_epoch": None,
+                    }
+                    record["reconnect"] = {
+                        "proven": False,
+                        "captured_epoch": None,
+                    }
+                record["mesh_id"] = candidate_id
+                record["identified_epoch"] = self.clock()
+                session["staged_sha256"] = None
+                session["staged_epoch"] = None
+                self._save(session)
+        finally:
+            address = b""
+        return {
+            "ok": True,
+            "command": "identify",
+            "stable_samples": MINIMUM_STABLE_SAMPLES,
+            "strict_association_proven": True,
+            "address_retained": False,
+            "off_on_credited": off_on_credited,
+            "next_action": (
+                "continue_or_stage"
+                if off_on_credited
+                else "disconnect_this_phone"
+            ),
+        }
+
+    def credit_controller_identity(
+        self,
+        person: str,
+        *,
+        confirm_existing_controller_identity: bool,
+    ) -> dict[str, Any]:
+        """Credit one exact v1 identity after strict targeted mesh continuity."""
+
+        if person not in PEOPLE:
+            raise EnrollmentError("person_invalid")
+        if not confirm_existing_controller_identity:
+            raise EnrollmentError("controller_identity_confirmation_missing")
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            if session["activated_epoch"] is not None:
+                raise EnrollmentError("activation_already_complete")
+            _, source_unchanged = self._source_v1_unchanged(session)
+            if not source_unchanged:
+                raise EnrollmentError("production_v1_changed")
+            target, _ = self._topology(session)
+            record = session["people"][person]
+            candidate_id = _normalize_id(record.get("controller_id"))
+            if candidate_id is None:
+                raise EnrollmentError("session_invalid")
+            existing_mesh_id = record.get("mesh_id")
+            if (
+                existing_mesh_id is not None
+                and not hmac.compare_digest(existing_mesh_id, candidate_id)
+            ):
+                raise EnrollmentError("mesh_binding_conflict")
+            other_person = PEOPLE[1] if person == PEOPLE[0] else PEOPLE[0]
+            other = session["people"][other_person]
+            for other_binding in (
+                other.get("controller_id"),
+                other.get("mesh_id"),
+            ):
+                if (
+                    isinstance(other_binding, str)
+                    and hmac.compare_digest(candidate_id, other_binding)
+                ):
+                    raise EnrollmentError("binding_collision")
+
+            final_strict_associations: list[float] = []
+            for index in range(POSITIVE_SAMPLE_LIMIT):
+                association = _strict_exact_id_association(
+                    self.query(target), candidate_id
+                )
+                if association is None:
+                    final_strict_associations = []
+                else:
+                    final_strict_associations.append(association)
+                if index + 1 < POSITIVE_SAMPLE_LIMIT:
+                    self.sleeper(SAMPLE_DELAY_SECONDS)
+            if (
+                len(final_strict_associations) < MINIMUM_STABLE_SAMPLES
+                or final_strict_associations[-1]
+                <= final_strict_associations[0]
+                or any(
+                    current < previous
+                    for previous, current in zip(
+                        final_strict_associations,
+                        final_strict_associations[1:],
+                    )
+                )
+            ):
+                raise EnrollmentError(
+                    "controller_identity_continuity_not_proven"
+                )
+
+            self._topology(session)
+            _, source_unchanged = self._source_v1_unchanged(session)
+            if not source_unchanged:
+                raise EnrollmentError("production_v1_changed")
+            self._require_jobs_stopped()
+            now = self.clock()
+            record["mesh_id"] = candidate_id
+            record["identified_epoch"] = now
+            record["baseline"] = None
+            record["disconnect"] = {
+                "proven": True,
+                "captured_epoch": now,
+            }
+            record["reconnect"] = {
+                "proven": True,
+                "captured_epoch": now,
+            }
+            session["staged_sha256"] = None
+            session["staged_epoch"] = None
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "credit-controller-identity",
+            "controller_identity_continuity_credited": True,
+            "private_identifiers_exposed": False,
+            "next_action": "continue_or_stage",
+        }
+
+    def disconnect(self, person: str) -> dict[str, Any]:
+        if person not in PEOPLE:
+            raise EnrollmentError("person_invalid")
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            if session["activated_epoch"] is not None:
+                raise EnrollmentError("activation_already_complete")
+            target, _ = self._topology(session)
+            record = session["people"][person]
+            candidate_id = _normalize_id(record.get("mesh_id"))
+            if candidate_id is None:
+                raise EnrollmentError("identify_required")
+            associations: list[float | None] = []
+            for index in range(OFF_SAMPLE_LIMIT):
+                associations.append(
+                    _candidate_association(self.query(target), candidate_id)
+                )
+                if index + 1 < OFF_SAMPLE_LIMIT:
+                    self.sleeper(SAMPLE_DELAY_SECONDS)
+            if any(
+                association is not None
+                for association in associations[-MINIMUM_CONSECUTIVE_OFF_SAMPLES:]
+            ):
+                raise EnrollmentError("disconnect_not_proven")
+            record["disconnect"] = {
+                "proven": True,
+                "captured_epoch": self.clock(),
+            }
+            record["reconnect"] = {"proven": False, "captured_epoch": None}
+            session["staged_sha256"] = None
+            session["staged_epoch"] = None
+            self._save(session)
+        return {
+            "ok": True,
+            "command": "disconnect",
+            "off_state_samples": MINIMUM_CONSECUTIVE_OFF_SAMPLES,
+            "next_action": "reconnect_and_generate_traffic",
+        }
+
+    def reconnect(
+        self,
+        person: str,
+        *,
+        reader: Callable[[str], str] | None = None,
+    ) -> dict[str, Any]:
+        if person not in PEOPLE:
+            raise EnrollmentError("person_invalid")
+        self._require_jobs_stopped()
+        address = _read_confirmed_private_ipv4(reader)
+        try:
+            with _lock(self.settings, create=False):
+                session = self._load()
+                if session["activated_epoch"] is not None:
+                    raise EnrollmentError("activation_already_complete")
+                record = session["people"][person]
+                candidate_id = _normalize_id(record.get("mesh_id"))
+                off_epoch = record["disconnect"].get("captured_epoch")
+                if candidate_id is None or not record["disconnect"].get("proven"):
+                    raise EnrollmentError("disconnect_required")
+                if self.clock() - float(off_epoch) < MINIMUM_DISCONNECT_SECONDS:
+                    raise EnrollmentError("disconnect_interval_too_short")
+                self._positive_candidate(
+                    session, address, expected_id=candidate_id
+                )
+                record["reconnect"] = {
+                    "proven": True,
+                    "captured_epoch": self.clock(),
+                }
+                session["staged_sha256"] = None
+                session["staged_epoch"] = None
+                self._save(session)
+        finally:
+            address = b""
+        return {
+            "ok": True,
+            "command": "reconnect",
+            "same_identity_proven": True,
+            "strict_association_proven": True,
+            "address_retained": False,
+            "next_action": "continue_or_stage",
+        }
+
+    def _source_v1_unchanged(self, session: Mapping[str, Any]) -> tuple[bytes, bool]:
+        raw, bindings = self._read_v1()
+        unchanged = hmac.compare_digest(
+            _sha256(raw), session["source_config_sha256"]
+        ) and all(
+            hmac.compare_digest(
+                bindings[person], session["people"][person]["controller_id"]
+            )
+            for person in PEOPLE
+        )
+        return raw, unchanged
+
+    def _completion(self, session: Mapping[str, Any]) -> tuple[int, bool]:
+        complete = sum(
+            bool(
+                session["people"][person]["mesh_id"] is not None
+                and session["people"][person]["reconnect"]["proven"]
+            )
+            for person in PEOPLE
+        )
+        if complete != len(PEOPLE):
+            return complete, False
+        try:
+            _config_v2(session)
+        except EnrollmentError:
+            return complete, False
+        return complete, True
+
+    def stage(self) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            if session["activated_epoch"] is not None:
+                raise EnrollmentError("activation_already_complete")
+            self._topology(session)
+            _, source_unchanged = self._source_v1_unchanged(session)
+            if not source_unchanged:
+                raise EnrollmentError("production_v1_changed")
+            completed, ready = self._completion(session)
+            if not ready:
+                raise EnrollmentError("enrollment_incomplete")
+            config = _config_v2(session)
+            encoded = _encode_json(config)
+            _atomic_replace_bytes(
+                self.settings.staged_config,
+                encoded,
+                code="staged_config_write_failed",
+            )
+            session["staged_sha256"] = _sha256(encoded)
+            session["staged_epoch"] = self.clock()
+            self._save(session)
+            report = self._report_locked(session, topology_verified=True)
+            _atomic_replace_bytes(
+                self.settings.safe_report,
+                _encode_json(report),
+                code="safe_report_write_failed",
+            )
+        return {
+            "ok": True,
+            "command": "stage",
+            "people_completed": completed,
+            "schema_version": PRODUCTION_SCHEMA_V2,
+            "active_schema_preserved": True,
+            "ready_for_activation": report["ready_for_activation"],
+            "next_action": "deploy_v2_consumer_then_review_and_activate",
+        }
+
+    def _stage_matches(self, session: Mapping[str, Any]) -> bool:
+        try:
+            raw, value = _decode_private_json(
+                self.settings.staged_config, code="staged_config_invalid"
+            )
+            _validate_v2_config(value)
+            return bool(
+                raw == _encode_json(_config_v2(session))
+                and session.get("staged_sha256") is not None
+                and hmac.compare_digest(_sha256(raw), session["staged_sha256"])
+            )
+        except EnrollmentError:
+            return False
+
+    def _require_runtime_consumer_ready(self) -> str:
+        scanner = self.settings.scanner_path
+        if not scanner.is_absolute():
+            raise EnrollmentError("runtime_consumer_not_ready")
+        before, identity = _read_runtime_scanner(scanner)
+        marker = b'PRESENCE_SCANNER_CONFIG_CONTRACT="cabin-sources-v2"'
+        if sum(line == marker for line in before.splitlines()) != 1:
+            raise EnrollmentError("runtime_consumer_not_ready")
+        try:
+            completed = subprocess.run(
+                [str(scanner), "validate-config", "cabin"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                check=False,
+                env={
+                    "HOME": str(self.settings.home),
+                    "PATH": (
+                        "/opt/homebrew/bin:/usr/local/bin:"
+                        "/usr/bin:/bin:/usr/sbin:/sbin"
+                    ),
+                    "PRESENCE_DEVICE_CONFIG": str(
+                        self.settings.staged_config
+                    ),
+                },
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise EnrollmentError("runtime_consumer_not_ready") from exc
+        if completed.returncode != 0:
+            raise EnrollmentError("runtime_consumer_not_ready")
+        after, after_identity = _read_runtime_scanner(scanner)
+        if after_identity != identity or not hmac.compare_digest(before, after):
+            raise EnrollmentError("runtime_consumer_not_ready")
+        return _sha256(before)
+
+    def _report_locked(
+        self,
+        session: Mapping[str, Any],
+        *,
+        topology_verified: bool | None = None,
+    ) -> dict[str, Any]:
+        if topology_verified is None:
+            try:
+                self._topology(session)
+                topology_verified = True
+            except EnrollmentError:
+                topology_verified = False
+        completed, bindings_distinct = self._completion(session)
+        try:
+            _, source_unchanged = self._source_v1_unchanged(session)
+        except EnrollmentError:
+            source_unchanged = False
+        stage_matches = self._stage_matches(session)
+        try:
+            jobs_stopped = self.jobs_stopped()
+        except EnrollmentError:
+            jobs_stopped = False
+        ready = bool(
+            topology_verified
+            and source_unchanged
+            and completed == len(PEOPLE)
+            and bindings_distinct
+            and stage_matches
+            and jobs_stopped
+            and session.get("activated_epoch") is None
+        )
+        return {
+            "schema_version": 1,
+            "topology_verified": topology_verified,
+            "source_schema_unchanged": source_unchanged,
+            "people_expected": len(PEOPLE),
+            "people_completed": completed,
+            "bindings_distinct": bindings_distinct,
+            "source_specific_predicates": True,
+            "stage_matches_session": stage_matches,
+            "protected_jobs_stopped": jobs_stopped,
+            "active_schema_preserved": session.get("activated_epoch") is None,
+            "ready_for_activation": ready,
+        }
+
+    def report(self) -> dict[str, Any]:
+        with _lock(self.settings, create=False):
+            session = self._load()
+            report = self._report_locked(session)
+            _atomic_replace_bytes(
+                self.settings.safe_report,
+                _encode_json(report),
+                code="safe_report_write_failed",
+            )
+        return {"ok": True, "command": "report", **report}
+
+    def status(self) -> dict[str, Any]:
+        with _lock(self.settings, create=False):
+            session = self._load()
+            completed, distinct = self._completion(session)
+            return {
+                "ok": True,
+                "command": "status",
+                "people_completed": completed,
+                "bindings_distinct": distinct,
+                "staged": self._stage_matches(session),
+                "activated": session.get("activated_epoch") is not None,
+                "active_schema_preserved": session.get("activated_epoch") is None,
+            }
+
+    def abort(self, *, confirm_abandon: bool) -> dict[str, Any]:
+        if not confirm_abandon:
+            raise EnrollmentError("abort_confirmation_missing")
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            if session.get("activated_epoch") is not None:
+                raise EnrollmentError("abort_after_activation_forbidden")
+            try:
+                _, source_unchanged = self._source_v1_unchanged(session)
+            except EnrollmentError as exc:
+                raise EnrollmentError("abort_activation_state_uncertain") from exc
+            if not source_unchanged:
+                raise EnrollmentError("abort_activation_state_uncertain")
+            optional_paths = (
+                self.settings.staged_config,
+                self.settings.safe_report,
+            )
+            for path in optional_paths:
+                if path.exists() or path.is_symlink():
+                    _private_metadata(
+                        path, directory=False, code="abort_artifact_invalid"
+                    )
+            _private_metadata(
+                self.settings.session_file,
+                directory=False,
+                code="session_invalid",
+            )
+            staged_removed = _unlink_private(
+                self.settings.staged_config, code="abort_failed"
+            )
+            report_removed = _unlink_private(
+                self.settings.safe_report, code="abort_failed"
+            )
+            _unlink_private(self.settings.session_file, code="abort_failed")
+        return {
+            "ok": True,
+            "command": "abort",
+            "session_removed": True,
+            "staged_removed": staged_removed,
+            "safe_report_removed": report_removed,
+            "active_schema_preserved": True,
+            "legacy_enrollment_untouched": True,
+        }
+
+    def _ensure_backup(self, original: bytes) -> None:
+        if self.settings.backup_file.exists() or self.settings.backup_file.is_symlink():
+            existing = _bounded_read(
+                self.settings.backup_file, code="production_backup_invalid"
+            )
+            if not hmac.compare_digest(existing, original):
+                raise EnrollmentError("production_backup_invalid")
+            _validate_v1_config(
+                _parse_json_bytes(existing, code="production_backup_invalid")
+            )
+            return
+        _atomic_create_bytes(
+            self.settings.backup_file,
+            original,
+            code="production_backup_create_failed",
+        )
+
+    def _valid_backup(self, session: Mapping[str, Any]) -> bytes:
+        backup = _bounded_read(
+            self.settings.backup_file, code="production_backup_invalid"
+        )
+        bindings = _validate_v1_config(
+            _parse_json_bytes(backup, code="production_backup_invalid")
+        )
+        if not hmac.compare_digest(
+            _sha256(backup), session["source_config_sha256"]
+        ) or any(
+            not hmac.compare_digest(
+                bindings[person], session["people"][person]["controller_id"]
+            )
+            for person in PEOPLE
+        ):
+            raise EnrollmentError("production_backup_invalid")
+        return backup
+
+    def activate(
+        self,
+        *,
+        confirm_safe_report: bool,
+        confirm_jobs_stopped: bool,
+        confirm_v2_consumer_ready: bool,
+        confirm_exact_rollback: bool,
+    ) -> dict[str, Any]:
+        if not all(
+            (
+                confirm_safe_report,
+                confirm_jobs_stopped,
+                confirm_v2_consumer_ready,
+                confirm_exact_rollback,
+            )
+        ):
+            raise EnrollmentError("activation_confirmations_missing")
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            staged_raw, staged_value = _decode_private_json(
+                self.settings.staged_config, code="staged_config_invalid"
+            )
+            _validate_v2_config(staged_value)
+            if staged_raw != _encode_json(_config_v2(session)) or not self._stage_matches(
+                session
+            ):
+                raise EnrollmentError("staged_config_invalid")
+            runtime_consumer_sha256 = self._require_runtime_consumer_ready()
+
+            current_raw, current_value = _decode_private_json(
+                self.settings.production_config, code="production_config_invalid"
+            )
+            if session.get("activated_epoch") is not None:
+                if current_raw != staged_raw:
+                    raise EnrollmentError("activated_config_mismatch")
+                self._valid_backup(session)
+                return {
+                    "ok": True,
+                    "command": "activate",
+                    "already_active": True,
+                    "schema_version": PRODUCTION_SCHEMA_V2,
+                    "exact_backup_retained": True,
+                    "runtime_consumer_verified": True,
+                }
+
+            if current_raw == staged_raw:
+                _validate_v2_config(current_value)
+                backup_raw = _bounded_read(
+                    self.settings.backup_file, code="production_backup_invalid"
+                )
+                _validate_v1_config(
+                    _parse_json_bytes(
+                        backup_raw, code="production_backup_invalid"
+                    )
+                )
+                if not hmac.compare_digest(
+                    _sha256(backup_raw), session["source_config_sha256"]
+                ):
+                    raise EnrollmentError("production_backup_invalid")
+                session["activated_epoch"] = self.clock()
+                self._save(session)
+                return {
+                    "ok": True,
+                    "command": "activate",
+                    "already_active": False,
+                    "recovered_interrupted_activation": True,
+                    "schema_version": PRODUCTION_SCHEMA_V2,
+                    "exact_backup_retained": True,
+                    "runtime_consumer_verified": True,
+                }
+
+            original_bindings = _validate_v1_config(current_value)
+            if not hmac.compare_digest(
+                _sha256(current_raw), session["source_config_sha256"]
+            ) or any(
+                not hmac.compare_digest(
+                    original_bindings[person],
+                    session["people"][person]["controller_id"],
+                )
+                for person in PEOPLE
+            ):
+                raise EnrollmentError("production_v1_changed")
+            report = self._report_locked(session)
+            if not report["ready_for_activation"]:
+                raise EnrollmentError("safe_report_not_ready")
+            _atomic_replace_bytes(
+                self.settings.safe_report,
+                _encode_json(report),
+                code="safe_report_write_failed",
+            )
+            self._ensure_backup(current_raw)
+            self._require_jobs_stopped()
+            current_scanner, _ = _read_runtime_scanner(
+                self.settings.scanner_path
+            )
+            if not hmac.compare_digest(
+                _sha256(current_scanner), runtime_consumer_sha256
+            ):
+                raise EnrollmentError("runtime_consumer_not_ready")
+            current_stage = _bounded_read(
+                self.settings.staged_config, code="staged_config_invalid"
+            )
+            if not hmac.compare_digest(current_stage, staged_raw):
+                raise EnrollmentError("staged_config_invalid")
+
+            try:
+                _atomic_replace_bytes(
+                    self.settings.production_config,
+                    staged_raw,
+                    code="production_config_replace_failed",
+                )
+                installed = _bounded_read(
+                    self.settings.production_config,
+                    code="production_config_replace_failed",
+                )
+                if not hmac.compare_digest(installed, staged_raw):
+                    raise EnrollmentError("production_config_replace_failed")
+                session["activated_epoch"] = self.clock()
+                self._save(session)
+            except BaseException as exc:
+                rollback_failed = False
+                try:
+                    _atomic_replace_bytes(
+                        self.settings.production_config,
+                        current_raw,
+                        code="production_config_rollback_failed",
+                    )
+                    restored = _bounded_read(
+                        self.settings.production_config,
+                        code="production_config_rollback_failed",
+                    )
+                    if not hmac.compare_digest(restored, current_raw):
+                        rollback_failed = True
+                except BaseException:
+                    rollback_failed = True
+                if rollback_failed:
+                    raise EnrollmentError("activation_rollback_failed") from exc
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
+                raise EnrollmentError("activation_failed") from exc
+        return {
+            "ok": True,
+            "command": "activate",
+            "already_active": False,
+            "schema_version": PRODUCTION_SCHEMA_V2,
+            "exact_backup_retained": True,
+            "active_config_replaced_atomically": True,
+            "runtime_consumer_verified": True,
+            "next_action": "run_downstream_disabled_v2_canary",
+        }
+
+    def rollback(
+        self, *, confirm_post_activation_rollback: bool
+    ) -> dict[str, Any]:
+        if not confirm_post_activation_rollback:
+            raise EnrollmentError("rollback_confirmation_missing")
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            if not self._stage_matches(session):
+                raise EnrollmentError("staged_config_invalid")
+            expected_v2 = _encode_json(_config_v2(session))
+            exact_v1 = self._valid_backup(session)
+            current = _bounded_read(
+                self.settings.production_config,
+                code="production_config_invalid",
+            )
+            if hmac.compare_digest(current, exact_v1):
+                already_rolled_back = True
+            elif hmac.compare_digest(current, expected_v2):
+                already_rolled_back = False
+                try:
+                    _atomic_replace_bytes(
+                        self.settings.production_config,
+                        exact_v1,
+                        code="rollback_restore_failed",
+                    )
+                except BaseException as exc:
+                    try:
+                        observed = _bounded_read(
+                            self.settings.production_config,
+                            code="rollback_state_uncertain",
+                        )
+                    except EnrollmentError as read_exc:
+                        raise EnrollmentError(
+                            "rollback_state_uncertain"
+                        ) from read_exc
+                    if hmac.compare_digest(observed, exact_v1):
+                        pass
+                    elif hmac.compare_digest(observed, expected_v2):
+                        raise EnrollmentError(
+                            "rollback_restore_failed_v2_preserved"
+                        ) from exc
+                    else:
+                        raise EnrollmentError(
+                            "rollback_state_uncertain"
+                        ) from exc
+            else:
+                raise EnrollmentError("rollback_current_config_unsafe")
+
+            restored = _bounded_read(
+                self.settings.production_config,
+                code="rollback_state_uncertain",
+            )
+            if not hmac.compare_digest(restored, exact_v1):
+                raise EnrollmentError("rollback_state_uncertain")
+
+            previous_activation = session.get("activated_epoch")
+            if previous_activation is not None:
+                session["activated_epoch"] = None
+                try:
+                    self._save(session)
+                except BaseException as exc:
+                    try:
+                        observed_session = self._load()
+                    except EnrollmentError as load_exc:
+                        raise EnrollmentError(
+                            "rollback_state_uncertain"
+                        ) from load_exc
+                    if (
+                        observed_session.get("activated_epoch") is None
+                        and _encode_json(_config_v2(observed_session))
+                        == expected_v2
+                    ):
+                        session = observed_session
+                    else:
+                        session["activated_epoch"] = previous_activation
+                        if (
+                            observed_session.get("activated_epoch")
+                            != previous_activation
+                            or _encode_json(_config_v2(observed_session))
+                            != expected_v2
+                        ):
+                            raise EnrollmentError(
+                                "rollback_state_uncertain"
+                            ) from exc
+                        if already_rolled_back:
+                            raise EnrollmentError(
+                                "rollback_session_update_failed"
+                            ) from exc
+                        try:
+                            _atomic_replace_bytes(
+                                self.settings.production_config,
+                                expected_v2,
+                                code="rollback_v2_recovery_failed",
+                            )
+                            recovered = _bounded_read(
+                                self.settings.production_config,
+                                code="rollback_v2_recovery_failed",
+                            )
+                        except BaseException as recovery_exc:
+                            raise EnrollmentError(
+                                "rollback_state_uncertain"
+                            ) from recovery_exc
+                        if not hmac.compare_digest(recovered, expected_v2):
+                            raise EnrollmentError(
+                                "rollback_state_uncertain"
+                            ) from exc
+                        raise EnrollmentError(
+                            "rollback_session_update_failed_v2_restored"
+                        ) from exc
+
+            closure = {
+                "schema_version": 1,
+                "rollback_completed": True,
+                "production_schema_v1_verified": True,
+                "exact_v1_backup_retained": True,
+                "staged_v2_preserved": self._stage_matches(session),
+                "legacy_enrollment_untouched": True,
+            }
+            _atomic_replace_bytes(
+                self.settings.safe_report,
+                _encode_json(closure),
+                code="safe_report_write_failed",
+            )
+        return {
+            "ok": True,
+            "command": "rollback",
+            "already_rolled_back": already_rolled_back,
+            "production_schema_v1_restored": True,
+            "session_preserved": True,
+            "staged_v2_preserved": True,
+            "safe_report_preserved": True,
+            "exact_v1_backup_retained": True,
+            "legacy_enrollment_untouched": True,
+        }
+
+    def cleanup(self, *, confirm_post_canary_success: bool) -> dict[str, Any]:
+        if not confirm_post_canary_success:
+            raise EnrollmentError("cleanup_confirmation_missing")
+        self._require_jobs_stopped()
+        with _lock(self.settings, create=False):
+            session = self._load()
+            if session.get("activated_epoch") is None:
+                raise EnrollmentError("cleanup_before_activation_forbidden")
+            expected = _encode_json(_config_v2(session))
+            installed = _bounded_read(
+                self.settings.production_config,
+                code="production_config_invalid",
+            )
+            if not hmac.compare_digest(installed, expected):
+                raise EnrollmentError("activated_config_mismatch")
+            self._valid_backup(session)
+            if (
+                self.settings.staged_config.exists()
+                or self.settings.staged_config.is_symlink()
+            ):
+                staged = _bounded_read(
+                    self.settings.staged_config, code="staged_config_invalid"
+                )
+                if not hmac.compare_digest(staged, expected):
+                    raise EnrollmentError("staged_config_invalid")
+            closure = {
+                "schema_version": 1,
+                "cleanup_completed": True,
+                "production_schema_v2_verified": True,
+                "exact_v1_backup_retained": True,
+                "legacy_enrollment_untouched": True,
+            }
+            _atomic_replace_bytes(
+                self.settings.safe_report,
+                _encode_json(closure),
+                code="safe_report_write_failed",
+            )
+            staged_removed = _unlink_private(
+                self.settings.staged_config, code="cleanup_failed"
+            )
+            _unlink_private(self.settings.session_file, code="cleanup_failed")
+        return {
+            "ok": True,
+            "command": "cleanup",
+            "session_removed": True,
+            "staged_removed": staged_removed,
+            "safe_report_retained": True,
+            "exact_v1_backup_retained": True,
+            "legacy_enrollment_untouched": True,
+        }
+
+
+def _parser() -> SafeArgumentParser:
+    parser = SafeArgumentParser(add_help=True)
+    parser.add_argument("--attended", action="store_true")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("init")
+    for name in ("baseline", "identify", "disconnect", "reconnect"):
+        subcommand = commands.add_parser(name)
+        subcommand.add_argument("person", choices=PEOPLE)
+    continuity = commands.add_parser("credit-controller-identity")
+    continuity.add_argument("person", choices=PEOPLE)
+    continuity.add_argument(
+        "--confirm-existing-controller-identity", action="store_true"
+    )
+    commands.add_parser("stage")
+    commands.add_parser("report")
+    commands.add_parser("status")
+    abort = commands.add_parser("abort")
+    abort.add_argument("--confirm-abandon-mesh-enrollment", action="store_true")
+    activate = commands.add_parser("activate")
+    activate.add_argument("--confirm-safe-report-reviewed", action="store_true")
+    activate.add_argument("--confirm-mutation-jobs-stopped", action="store_true")
+    activate.add_argument("--confirm-v2-consumer-ready", action="store_true")
+    activate.add_argument("--confirm-exact-rollback-ready", action="store_true")
+    cleanup = commands.add_parser("cleanup")
+    cleanup.add_argument("--confirm-post-canary-success", action="store_true")
+    rollback = commands.add_parser("rollback")
+    rollback.add_argument(
+        "--confirm-post-activation-rollback", action="store_true"
+    )
+    return parser
+
+
+MUTATING_COMMANDS = frozenset(
+    {
+        "init",
+        "baseline",
+        "identify",
+        "credit-controller-identity",
+        "disconnect",
+        "reconnect",
+        "stage",
+        "abort",
+        "activate",
+        "rollback",
+        "cleanup",
+    }
+)
+
+
+def _require_attended(args: argparse.Namespace) -> None:
+    if args.command not in MUTATING_COMMANDS:
+        return
+    if not args.attended or not sys.stdin.isatty() or not sys.stderr.isatty():
+        raise EnrollmentError("attended_session_required")
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = _parser().parse_args(argv)
+        _require_attended(args)
+        app = MeshEnrollment(Settings(home=Path.home()))
+        if args.command == "init":
+            result = app.init()
+        elif args.command == "baseline":
+            result = app.baseline(args.person)
+        elif args.command == "identify":
+            result = app.identify(args.person)
+        elif args.command == "credit-controller-identity":
+            result = app.credit_controller_identity(
+                args.person,
+                confirm_existing_controller_identity=(
+                    args.confirm_existing_controller_identity
+                ),
+            )
+        elif args.command == "disconnect":
+            result = app.disconnect(args.person)
+        elif args.command == "reconnect":
+            result = app.reconnect(args.person)
+        elif args.command == "stage":
+            result = app.stage()
+        elif args.command == "report":
+            result = app.report()
+        elif args.command == "status":
+            result = app.status()
+        elif args.command == "abort":
+            result = app.abort(
+                confirm_abandon=args.confirm_abandon_mesh_enrollment
+            )
+        elif args.command == "activate":
+            result = app.activate(
+                confirm_safe_report=args.confirm_safe_report_reviewed,
+                confirm_jobs_stopped=args.confirm_mutation_jobs_stopped,
+                confirm_v2_consumer_ready=args.confirm_v2_consumer_ready,
+                confirm_exact_rollback=args.confirm_exact_rollback_ready,
+            )
+        elif args.command == "cleanup":
+            result = app.cleanup(
+                confirm_post_canary_success=args.confirm_post_canary_success
+            )
+        elif args.command == "rollback":
+            result = app.rollback(
+                confirm_post_activation_rollback=(
+                    args.confirm_post_activation_rollback
+                )
+            )
+        else:
+            raise EnrollmentError("arguments_invalid")
+        sys.stdout.write(json.dumps(result, sort_keys=True, separators=(",", ":")) + "\n")
+        return 0
+    except EnrollmentError as exc:
+        sys.stderr.write(
+            json.dumps(
+                {"ok": False, "error": exc.code},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

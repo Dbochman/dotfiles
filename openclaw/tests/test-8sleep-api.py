@@ -44,9 +44,26 @@ class MultiPodHomeTests(unittest.TestCase):
     def setUp(self):
         self.token = {"access_token": "test-token", "userId": "dylan-user"}
         self.events = []
-        self.current_set = "set-crosstown"
-        self.away_state = False
-        self.update_assignment_on_select = True
+        self.current_sets = {
+            "dylan-user": "set-crosstown",
+            "julia-user": "set-crosstown",
+        }
+        self.current_devices = {
+            "dylan-user": {"id": "pod-crosstown", "side": "left"},
+            "julia-user": {"id": "pod-crosstown", "side": "right"},
+        }
+        self.away_states = {
+            "dylan-user": False,
+            "julia-user": False,
+        }
+        self.current_device_put_delays = {
+            "dylan-user": 0,
+            "julia-user": 0,
+        }
+        self.current_device_put_counts = {
+            "dylan-user": 0,
+            "julia-user": 0,
+        }
         self.household_sets = [
             {
                 "setId": "set-crosstown",
@@ -94,41 +111,57 @@ class MultiPodHomeTests(unittest.TestCase):
         if path.endswith("/summary"):
             return {"households": [{"sets": self.household_sets}]}
         if path.endswith("/current-set"):
-            return {"setId": self.current_set}
+            user_id = path.split("/")[2]
+            return {"setId": self.current_sets[user_id]}
         if path.endswith("/away-mode"):
-            return {"isAway": self.away_state}
+            user_id = path.split("/")[1]
+            return {"isAway": self.away_states[user_id]}
         self.fail(f"unexpected app API GET {path}")
 
     def fake_get(self, path, token_data=None):
         self.events.append(("get", path, None, None))
+        if path.startswith("users/") and path.endswith("/current-device"):
+            user_id = path.split("/")[1]
+            return dict(self.current_devices[user_id])
         if path.startswith("devices/"):
             device_id = path.removeprefix("devices/").split("?", 1)[0]
             return {"result": dict(self.device_assignments[device_id])}
         self.fail(f"unexpected client API GET {path}")
 
-    def move_dylan_assignment(self, target_set):
-        target_device = {
-            "set-crosstown": "pod-crosstown",
-            "set-cabin": "pod-cabin",
-        }[target_set]
+    def move_user_assignment(self, user_id, target_device, side):
         other_device = (
             "pod-cabin" if target_device == "pod-crosstown" else "pod-crosstown"
         )
-        self.device_assignments[target_device]["leftUserId"] = "dylan-user"
-        self.device_assignments[target_device]["awaySides"].pop("leftUserId", None)
-        self.device_assignments[other_device]["leftUserId"] = None
-        self.device_assignments[other_device]["awaySides"]["leftUserId"] = (
-            "dylan-user"
-        )
+        field = f"{side}UserId"
+        self.current_devices[user_id] = {"id": target_device, "side": side}
+        self.device_assignments[target_device][field] = user_id
+        target_away = self.device_assignments[target_device].get("awaySides")
+        if isinstance(target_away, dict):
+            target_away.pop(field, None)
+        if self.device_assignments[other_device].get(field) == user_id:
+            self.device_assignments[other_device][field] = None
+        other_away = self.device_assignments[other_device].get("awaySides")
+        if isinstance(other_away, dict):
+            other_away[field] = user_id
 
     def fake_put(self, path, body, token_data=None, use_app_api=False):
         self.events.append(("put", path, body, use_app_api))
         if path.endswith("/current-set"):
-            self.current_set = body["setId"]
-            if self.update_assignment_on_select:
-                self.move_dylan_assignment(self.current_set)
+            user_id = path.split("/")[2]
+            self.current_sets[user_id] = body["setId"]
+        elif path.endswith("/current-device"):
+            user_id = path.split("/")[1]
+            self.current_device_put_counts[user_id] += 1
+            if (
+                self.current_device_put_counts[user_id]
+                > self.current_device_put_delays[user_id]
+            ):
+                self.move_user_assignment(
+                    user_id, body["id"], body["side"]
+                )
         elif path.endswith("/away-mode"):
-            self.away_state = "start" in body["awayPeriod"]
+            user_id = path.split("/")[1]
+            self.away_states[user_id] = "start" in body["awayPeriod"]
         return {"success": True}
 
     @contextlib.contextmanager
@@ -190,12 +223,34 @@ class MultiPodHomeTests(unittest.TestCase):
             )
 
         self.assertFalse(any(event[0] == "put" for event in self.events))
-        self.assertEqual(self.current_set, "set-crosstown")
-        self.assertFalse(self.away_state)
+        self.assertEqual(self.current_sets["dylan-user"], "set-crosstown")
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-crosstown", "side": "left"},
+        )
+        self.assertFalse(self.away_states["dylan-user"])
         assignment_reads = [
-            event for event in self.events if event[0] == "get" and event[1].startswith("devices/")
+            event[1]
+            for event in self.events
+            if event[0] == "get" and event[1].startswith("devices/")
         ]
-        self.assertEqual(len(assignment_reads), 2)
+        self.assertEqual(
+            assignment_reads,
+            ["devices/pod-crosstown?filter=leftUserId"],
+        )
+        current_device_reads = [
+            event[1]
+            for event in self.events
+            if event[0] == "get"
+            and event[1].endswith("/current-device")
+        ]
+        self.assertEqual(
+            current_device_reads,
+            [
+                "users/dylan-user/current-device",
+                "users/dylan-user/current-device",
+            ],
+        )
 
         result = json.loads(output)
         self.assertTrue(result["success"])
@@ -204,27 +259,43 @@ class MultiPodHomeTests(unittest.TestCase):
         self.assertEqual(result["state"], "home")
         self.assertFalse(result["changed"])
 
-    def test_relocation_selects_target_ends_away_and_proves_assignment(self):
-        self.away_state = True
+    def test_relocation_uses_exact_device_route_and_ends_away(self):
+        self.away_states["dylan-user"] = True
         with self.mocked_api():
             output = self.run_cli(
                 "--location", "cabin", "home", "dylan"
             )
 
-        current_path = "household/users/dylan-user/current-set"
+        current_set_path = "household/users/dylan-user/current-set"
+        current_device_path = "users/dylan-user/current-device"
         away_path = "users/dylan-user/away-mode"
         puts = [event for event in self.events if event[0] == "put"]
         self.assertEqual(
-            puts[0][:3],
-            ("put", current_path, {"setId": "set-cabin"}),
+            puts[0],
+            (
+                "put",
+                current_set_path,
+                {"setId": "set-cabin"},
+                True,
+            ),
         )
-        self.assertEqual(puts[1][:2], ("put", away_path))
-        self.assertIn("end", puts[1][2]["awayPeriod"])
-        self.assertEqual(len(puts), 2)
+        self.assertEqual(
+            puts[1],
+            (
+                "put",
+                current_device_path,
+                {"id": "pod-cabin", "side": "left"},
+                False,
+            ),
+        )
+        self.assertEqual(puts[2][:2], ("put", away_path))
+        self.assertIn("end", puts[2][2]["awayPeriod"])
+        self.assertTrue(puts[2][3])
+        self.assertEqual(len(puts), 3)
         self.assertFalse(
             any(
                 event[0] == "put"
-                and event[1] == current_path
+                and event[1] == current_set_path
                 and event[2] == {"setId": "set-crosstown"}
                 for event in self.events
             ),
@@ -235,10 +306,16 @@ class MultiPodHomeTests(unittest.TestCase):
             for event in self.events
             if event[0] == "get" and event[1].startswith("devices/")
         ]
-        self.assertTrue(any(path.startswith("devices/pod-cabin?") for path in assignment_paths))
-        self.assertTrue(any(path.startswith("devices/pod-crosstown?") for path in assignment_paths))
-        self.assertEqual(self.current_set, "set-cabin")
-        self.assertFalse(self.away_state)
+        self.assertEqual(
+            assignment_paths,
+            ["devices/pod-cabin?filter=leftUserId"],
+        )
+        self.assertEqual(self.current_sets["dylan-user"], "set-cabin")
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-cabin", "side": "left"},
+        )
+        self.assertFalse(self.away_states["dylan-user"])
         self.assertEqual(
             self.device_assignments["pod-cabin"]["leftUserId"],
             "dylan-user",
@@ -254,6 +331,244 @@ class MultiPodHomeTests(unittest.TestCase):
         self.assertEqual(result["state"], "home")
         self.assertTrue(result["changed"])
 
+    def test_same_set_stale_assignment_is_repaired_via_current_device(self):
+        self.current_sets["dylan-user"] = "set-cabin"
+
+        with self.mocked_api():
+            output = self.run_cli(
+                "--location", "cabin", "home", "dylan"
+            )
+
+        puts = [event for event in self.events if event[0] == "put"]
+        self.assertEqual(
+            puts,
+            [
+                (
+                    "put",
+                    "users/dylan-user/current-device",
+                    {"id": "pod-cabin", "side": "left"},
+                    False,
+                )
+            ],
+        )
+        self.assertEqual(self.current_sets["dylan-user"], "set-cabin")
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-cabin", "side": "left"},
+        )
+        self.assertEqual(
+            self.device_assignments["pod-cabin"]["leftUserId"],
+            "dylan-user",
+        )
+        self.assertTrue(json.loads(output)["changed"])
+
+    def test_julia_relocation_uses_right_side_without_mutating_dylan(self):
+        self.away_states["julia-user"] = True
+
+        with self.mocked_api():
+            output = self.run_cli(
+                "--location", "cabin", "home", "julia"
+            )
+
+        puts = [event for event in self.events if event[0] == "put"]
+        self.assertEqual(
+            puts[0],
+            (
+                "put",
+                "household/users/julia-user/current-set",
+                {"setId": "set-cabin"},
+                True,
+            ),
+        )
+        self.assertEqual(
+            puts[1],
+            (
+                "put",
+                "users/julia-user/current-device",
+                {"id": "pod-cabin", "side": "right"},
+                False,
+            ),
+        )
+        self.assertEqual(puts[2][1], "users/julia-user/away-mode")
+        self.assertEqual(len(puts), 3)
+        self.assertEqual(self.current_sets["julia-user"], "set-cabin")
+        self.assertEqual(
+            self.current_devices["julia-user"],
+            {"id": "pod-cabin", "side": "right"},
+        )
+        self.assertFalse(self.away_states["julia-user"])
+        self.assertEqual(self.current_sets["dylan-user"], "set-crosstown")
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-crosstown", "side": "left"},
+        )
+        self.assertEqual(
+            self.device_assignments["pod-crosstown"]["leftUserId"],
+            "dylan-user",
+        )
+        self.assertEqual(
+            self.device_assignments["pod-cabin"]["rightUserId"],
+            "julia-user",
+        )
+        result = json.loads(output)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["side"], "julia")
+        self.assertTrue(result["changed"])
+
+    def test_target_side_conflict_fails_before_any_mutation(self):
+        self.device_assignments["pod-cabin"]["leftUserId"] = "other-user"
+        original_sets = dict(self.current_sets)
+        original_devices = {
+            user_id: dict(current)
+            for user_id, current in self.current_devices.items()
+        }
+        original_away = dict(self.away_states)
+
+        with self.mocked_api():
+            result = self.run_cli_error(
+                "--location", "cabin", "home", "dylan"
+            )
+
+        self.assertFalse(any(event[0] == "put" for event in self.events))
+        self.assertEqual(self.current_sets, original_sets)
+        self.assertEqual(self.current_devices, original_devices)
+        self.assertEqual(self.away_states, original_away)
+        self.assertFalse(
+            any(
+                event[0] == "get"
+                and event[1].endswith("/current-device")
+                for event in self.events
+            )
+        )
+        self.assertIn(
+            "cabin left side is assigned to another user",
+            result["message"],
+        )
+
+    def test_delayed_current_device_readback_retries_exact_write(self):
+        self.current_sets["dylan-user"] = "set-cabin"
+        self.current_device_put_delays["dylan-user"] = 1
+
+        with self.mocked_api():
+            output = self.run_cli(
+                "--location", "cabin", "home", "dylan"
+            )
+
+        device_puts = [
+            event
+            for event in self.events
+            if event[0] == "put"
+            and event[1] == "users/dylan-user/current-device"
+        ]
+        self.assertEqual(
+            device_puts,
+            [
+                (
+                    "put",
+                    "users/dylan-user/current-device",
+                    {"id": "pod-cabin", "side": "left"},
+                    False,
+                ),
+                (
+                    "put",
+                    "users/dylan-user/current-device",
+                    {"id": "pod-cabin", "side": "left"},
+                    False,
+                ),
+            ],
+        )
+        self.assertFalse(
+            any(
+                event[0] == "put" and event[1].endswith("/current-set")
+                for event in self.events
+            )
+        )
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-cabin", "side": "left"},
+        )
+        self.assertTrue(json.loads(output)["changed"])
+
+    def test_current_device_put_api_failure_is_reported(self):
+        self.current_sets["dylan-user"] = "set-cabin"
+
+        def failing_put(path, body, token_data=None, use_app_api=False):
+            if path == "users/dylan-user/current-device":
+                self.events.append(("put", path, body, use_app_api))
+                return {"error": 503, "message": "temporarily unavailable"}
+            return self.fake_put(path, body, token_data, use_app_api)
+
+        with self.mocked_api(put=failing_put):
+            result = self.run_cli_error(
+                "--location", "cabin", "home", "dylan"
+            )
+
+        device_puts = [
+            event
+            for event in self.events
+            if event[0] == "put"
+            and event[1] == "users/dylan-user/current-device"
+        ]
+        self.assertEqual(len(device_puts), 3)
+        self.assertFalse(
+            any(
+                event[0] == "put"
+                and (
+                    event[1].endswith("/current-set")
+                    or event[1].endswith("/away-mode")
+                )
+                for event in self.events
+            )
+        )
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-crosstown", "side": "left"},
+        )
+        self.assertIn(
+            "assigning cabin left side failed: temporarily unavailable",
+            result["message"],
+        )
+
+    def test_stale_away_sides_do_not_block_authoritative_success(self):
+        self.current_sets["dylan-user"] = "set-cabin"
+        self.current_devices["dylan-user"] = {
+            "id": "pod-cabin",
+            "side": "left",
+        }
+        self.device_assignments["pod-cabin"]["leftUserId"] = "dylan-user"
+        self.device_assignments["pod-cabin"]["awaySides"] = {
+            "leftUserId": "stale-user"
+        }
+        self.device_assignments["pod-crosstown"]["awaySides"] = {
+            "leftUserId": "dylan-user"
+        }
+
+        with self.mocked_api():
+            output = self.run_cli(
+                "--location", "cabin", "home", "dylan"
+            )
+
+        self.assertFalse(any(event[0] == "put" for event in self.events))
+        self.assertFalse(json.loads(output)["changed"])
+
+    def test_missing_away_sides_do_not_block_authoritative_success(self):
+        self.current_sets["dylan-user"] = "set-cabin"
+        self.current_devices["dylan-user"] = {
+            "id": "pod-cabin",
+            "side": "left",
+        }
+        self.device_assignments["pod-cabin"]["leftUserId"] = "dylan-user"
+        self.device_assignments["pod-cabin"].pop("awaySides")
+        self.device_assignments["pod-crosstown"].pop("awaySides")
+
+        with self.mocked_api():
+            output = self.run_cli(
+                "--location", "cabin", "home", "dylan"
+            )
+
+        self.assertFalse(any(event[0] == "put" for event in self.events))
+        self.assertFalse(json.loads(output)["changed"])
+
     def test_ordinary_write_to_non_current_location_fails_without_put(self):
         with self.mocked_api():
             result = self.run_cli_error(
@@ -261,19 +576,59 @@ class MultiPodHomeTests(unittest.TestCase):
             )
 
         self.assertFalse(any(event[0] == "put" for event in self.events))
-        self.assertEqual(self.current_set, "set-crosstown")
+        self.assertEqual(self.current_sets["dylan-user"], "set-crosstown")
         self.assertIn("not this user's current Pod", result["message"])
         self.assertIn("home command first", result["message"])
 
-    def test_temp_to_current_but_away_location_fails_without_put(self):
-        self.away_state = True
+    def test_ordinary_write_requires_exact_current_device_and_side(self):
+        self.current_devices["dylan-user"] = {
+            "id": "pod-cabin",
+            "side": "left",
+        }
+
         with self.mocked_api():
             result = self.run_cli_error(
                 "--location", "crosstown", "temp", "dylan", "-20"
             )
 
         self.assertFalse(any(event[0] == "put" for event in self.events))
-        self.assertEqual(self.current_set, "set-crosstown")
+        self.assertEqual(self.current_sets["dylan-user"], "set-crosstown")
+        self.assertIn("not this user's current Pod", result["message"])
+        self.assertIn("home command first", result["message"])
+
+    def test_ordinary_write_detects_current_device_drift_after_put(self):
+        def drifting_put(path, body, token_data=None, use_app_api=False):
+            result = self.fake_put(path, body, token_data, use_app_api)
+            if path == "users/dylan-user/temperature":
+                self.current_devices["dylan-user"] = {
+                    "id": "pod-cabin",
+                    "side": "left",
+                }
+            return result
+
+        with self.mocked_api(put=drifting_put):
+            result = self.run_cli_error(
+                "--location", "crosstown", "temp", "dylan", "-20"
+            )
+
+        temperature_puts = [
+            event
+            for event in self.events
+            if event[0] == "put"
+            and event[1] == "users/dylan-user/temperature"
+        ]
+        self.assertEqual(len(temperature_puts), 1)
+        self.assertIn("current Pod changed", result["message"])
+
+    def test_temp_to_current_but_away_location_fails_without_put(self):
+        self.away_states["dylan-user"] = True
+        with self.mocked_api():
+            result = self.run_cli_error(
+                "--location", "crosstown", "temp", "dylan", "-20"
+            )
+
+        self.assertFalse(any(event[0] == "put" for event in self.events))
+        self.assertEqual(self.current_sets["dylan-user"], "set-crosstown")
         self.assertIn("still away for this user", result["message"])
         self.assertIn("home command first", result["message"])
 
@@ -285,7 +640,7 @@ class MultiPodHomeTests(unittest.TestCase):
         self.assertEqual(result["error"], "missing_location")
 
     def test_missing_assignment_proof_fails_closed(self):
-        self.update_assignment_on_select = False
+        self.current_device_put_delays["dylan-user"] = 10
         with self.mocked_api():
             result = self.run_cli_error(
                 "--location", "cabin", "home", "dylan"
@@ -296,16 +651,31 @@ class MultiPodHomeTests(unittest.TestCase):
             for event in self.events
             if event[0] == "put" and event[1].endswith("/current-set")
         ]
-        assignment_reads = [
+        current_device_puts = [
             event
             for event in self.events
-            if event[0] == "get" and event[1].startswith("devices/")
+            if event[0] == "put"
+            and event[1] == "users/dylan-user/current-device"
         ]
-        self.assertGreaterEqual(len(current_set_puts), 2)
-        self.assertGreaterEqual(len(assignment_reads), 4)
-        self.assertEqual(self.current_set, "set-cabin")
+        current_device_reads = [
+            event
+            for event in self.events
+            if event[0] == "get"
+            and event[1] == "users/dylan-user/current-device"
+        ]
+        self.assertEqual(len(current_set_puts), 1)
+        self.assertEqual(len(current_device_puts), 3)
+        self.assertGreaterEqual(len(current_device_reads), 4)
+        self.assertEqual(self.current_sets["dylan-user"], "set-cabin")
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-crosstown", "side": "left"},
+        )
         self.assertIsNone(self.device_assignments["pod-cabin"]["leftUserId"])
-        self.assertIn("did not move left assignment to cabin", result["message"])
+        self.assertIn(
+            "did not assign the requested Pod side",
+            result["message"],
+        )
 
 
 if __name__ == "__main__":

@@ -15,9 +15,12 @@ behavior, the direct doorbell message, vacancy actions, and the August
 approval/mutation workflow also remain independent.
 
 The current production flags enable canonical presence and the Nest bridge.
-Ring and August remain installed but disabled and unobserved. Cabin presence
-still uses the preserved legacy scanner until the attended exact-ID enrollment
-and downstream-disabled canary are complete.
+Ring and August remain installed but disabled and unobserved. Cabin production
+schema v2 has exact controller and Kitchen-mesh bindings for both residents.
+After two clean scheduled ticks, 12/12 live observations, and the full test
+suite, the operator explicitly waived the remaining two canary ticks and
+approved the exact installed scanner hash. Presence consumers, physical
+actions, and the camera reviewer are restored.
 
 ## Data flow
 
@@ -216,20 +219,46 @@ third-state batch untouched and fails health closed. The first enabled
 evaluation baselines silently, and repeated identical evaluations publish
 nothing.
 
-The planned strict scanner reads identities only from each host's protected,
-site-scoped `~/.openclaw/presence-devices.json`. Once activated, Cabin will use
-exact Starlink captive client IDs and count a match only when
-`dhcpLeaseFound` and `dhcpLeaseActive` are true, the remaining lease time is
-positive, and data idle time is no more than five minutes. Crosstown already
-uses exact site-private MACs with fresh inbound ARP reachability. Names,
-hostnames, generic iPhone matches, and IP addresses are not strict-scanner
-fallbacks; missing, insecure, or malformed bindings fail the scan closed.
-Current Cabin production remains on the preserved legacy name-based scanner
-until an attended on-site session binds and validates both phones without
-printing the identifiers. Crosstown's strict JSON binding is ready, but its
-legacy runtime remains preserved until the
-[exact-source shadow canary](plans/crosstown-strict-presence-canary.md) passes;
-config validity alone cannot activate either site's new scanner.
+The tracked strict scanner reads identities only from each host's protected,
+site-scoped `~/.openclaw/presence-devices.json`. Cabin schema v1 remains a
+controller-only compatibility format. Cabin schema v2 is required when mesh is
+monitored: it contains exactly one controller plus one or more exact
+`target_id` mesh sources, and each source has its own exact
+`captiveClientId` binding for Dylan and Julia. A resident's result is the union
+of those source-specific positives, but only after every configured source has
+returned and validated successfully.
+
+Controller rows use the strict DHCP/lease/idle predicate:
+`dhcpLeaseFound` and `dhcpLeaseActive` must be booleans and both true,
+`secondsUntilDhcpLeaseExpires` must be finite and positive, and `noDataIdleS`
+must be a non-negative integer no greater than 300. Mesh rows use the exact
+node-local binding and require `role: "CLIENT"`, finite non-negative
+`associatedTimeS`, finite `signalStrength`, and valid RX and TX statistics.
+Starlink's `active` field is diagnostic-only and may be false or absent for a
+connected mesh client. A failed source request, missing clients array, or
+duplicate selected row invalidates the whole observation. Incomplete liveness
+on one successful source is per-person unknown: a strict positive for that
+resident on another source wins the union, but without any positive the unknown
+fails closed rather than becoming absence.
+
+Crosstown uses exact site-private MACs with fresh inbound ARP reachability.
+Names, hostnames, generic iPhone matches, and IP addresses are not
+strict-scanner fallbacks; missing, insecure, or malformed bindings fail the
+scan closed. Sanitized observations and downstream state expose only resident
+booleans and safe aggregate evidence, never client or mesh target IDs, names,
+addresses, or raw provider rows.
+
+Current Cabin production has protected schema-v2 exact bindings for the
+controller and Kitchen mesh node. Enrollment staging has been cleaned, the
+exact v1 backup and identifier-free report are retained, and routine deployment
+accepts only the explicitly approved scanner hash.
+Crosstown's strict JSON binding is ready, but its legacy runtime remains
+preserved until the
+[exact-source shadow canary](plans/crosstown-strict-presence-canary.md) passes.
+Each host accepts only the exact scanner hash that passed its own canary. Any
+scanner byte change requires a new per-host approval; Cabin approval and
+Crosstown approval are independent, so config validity or approval at one site
+cannot activate the other site's candidate.
 
 ### August
 
@@ -291,16 +320,13 @@ bridge baseline are complete. A fresh or rebuilt installation must first:
 4. Run `home-eventctl check-config`, compilation/tests, and `plutil -lint` for
    each installed plist.
 
-The remaining attended rollout is:
+Rollout status and remaining work:
 
-5. For Cabin identity, complete the separately planned
-   [attended enrollment](plans/cabin-starlink-presence-enrollment.md):
-   prove two reconnect cycles and complete 5-, 10-, and 20-minute idle
-   evidence per phone, then collect at
-   least eight correct samples over at least one hour with three real-cadence
-   intervals and all five occupancy scenarios. Require zero mismatches and a
-   four-tick downstream-disabled production canary. Use an extra 24–48-hour
-   soak only when the evidence is inconsistent.
+5. Cabin [attended enrollment](plans/cabin-starlink-presence-enrollment.md)
+   completed July 23. Schema v2 uses exact controller and mesh bindings; the
+   operator accepted two clean scheduled ticks plus 12/12 live observations
+   and the full test suite, explicitly waived the remaining two ticks, and
+   approved the exact installed scanner hash. Protected jobs are restored.
 6. After enrollment, verify one true presence transition is normalized once,
    then correlate a later organic or attended Nest person event against the
    corrected canonical state without changing listener or reviewer behavior.

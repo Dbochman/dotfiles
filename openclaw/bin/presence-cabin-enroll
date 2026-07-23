@@ -4,7 +4,8 @@
 The helper reads Starlink's local ``wifiGetClients`` response but never emits
 or logs provider names, client IDs, MAC addresses, IP addresses, or raw rows.
 It keeps only the two selected captive-client IDs in an owner-only session and
-uses session-keyed fingerprints for the pre-identification baseline.
+uses session-keyed fingerprints for the pre-identification baseline and
+non-target reconnect context.
 
 This is an operator tool.  It never writes canonical presence state, invokes
 vacancy automation, publishes a home event, captures an image, or sends a
@@ -17,10 +18,13 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
+import copy
 import datetime as dt
 import fcntl
+import getpass
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import os
@@ -31,13 +35,17 @@ import stat
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 4
 PEOPLE = ("Dylan", "Julia")
+INDEPENDENT_IDENTIFY_METHODS = frozenset(
+    {"exact_wifi_address", "exact_ip_address"}
+)
 CYCLES = (1, 2)
 IDLE_MINUTES = (5, 10, 20)
 SHADOW_SCENARIOS: Mapping[str, Mapping[str, bool]] = {
@@ -48,6 +56,7 @@ SHADOW_SCENARIOS: Mapping[str, Mapping[str, bool]] = {
     "return-both": {"Dylan": True, "Julia": True},
 }
 REQUIRED_SHADOW_SCENARIOS = frozenset(SHADOW_SCENARIOS)
+COMPACT_JOINT_SEQUENCE = ("both-present", "dylan-only", "both-present")
 
 GRPCURL = Path("/opt/homebrew/bin/grpcurl")
 LAUNCHCTL = Path("/bin/launchctl")
@@ -61,12 +70,15 @@ MAX_SAMPLES = 256
 QUERY_TIMEOUT_SECONDS = 12
 IDENTIFY_SAMPLE_COUNT = 3
 IDENTIFY_SAMPLE_DELAY_SECONDS = 1.0
+EXACT_IP_MAX_SAMPLE_COUNT = 10
+EXACT_RECONNECT_MAX_SAMPLE_COUNT = 15
+MAXIMUM_RECONNECT_IDLE_START_AGE_SECONDS = 5 * 60
 IDENTIFY_FRESH_SECONDS = 60
 RESET_DELTA_SECONDS = 30
 CURRENT_IDLE_THRESHOLD_SECONDS = 300
+MAXIMUM_EXACT_BASELINE_AGE_SECONDS = 30 * 60
 MINIMUM_DISCONNECT_SECONDS = 5
 IDLE_CHECK_EARLY_TOLERANCE_SECONDS = 15
-IDLE_CHECK_LATE_TOLERANCE_SECONDS = 120
 MINIMUM_SHADOW_SECONDS = 60 * 60
 MINIMUM_SHADOW_SAMPLES = 8
 MINIMUM_CADENCE_GAP_SECONDS = 14 * 60
@@ -83,6 +95,9 @@ ID_RE = re.compile(r"^[0-9a-f]{64}$")
 SESSION_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 FINGERPRINT_RE = re.compile(r"^[0-9a-f]{64}$")
 LABEL_RE = re.compile(r"^candidate-[0-9a-f]{12}$")
+WIFI_ADDRESS_HEX_RE = re.compile(r"^[0-9a-fA-F]{12}$")
+CABIN_IPV4_NETWORK = ipaddress.IPv4Network("192.168.1.0/24")
+CABIN_ROUTER_IPV4 = ipaddress.IPv4Address(STARLINK_ENDPOINT.split(":", 1)[0])
 
 
 class EnrollmentError(RuntimeError):
@@ -252,6 +267,8 @@ class Snapshot:
     total_clients: int
     missing_ids: int
     malformed_ids: int
+    liveness_tuple_absent_ids: frozenset[str] = frozenset()
+    liveness_shapes: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
     def safe_counts(self) -> dict[str, int]:
         return {
@@ -522,6 +539,85 @@ def _evidence_from_client(client: Mapping[str, Any]) -> Evidence:
     )
 
 
+def _normalize_wifi_address(value: Any) -> bytes | None:
+    """Normalize a link-layer address without ever including it in an error."""
+
+    if not isinstance(value, str):
+        return None
+    if WIFI_ADDRESS_HEX_RE.fullmatch(value):
+        compact = value.lower()
+    elif re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", value):
+        compact = value.replace(":", "").lower()
+    elif re.fullmatch(r"(?:[0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2}", value):
+        compact = value.replace("-", "").lower()
+    else:
+        return None
+    normalized = bytes.fromhex(compact)
+    if (
+        normalized == b"\x00" * 6
+        or normalized == b"\xff" * 6
+        or normalized[0] & 1
+    ):
+        return None
+    return normalized
+
+
+def _normalize_cabin_ip_address(value: Any) -> bytes | None:
+    """Normalize the current Cabin IPv4 address without echoing bad input."""
+
+    if not isinstance(value, str) or value != value.strip():
+        return None
+    try:
+        normalized = ipaddress.IPv4Address(value)
+    except ipaddress.AddressValueError:
+        return None
+    if (
+        normalized not in CABIN_IPV4_NETWORK
+        or normalized in {
+            CABIN_IPV4_NETWORK.network_address,
+            CABIN_IPV4_NETWORK.broadcast_address,
+            CABIN_ROUTER_IPV4,
+        }
+    ):
+        return None
+    return normalized.packed
+
+
+def _safe_liveness_shape(client: Mapping[str, Any]) -> dict[str, str]:
+    def boolean_shape(value: Any) -> str:
+        if value is None:
+            return "missing"
+        if type(value) is bool:
+            return "true" if value else "false"
+        return "invalid"
+
+    def number_shape(value: Any) -> str:
+        if value is None:
+            return "missing"
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            return "invalid"
+        return "positive" if float(value) > 0 else "nonpositive"
+
+    def idle_shape(value: Any) -> str:
+        if value is None:
+            return "missing"
+        if type(value) is not int or value < 0:
+            return "invalid"
+        return "nonnegative"
+
+    return {
+        "lease_found": boolean_shape(client.get("dhcpLeaseFound")),
+        "lease_active": boolean_shape(client.get("dhcpLeaseActive")),
+        "lease_seconds": number_shape(client.get("secondsUntilDhcpLeaseExpires")),
+        "idle_seconds": idle_shape(client.get("noDataIdleS")),
+        "active": boolean_shape(client.get("active")),
+    }
+
+
 def parse_starlink_payload(payload: Any) -> Snapshot:
     if not isinstance(payload, dict):
         raise EnrollmentError("starlink_schema_invalid")
@@ -530,6 +626,8 @@ def parse_starlink_payload(payload: Any) -> Snapshot:
         raise EnrollmentError("starlink_schema_invalid")
     rows = wifi["clients"]
     clients: dict[str, Evidence] = {}
+    liveness_tuple_absent_ids: set[str] = set()
+    liveness_shapes: dict[str, Mapping[str, str]] = {}
     missing_ids = 0
     malformed_ids = 0
     for row in rows:
@@ -547,15 +645,29 @@ def parse_starlink_payload(payload: Any) -> Snapshot:
         if normalized in clients:
             raise EnrollmentError("starlink_duplicate_id")
         clients[normalized] = _evidence_from_client(row)
+        shape = _safe_liveness_shape(row)
+        liveness_shapes[normalized] = shape
+        if all(
+            shape[field] == "missing"
+            for field in (
+                "lease_found",
+                "lease_active",
+                "lease_seconds",
+                "idle_seconds",
+            )
+        ):
+            liveness_tuple_absent_ids.add(normalized)
     return Snapshot(
         clients=clients,
         total_clients=len(rows),
         missing_ids=missing_ids,
         malformed_ids=malformed_ids,
+        liveness_tuple_absent_ids=frozenset(liveness_tuple_absent_ids),
+        liveness_shapes=liveness_shapes,
     )
 
 
-def query_starlink(settings: Settings) -> Snapshot:
+def _query_starlink_payload(settings: Settings) -> Any:
     if not settings.grpcurl.is_file() or not os.access(settings.grpcurl, os.X_OK):
         raise EnrollmentError("grpcurl_unavailable")
     deadline = time.monotonic() + settings.timeout_seconds
@@ -621,10 +733,108 @@ def query_starlink(settings: Settings) -> Snapshot:
             process.stdout.close()
 
     try:
-        payload = json.loads(bytes(response).decode("utf-8"))
+        return json.loads(bytes(response).decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise EnrollmentError("starlink_schema_invalid") from exc
-    return parse_starlink_payload(payload)
+
+
+def query_starlink(settings: Settings) -> Snapshot:
+    return parse_starlink_payload(_query_starlink_payload(settings))
+
+
+def _match_exact_wifi_address(
+    payload: Any, snapshot: Snapshot, wifi_address: bytes
+) -> str:
+    wifi = payload.get("wifiGetClients") if isinstance(payload, dict) else None
+    rows = wifi.get("clients") if isinstance(wifi, dict) else None
+    if not isinstance(rows, list):
+        raise EnrollmentError("starlink_schema_invalid")
+    matches: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        provider_address = _normalize_wifi_address(row.get("macAddress"))
+        if provider_address is None or not hmac.compare_digest(
+            provider_address, wifi_address
+        ):
+            continue
+        raw_id = row.get("captiveClientId")
+        if (
+            not isinstance(raw_id, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", raw_id)
+        ):
+            raise EnrollmentError("exact_address_row_invalid")
+        normalized_id = raw_id.lower()
+        if normalized_id not in snapshot.clients:
+            raise EnrollmentError("exact_address_row_invalid")
+        matches.append(normalized_id)
+    if not matches:
+        raise EnrollmentError("exact_address_not_found")
+    if len(matches) != 1:
+        raise EnrollmentError("exact_address_ambiguous")
+    return matches[0]
+
+
+def query_starlink_exact(settings: Settings, wifi_address: bytes) -> tuple[Snapshot, str]:
+    payload = _query_starlink_payload(settings)
+    snapshot = parse_starlink_payload(payload)
+    return snapshot, _match_exact_wifi_address(payload, snapshot, wifi_address)
+
+
+def _match_exact_ip_address(
+    payload: Any, snapshot: Snapshot, ip_address: bytes
+) -> str:
+    wifi = payload.get("wifiGetClients") if isinstance(payload, dict) else None
+    rows = wifi.get("clients") if isinstance(wifi, dict) else None
+    if not isinstance(rows, list):
+        raise EnrollmentError("starlink_schema_invalid")
+    matches: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        provider_address = _normalize_cabin_ip_address(row.get("ipAddress"))
+        if provider_address is None or not hmac.compare_digest(
+            provider_address, ip_address
+        ):
+            continue
+        raw_id = row.get("captiveClientId")
+        if (
+            not isinstance(raw_id, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", raw_id)
+        ):
+            raise EnrollmentError("exact_ip_row_invalid")
+        normalized_id = raw_id.lower()
+        if normalized_id not in snapshot.clients:
+            raise EnrollmentError("exact_ip_row_invalid")
+        matches.append(normalized_id)
+    if not matches:
+        raise EnrollmentError("exact_ip_not_found")
+    if len(matches) != 1:
+        raise EnrollmentError("exact_ip_ambiguous")
+    return matches[0]
+
+
+def query_starlink_exact_ip(
+    settings: Settings, ip_address: bytes
+) -> tuple[Snapshot, str]:
+    payload = _query_starlink_payload(settings)
+    snapshot = parse_starlink_payload(payload)
+    return snapshot, _match_exact_ip_address(payload, snapshot, ip_address)
+
+
+def _exact_ip_sample_has_allowed_omission(
+    snapshot: Snapshot, raw_id: str
+) -> bool:
+    if raw_id in snapshot.liveness_tuple_absent_ids:
+        return True
+    shape = snapshot.liveness_shapes.get(raw_id)
+    return bool(
+        isinstance(shape, Mapping)
+        and shape.get("lease_found") == "true"
+        and shape.get("lease_active") == "true"
+        and shape.get("lease_seconds") == "positive"
+        and shape.get("idle_seconds") == "missing"
+    )
 
 
 def mutation_jobs_stopped() -> bool:
@@ -668,8 +878,20 @@ def _new_person_state() -> dict[str, Any]:
         "identified_at": None,
         "identify_method": None,
         "reconnect": {
-            "1": {"off": None, "on": None, "proven": False},
-            "2": {"off": None, "on": None, "proven": False},
+            "1": {
+                "off": None,
+                "off_peer_fingerprints": None,
+                "off_context_consumed": False,
+                "on": None,
+                "proven": False,
+            },
+            "2": {
+                "off": None,
+                "off_peer_fingerprints": None,
+                "off_context_consumed": False,
+                "on": None,
+                "proven": False,
+            },
         },
         "idle": {"start": None, "checks": {}},
     }
@@ -736,11 +958,27 @@ def _validate_observation(
     return None
 
 
-def _observation_proves_off(value: Mapping[str, Any]) -> bool:
+def _observation_proves_enrollment_off(value: Mapping[str, Any]) -> bool:
+    """Validate a helper-created persisted off record, never production absence."""
+
     if value.get("seen") is not True:
         return True
     evidence = Evidence.from_private_json(value.get("evidence"))
-    return bool(evidence.complete and not evidence.lease_valid)
+    return bool(not evidence.complete or not evidence.lease_valid)
+
+
+def _snapshot_proves_enrollment_off(
+    snapshot: Snapshot, raw_id: str, observation: Mapping[str, Any]
+) -> bool:
+    """Accept only exact live off shapes before persisting a disconnect record."""
+
+    if observation.get("seen") is not True:
+        return True
+    evidence = Evidence.from_private_json(observation.get("evidence"))
+    return bool(
+        (evidence.complete and not evidence.lease_valid)
+        or raw_id in snapshot.liveness_tuple_absent_ids
+    )
 
 
 def _validate_safe_evidence(value: Any) -> None:
@@ -883,7 +1121,12 @@ def _validate_session(session: Any) -> dict[str, Any]:
         elif label is not None:
             raise EnrollmentError("session_invalid")
         _validate_timestamp(state.get("identified_at"), allow_none=True)
-        if state.get("identify_method") not in {None, "new", "idle_reset"}:
+        if state.get("identify_method") not in {
+            None,
+            "new",
+            "idle_reset",
+            *INDEPENDENT_IDENTIFY_METHODS,
+        }:
             raise EnrollmentError("session_invalid")
         if selected_id is None and (
             state.get("identified_at") is not None
@@ -897,6 +1140,7 @@ def _validate_session(session: Any) -> dict[str, Any]:
                 "captured_at",
                 "captured_epoch",
                 "fingerprints",
+                "strict_present_fingerprints",
                 "sample_count",
                 "safe_counts",
             }:
@@ -927,32 +1171,96 @@ def _validate_session(session: Any) -> dict[str, Any]:
                 ):
                     raise EnrollmentError("session_invalid")
                 Evidence.from_private_json(evidence)
+            strict_present_fingerprints = baseline_record.get(
+                "strict_present_fingerprints"
+            )
+            if not isinstance(strict_present_fingerprints, list):
+                raise EnrollmentError("session_invalid")
+            if any(
+                not isinstance(fingerprint, str)
+                or not FINGERPRINT_RE.fullmatch(fingerprint)
+                or fingerprint not in fingerprints
+                for fingerprint in strict_present_fingerprints
+            ):
+                raise EnrollmentError("session_invalid")
+            if strict_present_fingerprints != sorted(
+                set(strict_present_fingerprints)
+            ):
+                raise EnrollmentError("session_invalid")
+            strict_present_set = set(strict_present_fingerprints)
+            if any(
+                Evidence.from_private_json(evidence).strict_present
+                and fingerprint not in strict_present_set
+                for fingerprint, evidence in fingerprints.items()
+            ):
+                raise EnrollmentError("session_invalid")
         reconnect = state.get("reconnect")
         if not isinstance(reconnect, dict) or set(reconnect) != {"1", "2"}:
             raise EnrollmentError("session_invalid")
         reconnect_records: dict[str, Mapping[str, Any]] = {}
         for cycle in ("1", "2"):
             cycle_record = _assert_record(reconnect[cycle])
-            if set(cycle_record) != {"off", "on", "proven"} or type(
-                cycle_record["proven"]
-            ) is not bool:
+            if set(cycle_record) != {
+                "off",
+                "off_peer_fingerprints",
+                "off_context_consumed",
+                "on",
+                "proven",
+            } or any(
+                type(cycle_record[key]) is not bool
+                for key in ("off_context_consumed", "proven")
+            ):
                 raise EnrollmentError("session_invalid")
             off_evidence = _validate_observation(cycle_record["off"])
             on_evidence = _validate_observation(cycle_record["on"])
+            off_peers = cycle_record["off_peer_fingerprints"]
+            if cycle_record["off"] is None:
+                if (
+                    off_peers is not None
+                    or cycle_record["off_context_consumed"] is not False
+                ):
+                    raise EnrollmentError("session_invalid")
+            else:
+                if not isinstance(off_peers, dict):
+                    raise EnrollmentError("session_invalid")
+                selected_fingerprint = (
+                    _fingerprint(session, selected_id)
+                    if isinstance(selected_id, str)
+                    else None
+                )
+                for fingerprint, evidence in off_peers.items():
+                    if (
+                        not isinstance(fingerprint, str)
+                        or not FINGERPRINT_RE.fullmatch(fingerprint)
+                        or fingerprint == selected_fingerprint
+                    ):
+                        raise EnrollmentError("session_invalid")
+                    Evidence.from_private_json(evidence)
             if cycle_record["on"] is not None and cycle_record["off"] is None:
+                raise EnrollmentError("session_invalid")
+            if (
+                cycle_record["on"] is not None
+                and cycle_record["off_context_consumed"] is not True
+            ):
                 raise EnrollmentError("session_invalid")
             off_proven = bool(
                 cycle_record["off"] is not None
-                and _observation_proves_off(cycle_record["off"])
+                and _observation_proves_enrollment_off(cycle_record["off"])
             )
             on_proven = bool(
                 on_evidence is not None
-                and on_evidence.identify_fresh
+                and _reconnect_rule_present(
+                    on_evidence, state.get("identify_method")
+                )
                 and cycle_record["on"]["captured_epoch"]
                 - cycle_record["off"]["captured_epoch"]
                 >= MINIMUM_DISCONNECT_SECONDS
             ) if cycle_record["on"] is not None and cycle_record["off"] is not None else False
-            if cycle_record["proven"] is not (off_proven and on_proven):
+            if cycle_record["proven"] is not (
+                off_proven
+                and on_proven
+                and cycle_record["off_context_consumed"] is True
+            ):
                 raise EnrollmentError("session_invalid")
             reconnect_records[cycle] = cycle_record
         if (
@@ -970,11 +1278,24 @@ def _validate_session(session: Any) -> dict[str, Any]:
             if "start_epoch" not in idle:
                 raise EnrollmentError("session_invalid")
             _validate_epoch(idle["start_epoch"])
+            idle_start_captured_epoch = float(idle["start"]["captured_epoch"])
+            idle_start_epoch = float(idle["start_epoch"])
             if (
                 idle_start_evidence is None
-                or not idle_start_evidence.identify_fresh
+                or not _reconnect_rule_present(
+                    idle_start_evidence, state.get("identify_method")
+                )
                 or reconnect_records["1"]["proven"] is not True
                 or reconnect_records["2"]["proven"] is not True
+                or idle_start_epoch < idle_start_captured_epoch
+            ):
+                raise EnrollmentError("session_invalid")
+            if idle_start_epoch != idle_start_captured_epoch and (
+                state.get("identify_method") not in INDEPENDENT_IDENTIFY_METHODS
+                or idle["start"] != reconnect_records["2"]["on"]
+                or not idle_start_evidence.identify_fresh
+                or idle_start_epoch - idle_start_captured_epoch
+                > MAXIMUM_RECONNECT_IDLE_START_AGE_SECONDS
             ):
                 raise EnrollmentError("session_invalid")
         elif "start_epoch" in idle:
@@ -996,7 +1317,6 @@ def _validate_session(session: Any) -> dict[str, Any]:
             elapsed = captured_epoch - float(idle["start_epoch"])
             if (
                 elapsed < minutes * 60 - IDLE_CHECK_EARLY_TOLERANCE_SECONDS
-                or elapsed > minutes * 60 + IDLE_CHECK_LATE_TOLERANCE_SECONDS
                 or captured_epoch <= previous_epoch
             ):
                 raise EnrollmentError("session_invalid")
@@ -1100,18 +1420,96 @@ def _candidate_method(previous: Evidence | None, current: Evidence) -> str | Non
     return None
 
 
+def _reconnect_rule_present(evidence: Evidence, identify_method: Any) -> bool:
+    if identify_method in INDEPENDENT_IDENTIFY_METHODS:
+        return evidence.strict_present
+    return evidence.identify_fresh
+
+
+def _read_confirmed_wifi_address(
+    reader: Callable[[str], str] | None = None,
+) -> bytes:
+    """Read a Wi-Fi address twice without permitting an echoed fallback."""
+
+    def hidden_read(prompt: str) -> str:
+        if reader is not None:
+            return reader(prompt)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            return getpass.getpass(prompt)
+
+    try:
+        first = _normalize_wifi_address(
+            hidden_read("Wi-Fi address (hidden; not stored): ")
+        )
+        if first is None:
+            raise EnrollmentError("wifi_address_invalid")
+        second = _normalize_wifi_address(
+            hidden_read("Confirm Wi-Fi address (hidden; not stored): ")
+        )
+        if second is None:
+            raise EnrollmentError("wifi_address_invalid")
+    except EnrollmentError:
+        raise
+    except (EOFError, KeyboardInterrupt, OSError, getpass.GetPassWarning) as exc:
+        raise EnrollmentError("wifi_address_input_unavailable") from exc
+    if not hmac.compare_digest(first, second):
+        raise EnrollmentError("wifi_address_confirmation_mismatch")
+    return first
+
+
+def _read_confirmed_ip_address(
+    reader: Callable[[str], str] | None = None,
+) -> bytes:
+    """Read the current Cabin IPv4 address twice without an echoed fallback."""
+
+    def hidden_read(prompt: str) -> str:
+        if reader is not None:
+            return reader(prompt)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            return getpass.getpass(prompt)
+
+    try:
+        first = _normalize_cabin_ip_address(
+            hidden_read("Current Cabin IP address (hidden; not stored): ")
+        )
+        if first is None:
+            raise EnrollmentError("ip_address_invalid")
+        second = _normalize_cabin_ip_address(
+            hidden_read("Confirm Cabin IP address (hidden; not stored): ")
+        )
+        if second is None:
+            raise EnrollmentError("ip_address_invalid")
+    except EnrollmentError:
+        raise
+    except (EOFError, KeyboardInterrupt, OSError, getpass.GetPassWarning) as exc:
+        raise EnrollmentError("ip_address_input_unavailable") from exc
+    if not hmac.compare_digest(first, second):
+        raise EnrollmentError("ip_address_confirmation_mismatch")
+    return first
+
+
 class EnrollmentApp:
     def __init__(
         self,
         settings: Settings,
         *,
         snapshot_provider: Callable[[], Snapshot] | None = None,
+        exact_address_provider: Callable[[bytes], tuple[Snapshot, str]] | None = None,
+        exact_ip_provider: Callable[[bytes], tuple[Snapshot, str]] | None = None,
         mutation_jobs_stopped_provider: Callable[[], bool] = mutation_jobs_stopped,
         clock: Callable[[], float] = time.time,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.settings = settings
         self.snapshot_provider = snapshot_provider or (lambda: query_starlink(settings))
+        self.exact_address_provider = exact_address_provider or (
+            lambda address: query_starlink_exact(settings, address)
+        )
+        self.exact_ip_provider = exact_ip_provider or (
+            lambda address: query_starlink_exact_ip(settings, address)
+        )
         self.mutation_jobs_stopped_provider = mutation_jobs_stopped_provider
         self.clock = clock
         self.sleeper = sleeper
@@ -1183,14 +1581,19 @@ class EnrollmentApp:
                 raise EnrollmentError("person_already_identified")
             snapshots = self._repeated_snapshots()
             fingerprints: dict[str, Any] = {}
+            strict_present_fingerprints: set[str] = set()
             for snapshot in snapshots:
                 for raw_id, evidence in snapshot.clients.items():
-                    fingerprints[_fingerprint(session, raw_id)] = evidence.private_json()
+                    fingerprint = _fingerprint(session, raw_id)
+                    fingerprints[fingerprint] = evidence.private_json()
+                    if evidence.strict_present:
+                        strict_present_fingerprints.add(fingerprint)
             now = self.clock()
             state["baseline"] = {
                 "captured_at": _utc_iso(now),
                 "captured_epoch": now,
                 "fingerprints": fingerprints,
+                "strict_present_fingerprints": sorted(strict_present_fingerprints),
                 "sample_count": len(snapshots),
                 "safe_counts": snapshots[-1].safe_counts(),
             }
@@ -1222,12 +1625,17 @@ class EnrollmentApp:
                 fingerprint: Evidence.from_private_json(value)
                 for fingerprint, value in baseline_values.items()
             }
+            baseline_strict_present = set(
+                baseline["strict_present_fingerprints"]
+            )
             snapshots = self._repeated_snapshots()
             candidates_per_sample: list[dict[str, str]] = []
             for snapshot in snapshots:
                 candidates: dict[str, str] = {}
                 for raw_id, current in snapshot.clients.items():
                     fingerprint = _fingerprint(session, raw_id)
+                    if fingerprint in baseline_strict_present:
+                        continue
                     method = _candidate_method(
                         baseline_evidence.get(fingerprint), current
                     )
@@ -1270,6 +1678,200 @@ class EnrollmentApp:
             "next_action": f"disconnect_{person.lower()}_cycle_1",
         }
 
+    def identify_exact_address(self, person: str, wifi_address: bytes) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        if (
+            not isinstance(wifi_address, bytes)
+            or len(wifi_address) != 6
+            or wifi_address in {b"\x00" * 6, b"\xff" * 6}
+            or wifi_address[0] & 1
+        ):
+            raise EnrollmentError("wifi_address_invalid")
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            if state["selected_id"] is not None:
+                raise EnrollmentError("person_already_identified")
+            baseline = state.get("baseline")
+            if not isinstance(baseline, dict):
+                raise EnrollmentError("baseline_required")
+            baseline_values = baseline.get("fingerprints")
+            if not isinstance(baseline_values, dict):
+                raise EnrollmentError("session_invalid")
+            baseline_age = self.clock() - float(baseline["captured_epoch"])
+            if (
+                baseline_age < 0
+                or baseline_age > MAXIMUM_EXACT_BASELINE_AGE_SECONDS
+            ):
+                raise EnrollmentError("exact_baseline_stale")
+
+            matched_ids: list[str] = []
+            for index in range(IDENTIFY_SAMPLE_COUNT):
+                snapshot, raw_id = self.exact_address_provider(wifi_address)
+                if not isinstance(raw_id, str) or not ID_RE.fullmatch(raw_id):
+                    raise EnrollmentError("exact_address_row_invalid")
+                current = snapshot.clients.get(raw_id)
+                if current is None:
+                    raise EnrollmentError("exact_address_row_invalid")
+                if not current.identify_fresh:
+                    raise EnrollmentError("exact_address_not_fresh")
+                matched_ids.append(raw_id)
+                if index + 1 < IDENTIFY_SAMPLE_COUNT:
+                    self.sleeper(IDENTIFY_SAMPLE_DELAY_SECONDS)
+            if len(set(matched_ids)) != 1:
+                raise EnrollmentError("exact_address_unstable")
+            raw_id = matched_ids[0]
+            for other in PEOPLE:
+                if other != person and session["people"][other]["selected_id"] == raw_id:
+                    raise EnrollmentError("session_duplicate_binding")
+
+            target_fingerprint = _fingerprint(session, raw_id)
+            baseline_value = baseline_values.get(target_fingerprint)
+            baseline_evidence = (
+                Evidence.from_private_json(baseline_value)
+                if baseline_value is not None
+                else None
+            )
+            if target_fingerprint in set(
+                baseline["strict_present_fingerprints"]
+            ):
+                raise EnrollmentError("exact_address_present_in_off_baseline")
+            now = self.clock()
+            state["selected_id"] = raw_id
+            state["selected_label"] = _label(session, raw_id)
+            state["identified_at"] = _utc_iso(now)
+            state["identify_method"] = "exact_wifi_address"
+            self._save(session)
+            label = state["selected_label"]
+        return {
+            "ok": True,
+            "command": "identify-exact-address",
+            "person": person,
+            "candidate": label,
+            "method": "exact_wifi_address",
+            "stable_samples": len(matched_ids),
+            "off_baseline_evidence": (
+                baseline_evidence.safe_json()
+                if baseline_evidence is not None
+                else {
+                    "lease_state": "missing",
+                    "idle_bucket": "unknown",
+                    "current_rule_present": False,
+                }
+            ),
+            "address_retained": False,
+            "next_action": f"disconnect_{person.lower()}_cycle_1",
+        }
+
+    def identify_exact_ip(self, person: str, ip_address: bytes) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        try:
+            normalized_ip = (
+                ipaddress.IPv4Address(ip_address)
+                if isinstance(ip_address, bytes) and len(ip_address) == 4
+                else None
+            )
+        except ipaddress.AddressValueError:
+            normalized_ip = None
+        if (
+            normalized_ip is None
+            or normalized_ip not in CABIN_IPV4_NETWORK
+            or normalized_ip
+            in {
+                CABIN_IPV4_NETWORK.network_address,
+                CABIN_IPV4_NETWORK.broadcast_address,
+                CABIN_ROUTER_IPV4,
+            }
+        ):
+            raise EnrollmentError("ip_address_invalid")
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            self._require_enrollment_mutable(session)
+            state = session["people"][person]
+            if state["selected_id"] is not None:
+                raise EnrollmentError("person_already_identified")
+            baseline = state.get("baseline")
+            if not isinstance(baseline, dict):
+                raise EnrollmentError("baseline_required")
+            baseline_values = baseline.get("fingerprints")
+            if not isinstance(baseline_values, dict):
+                raise EnrollmentError("session_invalid")
+            baseline_age = self.clock() - float(baseline["captured_epoch"])
+            if (
+                baseline_age < 0
+                or baseline_age > MAXIMUM_EXACT_BASELINE_AGE_SECONDS
+            ):
+                raise EnrollmentError("exact_baseline_stale")
+
+            matched_ids: list[str] = []
+            present_samples = 0
+            for index in range(EXACT_IP_MAX_SAMPLE_COUNT):
+                snapshot, raw_id = self.exact_ip_provider(ip_address)
+                if not isinstance(raw_id, str) or not ID_RE.fullmatch(raw_id):
+                    raise EnrollmentError("exact_ip_row_invalid")
+                current = snapshot.clients.get(raw_id)
+                if current is None:
+                    raise EnrollmentError("exact_ip_row_invalid")
+                if current.strict_present:
+                    present_samples += 1
+                elif not _exact_ip_sample_has_allowed_omission(snapshot, raw_id):
+                    raise EnrollmentError("exact_ip_not_present")
+                matched_ids.append(raw_id)
+                if (
+                    len(matched_ids) >= IDENTIFY_SAMPLE_COUNT
+                    and present_samples > 0
+                ):
+                    break
+                if index + 1 < EXACT_IP_MAX_SAMPLE_COUNT:
+                    self.sleeper(IDENTIFY_SAMPLE_DELAY_SECONDS)
+            if len(set(matched_ids)) != 1:
+                raise EnrollmentError("exact_ip_unstable")
+            if present_samples == 0:
+                raise EnrollmentError("exact_ip_not_present")
+            raw_id = matched_ids[0]
+            for other in PEOPLE:
+                if other != person and session["people"][other]["selected_id"] == raw_id:
+                    raise EnrollmentError("session_duplicate_binding")
+
+            target_fingerprint = _fingerprint(session, raw_id)
+            baseline_value = baseline_values.get(target_fingerprint)
+            baseline_evidence = (
+                Evidence.from_private_json(baseline_value)
+                if baseline_value is not None
+                else None
+            )
+            if target_fingerprint in set(
+                baseline["strict_present_fingerprints"]
+            ):
+                raise EnrollmentError("exact_ip_present_in_off_baseline")
+            now = self.clock()
+            state["selected_id"] = raw_id
+            state["selected_label"] = _label(session, raw_id)
+            state["identified_at"] = _utc_iso(now)
+            state["identify_method"] = "exact_ip_address"
+            self._save(session)
+            label = state["selected_label"]
+        return {
+            "ok": True,
+            "command": "identify-exact-ip",
+            "person": person,
+            "candidate": label,
+            "method": "exact_ip_address",
+            "stable_samples": len(matched_ids),
+            "off_baseline_evidence": (
+                baseline_evidence.safe_json()
+                if baseline_evidence is not None
+                else {
+                    "lease_state": "missing",
+                    "idle_bucket": "unknown",
+                    "current_rule_present": False,
+                }
+            ),
+            "ip_retained": False,
+            "next_action": f"disconnect_{person.lower()}_cycle_1",
+        }
+
     def disconnect(self, person: str, cycle: int) -> dict[str, Any]:
         self._require_jobs_stopped()
         with _session_lock(self.settings, create=False):
@@ -1287,9 +1889,16 @@ class EnrollmentApp:
             snapshot = self.snapshot_provider()
             now = self.clock()
             observation = _private_observation(snapshot, raw_id, now)
-            if not _observation_proves_off(observation):
+            if not _snapshot_proves_enrollment_off(snapshot, raw_id, observation):
                 raise EnrollmentError("disconnect_not_observed")
             cycle_state["off"] = observation
+            cycle_state["off_peer_fingerprints"] = {
+                _fingerprint(session, other_id): other_evidence.private_json()
+                for other_id, other_evidence in snapshot.clients.items()
+                if other_id != raw_id
+            }
+            cycle_state["off_context_consumed"] = False
+            cycle_state["on"] = None
             cycle_state["proven"] = False
             self._save(session)
         return {
@@ -1314,40 +1923,95 @@ class EnrollmentApp:
             off = cycle_state.get("off")
             if not isinstance(off, dict):
                 raise EnrollmentError("disconnect_sample_required")
-            if not _observation_proves_off(off):
+            if not _observation_proves_enrollment_off(off):
                 raise EnrollmentError("disconnect_not_observed")
+            off_peer_values = cycle_state.get("off_peer_fingerprints")
+            if not isinstance(off_peer_values, dict):
+                raise EnrollmentError("disconnect_context_required")
+            if cycle_state.get("off_context_consumed") is True:
+                raise EnrollmentError("disconnect_context_consumed")
+            if cycle_state.get("on") is not None or cycle_state.get("proven") is True:
+                raise EnrollmentError("reconnect_cycle_already_complete")
+            off_peer_evidence = {
+                fingerprint: Evidence.from_private_json(value)
+                for fingerprint, value in off_peer_values.items()
+            }
             if self.clock() - float(off["captured_epoch"]) < MINIMUM_DISCONNECT_SECONDS:
                 raise EnrollmentError("disconnect_interval_too_short")
-            snapshots = self._repeated_snapshots()
-            baseline = _assert_record(state.get("baseline"))
-            baseline_fingerprints = baseline.get("fingerprints")
-            if not isinstance(baseline_fingerprints, dict):
-                raise EnrollmentError("session_invalid")
-            baseline_evidence = {
-                fingerprint: Evidence.from_private_json(value)
-                for fingerprint, value in baseline_fingerprints.items()
-            }
-            evidence_values: list[Evidence] = []
-            for snapshot in snapshots:
-                evidence = snapshot.clients.get(raw_id)
-                if evidence is None:
-                    raise EnrollmentError("identity_changed_or_missing")
-                if not evidence.identify_fresh:
-                    raise EnrollmentError("reconnect_not_fresh")
-                if any(
+            snapshots: list[Snapshot] = []
+            reconnect_rule_failed = False
+            identify_method = state.get("identify_method")
+            independent_identity = (
+                identify_method in INDEPENDENT_IDENTIFY_METHODS
+            )
+            guard_peer_ambiguity = not independent_identity
+            sample_limit = (
+                EXACT_RECONNECT_MAX_SAMPLE_COUNT
+                if independent_identity
+                else IDENTIFY_SAMPLE_COUNT
+            )
+            present_snapshot: Snapshot | None = None
+            strict_present_samples = 0
+            for index in range(sample_limit):
+                snapshot = self.snapshot_provider()
+                snapshots.append(snapshot)
+                if guard_peer_ambiguity and any(
                     other_id != raw_id
                     and _candidate_method(
-                        baseline_evidence.get(_fingerprint(session, other_id)),
+                        off_peer_evidence.get(_fingerprint(session, other_id)),
                         other_evidence,
                     )
                     is not None
                     for other_id, other_evidence in snapshot.clients.items()
                 ):
+                    cycle_state["off_context_consumed"] = True
+                    cycle_state["on"] = None
+                    cycle_state["proven"] = False
+                    self._save(session)
                     raise EnrollmentError("unexpected_fresh_identity")
-                evidence_values.append(evidence)
+                evidence = snapshot.clients.get(raw_id)
+                if evidence is None:
+                    cycle_state["off_context_consumed"] = True
+                    cycle_state["on"] = None
+                    cycle_state["proven"] = False
+                    self._save(session)
+                    raise EnrollmentError("identity_changed_or_missing")
+                if independent_identity:
+                    if evidence.strict_present:
+                        present_snapshot = snapshot
+                        strict_present_samples += 1
+                    elif not _exact_ip_sample_has_allowed_omission(
+                        snapshot, raw_id
+                    ):
+                        reconnect_rule_failed = True
+                        break
+                    if (
+                        len(snapshots) >= IDENTIFY_SAMPLE_COUNT
+                        and present_snapshot is not None
+                    ):
+                        break
+                elif not _reconnect_rule_present(evidence, identify_method):
+                    reconnect_rule_failed = True
+                else:
+                    strict_present_samples += 1
+                if index + 1 < sample_limit:
+                    self.sleeper(IDENTIFY_SAMPLE_DELAY_SECONDS)
+            if reconnect_rule_failed or (
+                independent_identity and present_snapshot is None
+            ):
+                raise EnrollmentError(
+                    "reconnect_not_present"
+                    if independent_identity
+                    else "reconnect_not_fresh"
+                )
             now = self.clock()
-            observation = _private_observation(snapshots[-1], raw_id, now)
+            observation = _private_observation(
+                present_snapshot if present_snapshot is not None else snapshots[-1],
+                raw_id,
+                now,
+            )
             cycle_state["on"] = observation
+            cycle_state["off_context_consumed"] = True
             cycle_state["proven"] = True
             self._save(session)
         return {
@@ -1357,6 +2021,8 @@ class EnrollmentApp:
             "cycle": cycle,
             "same_identity": True,
             "observable_off_and_same_id_proven": True,
+            "stable_samples": len(snapshots),
+            "strict_present_samples": strict_present_samples,
             "observation": _safe_observation(observation),
             "next_action": (
                 f"disconnect_{person.lower()}_cycle_2"
@@ -1379,15 +2045,42 @@ class EnrollmentApp:
                 for cycle in CYCLES
             ):
                 raise EnrollmentError("reconnect_proof_required")
-            snapshot = self.snapshot_provider()
-            evidence = snapshot.clients.get(raw_id)
-            if evidence is None or not evidence.identify_fresh:
-                raise EnrollmentError("idle_start_not_fresh")
             now = self.clock()
-            observation = _private_observation(snapshot, raw_id, now)
+            recent_reconnect = state["reconnect"]["2"].get("on")
+            recent_evidence = _validate_observation(recent_reconnect)
+            recent_age = (
+                now - float(recent_reconnect["captured_epoch"])
+                if isinstance(recent_reconnect, dict)
+                else -1
+            )
+            reuse_recent_reconnect = bool(
+                state.get("identify_method") in INDEPENDENT_IDENTIFY_METHODS
+                and recent_evidence is not None
+                and recent_evidence.identify_fresh
+                and 0 <= recent_age <= MAXIMUM_RECONNECT_IDLE_START_AGE_SECONDS
+            )
+            if reuse_recent_reconnect:
+                observation = copy.deepcopy(recent_reconnect)
+                start_epoch = now
+                start_source = "recent_reconnect"
+            else:
+                snapshot = self.snapshot_provider()
+                evidence = snapshot.clients.get(raw_id)
+                if evidence is None or not _reconnect_rule_present(
+                    evidence, state.get("identify_method")
+                ):
+                    raise EnrollmentError(
+                        "idle_start_not_present"
+                        if state.get("identify_method")
+                        in INDEPENDENT_IDENTIFY_METHODS
+                        else "idle_start_not_fresh"
+                    )
+                start_epoch = self.clock()
+                observation = _private_observation(snapshot, raw_id, start_epoch)
+                start_source = "live_snapshot"
             state["idle"] = {
                 "start": observation,
-                "start_epoch": now,
+                "start_epoch": start_epoch,
                 "checks": {},
             }
             self._save(session)
@@ -1396,6 +2089,7 @@ class EnrollmentApp:
             "command": "idle-start",
             "person": person,
             "observation": _safe_observation(observation),
+            "start_source": start_source,
             "next_action": f"lock_{person.lower()}_phone_then_idle_check_5m",
         }
 
@@ -1420,9 +2114,10 @@ class EnrollmentApp:
             elapsed = now - float(idle["start_epoch"])
             if elapsed < minutes * 60 - IDLE_CHECK_EARLY_TOLERANCE_SECONDS:
                 raise EnrollmentError("idle_checkpoint_too_early")
-            if elapsed > minutes * 60 + IDLE_CHECK_LATE_TOLERANCE_SECONDS:
-                raise EnrollmentError("idle_checkpoint_too_late")
             snapshot = self.snapshot_provider()
+            evidence = snapshot.clients.get(raw_id)
+            if evidence is not None and not evidence.complete:
+                raise EnrollmentError("idle_checkpoint_incomplete")
             observation = _private_observation(snapshot, raw_id, now)
             idle["checks"][str(minutes)] = observation
             self._save(session)
@@ -1506,6 +2201,37 @@ class EnrollmentApp:
             status = self._status_from_session(session)
         return {"ok": True, "command": "status", **status}
 
+    def observe_selected(self, person: str) -> dict[str, Any]:
+        self._require_jobs_stopped()
+        with _session_lock(self.settings, create=False):
+            session = self._load()
+            raw_id = session["people"][person].get("selected_id")
+            if not isinstance(raw_id, str):
+                raise EnrollmentError("identify_required")
+            snapshot = self.snapshot_provider()
+            observation = _private_observation(snapshot, raw_id, self.clock())
+            safe_observation = _safe_observation(observation)
+            if safe_observation is not None:
+                safe_observation["liveness_tuple_absent"] = (
+                    raw_id in snapshot.liveness_tuple_absent_ids
+                )
+                safe_observation["liveness_shape"] = snapshot.liveness_shapes.get(
+                    raw_id,
+                    {
+                        "lease_found": "unknown",
+                        "lease_active": "unknown",
+                        "lease_seconds": "unknown",
+                        "idle_seconds": "unknown",
+                        "active": "unknown",
+                    },
+                )
+        return {
+            "ok": True,
+            "command": "observe-selected",
+            "person": person,
+            "observation": safe_observation,
+        }
+
     def seal_candidate(self) -> dict[str, Any]:
         with _session_lock(self.settings, create=False):
             session = self._load()
@@ -1555,6 +2281,8 @@ class EnrollmentApp:
             for person in PEOPLE:
                 raw_id = session["people"][person]["selected_id"]
                 evidence = snapshot.clients.get(raw_id)
+                if evidence is not None and not evidence.complete:
+                    raise EnrollmentError("shadow_sample_incomplete")
                 observed[person] = bool(evidence and evidence.strict_present)
                 liveness_complete[person] = bool(evidence and evidence.complete)
                 evidence_safe[person] = (
@@ -1625,7 +2353,7 @@ class EnrollmentApp:
         mismatch_count = sum(sample.get("matches") is not True for sample in samples)
         missing_scenarios = sorted(REQUIRED_SHADOW_SCENARIOS - set(scenarios))
         enrollment_ready = self._status_from_session(session)["enrollment_ready"]
-        ready = bool(
+        legacy_gate_proven = bool(
             enrollment_ready
             and len(samples) >= MINIMUM_SHADOW_SAMPLES
             and span_seconds >= MINIMUM_SHADOW_SECONDS
@@ -1633,6 +2361,74 @@ class EnrollmentApp:
             and not missing_scenarios
             and return_transition_proven
             and mismatch_count == 0
+        )
+        compact_live_sequence_proven = any(
+            all(
+                sample["scenario"] == expected
+                and sample["matches"] is True
+                for sample, expected in zip(
+                    samples[index : index + len(COMPACT_JOINT_SEQUENCE)],
+                    COMPACT_JOINT_SEQUENCE,
+                )
+            )
+            for index in range(
+                max(0, len(samples) - len(COMPACT_JOINT_SEQUENCE) + 1)
+            )
+        )
+        selected_ids = {
+            person: session["people"][person].get("selected_id")
+            for person in PEOPLE
+        }
+        exact_bindings = all(
+            session["people"][person].get("identify_method")
+            in INDEPENDENT_IDENTIFY_METHODS
+            for person in PEOPLE
+        )
+        both_away_credit = False
+        julia_baseline = session["people"]["Julia"].get("baseline")
+        if (
+            all(isinstance(value, str) for value in selected_ids.values())
+            and isinstance(julia_baseline, dict)
+        ):
+            selected_fingerprints = {
+                _fingerprint(session, str(value))
+                for value in selected_ids.values()
+            }
+            both_away_credit = selected_fingerprints.isdisjoint(
+                set(julia_baseline.get("fingerprints", {}))
+            )
+        julia_only_credit = False
+        julia_id = selected_ids["Julia"]
+        if isinstance(julia_id, str):
+            julia_fingerprint = _fingerprint(session, julia_id)
+            for cycle in CYCLES:
+                record = session["people"]["Dylan"]["reconnect"][str(cycle)]
+                off = record.get("off")
+                peers = record.get("off_peer_fingerprints")
+                if (
+                    isinstance(off, dict)
+                    and _observation_proves_enrollment_off(off)
+                    and isinstance(peers, dict)
+                    and julia_fingerprint in peers
+                    and Evidence.from_private_json(
+                        peers[julia_fingerprint]
+                    ).strict_present
+                ):
+                    julia_only_credit = True
+                    break
+        compact_enrollment_credits = {
+            "exact_bindings": exact_bindings,
+            "both_away": both_away_credit,
+            "julia_only": julia_only_credit,
+        }
+        compact_sequence_proven = bool(
+            compact_live_sequence_proven
+            and all(compact_enrollment_credits.values())
+        )
+        ready = bool(
+            enrollment_ready
+            and mismatch_count == 0
+            and (legacy_gate_proven or compact_sequence_proven)
         )
         return {
             "schema_version": 1,
@@ -1642,6 +2438,11 @@ class EnrollmentApp:
             "scenarios": scenarios,
             "missing_scenarios": missing_scenarios,
             "return_transition_proven": return_transition_proven,
+            "compact_sequence": list(COMPACT_JOINT_SEQUENCE),
+            "compact_live_sequence_proven": compact_live_sequence_proven,
+            "compact_enrollment_credits": compact_enrollment_credits,
+            "compact_sequence_proven": compact_sequence_proven,
+            "legacy_gate_proven": legacy_gate_proven,
             "mismatch_count": mismatch_count,
             "minimum_samples": MINIMUM_SHADOW_SAMPLES,
             "minimum_span_hours": MINIMUM_SHADOW_SECONDS // 3600,
@@ -1775,6 +2576,10 @@ def _build_parser() -> argparse.ArgumentParser:
     baseline.add_argument("person", type=_person)
     identify = commands.add_parser("identify")
     identify.add_argument("person", type=_person)
+    identify_exact = commands.add_parser("identify-exact-address")
+    identify_exact.add_argument("person", type=_person)
+    identify_exact_ip = commands.add_parser("identify-exact-ip")
+    identify_exact_ip.add_argument("person", type=_person)
     disconnect = commands.add_parser("disconnect")
     disconnect.add_argument("person", type=_person)
     disconnect.add_argument("--cycle", type=int, choices=CYCLES, required=True)
@@ -1787,6 +2592,8 @@ def _build_parser() -> argparse.ArgumentParser:
     idle_check.add_argument("person", type=_person)
     idle_check.add_argument("--minutes", type=int, choices=IDLE_MINUTES, required=True)
     commands.add_parser("status")
+    observe_selected = commands.add_parser("observe-selected")
+    observe_selected.add_argument("person", type=_person)
     commands.add_parser("seal-candidate")
     shadow_sample = commands.add_parser("shadow-sample")
     shadow_sample.add_argument("--scenario", choices=SHADOW_SCENARIOS, required=True)
@@ -1807,6 +2614,8 @@ MUTATING_COMMANDS = {
     "start",
     "baseline",
     "identify",
+    "identify-exact-address",
+    "identify-exact-ip",
     "disconnect",
     "reconnect",
     "idle-start",
@@ -1846,6 +2655,12 @@ def _dispatch(app: EnrollmentApp, args: argparse.Namespace) -> Mapping[str, Any]
         return app.baseline(args.person)
     if args.command == "identify":
         return app.identify(args.person)
+    if args.command == "identify-exact-address":
+        return app.identify_exact_address(
+            args.person, _read_confirmed_wifi_address()
+        )
+    if args.command == "identify-exact-ip":
+        return app.identify_exact_ip(args.person, _read_confirmed_ip_address())
     if args.command == "disconnect":
         return app.disconnect(args.person, args.cycle)
     if args.command == "reconnect":
@@ -1856,6 +2671,8 @@ def _dispatch(app: EnrollmentApp, args: argparse.Namespace) -> Mapping[str, Any]
         return app.idle_check(args.person, args.minutes)
     if args.command == "status":
         return app.status()
+    if args.command == "observe-selected":
+        return app.observe_selected(args.person)
     if args.command == "seal-candidate":
         return app.seal_candidate()
     if args.command == "shadow-sample":

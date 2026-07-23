@@ -103,11 +103,10 @@ PY
   esac
 }
 
-# Julia's deployed Cabin scanner still has a permissive generic-iPhone
-# fallback until her attended Starlink enrollment is activated. Do not let
-# those untrusted Cabin positives semantically relocate her Eight Sleep side.
-# The pin releases automatically only when the deployed scanner can validate
-# the strict production Cabin binding without writing presence state.
+# Do not let an absent, invalid, or legacy Cabin binding semantically relocate
+# Julia's Eight Sleep side. Schema-v2 activation releases this containment
+# automatically only while the deployed scanner can validate the protected
+# exact production binding without writing presence state.
 cabin_presence_enrollment_active() {
   [[ -x "$PRESENCE_SCANNER" ]] &&
     "$PRESENCE_SCANNER" validate-config cabin >/dev/null 2>&1

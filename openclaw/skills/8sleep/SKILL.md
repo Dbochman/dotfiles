@@ -22,9 +22,11 @@ must remain populated for deterministic multi-Pod routing.
 
 Eight Sleep's per-side write endpoints are user-scoped, and household-set
 selection is a semantic relocation rather than a neutral routing mechanism.
-Use `home` with an explicit location to make that Pod current for one user; the
-other Pod becomes away for that side. Temperature, power, and manual away
-commands fail closed unless the requested Pod is already current.
+Use `home` with an explicit location to make that Pod current for one user. The
+command selects the household set and explicitly assigns that user to the
+location's exact device and static side. The other Pod becomes away for that
+side. Temperature, power, and manual away commands fail closed unless both the
+requested household set and exact device/side are already current.
 
 ## Pod Sides
 
@@ -78,11 +80,14 @@ or extended travel. For short absences, prefer `off`/`on` instead.
 8sleep --location cabin home julia
 ```
 
-`home` requires an explicit location. It selects that household set, clears
-away mode there, verifies the side assignment moved, and leaves the selection
-in place. The other Pod becomes away for that user. Vacancy automation uses
-this command independently for Dylan and Julia, including when they are at
-different houses.
+`home` requires an explicit location. Before changing anything, it refuses to
+overwrite a target side assigned to another user. It then selects that household
+set, explicitly assigns the intended user to the location's exact device and
+static side, clears away mode there, and verifies all three authoritative
+readbacks. The other Pod becomes away for that user. Eight Sleep's device-level
+`awaySides` telemetry can lag and is diagnostic-only; it is not required as
+proof of a successful move. Vacancy automation uses this command independently
+for Dylan and Julia, including when they are at different houses.
 
 ### Temperature scale
 | Level | Temp | Feeling |

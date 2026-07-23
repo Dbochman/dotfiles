@@ -62,6 +62,7 @@ REQUIRED_HELPERS = {
     "bin/august": "august wrapper\n",
     "bin/pinchtab-headless-instance": "pinchtab helper\n",
     "bin/presence-cabin-enroll": "presence enrollment helper\n",
+    "bin/presence-cabin-mesh-enroll": "presence mesh enrollment helper\n",
     "bin/presence-crosstown-canary": "presence canary helper\n",
     "bin/opentable-book": "opentable wrapper\n",
     "bin/opentable-reservations": "opentable reservations wrapper\n",
@@ -680,7 +681,11 @@ class DeploymentContractTests(unittest.TestCase):
         strict_contract = (
             'PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"'
         )
+        cabin_v2_contract = (
+            'PRESENCE_SCANNER_CONFIG_CONTRACT="cabin-sources-v2"'
+        )
         self.assertIn(strict_contract, presence_text)
+        self.assertIn(cabin_v2_contract, presence_text)
         self.assertIn(strict_contract, deployment_text)
         self.assertIn(
             "openclaw_presence_scanner_has_strict_deployment_contract",

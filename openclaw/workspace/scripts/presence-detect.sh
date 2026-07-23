@@ -29,6 +29,9 @@ umask 077
 # binding-aware scanner. Keep it coupled to the validate-config command and its
 # fail-closed protected-file validation below.
 PRESENCE_SCANNER_DEPLOYMENT_CONTRACT="strict-site-bindings-v1"
+# Independent of the deployment protocol above: this marker states that the
+# scanner can parse and observe Cabin controller+mesh source schema v2.
+PRESENCE_SCANNER_CONFIG_CONTRACT="cabin-sources-v2"
 
 REQUESTED_MODE="${1:-}"
 READ_ONLY_OBSERVATION=0
@@ -209,31 +212,102 @@ try {
 
   const raw = fs.readFileSync(descriptor, "utf8");
   const config = JSON.parse(raw);
-  if (!hasExactKeys(config, ["schema_version", "site", "people"]) ||
-      config.schema_version !== 1 || config.site !== expectedSite ||
-      !hasExactKeys(config.people, expectedPeople)) fail();
 
-  const devices = [];
-  const identities = new Set();
-  for (const person of expectedPeople) {
-    const binding = config.people[person];
-    if (!hasExactKeys(binding, ["kind", "value"]) || typeof binding.value !== "string") fail();
-
-    let value = binding.value;
-    if (expectedSite === "cabin") {
-      if (binding.kind !== "starlink_captive_client_id" ||
-          !/^[0-9a-fA-F]{64}$/.test(value)) fail();
-      value = value.toLowerCase();
-    } else {
-      if (binding.kind !== "mac" ||
-          !/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(value)) fail();
-      value = value.toLowerCase();
+  function parseBindings(people, expectedKind, valuePattern) {
+    if (!hasExactKeys(people, expectedPeople)) fail();
+    const devices = [];
+    const identities = new Set();
+    for (const person of expectedPeople) {
+      const binding = people[person];
+      if (!hasExactKeys(binding, ["kind", "value"]) ||
+          binding.kind !== expectedKind ||
+          typeof binding.value !== "string" ||
+          !valuePattern.test(binding.value)) fail();
+      const value = binding.value.toLowerCase();
+      if (identities.has(value)) fail();
+      identities.add(value);
+      devices.push({ person, kind: binding.kind, value });
     }
-    if (identities.has(value)) fail();
-    identities.add(value);
-    devices.push({ person, kind: binding.kind, value });
+    return devices;
   }
-  process.stdout.write(JSON.stringify(devices));
+
+  if (expectedSite === "crosstown") {
+    if (!hasExactKeys(config, ["schema_version", "site", "people"]) ||
+        config.schema_version !== 1 || config.site !== expectedSite) fail();
+    process.stdout.write(JSON.stringify(parseBindings(
+      config.people,
+      "mac",
+      /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/
+    )));
+  } else if (config.schema_version === 1) {
+    // Migration compatibility for the original controller-only Cabin binding
+    // file. Schema v2 is required as soon as any mesh source is monitored.
+    if (!hasExactKeys(config, ["schema_version", "site", "people"]) ||
+        config.site !== expectedSite) fail();
+    process.stdout.write(JSON.stringify({
+      schema_version: 1,
+      sources: [{
+        kind: "starlink_controller",
+        bindings: parseBindings(
+          config.people,
+          "starlink_captive_client_id",
+          /^[0-9a-fA-F]{64}$/
+        )
+      }]
+    }));
+  } else {
+    if (!hasExactKeys(config, ["schema_version", "site", "sources"]) ||
+        config.schema_version !== 2 || config.site !== expectedSite ||
+        !Array.isArray(config.sources) ||
+        config.sources.length < 2 || config.sources.length > 16) fail();
+
+    const sources = [];
+    const targetIds = new Set();
+    let controllerCount = 0;
+    for (const source of config.sources) {
+      if (!isObject(source) || typeof source.kind !== "string") fail();
+      if (source.kind === "starlink_controller") {
+        if (!hasExactKeys(source, ["kind", "bindings"])) fail();
+        controllerCount += 1;
+        sources.push({
+          kind: source.kind,
+          bindings: parseBindings(
+            source.bindings,
+            "starlink_captive_client_id",
+            /^[0-9a-fA-F]{64}$/
+          )
+        });
+      } else if (source.kind === "starlink_mesh") {
+        if (!hasExactKeys(source, ["kind", "target_id", "bindings"]) ||
+            typeof source.target_id !== "string" ||
+            !/^[A-Za-z0-9_.:-]{1,128}$/.test(source.target_id)) fail();
+        const targetKey = source.target_id.toLowerCase();
+        if (targetIds.has(targetKey)) fail();
+        targetIds.add(targetKey);
+        sources.push({
+          kind: source.kind,
+          target_id: source.target_id,
+          bindings: parseBindings(
+            source.bindings,
+            "starlink_captive_client_id",
+            /^[0-9a-fA-F]{64}$/
+          )
+        });
+      } else {
+        fail();
+      }
+    }
+    if (controllerCount !== 1 || targetIds.size < 1) fail();
+    const identityPeople = new Map();
+    for (const source of sources) {
+      for (const binding of source.bindings) {
+        const previousPerson = identityPeople.get(binding.value);
+        if (previousPerson !== undefined && previousPerson !== binding.person) fail();
+        identityPeople.set(binding.value, binding.person);
+      }
+    }
+    process.stdout.write(JSON.stringify({ schema_version: 2, sources }));
+  }
 } catch {
   fail();
 } finally {
@@ -252,64 +326,162 @@ NODE
 # ── Cabin: Starlink gRPC API ────────────────────────────────────────────────
 
 scan_cabin() {
-  local grpc_response parsed
+  local source_count source_index request grpc_response encoded_response
+  local response_records="" parsed
   if ! load_site_devices cabin; then
     echo '{"error":"cabin_device_config_unavailable","location":"cabin"}'
     return 1
   fi
 
-  grpc_response=$($GRPCURL -plaintext -d '{"wifiGetClients":{}}' \
-    192.168.1.1:9000 SpaceX.API.Device.Device/Handle 2>/dev/null || echo '{}')
-
-  if [ "$grpc_response" = "{}" ] || [ -z "$grpc_response" ]; then
-    log "ERROR: Starlink gRPC API unreachable"
-    echo '{"error":"starlink_unreachable","location":"cabin"}'
+  if ! source_count=$(printf '%s' "$SITE_DEVICES" | "$NODE" -e '
+const config = JSON.parse(require("fs").readFileSync(0, "utf8"));
+if (!config || !Array.isArray(config.sources) || config.sources.length < 1) process.exit(2);
+process.stdout.write(String(config.sources.length));
+' 2>/dev/null); then
+    log "ERROR: Protected Cabin source config failed strict parsing"
+    echo '{"error":"parse_failed","location":"cabin"}'
     return 1
   fi
 
-  if ! parsed=$({ printf '%s\0%s' "$SITE_DEVICES" "$grpc_response"; } | "$NODE" -e "
+  source_index=0
+  while [ "$source_index" -lt "$source_count" ]; do
+    if ! request=$(printf '%s' "$SITE_DEVICES" | "$NODE" -e '
+const config = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const source = config.sources[Number(process.argv[1])];
+if (!source || !["starlink_controller", "starlink_mesh"].includes(source.kind)) process.exit(2);
+const request = { wifiGetClients: {} };
+if (source.kind === "starlink_mesh") request.targetId = source.target_id;
+process.stdout.write(JSON.stringify(request));
+' "$source_index" 2>/dev/null); then
+      log "ERROR: Protected Cabin source request failed strict construction"
+      echo '{"error":"parse_failed","location":"cabin"}'
+      return 1
+    fi
+
+    if ! grpc_response=$(printf '%s' "$request" | \
+        "$GRPCURL" -plaintext -d @ \
+        192.168.1.1:9000 SpaceX.API.Device.Device/Handle 2>/dev/null); then
+      log "ERROR: Starlink source gRPC API unreachable"
+      echo '{"error":"starlink_unreachable","location":"cabin"}'
+      return 1
+    fi
+    if [ "$grpc_response" = "{}" ] || [ -z "$grpc_response" ]; then
+      log "ERROR: Starlink source gRPC API returned no response"
+      echo '{"error":"starlink_unreachable","location":"cabin"}'
+      return 1
+    fi
+
+    encoded_response=$(printf '%s' "$grpc_response" | /usr/bin/base64 | /usr/bin/tr -d '\n')
+    response_records="${response_records}${source_index}:${encoded_response}"$'\n'
+    source_index=$((source_index + 1))
+  done
+
+  if ! parsed=$({ printf '%s\0%s' "$SITE_DEVICES" "$response_records"; } | "$NODE" -e "
 const input = require('fs').readFileSync(0);
 const separator = input.indexOf(0);
 if (separator < 0) process.exit(2);
-const devices = JSON.parse(input.subarray(0, separator).toString('utf8'));
-const response = JSON.parse(input.subarray(separator + 1).toString('utf8'));
-const clients = response?.wifiGetClients?.clients;
-if (!Array.isArray(clients)) process.exit(2);
-const results = {};
+const config = JSON.parse(input.subarray(0, separator).toString('utf8'));
+const recordLines = input.subarray(separator + 1).toString('utf8').trim().split('\n').filter(Boolean);
+if (!config || !Array.isArray(config.sources) ||
+    recordLines.length !== config.sources.length) process.exit(2);
 
-function validLivenessShape(client) {
+const responses = new Map();
+for (const line of recordLines) {
+  const delimiter = line.indexOf(':');
+  if (delimiter < 1) process.exit(2);
+  const sourceIndex = Number(line.slice(0, delimiter));
+  if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 ||
+      sourceIndex >= config.sources.length || responses.has(sourceIndex)) process.exit(2);
+  let response;
+  try {
+    response = JSON.parse(Buffer.from(line.slice(delimiter + 1), 'base64').toString('utf8'));
+  } catch {
+    process.exit(2);
+  }
+  responses.set(sourceIndex, response);
+}
+
+function validControllerLiveness(client) {
   return typeof client.dhcpLeaseFound === 'boolean' &&
     typeof client.dhcpLeaseActive === 'boolean' &&
     Number.isFinite(client.secondsUntilDhcpLeaseExpires) &&
     Number.isInteger(client.noDataIdleS) && client.noDataIdleS >= 0;
 }
 
-for (const dev of devices) {
-  if (dev.kind !== 'starlink_captive_client_id') process.exit(2);
-  const matches = clients.filter(client => client &&
-    typeof client === 'object' && !Array.isArray(client) &&
-    typeof client.captiveClientId === 'string' &&
-    /^[0-9a-fA-F]{64}$/.test(client.captiveClientId) &&
-    client.captiveClientId.toLowerCase() === dev.value);
-  if (matches.length > 1) process.exit(2);
-  if (matches.length === 0) {
-    results[dev.person] = { present: false };
-    continue;
+function validMeshLiveness(client) {
+  return client.role === 'CLIENT' &&
+    Number.isFinite(client.associatedTimeS) && client.associatedTimeS >= 0 &&
+    Number.isFinite(client.signalStrength) &&
+    client.rxStatsValid === true &&
+    client.txStatsValid === true;
+}
+
+const results = {
+  Dylan: { present: false, unknown: false },
+  Julia: { present: false, unknown: false }
+};
+let totalClients = 0;
+
+for (let sourceIndex = 0; sourceIndex < config.sources.length; sourceIndex += 1) {
+  const source = config.sources[sourceIndex];
+  const response = responses.get(sourceIndex);
+  const clients = response?.wifiGetClients?.clients;
+  if (!Array.isArray(clients) || !Array.isArray(source.bindings)) process.exit(2);
+  totalClients += clients.length;
+
+  for (const dev of source.bindings) {
+    if (dev.kind !== 'starlink_captive_client_id' ||
+        !Object.prototype.hasOwnProperty.call(results, dev.person)) process.exit(2);
+    const matches = clients.filter(client => client &&
+      typeof client === 'object' && !Array.isArray(client) &&
+      typeof client.captiveClientId === 'string' &&
+      /^[0-9a-fA-F]{64}$/.test(client.captiveClientId) &&
+      client.captiveClientId.toLowerCase() === dev.value);
+    if (matches.length > 1) process.exit(2);
+    if (matches.length === 0) continue;
+
+    const client = matches[0];
+    let present;
+    if (source.kind === 'starlink_controller') {
+      if (!validControllerLiveness(client)) {
+        results[dev.person].unknown = true;
+        continue;
+      }
+      present = client.dhcpLeaseFound === true &&
+        client.dhcpLeaseActive === true &&
+        client.secondsUntilDhcpLeaseExpires > 0 &&
+        client.noDataIdleS <= 300;
+    } else if (source.kind === 'starlink_mesh') {
+      if (!validMeshLiveness(client)) {
+        results[dev.person].unknown = true;
+        continue;
+      }
+      // Targeted mesh responses can keep the active field false for a
+      // connected client.
+      // The exact node-local row plus strict association evidence is the
+      // authoritative signal; the active field is deliberately
+      // diagnostic-only.
+      present = true;
+    } else {
+      process.exit(2);
+    }
+    if (present) results[dev.person].present = true;
   }
-  const client = matches[0];
-  if (!validLivenessShape(client)) process.exit(2);
-  results[dev.person] = {
-    present: client.dhcpLeaseFound === true &&
-      client.dhcpLeaseActive === true &&
-      client.secondsUntilDhcpLeaseExpires > 0 &&
-      client.noDataIdleS <= 300
-  };
+}
+
+for (const person of Object.keys(results)) {
+  // Presence is a per-person union. A strict positive from one successful
+  // source safely overrides an incomplete duplicate view from another source.
+  // Without any positive, incomplete selected-row evidence remains unknown
+  // and fails the whole observation rather than becoming absence.
+  if (!results[person].present && results[person].unknown) process.exit(2);
+  delete results[person].unknown;
 }
 
 console.log(JSON.stringify({
   location: 'cabin',
   timestamp: new Date().toISOString(),
-  totalClients: clients.length,
+  totalClients,
   presence: results
 }, null, 2));
 " 2>/dev/null); then
