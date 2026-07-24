@@ -19,6 +19,7 @@ readonly PRESENCE_OBSERVER="$HOME/.openclaw/workspace/scripts/presence-detect.sh
 readonly SECRETS_CACHE="$HOME/.openclaw/.secrets-cache"
 readonly REVIEWER="$HOME/.openclaw/bin/nest-activity-reviewer.py"
 readonly PYTHON="/usr/bin/python3"
+readonly RUNTIME_PATH="/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 readonly LOG_DIR="$HOME/.openclaw/logs"
 readonly STDOUT_LOG="$LOG_DIR/$SERVICE.log"
 readonly STDERR_LOG="$LOG_DIR/$SERVICE.err.log"
@@ -182,7 +183,7 @@ run_child() {
 
   exec /usr/bin/env -i \
     HOME="$HOME" \
-    PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    PATH="$RUNTIME_PATH" \
     NEST_ACTIVITY_MODE="cabin-commentary" \
     NEST_EVENT_STATE_DIR="$STATE_DIR" \
     NEST_EVENT_DATABASE="$DATABASE_FILE" \
@@ -254,7 +255,7 @@ run_service() {
 
   /usr/bin/env -i \
     HOME="$HOME" \
-    PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+    PATH="$RUNTIME_PATH" \
     NEST_ACTIVITY_MODE="cabin-commentary" \
     NEST_EVENT_STATE_DIR="$STATE_DIR" \
     NEST_EVENT_DATABASE="$DATABASE_FILE" \

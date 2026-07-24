@@ -84,6 +84,10 @@ DEFAULT_CROSSTOWN_SCAN = DEFAULT_PRESENCE_DIR / "crosstown-scan.json"
 NEST_BIN = Path("/opt/homebrew/bin/nest")
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
 IMSG_BIN = Path("/opt/homebrew/bin/imsg")
+RUNTIME_PATH = (
+    "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:"
+    "/usr/local/bin:/usr/bin:/bin"
+)
 MODEL = "codex/gpt-5.6-sol"
 MODEL_PROVIDER = "codex"
 MODEL_NAME = "gpt-5.6-sol"
@@ -832,7 +836,7 @@ class ProcessCommands:
     def _environment(self) -> dict[str, str]:
         return {
             "HOME": str(self.settings.home),
-            "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+            "PATH": RUNTIME_PATH,
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
         }

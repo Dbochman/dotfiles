@@ -775,6 +775,14 @@ class PresenceContractTests(ActivityReviewerTestCase):
 
 
 class ProcessCommandSafetyTests(ActivityReviewerTestCase):
+    def test_subprocess_environment_prefers_versioned_node_runtime(self) -> None:
+        environment = review.ProcessCommands(self.settings)._environment()
+        self.assertEqual(environment["PATH"], review.RUNTIME_PATH)
+        self.assertEqual(
+            environment["PATH"].split(":", 1)[0],
+            "/opt/homebrew/opt/node@22/bin",
+        )
+
     def test_message_send_uses_bridge_rpc_and_validates_guid_receipt(self) -> None:
         response = {
             "jsonrpc": "2.0",

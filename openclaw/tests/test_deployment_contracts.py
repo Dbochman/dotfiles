@@ -1027,6 +1027,12 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("LOG_LIMIT_BYTES=262144", wrapper_text)
         self.assertIn("bounded_log_stream", wrapper_text)
         self.assertIn("/usr/bin/mkfifo -m 600", wrapper_text)
+        self.assertIn(
+            'readonly RUNTIME_PATH="/opt/homebrew/opt/node@22/bin:'
+            '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"',
+            wrapper_text,
+        )
+        self.assertEqual(wrapper_text.count('PATH="$RUNTIME_PATH"'), 2)
         self.assertNotRegex(wrapper_text, r"(?:^|[ /])op(?:[ \"']|$)")
         self.assertNotIn("OPENCLAW_GATEWAY_TOKEN", wrapper_text)
 
