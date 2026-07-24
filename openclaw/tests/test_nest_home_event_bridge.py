@@ -173,6 +173,15 @@ raise SystemExit(9 if os.environ.get('FAKE_PUBLISH_FAIL') == '1' else 0)
     def cursor(self) -> dict:
         return json.loads(self.cursor_path.read_text(encoding="utf-8"))
 
+    def write_cursor(self, value: dict) -> None:
+        self.cursor_path.write_text(
+            json.dumps(value, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        self.cursor_path.chmod(0o600)
+
+    def database_birthtime_us(self) -> int:
+        return int(self.database.stat().st_birthtime * 1_000_000)
+
     def published(self) -> list[dict]:
         if not self.events_log.exists():
             return []
@@ -205,8 +214,12 @@ raise SystemExit(9 if os.environ.get('FAKE_PUBLISH_FAIL') == '1' else 0)
         self.assertEqual(self.published(), [])
         cursor = self.cursor()
         database_stat = self.database.stat()
+        self.assertEqual(cursor["version"], 2)
         self.assertEqual(cursor["database_device"], database_stat.st_dev)
         self.assertEqual(cursor["database_inode"], database_stat.st_ino)
+        self.assertEqual(
+            cursor["database_birthtime_us"], self.database_birthtime_us()
+        )
         self.assertEqual(cursor["last_outbox_id"], 1)
         self.assertEqual(stat.S_IMODE(self.cursor_path.stat().st_mode), 0o600)
 
@@ -351,6 +364,122 @@ raise SystemExit(9 if os.environ.get('FAKE_PUBLISH_FAIL') == '1' else 0)
             [source_id, source_id],
         )
         self.assertEqual(self.cursor()["last_outbox_id"], 2)
+
+    def test_legacy_cursor_survives_reboot_device_change(self) -> None:
+        self.insert_event(1)
+        self.assertEqual(self.run_bridge().returncode, 0)
+        current_cursor = self.cursor()
+        self.write_cursor(
+            {
+                "version": 1,
+                "database_device": current_cursor["database_device"] + 1,
+                "database_inode": current_cursor["database_inode"],
+                "last_outbox_id": current_cursor["last_outbox_id"],
+            }
+        )
+        source_id = self.insert_event(2)
+
+        result = self.run_bridge()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["event_count"], 1)
+        self.assertEqual(
+            [entry["payload"]["source_event_id"] for entry in self.published()],
+            [source_id],
+        )
+        migrated = self.cursor()
+        database_stat = self.database.stat()
+        self.assertEqual(migrated["version"], 2)
+        self.assertEqual(migrated["database_device"], database_stat.st_dev)
+        self.assertEqual(migrated["database_inode"], database_stat.st_ino)
+        self.assertEqual(
+            migrated["database_birthtime_us"], self.database_birthtime_us()
+        )
+        self.assertEqual(migrated["last_outbox_id"], 2)
+
+    def test_current_cursor_refreshes_reboot_device_change(self) -> None:
+        self.insert_event(1)
+        self.assertEqual(self.run_bridge().returncode, 0)
+        drifted = self.cursor()
+        drifted["database_device"] += 1
+        self.write_cursor(drifted)
+
+        result = self.run_bridge()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["event_count"], 0)
+        refreshed = self.cursor()
+        self.assertEqual(
+            refreshed["database_device"], self.database.stat().st_dev
+        )
+        self.assertEqual(refreshed["last_outbox_id"], 1)
+        self.assertEqual(self.published(), [])
+
+    def test_legacy_cursor_rejects_database_newer_than_cursor(self) -> None:
+        self.insert_event(1)
+        self.assertEqual(self.run_bridge().returncode, 0)
+        current_cursor = self.cursor()
+        legacy = {
+            "version": 1,
+            "database_device": current_cursor["database_device"] + 1,
+            "database_inode": current_cursor["database_inode"],
+            "last_outbox_id": current_cursor["last_outbox_id"],
+        }
+        self.write_cursor(legacy)
+        database_birthtime = self.database.stat().st_birthtime
+        os.utime(
+            self.cursor_path,
+            (database_birthtime - 1, database_birthtime - 1),
+        )
+        before = self.cursor_path.read_bytes()
+
+        result = self.run_bridge()
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout)["error_code"], "database_replaced"
+        )
+        self.assertEqual(self.cursor_path.read_bytes(), before)
+        self.assertEqual(self.published(), [])
+
+    def test_current_cursor_rejects_birthtime_change(self) -> None:
+        self.insert_event(1)
+        self.assertEqual(self.run_bridge().returncode, 0)
+        replaced = self.cursor()
+        replaced["database_birthtime_us"] += 1
+        self.write_cursor(replaced)
+        before = self.cursor_path.read_bytes()
+
+        result = self.run_bridge()
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout)["error_code"], "database_replaced"
+        )
+        self.assertEqual(self.cursor_path.read_bytes(), before)
+        self.assertEqual(self.published(), [])
+
+    def test_legacy_cursor_does_not_migrate_across_rewind(self) -> None:
+        self.insert_event(1)
+        self.assertEqual(self.run_bridge().returncode, 0)
+        current_cursor = self.cursor()
+        legacy = {
+            "version": 1,
+            "database_device": current_cursor["database_device"] + 1,
+            "database_inode": current_cursor["database_inode"],
+            "last_outbox_id": 2,
+        }
+        self.write_cursor(legacy)
+        before = self.cursor_path.read_bytes()
+
+        result = self.run_bridge()
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout)["error_code"], "database_rewound"
+        )
+        self.assertEqual(self.cursor_path.read_bytes(), before)
+        self.assertEqual(self.published(), [])
 
     def test_replaced_database_fails_closed_without_moving_cursor(self) -> None:
         self.insert_event(1)

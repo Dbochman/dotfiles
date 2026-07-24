@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -25,7 +26,8 @@ from typing import Any
 from urllib.parse import quote
 
 
-VERSION = 1
+LEGACY_CURSOR_VERSION = 1
+CURSOR_VERSION = 2
 NEST_SCHEMA_VERSION = 2
 MAX_BATCH_SIZE = 100
 DEDUPE_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -83,12 +85,24 @@ def _private_regular_file(path: Path, code: str) -> os.stat_result:
     return metadata
 
 
-def _database_identity(path: Path) -> tuple[int, int]:
+def _birthtime_us(metadata: os.stat_result) -> int:
+    birthtime = getattr(metadata, "st_birthtime", None)
+    if (
+        not isinstance(birthtime, (int, float))
+        or isinstance(birthtime, bool)
+        or not math.isfinite(birthtime)
+        or birthtime <= 0
+    ):
+        raise BridgeError("database_identity")
+    return int(birthtime * 1_000_000)
+
+
+def _database_identity(path: Path) -> tuple[int, int, int]:
     if not path.is_absolute():
         raise BridgeError("database_path_not_absolute")
     _private_directory(path.parent)
     metadata = _private_regular_file(path, "unsafe_database")
-    return metadata.st_dev, metadata.st_ino
+    return metadata.st_dev, metadata.st_ino, _birthtime_us(metadata)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -119,16 +133,21 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _cursor_value(identity: tuple[int, int], last_outbox_id: int) -> dict[str, Any]:
+def _cursor_value(
+    identity: tuple[int, int, int], last_outbox_id: int
+) -> dict[str, Any]:
     return {
-        "version": VERSION,
+        "version": CURSOR_VERSION,
         "database_device": identity[0],
         "database_inode": identity[1],
+        "database_birthtime_us": identity[2],
         "last_outbox_id": last_outbox_id,
     }
 
 
-def _load_cursor(path: Path) -> dict[str, Any] | None:
+def _load_cursor(
+    path: Path,
+) -> tuple[dict[str, Any], os.stat_result] | None:
     if not path.exists() and not path.is_symlink():
         return None
     metadata = _private_regular_file(path, "unsafe_cursor")
@@ -139,22 +158,45 @@ def _load_cursor(path: Path) -> dict[str, Any] | None:
             value = json.load(handle)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise BridgeError("invalid_cursor") from exc
-    if not isinstance(value, dict) or set(value) != {
-        "version",
-        "database_device",
-        "database_inode",
-        "last_outbox_id",
-    }:
+    if not isinstance(value, dict):
         raise BridgeError("invalid_cursor")
-    if value.get("version") != VERSION:
+    version = value.get("version")
+    if not isinstance(version, int) or isinstance(version, bool):
+        raise BridgeError("invalid_cursor")
+    if version == LEGACY_CURSOR_VERSION:
+        expected_keys = {
+            "version",
+            "database_device",
+            "database_inode",
+            "last_outbox_id",
+        }
+        identity_keys = ("database_device", "database_inode")
+    elif version == CURSOR_VERSION:
+        expected_keys = {
+            "version",
+            "database_device",
+            "database_inode",
+            "database_birthtime_us",
+            "last_outbox_id",
+        }
+        identity_keys = (
+            "database_device",
+            "database_inode",
+            "database_birthtime_us",
+        )
+    else:
         raise BridgeError("cursor_version")
-    for key in ("database_device", "database_inode", "last_outbox_id"):
+    if set(value) != expected_keys:
+        raise BridgeError("invalid_cursor")
+    for key in (*identity_keys, "last_outbox_id"):
         item = value.get(key)
         if not isinstance(item, int) or isinstance(item, bool) or item < 0:
             raise BridgeError("invalid_cursor")
     if value["database_inode"] == 0:
         raise BridgeError("invalid_cursor")
-    return value
+    if version == CURSOR_VERSION and value["database_birthtime_us"] == 0:
+        raise BridgeError("invalid_cursor")
+    return value, metadata
 
 
 def _open_database(path: Path) -> sqlite3.Connection:
@@ -355,14 +397,14 @@ def run_once() -> dict[str, Any]:
         return {"ok": True, "mode": "already_running"}
     try:
         identity = _database_identity(database_path)
-        cursor = _load_cursor(cursor_path)
+        loaded_cursor = _load_cursor(cursor_path)
         with contextlib.closing(_open_database(database_path)) as connection:
             _check_schema(connection)
             maximum = _maximum_outbox_id(connection)
             if _database_identity(database_path) != identity:
                 raise BridgeError("database_changed")
 
-            if cursor is None:
+            if loaded_cursor is None:
                 _atomic_json(cursor_path, _cursor_value(identity, maximum))
                 return {
                     "ok": True,
@@ -371,11 +413,18 @@ def run_once() -> dict[str, Any]:
                     "last_outbox_id": maximum,
                 }
 
-            cursor_identity = (
-                cursor["database_device"],
+            cursor, cursor_metadata = loaded_cursor
+            if cursor["version"] == LEGACY_CURSOR_VERSION:
+                cursor_mtime_us = cursor_metadata.st_mtime_ns // 1_000
+                if (
+                    cursor["database_inode"] != identity[1]
+                    or identity[2] > cursor_mtime_us
+                ):
+                    raise BridgeError("database_replaced")
+            elif (
                 cursor["database_inode"],
-            )
-            if cursor_identity != identity:
+                cursor["database_birthtime_us"],
+            ) != identity[1:]:
                 raise BridgeError("database_replaced")
             if cursor["last_outbox_id"] > maximum:
                 raise BridgeError("database_rewound")
@@ -384,6 +433,13 @@ def run_once() -> dict[str, Any]:
             rows = _future_rows(connection, last_outbox_id)
             if _database_identity(database_path) != identity:
                 raise BridgeError("database_changed")
+            if (
+                cursor["version"] == LEGACY_CURSOR_VERSION
+                or cursor["database_device"] != identity[0]
+            ):
+                _atomic_json(
+                    cursor_path, _cursor_value(identity, last_outbox_id)
+                )
             published = 0
             for row in rows:
                 event = _event_from_row(row, last_outbox_id)

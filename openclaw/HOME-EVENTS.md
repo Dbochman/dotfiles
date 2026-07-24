@@ -354,7 +354,12 @@ and `living_room_wired`. Person and motion rows become
 classification and source/observation times. The bridge never opens the
 camera, invokes vision, or copies an image, model summary, message, raw SDM
 identifier, or resource name. Database replacement or rewind fails closed
-instead of silently rebasing an existing cursor.
+instead of silently rebasing an existing cursor. Cursor version 2 uses the
+database inode plus its APFS creation time as the persistent identity; the
+mount-specific device number is refreshed rather than treated as stable across
+a reboot. A legacy cursor is upgraded without advancing it only when the inode
+matches, the database predates the cursor, and the schema and outbox watermark
+remain continuous.
 
 ## Attended rollout
 
