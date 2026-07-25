@@ -143,6 +143,7 @@ class ProcessResult:
     duplicate_events: int
     alias: str | None = None
     site: str | None = None
+    reason_code: str | None = None
 
 
 def utc_now() -> str:
@@ -344,6 +345,27 @@ def apply_policy(
     if not envelope.camera_events:
         return PolicyDecision(policy, (), "ignored_event_type")
     return PolicyDecision(policy, envelope.camera_events, "accepted")
+
+
+def ignored_resource_reason(
+    envelope: NormalizedEnvelope,
+    cameras_by_resource: Mapping[str, CameraPolicy],
+) -> str | None:
+    """Classify an unbound supported camera event without retaining its resource."""
+
+    if (
+        envelope.update_kind != "events"
+        or envelope.resource is None
+        or not envelope.camera_events
+    ):
+        return None
+    event_enterprise = envelope.resource.rsplit("/devices/", 1)[0]
+    configured_enterprises = {
+        resource.rsplit("/devices/", 1)[0] for resource in cameras_by_resource
+    }
+    if event_enterprise in configured_enterprises:
+        return "unbound_camera_same_enterprise"
+    return "unbound_camera_other_enterprise"
 
 
 def _assert_private_directory(path: Path, *, create: bool) -> None:
@@ -869,13 +891,22 @@ class StateStore:
 
         decision = apply_policy(envelope, self.settings.cameras_by_resource)
         if decision.policy is None or not decision.events:
+            reason_code = (
+                ignored_resource_reason(
+                    envelope, self.settings.cameras_by_resource
+                )
+                if decision.outcome == "ignored_resource"
+                else None
+            )
             connection.execute(
-                "UPDATE inbox SET outcome = ? WHERE id = ?",
-                (decision.outcome, inbox_id),
+                "UPDATE inbox SET outcome = ?, reason_code = ? WHERE id = ?",
+                (decision.outcome, reason_code, inbox_id),
             )
             self._increment(connection, "ignored_messages")
             self._touch_status(connection, received_at, health="ok")
-            return ProcessResult(decision.outcome, 0, 0)
+            return ProcessResult(
+                decision.outcome, 0, 0, reason_code=reason_code
+            )
 
         policy = decision.policy
         accepted = 0
@@ -1207,6 +1238,7 @@ class PubSubMessageProcessor:
                 acceptedEvents=result.accepted_events,
                 alias=result.alias,
                 site=result.site,
+                reasonCode=result.reason_code,
             )
 
     def _safe_runtime_error(self, code: str) -> None:
@@ -1373,6 +1405,7 @@ def _run_once(
         acceptedEvents=result.accepted_events,
         alias=result.alias,
         site=result.site,
+        reasonCode=result.reason_code,
     )
     return 0
 

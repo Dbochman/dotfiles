@@ -348,6 +348,46 @@ class ParsingAndPolicyTests(NestEventTestCase):
             "ignored_event_type",
         )
 
+    def test_unbound_camera_event_records_only_safe_scope_diagnostic(self) -> None:
+        store = self.store()
+        same_enterprise = store.record_delivery(
+            event_payload(
+                resource="enterprises/sdm-project/devices/replaced-camera",
+                top_event_id="same-enterprise-event",
+            ),
+            "same-enterprise-message",
+        )
+        other_enterprise = store.record_delivery(
+            event_payload(
+                resource="enterprises/other-project/devices/other-camera",
+                top_event_id="other-enterprise-event",
+            ),
+            "other-enterprise-message",
+        )
+
+        self.assertEqual(
+            same_enterprise.reason_code, "unbound_camera_same_enterprise"
+        )
+        self.assertEqual(
+            other_enterprise.reason_code, "unbound_camera_other_enterprise"
+        )
+        with sqlite3.connect(store.db_path) as connection:
+            rows = connection.execute(
+                "SELECT outcome, reason_code FROM inbox ORDER BY id"
+            ).fetchall()
+        self.assertEqual(
+            rows,
+            [
+                ("ignored_resource", "unbound_camera_same_enterprise"),
+                ("ignored_resource", "unbound_camera_other_enterprise"),
+            ],
+        )
+        combined = json.dumps(rows)
+        self.assertNotIn("replaced-camera", combined)
+        self.assertNotIn("other-camera", combined)
+        self.assertNotIn("sdm-project", combined)
+        self.assertNotIn("other-project", combined)
+
 
 class DurabilityTests(NestEventTestCase):
     def test_v1_empty_outbox_seeds_sequence_from_lifetime_event_count(self) -> None:

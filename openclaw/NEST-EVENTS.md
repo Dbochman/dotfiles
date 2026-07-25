@@ -412,6 +412,12 @@ safe JSON to the invoking terminal. Only `run` writes service logs; its
 streaming log writer continuously caps each file rather than waiting for a
 listener restart.
 
+When a supported camera event arrives for a resource outside the exact
+three-camera allowlist, the listener retains only
+`unbound_camera_same_enterprise` or `unbound_camera_other_enterprise`. This
+distinguishes a replaced device binding from an obsolete or different Device
+Access project without retaining either enterprise or device identifier.
+
 For a controlled single pull while the long-running job is stopped:
 
 ```bash
