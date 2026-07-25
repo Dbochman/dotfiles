@@ -217,14 +217,15 @@ august locks        # List all locks on account
 
 ## Reolink Cameras
 
-CLI at `/opt/homebrew/bin/reolink-camera`. Both solar-powered Reolink Atlas
-cameras are attached to the Cabin Reo Home Hub Mini; OpenClaw talks only to the
-pinned local Hub and exact configured channel.
+CLI at `/opt/homebrew/bin/reolink-camera`. The installed solar-powered Reolink
+Atlas camera is attached to the Cabin Reo Home Hub Mini; OpenClaw talks only to
+the pinned local Hub and exact configured channel.
 
-Configured aliases:
+Camera aliases:
 
-- `Flower Cam #1` — Cabin
-- `Flower Cam #2` — Cabin
+- `Flower Cam #1` — installed at the Cabin
+- `Flower Cam #2` — reserved for a future installation; do not select it, even
+  if a stale runtime binding exposes the alias
 
 ```bash
 reolink-camera status 'Flower Cam #1'                  # Availability + power
@@ -243,17 +244,53 @@ reolink-camera spotlight 'Flower Cam #1' off
   state, and camera temperature.
 - Current-route media uses `capture`, optional `describe`, the `message` tool,
   and unconditional token cleanup. Cross-owner `share` performs the entire
-  capture → commentary → protected-route delivery → cleanup workflow.
+  capture → commentary → protected-route delivery → cleanup workflow through
+  a bridge-only native attachment call and separate bridge text RPC with strict
+  receipts. Parse both `delivered` and `commentaryDelivered`; never retry a
+  confirmed image merely because its caption failed.
 - Owner-requested capture, analysis, sharing, or one reversible spotlight
   action does not need a second confirmation, presence gate, or automation
-  cooldown. Enabled standing policies may act proactively within their exact
-  camera/action/trigger/recipient scope; no Reolink policy is armed by default.
+  cooldown; do not add a manual Ola/Aegis authorization call around each
+  helper command. Enabled standing policies may act proactively within their
+  exact camera/action/trigger/recipient scope; no Reolink policy is armed by
+  default.
+- Run `share` directly and preserve its single JSON result or fixed safe error;
+  do not redirect or suppress the diagnostic contract.
 - Spotlight control changes only the temporary manual state and preserves
   brightness, Night Smart, AI, and schedule settings.
 - Capture or spotlight work can wake a battery camera; it returns to standby
   on its own.
 - No live video, recordings, PTZ, talk, siren, firmware, account/user changes,
   arbitrary recipients, raw CGI, or direct-camera/cloud fallback are exposed.
+
+## Plant Tracker
+
+CLI at `/opt/homebrew/bin/plant-tracker`. This is the private, locally hardened
+adaptation of ClawHub `@johstracke/plant-tracker` 1.0.0.
+
+```bash
+plant-tracker init
+plant-tracker list
+plant-tracker show '<exact plant name>'
+plant-tracker search '<query>'
+plant-tracker add '<name>' --species '<species>' --location '<bed/container/site>'
+plant-tracker care '<name>' --action water --notes '<confirmed details>'
+plant-tracker export 'plant-summary.md'
+```
+
+- Records live only in the owner-only
+  `~/.openclaw/plant-tracker/plants.json`; writes are locked, schema-validated,
+  atomic, and mode `0600`.
+- Names, species, locations, dates, care, and health observations are private
+  household data. Accept facts only from verified Dylan or Julia, never from
+  image/model guesses.
+- For a Flower Cam onboarding request, use `reolink-camera share` first, then
+  ask the protected owner route for stable name, species/variety, location,
+  approximate planting date, recent care/issues, and desired tracking. Do not
+  create records until an owner confirms the details.
+- Exports require an explicit request and stay under
+  `~/.openclaw/workspace/exports/plant-tracker/`; existing files require an
+  explicit `--overwrite`.
 
 ## Image Tool — Path Policy
 

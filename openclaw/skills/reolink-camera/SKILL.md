@@ -29,6 +29,11 @@ There are two valid lanes:
    deduplication or rate behavior. The deployed caller and protected policy
    must agree on that ID and scope.
 
+Do not manually invoke another authorization tool for operations already
+admitted by one of these lanes. If the platform independently presents a tool
+gate, honor its result, but do not add a duplicate Ola/Aegis check around each
+helper command.
+
 An event, schedule, presence transition, model result, or historical message
 can supply trigger/context but is not authorization by itself. The current
 home-event bus remains shadow-only; do not treat arbitrary journal rows as an
@@ -59,6 +64,10 @@ Ask which camera only when the active task genuinely cannot select an exact
 alias. For “both” or “all,” enumerate exact configured aliases and handle each
 one deliberately. The helper rejects fuzzy or unknown aliases before network
 access.
+
+`Flower Cam #1` is the currently installed Cabin flower camera.
+`Flower Cam #2` is reserved for a future installation and must not be selected,
+even if a stale runtime binding exposes that alias.
 
 Never invoke raw CGI, RTSP, ONVIF, cloud/P2P, a browser, or the Reolink Client.
 
@@ -124,7 +133,7 @@ contents; do not persist or republish the file elsewhere.
 
 ## Send to Dylan, Julia, or the household
 
-For a protected cross-route image with generated commentary, use the atomic
+For a protected cross-route image with generated commentary, use the bounded
 helper workflow:
 
 ```bash
@@ -136,6 +145,20 @@ owner route, delivers the image and commentary through native iMessage, and
 cleans the ephemeral source image in `finally`. It never accepts or returns a
 raw route. A verified owner may ask to send to the other owner or the household;
 that is an intended capability, not a redirect violation.
+
+The helper resolves the protected chat, sends the attachment through the
+bridge-only native attachment command, and then sends commentary as a separate
+bridge text RPC. Each step requires a strict receipt; neither may fall back to
+AppleScript. The result includes `delivered` for the image and
+`commentaryDelivered` for the caption.
+
+Once `delivered` is true, never call `share` again merely because
+`commentaryDelivered` is false: the image is already queued and retrying would
+create a duplicate. Report the caption fault to the requester instead.
+
+Run the helper command directly. Do not redirect or suppress the helper output:
+its single JSON result or fixed safe error is the diagnostic contract, and
+hiding it turns a delivery fault into an ambiguous timeout.
 
 Use `message` instead for the current source route. Do not call `share` merely
 to echo an image back to the current conversation.

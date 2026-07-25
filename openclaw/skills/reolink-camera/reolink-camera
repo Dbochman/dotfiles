@@ -37,6 +37,8 @@ MAX_PRIVATE_JSON_BYTES = 64 * 1024
 MAX_API_RESPONSE_BYTES = 1024 * 1024
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 MAX_INFERENCE_OUTPUT_BYTES = 1024 * 1024
+MAX_COMMAND_INPUT_BYTES = 16 * 1024
+MAX_IMSG_GUID_CHARACTERS = 1024
 MAX_INFERENCE_TEXT_BYTES = 8 * 1024
 MAX_COMMENTARY_CHARACTERS = 320
 MAX_SECRETS_CACHE_BYTES = 64 * 1024
@@ -101,6 +103,7 @@ PRIVATE_IPV4_NETWORKS = tuple(
 PRIVATE_IPV6_NETWORK = ipaddress.ip_network("fc00::/7")
 OPENCLAW_BINARY = Path("/opt/homebrew/bin/openclaw")
 IMSG_BINARY = Path("/opt/homebrew/bin/imsg")
+IMSG_RPC_REQUEST_ID = "reolink-camera-share"
 RUNTIME_PATH = (
     "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:"
     "/usr/local/bin:/usr/bin:/bin"
@@ -1834,18 +1837,31 @@ def _run_bounded_command(
     *,
     timeout: int,
     failure_message: str,
+    stdin_data: bytes | None = None,
 ) -> bytes:
-    try:
-        completed = subprocess.run(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_runtime_environment(),
-            timeout=timeout,
-            check=False,
-            start_new_session=True,
+    if (
+        stdin_data is not None
+        and (
+            not isinstance(stdin_data, bytes)
+            or not stdin_data
+            or len(stdin_data) > MAX_COMMAND_INPUT_BYTES
         )
+    ):
+        raise PublicError(failure_message)
+    run_options: dict[str, Any] = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "env": _runtime_environment(),
+        "timeout": timeout,
+        "check": False,
+        "start_new_session": True,
+    }
+    if stdin_data is None:
+        run_options["stdin"] = subprocess.DEVNULL
+    else:
+        run_options["input"] = stdin_data
+    try:
+        completed = subprocess.run(command, **run_options)
     except (OSError, subprocess.SubprocessError) as error:
         raise PublicError(failure_message) from error
     if (
@@ -2048,7 +2064,7 @@ def _deliver_owner_image(
     media_directory: Path | None = None,
     secrets_cache: Path | None = None,
     command_runner: Callable[..., bytes] = _run_bounded_command,
-) -> str:
+) -> tuple[str, bool]:
     if (
         not isinstance(caption, str)
         or not 1 <= len(caption) <= MAX_COMMENTARY_CHARACTERS + 100
@@ -2065,35 +2081,169 @@ def _deliver_owner_image(
         recipient,
         secrets_cache=secrets_cache,
     )
-    stdout = command_runner(
+    group_stdout = command_runner(
         [
             str(IMSG_BINARY),
-            "send",
+            "group",
             "--chat-id",
             chat_id,
-            "--text",
-            caption,
-            "--file",
-            str(image_path),
             "--json",
         ],
         timeout=DELIVERY_TIMEOUT_SECONDS,
         failure_message="Camera image delivery failed",
     )
     try:
-        receipt = json.loads(stdout.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
+        lines = group_stdout.decode("utf-8").splitlines()
+        if len(lines) != 1 or not lines[0]:
+            raise ValueError("invalid route receipt line count")
+        route = json.loads(
+            lines[0],
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise PublicError("Camera image delivery failed") from error
+    required_route_keys = {
+        "id",
+        "identifier",
+        "guid",
+        "name",
+        "service",
+        "is_group",
+        "participants",
+    }
+    allowed_route_keys = required_route_keys | {
+        "account_id",
+        "account_login",
+        "last_addressed_handle",
+    }
+    if (
+        not isinstance(route, dict)
+        or not required_route_keys.issubset(route)
+        or not set(route).issubset(allowed_route_keys)
+        or isinstance(route.get("id"), bool)
+        or route.get("id") != int(chat_id)
+        or route.get("service") != "iMessage"
+        or not isinstance(route.get("identifier"), str)
+        or not isinstance(route.get("name"), str)
+        or not isinstance(route.get("is_group"), bool)
+        or not isinstance(route.get("participants"), list)
+        or any(not isinstance(item, str) for item in route["participants"])
+        or not isinstance(route.get("guid"), str)
+        or not 1 <= len(route["guid"]) <= MAX_IMSG_GUID_CHARACTERS
+        or not route["guid"].startswith("iMessage;")
+        or CONTROL_CHARACTER_PATTERN.search(route["guid"])
+    ):
+        raise PublicError("Camera image delivery failed")
+    chat_guid = route["guid"]
+    attachment_stdout = command_runner(
+        [
+            str(IMSG_BINARY),
+            "send-attachment",
+            "--chat",
+            chat_guid,
+            "--file",
+            str(image_path),
+            "--transport",
+            "dylib",
+            "--json",
+        ],
+        timeout=DELIVERY_TIMEOUT_SECONDS,
+        failure_message="Camera image delivery failed",
+    )
+    try:
+        lines = attachment_stdout.decode("utf-8").splitlines()
+        if len(lines) != 1 or not lines[0]:
+            raise ValueError("invalid attachment receipt line count")
+        attachment_receipt = json.loads(
+            lines[0],
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+    ) as error:
         raise PublicError("Camera image delivery failed") from error
     if (
-        not isinstance(receipt, dict)
-        or receipt.get("status") != "sent"
+        not isinstance(attachment_receipt, dict)
+        or set(attachment_receipt)
+        != {"chatGuid", "messageGuid", "selectedMessageGuid", "transferGuid"}
+        or any(not isinstance(value, str) for value in attachment_receipt.values())
+        or attachment_receipt.get("chatGuid") != chat_guid
+        or attachment_receipt.get("selectedMessageGuid") != ""
+        or not 1
+        <= len(attachment_receipt.get("transferGuid", ""))
+        <= MAX_IMSG_GUID_CHARACTERS
+        or len(attachment_receipt.get("messageGuid", ""))
+        > MAX_IMSG_GUID_CHARACTERS
         or any(
-            key not in {"status", "id", "guid", "message_id"}
-            for key in receipt
+            CONTROL_CHARACTER_PATTERN.search(value)
+            for value in attachment_receipt.values()
         )
     ):
         raise PublicError("Camera image delivery failed")
-    return display_name
+    request = {
+        "jsonrpc": "2.0",
+        "id": IMSG_RPC_REQUEST_ID,
+        "method": "send",
+        "params": {
+            "chat_guid": chat_guid,
+            "text": caption,
+            "transport": "bridge",
+        },
+    }
+    encoded_request = (
+        json.dumps(
+            request,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        + b"\n"
+    )
+    try:
+        stdout = command_runner(
+            [
+                str(IMSG_BINARY),
+                "rpc",
+            ],
+            timeout=DELIVERY_TIMEOUT_SECONDS,
+            failure_message="Camera image commentary delivery failed",
+            stdin_data=encoded_request,
+        )
+        lines = stdout.decode("utf-8").splitlines()
+        if len(lines) != 1 or not lines[0]:
+            raise ValueError("invalid receipt line count")
+        receipt = json.loads(
+            lines[0],
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+        PublicError,
+    ):
+        return display_name, False
+    if (
+        not isinstance(receipt, dict)
+        or set(receipt) != {"jsonrpc", "id", "result"}
+        or receipt.get("jsonrpc") != "2.0"
+        or receipt.get("id") != IMSG_RPC_REQUEST_ID
+        or not isinstance(receipt.get("result"), dict)
+        or receipt["result"].get("ok") is not True
+        or receipt["result"].get("transport") != "bridge"
+        or receipt["result"].get("chat_guid") != chat_guid
+        or any(not isinstance(key, str) for key in receipt["result"])
+    ):
+        return display_name, False
+    return display_name, True
 
 
 def share_image(
@@ -2104,7 +2254,7 @@ def share_image(
     secrets_cache: Path | None = None,
     capture_function: Callable[..., dict[str, str]] = capture_image,
     analysis_function: Callable[..., dict[str, str | bool]] = analyze_image,
-    delivery_function: Callable[..., str] = _deliver_owner_image,
+    delivery_function: Callable[..., tuple[str, bool]] = _deliver_owner_image,
 ) -> dict[str, str | bool]:
     if recipient not in OWNER_RECIPIENTS:
         raise PublicError("Camera image recipient is invalid")
@@ -2127,16 +2277,26 @@ def share_image(
         if not isinstance(summary, str):
             raise PublicError("Camera image sharing failed")
         caption = f"{alias} — {summary}"
-        display_name = delivery_function(
+        delivery_result = delivery_function(
             recipient,
             token,
             caption,
             media_directory=media_directory,
             secrets_cache=secrets_cache,
         )
+        if (
+            not isinstance(delivery_result, tuple)
+            or len(delivery_result) != 2
+            or not isinstance(delivery_result[0], str)
+            or not delivery_result[0]
+            or not isinstance(delivery_result[1], bool)
+        ):
+            raise PublicError("Camera image sharing failed")
+        display_name, commentary_delivered = delivery_result
         return {
             "alias": alias,
             "delivered": True,
+            "commentaryDelivered": commentary_delivered,
             "recipient": display_name,
             **commentary,
         }

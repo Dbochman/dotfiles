@@ -61,6 +61,7 @@ NEST_ACTIVITY_REVIEWER_PLIST = (
 REQUIRED_HELPERS = {
     "bin/august": "august wrapper\n",
     "bin/pinchtab-headless-instance": "pinchtab helper\n",
+    "bin/plant-tracker": "plant tracker wrapper\n",
     "bin/presence-cabin-enroll": "presence enrollment helper\n",
     "bin/presence-cabin-mesh-enroll": "presence mesh enrollment helper\n",
     "bin/presence-crosstown-canary": "presence canary helper\n",
@@ -79,6 +80,7 @@ STANDALONE_SKILL_WRAPPERS = {
     "opentable-book",
     "opentable-reservations",
     "pinchtab-headless-instance",
+    "plant-tracker",
     "reolink-camera",
     "restaurant-book",
     "restaurant-snipe",

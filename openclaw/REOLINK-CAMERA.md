@@ -80,12 +80,12 @@ The inference process gets one image and the fixed prompt—not the agent
 session, household memory, chat transcript, or messaging tools. Text visible
 inside the scene is treated as untrusted.
 
-`share` is an atomic protected cross-route workflow: it captures, describes,
+`share` is a bounded protected cross-route workflow: it captures, describes,
 resolves one semantic recipient from the owner-only OpenClaw secrets cache,
-sends the image plus commentary through native iMessage, and cleans the source
-image in `finally`. It accepts only `dylan`, `julia`, or `household`; raw chat
-IDs and handles never enter or leave the public interface. Current-conversation
-delivery continues to use the OpenClaw `message` tool.
+sends the image and then its commentary through native iMessage, and cleans the
+source image in `finally`. It accepts only `dylan`, `julia`, or `household`;
+raw chat IDs and handles never enter or leave the public interface.
+Current-conversation delivery continues to use the OpenClaw `message` tool.
 
 `spotlight` reads the current manual state before acting. If a change is
 needed, it sends only:
@@ -118,6 +118,10 @@ authenticated Reachy session. It does not require a second confirmation for
 each capture or light action, and it is not gated by presence or automation
 cooldowns.
 
+The admitted task is the authorization lane; callers must not add a manual
+Ola/Aegis authorization call around each helper operation. A platform-enforced
+tool gate still applies when independently presented.
+
 ### Standing proactive work
 
 Proactive capture or control is supported when an enabled owner-approved policy
@@ -135,6 +139,15 @@ Events, schedules, presence changes, and vision results are trigger/context,
 not authority by themselves. The current home-event bus is still shadow-only,
 so it cannot be treated as a generic command bus. A future active consumer must
 carry its own exact protected policy scope.
+
+Protected cross-route `share` delivery resolves the protected chat, uses
+`imsg send-attachment` with bridge-only `dylib` transport, then sends the
+commentary through a separate bridge text RPC. Both use bounded calls and
+strict receipts, never the public AppleScript attachment path. The result
+separately reports `delivered` and `commentaryDelivered`; callers must never
+resend a confirmed image just because its caption failed. The helper always
+removes the ephemeral image in `finally`, and callers should preserve its
+single JSON result or fixed safe error instead of redirecting its output.
 
 There is intentionally no universal one-hour limit or blanket “never
 proactive” rule. Outdoor policies can legitimately use `presence=any`; explicit
@@ -156,8 +169,10 @@ cadence still need an owner-approved standing definition.
 `config.json` contains exact aliases/sites plus private Hub coordinates,
 channels, and certificate pins. `credentials.json` contains the approved local
 Hub credential. The Cabin Home Hub Mini rejects local `AddUser` with Reolink
-code `-9`, so the two current bindings use the explicitly approved
-administrator account stored only in this protected registry.
+code `-9`, so the current binding uses the explicitly approved administrator
+account stored only in this protected registry. `Flower Cam #1` is installed;
+the `Flower Cam #2` name is reserved for a future installation and must not be
+selected if a stale runtime binding exposes it.
 
 The binding and credential registries use one generation and must contain the
 same exact alias set. The helper rejects insecure ownership, permissions,

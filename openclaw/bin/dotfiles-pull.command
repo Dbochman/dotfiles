@@ -510,6 +510,7 @@ STANDALONE_SKILL_WRAPPERS=(
   opentable-book
   opentable-reservations
   pinchtab-headless-instance
+  plant-tracker
   reolink-camera
   restaurant-book
   restaurant-snipe

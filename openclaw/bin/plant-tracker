@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# plant-tracker — Private household plant inventory and care records
+set -euo pipefail
+
+SKILL_DIR="$HOME/.openclaw/skills/plant-tracker"
+exec "$SKILL_DIR/scripts/plant_tracker.py" "$@"

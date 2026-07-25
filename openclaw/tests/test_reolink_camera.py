@@ -3389,6 +3389,30 @@ class ReolinkCameraTests(unittest.TestCase):
         self.assertIn("Logout", requests)
         self.assertNotIn(PASSWORD, json.dumps(result))
 
+    def test_bounded_command_passes_rpc_input_without_inheriting_stdin(self) -> None:
+        completed = mock.Mock(returncode=0, stdout=b'{"ok":true}', stderr=b"")
+        with mock.patch.object(
+            self.helper.subprocess,
+            "run",
+            return_value=completed,
+        ) as runner:
+            result = self.helper._run_bounded_command(
+                ["/fixed/helper", "rpc"],
+                timeout=20,
+                failure_message="Camera image delivery failed",
+                stdin_data=b'{"request":true}\n',
+            )
+
+        self.assertEqual(result, b'{"ok":true}')
+        self.assertEqual(
+            runner.call_args.args,
+            (["/fixed/helper", "rpc"],),
+        )
+        options = runner.call_args.kwargs
+        self.assertEqual(options["input"], b'{"request":true}\n')
+        self.assertNotIn("stdin", options)
+        self.assertTrue(options["start_new_session"])
+
     def test_image_analysis_uses_token_scoped_media_and_fixed_inference(self) -> None:
         self.media_directory.mkdir(mode=0o700)
         token = "a" * 48
@@ -3477,7 +3501,7 @@ class ReolinkCameraTests(unittest.TestCase):
 
         def deliver(recipient, delivered_token, caption, **_kwargs):
             deliveries.append((recipient, delivered_token, caption))
-            return "Julia"
+            return "Julia", True
 
         result = self.helper.share_image(
             ALIAS,
@@ -3490,6 +3514,7 @@ class ReolinkCameraTests(unittest.TestCase):
 
         self.assertEqual(result["recipient"], "Julia")
         self.assertIs(result["delivered"], True)
+        self.assertIs(result["commentaryDelivered"], True)
         self.assertEqual(
             deliveries,
             [
@@ -3533,11 +3558,28 @@ class ReolinkCameraTests(unittest.TestCase):
         image = self.media_directory / f"{token}.jpg"
         image.write_bytes(JPEG)
         image.chmod(0o600)
-        commands: list[list[str]] = []
+        commands: list[tuple[list[str], dict[str, object]]] = []
 
-        def command_runner(command, **_kwargs):
-            commands.append(command)
-            return b'{"status":"sent","guid":"opaque-receipt"}'
+        def command_runner(command, **kwargs):
+            commands.append((command, kwargs))
+            if command[1] == "group":
+                return (
+                    b'{"id":8,"identifier":"private","guid":'
+                    b'"iMessage;-;private","name":"","service":"iMessage",'
+                    b'"is_group":false,"participants":["private"]}'
+                )
+            if command[1] == "send-attachment":
+                return (
+                    b'{"chatGuid":"iMessage;-;private","messageGuid":'
+                    b'"message-receipt","selectedMessageGuid":"",'
+                    b'"transferGuid":"transfer-receipt"}'
+                )
+            return (
+                b'{"jsonrpc":"2.0","id":"reolink-camera-share",'
+                b'"result":{"ok":true,"transport":"bridge",'
+                b'"chat_guid":"iMessage;-;private",'
+                b'"guid":"opaque-receipt"}}'
+            )
 
         self.assertEqual(
             self.helper._deliver_owner_image(
@@ -3548,16 +3590,63 @@ class ReolinkCameraTests(unittest.TestCase):
                 secrets_cache=cache,
                 command_runner=command_runner,
             ),
-            "Julia",
+            ("Julia", True),
         )
-        self.assertEqual(commands[0][0], str(self.helper.IMSG_BINARY))
+        self.assertEqual(len(commands), 3)
+        command, options = commands[0]
         self.assertEqual(
-            commands[0][commands[0].index("--chat-id") + 1],
-            "8",
+            command,
+            [
+                str(self.helper.IMSG_BINARY),
+                "group",
+                "--chat-id",
+                "8",
+                "--json",
+            ],
+        )
+        self.assertNotIn("stdin_data", options)
+        command, options = commands[1]
+        self.assertEqual(
+            command,
+            [
+                str(self.helper.IMSG_BINARY),
+                "send-attachment",
+                "--chat",
+                "iMessage;-;private",
+                "--file",
+                str(image),
+                "--transport",
+                "dylib",
+                "--json",
+            ],
+        )
+        self.assertNotIn("stdin_data", options)
+        command, options = commands[2]
+        self.assertEqual(
+            command,
+            [str(self.helper.IMSG_BINARY), "rpc"],
+        )
+        request = json.loads(options["stdin_data"])
+        self.assertEqual(
+            request,
+            {
+                "jsonrpc": "2.0",
+                "id": "reolink-camera-share",
+                "method": "send",
+                "params": {
+                    "chat_guid": "iMessage;-;private",
+                    "text": "A fresh flower-camera view.",
+                    "transport": "bridge",
+                },
+            },
         )
         self.assertEqual(
-            commands[0][commands[0].index("--file") + 1],
-            str(image),
+            options["timeout"],
+            self.helper.DELIVERY_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            options["failure_message"],
+            "Camera image commentary delivery failed",
         )
         cache.write_bytes(cache.read_bytes() + b"JULIA_CHAT_ID=10\n")
         cache.chmod(0o600)
@@ -3566,6 +3655,105 @@ class ReolinkCameraTests(unittest.TestCase):
                 "julia",
                 secrets_cache=cache,
             )
+
+    def test_owner_delivery_requires_exact_bridge_attachment_receipt(self) -> None:
+        cache = self.protected / ".secrets-cache"
+        cache.write_bytes(b"JULIA_CHAT_ID=8\n")
+        cache.chmod(0o600)
+        self.media_directory.mkdir(mode=0o700)
+        token = "d" * 48
+        image = self.media_directory / f"{token}.jpg"
+        image.write_bytes(JPEG)
+        image.chmod(0o600)
+        invalid_receipts = (
+            b'{"status":"sent","guid":"legacy-applescript"}',
+            (
+                b'{"chatGuid":"iMessage;-;wrong","messageGuid":"message",'
+                b'"selectedMessageGuid":"","transferGuid":"transfer"}'
+            ),
+            (
+                b'{"chatGuid":"iMessage;-;private","messageGuid":"message",'
+                b'"selectedMessageGuid":"","transferGuid":""}'
+            ),
+            (
+                b'{"chatGuid":"iMessage;-;private","messageGuid":"message",'
+                b'"selectedMessageGuid":"reply","transferGuid":"transfer"}'
+            ),
+            (
+                b'{"chatGuid":"iMessage;-;private","messageGuid":"message",'
+                b'"selectedMessageGuid":"","transferGuid":"transfer"}\n{}'
+            ),
+        )
+        for receipt in invalid_receipts:
+            with self.subTest(receipt=receipt):
+                calls = 0
+
+                def command_runner(command, **_kwargs):
+                    nonlocal calls
+                    calls += 1
+                    if command[1] == "group":
+                        return (
+                            b'{"id":8,"identifier":"private","guid":'
+                            b'"iMessage;-;private","name":"","service":"iMessage",'
+                            b'"is_group":false,"participants":["private"]}'
+                        )
+                    return receipt
+
+                with self.assertRaises(self.helper.PublicError) as caught:
+                    self.helper._deliver_owner_image(
+                        "julia",
+                        token,
+                        "A fresh flower-camera view.",
+                        media_directory=self.media_directory,
+                        secrets_cache=cache,
+                        command_runner=command_runner,
+                    )
+                self.assertEqual(
+                    str(caught.exception),
+                    "Camera image delivery failed",
+                )
+                self.assertEqual(calls, 2)
+
+    def test_owner_delivery_does_not_retry_image_when_commentary_fails(self) -> None:
+        cache = self.protected / ".secrets-cache"
+        cache.write_bytes(b"JULIA_CHAT_ID=8\n")
+        cache.chmod(0o600)
+        self.media_directory.mkdir(mode=0o700)
+        token = "e" * 48
+        image = self.media_directory / f"{token}.jpg"
+        image.write_bytes(JPEG)
+        image.chmod(0o600)
+        attachment_calls = 0
+
+        def command_runner(command, **_kwargs):
+            nonlocal attachment_calls
+            if command[1] == "group":
+                return (
+                    b'{"id":8,"identifier":"private","guid":'
+                    b'"iMessage;-;private","name":"","service":"iMessage",'
+                    b'"is_group":false,"participants":["private"]}'
+                )
+            if command[1] == "send-attachment":
+                attachment_calls += 1
+                return (
+                    b'{"chatGuid":"iMessage;-;private","messageGuid":'
+                    b'"message-receipt","selectedMessageGuid":"",'
+                    b'"transferGuid":"transfer-receipt"}'
+                )
+            return b'{"jsonrpc":"2.0","id":"wrong","result":{"ok":true}}'
+
+        self.assertEqual(
+            self.helper._deliver_owner_image(
+                "julia",
+                token,
+                "A fresh flower-camera view.",
+                media_directory=self.media_directory,
+                secrets_cache=cache,
+                command_runner=command_runner,
+            ),
+            ("Julia", False),
+        )
+        self.assertEqual(attachment_calls, 1)
 
     def test_invalid_or_oversized_capture_is_removed_and_sanitized(self) -> None:
         scenarios = (
@@ -3741,6 +3929,12 @@ class ReolinkCameraTests(unittest.TestCase):
             "NO_REPLY",
             "do not categorically refuse proactive use",
             "does not require another confirmation",
+            "Do not manually invoke another authorization tool",
+            "Do not redirect or",
+            "bridge-only native attachment command",
+            "`commentaryDelivered`",
+            "never call `share` again",
+            "`Flower Cam #2` is reserved",
             "preserves the camera's existing brightness",
         ):
             with self.subTest(required=required):

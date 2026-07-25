@@ -798,6 +798,7 @@ install_openclaw_guarded_helpers() {
   local helper_specs=(
     "bin/august|bin/august|755|August guarded unlock wrapper"
     "bin/pinchtab-headless-instance|bin/pinchtab-headless-instance|755|managed PinchTab instance helper"
+    "bin/plant-tracker|bin/plant-tracker|755|private plant tracker wrapper"
     "bin/presence-cabin-enroll|bin/presence-cabin-enroll|755|Cabin Starlink presence enrollment helper"
     "bin/presence-cabin-mesh-enroll|bin/presence-cabin-mesh-enroll|755|Cabin Starlink mesh enrollment helper"
     "bin/presence-crosstown-canary|bin/presence-crosstown-canary|755|Crosstown strict presence canary helper"
@@ -835,6 +836,7 @@ publish_openclaw_standalone_skill_wrappers() {
     opentable-book
     opentable-reservations
     pinchtab-headless-instance
+    plant-tracker
     reolink-camera
     restaurant-book
     restaurant-snipe
