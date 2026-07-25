@@ -27,6 +27,9 @@ NORMAL_POLL_SECONDS = 300
 NORMAL_POLL_JITTER_SECONDS = 30
 OBSERVE_TIMEOUT_SECONDS = 20
 MAX_OUTPUT_BYTES = 4096
+TRANSPORT_UNAVAILABLE_GRACE_SECONDS = 30 * 60
+STRICT_UNAVAILABLE_GRACE_SECONDS = 10 * 60
+STRICT_UNAVAILABLE_FAILURES = 3
 OBSERVE_STAGE_CODES = frozenset(
     {
         "observe_transport_unavailable",
@@ -538,9 +541,18 @@ def failure_state(
     first_failure_at = state.get("first_failure_at") or timestamp(now)
     first_failure = parse_timestamp(first_failure_at)
     offline = bool(state.get("offline_emitted"))
-    should_emit = not offline and (
-        failures >= 3 or (now - first_failure).total_seconds() >= 600
-    )
+    failure_seconds = (now - first_failure).total_seconds()
+    if code == "observe_transport_unavailable":
+        should_emit = (
+            not offline
+            and failures >= STRICT_UNAVAILABLE_FAILURES
+            and failure_seconds >= TRANSPORT_UNAVAILABLE_GRACE_SECONDS
+        )
+    else:
+        should_emit = not offline and (
+            failures >= STRICT_UNAVAILABLE_FAILURES
+            or failure_seconds >= STRICT_UNAVAILABLE_GRACE_SECONDS
+        )
     backoff = FAILURE_BACKOFF_SECONDS[min(failures - 1, len(FAILURE_BACKOFF_SECONDS) - 1)]
     updated = {
         **state,

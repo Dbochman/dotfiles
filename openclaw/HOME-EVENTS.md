@@ -337,9 +337,13 @@ the identifier.
 and then publishes only lock, door, battery-threshold, unavailable, and
 recovery transitions. Normal polling is five minutes with up to 30 seconds of
 jitter in either direction. Failures back off through
-1, 2, 5, 10, and 15 minutes; three consecutive failures or ten minutes without
-a good observation produces one unavailable transition. The existing manual
-lock and one-use unlock approval paths are unchanged and still require known,
+1, 2, 5, 10, and 15 minutes. Relay transport failures remain visible in the
+adapter log but produce an unavailable transition only after at least three
+failures spanning 30 minutes. This absorbs the observed routine 14- to
+23-minute Crosstown transport gaps. Remote-command, missing, oversized,
+malformed, and contract-invalid failures retain the stricter threshold of
+three consecutive failures or ten minutes. The existing manual lock and
+one-use unlock approval paths are unchanged and still require known,
 unambiguous physical state. An `unknown` observation is checkpointed silently;
 a lock or door transition is emitted only when the immediately previous and
 current values are both known and different.

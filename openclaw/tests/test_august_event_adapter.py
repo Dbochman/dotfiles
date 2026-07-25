@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -153,13 +154,23 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
         )
 
     def establish_failure(
-        self, **overrides: str
+        self, *, age_before_last: bool = False, **overrides: str
     ) -> subprocess.CompletedProcess[str]:
         baseline = self.run_adapter()
         self.assertEqual(baseline.returncode, 0, baseline.stderr)
         result = baseline
-        for _ in range(3):
+        for attempt in range(3):
             self.make_due()
+            if age_before_last and attempt == 2:
+                state = json.loads(self.state_path.read_text(encoding="utf-8"))
+                state["first_failure_at"] = (
+                    datetime.now(timezone.utc)
+                    - timedelta(
+                        seconds=ADAPTER_MODULE.TRANSPORT_UNAVAILABLE_GRACE_SECONDS + 1
+                    )
+                ).isoformat(timespec="seconds").replace("+00:00", "Z")
+                self.state_path.write_text(json.dumps(state), encoding="utf-8")
+                self.state_path.chmod(0o600)
             result = self.run_adapter(**overrides)
             self.assertNotEqual(result.returncode, 0)
         return result
@@ -282,7 +293,7 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
             ["lock.unlocked", "lock.unlocked"],
         )
 
-    def test_three_failures_emit_one_unavailable_transition(self) -> None:
+    def test_three_remote_failures_emit_one_unavailable_transition(self) -> None:
         self.assertEqual(self.run_adapter().returncode, 0)
         for _ in range(3):
             self.make_due()
@@ -308,12 +319,59 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
             unavailable["attributes"]["reason_code"], "observe_remote_failed"
         )
 
+    def test_routine_transport_gap_stays_in_backoff_until_thirty_minutes(self) -> None:
+        self.assertEqual(self.run_adapter().returncode, 0)
+        for _ in range(5):
+            self.make_due()
+            failed = self.run_adapter(
+                FAKE_AUGUST_FAIL="1",
+                FAKE_AUGUST_EXIT="255",
+            )
+            self.assertNotEqual(failed.returncode, 0)
+
+        self.assertEqual(self.published(), [])
+        state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertFalse(state["offline_emitted"])
+        self.assertEqual(state["consecutive_failures"], 5)
+        self.assertEqual(
+            state["last_error_code"], "observe_transport_unavailable"
+        )
+
+    def test_transport_gap_emits_unavailable_after_thirty_minutes(self) -> None:
+        result = self.establish_failure(
+            age_before_last=True,
+            FAKE_AUGUST_FAIL="1",
+            FAKE_AUGUST_EXIT="255",
+        )
+
+        self.assertEqual(
+            json.loads(result.stdout)["error_code"],
+            "observe_transport_unavailable",
+        )
+        published = self.published()
+        self.assertEqual(
+            [entry["payload"]["event_type"] for entry in published],
+            ["source.unavailable"],
+        )
+        unavailable = published[0]["payload"]
+        self.assertEqual(
+            unavailable["attributes"]["reason_code"],
+            "observe_transport_unavailable",
+        )
+        BUS.normalize_input(
+            "august",
+            unavailable,
+            b"a" * 32,
+            clock=lambda: unavailable["observed_at"],
+        )
+
     def test_allowlisted_wrapper_stages_reach_status_and_unavailable_event(self) -> None:
         secret_canary = "PRIVATE_AUGUST_STREAM_CANARY_6c3ca2"
         for stage in sorted(ADAPTER_MODULE.OBSERVE_STAGE_CODES):
             with self.subTest(stage=stage):
                 self.reset_runtime()
                 result = self.establish_failure(
+                    age_before_last=stage == "observe_transport_unavailable",
                     FAKE_AUGUST_FAIL="1",
                     FAKE_AUGUST_FAILURE_OUTPUT=self.failure_envelope(stage),
                     FAKE_AUGUST_STDERR=secret_canary,

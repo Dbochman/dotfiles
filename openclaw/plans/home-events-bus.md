@@ -574,7 +574,11 @@ read-only status through the existing MBP boundary.
 - Keep 60-second vacant polling and 15-second post-event bursts behind separate
   disabled feature flags until observed rate-limit behavior supports them.
 - On failure, back off through 1, 2, 5, 10, and 15 minutes.
-- Emit one `source.unavailable` only after three consecutive failures or ten
+- For relay transport failures, emit one `source.unavailable` only after at
+  least three failures spanning 30 minutes. This threshold incorporates the
+  observed routine 14- to 23-minute Crosstown transport gaps.
+- For remote-command, missing, oversized, malformed, or contract-invalid
+  output, retain the stricter threshold of three consecutive failures or ten
   minutes without a good status.
 - Emit one recovery event on the first successful poll.
 - Battery low at `≤20%`; recovered at `≥25%`.
