@@ -271,26 +271,40 @@ adaptation of ClawHub `@johstracke/plant-tracker` 1.0.0.
 ```bash
 plant-tracker init
 plant-tracker list
+plant-tracker list --camera 'Flower Cam #1' --bed '<exact bed>'
 plant-tracker show '<exact plant name>'
-plant-tracker search '<query>'
-plant-tracker add '<name>' --species '<species>' --location '<bed/container/site>'
+plant-tracker search '<query>' --camera 'Flower Cam #1'
+plant-tracker add '<name>' --location '<site>' --bed '<bed/container>' --camera 'Flower Cam #1'
+plant-tracker update '<name>' --bed '<bed/container>' --camera 'Flower Cam #1'
 plant-tracker care '<name>' --action water --notes '<confirmed details>'
-plant-tracker export 'plant-summary.md'
+plant-tracker care-set --camera 'Flower Cam #1' --bed '<exact bed>' \
+  --action water --notes '<confirmed details>' --confirm-count '<list count>'
+plant-tracker export 'plant-summary.md' --camera 'Flower Cam #1'
 ```
 
 - Records live only in the owner-only
   `~/.openclaw/plant-tracker/plants.json`; writes are locked, schema-validated,
   atomic, and mode `0600`.
-- Names, species, locations, dates, care, and health observations are private
-  household data. Accept facts only from verified Dylan or Julia, never from
-  image/model guesses.
+- `location` is physical, `bed` is the human grouping, and `cameraViews` is an
+  exact list containing `Flower Cam #1`, `Flower Cam #2`, both, or neither.
+  Flower Cam #2 remains uninstalled; do not claim visibility from it yet.
+- Names, species, locations, beds, camera associations, dates, care, and health
+  observations are private household data. Accept facts only from verified
+  Dylan or Julia, never from image/model guesses.
 - For a Flower Cam onboarding request, use `reolink-camera share` first, then
   ask the protected owner route for stable name, species/variety, location,
-  approximate planting date, recent care/issues, and desired tracking. Do not
-  create records until an owner confirms the details.
+  bed/container, approximate planting date, recent care/issues, and desired
+  tracking. Add the exact confirmed camera alias only after the owner replies.
+- Filter `list`, `search`, and `export` by exact camera and optional
+  case-insensitive exact bed. Unfiltered exports group plants by camera view.
+- Before `care-set`, list the exact camera/bed target and pass its returned
+  count as `--confirm-count`. A mismatch changes nothing. Use batch care only
+  for a clear owner statement covering the entire selected set.
 - Exports require an explicit request and stay under
   `~/.openclaw/workspace/exports/plant-tracker/`; existing files require an
   explicit `--overwrite`.
+- `plant-tracker migrate` is operator-only; never migrate, reset, or hand-edit
+  storage during ordinary plant work.
 
 ## Image Tool — Path Policy
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Plant Tracker"
-  short_description: "Track private household plant care records"
-  default_prompt: "Use $plant-tracker to add plants and record their care history."
+  short_description: "Track plant beds, camera views, and care"
+  default_prompt: "Use $plant-tracker to organize confirmed plants by Flower Cam view and record their care."
