@@ -1,6 +1,6 @@
 ---
 name: august-lock
-description: Safely control and verify the August smart lock at Crosstown. Lock, explicitly confirm unlocks, and check status (locked/unlocked, door open/closed, battery). Use when asked to lock or unlock the door, check whether the door is locked, or check lock battery.
+description: Safely control and verify the August smart lock at Crosstown. Lock, explicitly confirm unlocks, check status (locked/unlocked, door open/closed, battery), and diagnose sanitized read-only observation availability. Use when asked to operate the lock, check its state or battery, or explain an August observer outage.
 allowed-tools: Bash(august:*)
 metadata: {"openclaw":{"emoji":"🔒","requires":{"bins":["august"]}}}
 ---
@@ -16,6 +16,27 @@ Control the August Wi-Fi Smart Lock (4th gen) at **Crosstown (Crosstown residenc
 august status
 ```
 Returns JSON with lock state (locked/unlocked), door position (open/closed), and battery level.
+
+### Read-only automation observation
+
+```bash
+august observe
+```
+
+Uses the exact protected binding and returns only the safe alias, observation
+time, validated lock/door states, and optional battery percentage. It never
+returns remote stderr or unvalidated stdout. A failure exposes only one bounded
+stage:
+
+- `observe_transport_unavailable`
+- `observe_remote_failed`
+- `observe_output_missing`
+- `observe_output_oversize`
+- `observe_output_malformed`
+- `observe_output_contract_invalid`
+
+Treat these as observation-path diagnostics, not evidence that the physical
+lock changed state.
 
 ### Lock the door
 ```bash
@@ -111,7 +132,7 @@ closed and is never replaced automatically. Save failures exit nonzero.
 
 ## Safety rules
 
-- Run `status` freely; it is read-only.
+- Run `status` and `observe` freely; both are read-only.
 - Run `lock` only when requested or as part of an already authorized routine.
 - For `unlock`, run the preview, show its exact observed facts, obtain explicit
   user confirmation, and use only its returned approval ID. Never infer

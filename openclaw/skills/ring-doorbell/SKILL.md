@@ -1,20 +1,25 @@
 ---
 name: ring-doorbell
-description: Check Ring doorbell status, battery, events, and wifi health. Use when asked about the doorbell, front door, who rang the bell, motion at the door, or Ring device status. NOT for locks or alarm (Ring Alarm not supported).
+description: Check Ring doorbell and driveway-camera status, battery, events, and wifi health. Use when asked about a front door, doorbell ring, driveway or front-yard motion, or Ring device status. NOT for locks or alarm (Ring Alarm not supported).
 allowed-tools: Bash(ring:*)
 metadata: {"openclaw":{"emoji":"D","requires":{"bins":["ring"]}}}
 ---
 
-# Ring Doorbell
+# Ring Cameras and Doorbells
 
-Check **Ring doorbell** status, event history, and connectivity via the Ring cloud API.
+Check Ring device status, event history, and connectivity via the Ring cloud API.
 
 ## Devices
 
-| Name | ID | Type | Location |
-|------|-----|------|----------|
-| Front Door | 684794187 | cocoa_doorbell_v3 | Crosstown |
-| Front Door | 697442349 | cocoa_doorbell_v3 (shared) | Cabin |
+| Name | Safe binding | Role | Location |
+|------|--------------|------|----------|
+| Front Door | `front_door` | Doorbell | Crosstown |
+| Front Door | `front_door` | Doorbell (shared) | Cabin |
+| Sliding Door | `driveway` | Driveway/front-yard camera | Cabin |
+
+Provider identifiers remain inside the exact runtime binding. The normalized
+home-event bus accepts `driveway` only at Cabin and never guesses a site for an
+unknown device. Driveway motion is not a legacy dog-walk departure signal.
 
 ## Commands
 
@@ -70,7 +75,7 @@ Always use the `ring` command (custom wrapper). Never `pip install ring-doorbell
 ## Architecture
 
 ```
-Ring Doorbell <-cloud-> Ring API <-HTTPS-> ring_doorbell (venv) <- ring-api.py <- ring (bash) <- OpenClaw
+Ring devices <-cloud-> Ring API <-HTTPS-> ring_doorbell (venv) <- ring-api.py <- ring (bash) <- OpenClaw
 ```
 
 Cloud-only. Auth via Ring account (email + password + 2FA on first use). Tokens auto-refresh after initial setup.
@@ -88,7 +93,7 @@ Too many auth attempts. Wait a few minutes. Token caching prevents this under no
 
 ## Skill Boundaries
 
-This skill handles Ring doorbell CLI queries only.
+This skill handles Ring device CLI queries only.
 
 For related tasks, switch to:
 - **dog-walk**: Automated dog walk detection + Roomba automation (uses Ring for return monitoring only)

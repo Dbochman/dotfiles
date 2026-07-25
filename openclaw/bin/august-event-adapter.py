@@ -9,10 +9,12 @@ import json
 import os
 import re
 import secrets
+import selectors
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,24 @@ NORMAL_POLL_SECONDS = 300
 NORMAL_POLL_JITTER_SECONDS = 30
 OBSERVE_TIMEOUT_SECONDS = 20
 MAX_OUTPUT_BYTES = 4096
+OBSERVE_STAGE_CODES = frozenset(
+    {
+        "observe_transport_unavailable",
+        "observe_remote_failed",
+        "observe_output_missing",
+        "observe_output_oversize",
+        "observe_output_malformed",
+        "observe_output_contract_invalid",
+    }
+)
+LEGACY_OBSERVE_STAGE_CODES = {
+    "observe_timeout": "observe_transport_unavailable",
+    "observe_unavailable": "observe_transport_unavailable",
+    "observe_failed": "observe_remote_failed",
+    "invalid_observation": "observe_output_contract_invalid",
+    "invalid_observation_time": "observe_output_contract_invalid",
+    "observation_unavailable": "observe_remote_failed",
+}
 
 
 class AdapterError(Exception):
@@ -156,10 +176,13 @@ def validate_state(value: dict[str, Any] | None) -> dict[str, Any]:
         if value.get(key) is not None:
             value[key] = timestamp(parse_timestamp(value[key]))
     error_code = value.get("last_error_code")
-    if error_code is not None and (
-        not isinstance(error_code, str) or not SAFE_ALIAS_RE.fullmatch(error_code)
-    ):
-        raise AdapterError("invalid_state_file")
+    if error_code is not None:
+        if not isinstance(error_code, str):
+            raise AdapterError("invalid_state_file")
+        error_code = LEGACY_OBSERVE_STAGE_CODES.get(error_code, error_code)
+        if error_code not in OBSERVE_STAGE_CODES:
+            raise AdapterError("invalid_state_file")
+        value["last_error_code"] = error_code
     observation = value.get("observation")
     if observation is not None:
         value["observation"] = validate_observation(
@@ -387,34 +410,130 @@ def publish_pending(
     return state_after
 
 
+def wrapper_failure_stage(raw: bytes) -> str:
+    """Return only a stage from the wrapper's bounded failure contract."""
+
+    fallback = "observe_remote_failed"
+    if not raw or len(raw) > MAX_OUTPUT_BYTES:
+        return fallback
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return fallback
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"success", "error_code", "message"}
+        or value.get("success") is not False
+        or not isinstance(value.get("message"), str)
+        or len(value["message"]) > 256
+    ):
+        return fallback
+    code = value.get("error_code")
+    if not isinstance(code, str):
+        return fallback
+    code = LEGACY_OBSERVE_STAGE_CODES.get(code, code)
+    return code if code in OBSERVE_STAGE_CODES else fallback
+
+
+def stop_process(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is None:
+        process.kill()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def run_bounded_command(
+    argv: list[str], *, timeout: int, maximum_output_bytes: int
+) -> tuple[int, bytes, bool]:
+    """Run with discarded stderr and at most maximum+1 stdout bytes in memory."""
+
+    process = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    assert process.stdout is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout
+    output = bytearray()
+    oversize = False
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(remaining):
+                stop_process(process)
+                raise subprocess.TimeoutExpired(argv, timeout)
+            try:
+                chunk = os.read(
+                    process.stdout.fileno(),
+                    min(4096, maximum_output_bytes + 1 - len(output)),
+                )
+            except OSError:
+                stop_process(process)
+                raise
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > maximum_output_bytes:
+                oversize = True
+                stop_process(process)
+                break
+        if not oversize:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                stop_process(process)
+                raise subprocess.TimeoutExpired(argv, timeout)
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                stop_process(process)
+                raise
+        return int(process.returncode), bytes(output), oversize
+    finally:
+        selector.close()
+        process.stdout.close()
+
+
 def observe(august_bin: str) -> dict[str, Any]:
     try:
-        result = subprocess.run(
+        returncode, encoded, oversize = run_bounded_command(
             [august_bin, "observe"],
-            capture_output=True,
-            text=True,
             timeout=OBSERVE_TIMEOUT_SECONDS,
-            check=False,
+            maximum_output_bytes=MAX_OUTPUT_BYTES,
         )
     except subprocess.TimeoutExpired as exc:
-        raise AdapterError("observe_timeout") from exc
+        raise AdapterError("observe_transport_unavailable") from exc
     except OSError as exc:
-        raise AdapterError("observe_unavailable") from exc
-    if result.returncode != 0:
-        raise AdapterError("observe_failed")
-    encoded = result.stdout.encode("utf-8", errors="replace")
-    if not encoded or len(encoded) > MAX_OUTPUT_BYTES:
-        raise AdapterError("invalid_observation")
+        raise AdapterError("observe_transport_unavailable") from exc
+    if oversize:
+        raise AdapterError("observe_output_oversize")
+    if returncode != 0:
+        code = (
+            "observe_transport_unavailable"
+            if returncode == 255
+            else wrapper_failure_stage(encoded)
+        )
+        raise AdapterError(code)
+    if not encoded:
+        raise AdapterError("observe_output_missing")
     try:
-        raw = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise AdapterError("invalid_observation") from exc
-    return validate_observation(raw)
+        raw = json.loads(encoded.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise AdapterError("observe_output_malformed") from exc
+    try:
+        return validate_observation(raw)
+    except AdapterError as exc:
+        raise AdapterError("observe_output_contract_invalid") from exc
 
 
 def failure_state(
     state: dict[str, Any], now: datetime, code: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if code not in OBSERVE_STAGE_CODES:
+        raise AdapterError("invalid_observe_stage")
     failures = int(state.get("consecutive_failures", 0)) + 1
     first_failure_at = state.get("first_failure_at") or timestamp(now)
     first_failure = parse_timestamp(first_failure_at)

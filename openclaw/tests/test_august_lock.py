@@ -96,6 +96,7 @@ import json
 import os
 import re
 import sys
+import time
 
 args = sys.argv[1:]
 with open(os.environ["FAKE_SSH_LOG"], "w", encoding="utf-8") as handle:
@@ -146,10 +147,13 @@ elif remote_args[0] == "unlock":
 elif remote_args[0] == "observe":
     if os.environ.get("FAKE_OBSERVE_STDERR") == "1":
         print("RAW_SSH_OBSERVE_STDERR_CANARY_7EDFA965E0AE0CE19772AFA435364295", file=sys.stderr)
-    if os.environ.get("FAKE_OBSERVE_FAIL") == "1":
+    if os.environ.get("FAKE_OBSERVE_SLEEP"):
+        time.sleep(float(os.environ["FAKE_OBSERVE_SLEEP"]))
+    if os.environ.get("FAKE_OBSERVE_FAIL") == "1" or os.environ.get("FAKE_OBSERVE_EXIT"):
         print("RAW_SSH_OBSERVE_STDOUT_CANARY_7EDFA965E0AE0CE19772AFA435364295")
-        raise SystemExit(73)
-    print(os.environ.get("FAKE_REMOTE_OBSERVE", json.dumps(sanitized_observation)))
+        raise SystemExit(int(os.environ.get("FAKE_OBSERVE_EXIT", "73")))
+    if os.environ.get("FAKE_OBSERVE_NO_STDOUT") != "1":
+        print(os.environ.get("FAKE_REMOTE_OBSERVE", json.dumps(sanitized_observation)))
 else:
     print('{"fake_ssh":true}')
 ''',
@@ -744,36 +748,94 @@ fs.renameSync = function (...args) {
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), observation)
 
-    def test_wrapper_observe_quarantines_remote_stdout_and_stderr(self) -> None:
+    def test_wrapper_observe_reports_bounded_stages_without_stream_leakage(self) -> None:
+        malformed_canary = (
+            "RAW_MALFORMED_OBSERVE_CANARY_"
+            "7EDFA965E0AE0CE19772AFA435364295"
+        )
         cases = (
-            {
-                "FAKE_OBSERVE_FAIL": "1",
-                "FAKE_OBSERVE_STDERR": "1",
-            },
-            {
-                "FAKE_REMOTE_OBSERVE": (
-                    '{"ok":true,"alias":"front_door",'
-                    '"observed_at":"2026-01-01T12:00:00.000Z",'
-                    '"lock_state":"locked","door_state":"closed",'
-                    f'"provider_lock_id":"{LOCK_ID}"}}'
-                ),
-                "FAKE_OBSERVE_STDERR": "1",
-            },
+            (
+                "transport_exit_255",
+                {"FAKE_OBSERVE_EXIT": "255"},
+                "observe_transport_unavailable",
+            ),
+            (
+                "transport_timeout",
+                {
+                    "FAKE_OBSERVE_SLEEP": "0.2",
+                    "AUGUST_OBSERVE_TIMEOUT_SECONDS": "0.05",
+                },
+                "observe_transport_unavailable",
+            ),
+            (
+                "remote_nonzero",
+                {"FAKE_OBSERVE_FAIL": "1"},
+                "observe_remote_failed",
+            ),
+            (
+                "missing_output",
+                {"FAKE_OBSERVE_NO_STDOUT": "1"},
+                "observe_output_missing",
+            ),
+            (
+                "oversize_output",
+                {"FAKE_REMOTE_OBSERVE": malformed_canary + ("x" * 4096)},
+                "observe_output_oversize",
+            ),
+            (
+                "malformed_output",
+                {"FAKE_REMOTE_OBSERVE": malformed_canary},
+                "observe_output_malformed",
+            ),
+            (
+                "contract_invalid_output",
+                {
+                    "FAKE_REMOTE_OBSERVE": (
+                        '{"ok":true,"alias":"front_door",'
+                        '"observed_at":"2026-01-01T12:00:00.000Z",'
+                        '"lock_state":"locked","door_state":"closed",'
+                        f'"provider_lock_id":"{LOCK_ID}"}}'
+                    )
+                },
+                "observe_output_contract_invalid",
+            ),
         )
 
-        for overrides in cases:
-            with self.subTest(overrides=overrides):
-                result = self.run_wrapper("observe", **overrides)
+        for label, overrides, expected_code in cases:
+            with self.subTest(case=label):
+                result = self.run_wrapper(
+                    "observe", FAKE_OBSERVE_STDERR="1", **overrides
+                )
 
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(
                     self.wrapper_output(result)["error_code"],
-                    "observation_unavailable",
+                    expected_code,
                 )
                 self.assertEqual(result.stderr, "")
                 combined = result.stdout + result.stderr
                 self.assertNotIn("RAW_SSH_OBSERVE", combined)
+                self.assertNotIn(malformed_canary, combined)
                 self.assertNotIn(LOCK_ID, combined)
+
+    def test_wrapper_observe_stage_codes_are_a_closed_set(self) -> None:
+        expected = {
+            "observe_transport_unavailable",
+            "observe_remote_failed",
+            "observe_output_missing",
+            "observe_output_oversize",
+            "observe_output_malformed",
+            "observe_output_contract_invalid",
+        }
+        source = WRAPPER.read_text(encoding="utf-8")
+        emitted = set(
+            re.findall(
+                r'"(observe_(?:transport|remote|output)_[a-z_]+)"',
+                source,
+            )
+        )
+
+        self.assertEqual(emitted, expected)
 
     def test_lock_retries_then_returns_verified_safe_state(self) -> None:
         self.write_config(self.valid_config())

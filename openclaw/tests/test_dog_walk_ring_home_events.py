@@ -179,6 +179,93 @@ class RingHomeEventTests(unittest.TestCase):
         self.assertNotIn("697442349", combined_logs)
         self.assertNotIn("123457", combined_logs)
 
+    def test_driveway_binding_publishes_without_becoming_a_departure_signal(
+        self,
+    ) -> None:
+        driveway_ids = [
+            provider_id
+            for provider_id, binding in self.module.RING_EVENT_DEVICES.items()
+            if binding == {"site": "cabin", "entity_alias": "driveway"}
+        ]
+        self.assertEqual(len(driveway_ids), 1)
+        driveway_id = driveway_ids[0]
+
+        with mock.patch.object(self.module.time, "time", return_value=1_788_000_001.0):
+            self.process(
+                event_id=123458,
+                device="Sliding Door",
+                doorbot_id=driveway_id,
+            )
+
+        self.assertEqual(len(self.publisher.payloads), 1)
+        payload = self.publisher.payloads[0]
+        self.assertEqual(payload["site"], "cabin")
+        self.assertEqual(payload["entity_kind"], "doorbell")
+        self.assertEqual(payload["entity_alias"], "driveway")
+        self.assertEqual(
+            payload["source_event_id"],
+            f"{driveway_id}:123458",
+        )
+        self.assertNotIn(driveway_id, self.module.DOORBELL_LOCATIONS)
+        self.assertEqual(self.module._ring_departure_motion, {})
+        self.assertEqual(self.publisher.quarantined, 0)
+
+        combined_logs = "\n".join(self.logs)
+        self.assertIn("site=cabin entity=driveway", combined_logs)
+        self.assertNotIn("Sliding Door", combined_logs)
+        self.assertNotIn(str(driveway_id), combined_logs)
+        self.assertNotIn("123458", combined_logs)
+
+    def test_video_inventory_reconciliation_covers_driveway_and_unmapped_cameras(
+        self,
+    ) -> None:
+        driveway_id = next(
+            provider_id
+            for provider_id, binding in self.module.RING_EVENT_DEVICES.items()
+            if binding == {"site": "cabin", "entity_alias": "driveway"}
+        )
+        mapped = types.SimpleNamespace(id=driveway_id)
+
+        mapped_inventory = types.SimpleNamespace(video_devices=(mapped,))
+        self.assertFalse(
+            self.module._ring_inventory_has_unbound_devices(mapped_inventory)
+        )
+
+        unmapped_id = max(self.module.RING_EVENT_DEVICES) + 1
+        unmapped = types.SimpleNamespace(id=unmapped_id)
+        broad_inventory = types.SimpleNamespace(
+            # A doorbell-only check would miss the unmapped video camera.
+            doorbots=(mapped,),
+            authorized_doorbots=(),
+            stickup_cams=(unmapped,),
+            video_devices=(mapped, unmapped),
+        )
+        self.assertTrue(
+            self.module._ring_inventory_has_unbound_devices(broad_inventory)
+        )
+
+    def test_video_inventory_reconciliation_has_a_fail_closed_sdk_fallback(
+        self,
+    ) -> None:
+        front_door_id = next(iter(self.module.DOORBELL_LOCATIONS))
+        legacy_inventory = types.SimpleNamespace(
+            doorbots=(types.SimpleNamespace(id=front_door_id),),
+            authorized_doorbots=(),
+            stickup_cams=(),
+        )
+        self.assertFalse(
+            self.module._ring_inventory_has_unbound_devices(legacy_inventory)
+        )
+        self.assertTrue(
+            self.module._ring_inventory_has_unbound_devices(
+                types.SimpleNamespace(
+                    doorbots=(),
+                    authorized_doorbots=(),
+                    stickup_cams=(),
+                )
+            )
+        )
+
     def test_dedupe_precedes_bus_tee_and_legacy_person_motion_is_preserved(self) -> None:
         self.process()
         first_departure_timestamp = self.module._ring_departure_motion["crosstown"]
@@ -422,6 +509,200 @@ class RingHomeEventTests(unittest.TestCase):
         self.assertEqual(status["counters"]["published"], 1)
         self.assertEqual(status["counters"]["failed"], 1)
         self.assertEqual(status_path.stat().st_mode & 0o777, 0o600)
+
+    def test_status_persist_failures_back_off_without_clearing_dirty_state(
+        self,
+    ) -> None:
+        publisher = self.module._RingHomeEventPublisher(
+            "/fake/home-eventctl",
+            status_path=Path(self.class_tempdir.name) / "unused-status.json",
+        )
+        publisher._increment("accepted")
+        log_result = mock.Mock()
+
+        with (
+            mock.patch.object(
+                publisher,
+                "_persist_status",
+                side_effect=ValueError("unsafe status path"),
+            ) as persist_status,
+            mock.patch.object(publisher, "_log_result", log_result),
+        ):
+            self.assertFalse(publisher._persist_status_if_due(now=0.0))
+            self.assertEqual(persist_status.call_count, 1)
+            self.assertFalse(publisher._persist_status_if_due(now=4.99))
+            self.assertEqual(persist_status.call_count, 1)
+
+            self.assertFalse(publisher._persist_status_if_due(now=5.0))
+            self.assertEqual(persist_status.call_count, 2)
+            self.assertFalse(publisher._persist_status_if_due(now=14.99))
+            self.assertEqual(persist_status.call_count, 2)
+
+            self.assertFalse(publisher._persist_status_if_due(now=15.0))
+            self.assertEqual(persist_status.call_count, 3)
+            while (
+                publisher._status_retry_delay
+                < self.module._RING_STATUS_RETRY_MAX_SECONDS
+            ):
+                self.assertFalse(
+                    publisher._persist_status_if_due(
+                        now=publisher._status_retry_not_before
+                    )
+                )
+
+            capped_retry_at = publisher._status_retry_not_before
+            self.assertFalse(
+                publisher._persist_status_if_due(now=capped_retry_at)
+            )
+            self.assertEqual(
+                publisher._status_retry_not_before - capped_retry_at,
+                self.module._RING_STATUS_RETRY_MAX_SECONDS,
+            )
+
+        log_result.assert_called_once_with("status_persist_failure")
+        self.assertTrue(publisher._dirty.is_set())
+
+        def recover_status() -> None:
+            publisher._dirty.clear()
+
+        with mock.patch.object(
+            publisher,
+            "_persist_status",
+            side_effect=recover_status,
+        ):
+            self.assertTrue(
+                publisher._persist_status_if_due(
+                    now=publisher._status_retry_not_before
+                )
+            )
+
+        self.assertFalse(publisher._dirty.is_set())
+        self.assertEqual(
+            publisher._status_retry_delay,
+            self.module._RING_STATUS_RETRY_INITIAL_SECONDS,
+        )
+        self.assertEqual(publisher._status_retry_not_before, 0.0)
+        self.assertFalse(publisher._status_persist_failure_logged)
+
+        publisher._increment("accepted")
+        with (
+            mock.patch.object(
+                publisher,
+                "_persist_status",
+                side_effect=ValueError("unsafe status path"),
+            ),
+            mock.patch.object(publisher, "_log_result", log_result),
+        ):
+            self.assertFalse(publisher._persist_status_if_due(now=5000.0))
+        self.assertEqual(
+            log_result.call_args_list,
+            [
+                mock.call("status_persist_failure"),
+                mock.call("status_persist_failure"),
+            ],
+        )
+
+    def test_v1_quarantine_history_recovers_after_clean_inventory_reconciliation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            status_path = Path(directory) / "state" / "ring-producer.json"
+            status_path.parent.mkdir(mode=0o700)
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "updated_at": "2026-07-24T20:00:00Z",
+                        "health": "degraded",
+                        "counters": {
+                            "accepted": 33,
+                            "published": 33,
+                            "failed": 0,
+                            "dropped": 0,
+                            "quarantined": 8,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            status_path.chmod(0o600)
+            publisher = self.module._RingHomeEventPublisher(
+                "/fake/home-eventctl",
+                status_path=status_path,
+            )
+
+            publisher._load_status()
+            self.assertEqual(publisher._health_locked(), "degraded")
+            publisher.reconcile_device_bindings(has_unbound_devices=False)
+            publisher._persist_status()
+
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status["schema_version"], 1)
+            self.assertEqual(
+                set(status),
+                {"schema_version", "updated_at", "health", "counters"},
+            )
+            self.assertEqual(status["health"], "ok")
+            self.assertEqual(status["counters"]["quarantined"], 8)
+            self.assertEqual(status["counters"]["published"], 33)
+
+    def test_active_unbound_device_stays_degraded_until_reconciled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            status_path = Path(directory) / "state" / "ring-producer.json"
+            status_path.parent.mkdir(mode=0o700)
+            publisher = self.module._RingHomeEventPublisher(
+                "/fake/home-eventctl",
+                status_path=status_path,
+            )
+
+            publisher.reconcile_device_bindings(has_unbound_devices=True)
+            publisher.quarantine_unknown_device()
+            publisher._increment("published")
+            publisher._persist_status()
+
+            degraded = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(degraded["health"], "degraded")
+            self.assertEqual(degraded["schema_version"], 1)
+            self.assertEqual(
+                set(degraded),
+                {"schema_version", "updated_at", "health", "counters"},
+            )
+            self.assertEqual(degraded["counters"]["quarantined"], 1)
+
+            publisher.reconcile_device_bindings(has_unbound_devices=False)
+            publisher._persist_status()
+
+            recovered = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(recovered["health"], "ok")
+            self.assertEqual(recovered["counters"]["quarantined"], 1)
+
+    def test_delivery_failure_and_drop_recover_only_after_publish(self) -> None:
+        for outcome in ("failed", "dropped"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                status_path = Path(directory) / "state" / "ring-producer.json"
+                status_path.parent.mkdir(mode=0o700)
+                publisher = self.module._RingHomeEventPublisher(
+                    "/fake/home-eventctl",
+                    status_path=status_path,
+                )
+                publisher.reconcile_device_bindings(has_unbound_devices=False)
+
+                publisher._increment(outcome)
+                publisher._persist_status()
+                degraded = json.loads(status_path.read_text(encoding="utf-8"))
+                self.assertEqual(degraded["health"], "degraded")
+                self.assertEqual(degraded["schema_version"], 1)
+                self.assertEqual(degraded["counters"][outcome], 1)
+
+                publisher._increment("published")
+                publisher._persist_status()
+                recovered = json.loads(status_path.read_text(encoding="utf-8"))
+                self.assertEqual(recovered["health"], "ok")
+                self.assertEqual(
+                    set(recovered),
+                    {"schema_version", "updated_at", "health", "counters"},
+                )
+                self.assertEqual(recovered["counters"][outcome], 1)
 
 
 if __name__ == "__main__":

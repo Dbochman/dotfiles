@@ -44,6 +44,29 @@ AUTO_PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
 MAINTENANCE_LAST_PRUNE_EPOCH = "maintenance_last_prune_epoch"
 RING_LIVE_MAX_AGE = dt.timedelta(seconds=60)
 RING_BACKFILL_MAX_AGE = dt.timedelta(minutes=15)
+AUGUST_OBSERVE_STAGE_CODES = frozenset(
+    {
+        "observe_transport_unavailable",
+        "observe_remote_failed",
+        "observe_output_missing",
+        "observe_output_oversize",
+        "observe_output_malformed",
+        "observe_output_contract_invalid",
+    }
+)
+AUGUST_LEGACY_OBSERVE_STAGE_CODES = frozenset(
+    {
+        "observe_timeout",
+        "observe_unavailable",
+        "observe_failed",
+        "invalid_observation",
+        "invalid_observation_time",
+        "observation_unavailable",
+    }
+)
+AUGUST_UNAVAILABLE_REASON_CODES = (
+    AUGUST_OBSERVE_STAGE_CODES | AUGUST_LEGACY_OBSERVE_STAGE_CODES
+)
 
 SAFE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 EVENT_UID_RE = re.compile(r"^evt_[0-9a-f]{32}$")
@@ -204,10 +227,17 @@ EVENT_ENTITY_KIND: Mapping[str, Mapping[str, str]] = {
 }
 
 SAFE_DEVICE_ALIASES: Mapping[str, frozenset[str]] = {
-    "ring": frozenset({"front_door"}),
+    "ring": frozenset({"front_door", "driveway"}),
     "august": frozenset({"front_door"}),
     "nest": frozenset({"kitchen", "living_room", "living_room_wired"}),
 }
+SAFE_RING_BINDINGS = frozenset(
+    {
+        ("cabin", "driveway"),
+        ("cabin", "front_door"),
+        ("crosstown", "front_door"),
+    }
+)
 SAFE_PERSON_ALIASES = frozenset({"dylan", "julia"})
 
 ENTITY_KINDS: Mapping[str, Tuple[str, ...]] = {
@@ -603,6 +633,8 @@ def _validate_event_contract(
         raise PayloadError("unbound_entity_site")
 
     if source == "ring":
+        if (site, entity_alias) not in SAFE_RING_BINDINGS:
+            raise PayloadError("unbound_entity_site")
         expected_classification = {
             "entry.person_detected": "person",
             "entry.motion_detected": "motion",
@@ -713,6 +745,11 @@ def _validate_event_contract(
     if source == "august":
         if occurred_at != observed_at or occurred != observed:
             raise PayloadError("invalid_observed_interval")
+        if (
+            event_type == "source.unavailable"
+            and attributes.get("reason_code") not in AUGUST_UNAVAILABLE_REASON_CODES
+        ):
+            raise PayloadError("invalid_august_reason_code")
         if event_type.startswith(("lock.", "door.", "device.")):
             not_before = attributes.get("not_before")
             not_after = attributes.get("not_after")

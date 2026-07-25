@@ -36,6 +36,7 @@ def ring_payload(
     source_event_id: str = "private-ring-device:private-ring-event",
     event_type: str = "entry.person_detected",
     site: str = "crosstown",
+    alias: str = "front_door",
     occurred_at: str = "2026-07-12T14:59:55Z",
     observed_at: str = "2026-07-12T14:59:56Z",
     schema: bool = True,
@@ -50,7 +51,7 @@ def ring_payload(
         "event_type": event_type,
         "site": site,
         "entity_kind": "doorbell",
-        "entity_alias": "front_door",
+        "entity_alias": alias,
         "occurred_at": occurred_at,
         "observed_at": observed_at,
         "time_precision": "source",
@@ -423,6 +424,38 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertEqual(status["publisher"]["counters"]["dropped"], 1)
         self.assertIsNone(status["publisher"]["error_code"])
 
+    def test_ring_worker_v1_projects_recovered_health_without_erasing_history(
+        self,
+    ) -> None:
+        self.paths.ring_producer_status.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "updated_at": NOW,
+                    "health": "ok",
+                    "counters": {
+                        "accepted": 12,
+                        "published": 12,
+                        "failed": 0,
+                        "dropped": 0,
+                        "quarantined": 8,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.paths.ring_producer_status.chmod(0o600)
+
+        publisher = self.store.status_snapshot()["sources"]["ring"]["publisher"]
+
+        self.assertEqual(publisher["health"], "ok")
+        self.assertEqual(publisher["counters"]["quarantined"], 8)
+        self.assertIsNone(publisher["error_code"])
+        self.assertEqual(
+            set(publisher),
+            {"health", "updated_at", "error_code", "counters"},
+        )
+
 
 class EnqueueValidationTests(HomeEventTestCase):
     def test_raw_source_identifier_is_hmaced_before_spool_or_database(self) -> None:
@@ -501,6 +534,36 @@ class EnqueueValidationTests(HomeEventTestCase):
         event = self.enqueue(delayed)
         self.assertEqual(event.time_precision, "backfill")
 
+    def test_ring_site_alias_bindings_are_exact(self) -> None:
+        for index, (site, alias) in enumerate(
+            (
+                ("crosstown", "front_door"),
+                ("cabin", "front_door"),
+                ("cabin", "driveway"),
+            )
+        ):
+            with self.subTest(site=site, alias=alias):
+                event = self.enqueue(
+                    ring_payload(
+                        source_event_id=f"bound-ring-{index}",
+                        site=site,
+                        alias=alias,
+                    )
+                )
+                self.assertEqual(event.site, site)
+                self.assertEqual(event.entity_alias, alias)
+
+        with self.assertRaisesRegex(
+            home_events.PayloadError, "unbound_entity_site"
+        ):
+            self.enqueue(
+                ring_payload(
+                    source_event_id="misbound-driveway",
+                    site="crosstown",
+                    alias="driveway",
+                )
+            )
+
     def test_duplicate_keys_nonfinite_numbers_oversize_and_bad_time_are_rejected(self) -> None:
         duplicate = (
             b'{"schema_version":1,"schema_version":1,"source_event_id":"x",'
@@ -560,6 +623,43 @@ class EnqueueValidationTests(HomeEventTestCase):
             home_events.PayloadError, "transition_direction_mismatch"
         ):
             self.enqueue(reversed_direction, source="august")
+
+    def test_august_unavailable_reason_codes_are_closed(self) -> None:
+        for index, reason_code in enumerate(
+            sorted(home_events.AUGUST_UNAVAILABLE_REASON_CODES)
+        ):
+            with self.subTest(reason_code=reason_code):
+                payload = august_payload(
+                    source_event_id=f"safe-unavailable-{index}"
+                )
+                payload.update(
+                    {
+                        "event_type": "source.unavailable",
+                        "entity_kind": "adapter",
+                    }
+                )
+                payload["attributes"] = {
+                    "failure_count": 3,
+                    "reason_code": reason_code,
+                }
+                event = self.enqueue(payload, source="august")
+                self.assertEqual(event.attributes["reason_code"], reason_code)
+
+        payload = august_payload(source_event_id="unsafe-unavailable-reason")
+        payload.update(
+            {
+                "event_type": "source.unavailable",
+                "entity_kind": "adapter",
+            }
+        )
+        payload["attributes"] = {
+            "failure_count": 3,
+            "reason_code": "provider_account_private_failure",
+        }
+        with self.assertRaisesRegex(
+            home_events.PayloadError, "invalid_august_reason_code"
+        ):
+            self.enqueue(payload, source="august")
 
     def test_presence_contract_accepts_only_canonical_safe_context(self) -> None:
         payload = {

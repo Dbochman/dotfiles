@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -17,6 +18,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ADAPTER = REPO_ROOT / "openclaw" / "bin" / "august-event-adapter.py"
 BUS_PATH = REPO_ROOT / "openclaw" / "bin" / "home_event_bus.py"
+
+ADAPTER_SPEC = importlib.util.spec_from_file_location(
+    "august_test_event_adapter", ADAPTER
+)
+assert ADAPTER_SPEC and ADAPTER_SPEC.loader
+ADAPTER_MODULE = importlib.util.module_from_spec(ADAPTER_SPEC)
+sys.modules[ADAPTER_SPEC.name] = ADAPTER_MODULE
+ADAPTER_SPEC.loader.exec_module(ADAPTER_MODULE)
 
 BUS_SPEC = importlib.util.spec_from_file_location("august_test_home_event_bus", BUS_PATH)
 assert BUS_SPEC and BUS_SPEC.loader
@@ -41,12 +50,21 @@ class AugustEventAdapterTests(unittest.TestCase):
         self._write_executable(
             self.august,
             """#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 with open(os.environ['AUGUST_CALLS_LOG'], 'a', encoding='utf-8') as handle:
     handle.write(' '.join(sys.argv[1:]) + '\\n')
+if os.environ.get('FAKE_AUGUST_STDERR'):
+    sys.stderr.write(os.environ['FAKE_AUGUST_STDERR'])
+if os.environ.get('FAKE_AUGUST_SLEEP'):
+    time.sleep(float(os.environ['FAKE_AUGUST_SLEEP']))
 if os.environ.get('FAKE_AUGUST_FAIL') == '1':
-    raise SystemExit(7)
-print(os.environ['FAKE_AUGUST_OBSERVATION'])
+    sys.stdout.write(os.environ.get('FAKE_AUGUST_FAILURE_OUTPUT', ''))
+    raise SystemExit(int(os.environ.get('FAKE_AUGUST_EXIT', '7')))
+if os.environ.get('FAKE_AUGUST_NO_STDOUT') != '1':
+    sys.stdout.write(os.environ.get(
+        'FAKE_AUGUST_RAW_OUTPUT',
+        os.environ['FAKE_AUGUST_OBSERVATION'] + '\\n',
+    ))
 """,
         )
         self._write_executable(
@@ -117,6 +135,34 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
         if not self.events_log.exists():
             return []
         return [json.loads(line) for line in self.events_log.read_text().splitlines()]
+
+    def reset_runtime(self) -> None:
+        shutil.rmtree(
+            self.home / ".openclaw" / "home-events",
+            ignore_errors=True,
+        )
+        self.events_log.unlink(missing_ok=True)
+        self.calls_log.unlink(missing_ok=True)
+
+    @staticmethod
+    def failure_envelope(code: str, message: str = "Observation unavailable") -> str:
+        return json.dumps(
+            {"success": False, "error_code": code, "message": message},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    def establish_failure(
+        self, **overrides: str
+    ) -> subprocess.CompletedProcess[str]:
+        baseline = self.run_adapter()
+        self.assertEqual(baseline.returncode, 0, baseline.stderr)
+        result = baseline
+        for _ in range(3):
+            self.make_due()
+            result = self.run_adapter(**overrides)
+            self.assertNotEqual(result.returncode, 0)
+        return result
 
     def test_disabled_mode_does_not_observe_or_create_state(self) -> None:
         result = self.run_adapter(HOME_EVENTS_AUGUST_ENABLED="0")
@@ -257,6 +303,144 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
         state = json.loads(self.state_path.read_text(encoding="utf-8"))
         self.assertTrue(state["offline_emitted"])
         self.assertEqual(state["consecutive_failures"], 3)
+        self.assertEqual(state["last_error_code"], "observe_remote_failed")
+        self.assertEqual(
+            unavailable["attributes"]["reason_code"], "observe_remote_failed"
+        )
+
+    def test_allowlisted_wrapper_stages_reach_status_and_unavailable_event(self) -> None:
+        secret_canary = "PRIVATE_AUGUST_STREAM_CANARY_6c3ca2"
+        for stage in sorted(ADAPTER_MODULE.OBSERVE_STAGE_CODES):
+            with self.subTest(stage=stage):
+                self.reset_runtime()
+                result = self.establish_failure(
+                    FAKE_AUGUST_FAIL="1",
+                    FAKE_AUGUST_FAILURE_OUTPUT=self.failure_envelope(stage),
+                    FAKE_AUGUST_STDERR=secret_canary,
+                )
+
+                self.assertEqual(
+                    json.loads(result.stdout)["error_code"],
+                    stage,
+                )
+                state = json.loads(self.state_path.read_text(encoding="utf-8"))
+                self.assertEqual(state["last_error_code"], stage)
+                unavailable = self.published()[0]["payload"]
+                self.assertEqual(
+                    unavailable["attributes"]["reason_code"],
+                    stage,
+                )
+                BUS.normalize_input(
+                    "august",
+                    unavailable,
+                    b"a" * 32,
+                    clock=lambda: unavailable["observed_at"],
+                )
+                self.assertNotIn(
+                    secret_canary,
+                    result.stdout + result.stderr + json.dumps(unavailable),
+                )
+
+    def test_untrusted_wrapper_stage_and_message_are_not_propagated(self) -> None:
+        private_code = "private_provider_account_disabled"
+        secret_canary = "PRIVATE_AUGUST_FAILURE_MESSAGE_942ad7"
+        result = self.establish_failure(
+            FAKE_AUGUST_FAIL="1",
+            FAKE_AUGUST_FAILURE_OUTPUT=self.failure_envelope(
+                private_code, secret_canary
+            ),
+            FAKE_AUGUST_STDERR=secret_canary,
+        )
+
+        self.assertEqual(
+            json.loads(result.stdout)["error_code"],
+            "observe_remote_failed",
+        )
+        state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["last_error_code"], "observe_remote_failed")
+        unavailable = self.published()[0]["payload"]
+        self.assertEqual(
+            unavailable["attributes"]["reason_code"],
+            "observe_remote_failed",
+        )
+        combined = result.stdout + result.stderr + json.dumps(state) + json.dumps(
+            unavailable
+        )
+        self.assertNotIn(private_code, combined)
+        self.assertNotIn(secret_canary, combined)
+
+    def test_success_output_failures_are_distinct_and_stream_safe(self) -> None:
+        private_canary = "PRIVATE_AUGUST_OUTPUT_CANARY_0e765f"
+        cases = (
+            (
+                "missing",
+                {"FAKE_AUGUST_NO_STDOUT": "1"},
+                "observe_output_missing",
+            ),
+            (
+                "oversize",
+                {"FAKE_AUGUST_RAW_OUTPUT": private_canary + ("x" * 4096)},
+                "observe_output_oversize",
+            ),
+            (
+                "malformed",
+                {"FAKE_AUGUST_RAW_OUTPUT": private_canary},
+                "observe_output_malformed",
+            ),
+            (
+                "contract_invalid",
+                {
+                    "FAKE_AUGUST_RAW_OUTPUT": json.dumps(
+                        {
+                            "ok": True,
+                            "alias": "private_lock_alias",
+                            "observed_at": "2026-01-01T12:05:00Z",
+                            "lock_state": "locked",
+                            "door_state": "closed",
+                            "private": private_canary,
+                        }
+                    )
+                },
+                "observe_output_contract_invalid",
+            ),
+        )
+        for label, overrides, expected in cases:
+            with self.subTest(case=label):
+                self.reset_runtime()
+                baseline = self.run_adapter()
+                self.assertEqual(baseline.returncode, 0, baseline.stderr)
+                self.make_due()
+
+                result = self.run_adapter(
+                    FAKE_AUGUST_STDERR=private_canary,
+                    **overrides,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(json.loads(result.stdout)["error_code"], expected)
+                state = json.loads(self.state_path.read_text(encoding="utf-8"))
+                self.assertEqual(state["last_error_code"], expected)
+                self.assertEqual(self.published(), [])
+                self.assertNotIn(
+                    private_canary,
+                    result.stdout + result.stderr + json.dumps(state),
+                )
+
+    def test_legacy_state_codes_migrate_but_arbitrary_codes_fail_closed(self) -> None:
+        for legacy, expected in ADAPTER_MODULE.LEGACY_OBSERVE_STAGE_CODES.items():
+            with self.subTest(legacy=legacy):
+                state = ADAPTER_MODULE.initial_state()
+                state["last_error_code"] = legacy
+                self.assertEqual(
+                    ADAPTER_MODULE.validate_state(state)["last_error_code"],
+                    expected,
+                )
+
+        state = ADAPTER_MODULE.initial_state()
+        state["last_error_code"] = "provider_private_failure"
+        with self.assertRaises(ADAPTER_MODULE.AdapterError) as raised:
+            ADAPTER_MODULE.validate_state(state)
+        self.assertEqual(raised.exception.code, "invalid_state_file")
 
     def test_adapter_source_has_no_mutation_command(self) -> None:
         source = ADAPTER.read_text(encoding="utf-8")

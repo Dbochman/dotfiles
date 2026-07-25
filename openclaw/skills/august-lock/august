@@ -100,62 +100,170 @@ remote_call() {
     -o ConnectTimeout=5 "$MACBOOK" "$remote_command"
 }
 
-validate_observation_output() {
-  "$PYTHON_BIN" -c '
-import datetime
-import json
-import sys
-
-maximum = 4096
-raw = sys.stdin.buffer.read(maximum + 1)
-if not raw or len(raw) > maximum:
-    raise SystemExit(1)
-try:
-    value = json.loads(raw.decode("utf-8"))
-except (UnicodeDecodeError, json.JSONDecodeError):
-    raise SystemExit(1)
-
-required = {"ok", "alias", "observed_at", "lock_state", "door_state"}
-allowed = required | {"battery_percent"}
-if (not isinstance(value, dict) or not required.issubset(value)
-        or set(value) - allowed):
-    raise SystemExit(1)
-if value.get("ok") is not True or value.get("alias") != "front_door":
-    raise SystemExit(1)
-if value.get("lock_state") not in {"locked", "unlocked", "unknown"}:
-    raise SystemExit(1)
-if value.get("door_state") not in {"open", "closed", "unknown"}:
-    raise SystemExit(1)
-observed_at = value.get("observed_at")
-if not isinstance(observed_at, str) or not observed_at or len(observed_at) > 64:
-    raise SystemExit(1)
-try:
-    parsed = datetime.datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
-except ValueError:
-    raise SystemExit(1)
-if parsed.tzinfo is None:
-    raise SystemExit(1)
-battery = value.get("battery_percent")
-if "battery_percent" in value and (type(battery) is not int or not 0 <= battery <= 100):
-    raise SystemExit(1)
-
-print(json.dumps(value, separators=(",", ":"), sort_keys=True))
-'
-}
-
 observe_bound_lock() {
-  local observation
+  local remote_command
+  remote_command=$(remote_command_for observe)
 
   # The remote provider is an untrusted stream producer.  It may write account
   # or device material before the Node command can convert an exception into
-  # its safe JSON error.  Never forward its stderr, and release stdout only
-  # after a bounded exact-contract validation and canonical re-serialization.
-  if ! observation=$(remote_call observe 2>/dev/null \
-      | validate_observation_output 2>/dev/null); then
-    emit_error "observation_unavailable" "Sanitized August observation is unavailable"
-    return 1
-  fi
-  printf '%s\n' "$observation"
+  # its safe JSON error.  Contain both streams inside this helper: discard
+  # stderr, cap stdout, and release it only after exact-contract validation and
+  # canonicalization.  Failure output is always a small, allowlisted stage.
+  "$PYTHON_BIN" - "$SSH_BIN" "$SSH_KEY" "$MACBOOK" "$remote_command" <<'PY'
+import datetime
+import json
+import math
+import os
+import selectors
+import subprocess
+import sys
+import time
+
+MAXIMUM_OUTPUT_BYTES = 4096
+DEFAULT_TIMEOUT_SECONDS = 15.0
+MINIMUM_TIMEOUT_SECONDS = 0.05
+MAXIMUM_TIMEOUT_SECONDS = 60.0
+
+
+def emit_failure(code):
+    print(json.dumps({
+        "success": False,
+        "error_code": code,
+        "message": "Sanitized August observation is unavailable",
+    }, separators=(",", ":"), sort_keys=True))
+    raise SystemExit(1)
+
+
+def stop_process(process):
+    if process.poll() is None:
+        process.kill()
+    try:
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def run_bounded(command, timeout_seconds):
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        emit_failure("observe_transport_unavailable")
+    assert process.stdout is not None
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout_seconds
+    output = bytearray()
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                stop_process(process)
+                emit_failure("observe_transport_unavailable")
+            if not selector.select(remaining):
+                stop_process(process)
+                emit_failure("observe_transport_unavailable")
+            try:
+                chunk = os.read(
+                    process.stdout.fileno(),
+                    min(4096, MAXIMUM_OUTPUT_BYTES + 1 - len(output)),
+                )
+            except OSError:
+                stop_process(process)
+                emit_failure("observe_transport_unavailable")
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > MAXIMUM_OUTPUT_BYTES:
+                stop_process(process)
+                emit_failure("observe_output_oversize")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stop_process(process)
+            emit_failure("observe_transport_unavailable")
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            stop_process(process)
+            emit_failure("observe_transport_unavailable")
+        return returncode, bytes(output)
+    finally:
+        selector.close()
+        process.stdout.close()
+
+
+try:
+    timeout_seconds = float(
+        os.environ.get("AUGUST_OBSERVE_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+    )
+except (TypeError, ValueError):
+    timeout_seconds = DEFAULT_TIMEOUT_SECONDS
+if (
+    not math.isfinite(timeout_seconds)
+    or not MINIMUM_TIMEOUT_SECONDS <= timeout_seconds <= MAXIMUM_TIMEOUT_SECONDS
+):
+    timeout_seconds = DEFAULT_TIMEOUT_SECONDS
+
+command = [
+    sys.argv[1],
+    "-i",
+    sys.argv[2],
+    "-o",
+    "IdentityAgent=none",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "ConnectTimeout=5",
+    sys.argv[3],
+    sys.argv[4],
+]
+returncode, raw = run_bounded(command, timeout_seconds)
+if returncode != 0:
+    emit_failure(
+        "observe_transport_unavailable"
+        if returncode == 255
+        else "observe_remote_failed"
+    )
+
+if not raw:
+    emit_failure("observe_output_missing")
+try:
+    value = json.loads(raw.decode("utf-8"))
+except (UnicodeDecodeError, json.JSONDecodeError):
+    emit_failure("observe_output_malformed")
+
+required = {"ok", "alias", "observed_at", "lock_state", "door_state"}
+allowed = required | {"battery_percent"}
+if (
+    not isinstance(value, dict)
+    or not required.issubset(value)
+    or set(value) - allowed
+    or value.get("ok") is not True
+    or value.get("alias") != "front_door"
+    or value.get("lock_state") not in {"locked", "unlocked", "unknown"}
+    or value.get("door_state") not in {"open", "closed", "unknown"}
+):
+    emit_failure("observe_output_contract_invalid")
+observed_at = value.get("observed_at")
+if not isinstance(observed_at, str) or not observed_at or len(observed_at) > 64:
+    emit_failure("observe_output_contract_invalid")
+try:
+    parsed = datetime.datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+except ValueError:
+    emit_failure("observe_output_contract_invalid")
+if parsed.tzinfo is None:
+    emit_failure("observe_output_contract_invalid")
+battery = value.get("battery_percent")
+if "battery_percent" in value and (
+    type(battery) is not int or not 0 <= battery <= 100
+):
+    emit_failure("observe_output_contract_invalid")
+
+print(json.dumps(value, separators=(",", ":"), sort_keys=True))
+PY
 }
 
 claim_field() {

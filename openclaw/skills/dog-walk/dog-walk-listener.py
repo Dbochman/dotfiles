@@ -216,11 +216,57 @@ USER_AGENT = "OpenClaw/1.0"
 RING_EVENT_DEVICES = {
     684794187: {"site": "crosstown", "entity_alias": "front_door"},
     697442349: {"site": "cabin", "entity_alias": "front_door"},
+    760125217: {"site": "cabin", "entity_alias": "driveway"},
 }
 DOORBELL_LOCATIONS = {
     doorbot_id: binding["site"]
     for doorbot_id, binding in RING_EVENT_DEVICES.items()
+    if binding["entity_alias"] == "front_door"
 }
+
+
+def _ring_inventory_has_unbound_devices(devices) -> bool:
+    """Fail closed when any current FCM-capable video device is unbound."""
+    try:
+        # The FCM listener covers stickup cameras as well as doorbells.
+        video_devices = devices.video_devices
+    except AttributeError:
+        # Compatibility with older SDK collections that predate video_devices.
+        try:
+            video_devices = [
+                *devices.doorbots,
+                *devices.authorized_doorbots,
+                *getattr(devices, "stickup_cams", ()),
+            ]
+        except Exception:
+            return True
+    except Exception:
+        return True
+
+    try:
+        if callable(video_devices):
+            video_devices = video_devices()
+        inventory = tuple(video_devices)
+    except Exception:
+        return True
+    if not inventory:
+        return True
+
+    provider_ids = set()
+    for device in inventory:
+        try:
+            provider_id = device.id
+        except Exception:
+            return True
+        if (
+            not isinstance(provider_id, int)
+            or isinstance(provider_id, bool)
+            or provider_id <= 0
+        ):
+            return True
+        provider_ids.add(provider_id)
+    return not provider_ids.issubset(RING_EVENT_DEVICES)
+
 
 # Roomba commands per location
 ROOMBA_COMMANDS = {
@@ -290,6 +336,10 @@ _RING_HOME_EVENT_QUEUE_MAX = 256
 _RING_HOME_EVENT_PUBLISH_TIMEOUT = 10
 _RING_BACKFILL_AFTER_SECONDS = 60
 _RING_BACKFILL_MAX_SECONDS = 15 * 60
+_RING_STATUS_COMPONENTS = frozenset({"delivery", "bindings"})
+_RING_STATUS_HEALTHS = frozenset({"unknown", "ok", "degraded"})
+_RING_STATUS_RETRY_INITIAL_SECONDS = 5.0
+_RING_STATUS_RETRY_MAX_SECONDS = 5 * 60.0
 
 
 class _RingHomeEventPublisher:
@@ -313,8 +363,15 @@ class _RingHomeEventPublisher:
         self._counter_lock = threading.Lock()
         self._dirty = threading.Event()
         self._generation = 0
-        self._health = "unknown"
+        self._component_health = {
+            "delivery": "unknown",
+            "bindings": "unknown",
+        }
+        self._binding_reconciliation_pending = False
         self._status_loaded = False
+        self._status_retry_delay = _RING_STATUS_RETRY_INITIAL_SECONDS
+        self._status_retry_not_before = 0.0
+        self._status_persist_failure_logged = False
         self._counters = {
             "accepted": 0,
             "published": 0,
@@ -328,6 +385,14 @@ class _RingHomeEventPublisher:
         with self._start_lock:
             if self._thread is not None and self._thread.is_alive():
                 return
+            try:
+                self._load_status()
+            except Exception:
+                self._record_health(
+                    component="delivery",
+                    health="degraded",
+                )
+                self._log_result("status_load_failure")
             self._thread = threading.Thread(
                 target=self._run,
                 name="ring-home-event-publisher",
@@ -349,18 +414,55 @@ class _RingHomeEventPublisher:
         """Count an event whose provider device has no safe local binding."""
         self._increment("quarantined")
 
+    def reconcile_device_bindings(self, *, has_unbound_devices: bool) -> None:
+        """Record whether the current Ring inventory is completely bound.
+
+        Provider identities remain outside the persisted status. A clean
+        inventory clears only the active binding issue; cumulative quarantine
+        history remains untouched.
+        """
+        if not isinstance(has_unbound_devices, bool):
+            raise TypeError("has_unbound_devices must be a bool")
+        self._record_health(
+            component="bindings",
+            health="degraded" if has_unbound_devices else "ok",
+        )
+
     def counters(self) -> dict[str, int]:
         with self._counter_lock:
             return dict(self._counters)
+
+    def _health_locked(self) -> str:
+        if (
+            self._binding_reconciliation_pending
+            or "degraded" in self._component_health.values()
+        ):
+            return "degraded"
+        return "ok"
+
+    def _record_health(self, *, component: str, health: str) -> None:
+        if component not in _RING_STATUS_COMPONENTS:
+            raise ValueError("invalid_ring_status_component")
+        if health not in _RING_STATUS_HEALTHS - {"unknown"}:
+            raise ValueError("invalid_ring_status_health")
+        with self._counter_lock:
+            self._component_health[component] = health
+            if component == "bindings":
+                self._binding_reconciliation_pending = False
+            self._generation += 1
+            self._dirty.set()
 
     def _increment(self, name: str) -> None:
         with self._counter_lock:
             self._counters[name] += 1
             self._generation += 1
-            if name in {"failed", "dropped", "quarantined"}:
-                self._health = "degraded"
-            elif name == "published" and self._health == "unknown":
-                self._health = "ok"
+            if name in {"failed", "dropped"}:
+                self._component_health["delivery"] = "degraded"
+            elif name == "published":
+                self._component_health["delivery"] = "ok"
+            elif name == "quarantined":
+                self._component_health["bindings"] = "degraded"
+                self._binding_reconciliation_pending = False
             self._dirty.set()
 
     def _load_status(self) -> None:
@@ -383,7 +485,12 @@ class _RingHomeEventPublisher:
         value = json.loads(path.read_text(encoding="utf-8"))
         if (
             not isinstance(value, dict)
-            or set(value) != {"schema_version", "updated_at", "health", "counters"}
+            or set(value) != {
+                "schema_version",
+                "updated_at",
+                "health",
+                "counters",
+            }
             or value.get("schema_version") != 1
             or value.get("health") not in {"ok", "degraded"}
             or not isinstance(value.get("updated_at"), str)
@@ -403,11 +510,29 @@ class _RingHomeEventPublisher:
         )
         if updated_at.tzinfo is None:
             raise ValueError("invalid_ring_status_time")
+
+        components = {
+            "delivery": "unknown",
+            "bindings": "unknown",
+        }
+        counters = value["counters"]
+        if value["health"] == "degraded":
+            if counters["failed"] or counters["dropped"]:
+                components["delivery"] = "degraded"
+            elif counters["quarantined"]:
+                # Cumulative v1 counters cannot prove whether the binding
+                # fault is still active. Keep aggregate health degraded until
+                # startup reconciles the current video inventory.
+                self._binding_reconciliation_pending = True
+            else:
+                # A valid degraded v1 status with no diagnostic counter has an
+                # unknown active cause. Keep it degraded until a good publish.
+                components["delivery"] = "degraded"
+
         with self._counter_lock:
             for name, counter in value["counters"].items():
                 self._counters[name] += counter
-            if value["health"] == "degraded" or self._health == "unknown":
-                self._health = value["health"]
+            self._component_health = dict(components)
 
     def _persist_status(self) -> None:
         path = self._status_path
@@ -432,7 +557,7 @@ class _RingHomeEventPublisher:
         with self._counter_lock:
             generation = self._generation
             counters = dict(self._counters)
-            health = self._health if self._health != "unknown" else "ok"
+            health = self._health_locked()
         value = {
             "schema_version": 1,
             "updated_at": datetime.now(timezone.utc)
@@ -477,6 +602,35 @@ class _RingHomeEventPublisher:
                 os.close(descriptor)
             temporary.unlink(missing_ok=True)
 
+    def _persist_status_if_due(self, *, now: float | None = None) -> bool:
+        """Persist dirty status with bounded retries and one log per outage."""
+        if not self._dirty.is_set():
+            self._status_retry_delay = _RING_STATUS_RETRY_INITIAL_SECONDS
+            self._status_retry_not_before = 0.0
+            self._status_persist_failure_logged = False
+            return True
+
+        current = time.monotonic() if now is None else now
+        if current < self._status_retry_not_before:
+            return False
+        try:
+            self._persist_status()
+        except Exception:
+            if not self._status_persist_failure_logged:
+                self._log_result("status_persist_failure")
+                self._status_persist_failure_logged = True
+            self._status_retry_not_before = current + self._status_retry_delay
+            self._status_retry_delay = min(
+                self._status_retry_delay * 2,
+                _RING_STATUS_RETRY_MAX_SECONDS,
+            )
+            return False
+
+        self._status_retry_delay = _RING_STATUS_RETRY_INITIAL_SECONDS
+        self._status_retry_not_before = 0.0
+        self._status_persist_failure_logged = False
+        return True
+
     def _log_result(self, result: str) -> None:
         counters = self.counters()
         try:
@@ -508,20 +662,12 @@ class _RingHomeEventPublisher:
             return False
 
     def _run(self) -> None:
-        try:
-            self._load_status()
-        except Exception:
-            self._health = "degraded"
-            self._log_result("status_load_failure")
         while True:
             try:
                 payload = self._queue.get(timeout=5)
             except queue.Empty:
                 if self._dirty.is_set():
-                    try:
-                        self._persist_status()
-                    except Exception:
-                        self._log_result("status_persist_failure")
+                    self._persist_status_if_due()
                 continue
             try:
                 if self._publish(payload):
@@ -530,10 +676,7 @@ class _RingHomeEventPublisher:
                 else:
                     self._increment("failed")
                     self._log_result("failure")
-                try:
-                    self._persist_status()
-                except Exception:
-                    self._log_result("status_persist_failure")
+                self._persist_status_if_due()
             finally:
                 self._queue.task_done()
 
@@ -2922,6 +3065,10 @@ async def main() -> None:
     devices = ring.devices()
     doorbells = list(devices.doorbots) + list(devices.authorized_doorbots)
     log(f"Monitoring {len(doorbells)} Ring doorbell(s)")
+    if HOME_EVENTS_RING_ENABLED:
+        _ring_home_event_publisher.reconcile_device_bindings(
+            has_unbound_devices=_ring_inventory_has_unbound_devices(devices)
+        )
 
     # FCM credentials
     fcm_creds = load_fcm_credentials()

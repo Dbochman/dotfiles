@@ -306,19 +306,19 @@ Exit gate met: concurrency, crash-boundary, restart-dedupe, permissions,
 schema-corruption, pruning, and privacy-sentinel tests passed before the live
 presence and Nest producers were enabled.
 
-## Work package 2: Ring durable tee — enabled, shadow evidence pending
+## Work package 2: Ring durable tee — enabled, shadow evidence active
 
 The tee and its tests are installed and the attended production flag is `1`.
-The listener restarted successfully with two exact site bindings, but the bus
-had not yet observed a post-promotion Ring event at activation. The existing
-FCM, direct-ding, and dog-walk paths remain authoritative.
+The listener has exact bindings for both front doors and the Cabin driveway
+camera. The bus has observed post-promotion Ring activity at both sites; the
+existing FCM, direct-ding, and dog-walk paths remain authoritative.
 
 The implementation modifies the existing Ring callback path and does not add
 another Ring service or FCM registration.
 
 Implementation:
 
-1. When `HOME_EVENTS_RING_ENABLED=1`, map the exact known Ring device binding
+1. When `HOME_EVENTS_RING_ENABLED=1`, map each exact known Ring device binding
    to a fixed site and alias. The default `0` does no bus publication.
 2. Keep the FCM callback free of disk I/O. It submits a bounded normalized
    record to a dedicated publisher worker; the worker performs HMAC,

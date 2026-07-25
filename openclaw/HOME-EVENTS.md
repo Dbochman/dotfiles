@@ -19,11 +19,11 @@ bridge, the Ring tee, the read-only August observer, and Cabin local-presence
 enrichment. Ring and August were promoted together into shadow observation on
 July 23 after an explicit operator decision to accelerate their otherwise
 independent gates. August's exact protected binding passed a read-only status
-check and its first poll created a silent baseline with no event. Ring
-restarted on its existing FCM connection with both configured sites; its
-legacy paths remain authoritative while the remaining attended parity checks
-are pending. The Cabin local adapter also baselined both residents as present
-with zero events, then treated the repeated scan as a no-op. Crosstown local
+check and its first poll created a silent baseline with no event. Ring uses
+exact bindings for both front doors and the Cabin driveway camera; its legacy
+paths remain authoritative while the remaining attended parity checks are
+pending. The Cabin local adapter also baselined both residents as present with
+zero events, then treated the repeated scan as a no-op. Crosstown local
 attribution remains disabled. The tracked plist defaults remain disabled so a
 fresh install cannot silently activate any producer.
 
@@ -215,13 +215,19 @@ The dog-walk listener keeps the existing FCM session and all legacy behavior.
 The tee defaults off; `HOME_EVENTS_RING_ENABLED=1` enables bus publication
 without changing legacy Ring handling. Its callback then performs only a
 nonblocking enqueue to a 256-record memory queue.
-A daemon worker maps the exact known device to the local `front_door` alias,
-then calls `home-eventctl enqueue --source ring`. Exact bindings cover the
-Crosstown and Cabin front doors; unknown devices are quarantined rather than
-assigned a site. Queue overflow or publication failure increments safe
-counters and marks the protected `ring-producer.json` projection degraded
-without blocking Ring or dog-walk processing. The callback still performs no
-disk I/O; the dedicated worker owns that bounded atomic status write.
+A daemon worker maps each exact known device to a safe site and alias, then
+calls `home-eventctl enqueue --source ring`. Exact bindings cover the
+Crosstown and Cabin `front_door` devices plus the Cabin `driveway` camera;
+`driveway` is bus-only and does not become a legacy departure trigger. Unknown
+devices are quarantined rather than assigned a site. Queue overflow or
+publication failure increments safe counters without blocking Ring or dog-walk
+processing. Delivery and binding health remain separate in process; startup
+reconciles the full current Ring video inventory, including stickup cameras,
+without persisting its identifiers. The protected status remains exact schema
+v1 for rollback compatibility, projecting aggregate health and cumulative
+counters. Resolved binding defects recover without erasing quarantine history.
+The callback still performs no disk I/O; the dedicated worker owns the bounded
+atomic status write.
 
 Durability begins at the worker's spool commit, so there is an accepted small
 callback-to-worker crash window. Provider IDs exist only in memory and are
@@ -337,6 +343,14 @@ lock and one-use unlock approval paths are unchanged and still require known,
 unambiguous physical state. An `unknown` observation is checkpointed silently;
 a lock or door transition is emitted only when the immediately previous and
 current values are both known and different.
+
+The observe boundary discards remote stderr, caps stdout before validation,
+and reports only allowlisted stages for relay transport, remote-command,
+missing, oversized, malformed, or contract-invalid output. The adapter and bus
+independently enforce that closed set; provider messages and arbitrary reason
+codes cannot enter status or normalized events. The bus additionally accepts
+the small legacy stage set during reader-first deployment or rollback, while
+the current adapter rewrites those codes to the new taxonomy.
 
 ### Nest
 
