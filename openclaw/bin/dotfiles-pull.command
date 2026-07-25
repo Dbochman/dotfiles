@@ -510,6 +510,7 @@ STANDALONE_SKILL_WRAPPERS=(
   opentable-book
   opentable-reservations
   pinchtab-headless-instance
+  reolink-camera
   restaurant-book
   restaurant-snipe
   resy-read

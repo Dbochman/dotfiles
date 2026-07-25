@@ -215,6 +215,46 @@ august locks        # List all locks on account
 - Architecture: SSH to MBP → Node.js august-cmd.js → August cloud API
 - Auto-locks on vacancy via `vacancy-actions.sh` (checks status first, texts result)
 
+## Reolink Cameras
+
+CLI at `/opt/homebrew/bin/reolink-camera`. Both solar-powered Reolink Atlas
+cameras are attached to the Cabin Reo Home Hub Mini; OpenClaw talks only to the
+pinned local Hub and exact configured channel.
+
+Configured aliases:
+
+- `Flower Cam #1` — Cabin
+- `Flower Cam #2` — Cabin
+
+```bash
+reolink-camera status 'Flower Cam #1'                  # Availability + power
+reolink-camera capture 'Flower Cam #1'                 # Fresh JPEG + cleanup token
+reolink-camera describe '<cleanup-token>'              # Stateless visual commentary
+reolink-camera cleanup '<cleanup-token>'               # Always run in finally
+reolink-camera share 'Flower Cam #1' julia             # Image + commentary to Julia
+reolink-camera share 'Flower Cam #1' dylan             # Image + commentary to Dylan
+reolink-camera share 'Flower Cam #1' household         # Image + commentary to both
+reolink-camera spotlight 'Flower Cam #1' status
+reolink-camera spotlight 'Flower Cam #1' on
+reolink-camera spotlight 'Flower Cam #1' off
+```
+
+- `status` returns only alias/site/availability, battery percentage, charge
+  state, and camera temperature.
+- Current-route media uses `capture`, optional `describe`, the `message` tool,
+  and unconditional token cleanup. Cross-owner `share` performs the entire
+  capture → commentary → protected-route delivery → cleanup workflow.
+- Owner-requested capture, analysis, sharing, or one reversible spotlight
+  action does not need a second confirmation, presence gate, or automation
+  cooldown. Enabled standing policies may act proactively within their exact
+  camera/action/trigger/recipient scope; no Reolink policy is armed by default.
+- Spotlight control changes only the temporary manual state and preserves
+  brightness, Night Smart, AI, and schedule settings.
+- Capture or spotlight work can wake a battery camera; it returns to standby
+  on its own.
+- No live video, recordings, PTZ, talk, siren, firmware, account/user changes,
+  arbitrary recipients, raw CGI, or direct-camera/cloud fallback are exposed.
+
 ## Image Tool — Path Policy
 
 The `image` tool is restricted to workspace paths (`tools.fs.workspaceOnly: true`). Always save images to `~/.openclaw/workspace/tmp/` before passing them to the image tool — never use `/tmp` or `~/Downloads`.

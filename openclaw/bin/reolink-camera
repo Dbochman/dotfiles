@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# reolink-camera — Protected local Reolink camera, commentary, sharing, and light control
+SKILL_DIR="$HOME/.openclaw/skills/reolink-camera"
+exec "$SKILL_DIR/reolink-camera" "$@"

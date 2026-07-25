@@ -801,6 +801,8 @@ install_openclaw_guarded_helpers() {
     "bin/presence-cabin-enroll|bin/presence-cabin-enroll|755|Cabin Starlink presence enrollment helper"
     "bin/presence-cabin-mesh-enroll|bin/presence-cabin-mesh-enroll|755|Cabin Starlink mesh enrollment helper"
     "bin/presence-crosstown-canary|bin/presence-crosstown-canary|755|Crosstown strict presence canary helper"
+    "bin/reolink-camera|bin/reolink-camera|755|Reolink guarded camera wrapper"
+    "bin/reolink-camera-enroll|bin/reolink-camera-enroll|755|Reolink attended enrollment helper"
     "bin/opentable-book|bin/opentable-book|755|OpenTable guarded booking wrapper"
     "bin/opentable-reservations|bin/opentable-reservations|755|OpenTable read-only reservations wrapper"
     "bin/restaurant-book|bin/restaurant-book|755|dual-provider restaurant booking wrapper"
@@ -833,6 +835,7 @@ publish_openclaw_standalone_skill_wrappers() {
     opentable-book
     opentable-reservations
     pinchtab-headless-instance
+    reolink-camera
     restaurant-book
     restaurant-snipe
     resy-read

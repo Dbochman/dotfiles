@@ -64,6 +64,8 @@ REQUIRED_HELPERS = {
     "bin/presence-cabin-enroll": "presence enrollment helper\n",
     "bin/presence-cabin-mesh-enroll": "presence mesh enrollment helper\n",
     "bin/presence-crosstown-canary": "presence canary helper\n",
+    "bin/reolink-camera": "reolink camera wrapper\n",
+    "bin/reolink-camera-enroll": "reolink enrollment helper\n",
     "bin/opentable-book": "opentable wrapper\n",
     "bin/opentable-reservations": "opentable reservations wrapper\n",
     "bin/restaurant-book": "restaurant coordinator wrapper\n",
@@ -73,10 +75,11 @@ REQUIRED_HELPERS = {
     "workspace/scripts/opentable-book.sh": "opentable helper\n",
     "workspace/scripts/opentable-book-state.py": "state helper\n",
 }
-STANDALONE_RESTAURANT_WRAPPERS = {
+STANDALONE_SKILL_WRAPPERS = {
     "opentable-book",
     "opentable-reservations",
     "pinchtab-headless-instance",
+    "reolink-camera",
     "restaurant-book",
     "restaurant-snipe",
     "resy-read",
@@ -94,6 +97,7 @@ GATEWAY_RESTAURANT_COMMANDS = (
     "restaurant-snipe",
     "resy-read",
 )
+REOLINK_WRAPPERS = ("reolink-camera", "reolink-camera-enroll")
 
 
 class DeploymentContractTests(unittest.TestCase):
@@ -744,19 +748,19 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn(".openclaw/rest980/env-10max", pull_text)
         self.assertIn(".openclaw/rest980/env-j5", pull_text)
 
-    def test_restaurant_wrappers_are_visible_to_standalone_doctor(self) -> None:
+    def test_skill_wrappers_are_visible_to_standalone_doctor(self) -> None:
         install_text = INSTALLER.read_text(encoding="utf-8")
         pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
         guide_text = AUTHORING_GUIDE_PATH.read_text(encoding="utf-8")
 
         self.assertIn("publish_openclaw_standalone_skill_wrappers", install_text)
         self.assertIn("STANDALONE_SKILL_WRAPPERS=(", pull_text)
-        for wrapper in STANDALONE_RESTAURANT_WRAPPERS:
+        for wrapper in STANDALONE_SKILL_WRAPPERS:
             self.assertIn(wrapper, install_text)
             self.assertIn(wrapper, pull_text)
         self.assertIn("openclaw doctor --fix", guide_text)
 
-    def test_installer_publishes_every_standalone_restaurant_wrapper(self) -> None:
+    def test_installer_publishes_every_standalone_skill_wrapper(self) -> None:
         source = self.root / "openclaw-source"
         destination = self.root / "openclaw-home"
         standalone_bin = self.root / "standalone-bin"
@@ -786,13 +790,48 @@ class DeploymentContractTests(unittest.TestCase):
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        for wrapper in STANDALONE_RESTAURANT_WRAPPERS:
+        for wrapper in STANDALONE_SKILL_WRAPPERS:
             published = standalone_bin / wrapper
             self.assertTrue(published.is_symlink(), wrapper)
             self.assertEqual(
                 published.resolve(),
                 (destination / "bin" / wrapper).resolve(),
             )
+
+    def test_reolink_wrappers_follow_routine_pull_and_doctor_contracts(self) -> None:
+        install_text = INSTALLER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        installer_standalone_block = install_text[
+            install_text.index("publish_openclaw_standalone_skill_wrappers()") :
+            install_text.index("install_managed_launchagent()")
+        ]
+        wrapper_block = pull_text[
+            pull_text.index('for wrapper in "$BIN_SRC"/*; do') :
+            pull_text.index("# OpenClaw's standalone skill checker")
+        ]
+        standalone_block = pull_text[
+            pull_text.index("STANDALONE_SKILL_WRAPPERS=(") :
+            pull_text.index(
+                'for skill_wrapper in "${STANDALONE_SKILL_WRAPPERS[@]}"; do'
+            )
+        ]
+
+        for wrapper in REOLINK_WRAPPERS:
+            relative = f"bin/{wrapper}"
+            source = REPO_ROOT / "openclaw" / relative
+            self.assertIn(f'"{relative}|{relative}|755|', install_text)
+            self.assertTrue(source.is_file(), wrapper)
+            self.assertTrue(os.access(source, os.X_OK), wrapper)
+
+        self.assertIn('[ -x "$wrapper" ] || continue', wrapper_block)
+        self.assertIn(
+            'atomic_install_executable "$wrapper" "$BIN_DST/$fname"',
+            wrapper_block,
+        )
+        self.assertIn("reolink-camera", installer_standalone_block)
+        self.assertNotIn("reolink-camera-enroll", installer_standalone_block)
+        self.assertIn("reolink-camera", standalone_block)
+        self.assertNotIn("reolink-camera-enroll", standalone_block)
 
     def test_scheduled_nest_path_uses_the_hardened_cli(self) -> None:
         plist_text = NEST_SNAPSHOT_PLIST.read_text(encoding="utf-8")

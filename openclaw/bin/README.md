@@ -68,6 +68,17 @@ active post-deploy checks.
 | `nest-camera-image` | Creates exact-resource, owner-only, short-lived Nest request stills or 1-30 second videos for native OpenClaw delivery; validates JPEG/MP4 structure and exposes token-scoped cleanup without arbitrary paths. |
 | `nest-activity-reviewer.py` | Presence-gated Cabin reviewer. Captures a temporary live frame, retains only privacy-safe analysis diagnostics, and sends qualifying text through explicit `imsg rpc` bridge transport with a validated receipt and one-attempt-per-hour limit. |
 
+### Reolink Integration
+
+| Script | Description |
+|--------|-------------|
+| `reolink-camera` | Thin wrapper for safe status, exact-channel fresh stills, token-scoped image commentary, protected Dylan/Julia/household sharing, and verified manual spotlight state through the pinned local Home Hub binding. |
+| `reolink-camera-enroll` | Attended operator-only enrollment for one exact private-LAN Hub channel. It requires pinned TLS and exact `TRUST`, verifies the approved local account with exact-channel status and a fresh in-memory snapshot, and only then activates owner-only generation-matched binding and credential state. Public runtime commands remain bounded; enrollment, users, firmware, arbitrary API calls, and network configuration stay outside the skill. |
+
+See [`../REOLINK-CAMERA.md`](../REOLINK-CAMERA.md) for the private runtime
+contract, attended rollout, optional macOS Client role, verification, and V2
+boundaries.
+
 ### Home Events
 
 | Script | Description |

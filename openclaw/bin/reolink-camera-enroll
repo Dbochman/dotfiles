@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# reolink-camera-enroll — Attended Reolink Home Hub binding enrollment
+SKILL_DIR="$HOME/.openclaw/skills/reolink-camera"
+exec "$SKILL_DIR/reolink-camera" operator-enroll "$@"
