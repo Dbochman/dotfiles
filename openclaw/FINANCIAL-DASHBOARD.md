@@ -210,6 +210,12 @@ All five provider profiles are loaded and validated during global preflight from
 2. Runs `./venv/bin/python3 scrape_<name>.py --re-auth --headless`. This drives the login flow programmatically via Playwright, handles MFA where needed (PennyMac auto-fetches the 6-digit `PM-NNNNNNN` code from Julia's Gmail via `gws`), and saves `storage_state.json` in the scraper's `.NAME_session/` dir.
 3. Re-runs the normal scrape, which now finds fresh cookies and pulls data.
 
+National Grid's landing-to-B2C redirect is asynchronous. Its renewal waits
+without interaction for the exact `login.nationalgrid.com` credential origin,
+uses the current exact sign-in control, and treats the exact MyAccount root as
+authenticated only after submission. Playwright-aware waits keep the callback
+moving; the public landing page is never accepted as an existing session.
+
 The helper rejects a missing, symlinked, non-regular, non-owner, non-`0600`, malformed, partial, or extra-profile credential cache. Before that check, it reads the verified bounded canonical owner-only mode-`0600` repository `.env` through one file descriptor and retains only the exact `TESLA_EMAIL` assignment; missing, duplicate, malformed, oversized, symlinked, hardlinked, or insecure input fails preflight without starting source work. Every child receives only a closed runtime allowlist, and Python children additionally receive `PYTHON_DOTENV_DISABLED=1`. The Tesla identity reaches only the Tesla scrape process, and only one guarded re-authentication child receives `SCRAPER_USER` and `SCRAPER_PW`; provider entrypoints remove that pair before launching Playwright, Chromium, raw CDP, or another subprocess. The tracked helper is `~/dotfiles/openclaw/bin/weekly-financial-scrape.py` and is deployed mode `0755` to `~/.openclaw/bin/weekly-financial-scrape.py`; an exact-argv command cron pins `/opt/homebrew/bin/python3` and only that runtime copy. `--preflight` validates the Tesla identity source, exact version and seven-source capability manifest, provider-mode configuration, and credential-profile presence without starting PinchTab, a browser, normal scraper, or import.
 
 To roll out or rotate these pairs, add all ten corresponding
