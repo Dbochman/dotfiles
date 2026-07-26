@@ -412,6 +412,15 @@ safe JSON to the invoking terminal. Only `run` writes service logs; its
 streaming log writer continuously caps each file rather than waiting for a
 listener restart.
 
+Each valid inbox row also retains a compact JSON list of event kinds selected
+from a fixed local allowlist. Examples include `camera_person`,
+`camera_motion`, `camera_sound`, `temperature_trait`, `relation_created`, and
+the catch-all values `other_event` or `other_trait`. Google-provided event or
+trait names are never copied into durable state, so a new or malicious payload
+cannot turn this diagnostic into a raw metadata channel. Rows created before
+database schema v3 remain `NULL`; the migration never attempts to reconstruct
+discarded payloads.
+
 When a supported camera event arrives for a resource outside the exact
 three-camera allowlist, the listener retains only
 `unbound_camera_same_enterprise` or `unbound_camera_other_enterprise`. This

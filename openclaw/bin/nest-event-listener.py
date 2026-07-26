@@ -26,7 +26,7 @@ import threading
 from typing import Any, Callable, Mapping, Sequence
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 STATUS_SCHEMA_VERSION = 1
 SERVICE_NAME = "nest-event-listener"
 RETENTION_DAYS = 30
@@ -42,9 +42,36 @@ STATUS_FILENAME = "status.json"
 
 MOTION_EVENT = "sdm.devices.events.CameraMotion.Motion"
 PERSON_EVENT = "sdm.devices.events.CameraPerson.Person"
+SOUND_EVENT = "sdm.devices.events.CameraSound.Sound"
+CHIME_EVENT = "sdm.devices.events.DoorbellChime.Chime"
+CLIP_PREVIEW_EVENT = "sdm.devices.events.CameraClipPreview.ClipPreview"
 EVENT_TYPES = {
     MOTION_EVENT: "motion",
     PERSON_EVENT: "person",
+}
+SAFE_EVENT_KINDS = {
+    MOTION_EVENT: "camera_motion",
+    PERSON_EVENT: "camera_person",
+    SOUND_EVENT: "camera_sound",
+    CHIME_EVENT: "doorbell_chime",
+    CLIP_PREVIEW_EVENT: "camera_clip_preview",
+}
+SAFE_TRAIT_KINDS = {
+    "sdm.devices.traits.CameraClipPreview": "camera_clip_preview_trait",
+    "sdm.devices.traits.CameraLiveStream": "camera_live_stream_trait",
+    "sdm.devices.traits.CameraMotion": "camera_motion_trait",
+    "sdm.devices.traits.CameraPerson": "camera_person_trait",
+    "sdm.devices.traits.CameraSound": "camera_sound_trait",
+    "sdm.devices.traits.Connectivity": "connectivity_trait",
+    "sdm.devices.traits.DoorbellChime": "doorbell_chime_trait",
+    "sdm.devices.traits.Fan": "fan_trait",
+    "sdm.devices.traits.Humidity": "humidity_trait",
+    "sdm.devices.traits.Info": "info_trait",
+    "sdm.devices.traits.Temperature": "temperature_trait",
+    "sdm.devices.traits.ThermostatEco": "thermostat_eco_trait",
+    "sdm.devices.traits.ThermostatHvac": "thermostat_hvac_trait",
+    "sdm.devices.traits.ThermostatMode": "thermostat_mode_trait",
+    "sdm.devices.traits.ThermostatTemperatureSetpoint": "thermostat_setpoint_trait",
 }
 
 # This exact policy is intentional.  It prevents a typo in a protected runtime
@@ -127,6 +154,7 @@ class NormalizedEnvelope:
     thread_id: str | None
     thread_state: str | None
     camera_events: tuple[NormalizedCameraEvent, ...]
+    event_kinds: tuple[str, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -144,6 +172,7 @@ class ProcessResult:
     alias: str | None = None
     site: str | None = None
     reason_code: str | None = None
+    event_kinds: tuple[str, ...] = ()
 
 
 def utc_now() -> str:
@@ -271,6 +300,7 @@ def parse_sdm_payload(data: bytes) -> NormalizedEnvelope:
             thread_id=thread_id,
             thread_state=thread_state,
             camera_events=(),
+            event_kinds=(f"relation_{relation_type.lower()}",),
         )
 
     update = payload.get("resourceUpdate")
@@ -284,6 +314,19 @@ def parse_sdm_payload(data: bytes) -> NormalizedEnvelope:
     if events_value is None:
         # Trait snapshots and changes are valid SDM resource events but are not
         # camera detections for this service.
+        traits_value = update.get("traits")
+        if isinstance(traits_value, dict) and traits_value:
+            event_kinds = tuple(
+                sorted(
+                    {
+                        SAFE_TRAIT_KINDS.get(trait_name, "other_trait")
+                        for trait_name in traits_value
+                        if isinstance(trait_name, str)
+                    }
+                )
+            )
+        else:
+            event_kinds = ("trait_update",)
         return NormalizedEnvelope(
             event_id=event_id,
             occurred_at=occurred_at,
@@ -292,14 +335,17 @@ def parse_sdm_payload(data: bytes) -> NormalizedEnvelope:
             thread_id=thread_id,
             thread_state=thread_state,
             camera_events=(),
+            event_kinds=event_kinds or ("other_trait",),
         )
     if not isinstance(events_value, dict) or not events_value:
         raise PayloadError("invalid_events")
 
     camera_events: list[NormalizedCameraEvent] = []
+    event_kinds: set[str] = set()
     for event_name, details in events_value.items():
         if not isinstance(event_name, str) or not isinstance(details, dict):
             raise PayloadError("invalid_event_entry")
+        event_kinds.add(SAFE_EVENT_KINDS.get(event_name, "other_event"))
         normalized_type = EVENT_TYPES.get(event_name)
         if normalized_type is None:
             continue
@@ -327,6 +373,7 @@ def parse_sdm_payload(data: bytes) -> NormalizedEnvelope:
         thread_id=thread_id,
         thread_state=thread_state,
         camera_events=tuple(camera_events),
+        event_kinds=tuple(sorted(event_kinds)),
     )
 
 
@@ -550,6 +597,7 @@ class StateStore:
             site TEXT,
             outcome TEXT NOT NULL,
             reason_code TEXT,
+            event_kinds TEXT,
             normalized_event_count INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS sdm_dedupe (
@@ -614,10 +662,18 @@ class StateStore:
                 connection.execute(
                     "INSERT INTO schema_meta(version) VALUES (?)", (SCHEMA_VERSION,)
                 )
-            elif len(versions) == 1 and versions[0]["version"] == 1:
-                self._migrate_v1_to_v2(connection)
-            elif len(versions) != 1 or versions[0]["version"] != SCHEMA_VERSION:
+            elif len(versions) != 1:
                 raise ConfigError("database_schema")
+            else:
+                version = versions[0]["version"]
+                if version == 1:
+                    self._migrate_v1_to_v2(connection)
+                    version = 2
+                if version == 2:
+                    self._migrate_v2_to_v3(connection)
+                    version = 3
+                if version != SCHEMA_VERSION:
+                    raise ConfigError("database_schema")
             connection.execute(
                 """
                 INSERT INTO runtime_status(
@@ -705,7 +761,7 @@ class StateStore:
                 )
             connection.execute(
                 "UPDATE schema_meta SET version = ? WHERE version = 1",
-                (SCHEMA_VERSION,),
+                (2,),
             )
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise ConfigError("database_migration_integrity")
@@ -720,6 +776,24 @@ class StateStore:
             connection.execute("PRAGMA foreign_keys = ON")
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise ConfigError("database_foreign_keys")
+
+    @staticmethod
+    def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+        """Add bounded event-kind telemetry without backfilling old payloads."""
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("ALTER TABLE inbox ADD COLUMN event_kinds TEXT")
+            connection.execute(
+                "UPDATE schema_meta SET version = 3 WHERE version = 2"
+            )
+            integrity = connection.execute("PRAGMA quick_check").fetchone()
+            if integrity is None or integrity[0] != "ok":
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
     @staticmethod
     def _increment(connection: sqlite3.Connection, name: str, amount: int = 1) -> None:
@@ -860,8 +934,8 @@ class StateStore:
             """
             INSERT INTO inbox(
                 message_key, received_at, publish_at, sdm_event_key,
-                thread_key, event_at, outcome
-            ) VALUES (?, ?, ?, ?, ?, ?, 'processing')
+                thread_key, event_at, outcome, event_kinds
+            ) VALUES (?, ?, ?, ?, ?, ?, 'processing', ?)
             """,
             (
                 message_key,
@@ -870,6 +944,11 @@ class StateStore:
                 event_key,
                 thread_key,
                 envelope.occurred_at,
+                json.dumps(
+                    list(envelope.event_kinds),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
             ),
         )
         inbox_id = int(cursor.lastrowid)
@@ -887,7 +966,9 @@ class StateStore:
             )
             self._increment(connection, "duplicate_sdm_events")
             self._touch_status(connection, received_at, health="ok")
-            return ProcessResult("duplicate_event", 0, 0)
+            return ProcessResult(
+                "duplicate_event", 0, 0, event_kinds=envelope.event_kinds
+            )
 
         decision = apply_policy(envelope, self.settings.cameras_by_resource)
         if decision.policy is None or not decision.events:
@@ -905,7 +986,11 @@ class StateStore:
             self._increment(connection, "ignored_messages")
             self._touch_status(connection, received_at, health="ok")
             return ProcessResult(
-                decision.outcome, 0, 0, reason_code=reason_code
+                decision.outcome,
+                0,
+                0,
+                reason_code=reason_code,
+                event_kinds=envelope.event_kinds,
             )
 
         policy = decision.policy
@@ -1009,7 +1094,14 @@ class StateStore:
             health="ok",
             accepted_at=envelope.occurred_at if accepted else None,
         )
-        return ProcessResult(outcome, accepted, duplicates, policy.alias, policy.site)
+        return ProcessResult(
+            outcome,
+            accepted,
+            duplicates,
+            policy.alias,
+            policy.site,
+            event_kinds=envelope.event_kinds,
+        )
 
     @staticmethod
     def _touch_status(
@@ -1239,6 +1331,7 @@ class PubSubMessageProcessor:
                 alias=result.alias,
                 site=result.site,
                 reasonCode=result.reason_code,
+                eventKinds=result.event_kinds,
             )
 
     def _safe_runtime_error(self, code: str) -> None:
@@ -1406,6 +1499,7 @@ def _run_once(
         alias=result.alias,
         site=result.site,
         reasonCode=result.reason_code,
+        eventKinds=result.event_kinds,
     )
     return 0
 

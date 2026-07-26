@@ -284,6 +284,10 @@ class ParsingAndPolicyTests(NestEventTestCase):
             tuple(event.event_type for event in envelope.camera_events),
             ("motion", "person"),
         )
+        self.assertEqual(
+            envelope.event_kinds,
+            ("camera_motion", "camera_person"),
+        )
         normalized = repr(envelope)
         self.assertNotIn("private-user-id", normalized)
         self.assertNotIn("inner-image-event-secret", normalized)
@@ -317,6 +321,7 @@ class ParsingAndPolicyTests(NestEventTestCase):
         relation_envelope = nest_events.parse_sdm_payload(
             json.dumps(relation).encode("utf-8")
         )
+        self.assertEqual(relation_envelope.event_kinds, ("relation_created",))
         self.assertEqual(
             nest_events.apply_policy(
                 relation_envelope, self.settings.cameras_by_resource
@@ -341,6 +346,7 @@ class ParsingAndPolicyTests(NestEventTestCase):
         other_envelope = nest_events.parse_sdm_payload(
             json.dumps(other_event).encode("utf-8")
         )
+        self.assertEqual(other_envelope.event_kinds, ("camera_sound",))
         self.assertEqual(
             nest_events.apply_policy(
                 other_envelope, self.settings.cameras_by_resource
@@ -373,13 +379,21 @@ class ParsingAndPolicyTests(NestEventTestCase):
         )
         with sqlite3.connect(store.db_path) as connection:
             rows = connection.execute(
-                "SELECT outcome, reason_code FROM inbox ORDER BY id"
+                "SELECT outcome, reason_code, event_kinds FROM inbox ORDER BY id"
             ).fetchall()
         self.assertEqual(
             rows,
             [
-                ("ignored_resource", "unbound_camera_same_enterprise"),
-                ("ignored_resource", "unbound_camera_other_enterprise"),
+                (
+                    "ignored_resource",
+                    "unbound_camera_same_enterprise",
+                    '["camera_person"]',
+                ),
+                (
+                    "ignored_resource",
+                    "unbound_camera_other_enterprise",
+                    '["camera_person"]',
+                ),
             ],
         )
         combined = json.dumps(rows)
@@ -388,8 +402,59 @@ class ParsingAndPolicyTests(NestEventTestCase):
         self.assertNotIn("sdm-project", combined)
         self.assertNotIn("other-project", combined)
 
+    def test_ignored_updates_retain_only_allowlisted_event_kinds(self) -> None:
+        store = self.store()
+        unknown_name = "sdm.devices.events.PrivateFutureTrait.SecretEvent"
+        payload = json.loads(
+            event_payload(
+                resource="enterprises/other/devices/not-allowlisted",
+                event_names=(nest_events.SOUND_EVENT, unknown_name),
+            )
+        )
+        result = store.record_delivery(
+            json.dumps(payload).encode("utf-8"),
+            "safe-event-kind-message",
+        )
+
+        self.assertEqual(
+            result.event_kinds,
+            ("camera_sound", "other_event"),
+        )
+        with sqlite3.connect(store.db_path) as connection:
+            retained = connection.execute(
+                "SELECT event_kinds FROM inbox"
+            ).fetchone()[0]
+        self.assertEqual(retained, '["camera_sound","other_event"]')
+        self.assertNotIn(unknown_name.encode(), store.db_path.read_bytes())
+
 
 class DurabilityTests(NestEventTestCase):
+    def test_v2_database_migrates_to_privacy_safe_event_kinds(self) -> None:
+        self.state_dir.mkdir(parents=True, mode=0o700)
+        os.chmod(self.state_dir, 0o700)
+        database = self.state_dir / nest_events.DB_FILENAME
+        connection = sqlite3.connect(database)
+        try:
+            connection.executescript(V1_SCHEMA)
+            connection.execute("INSERT INTO schema_meta(version) VALUES (1)")
+            connection.commit()
+            nest_events.StateStore._migrate_v1_to_v2(connection)
+        finally:
+            connection.close()
+        os.chmod(database, 0o600)
+
+        self.store()
+
+        with sqlite3.connect(database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT version FROM schema_meta").fetchone(),
+                (nest_events.SCHEMA_VERSION,),
+            )
+            columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(inbox)")
+            }
+        self.assertIn("event_kinds", columns)
+
     def test_v1_empty_outbox_seeds_sequence_from_lifetime_event_count(self) -> None:
         self.state_dir.mkdir(parents=True, mode=0o700)
         os.chmod(self.state_dir, 0o700)
@@ -588,9 +653,21 @@ class DurabilityTests(NestEventTestCase):
 
         with sqlite3.connect(store.db_path) as connection:
             inbox = connection.execute(
-                "SELECT alias, site, outcome, normalized_event_count FROM inbox"
+                """
+                SELECT alias, site, outcome, event_kinds, normalized_event_count
+                FROM inbox
+                """
             ).fetchone()
-            self.assertEqual(inbox, ("Kitchen", "Cabin", "accepted", 2))
+            self.assertEqual(
+                inbox,
+                (
+                    "Kitchen",
+                    "Cabin",
+                    "accepted",
+                    '["camera_motion","camera_person"]',
+                    2,
+                ),
+            )
             outbox = connection.execute(
                 "SELECT alias, site, event_type, capture_strategy, status FROM outbox ORDER BY event_type"
             ).fetchall()
