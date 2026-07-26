@@ -536,6 +536,7 @@ fi
 SCRIPTS_DEPLOYED=0
 NEST_EVENT_RUNTIME_CHANGED=0
 NEST_ACTIVITY_RUNTIME_CHANGED=0
+CABIN_ENTRY_RUNTIME_CHANGED=0
 OLA_BRIDGE_RUNTIME_CHANGED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
@@ -553,6 +554,12 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
     nest-event-listener.py|nest-event-listener-wrapper.sh|nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh)
       [ "$NEST_EVENT_SCHEMA_DEPLOY_READY" -eq 1 ] || continue
       ;;
+    cabin-entry-verifier.py|cabin-entry-verifier-wrapper.sh)
+      if [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -ne 1 ] \
+        || [ "$NEST_EVENT_SCHEMA_DEPLOY_READY" -ne 1 ]; then
+        continue
+      fi
+      ;;
   esac
   case "$fname" in
     nest-event-listener.py|nest-event-listener-wrapper.sh)
@@ -563,6 +570,11 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
     nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         NEST_ACTIVITY_RUNTIME_CHANGED=1
+      fi
+      ;;
+    cabin-entry-verifier.py|cabin-entry-verifier-wrapper.sh)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        CABIN_ENTRY_RUNTIME_CHANGED=1
       fi
       ;;
     ola-webhook-bridge.py|ola-webhook-bridge-wrapper.sh)
@@ -795,6 +807,48 @@ if [ -e "$NEST_ACTIVITY_AGENT_DST" ] || [ -L "$NEST_ACTIVITY_AGENT_DST" ]; then
     fi
   elif [ "$NEST_ACTIVITY_AGENT_CHANGED" -eq 1 ] || [ "$NEST_ACTIVITY_RUNTIME_CHANGED" -eq 1 ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) nest-activity: refreshed installed files; LaunchAgent remains unloaded pending explicit bootstrap" >> "$LOG"
+  fi
+fi
+
+# Refresh the ordered Ring-to-Kitchen verifier only after an attended
+# initialization, consumer registration, and bootstrap have installed its
+# plist. Routine pulls must never create or activate this camera path.
+CABIN_ENTRY_AGENT_LABEL="ai.openclaw.cabin-entry-verifier"
+CABIN_ENTRY_AGENT_SRC="$REPO/openclaw/launchagents/$CABIN_ENTRY_AGENT_LABEL.plist"
+CABIN_ENTRY_AGENT_DST="$HOME/Library/LaunchAgents/$CABIN_ENTRY_AGENT_LABEL.plist"
+if [ -e "$CABIN_ENTRY_AGENT_DST" ] || [ -L "$CABIN_ENTRY_AGENT_DST" ]; then
+  if [ ! -f "$CABIN_ENTRY_AGENT_SRC" ] || [ -L "$CABIN_ENTRY_AGENT_SRC" ] \
+    || [ ! -f "$CABIN_ENTRY_AGENT_DST" ] || [ -L "$CABIN_ENTRY_AGENT_DST" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cabin-entry: FATAL installed LaunchAgent is unavailable or unsafe" >> "$LOG"
+    exit 1
+  fi
+
+  CABIN_ENTRY_AGENT_CHANGED=0
+  if ! cmp -s "$CABIN_ENTRY_AGENT_SRC" "$CABIN_ENTRY_AGENT_DST"; then
+    atomic_install_managed_file "$CABIN_ENTRY_AGENT_SRC" "$CABIN_ENTRY_AGENT_DST" 644
+    CABIN_ENTRY_AGENT_CHANGED=1
+  fi
+
+  CABIN_ENTRY_AGENT_DOMAIN="gui/$(id -u)"
+  if launchctl print "$CABIN_ENTRY_AGENT_DOMAIN/$CABIN_ENTRY_AGENT_LABEL" >/dev/null 2>&1; then
+    if [ "$CABIN_ENTRY_AGENT_CHANGED" -eq 1 ] || [ "$CABIN_ENTRY_RUNTIME_CHANGED" -eq 1 ]; then
+      launchctl bootout "$CABIN_ENTRY_AGENT_DOMAIN/$CABIN_ENTRY_AGENT_LABEL" >/dev/null 2>&1 || true
+      CABIN_ENTRY_RELOAD_OK=0
+      for CABIN_ENTRY_RELOAD_ATTEMPT in 1 2 3 4 5; do
+        if launchctl bootstrap "$CABIN_ENTRY_AGENT_DOMAIN" "$CABIN_ENTRY_AGENT_DST"; then
+          CABIN_ENTRY_RELOAD_OK=1
+          break
+        fi
+        sleep 1
+      done
+      if [ "$CABIN_ENTRY_RELOAD_OK" -ne 1 ]; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cabin-entry: FATAL verifier reload failed" >> "$LOG"
+        exit 1
+      fi
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cabin-entry: reloaded installed verifier" >> "$LOG"
+    fi
+  elif [ "$CABIN_ENTRY_AGENT_CHANGED" -eq 1 ] || [ "$CABIN_ENTRY_RUNTIME_CHANGED" -eq 1 ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cabin-entry: refreshed installed files; LaunchAgent remains unloaded pending explicit bootstrap" >> "$LOG"
   fi
 fi
 

@@ -3,9 +3,17 @@
 Home events is the Mac Mini's private, durable journal for normalized household
 activity. Ring, canonical presence, a read-only August observer, a metadata-only
 Nest bridge, and a local network-presence adapter publish small site-scoped
-records; one ingester serially commits them to SQLite. The system is installed
-in **shadow mode**: it records and exposes evidence but does not send a
-message, capture a camera image, change presence, or operate a lock.
+records; one ingester serially commits them to SQLite. The bus producers and
+correlator remain in **shadow mode**: they record and expose evidence but do
+not themselves send a message, capture a camera image, change presence, or
+operate a lock.
+
+One separately authorized consumer is an explicit exception to that shadow
+boundary. The Cabin entry verifier requires ordered live Ring evidence at the
+driveway and then the front door within five minutes. Only that complete
+sequence may schedule short-lived exact Kitchen stills at +30 and +60 seconds
+from the front-door event. It retains only a structured person-visible result,
+deletes both frames, and may send Dylan one fixed positive confirmation.
 
 The Nest listener and Cabin reviewer retain their own acknowledgement,
 capture, and delivery path. The bridge only mirrors already-committed Nest
@@ -44,9 +52,12 @@ Sanitized site scans -> local presence adapter -/               |
                                                                v
                                                     single SQLite ingester
                                                                |
-                                                  shadow correlator
-                                                               |
-                                     read-only CLI and OpenClaw `home-events`
+                                         +---------------------+------------------+
+                                         |                                        |
+                                  shadow correlator                   ordered Cabin verifier
+                                         |                              driveway -> front door
+                          read-only CLI and `home-events`                   |
+                                                                Kitchen +30s / +60s
 ```
 
 Producers accept at-least-once delivery. A spool record becomes durable only
@@ -70,6 +81,15 @@ status projection, and logs.
 - `bin/home-events` is the fixed-root, read-only agent wrapper.
 - `bin/home-event-correlator.py` claims durable consumer rows, groups them into
   persistent site incidents, and records shadow-only policy decisions.
+- `bin/cabin-entry-verifier.py` is a separate future-only consumer. It requires
+  Cabin `driveway` activity followed by `front_door` activity within five
+  minutes, gates the sequence on confirmed vacancy, captures exact Kitchen
+  stills at +30/+60 seconds from the front-door event, retains only strict
+  person-visible decisions, and deletes the frames. Its one-shot attended
+  canary may bypass vacancy for the next complete sequence only.
+- `bin/cabin-entry-verifier-wrapper.sh` supplies a sanitized cache-only
+  LaunchAgent boundary and one bounded owner-only log. It loads only Dylan's
+  validated chat target from the protected cache and never invokes `op`.
 - `bin/home-event-service-wrapper.sh` is the sanitized LaunchAgent boundary for
   ingestion, correlation, August polling, Nest bridging, and local network
   enrichment, with one bounded safe log.
@@ -91,6 +111,9 @@ status projection, and logs.
 - Five attended-install LaunchAgents schedule ingestion, correlation, the
   disabled-by-default August observer and Nest bridge, and the independently
   site-gated local-presence adapter.
+- The verifier has its own attended-install KeepAlive LaunchAgent. Merely
+  deploying its files does not activate it: initialization, future-only
+  consumer registration, and bootstrap are separate operator steps.
 
 ## Protected runtime
 
@@ -119,6 +142,11 @@ status projection, and logs.
     │                                      0600 only during retry/recovery
     └── presence-local-adapter.lock      0600
 
+~/.openclaw/cabin-entry-verifier/        0700
+├── state.sqlite3                        0600 structured schedule/results
+├── service.lock                         0600
+└── images/                              0700 normally empty; frames are 0600
+
 ~/.openclaw/presence/home-events-outbox/ 0700
 ├── producer-state.json                  0600 normalization checkpoint
 ├── <hash>.pending.json                  0600 before canonical commit
@@ -138,6 +166,11 @@ the WAL. The internal maintenance marker is not exposed through safe status.
 Status includes bus-observed per-source health and safe failure state, consumer
 depth and oldest unfinished time, retention, and database size. A source with
 no evidence remains `unknown`; this does not claim that its process is running.
+
+The verifier stores no provider identifiers, model prose, image path,
+recipient, message body, or receipt. The driveway candidate, front-door match,
+two capture outcomes, two strict vision decisions, final result, counters, and
+sanitized error codes are the complete durable contract.
 
 ## Commands
 
@@ -378,6 +411,39 @@ mount-specific device number is refreshed rather than treated as stable across
 a reboot. A legacy cursor is upgraded without advancing it only when the inode
 matches, the database predates the cursor, and the schema and outbox watermark
 remain continuous.
+
+### Ordered Cabin entry verification
+
+`cabin-entry-verifier.py` registers the dedicated
+`cabin_entry_verifier` consumer only during attended activation. Registration
+does not backfill existing events, so old Ring history cannot schedule a
+capture. Every future bus event is acknowledged after filtering; only fresh
+source-time Cabin Ring person/motion records from the exact `driveway` and
+`front_door` aliases participate.
+
+A driveway record opens a five-minute candidate window but performs no camera
+work. A later front-door record must be newer than that driveway record and
+inside the window. Front-door-only, driveway-only, reversed, stale, backfilled,
+cross-site, and unknown-alias records are inert. A complete sequence is
+coalesced for two minutes and schedules exact `Kitchen / Cabin` live stills
+30 and 60 seconds after the front-door source timestamp.
+
+Normal sequences require the strict canonical presence gate to say the Cabin
+was confirmed vacant when the front-door record completed the sequence. There
+is deliberately no later presence veto: the arriving resident may join the
+Cabin network before the stills, which is the condition the verifier is trying
+to confirm. `arm-canary` grants only the next complete sequence a short-lived
+vacancy bypass for an attended test; either Ring event alone cannot consume
+the bypass.
+
+The two images are mode `0600`, never leave the Mini, and are deleted after
+analysis even when capture, analysis, or delivery fails. Vision returns only
+`person_visible` plus `low|medium|high` confidence. Either medium/high positive
+produces `person_visible`; two medium/high negatives produce
+`no_person_visible`; every partial, failed, or low-confidence pair is
+`uncertain`. Only `person_visible` reserves and attempts one fixed text
+notification. A crash after that reservation becomes `unknown` and is never
+retried, preventing a duplicate.
 
 ## Attended rollout
 

@@ -20,6 +20,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary over explicit iMessage RPC bridge transport, hard-limited to one send attempt/hour |
+| `ai.openclaw.cabin-entry-verifier` | `cabin-entry-verifier-wrapper.sh` | — | Ordered Cabin Ring driveway → front-door consumer; exact Kitchen stills at +30/+60 seconds, ephemeral media, fixed positive confirmation |
 | `ai.openclaw.ola-webhook-bridge` | `ola-webhook-bridge-wrapper.sh` | 18790 loopback | Verifies Ola's public HMAC-signed wake and relays it to the private OpenClaw hook token |
 | `ai.openclaw.reachy-gateway-tunnel` | `ssh -R` | Reachy loopback 18789 | Keeps a token-authenticated path from Crosstown Reachy Mini to the Mac mini's loopback-only gateway |
 | `ai.openclaw.reachy-gateway-upstream` | `ssh -L` | Crosstown MBP loopback 28789 | Carries the Mac mini's loopback-only gateway to the always-on Crosstown MBP without exposing it on Tailscale or the LAN |
@@ -58,6 +59,25 @@ dotfiles pulls update and reload either job only after its installed plist
 exists. See
 [`NEST-EVENTS.md`](NEST-EVENTS.md) for the cloud IAM contract, protected
 runtime layout, checks, and rollout gates.
+
+### Ordered Cabin Entry Verifier
+
+`ai.openclaw.cabin-entry-verifier` is independent of the Nest Pub/Sub event
+path. Its future-only home-event consumer requires live Cabin Ring activity at
+`driveway`, followed within five minutes by `front_door`; either event alone
+is inert. The front-door timestamp schedules exact Kitchen stills at +30 and
++60 seconds. Normal sequences require canonical confirmed vacancy at the
+front-door trigger. An operator may arm one short-lived attended canary for the
+next complete sequence while the Cabin is occupied.
+
+Frames remain mode `0600` and are deleted after both strict person-visible
+checks. Durable state contains only timing, booleans/confidence, counters,
+results, notification state, and sanitized errors. A positive pair reserves
+one fixed text notification before using explicit `imsg rpc` bridge transport;
+there is no image delivery or model-authored prose. The service is
+attended-install only: routine pulls may refresh it only after its plist
+already exists, and cannot initialize its state, register its consumer, arm a
+canary, or bootstrap it.
 
 ### Ola Webhook Bridge
 

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.openclaw.cabin-entry-verifier</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/dbochman/.openclaw/bin/cabin-entry-verifier-wrapper.sh</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/dbochman</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CABIN_ENTRY_MODE</key>
+    <string>ring-kitchen-verification</string>
+    <key>HOME_EVENTS_ROOT</key>
+    <string>/Users/dbochman/.openclaw/home-events</string>
+    <key>CABIN_ENTRY_STATE_DIR</key>
+    <string>/Users/dbochman/.openclaw/cabin-entry-verifier</string>
+    <key>CABIN_ENTRY_DATABASE</key>
+    <string>/Users/dbochman/.openclaw/cabin-entry-verifier/state.sqlite3</string>
+    <key>CABIN_ENTRY_IMAGE_DIR</key>
+    <string>/Users/dbochman/.openclaw/cabin-entry-verifier/images</string>
+    <key>CABIN_ENTRY_LOCK_FILE</key>
+    <string>/Users/dbochman/.openclaw/cabin-entry-verifier/service.lock</string>
+    <key>OPENCLAW_PRESENCE_STATE</key>
+    <string>/Users/dbochman/.openclaw/presence/state.json</string>
+    <key>OPENCLAW_PRESENCE_CABIN_SCAN</key>
+    <string>/Users/dbochman/.openclaw/presence/cabin-scan.json</string>
+    <key>OPENCLAW_PRESENCE_CROSSTOWN_SCAN</key>
+    <string>/Users/dbochman/.openclaw/presence/crosstown-scan.json</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/dev/null</string>
+</dict>
+</plist>

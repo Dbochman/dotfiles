@@ -11,11 +11,20 @@ exactly **Kitchen / Cabin**. It may capture a fresh live frame, ask OpenClaw's
 stateless vision capability for a factual observation, and send one text-only
 iMessage only while the presence system confirms the Cabin is vacant. An
 occupied or uncertain Cabin and both Crosstown cameras remain shadow-only.
+The reviewer validates listener schema 3; that migration added only sanitized
+diagnostic metadata and left the outbox columns it reads unchanged.
 
 A second, independent bridge mirrors newly committed person/motion metadata
 into the durable home-event bus. It is downstream of the listener's
 acknowledgement boundary and carries no image, model text, raw SDM identifier,
 or camera resource, so bus downtime cannot delay Pub/Sub or visual review.
+
+A separately authorized Cabin entry verifier does not depend on Nest camera
+events. It consumes an ordered Ring sequence from the home-event bus:
+`driveway` followed by `front_door` within five minutes. Only that complete
+sequence schedules exact Kitchen live stills at +30 and +60 seconds from the
+front-door timestamp. This is the fallback for the Kitchen camera's currently
+missing SDM person/motion deliveries.
 
 ## Data flow
 
@@ -39,6 +48,12 @@ Living Room Wired -------/                            |
                                                                       meaningful + hourly slot
                                                                                    v
                                                                   iMessage RPC bridge transport
+
+Ring driveway -> Ring front door -> ordered verifier -> Kitchen +30s / +60s
+                                                |
+                                      strict person-visible result
+                                                |
+                                  fixed positive text; frames deleted
 ```
 
 One Device Access topic and one pull subscription cover every camera that is
@@ -84,6 +99,11 @@ required.
 ~/.openclaw/home-events/state/
 ├── nest-bridge.json                     0600 outbox cursor + DB identity
 └── nest-bridge.lock                     0600
+
+~/.openclaw/cabin-entry-verifier/        0700
+├── state.sqlite3                        0600 structured schedule/results only
+├── service.lock                         0600
+└── images/                              0700; temporary frames are 0600
 ```
 
 The credential JSON is never stored in the repository, general secrets cache,

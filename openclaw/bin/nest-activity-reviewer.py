@@ -45,7 +45,7 @@ from urllib.parse import quote
 
 SERVICE_NAME = "nest-activity-reviewer"
 SCHEMA_VERSION = 2
-NEST_LISTENER_SCHEMA_VERSION = 2
+NEST_LISTENER_SCHEMA_VERSION = 3
 MODE = "cabin-commentary"
 CAMERA_ALIAS = "Kitchen"
 CAMERA_SITE = "Cabin"

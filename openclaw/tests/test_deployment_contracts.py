@@ -57,6 +57,15 @@ NEST_ACTIVITY_REVIEWER_PLIST = (
     / "launchagents"
     / "ai.openclaw.nest-activity-reviewer.plist"
 )
+CABIN_ENTRY_VERIFIER_WRAPPER = (
+    REPO_ROOT / "openclaw" / "bin" / "cabin-entry-verifier-wrapper.sh"
+)
+CABIN_ENTRY_VERIFIER_PLIST = (
+    REPO_ROOT
+    / "openclaw"
+    / "launchagents"
+    / "ai.openclaw.cabin-entry-verifier.plist"
+)
 
 REQUIRED_HELPERS = {
     "bin/august": "august wrapper\n",
@@ -1181,6 +1190,53 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("private file ownership or mode is invalid", failed.stderr)
         self.assertNotIn("chat_id:7", failed.stdout + failed.stderr)
+
+    def test_cabin_entry_verifier_deployment_is_private_and_attended(self) -> None:
+        wrapper_text = CABIN_ENTRY_VERIFIER_WRAPPER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        with CABIN_ENTRY_VERIFIER_PLIST.open("rb") as plist_file:
+            entry_plist = plistlib.load(plist_file)
+
+        self.assertEqual(
+            entry_plist["Label"], "ai.openclaw.cabin-entry-verifier"
+        )
+        self.assertTrue(entry_plist["RunAtLoad"])
+        self.assertTrue(entry_plist["KeepAlive"])
+        self.assertEqual(entry_plist["Umask"], 0o77)
+        self.assertEqual(entry_plist["StandardOutPath"], "/dev/null")
+        self.assertEqual(entry_plist["StandardErrorPath"], "/dev/null")
+        environment = entry_plist["EnvironmentVariables"]
+        self.assertEqual(
+            environment["CABIN_ENTRY_MODE"], "ring-kitchen-verification"
+        )
+        self.assertNotIn("OPENCLAW_DYLAN_IMESSAGE_TARGET", environment)
+        self.assertNotIn("DYLAN_CHAT_ID", environment)
+
+        self.assertIn("umask 077", wrapper_text)
+        self.assertIn('SECRETS_CACHE="$OPENCLAW_ROOT/.secrets-cache"', wrapper_text)
+        self.assertIn('require_private_file "$SECRETS_CACHE"', wrapper_text)
+        self.assertIn("resolve_chat_target", wrapper_text)
+        self.assertIn("exec /usr/bin/env -i", wrapper_text)
+        self.assertIn("LOG_LIMIT_BYTES=262144", wrapper_text)
+        self.assertIn("bounded_log_stream", wrapper_text)
+        self.assertIn("/usr/bin/mkfifo -m 600", wrapper_text)
+        self.assertNotRegex(wrapper_text, r"(?:^|[ /])op(?:[ \"']|$)")
+        self.assertNotIn("OPENCLAW_GATEWAY_TOKEN", wrapper_text)
+
+        self.assertIn(
+            'CABIN_ENTRY_AGENT_LABEL="ai.openclaw.cabin-entry-verifier"',
+            pull_text,
+        )
+        self.assertIn("CABIN_ENTRY_RUNTIME_CHANGED=0", pull_text)
+        self.assertIn(
+            "cabin-entry-verifier.py|cabin-entry-verifier-wrapper.sh",
+            pull_text,
+        )
+        self.assertIn("CABIN_ENTRY_RELOAD_ATTEMPT in 1 2 3 4 5", pull_text)
+        self.assertIn("FATAL verifier reload failed", pull_text)
+        self.assertIn(
+            "LaunchAgent remains unloaded pending explicit bootstrap", pull_text
+        )
 
     def test_nest_event_run_logs_stay_bounded_while_listener_is_healthy(self) -> None:
         home = self.root / "bounded-home"
