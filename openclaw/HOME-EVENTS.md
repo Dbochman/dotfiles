@@ -386,7 +386,9 @@ installed in shadow mode. Canonical presence, Nest metadata, Ring, August, and
 Cabin local-presence enrichment are enabled in the installed runtime; the
 tracked producer defaults remain off. The local-presence adapter completed a
 silent Cabin baseline and duplicate-scan no-op, while Crosstown remains off.
-The Nest listener schema-v2 migration and bridge baseline are complete. A
+The Nest listener schema-v3 migration and bridge baseline are complete. The
+bridge retains exact schema-v2 compatibility because schema v3 did not change
+its outbox contract. A
 fresh or rebuilt installation must first:
 
 1. Confirm the target is the Mac Mini user `dbochman` with

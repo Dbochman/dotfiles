@@ -366,10 +366,12 @@ already been installed; it never silently performs first activation.
 
 The bridge is a separate disabled-by-default home-event LaunchAgent. Deploy the
 new listener and run `nest-event-listener-wrapper.sh migrate` first; the bridge
-requires listener database schema v2 and rejects v1. Schema v2 gives the
-outbox a durable SQLite AUTOINCREMENT watermark, so IDs cannot restart below a
-consumer cursor after retention empties the table. Then initialize and migrate
-the home-event bus, install the bridge script/plist, and set
+accepts listener database schemas v2 and v3 and rejects v1 or unknown future
+schemas. Schema v2 gives the outbox a durable SQLite AUTOINCREMENT watermark,
+so IDs cannot restart below a consumer cursor after retention empties the
+table. Schema v3 adds only bounded inbox telemetry and leaves that outbox
+contract unchanged. Then initialize and migrate the home-event bus, install
+the bridge script/plist, and set
 `HOME_EVENTS_NEST_ENABLED=1` only during an attended session. The first enabled
 run records the current Nest outbox watermark and emits zero events, so the
 historical validation corpus is not replayed. Verify that baseline before

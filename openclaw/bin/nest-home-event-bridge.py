@@ -28,7 +28,7 @@ from urllib.parse import quote
 
 LEGACY_CURSOR_VERSION = 1
 CURSOR_VERSION = 2
-NEST_SCHEMA_VERSION = 2
+SUPPORTED_NEST_SCHEMA_VERSIONS = frozenset({2, 3})
 MAX_BATCH_SIZE = 100
 DEDUPE_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -218,7 +218,10 @@ def _check_schema(connection: sqlite3.Connection) -> None:
         ).fetchall()
     except sqlite3.Error as exc:
         raise BridgeError("database_schema") from exc
-    if len(versions) != 1 or versions[0]["version"] != NEST_SCHEMA_VERSION:
+    if (
+        len(versions) != 1
+        or versions[0]["version"] not in SUPPORTED_NEST_SCHEMA_VERSIONS
+    ):
         raise BridgeError("database_schema")
 
 

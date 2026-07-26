@@ -19,7 +19,7 @@ API_HOST="api.smartcielo.com"
 API_KEY="${CIELO_API_KEY:?CIELO_API_KEY not set}"
 GRAB_SCRIPT="$HOME/.openclaw/workspace/scripts/grab-cielo-tokens.py"
 PINCHTAB="/opt/homebrew/bin/pinchtab"
-PINCHTAB_PROFILE="${CIELO_PINCHTAB_PROFILE:-default}"
+PINCHTAB_PROFILE="${CIELO_PINCHTAB_PROFILE:-cielo}"
 
 # ── Method 1: API refresh token ─────────────────────────────────────────────
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -59,6 +59,7 @@ fi
 # ── Start pinchtab ──────────────────────────────────────────────────────────
 STARTED_PINCHTAB_INSTANCE=false
 PINCHTAB_INSTANCE_ID=""
+PINCHTAB_INSTANCE_URL=""
 PINCHTAB_PROFILE_PATH=""
 CIELO_TAB_ID=""
 PASSIVE_GRAB_PID=""
@@ -68,8 +69,9 @@ cleanup() {
     kill "$PASSIVE_GRAB_PID" 2>/dev/null || true
     wait "$PASSIVE_GRAB_PID" 2>/dev/null || true
   fi
-  if [[ -n "$CIELO_TAB_ID" ]]; then
-    "$PINCHTAB" close "$CIELO_TAB_ID" >/dev/null 2>&1 || true
+  if [[ -n "$CIELO_TAB_ID" && -n "$PINCHTAB_INSTANCE_URL" ]]; then
+    "$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
+      close "$CIELO_TAB_ID" >/dev/null 2>&1 || true
   fi
   if [[ "$STARTED_PINCHTAB_INSTANCE" == true ]] && [[ -n "$PINCHTAB_INSTANCE_ID" ]]; then
     "$PINCHTAB" instance stop "$PINCHTAB_INSTANCE_ID" >/dev/null 2>&1 || true
@@ -144,12 +146,44 @@ if [[ "${INSTANCE_STATUS:-}" != "running" ]]; then
   cleanup; exit 1
 fi
 
-# Open an isolated Cielo tab through the managed instance API.
-NAV_OUTPUT=$("$PINCHTAB" instance navigate "$PINCHTAB_INSTANCE_ID" "https://home.cielowigle.com/" 2>/dev/null)
+PINCHTAB_INSTANCE_URL=$("$PINCHTAB" instances --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    instances = json.load(sys.stdin)
+    print(next((i.get('url', '') for i in instances if i.get('id') == '$PINCHTAB_INSTANCE_ID'), ''))
+except Exception:
+    print('')
+" 2>/dev/null)
+case "$PINCHTAB_INSTANCE_URL" in
+  http://127.0.0.1:*|http://localhost:*) ;;
+  *)
+    echo '{"success":false,"error":"PinchTab instance endpoint is unavailable"}'
+    cleanup; exit 1
+    ;;
+esac
+
+# Open an isolated Cielo tab through the acquired instance's exact endpoint.
+# The control-plane instance-navigate command can report a tab ID before the
+# headed/headless instance has registered the tab, which leaves CDP capture
+# pointed at a target that never becomes usable.
+NAV_OUTPUT=$("$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
+  nav "https://home.cielowigle.com/" --new-tab --print-tab-id 2>/dev/null)
 CIELO_TAB_ID=$(printf '%s' "$NAV_OUTPUT" | python3 -c "
-import re, sys
-match = re.search(r'\"tabId\"\s*:\s*\"([^\"]+)\"', sys.stdin.read())
-print(match.group(1) if match else '')
+import json, re, sys
+text = sys.stdin.read().strip()
+tab_id = ''
+try:
+    payload = json.loads(text)
+except Exception:
+    payload = None
+if isinstance(payload, dict):
+    tab_id = payload.get('tabId') or payload.get('id') or ''
+if not tab_id and re.fullmatch(r'[A-Za-z0-9_.:-]{4,160}', text):
+    tab_id = text
+if not tab_id:
+    match = re.search(r'\"tabId\"\s*:\s*\"([^\"]+)\"', text)
+    tab_id = match.group(1) if match else ''
+print(tab_id if isinstance(tab_id, str) else '')
 " 2>/dev/null)
 
 if [[ -z "$CIELO_TAB_ID" ]]; then
@@ -208,7 +242,8 @@ fi
 # ── Check if logged in (poll for URL to settle) ─────────────────────────────
 IS_LOGGED_IN="no"
 for check in $(seq 1 5); do
-  CURRENT_URL=$("$PINCHTAB" eval "window.location.href" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
+  CURRENT_URL=$("$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
+    eval "window.location.href" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
@@ -238,7 +273,9 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
   echo '{"info":"Cookies expired, attempting headless login..."}'
 
   # Navigate to login page
-  "$PINCHTAB" eval "window.location.assign('https://home.cielowigle.com/auth/login'); 'navigating'" --tab "$CIELO_TAB_ID" >/dev/null 2>&1
+  "$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
+    eval "window.location.assign('https://home.cielowigle.com/auth/login'); 'navigating'" \
+    --tab "$CIELO_TAB_ID" >/dev/null 2>&1
   sleep 8
 
   # Start passive CDP listener BEFORE login to capture the auth response (refreshToken)
@@ -250,7 +287,7 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
   # Fill login form and submit
   CIELO_USERNAME_JS=$(python3 -c 'import json, os; print(json.dumps(os.environ["CIELO_USERNAME"]))')
   CIELO_PASSWORD_JS=$(python3 -c 'import json, os; print(json.dumps(os.environ["CIELO_PASSWORD"]))')
-  LOGIN_RESULT=$("$PINCHTAB" eval "
+  LOGIN_RESULT=$("$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" eval "
     (() => {
       // Find form inputs — Cielo uses .input100 class
       const inputs = document.querySelectorAll('input');
@@ -321,7 +358,8 @@ except:
   sleep 10
 
   # Check if we landed on dashboard
-  FINAL_URL=$("$PINCHTAB" eval "window.location.href" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
+  FINAL_URL=$("$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
+    eval "window.location.href" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
 try: d = json.loads(sys.stdin.read()); print(d.get('result',''))
 except: print('')
@@ -329,7 +367,9 @@ except: print('')
 
   if [[ "$FINAL_URL" == *"login"* ]] || [[ "$FINAL_URL" == *"auth"* ]]; then
     # Check if reCAPTCHA is blocking
-    HAS_CAPTCHA=$("$PINCHTAB" eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
+    HAS_CAPTCHA=$("$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
+      eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" \
+      --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
 try: d = json.loads(sys.stdin.read()); print(d.get('result','none'))
 except: print('none')

@@ -128,8 +128,13 @@ async def cmd_status():
         }
         if db.battery_life is not None:
             d["battery"] = db.battery_life
-        if hasattr(db, "existing_doorbell_type"):
-            d["chimeType"] = db.existing_doorbell_type
+        try:
+            chime_type = db.existing_doorbell_type
+        except (AttributeError, KeyError):
+            pass
+        else:
+            if chime_type is not None:
+                d["chimeType"] = chime_type
         # WiFi
         d["wifiName"] = db.wifi_name
         d["wifiSignal"] = db.wifi_signal_strength

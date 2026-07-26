@@ -70,7 +70,7 @@ raise SystemExit(9 if os.environ.get('FAKE_PUBLISH_FAIL') == '1' else 0)
             connection.executescript(
                 """
                 CREATE TABLE schema_meta(version INTEGER NOT NULL);
-                INSERT INTO schema_meta(version) VALUES (2);
+                INSERT INTO schema_meta(version) VALUES (3);
                 CREATE TABLE event_records(
                     id INTEGER PRIMARY KEY,
                     dedupe_key TEXT NOT NULL UNIQUE,
@@ -226,6 +226,28 @@ raise SystemExit(9 if os.environ.get('FAKE_PUBLISH_FAIL') == '1' else 0)
     def test_listener_v1_schema_is_rejected_before_cursor_creation(self) -> None:
         with contextlib.closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("UPDATE schema_meta SET version = 1")
+
+        result = self.run_bridge()
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["error_code"], "database_schema")
+        self.assertFalse(self.cursor_path.exists())
+
+    def test_listener_v2_schema_remains_supported_for_rollback(self) -> None:
+        with contextlib.closing(sqlite3.connect(self.database)) as connection, connection:
+            connection.execute("UPDATE schema_meta SET version = 2")
+        self.insert_event(1)
+
+        result = self.run_bridge()
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["mode"], "baseline")
+        self.assertEqual(self.cursor()["last_outbox_id"], 1)
+        self.assertEqual(self.published(), [])
+
+    def test_future_listener_schema_is_rejected_before_cursor_creation(self) -> None:
+        with contextlib.closing(sqlite3.connect(self.database)) as connection, connection:
+            connection.execute("UPDATE schema_meta SET version = 4")
 
         result = self.run_bridge()
 

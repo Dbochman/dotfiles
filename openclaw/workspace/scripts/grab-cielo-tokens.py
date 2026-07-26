@@ -63,8 +63,15 @@ async def grab(cdp_port, passive=False):
         capture_timeout = min(max(capture_timeout, 5), 900)
         deadline = time.time() + capture_timeout
         token = None
-        session_id = None
-        user_id = None
+        existing_config = {}
+        if not passive and os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE) as existing_handle:
+                    existing_config = json.load(existing_handle)
+            except (OSError, json.JSONDecodeError, TypeError):
+                existing_config = {}
+        session_id = existing_config.get("sessionId") or None
+        user_id = existing_config.get("userId") or None
         refresh_token = None
         msg_id_counter = 10
 

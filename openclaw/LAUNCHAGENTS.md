@@ -325,7 +325,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
-| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's `default` profile |
+| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's dedicated `cielo` profile |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
 Presence identities are site-local protected JSON bindings. Routine deployment
@@ -414,7 +414,7 @@ through `~/.openclaw/bin/pinchtab-headless-instance`. OpenTable uses the
 `opentable` profile, grocery uses `grocery`, and finance uses `finance`. The
 helper refuses to navigate a visible PinchTab instance and stops only instances
 that it created. Cielo does not use this helper: its fallback owns a separate
-direct headless lifecycle on `default` and retains its attended
+direct headless lifecycle on `cielo` and retains its attended
 reauthentication path.
 The former viewing snooze is retired because scheduled browser work no longer
 needs the display. A visible browser is allowed only for an explicit,
