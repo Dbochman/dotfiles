@@ -2,9 +2,11 @@
 
 ## Status
 
-READY FOR READ-ONLY SHADOW SAMPLING — the protected Crosstown JSON binding
-validates, but production remains on the preserved legacy scanner until the
-exact strict source hash passes this canary and receives a site-local approval.
+ACTIVE — the strict Crosstown scanner was activated on `2026-07-26` at reviewed
+source hash
+`3c795e93244d0624dec426f350b93e7af1b6e4652e6d4b095e3b8f1fdb2470cf`.
+The MacBook Pro approval is pinned to that exact hash, and the exact prior
+legacy scanner is retained in an owner-only rollback bundle.
 
 Preliminary progress at `2026-07-20T11:02:59Z`: binding parity and strict
 config validation passed; a same-window shadow comparison had sanitized
@@ -29,6 +31,28 @@ clean commit `a8c945f`: the tracked and runtime updater hashes both verified as
 `0bb02acb6fab03727ea41baa70454608757aa4d77e6a92a73cc1adaf6603c6c0`, and the
 runtime gate markers were present. No scanner was deployed; both sites still
 had the same preserved legacy scanner hash and neither approval file existed.
+
+On `2026-07-26`, the current reviewed hash passed strict config, binding,
+scanner, receiver, correlation, home-event, vacancy-action, deployment, shell,
+and Python preflight tests. Attended Wi-Fi off/on checks independently removed
+and restored each phone. The first immediate Julia-off comparison was
+discarded on a decision mismatch; the later aged observation passed with zero
+mismatches, as did both return observations. Both phones were then positively
+observed together. Dylan explicitly waived the remaining hour-cadence soak and
+locked/sleeping-phone sample before authorizing activation.
+
+Activation followed the guarded production sequence below. All downstream
+consumers were stopped, the legacy runtime was copied into the protected
+rollback bundle, and the exact approval was created before the normal dotfiles
+deployment. Deployed hash/config/observation checks passed. A strict production
+scan landed with both residents present while consumers remained stopped; the
+receiver then advanced canonical state with Crosstown occupied, Cabin confirmed
+vacant, and zero transitions. Vacancy actions and the Nest reviewer were
+restored in order. A forced launch-agent tick subsequently traversed the normal
+scheduled path and again produced zero transitions. Final bus status was
+healthy with zero pending or leased deliveries, dead letters, or ready spool
+files; the sole open incident was the expected shadowed occupied-activity
+observation.
 
 ## One-time updater bootstrap
 
