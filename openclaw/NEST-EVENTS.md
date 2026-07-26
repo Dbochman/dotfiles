@@ -471,7 +471,24 @@ Current physical validation:
   iMessage subprocess timed out before a local Messages record existed. The
   privacy contract correctly retained no description, so the observation
   cannot be reconstructed. The explicit RPC bridge transport still needs a
-  verified organic or attended delivery after deployment.
+  verified organic or attended delivery after deployment. On 2026-07-25,
+  repeated person detections visible in Google Home stopped reaching SDM
+  Pub/Sub; the last accepted Kitchen camera event remained 2026-07-24
+  10:29 EDT. Reauthorizing all three cameras preserved the exact Kitchen
+  resource binding and exposed both `CameraPerson` and `CameraMotion`. The
+  Device Access project retained the expected self-hosted topic, and
+  humidity/temperature trait deliveries proved the topic, publisher,
+  subscription, listener, and acknowledgement path remained live. Neither a
+  Kitchen camera power cycle nor disabling and re-enabling Device Access
+  events restored camera-event delivery. The console reset produced a
+  validation-time Pub/Sub message, `devices.list` succeeded, and a subsequent
+  attended Kitchen person event produced no delivery during a 55-second
+  window. Occupancy was not involved: the listener received no Kitchen event
+  to hand to the downstream presence gate. The listener was left healthy in
+  shadow mode on database schema v3. Removing and re-adding the camera in
+  Google Home, followed by full Device Access reauthorization and an
+  exact-resource config review, is deliberately deferred as the next invasive
+  recovery step.
 - **Living Room / Crosstown:** pending; the camera was unavailable during the
   first attended attempt.
 
