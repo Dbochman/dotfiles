@@ -23,17 +23,17 @@ behavior, the direct doorbell message, vacancy actions, and the August
 approval/mutation workflow also remain independent.
 
 The current installed production flags enable canonical presence, the Nest
-bridge, the Ring tee, the read-only August observer, and Cabin local-presence
-enrichment. Ring and August were promoted together into shadow observation on
-July 23 after an explicit operator decision to accelerate their otherwise
-independent gates. August's exact protected binding passed a read-only status
-check and its first poll created a silent baseline with no event. Ring uses
-exact bindings for both front doors and the Cabin driveway camera; its legacy
-paths remain authoritative while the remaining attended parity checks are
-pending. The Cabin local adapter also baselined both residents as present with
-zero events, then treated the repeated scan as a no-op. Crosstown local
-attribution remains disabled. The tracked plist defaults remain disabled so a
-fresh install cannot silently activate any producer.
+bridge, the Ring tee, the read-only August observer, and Cabin plus Crosstown
+local-presence enrichment. Ring and August were promoted together into shadow
+observation on July 23 after an explicit operator decision to accelerate their
+otherwise independent gates. August's exact protected binding passed a
+read-only status check and its first poll created a silent baseline with no
+event. Ring uses exact bindings for both front doors and the Cabin driveway
+camera; its legacy paths remain authoritative while the remaining attended
+parity checks are pending. The local adapter baselined both enabled sites with
+zero events and treated each repeated scan as a no-op. The tracked plist
+defaults remain disabled so a fresh install cannot silently activate any
+producer.
 
 Cabin production schema v2 has exact controller and Kitchen-mesh bindings for
 both residents. After two clean scheduled ticks, 12/12 live observations, and
@@ -314,14 +314,13 @@ addresses, or raw provider rows.
 Current Cabin production has protected schema-v2 exact bindings for the
 controller and Kitchen mesh node. Enrollment staging has been cleaned, the
 exact v1 backup and identifier-free report are retained, and routine deployment
-accepts only the explicitly approved scanner hash.
-Crosstown's strict JSON binding is ready, but its legacy runtime remains
-preserved until the
-[exact-source shadow canary](plans/crosstown-strict-presence-canary.md) passes.
-Each host accepts only the exact scanner hash that passed its own canary. Any
-scanner byte change requires a new per-host approval; Cabin approval and
-Crosstown approval are independent, so config validity or approval at one site
-cannot activate the other site's candidate.
+accepts only the explicitly approved scanner hash. Crosstown's strict JSON
+binding and exact scanner hash passed the separate
+[exact-source shadow canary](plans/crosstown-strict-presence-canary.md); the
+strict runtime is active and its exact legacy predecessor remains in a
+protected rollback bundle. Each host accepts only the exact scanner hash that
+passed its own canary. Any scanner byte change requires a new per-host
+approval; Cabin and Crosstown approvals remain independent.
 
 `presence-local-event-adapter.py` is a separate read-only consumer of those
 sanitized scans. It does not modify the scanner or canonical state. A first
@@ -341,10 +340,10 @@ records are journal-only: the correlator acknowledges them without opening,
 attaching, resolving, or extending an incident, and they cannot establish
 vacancy or trigger camera, lock, delivery, or messaging work.
 
-Cabin and Crosstown have independent disabled-by-default flags. Cabin is
-eligible because its exact scanner hash is approved. Crosstown remains
-disabled until the strict exact-source canary and hash approval complete; the
-legacy matcher is not safe enough for named local excursion attribution.
+Cabin and Crosstown have independent disabled-by-default tracked flags. Their
+installed flags are both enabled after separate scanner approvals. Crosstown's
+July 26 baseline and duplicate pass each produced zero events, left canonical
+presence unchanged, and created no incident or delivery side effect.
 
 ### August
 
@@ -485,19 +484,21 @@ Rollout status and remaining work:
    corrected canonical state without changing listener or reviewer behavior.
 8. Complete Ring's attended ding and person-motion tests at each configured
    site, including restart/dedupe and legacy dog-walk parity evidence.
-9. Perform an attended manual August lock/unlock and door open/close cycle
-   across poll boundaries. No automated unlock is authorized. Provider-
-   unsupported DoorSense may remain `unknown` without inventing an event.
+9. The attended manual August lock/unlock cycle completed across distinct poll
+   boundaries on July 26–27. DoorSense remains `unknown`; attempt door
+   open/close evidence only if it begins returning a known state, and never
+   invent an event from `unknown`. No automated unlock is authorized.
 10. Soak Ring and August concurrently but assess and roll them back
     independently. Stop an affected producer for any parity gap, unbounded
     backlog, duplicate/cross-site incident, mutation-path regression, or
     outbound delivery attempt.
-11. Consider delivery only under separate explicit authorization; it is not
-    part of this rollout.
-12. The local-presence adapter was enabled for Cabin with Crosstown disabled.
-    Its silent baseline and duplicate-scan no-op are verified; one organic or
-    attended departure/return interval remains before considering it
-    established.
+11. Follow the separate
+    [event bus promotion plan](plans/event-bus-promotion-plan.md) before
+    considering delivery. Delivery is not part of this shadow rollout.
+12. The local-presence adapter is enabled for Cabin and Crosstown. Both silent
+    baselines and duplicate-scan no-ops are verified; one organic or attended
+    departure/return interval per site remains before considering local
+    enrichment established.
 13. Throughout every gate, verify `home-eventctl status`, source spool depth,
     SQLite health, shadow decisions, and zero outbound delivery attempts.
 

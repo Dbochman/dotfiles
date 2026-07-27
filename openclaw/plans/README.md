@@ -10,9 +10,10 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
 | [home-events-bus](home-events-bus.md) | Deployed shadow bus: presence, Nest, Ring, and August active for shadow evidence |
+| [event-bus-promotion-plan](event-bus-promotion-plan.md) | Promote shadow correlation through Crosstown enrichment, attended source evidence, and narrowly scoped household delivery |
 | [home-events-future-sources](home-events-future-sources.md) | Planned vacancy outcomes, site connectivity, and pet-equipment exception producers |
 | [cabin-starlink-presence-enrollment](cabin-starlink-presence-enrollment.md) | Cabin exact controller/mesh schema v2 activated; natural transition verification remains |
-| [crosstown-strict-presence-canary](crosstown-strict-presence-canary.md) | Shadow and explicitly approve the exact strict Crosstown scanner before production activation |
+| [crosstown-strict-presence-canary](crosstown-strict-presence-canary.md) | Strict Crosstown scanner activated with exact approval and a protected legacy rollback |
 
 ## Archive
 

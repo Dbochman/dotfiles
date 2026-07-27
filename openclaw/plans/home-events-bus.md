@@ -3,14 +3,14 @@
 ## Status: DEPLOYED IN SHADOW MODE
 
 Canonical presence normalization, the metadata-only Nest bridge, the Ring tee,
-the read-only August observer, and Cabin local arrival/departure enrichment are
-enabled in the installed shadow runtime. Cabin presence uses the approved
-schema-v2 exact controller and Kitchen-mesh bindings. Ring and August were
-promoted concurrently on July 23 after explicit operator approval; their
-tracked defaults remain disabled. August has a verified protected binding and
-a silent baseline, while both sources still need their attended physical
-evidence and shadow soak. Crosstown local enrichment remains disabled pending
-its strict-scanner canary and approval. There is no user-facing delivery or
+the read-only August observer, and Cabin plus Crosstown local
+arrival/departure enrichment are enabled in the installed shadow runtime.
+Cabin presence uses the approved schema-v2 exact controller and Kitchen-mesh
+bindings; Crosstown uses its separately approved strict scanner and exact
+site-local bindings. Ring and August were promoted concurrently on July 23
+after explicit operator approval; their tracked defaults remain disabled.
+Both sources still need their remaining attended physical evidence, and August
+has not completed its seven-day soak. There is no user-facing delivery or
 physical-mutation path in this bus.
 
 ## Overview
@@ -366,9 +366,9 @@ and explicit operator acceptance of the exact installed scanner hash.
 
 Only the Mini publishes canonical presence. The Crosstown MacBook continues
 supplying observations through the existing validated Taildrop receiver. Its
-strict exact-MAC scanner is separately tracked but remains behind the
-[exact-source canary and approval gate](crosstown-strict-presence-canary.md);
-the existing legacy runtime stays active until that gate passes.
+strict exact-MAC scanner passed the separate
+[exact-source canary and approval gate](crosstown-strict-presence-canary.md)
+and is active with an exact legacy rollback bundle retained.
 
 Preserve all current semantics:
 
@@ -411,8 +411,8 @@ if publication fails.
   repeated identical evaluations remain silent.
 - Correlate a later organic or attended Nest person event against the corrected
   canonical state without changing listener or reviewer behavior.
-- Continue the separate Crosstown exact-source canary before replacing its
-  preserved legacy scanner.
+- Continue natural strict Crosstown transition evidence after its completed
+  activation.
 
 ### Local arrival and departure enrichment
 
@@ -437,10 +437,11 @@ controller/mesh identifiers, raw client metadata, or provider rows.
 
 All four local event types are queryable context only. The correlator must
 acknowledge them without changing incidents, decisions, delivery, camera,
-lock, or canonical presence state. Cabin and Crosstown use independent
-disabled-by-default flags. Cabin may enter shadow observation after its exact
-scanner approval; Crosstown remains disabled until its strict-scanner canary
-and approval gate complete.
+lock, or canonical presence state. Cabin and Crosstown retain independent
+disabled-by-default tracked flags. Both installed site flags are now enabled
+after their separate scanner approvals; the July 26 Crosstown baseline and
+duplicate pass each produced zero events and no canonical or incident side
+effects.
 
 ## Work package 4: shadow correlation — deployed, multi-source soak pending
 
@@ -794,23 +795,27 @@ incident identifiers, and no database path or provider identity.
 
 The bus core, correlator, read-only skill, adapters, bridges, and LaunchAgents
 are installed on the Mac Mini with SQLite schema 2 in shadow mode. Presence,
-Nest, Ring, August, and Cabin local-presence enrichment are enabled in the
-attended runtime. The local adapter completed a zero-event Cabin baseline and
-duplicate-scan no-op; Crosstown remains gated. The remaining order is:
+Nest, Ring, August, and both local-presence sites are enabled in the attended
+runtime. The local adapter completed zero-event baselines and duplicate-scan
+no-ops for Cabin and Crosstown. The remaining order is:
 
 1. Verify one true post-enrollment presence transition and correlate a later
    Nest person event against the corrected canonical state.
 2. Complete Ring's attended ding and person-motion test at each configured
    site, including restart/dedupe and legacy dog-walk parity.
-3. Perform an attended manual August lock/unlock and door open/close cycle
-   across poll boundaries; never automate unlock.
+3. Retain the completed attended August lock/unlock cycle evidence. Attempt
+   door open/close evidence only if DoorSense begins returning a known state;
+   never infer it from `unknown` or automate unlock.
 4. Soak Ring and August concurrently, assessing and rolling back each source
    independently.
 5. Verify one Cabin local departure/arrival interval and household excursion
    pair with zero canonical-state or incident side effects.
-6. Complete Crosstown strict-scanner canary and approval before enabling named
-   local events there.
-7. Consider any limited delivery only under separate explicit authorization;
+6. Collect a natural or attended Crosstown local departure/arrival interval
+   with zero canonical-state or incident side effects.
+7. Follow the separate
+   [event bus promotion plan](event-bus-promotion-plan.md) before considering
+   limited delivery; no delivery is authorized by this shadow activation.
+8. Consider any limited delivery only under separate explicit authorization;
    it is not part of the current rollout.
 
 At each gate, run unit/integration tests, Python compilation, `check-config`,
