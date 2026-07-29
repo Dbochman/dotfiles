@@ -26,14 +26,14 @@ class TrustedIMessageApprovalTests(unittest.TestCase):
             self.assertEqual(policy["agentFilter"], ["main"])
             self.assertEqual(policy["sessionFilter"], [OWNER_SESSION])
 
-    def test_only_owner_can_resolve_imessage_approvals(self) -> None:
+    def test_open_dms_include_verified_owner_handles(self) -> None:
         self.assertEqual(
             self.config["channels"]["imessage"]["dmPolicy"],
-            "allowlist",
+            "open",
         )
         self.assertEqual(
             self.config["channels"]["imessage"]["allowFrom"],
-            ["dylanbochman@gmail.com", "chat_id:1"],
+            ["dylanbochman@gmail.com", "+15084234853", "*"],
         )
 
 

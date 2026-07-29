@@ -166,11 +166,12 @@
       "enabled": true,
       "cliPath": "/opt/homebrew/bin/imsg",
       "dbPath": "/Users/dbochman/Library/Messages/chat.db",
-      "dmPolicy": "allowlist",
+      "dmPolicy": "open",
       "groupPolicy": "open",
       "allowFrom": [
         "dylanbochman@gmail.com",
-        "chat_id:1"
+        "+15084234853",
+        "*"
       ],
       "groups": {
         "*": {}

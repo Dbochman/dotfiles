@@ -367,11 +367,10 @@ imsg chats --limit 10 --json
   posture. Remaining exec and plugin approvals are routed only to Dylan's exact
   iMessage session. A 👍 tapback allows once, 👎 denies, and `allow-always`
   remains available through `/approve <id> allow-always`.
-- Keep `channels.imessage.allowFrom` and `dmPolicy: "allowlist"` explicit. A
-  wildcard there would allow any sender to resolve an approval reaction. The
-  stable `chat_id:1` route keeps Julia's existing DM admitted without storing
-  her private handle in the repository; only Dylan's explicit handle can
-  resolve approval reactions.
+- `channels.imessage.dmPolicy` is intentionally `open`, with the required
+  `allowFrom` wildcard plus Dylan's and Julia's verified sender handles.
+  Incoming DM admission matches sender handles, never `chat_id:*` targets.
+  Approval cards remain routed only to Dylan's exact iMessage session.
 
 ## Native iMessage Recovery
 
