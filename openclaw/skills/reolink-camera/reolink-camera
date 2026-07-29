@@ -2135,7 +2135,12 @@ def _deliver_owner_image(
         or any(not isinstance(item, str) for item in route["participants"])
         or not isinstance(route.get("guid"), str)
         or not 1 <= len(route["guid"]) <= MAX_IMSG_GUID_CHARACTERS
-        or not route["guid"].startswith("iMessage;")
+        or not route["guid"].startswith(
+            (
+                "any;+;" if route["is_group"] else "any;-;",
+                "iMessage;+;" if route["is_group"] else "iMessage;-;",
+            )
+        )
         or CONTROL_CHARACTER_PATTERN.search(route["guid"])
     ):
         raise PublicError("Camera image delivery failed")

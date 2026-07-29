@@ -3565,19 +3565,19 @@ class ReolinkCameraTests(unittest.TestCase):
             if command[1] == "group":
                 return (
                     b'{"id":8,"identifier":"private","guid":'
-                    b'"iMessage;-;private","name":"","service":"iMessage",'
+                    b'"any;-;private","name":"","service":"iMessage",'
                     b'"is_group":false,"participants":["private"]}'
                 )
             if command[1] == "send-attachment":
                 return (
-                    b'{"chatGuid":"iMessage;-;private","messageGuid":'
+                    b'{"chatGuid":"any;-;private","messageGuid":'
                     b'"message-receipt","selectedMessageGuid":"",'
                     b'"transferGuid":"transfer-receipt"}'
                 )
             return (
                 b'{"jsonrpc":"2.0","id":"reolink-camera-share",'
                 b'"result":{"ok":true,"transport":"bridge",'
-                b'"chat_guid":"iMessage;-;private",'
+                b'"chat_guid":"any;-;private",'
                 b'"guid":"opaque-receipt"}}'
             )
 
@@ -3612,7 +3612,7 @@ class ReolinkCameraTests(unittest.TestCase):
                 str(self.helper.IMSG_BINARY),
                 "send-attachment",
                 "--chat",
-                "iMessage;-;private",
+                "any;-;private",
                 "--file",
                 str(image),
                 "--transport",
@@ -3634,7 +3634,7 @@ class ReolinkCameraTests(unittest.TestCase):
                 "id": "reolink-camera-share",
                 "method": "send",
                 "params": {
-                    "chat_guid": "iMessage;-;private",
+                    "chat_guid": "any;-;private",
                     "text": "A fresh flower-camera view.",
                     "transport": "bridge",
                 },
