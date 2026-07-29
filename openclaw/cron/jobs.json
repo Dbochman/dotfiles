@@ -698,6 +698,7 @@
         "message": "Use the `plant-bloom-watch` skill and execute enabled policy `plant-watch-julia-blooms-2026` exactly once. The canonical protected Julia delivery route for this job is `chat_id:${JULIA_CHAT_ID}`; it comes from the owner-only cron identity cache and is the only message target allowed. Follow the skill's capture, exact-zone analysis, cleanup, state, deduplication, protected sharing, failure-notice, and self-disable rules exactly. Do not spawn subagents or sessions. Cron delivery is disabled; return only the skill's compact internal JSON status.",
         "model": "codex/gpt-5.6-sol",
         "thinking": "low",
+        "lightContext": false,
         "timeoutSeconds": 600
       },
       "delivery": {
