@@ -681,6 +681,38 @@
       }
     },
     {
+      "id": "plant-watch-julia-blooms-2026",
+      "agentId": "main",
+      "name": "Julia Flower Bloom Watch",
+      "enabled": true,
+      "createdAtMs": 1785368245000,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 8 * * *",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Use the `plant-bloom-watch` skill and execute enabled policy `plant-watch-julia-blooms-2026` exactly once. The canonical protected Julia delivery route for this job is `chat_id:${JULIA_CHAT_ID}`; it comes from the owner-only cron identity cache and is the only message target allowed. Follow the skill's capture, exact-zone analysis, cleanup, state, deduplication, protected sharing, failure-notice, and self-disable rules exactly. Do not spawn subagents or sessions. Cron delivery is disabled; return only the skill's compact internal JSON status.",
+        "model": "codex/gpt-5.6-sol",
+        "thinking": "low",
+        "lightContext": true,
+        "timeoutSeconds": 600
+      },
+      "delivery": {
+        "mode": "none"
+      },
+      "failureAlert": {
+        "after": 3,
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "chat_id:${JULIA_CHAT_ID}",
+        "cooldownMs": 86400000
+      }
+    },
+    {
       "id": "weekly-report-0001",
       "agentId": "main",
       "name": "Weekly Activity Report, Security Check & Health Scan",
