@@ -290,7 +290,7 @@ and SSH recovery procedure.
 | Continuity enforcement | [`plugins/reachy-continuity`](plugins/reachy-continuity) | Mac mini OpenClaw plugin directory |
 | MBP upstream | [`launchagents/ai.openclaw.reachy-gateway-upstream.plist`](launchagents/ai.openclaw.reachy-gateway-upstream.plist) | MBP `~/Library/LaunchAgents` |
 | MBP reverse relay | [`launchagents/ai.openclaw.reachy-gateway-relay.plist`](launchagents/ai.openclaw.reachy-gateway-relay.plist) | MBP `~/Library/LaunchAgents` |
-| Legacy rollback tunnel | [`launchagents/ai.openclaw.reachy-gateway-tunnel.plist`](launchagents/ai.openclaw.reachy-gateway-tunnel.plist) | Mac mini `~/Library/LaunchAgents` (not loaded) |
+| Legacy rollback tunnel | [`launchagents/ai.openclaw.reachy-gateway-tunnel.plist.disabled`](launchagents/ai.openclaw.reachy-gateway-tunnel.plist.disabled) | Mac mini `~/Library/LaunchAgents/ai.openclaw.reachy-gateway-tunnel.plist.disabled` |
 | Reachy Mini Control | Pollen Robotics notarized application; not repository-managed | MBP `/Applications/Reachy Mini Control.app` (installed, normally closed) |
 
 ## Verification
@@ -374,7 +374,7 @@ the Mac mini service:
 
 ```bash
 ssh dbochman@100.107.209.85 'launchctl bootout "gui/$(id -u)/ai.openclaw.reachy-gateway-relay"'
-ssh dylans-mac-mini 'launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/ai.openclaw.reachy-gateway-tunnel.plist'
+ssh dylans-mac-mini 'cp ~/Library/LaunchAgents/ai.openclaw.reachy-gateway-tunnel.plist.disabled ~/Library/LaunchAgents/ai.openclaw.reachy-gateway-tunnel.plist && launchctl enable "gui/$(id -u)/ai.openclaw.reachy-gateway-tunnel" && launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/ai.openclaw.reachy-gateway-tunnel.plist'
 ```
 
 The MBP upstream may remain loaded because it binds only MBP loopback port

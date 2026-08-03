@@ -22,7 +22,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary over explicit iMessage RPC bridge transport, hard-limited to one send attempt/hour |
 | `ai.openclaw.cabin-entry-verifier` | `cabin-entry-verifier-wrapper.sh` | — | Ordered Cabin Ring driveway → front-door consumer; exact Kitchen stills at +30/+60 seconds, ephemeral media, fixed positive confirmation |
 | `ai.openclaw.ola-webhook-bridge` | `ola-webhook-bridge-wrapper.sh` | 18790 loopback | Verifies Ola's public HMAC-signed wake and relays it to the private OpenClaw hook token |
-| `ai.openclaw.reachy-gateway-tunnel` | `ssh -R` | Reachy loopback 18789 | Keeps a token-authenticated path from Crosstown Reachy Mini to the Mac mini's loopback-only gateway |
+| `ai.openclaw.reachy-gateway-tunnel` (disabled rollback) | `ssh -R` | Reachy loopback 18789 | Legacy direct Mac-mini tunnel, retained as `ai.openclaw.reachy-gateway-tunnel.plist.disabled` and never loaded beside the MBP relay |
 | `ai.openclaw.reachy-gateway-upstream` | `ssh -L` | Crosstown MBP loopback 28789 | Carries the Mac mini's loopback-only gateway to the always-on Crosstown MBP without exposing it on Tailscale or the LAN |
 | `ai.openclaw.reachy-gateway-relay` | `ssh -R` | Reachy loopback 18789 | Runs on the Crosstown MBP and publishes its private upstream gateway hop only on Reachy's loopback interface |
 
@@ -109,8 +109,9 @@ forwards MBP loopback port `28789` to the Mac mini gateway's loopback port
 `18789`, and `ai.openclaw.reachy-gateway-relay` publishes that upstream only as
 `127.0.0.1:18789` on Reachy. The legacy
 `ai.openclaw.reachy-gateway-tunnel` is retained as a rollback configuration but
-must not run at the same time because both reverse tunnels claim the same
-Reachy loopback port. Keep AC-powered system sleep disabled on the relay MBP
+must stay under a `.plist.disabled` filename and not run at the same time
+because both reverse tunnels claim the same Reachy loopback port. Keep
+AC-powered system sleep disabled on the relay MBP
 (`sudo pmset -c sleep 0`); display sleep and battery sleep may remain enabled.
 
 The relay uses the dedicated `~/.ssh/openclaw-reachy` key on the Crosstown MBP;
