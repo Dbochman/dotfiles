@@ -17,6 +17,66 @@ usage_dashboard = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(usage_dashboard)
 
 
+class CcusageIngestionTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.original_history_dir = usage_dashboard.HISTORY_DIR
+        usage_dashboard.HISTORY_DIR = self.tempdir.name
+
+    def tearDown(self):
+        usage_dashboard.HISTORY_DIR = self.original_history_dir
+        self.tempdir.cleanup()
+
+    def write_usage(self, machine, daily):
+        path = Path(self.tempdir.name) / f"ccusage-{machine}.json"
+        path.write_text(json.dumps({"daily": daily}), encoding="utf-8")
+
+    def test_current_period_schema_merges_across_machines(self):
+        self.write_usage("mini", [{
+            "period": "2026-08-01",
+            "totalTokens": 100,
+            "inputTokens": 40,
+            "outputTokens": 60,
+            "totalCost": 1.25,
+        }])
+        self.write_usage("macbook", [{
+            "period": "2026-08-01",
+            "totalTokens": 200,
+            "inputTokens": 75,
+            "outputTokens": 125,
+            "totalCost": 2.5,
+        }])
+
+        rows = usage_dashboard.load_ccusage()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["date"], "2026-08-01")
+        self.assertEqual(rows[0]["totalTokens"], 300)
+        self.assertEqual(rows[0]["inputTokens"], 115)
+        self.assertEqual(rows[0]["outputTokens"], 185)
+        self.assertEqual(rows[0]["totalCost"], 3.75)
+        self.assertEqual(set(rows[0]["machines"]), {"mini", "macbook"})
+
+    def test_legacy_date_is_supported_and_invalid_rows_are_ignored(self):
+        self.write_usage("legacy", [
+            {"date": "2026-07-31", "totalTokens": 50},
+            {"period": "2026-02-30", "totalTokens": 999},
+            {"period": "not-a-date", "totalTokens": 999},
+            "not-an-object",
+        ])
+
+        self.assertEqual(usage_dashboard.load_ccusage(), [{
+            "date": "2026-07-31",
+            "totalTokens": 50,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cacheCreationTokens": 0,
+            "cacheReadTokens": 0,
+            "totalCost": 0,
+            "machines": ["legacy"],
+        }])
+
+
 class IMessageResponseLatencyTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()

@@ -124,7 +124,9 @@ def load_ccusage():
             with open(path) as f:
                 data = json.load(f)
             for day in data.get("daily", []):
-                date = day.get("date", "")
+                if not isinstance(day, dict):
+                    continue
+                date = _ccusage_day_key(day)
                 if not date:
                     continue
                 if date not in merged:
@@ -132,18 +134,39 @@ def load_ccusage():
                                     "outputTokens": 0, "cacheCreationTokens": 0,
                                     "cacheReadTokens": 0, "totalCost": 0, "machines": []}
                 m = merged[date]
-                m["totalTokens"] += day.get("totalTokens", 0)
-                m["inputTokens"] += day.get("inputTokens", 0)
-                m["outputTokens"] += day.get("outputTokens", 0)
-                m["cacheCreationTokens"] += day.get("cacheCreationTokens", 0)
-                m["cacheReadTokens"] += day.get("cacheReadTokens", 0)
-                m["totalCost"] += day.get("totalCost", 0)
+                m["totalTokens"] += _ccusage_number(day, "totalTokens")
+                m["inputTokens"] += _ccusage_number(day, "inputTokens")
+                m["outputTokens"] += _ccusage_number(day, "outputTokens")
+                m["cacheCreationTokens"] += _ccusage_number(day, "cacheCreationTokens")
+                m["cacheReadTokens"] += _ccusage_number(day, "cacheReadTokens")
+                m["totalCost"] += _ccusage_number(day, "totalCost")
                 machine = os.path.basename(path).replace("ccusage-", "").replace(".json", "")
                 if machine not in m["machines"]:
                     m["machines"].append(machine)
         except (json.JSONDecodeError, OSError):
             continue
     return sorted(merged.values(), key=lambda d: d["date"])
+
+
+def _ccusage_day_key(day):
+    """Return the current ccusage period key, with legacy date compatibility."""
+    for field in ("period", "date"):
+        value = day.get(field)
+        if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            continue
+        try:
+            datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            continue
+        return value
+    return None
+
+
+def _ccusage_number(day, field):
+    value = day.get(field, 0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return value if math.isfinite(value) else 0
 
 
 LAUNCHAGENT_DIR = os.path.expanduser("~/Library/LaunchAgents")
