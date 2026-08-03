@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DOTFILES_ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-PUSH_SCRIPT="$DOTFILES_ROOT/openclaw/bin/ccusage-push.sh"
+PUSH_SCRIPT="${CCUSAGE_PUSH_SCRIPT:-$DOTFILES_ROOT/openclaw/bin/ccusage-push.sh}"
 
 if [[ ! -x "$PUSH_SCRIPT" ]]; then
   echo "Error: $PUSH_SCRIPT not found or not executable" >&2
@@ -19,10 +19,14 @@ fi
 
 LABEL="ai.openclaw.ccusage-push"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG_DIR="$HOME/.openclaw/logs"
+DOMAIN="gui/$(id -u)"
+
+mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
 
 # Unload existing if running
-if launchctl list "$LABEL" &>/dev/null; then
-  launchctl unload "$PLIST" 2>/dev/null || true
+if launchctl print "$DOMAIN/$LABEL" &>/dev/null; then
+  launchctl bootout "$DOMAIN/$LABEL"
   echo "Unloaded existing $LABEL"
 fi
 
@@ -40,16 +44,18 @@ cat > "$PLIST" <<EOF
     </array>
     <key>StartInterval</key>
     <integer>1800</integer>
+    <key>RunAtLoad</key>
+    <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/ccusage-push.log</string>
+    <string>$LOG_DIR/ccusage-push.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/ccusage-push.err.log</string>
+    <string>$LOG_DIR/ccusage-push.err.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
         <string>$HOME</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>SSH_AUTH_SOCK</key>
         <string></string>
     </dict>
@@ -59,7 +65,9 @@ cat > "$PLIST" <<EOF
 </plist>
 EOF
 
-launchctl load -w "$PLIST"
+plutil -lint "$PLIST" >/dev/null
+launchctl enable "$DOMAIN/$LABEL"
+launchctl bootstrap "$DOMAIN" "$PLIST"
 echo "Installed and started $LABEL"
 echo "  Plist: $PLIST"
 echo "  Script: $PUSH_SCRIPT"

@@ -7,23 +7,25 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/dylanbochman/repos/dotfiles/openclaw/bin/ccusage-push.sh</string>
+        <string>/Users/dbochman/dotfiles/openclaw/bin/ccusage-push.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
-        <string>/Users/dylanbochman</string>
+        <string>/Users/dbochman</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>SSH_AUTH_SOCK</key>
         <string></string>
     </dict>
     <key>StartInterval</key>
     <integer>1800</integer>
+    <key>RunAtLoad</key>
+    <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/ccusage-push.log</string>
+    <string>/Users/dbochman/.openclaw/logs/ccusage-push.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/ccusage-push.err.log</string>
+    <string>/Users/dbochman/.openclaw/logs/ccusage-push.err.log</string>
     <key>ProcessType</key>
     <string>Background</string>
 </dict>

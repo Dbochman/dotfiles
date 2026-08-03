@@ -94,7 +94,7 @@ Added in v5. The `ccusage-push.sh` script runs on the MacBook (where Claude Code
 
 The dashboard `/api/data` endpoint includes the ccusage data in its response. The Token Usage Over Time chart shows OpenClaw (orange) and Claude Code (blue) as stacked bars with daily granularity. Two gauges show each source's percentage of combined token usage.
 
-Since ccusage data is daily granularity and the push runs on a laptop (not always on), gaps during sleep don't cause data loss — the next push captures complete daily totals.
+Since ccusage data is daily granularity and the push runs on a laptop (not always on), gaps during sleep don't cause data loss — the next push captures complete daily totals. The collector uses an explicit unattended SSH identity (`~/.ssh/id_launchd`, with `~/.ssh/id_rsa` as a compatibility fallback) instead of the GUI SSH agent. It exits nonzero when collection, validation, or transfer fails, so launchd and the usage dashboard can distinguish a stale source from a successful refresh.
 
 ### API Endpoints
 
