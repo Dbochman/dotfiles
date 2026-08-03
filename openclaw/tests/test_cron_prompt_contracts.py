@@ -116,6 +116,11 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertEqual(job["schedule"]["expr"], "45 6 * * *")
         self.assertEqual(job["schedule"]["tz"], "America/New_York")
 
+    def test_flower_bloom_watch_uses_allowlisted_openai_model_route(self) -> None:
+        job = self.jobs["plant-watch-julia-blooms-2026"]
+
+        self.assertEqual(job["payload"]["model"], "openai/gpt-5.6-sol")
+
     def test_julia_briefing_uses_only_deterministic_collector(self) -> None:
         job = self.jobs["gws-julia-morning-briefing-0001"]
         prompt = job["payload"]["message"]
