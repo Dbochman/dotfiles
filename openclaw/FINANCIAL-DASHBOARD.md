@@ -164,7 +164,7 @@ The wrapper's path allowlist is deliberately closed: Tesla accepts only healthy 
 | 2 | `scrape_eversource.py` | `direct_http` via Opower GraphQL | Portal cookies mint a short-lived JWT | One Playwright recovery, then exact-marker re-auth if required | Crosstown |
 | 3 | `scrape_national_grid_electric.py` | `direct_http` via shared OAuth-PKCE/GraphQL adapter | Saved National Grid SSO state | One Playwright recovery, then exact-marker re-auth if required | Cabin |
 | 4 | `scrape_national_grid.py` (gas) | `direct_http` via shared OAuth-PKCE/GraphQL adapter | Saved National Grid SSO state | One Playwright recovery, then exact-marker re-auth if required | Crosstown |
-| 5 | `scrape_bwsc.py` | `direct_http` via CSS API | Portal cookies mint a short-lived JWT | One Playwright confirmation/recovery, then exact-marker re-auth if required | Crosstown |
+| 5 | `scrape_bwsc.py` | `direct_http` via bounded B2C renewal + CSS API | Long-lived B2C SSO renews the short portal session and mints a JWT | One Playwright confirmation/recovery, then exact-marker re-auth if required | Crosstown |
 | 6 | `scrape_mortgage.py --lender pennymac` | `direct_http` via loan-activity API | Bounded provider-only OAuth redirects | One Playwright recovery; attended email MFA remains available | Cabin |
 | 7 | `scrape_mortgage.py --lender boa` | `direct_http` via protected cookie replay | Existing exact-profile raw-CDP path | Exact-profile raw-CDP recovery; one guarded re-auth only after explicit sign-out | Crosstown |
 
@@ -174,17 +174,23 @@ The wrapper's path allowlist is deliberately closed: Tesla accepts only healthy 
 `scrape_bwsc.py --headless --merge --wrapper-contract 2 --run-id UUID`. It first reads the owner-only mode-`0600`
 Playwright storage state, sends only secure portal-scoped cookies to the exact
 BWSC portal to mint a short-lived JWT, and calls the exact CSS API from a
-separate cookie-free HTTP session. Redirects are disabled and response size,
-schema, dates, values, freshness, and continuity are validated before an
-atomic output replacement. Unsafe local state fails closed. Direct auth
-rejection gets one Playwright confirmation; direct transport or contract
+separate cookie-free HTTP session. When the short portal session has expired,
+the same Requests client uses the still-valid dedicated B2C SSO cookie to
+perform the exact observed OIDC form-post renewal. Every hop remains
+redirect-disabled and exact-host/path allowlisted, and the bounded parser
+accepts only the single callback form with exact `state`, `code`, and
+`id_token` fields without logging or retaining them. Response size, schema,
+dates, values, freshness, and continuity are validated before an atomic output
+replacement. Unsafe local state fails closed. Auth rejection after bounded SSO
+renewal gets one Playwright confirmation; direct transport or contract
 uncertainty gets one Playwright recovery attempt. `--browser-only` is the
 operator rollback path. Only the fixed `ERROR: BWSC authentication required`
 result reaches the guarded credential flow below; other safe failures neither
-receive credentials nor import the prior artifact. On success the scraper emits
-the unified contract-v2 status marker. The wrapper retains only the allowlisted
-`direct_http`, `browser_recovery`, `browser_only`, or `browser_explicit` path,
-so persistent fallback is visible without retaining provider output.
+receive credentials nor import the prior artifact. On success the scraper
+emits the unified contract-v2 status marker. The wrapper retains only the
+allowlisted `direct_http`, `browser_recovery`, `browser_only`, or
+`browser_explicit` path, so persistent fallback is visible without retaining
+provider output.
 The attended July 2026 parity check confirmed that BWSC's authenticated SPA uses
 the exact `/account/`, `/billing/`, and `/usage/` routes and that its token
 endpoint double-encodes the JSON string for the Requests client. The scraper
