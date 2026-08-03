@@ -288,6 +288,10 @@ def get_launchagent_status():
                 "label": label,
                 "status": status,
                 "last_exit": last_exit,
+                # launchctl retains the previous process exit after a
+                # KeepAlive service has restarted. It is diagnostic history,
+                # not the health of the process that is currently running.
+                "exit_relevant": status != "running",
                 "last_run": last_run_iso,
                 "next_run": next_run_iso,
                 "schedule": schedule_kind,
@@ -1076,6 +1080,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .badge{display:inline-block;padding:0.1rem 0.45rem;border-radius:4px;font-size:0.7rem;font-weight:500}
 .badge-ok{background:rgba(34,197,94,0.15);color:var(--green)}
 .badge-err{background:rgba(239,68,68,0.15);color:var(--red)}
+.badge-prior{background:rgba(148,163,184,0.12);color:var(--muted)}
 
 .loading{text-align:center;color:var(--muted);padding:2rem}
 .error-banner{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:0.75rem;color:var(--red);font-size:0.8rem;margin-bottom:1rem;display:none}
@@ -1791,9 +1796,14 @@ async function refreshServices() {
       const dotColor = isRunning ? C.green : C.muted;
       const label = s.label.replace(/^(ai|com)\.openclaw\./, '');
       const exitCode = s.last_exit;
-      const exitBadge = exitCode == null ? '<span style="color:' + C.muted + '">-</span>' :
-        exitCode === 0 ? '<span class="badge badge-ok">ok</span>' :
-        '<span class="badge badge-err">error (' + exitCode + ')</span>';
+      const exitRelevant = s.exit_relevant !== false;
+      const exitBadge = !exitRelevant && isRunning ?
+        (exitCode != null && exitCode !== 0 ?
+          '<span class="badge badge-prior">prior exit (' + exitCode + ')</span>' :
+          '<span class="badge badge-ok">current</span>') :
+        exitCode == null ? '<span style="color:' + C.muted + '">-</span>' :
+          exitCode === 0 ? '<span class="badge badge-ok">ok</span>' :
+          '<span class="badge badge-err">error (' + exitCode + ')</span>';
       let nextCell;
       if (s.next_run) {
         const nextMs = new Date(s.next_run).getTime();

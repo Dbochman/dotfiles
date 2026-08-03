@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -75,6 +76,35 @@ class CcusageIngestionTests(unittest.TestCase):
             "totalCost": 0,
             "machines": ["legacy"],
         }])
+
+
+class LaunchAgentStatusTests(unittest.TestCase):
+    def test_running_service_marks_prior_exit_as_not_current(self):
+        output = (
+            "123\t143\tai.openclaw.running-service\n"
+            "-\t1\tai.openclaw.idle-service\n"
+        )
+        completed = usage_dashboard.subprocess.CompletedProcess(
+            ["launchctl", "list"], 0, stdout=output, stderr=""
+        )
+        with mock.patch.object(
+            usage_dashboard.subprocess, "run", return_value=completed
+        ), mock.patch.object(usage_dashboard, "_plist_info", return_value={}):
+            services = {
+                service["label"]: service
+                for service in usage_dashboard.get_launchagent_status()
+            }
+
+        self.assertEqual(services["ai.openclaw.running-service"]["last_exit"], 143)
+        self.assertFalse(
+            services["ai.openclaw.running-service"]["exit_relevant"]
+        )
+        self.assertTrue(services["ai.openclaw.idle-service"]["exit_relevant"])
+
+    def test_dashboard_renders_prior_running_exit_as_neutral_history(self):
+        self.assertIn("const exitRelevant = s.exit_relevant !== false", usage_dashboard.DASHBOARD_HTML)
+        self.assertIn("prior exit (", usage_dashboard.DASHBOARD_HTML)
+        self.assertIn("badge-prior", usage_dashboard.DASHBOARD_HTML)
 
 
 class IMessageResponseLatencyTests(unittest.TestCase):
