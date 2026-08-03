@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = 1
+VERSION = 2
+LEGACY_VERSION = 1
 SAFE_ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 FAILURE_BACKOFF_SECONDS = (60, 120, 300, 600, 900)
 NORMAL_POLL_SECONDS = 300
@@ -148,13 +149,19 @@ def initial_state() -> dict[str, Any]:
         "last_error_code": None,
         "offline_emitted": False,
         "next_poll_at": None,
+        "successful_polls": 0,
+        "failed_polls": 0,
+        "last_success_gap_seconds": 0,
+        "max_success_gap_seconds": 0,
+        "max_success_gap_at": None,
     }
 
 
 def validate_state(value: dict[str, Any] | None) -> dict[str, Any]:
     if value is None:
         return initial_state()
-    expected = {
+    value = dict(value)
+    legacy_expected = {
         "version",
         "observation",
         "last_good_at",
@@ -164,7 +171,25 @@ def validate_state(value: dict[str, Any] | None) -> dict[str, Any]:
         "offline_emitted",
         "next_poll_at",
     }
-    if set(value) != expected or value.get("version") != VERSION:
+    current_expected = legacy_expected | {
+        "successful_polls",
+        "failed_polls",
+        "last_success_gap_seconds",
+        "max_success_gap_seconds",
+        "max_success_gap_at",
+    }
+    if value.get("version") == LEGACY_VERSION and set(value) == legacy_expected:
+        value.update(
+            {
+                "version": VERSION,
+                "successful_polls": 0,
+                "failed_polls": 0,
+                "last_success_gap_seconds": 0,
+                "max_success_gap_seconds": 0,
+                "max_success_gap_at": None,
+            }
+        )
+    elif value.get("version") != VERSION or set(value) != current_expected:
         raise AdapterError("state_version")
     failures = value.get("consecutive_failures")
     if (
@@ -175,9 +200,33 @@ def validate_state(value: dict[str, Any] | None) -> dict[str, Any]:
         raise AdapterError("invalid_state_file")
     if not isinstance(value.get("offline_emitted"), bool):
         raise AdapterError("invalid_state_file")
-    for key in ("last_good_at", "first_failure_at", "next_poll_at"):
+    for key in (
+        "last_good_at",
+        "first_failure_at",
+        "next_poll_at",
+        "max_success_gap_at",
+    ):
         if value.get(key) is not None:
             value[key] = timestamp(parse_timestamp(value[key]))
+    for key in (
+        "successful_polls",
+        "failed_polls",
+        "last_success_gap_seconds",
+        "max_success_gap_seconds",
+    ):
+        count = value.get(key)
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or not 0 <= count <= 1_000_000_000_000
+        ):
+            raise AdapterError("invalid_state_file")
+    if value["last_success_gap_seconds"] > value["max_success_gap_seconds"]:
+        raise AdapterError("invalid_state_file")
+    if (value["max_success_gap_seconds"] > 0) != (
+        value["max_success_gap_at"] is not None
+    ):
+        raise AdapterError("invalid_state_file")
     error_code = value.get("last_error_code")
     if error_code is not None:
         if not isinstance(error_code, str):
@@ -394,7 +443,7 @@ def publish_pending(
         return None
     if (
         set(pending) != {"version", "events", "state_after"}
-        or pending.get("version") != VERSION
+        or pending.get("version") not in {LEGACY_VERSION, VERSION}
         or not isinstance(pending.get("events"), list)
         or len(pending["events"]) > 16
     ):
@@ -561,6 +610,7 @@ def failure_state(
         "last_error_code": code,
         "offline_emitted": offline or should_emit,
         "next_poll_at": timestamp(now + timedelta(seconds=backoff)),
+        "failed_polls": int(state.get("failed_polls", 0)) + 1,
     }
     events: list[dict[str, Any]] = []
     prior = state.get("observation")
@@ -659,6 +709,20 @@ def run_once() -> dict[str, Any]:
             else None,
         )
         previous = state.get("observation")
+        previous_good_at = state.get("last_good_at")
+        success_gap = 0
+        if previous_good_at:
+            success_gap = max(
+                0,
+                int(
+                    (
+                        parse_timestamp(current["observed_at"])
+                        - parse_timestamp(previous_good_at)
+                    ).total_seconds()
+                ),
+            )
+        prior_max_gap = int(state.get("max_success_gap_seconds", 0))
+        max_gap = max(prior_max_gap, success_gap)
         updated = {
             **state,
             "observation": current,
@@ -668,6 +732,12 @@ def run_once() -> dict[str, Any]:
             "last_error_code": None,
             "offline_emitted": False,
             "next_poll_at": timestamp(now + timedelta(seconds=normal_poll_delay())),
+            "successful_polls": int(state.get("successful_polls", 0)) + 1,
+            "last_success_gap_seconds": success_gap,
+            "max_success_gap_seconds": max_gap,
+            "max_success_gap_at": current["observed_at"]
+            if success_gap > prior_max_gap
+            else state.get("max_success_gap_at"),
         }
         if not isinstance(previous, dict):
             atomic_json(state_path, updated)

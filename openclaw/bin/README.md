@@ -84,13 +84,13 @@ boundaries.
 | Script | Description |
 |--------|-------------|
 | `home_event_bus.py` | Durable shadow-only Ring, presence, August, and Nest household event journal: strict source validation, HMAC-minimized atomic spools, single-writer SQLite ingestion, retention, safe status, and bounded read queries. |
-| `home-eventctl` | Operator-only wrapper for `init`, `check-config`, producer `enqueue`, `ingest-once`, `status`, and `prune`; producers send strict JSON on stdin. |
+| `home-eventctl` | Operator-only wrapper for `init`, `check-config`, producer `enqueue`, `ingest-once`, `status`, access-attention review, and `prune`; producers send strict JSON on stdin. |
 | `home-events` | Fixed-root, read-only JSON CLI exposed to the OpenClaw `home-events` skill for status, recent activity, incidents, and explanations. |
 | `home-event-correlator.py` | Persistent shadow-only correlator that claims durable consumer rows, applies fail-closed canonical presence context, groups site incidents, and records rate-limited shadow decisions without delivery or camera work. |
 | `cabin-entry-verifier.py` | Explicitly authorized future-only consumer for an ordered Cabin Ring `driveway` → `front_door` sequence. It schedules exact Kitchen stills at +30/+60 seconds from the front-door event, retains only strict person-visible results, deletes both images, and may send one fixed positive bridge message. |
 | `cabin-entry-verifier-wrapper.sh` | Attended-install LaunchAgent boundary for the ordered verifier. It runs cache-only in a sanitized environment with protected state/images and bounded logs; registration and the one-shot occupied-Cabin canary remain operator-only. |
 | `home-event-service-wrapper.sh` | LaunchAgent boundary for ingestion, correlation, August polling, Nest bridging, and local network-presence enrichment; sanitizes the environment and writes one bounded owner-only operational log. |
-| `august-event-adapter.py` | Disabled-by-default read-only August transition poller. Uses the exact protected MBP observe binding, baselines silently, publishes through `home-eventctl` without a mutation path, and propagates only bounded allowlisted observation-stage failures. |
+| `august-event-adapter.py` | Disabled-by-default read-only August transition poller. Uses the exact protected MBP observe binding, baselines silently, persists safe poll-count/gap continuity, publishes through `home-eventctl` without a mutation path, and propagates only bounded allowlisted observation-stage failures. |
 | `nest-home-event-bridge.py` | Disabled-by-default downstream reader of committed Nest listener rows. The first enabled run silently baselines prior rows; later person/motion records publish only normalized aliases, sites, times, and classifications, never media or model text. |
 | `presence-local-event-adapter.py` | Disabled-by-default shadow adapter for per-residence network arrivals, inferred departures, and household excursion intervals. It consumes only sanitized exact-binding booleans and cannot change canonical presence or physical state. |
 

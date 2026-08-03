@@ -188,6 +188,13 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
         self.assertEqual(baseline.returncode, 0, baseline.stderr)
         self.assertEqual(json.loads(baseline.stdout)["mode"], "baseline")
         self.assertEqual(self.published(), [])
+        baseline_state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(baseline_state["version"], 2)
+        self.assertEqual(baseline_state["successful_polls"], 1)
+        self.assertEqual(baseline_state["failed_polls"], 0)
+        self.assertEqual(baseline_state["last_success_gap_seconds"], 0)
+        self.assertEqual(baseline_state["max_success_gap_seconds"], 0)
+        self.assertIsNone(baseline_state["max_success_gap_at"])
         self.make_due()
 
         changed = {
@@ -218,6 +225,12 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
                 clock=lambda: "2026-01-01T12:10:00Z",
             )
         self.assertEqual(self.calls_log.read_text().splitlines(), ["observe", "observe"])
+        continuity = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(continuity["successful_polls"], 2)
+        self.assertEqual(continuity["failed_polls"], 0)
+        self.assertEqual(continuity["last_success_gap_seconds"], 300)
+        self.assertEqual(continuity["max_success_gap_seconds"], 300)
+        self.assertEqual(continuity["max_success_gap_at"], "2026-01-01T12:05:00Z")
 
     def test_unknown_state_edges_checkpoint_silently(self) -> None:
         baseline = self.run_adapter()
@@ -314,6 +327,8 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
         state = json.loads(self.state_path.read_text(encoding="utf-8"))
         self.assertTrue(state["offline_emitted"])
         self.assertEqual(state["consecutive_failures"], 3)
+        self.assertEqual(state["successful_polls"], 1)
+        self.assertEqual(state["failed_polls"], 3)
         self.assertEqual(state["last_error_code"], "observe_remote_failed")
         self.assertEqual(
             unavailable["attributes"]["reason_code"], "observe_remote_failed"
@@ -333,6 +348,7 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
         state = json.loads(self.state_path.read_text(encoding="utf-8"))
         self.assertFalse(state["offline_emitted"])
         self.assertEqual(state["consecutive_failures"], 5)
+        self.assertEqual(state["failed_polls"], 5)
         self.assertEqual(
             state["last_error_code"], "observe_transport_unavailable"
         )
@@ -499,6 +515,29 @@ raise SystemExit(0 if os.environ.get('FAKE_PUBLISH_FAIL') != '1' else 8)
         with self.assertRaises(ADAPTER_MODULE.AdapterError) as raised:
             ADAPTER_MODULE.validate_state(state)
         self.assertEqual(raised.exception.code, "invalid_state_file")
+
+    def test_v1_state_migrates_to_continuity_schema_without_inventing_counts(self) -> None:
+        legacy = ADAPTER_MODULE.initial_state()
+        for key in (
+            "successful_polls",
+            "failed_polls",
+            "last_success_gap_seconds",
+            "max_success_gap_seconds",
+            "max_success_gap_at",
+        ):
+            legacy.pop(key)
+        legacy["version"] = 1
+        legacy["last_good_at"] = "2026-01-01T12:00:00Z"
+
+        migrated = ADAPTER_MODULE.validate_state(legacy)
+
+        self.assertEqual(migrated["version"], 2)
+        self.assertEqual(migrated["last_good_at"], "2026-01-01T12:00:00Z")
+        self.assertEqual(migrated["successful_polls"], 0)
+        self.assertEqual(migrated["failed_polls"], 0)
+        self.assertEqual(migrated["last_success_gap_seconds"], 0)
+        self.assertEqual(migrated["max_success_gap_seconds"], 0)
+        self.assertIsNone(migrated["max_success_gap_at"])
 
     def test_adapter_source_has_no_mutation_command(self) -> None:
         source = ADAPTER.read_text(encoding="utf-8")

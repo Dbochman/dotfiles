@@ -132,7 +132,7 @@ status projection, and logs.
     ├── ingest.lock                      0600
     ├── ring-producer.json               0600 durable safe worker health
     ├── status.json                      0600 best-effort projection
-    ├── august-adapter.json              0600 after first poll
+    ├── august-adapter.json              0600 observation + durable poll continuity
     ├── august-adapter.pending.json      0600 only during retry/recovery
     ├── august-adapter.lock              0600
     ├── nest-bridge.json                 0600 outbox cursor + DB identity
@@ -164,7 +164,12 @@ repair prune. Process restarts do not reset the gate. An explicit
 `home-eventctl prune` remains a forced maintenance operation and checkpoints
 the WAL. The internal maintenance marker is not exposed through safe status.
 Status includes bus-observed per-source health and safe failure state, consumer
-depth and oldest unfinished time, retention, and database size. A source with
+depth and oldest unfinished time, retention, database size, and a separate
+access-attention projection. An access incident that expires without a
+matching lock/close remains durable historical evidence and increments
+attention without redefining current bus health. The operator-only
+`review-access-attention` command records that every currently pending access
+expiry was reviewed; it never deletes or rewrites the incident. A source with
 no evidence remains `unknown`; this does not claim that its process is running.
 
 The verifier stores no provider identifiers, model prose, image path,
@@ -181,6 +186,7 @@ absolute `--root` before the subcommand:
 home-eventctl init
 home-eventctl check-config
 home-eventctl status
+home-eventctl review-access-attention
 home-eventctl ingest-once --limit 100
 home-eventctl prune
 printf '%s\n' '<strict normalized JSON>' | \
@@ -225,10 +231,10 @@ activity incident silently. Lock/close evidence resolves it only after every
 observed open-door and unlocked-lock condition is cleared; a close event
 cannot hide an unlocked lock, and vice versa. Routine activity closes after 15
 quiet minutes, while an unresolved access incident becomes
-`expired_unresolved` after 24 hours and degrades the bus health projection for
-operator review. August source health and battery transitions use separate
-incident categories. All incidents and consumer acknowledgements survive
-restarts.
+`expired_unresolved` after 24 hours and enters the separate operator-attention
+projection. Current bus health remains reserved for active operational
+failures. August source health and battery transitions use separate incident
+categories. All incidents and consumer acknowledgements survive restarts.
 
 After a 90-second arrival grace period, confirmed-vacant activity records a
 `shadowed` notification decision, capped at one such decision per site per
@@ -380,6 +386,12 @@ unambiguous physical state. An `unknown` observation is checkpointed silently;
 a lock or door transition is emitted only when the immediately previous and
 current values are both known and different.
 
+The protected adapter state uses schema v2 to retain cumulative successful and
+failed poll counts plus the latest and maximum gap between successful
+observations. A v1 state migrates in memory without inventing historical poll
+counts; the next atomic checkpoint writes v2. This makes a quiet period
+auditable without publishing heartbeat events or retaining provider data.
+
 The observe boundary discards remote stderr, caps stdout before validation,
 and reports only allowlisted stages for relay transport, remote-command,
 missing, oversized, malformed, or contract-invalid output. The adapter and bus
@@ -448,9 +460,9 @@ retried, preventing a duplicate.
 
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
 installed in shadow mode. Canonical presence, Nest metadata, Ring, August, and
-Cabin local-presence enrichment are enabled in the installed runtime; the
-tracked producer defaults remain off. The local-presence adapter completed a
-silent Cabin baseline and duplicate-scan no-op, while Crosstown remains off.
+Cabin plus Crosstown local-presence enrichment are enabled in the installed
+runtime; the tracked producer defaults remain off. Both sites completed silent
+baselines, duplicate-scan no-ops, and organic departure/return evidence.
 The Nest listener schema-v3 migration and bridge baseline are complete. The
 bridge retains exact schema-v2 compatibility because schema v3 did not change
 its outbox contract. A
@@ -496,9 +508,8 @@ Rollout status and remaining work:
     [event bus promotion plan](plans/event-bus-promotion-plan.md) before
     considering delivery. Delivery is not part of this shadow rollout.
 12. The local-presence adapter is enabled for Cabin and Crosstown. Both silent
-    baselines and duplicate-scan no-ops are verified; one organic or attended
-    departure/return interval per site remains before considering local
-    enrichment established.
+    baselines, duplicate-scan no-ops, and organic departure/return intervals
+    are verified; local shadow enrichment is established at both sites.
 13. Throughout every gate, verify `home-eventctl status`, source spool depth,
     SQLite health, shadow decisions, and zero outbound delivery attempts.
 

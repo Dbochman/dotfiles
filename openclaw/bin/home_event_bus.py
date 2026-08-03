@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, T
 
 
 SCHEMA_VERSION = 2
-STATUS_SCHEMA_VERSION = 1
+STATUS_SCHEMA_VERSION = 2
 EVENT_SCHEMA_VERSION = 1
 SERVICE_NAME = "home-events"
 DEFAULT_ROOT = Path("~/.openclaw/home-events").expanduser()
@@ -42,6 +42,9 @@ ACCEPTED_RETENTION_DAYS = 30
 DEAD_LETTER_RETENTION_DAYS = 90
 AUTO_PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
 MAINTENANCE_LAST_PRUNE_EPOCH = "maintenance_last_prune_epoch"
+ACCESS_INCIDENTS_EXPIRED = "access_incidents_expired"
+ACCESS_ATTENTION_REVIEWED = "access_attention_reviewed"
+ACCESS_ATTENTION_LAST_REVIEWED_EPOCH = "access_attention_last_reviewed_epoch"
 RING_LIVE_MAX_AGE = dt.timedelta(seconds=60)
 RING_BACKFILL_MAX_AGE = dt.timedelta(minutes=15)
 AUGUST_OBSERVE_STAGE_CODES = frozenset(
@@ -2268,6 +2271,72 @@ class EventStore:
             raise StateError("prune_state_invalid")
         return result
 
+    def review_access_attention(self) -> Mapping[str, Any]:
+        """Acknowledge historical access expiries without erasing evidence."""
+
+        now = self._now()
+        now_epoch = int(_parse_now(now).timestamp())
+        with contextlib.closing(self.connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            counter_rows = {
+                row["name"]: int(row["value"])
+                for row in connection.execute(
+                    """
+                    SELECT name, value FROM service_counters
+                    WHERE name IN (?, ?)
+                    """,
+                    (ACCESS_INCIDENTS_EXPIRED, ACCESS_ATTENTION_REVIEWED),
+                )
+            }
+            expired = max(0, counter_rows.get(ACCESS_INCIDENTS_EXPIRED, 0))
+            reviewed = max(0, counter_rows.get(ACCESS_ATTENTION_REVIEWED, 0))
+            pending = max(0, expired - reviewed)
+            if pending:
+                self._set_counter(connection, ACCESS_ATTENTION_REVIEWED, expired)
+                self._set_counter(
+                    connection,
+                    ACCESS_ATTENTION_LAST_REVIEWED_EPOCH,
+                    now_epoch,
+                )
+
+            durable_failures = connection.execute(
+                """
+                SELECT
+                    EXISTS(
+                        SELECT 1 FROM producer_inbox WHERE outcome = 'dead_letter'
+                    ) OR EXISTS(
+                        SELECT 1 FROM consumer_deliveries WHERE status = 'dead_letter'
+                    ) AS present
+                """
+            ).fetchone()["present"]
+            runtime = connection.execute(
+                "SELECT health, last_error_code FROM runtime_status WHERE singleton = 1"
+            ).fetchone()
+            if runtime is None:
+                raise ConfigError("runtime_status_missing")
+            cleared = bool(
+                not durable_failures
+                and runtime["health"] == "degraded"
+                and runtime["last_error_code"] == "access_expired_unresolved"
+            )
+            if cleared:
+                connection.execute(
+                    """
+                    UPDATE runtime_status SET
+                        health = 'ok', updated_at = ?,
+                        last_error_at = NULL, last_error_code = NULL
+                    WHERE singleton = 1
+                    """,
+                    (now,),
+                )
+            connection.commit()
+        self.write_status_best_effort()
+        return {
+            "reviewed": pending,
+            "total_reviewed": expired if pending else reviewed,
+            "runtime_health_cleared": cleared,
+        }
+
     def prune_if_due(self, *, checkpoint: bool = False) -> bool:
         now = self._now()
         now_epoch = int(_parse_now(now).timestamp())
@@ -2361,6 +2430,26 @@ class EventStore:
                     (MAINTENANCE_LAST_PRUNE_EPOCH,),
                 )
             }
+            reviewed_epoch = counters.pop(
+                ACCESS_ATTENTION_LAST_REVIEWED_EPOCH, None
+            )
+            expired_attention = max(0, counters.get(ACCESS_INCIDENTS_EXPIRED, 0))
+            reviewed_attention = max(
+                0, counters.get(ACCESS_ATTENTION_REVIEWED, 0)
+            )
+            pending_attention = max(0, expired_attention - reviewed_attention)
+            latest_attention = connection.execute(
+                """
+                SELECT MAX(updated_at) AS updated_at FROM incidents
+                WHERE state = 'expired_unresolved'
+                  AND summary_code = 'access_expired_unresolved'
+                """
+            ).fetchone()["updated_at"]
+            last_reviewed_at = None
+            if isinstance(reviewed_epoch, int) and reviewed_epoch >= 0:
+                last_reviewed_at = _format_timestamp(
+                    dt.datetime.fromtimestamp(reviewed_epoch, tz=dt.timezone.utc)
+                )
             ring_publisher = _ring_producer_status(self.paths)
             sources["ring"]["publisher"] = ring_publisher
             if ring_publisher["health"] == "degraded":
@@ -2375,6 +2464,14 @@ class EventStore:
                 "last_accepted_at": runtime["last_accepted_at"],
                 "last_error_at": runtime["last_error_at"],
                 "last_error_code": runtime["last_error_code"],
+                "attention": {
+                    "required": pending_attention > 0,
+                    "expired_unresolved": expired_attention,
+                    "reviewed": min(reviewed_attention, expired_attention),
+                    "pending": pending_attention,
+                    "latest_at": latest_attention,
+                    "last_reviewed_at": last_reviewed_at,
+                },
                 "counts": {
                     "events": event_count,
                     "open_incidents": open_count,
@@ -2658,6 +2755,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--limit", type=int, default=100)
     operator_commands.add_parser("status")
     operator_commands.add_parser("prune")
+    operator_commands.add_parser("review-access-attention")
 
     agent = modes.add_parser("agent", help="read-only agent commands")
     agent_commands = agent.add_subparsers(dest="command", required=True)
@@ -2705,6 +2803,8 @@ def run_operator(args: argparse.Namespace) -> Mapping[str, Any]:
         return store.status_snapshot()
     if args.command == "prune":
         return {"ok": True, "deleted": store.prune()}
+    if args.command == "review-access-attention":
+        return {"ok": True, **store.review_access_attention()}
     raise StateError("unknown_command")
 
 

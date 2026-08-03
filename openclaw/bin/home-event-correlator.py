@@ -470,17 +470,6 @@ class ShadowCorrelator:
                             "access_expired_unresolved",
                             state="expired_unresolved",
                         )
-                        status_time = format_time(now)
-                        connection.execute(
-                            """
-                            UPDATE runtime_status SET
-                                health = 'degraded', updated_at = ?,
-                                last_error_at = ?,
-                                last_error_code = 'access_expired_unresolved'
-                            WHERE singleton = 1
-                            """,
-                            (status_time, status_time),
-                        )
                         self._increment(connection, "access_incidents_expired")
                         changed += 1
                     elif not access_open and quiet >= ROUTINE_QUIET:

@@ -2,10 +2,10 @@
 
 ## Status
 
-IN PROGRESS — limited-delivery design is documented, Crosstown local-presence
-shadow enrichment is active with a verified silent baseline, and the
-Ring/August concurrent shadow evidence inventory has started. User-facing
-delivery, automatic camera work, and physical mutation remain disabled.
+IN PROGRESS — Cabin and Crosstown local-presence shadow enrichment are
+established, and the Ring/August concurrent shadow evidence inventory is
+current through August 3. User-facing delivery, automatic camera work, and
+physical mutation remain disabled.
 
 The starting production snapshot at `2026-07-26T19:45:02Z` was:
 
@@ -311,6 +311,29 @@ Never retain media in the bus or enable Crosstown camera delivery implicitly.
 - [ ] Complete the remaining August soak and failure-mode evidence.
 - [ ] Attribute the two historical Nest-only correlator latency pauses before
   any delivery implementation.
+
+### `2026-08-03`
+
+- [x] Verified 306 normalized events and 113 incident decisions in the prior
+  seven days with zero pending/leased work, dead letters, duplicate event IDs,
+  cross-site joins, or open incidents. Every decision completed within 95
+  seconds and no outbound attempt occurred.
+- [x] Established local-presence shadow enrichment at both sites from organic
+  departure/return intervals. Cabin transitioned to confirmed vacant when
+  Julia relocated to Crosstown on August 2 instead of remaining partially
+  occupied.
+- [x] Household evaluation identified the three July 27–28 vacant-Cabin
+  shadow windows as Julia doing yard work or expected excursions such as dog
+  walks. They are expected resident activity, not household security
+  exceptions.
+- [x] Separated historical unresolved-access attention from current bus
+  health and added an audited operator review action that preserves the
+  incident record.
+- [x] Added durable August successful/failed poll counts and latest/maximum
+  successful-observation gaps so a quiet soak can be evaluated without
+  publishing heartbeat events.
+- [ ] Complete Ring doorbell-ding and restart/reconnect parity evidence before
+  limited delivery.
 
 ## Decisions required before limited delivery
 

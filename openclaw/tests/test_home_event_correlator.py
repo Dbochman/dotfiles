@@ -810,7 +810,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         incidents = self.rows("SELECT site FROM incidents ORDER BY site")
         self.assertEqual([row["site"] for row in incidents], ["cabin", "crosstown"])
 
-    def test_unresolved_access_expires_and_degrades_health(self) -> None:
+    def test_unresolved_access_expires_into_separate_operator_attention(self) -> None:
         self.enqueue(
             "august",
             "door.opened",
@@ -830,9 +830,20 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.assertEqual(result["expired"], 1)
         incident = self.rows("SELECT * FROM incidents")[0]
         self.assertEqual(incident["state"], "expired_unresolved")
-        status = self.rows("SELECT * FROM runtime_status")[0]
-        self.assertEqual(status["health"], "degraded")
-        self.assertEqual(status["last_error_code"], "access_expired_unresolved")
+        status = bus.EventStore(bus.RuntimePaths(self.root)).status_snapshot()
+        self.assertEqual(status["health"], "ok")
+        self.assertIsNone(status["last_error_code"])
+        self.assertEqual(
+            status["attention"],
+            {
+                "required": True,
+                "expired_unresolved": 1,
+                "reviewed": 0,
+                "pending": 1,
+                "latest_at": "2026-07-12T15:00:00Z",
+                "last_reviewed_at": None,
+            },
+        )
 
     def test_projection_rolls_back_if_delivery_acknowledgement_fails(self) -> None:
         self.enqueue("ring", "entry.person_detected")

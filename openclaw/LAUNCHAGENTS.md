@@ -339,7 +339,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 |-------|----------|---------|-------------|
 | `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, August, and Nest spools into the shadow-only SQLite journal. |
 | `ai.openclaw.home-event-correlator` | 5s | `home-event-service-wrapper.sh correlate` | Records site-scoped incidents and rate-limited shadow decisions; no delivery or camera path. |
-| `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer; tracked enable flag remains `0`. |
+| `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer with durable safe poll-count/gap continuity; tracked enable flag remains `0`. |
 | `ai.openclaw.nest-home-event-bridge` | 5s | `home-event-service-wrapper.sh nest` | Mirrors only newly committed Nest person/motion metadata after a silent first-run baseline; tracked enable flag remains `0`. |
 | `ai.openclaw.presence-local-event-adapter` | 60s | `home-event-service-wrapper.sh presence-local` | Derives shadow-only named local arrivals/departures and household excursion intervals from advancing sanitized scans; both tracked site flags remain `0`. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
@@ -386,10 +386,11 @@ and hash approval complete. Restart only these jobs when their code changes;
 home events does not require an OpenClaw gateway restart. See
 [`HOME-EVENTS.md`](HOME-EVENTS.md).
 
-The attended Mini runtime currently has Cabin local enrichment enabled and
-Crosstown disabled. Its first Cabin run baselined both residents with zero
-events, and the repeated scan was a no-op. The tracked plist keeps both flags
-at `0` so a fresh install cannot inherit that attended decision.
+The attended Mini runtime currently has Cabin and Crosstown local enrichment
+enabled. Both sites completed zero-event baselines, duplicate-scan no-ops, and
+organic departure/return intervals without changing canonical authority. The
+tracked plist keeps both flags at `0` so a fresh install cannot inherit either
+attended decision.
 
 ### Native iMessage Reboot Recovery
 

@@ -270,6 +270,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
+        self.assertEqual(status["schema_version"], 2)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -281,6 +282,95 @@ class RuntimeSecurityTests(HomeEventTestCase):
             status["retention_days"], {"accepted": 30, "dead_letter": 90}
         )
         self.assertGreater(status["database_bytes"], 0)
+
+    def test_access_attention_review_is_audited_and_preserves_incident(self) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO incidents(
+                    incident_uid, site, state, category, summary_code,
+                    opened_at, updated_at, resolved_at
+                ) VALUES (?, 'crosstown', 'expired_unresolved', 'activity',
+                          'access_expired_unresolved', ?, ?, ?)
+                """,
+                ("inc_" + ("a" * 32), NOW, NOW, NOW),
+            )
+            connection.execute(
+                "INSERT INTO service_counters(name, value) VALUES (?, 1)",
+                (home_events.ACCESS_INCIDENTS_EXPIRED,),
+            )
+            connection.execute(
+                """
+                UPDATE runtime_status SET health='degraded',
+                    last_error_at=?, last_error_code='access_expired_unresolved'
+                WHERE singleton=1
+                """,
+                (NOW,),
+            )
+
+        before = self.store.status_snapshot()
+        self.assertEqual(before["health"], "degraded")
+        self.assertTrue(before["attention"]["required"])
+
+        reviewed = self.store.review_access_attention()
+
+        self.assertEqual(
+            reviewed,
+            {
+                "reviewed": 1,
+                "total_reviewed": 1,
+                "runtime_health_cleared": True,
+            },
+        )
+        after = self.store.status_snapshot()
+        self.assertEqual(after["health"], "ok")
+        self.assertIsNone(after["last_error_code"])
+        self.assertEqual(after["attention"]["expired_unresolved"], 1)
+        self.assertEqual(after["attention"]["reviewed"], 1)
+        self.assertEqual(after["attention"]["pending"], 0)
+        self.assertFalse(after["attention"]["required"])
+        self.assertEqual(after["attention"]["last_reviewed_at"], NOW)
+        with self.connection() as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM incidents WHERE state='expired_unresolved'"
+                ).fetchone()[0],
+                1,
+            )
+
+        repeated = self.store.review_access_attention()
+        self.assertEqual(repeated["reviewed"], 0)
+        self.assertEqual(repeated["total_reviewed"], 1)
+        self.assertFalse(repeated["runtime_health_cleared"])
+
+    def test_access_review_does_not_clear_a_durable_bus_failure(self) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO producer_inbox(
+                    receipt_uid, source, received_at, outcome, error_code
+                ) VALUES ('receipt', 'ring', ?, 'dead_letter', 'spool_integrity')
+                """,
+                (NOW,),
+            )
+            connection.execute(
+                "INSERT INTO service_counters(name, value) VALUES (?, 1)",
+                (home_events.ACCESS_INCIDENTS_EXPIRED,),
+            )
+            connection.execute(
+                """
+                UPDATE runtime_status SET health='degraded',
+                    last_error_at=?, last_error_code='access_expired_unresolved'
+                WHERE singleton=1
+                """,
+                (NOW,),
+            )
+
+        reviewed = self.store.review_access_attention()
+
+        self.assertEqual(reviewed["reviewed"], 1)
+        self.assertFalse(reviewed["runtime_health_cleared"])
+        self.assertEqual(self.store.status_snapshot()["health"], "degraded")
 
     def test_v1_source_constraint_migration_preserves_existing_delivery_state(self) -> None:
         self.enqueue(ring_payload())
