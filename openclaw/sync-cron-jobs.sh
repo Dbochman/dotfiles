@@ -12,6 +12,12 @@
 
 set -euo pipefail
 
+NODE22_BIN="${OPENCLAW_NODE22_BIN:-/opt/homebrew/opt/node@22/bin}"
+if [ -x "$NODE22_BIN/node" ]; then
+  PATH="$NODE22_BIN:$PATH"
+  export PATH
+fi
+
 DOTFILES_JOBS="${DOTFILES_JOBS:-$HOME/dotfiles/openclaw/cron/jobs.json}"
 LIVE_JOBS="${LIVE_JOBS:-$HOME/.openclaw/cron/jobs.json}"
 SQLITE_DB="${SQLITE_DB:-$HOME/.openclaw/state/openclaw.sqlite}"

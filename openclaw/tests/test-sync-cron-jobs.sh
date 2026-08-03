@@ -5,10 +5,14 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 TEST_HOME=$(mktemp -d)
 trap 'rm -rf "$TEST_HOME"' EXIT
+TEST_NODE22_BIN="$TEST_HOME/node22-bin"
 
 mkdir -p \
   "$TEST_HOME/dotfiles/openclaw/cron" \
-  "$TEST_HOME/.openclaw/cron/runs"
+  "$TEST_HOME/.openclaw/cron/runs" \
+  "$TEST_NODE22_BIN"
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$TEST_NODE22_BIN/node"
+chmod +x "$TEST_NODE22_BIN/node"
 printf '%s\n' \
   "DYLAN_EMAIL=dylan@example.invalid" \
   "JULIA_EMAIL=julia@example.invalid" \
@@ -72,7 +76,7 @@ PY
 }
 
 deploy() {
-  HOME="$TEST_HOME" PATH="${TEST_PATH:-$PATH}" \
+  HOME="$TEST_HOME" PATH="${TEST_PATH:-$PATH}" OPENCLAW_NODE22_BIN="$TEST_NODE22_BIN" \
     "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh" deploy >/dev/null
 }
 
@@ -359,9 +363,9 @@ PY
 : > "$OPENCLAW_CALL_LOG"
 deploy
 case "$(cat "$OPENCLAW_DOCTOR_PATH_LOG")" in
-  "$TEST_HOME/.openclaw/bin:"*) ;;
+  "$TEST_HOME/.openclaw/bin:$TEST_NODE22_BIN:$TEST_HOME/fake-bin:"*) ;;
   *)
-    echo "cron doctor did not inherit the managed OpenClaw wrapper path" >&2
+    echo "cron doctor did not inherit the managed OpenClaw and Node 22 paths" >&2
     exit 1
     ;;
 esac
