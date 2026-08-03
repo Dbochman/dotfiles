@@ -345,6 +345,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
+| `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects local Codex CLI daily usage into an atomic mode-`0600` dashboard source |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's dedicated `cielo` profile |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
@@ -508,7 +509,7 @@ as a persistent outage.
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects Claude Code token usage and pushes daily JSON to Mini |
+| `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects Codex CLI daily usage and pushes its host-namespaced JSON to Mini |
 | `com.dylanbochman.claude-session-backup` | Weekly Sun 5:00 AM | `bin/claude-session-backup` | Rsyncs `~/.claude/projects/` (335MB) to Mini at `~/Backups/claude-sessions/<hostname>/projects/` via Tailscale SSH. Preserves Claude session transcripts past the default ~30-day local retention. Stays on Tailscale (no cloud); namespaces by `hostname -s` so other machines can co-exist. |
 
 ## Disabled

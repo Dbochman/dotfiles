@@ -1,6 +1,6 @@
 # OpenClaw Usage Dashboard
 
-## Status: v7.6 (2026-06-27)
+## Status: v7.7 (2026-08-03)
 
 Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on the Mac Mini with home-LAN and Tailscale-tailnet access.
 
@@ -10,10 +10,10 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on th
 |-----------|------|---------|
 | `usage-dashboard.py` | Mini: `~/.openclaw/bin/` | HTTP server + embedded HTML/JS dashboard |
 | `usage-snapshot.sh` | Mini: `~/.openclaw/bin/` | OpenClaw data collector, runs every 15 min via LaunchAgent |
-| `ccusage-push.sh` | Any machine: `dotfiles/openclaw/bin/` | Claude Code usage collector, pushes to Mini every 30 min |
+| `ccusage-push.sh` | Any machine: `dotfiles/openclaw/bin/` | Codex CLI usage collector, refreshes the Mini every 30 min |
 | `ccusage-setup.sh` | Any machine: `dotfiles/openclaw/bin/` | Installs ccusage-push LaunchAgent with correct paths |
 | History JSONL | Mini: `~/.openclaw/usage-history/YYYY-MM-DD.jsonl` | One file per day, append-only OpenClaw snapshots |
-| ccusage JSON | Mini: `~/.openclaw/usage-history/ccusage-{hostname}.json` | Per-machine Claude Code daily token usage, merged by dashboard |
+| ccusage JSON | Mini: `~/.openclaw/usage-history/ccusage-codex-{hostname}.json` | Per-machine Codex CLI daily token usage, merged by dashboard |
 | State file | Mini: `~/.openclaw/usage-history/.snapshot-state` | Tracks the runtime-log offset and SQLite cron-run high-water cursor between snapshots |
 | OAuth cache | Mini: `~/.openclaw/.anthropic-oauth-cache` | Refreshed locally every 6 hours by `ai.openclaw.oauth-refresh` |
 
@@ -27,11 +27,11 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on th
 | Runtime log | Gateway restarts, errors (tslog format) | `parse_runtime_log()` via offset tracking |
 | Local Messages database | Native iMessage sent/received counts per interval | `fetch_imessage_messages()` via read-only `chat.db` query |
 | Native iMessage health probes | Live OpenClaw channel, configured message behavior, bridge capabilities, latest outbound delivery, and direct-chat response latency | Cached gateway `/health`, whitelisted runtime settings, attached `imsg rpc` worker check, `imsg status`, and read-only `chat.db` queries |
-| ccusage (Claude Code) | Daily token totals, per-model breakdown, cache stats | `ccusage-push.sh` via `npx ccusage daily --json` on MacBook |
+| ccusage (Codex CLI) | Daily token totals, reasoning output, estimated cost, per-model breakdown, and cache stats | `ccusage-push.sh` via pinned `npx ccusage codex daily --json` on Mini and MacBook |
 
 ### Dashboard Features
 
-**Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day. Sonnet 7d gauge only appears when there's active Sonnet usage. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns. Two additional gauges show OpenClaw (orange) and Claude Code (blue) token share of combined usage. Entire section auto-hides when utilization data is unavailable (e.g., stale OAuth token).
+**Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day. Sonnet 7d gauge only appears when there's active Sonnet usage. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns. Two additional gauges show OpenClaw (orange) and Codex CLI (blue) token share of combined usage. Entire section auto-hides when utilization data is unavailable (e.g., stale OAuth token).
 
 **Stat cards** — All cards auto-hide when their value is zero for the selected time range. Available: Total Cost ($), Total Tokens (in/out with cache), Cron Runs (with failure count), Messages (sent/recv), Sessions (with tool calls), Errors, Gateway Restarts. Cost/sessions require gateway RPC data; falls back to "No Activity" when nothing to show.
 
@@ -40,7 +40,7 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on th
 **Charts** — all charts auto-hide when they have no data to display:
 - Utilization Over Time — line chart with 100% threshold line
 - Tokens by Job — doughnut chart; when hidden, Token Usage expands to full width
-- Token Usage Over Time — stacked bar chart with adaptive buckets. At 6h/24h shows OpenClaw only (hourly); at 7d/30d adds Claude Code (daily ccusage data doesn't have sub-day granularity)
+- Token Usage Over Time — stacked bar chart with adaptive buckets. At 6h/24h shows OpenClaw only (hourly); at 7d/30d adds Codex CLI (daily ccusage data doesn't have sub-day granularity)
 - Activity — stacked bar chart (sent/received/cron), adaptive bucket sizes
 - Cost Over Time — stacked bar chart (cache write/read/output/input cost per day) from gateway RPC
 - Model Split — doughnut chart (per-model token share: Opus/Sonnet/etc.) from gateway RPC
@@ -88,13 +88,13 @@ The retired Feb 1–Mar 7 BlueBubbles backfill has aged out under the 90-day
 history retention policy. The renderer still recognizes `_backfill: true` so a
 restored archive cannot create false spikes in 6h/24h views.
 
-### Claude Code Usage Integration
+### Codex CLI Usage Integration
 
-Added in v5. The `ccusage-push.sh` script runs on the MacBook (where Claude Code session logs live at `~/.claude/projects/`) every 30 minutes via the `ai.openclaw.ccusage-push` LaunchAgent. It runs `npx ccusage daily --json --breakdown --offline --since <90 days ago>`, producing a JSON file with per-day per-model token breakdowns (input, output, cache creation, cache read, total, cost). Each source machine pushes to `~/.openclaw/usage-history/ccusage-<hostname>.json`; the dashboard merges all matching `ccusage-*.json` files.
+As of v7.7, `ccusage-push.sh` runs every 30 minutes on the Mini and MacBook through the `ai.openclaw.ccusage-push` LaunchAgent. It pins ccusage `20.0.19` and invokes the explicit `codex daily --json --breakdown --offline` reader over the previous 90 days. Each result includes daily input, output, reasoning output, cache, total-token, model, and estimated-cost fields. The Mini atomically installs its own mode-`0600` result; the MacBook transfers its host-namespaced result with an explicit unattended SSH identity. The dashboard merges only `ccusage-codex-<hostname>.json` files, so retained `ccusage-<hostname>.json` Claude history is preserved on disk without being mislabeled or double-counted.
 
-The dashboard `/api/data` endpoint includes the ccusage data in its response. The Token Usage Over Time chart shows OpenClaw (orange) and Claude Code (blue) as stacked bars with daily granularity. Two gauges show each source's percentage of combined token usage.
+The dashboard `/api/data` endpoint includes the Codex rows in its existing `ccusage` response field. The Token Usage Over Time chart shows OpenClaw (orange) and Codex CLI (blue) as stacked bars with daily granularity. Two gauges show each source's percentage of combined usage.
 
-Since ccusage data is daily granularity and the push runs on a laptop (not always on), gaps during sleep don't cause data loss — the next push captures complete daily totals. The collector uses an explicit unattended SSH identity (`~/.ssh/id_launchd`, with `~/.ssh/id_rsa` as a compatibility fallback) instead of the GUI SSH agent. It exits nonzero when collection, validation, or transfer fails, so launchd and the usage dashboard can distinguish a stale source from a successful refresh.
+Since ccusage reads Codex's retained local state at daily granularity, gaps while the MacBook sleeps do not lose completed historical days; the next run refreshes the complete 90-day window. The remote path uses `~/.ssh/id_launchd`, with `~/.ssh/id_rsa` as a compatibility fallback, and never the GUI SSH agent. Collection, JSON validation, local installation, and transfer failures exit nonzero so launchd exposes stale sources.
 
 ### API Endpoints
 
@@ -111,6 +111,12 @@ Since ccusage data is daily granularity and the push runs on a laptop (not alway
 ---
 
 ## Changelog
+
+### v7.7 (2026-08-03)
+- **Codex CLI usage** — replaced the active Claude collector with pinned, explicit Codex daily collection on the Mini and MacBook.
+- **Source-safe history** — Codex uses `ccusage-codex-<hostname>.json`; retained Claude files remain untouched and are excluded from current totals.
+- **Current Codex schema** — ingestion accepts `costUSD` and `reasoningOutputTokens` while retaining the prior date/period compatibility.
+- **Local Mini sink** — the Mini installs its result atomically with mode `0600`; remote hosts retain explicit unattended SSH transfer.
 
 ### v7.6 (2026-06-27)
 - **Accurate message behavior** — the health card now reads OpenClaw's configured `session.typingMode` and `channels.imessage.sendReadReceipts` values instead of presenting supported bridge capabilities as enabled behavior.

@@ -116,10 +116,11 @@ def _ts_minute(rec):
 
 
 def load_ccusage():
-    """Load and merge Claude Code usage from all ccusage-*.json files (one per machine)."""
+    """Load Codex CLI usage from ccusage-codex-*.json files."""
     import glob
     merged = {}  # date -> {totalTokens, inputTokens, outputTokens, ...}
-    for path in glob.glob(os.path.join(HISTORY_DIR, "ccusage-*.json")):
+    pattern = os.path.join(HISTORY_DIR, "ccusage-codex-*.json")
+    for path in sorted(glob.glob(pattern)):
         try:
             with open(path) as f:
                 data = json.load(f)
@@ -130,17 +131,24 @@ def load_ccusage():
                 if not date:
                     continue
                 if date not in merged:
-                    merged[date] = {"date": date, "totalTokens": 0, "inputTokens": 0,
+                    merged[date] = {"date": date, "source": "codex",
+                                    "totalTokens": 0, "inputTokens": 0,
                                     "outputTokens": 0, "cacheCreationTokens": 0,
-                                    "cacheReadTokens": 0, "totalCost": 0, "machines": []}
+                                    "cacheReadTokens": 0, "reasoningOutputTokens": 0,
+                                    "totalCost": 0, "machines": []}
                 m = merged[date]
                 m["totalTokens"] += _ccusage_number(day, "totalTokens")
                 m["inputTokens"] += _ccusage_number(day, "inputTokens")
                 m["outputTokens"] += _ccusage_number(day, "outputTokens")
                 m["cacheCreationTokens"] += _ccusage_number(day, "cacheCreationTokens")
                 m["cacheReadTokens"] += _ccusage_number(day, "cacheReadTokens")
-                m["totalCost"] += _ccusage_number(day, "totalCost")
-                machine = os.path.basename(path).replace("ccusage-", "").replace(".json", "")
+                m["reasoningOutputTokens"] += _ccusage_number(
+                    day, "reasoningOutputTokens"
+                )
+                cost_field = "costUSD" if "costUSD" in day else "totalCost"
+                m["totalCost"] += _ccusage_number(day, cost_field)
+                filename = os.path.basename(path)
+                machine = filename[len("ccusage-codex-"):-len(".json")]
                 if machine not in m["machines"]:
                     m["machines"].append(machine)
         except (json.JSONDecodeError, OSError):
@@ -1461,7 +1469,7 @@ function renderGauges(util, agg, ccusage) {
   else if (sd) { h += gaugeHTML('7-Day', sd.utilization, sd.resets_at); }
   // Only show Sonnet gauge if there's meaningful Sonnet-specific usage
   if (sn && sn.utilization > 0 && op) h += gaugeHTML('Sonnet 7d', sn.utilization, sn.resets_at);
-  // OpenClaw + Claude Code usage gauges (share of combined total)
+  // OpenClaw + Codex CLI usage gauges (share of combined total)
   if (agg && ccusage && ccusage.length > 0) {
     const cutoff = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
     const ccTotal = ccusage.filter(d => d.date >= cutoff).reduce((s, d) => s + (d.totalTokens || 0), 0);
@@ -1471,7 +1479,7 @@ function renderGauges(util, agg, ccusage) {
       const ocPct = ocTotal / combined * 100;
       const ccPct = ccTotal / combined * 100;
       h += usageGaugeHTML('OpenClaw', ocPct, fmtTokens(ocTotal), '#F97316');
-      h += usageGaugeHTML('Claude Code', ccPct, fmtTokens(ccTotal), '#3B82F6');
+      h += usageGaugeHTML('Codex CLI', ccPct, fmtTokens(ccTotal), '#3B82F6');
     }
   }
   if (!h) { el.innerHTML = ''; el.style.display = 'none'; return; }
@@ -1680,7 +1688,7 @@ function buildCharts(snaps, agg, ccusage) {
     tokenTimeBox.classList.add('full');
   }
 
-  // Token usage over time: OpenClaw vs Claude Code (stacked bar, adaptive buckets)
+  // Token usage over time: OpenClaw vs Codex CLI (stacked bar, adaptive buckets)
   function tokenBucketKey(ts) {
     const d = new Date(ts);
     if (currentHours <= 24) {
@@ -1698,7 +1706,7 @@ function buildCharts(snaps, agg, ccusage) {
     const t = s.tokens || {};
     ocBk[key] = (ocBk[key]||0) + (t.total || 0);
   }
-  // Overlay Claude Code daily totals from ccusage (only at ≥7d where daily buckets make sense)
+  // Overlay Codex CLI daily totals from ccusage (only at ≥7d where daily buckets make sense)
   const cutoffDate = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
   if (ccusage && currentHours > 24) {
     for (const d of ccusage) {
@@ -1720,7 +1728,7 @@ function buildCharts(snaps, agg, ccusage) {
       { label:'OpenClaw', data:allKeys.map(k=>({x:k,y:ocBk[k]||0})), backgroundColor:'rgba(249,115,22,0.7)', borderColor:'#F97316', borderWidth:1 },
     ];
     if (currentHours > 24) {
-      tokenDatasets.push({ label:'Claude Code', data:allKeys.map(k=>({x:k,y:ccBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 });
+      tokenDatasets.push({ label:'Codex CLI', data:allKeys.map(k=>({x:k,y:ccBk[k]||0})), backgroundColor:'rgba(59,130,246,0.7)', borderColor:C.blue, borderWidth:1 });
     }
     updateOrCreate('tokenTimeChart', 'bar', tokenDatasets, 'Tokens');
   } else {

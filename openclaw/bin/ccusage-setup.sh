@@ -5,12 +5,14 @@
 #
 # Usage: bash openclaw/bin/ccusage-setup.sh [dotfiles-root]
 #   dotfiles-root defaults to the parent of this script's directory.
+# Set CCUSAGE_LOCAL_DIR to install locally instead of transferring over SSH.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DOTFILES_ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 PUSH_SCRIPT="${CCUSAGE_PUSH_SCRIPT:-$DOTFILES_ROOT/openclaw/bin/ccusage-push.sh}"
+LOCAL_DIR="${CCUSAGE_LOCAL_DIR:-}"
 
 if [[ ! -x "$PUSH_SCRIPT" ]]; then
   echo "Error: $PUSH_SCRIPT not found or not executable" >&2
@@ -65,6 +67,10 @@ cat > "$PLIST" <<EOF
 </plist>
 EOF
 
+if [[ -n "$LOCAL_DIR" ]]; then
+  plutil -insert EnvironmentVariables.CCUSAGE_LOCAL_DIR -string "$LOCAL_DIR" "$PLIST"
+fi
+
 plutil -lint "$PLIST" >/dev/null
 launchctl enable "$DOMAIN/$LABEL"
 launchctl bootstrap "$DOMAIN" "$PLIST"
@@ -72,3 +78,8 @@ echo "Installed and started $LABEL"
 echo "  Plist: $PLIST"
 echo "  Script: $PUSH_SCRIPT"
 echo "  Interval: every 30 minutes"
+if [[ -n "$LOCAL_DIR" ]]; then
+  echo "  Destination: $LOCAL_DIR"
+else
+  echo "  Destination: Mac Mini over unattended SSH"
+fi
