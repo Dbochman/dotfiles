@@ -322,6 +322,41 @@ _gw_usage_lock = threading.Lock()
 GW_CACHE_TTL = 300  # seconds
 
 
+def _finite_usage_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return value if math.isfinite(value) else 0
+
+
+def _normalize_gateway_usage(data):
+    """Add stable daily aliases across gateway usage response versions."""
+    if not isinstance(data, dict):
+        return data
+    aggregates = data.get("aggregates")
+    if not isinstance(aggregates, dict):
+        return data
+    daily = aggregates.get("daily")
+    if not isinstance(daily, list):
+        return data
+
+    normalized_daily = []
+    for row in daily:
+        if not isinstance(row, dict):
+            continue
+        normalized = dict(row)
+        token_value = row.get("tokens", row.get("totalTokens", 0))
+        cost_value = row.get("cost", row.get("totalCost", 0))
+        normalized["totalTokens"] = _finite_usage_number(token_value)
+        normalized["totalCost"] = _finite_usage_number(cost_value)
+        normalized_daily.append(normalized)
+
+    normalized_aggregates = dict(aggregates)
+    normalized_aggregates["daily"] = normalized_daily
+    normalized_data = dict(data)
+    normalized_data["aggregates"] = normalized_aggregates
+    return normalized_data
+
+
 def fetch_gateway_usage():
     """Call `openclaw gateway call sessions.usage --json` with 5-min caching."""
     now = datetime.now(timezone.utc).timestamp()
@@ -350,7 +385,7 @@ def fetch_gateway_usage():
         if result.returncode != 0:
             print(f"gateway usage RPC failed: {result.stderr[:200]}", file=sys.stderr, flush=True)
             return None
-        data = json.loads(result.stdout)
+        data = _normalize_gateway_usage(json.loads(result.stdout))
     except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
         print(f"gateway usage RPC error: {e}", file=sys.stderr, flush=True)
         return None
@@ -1454,7 +1489,7 @@ function aggregate(snaps) {
   return r;
 }
 
-function renderGauges(util, agg, ccusage) {
+function renderGauges(util, agg, ccusage, gwData) {
   const el = document.getElementById('gauges');
   if (!util) { el.innerHTML = ''; el.style.display = 'none'; return; }
   el.style.display = '';
@@ -1473,7 +1508,10 @@ function renderGauges(util, agg, ccusage) {
   if (agg && ccusage && ccusage.length > 0) {
     const cutoff = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
     const ccTotal = ccusage.filter(d => d.date >= cutoff).reduce((s, d) => s + (d.totalTokens || 0), 0);
-    const ocTotal = agg.tokens.total || 0;
+    const gatewayDaily = gwData ? ((gwData.aggregates || {}).daily || []) : [];
+    const ocTotal = gatewayDaily.length > 0
+      ? gatewayDaily.filter(d => d.date >= cutoff).reduce((s, d) => s + (d.totalTokens || 0), 0)
+      : (agg.tokens.total || 0);
     const combined = ocTotal + ccTotal;
     if (combined > 0) {
       const ocPct = ocTotal / combined * 100;
@@ -1498,8 +1536,9 @@ function renderStats(agg, gwData) {
     acc.input += d.input || 0; acc.output += d.output || 0;
     acc.cacheRead += d.cacheRead || 0; acc.cacheWrite += d.cacheWrite || 0;
     acc.totalTokens += d.totalTokens || 0; acc.totalCost += d.totalCost || 0;
+    acc.hasBreakdown = acc.hasBreakdown || ['input','output','cacheRead','cacheWrite'].some(k => Number.isFinite(d[k]));
     return acc;
-  }, { input:0, output:0, cacheRead:0, cacheWrite:0, totalTokens:0, totalCost:0 }) : null;
+  }, { input:0, output:0, cacheRead:0, cacheWrite:0, totalTokens:0, totalCost:0, hasBreakdown:false }) : null;
   const totalTok = gw ? gw.totalTokens : agg.tokens.total;
   const inTok = gw ? (gw.input + gw.cacheRead) : agg.tokens.input;
   const outTok = gw ? (gw.output + gw.cacheWrite) : agg.tokens.output;
@@ -1528,8 +1567,8 @@ function renderStats(agg, gwData) {
   }
 
   let h = '';
-  if (cost != null && cost > 0) h += `<div class="stat"><div class="stat-label">Total Cost</div><div class="stat-value">$${cost.toFixed(2)}</div><div class="stat-sub">${gw ? fmtTokens(gw.cacheRead) + ' cache hits' : ''}</div></div>`;
-  if (totalTok > 0) h += `<div class="stat"><div class="stat-label">Total Tokens</div><div class="stat-value">${fmtTokens(totalTok)}</div><div class="stat-sub">In: ${fmtTokens(inTok)} / Out: ${fmtTokens(outTok)}</div></div>`;
+  if (cost != null && cost > 0) h += `<div class="stat"><div class="stat-label">Total Cost</div><div class="stat-value">$${cost.toFixed(2)}</div><div class="stat-sub">${gw && gw.hasBreakdown ? fmtTokens(gw.cacheRead) + ' cache hits' : 'All OpenClaw sessions'}</div></div>`;
+  if (totalTok > 0) h += `<div class="stat"><div class="stat-label">Total Tokens</div><div class="stat-value">${fmtTokens(totalTok)}</div><div class="stat-sub">${gw ? (gw.hasBreakdown ? 'In: ' + fmtTokens(inTok) + ' / Out: ' + fmtTokens(outTok) : 'All OpenClaw sessions') : 'Cron runs'}</div></div>`;
   if (a.cron_runs > 0) h += `<div class="stat"><div class="stat-label">Cron Runs</div><div class="stat-value">${a.cron_runs}</div><div class="stat-sub">${agg.cronJobs.filter(j=>j.status==='error').length} failed</div></div>`;
   if (a.messages_sent + a.messages_received > 0) h += `<div class="stat"><div class="stat-label">Messages</div><div class="stat-value">${a.messages_sent + a.messages_received}</div><div class="stat-sub">Sent: ${a.messages_sent} / Recv: ${a.messages_received}</div></div>`;
   if (sessions > 0) h += `<div class="stat"><div class="stat-label">Sessions</div><div class="stat-value">${sessions}</div><div class="stat-sub">${totalToolCalls} tool calls</div></div>`;
@@ -1634,7 +1673,7 @@ function updateOrCreate(id, type, datasets, yTitle, extra) {
   charts[id] = new Chart(ctx, { type, data:{ datasets }, options: opts, plugins });
 }
 
-function buildCharts(snaps, agg, ccusage) {
+function buildCharts(snaps, agg, ccusage, gwData) {
   // Filter out backfill entries for short time ranges (they compress a full day into one point)
   const chartSnaps = currentHours <= 24 ? snaps.filter(s => !s._backfill) : snaps;
 
@@ -1700,24 +1739,29 @@ function buildCharts(snaps, agg, ccusage) {
       return d.toISOString().slice(0,10) + 'T12:00:00Z'; // daily
     }
   }
-  const ocBk = {}, ccBk = {};
-  for (const s of chartSnaps) {
-    const key = tokenBucketKey(s.timestamp);
-    const t = s.tokens || {};
-    ocBk[key] = (ocBk[key]||0) + (t.total || 0);
-  }
-  // Overlay Codex CLI daily totals from ccusage (only at ≥7d where daily buckets make sense)
   const cutoffDate = new Date(Date.now() - currentHours * 3600000).toISOString().slice(0, 10);
+  const ocBk = {}, ccBk = {};
+  const gatewayDaily = gwData ? ((gwData.aggregates || {}).daily || []) : [];
+  if (gatewayDaily.length > 0) {
+    for (const d of gatewayDaily) {
+      if (d.date < cutoffDate) continue;
+      const key = d.date + 'T12:00:00Z';
+      ocBk[key] = (ocBk[key]||0) + (d.totalTokens || 0);
+    }
+  } else {
+    // Legacy fallback is cron-only; the gateway daily aggregate is authoritative.
+    for (const s of chartSnaps) {
+      const key = tokenBucketKey(s.timestamp);
+      const t = s.tokens || {};
+      ocBk[key] = (ocBk[key]||0) + (t.total || 0);
+    }
+  }
+  // Codex CLI is also daily-granularity, so do not invent sub-day buckets.
   if (ccusage && currentHours > 24) {
     for (const d of ccusage) {
       if (d.date < cutoffDate) continue;
-      if (currentHours <= 168) {
-        const half = Math.round((d.totalTokens || 0) / 2);
-        ccBk[d.date + 'T00:00:00Z'] = (ccBk[d.date + 'T00:00:00Z']||0) + half;
-        ccBk[d.date + 'T12:00:00Z'] = (ccBk[d.date + 'T12:00:00Z']||0) + half;
-      } else {
-        ccBk[d.date + 'T12:00:00Z'] = (ccBk[d.date + 'T12:00:00Z']||0) + (d.totalTokens || 0);
-      }
+      const key = d.date + 'T12:00:00Z';
+      ccBk[key] = (ccBk[key]||0) + (d.totalTokens || 0);
     }
   }
   const allKeys = [...new Set([...Object.keys(ocBk), ...Object.keys(ccBk)])].sort();
@@ -1937,28 +1981,46 @@ function buildGatewayCharts(gwData) {
   const costBox = document.getElementById('costBox');
   if (daily.length > 0 && daily.some(d => d.totalCost > 0)) {
     costBox.style.display = '';
-    const cacheWriteData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.cacheWriteCost || 0 }));
-    const cacheReadData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.cacheReadCost || 0 }));
-    const outputData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.outputCost || 0 }));
-    const inputData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.inputCost || 0 }));
-    updateOrCreate('costChart', 'bar', [
-      { label:'Cache Write', data:cacheWriteData, backgroundColor:'rgba(139,92,246,0.7)', borderColor:C.purple, borderWidth:1 },
-      { label:'Cache Read', data:cacheReadData, backgroundColor:'rgba(6,182,212,0.7)', borderColor:C.cyan, borderWidth:1 },
-      { label:'Output', data:outputData, backgroundColor:'rgba(249,115,22,0.7)', borderColor:C.orange, borderWidth:1 },
-      { label:'Input', data:inputData, backgroundColor:'rgba(34,197,94,0.7)', borderColor:C.green, borderWidth:1 },
-    ], 'USD');
+    const hasCostBreakdown = daily.some(d => ['cacheWriteCost','cacheReadCost','outputCost','inputCost'].some(k => Number.isFinite(d[k])));
+    if (hasCostBreakdown) {
+      const cacheWriteData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.cacheWriteCost || 0 }));
+      const cacheReadData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.cacheReadCost || 0 }));
+      const outputData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.outputCost || 0 }));
+      const inputData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.inputCost || 0 }));
+      updateOrCreate('costChart', 'bar', [
+        { label:'Cache Write', data:cacheWriteData, backgroundColor:'rgba(139,92,246,0.7)', borderColor:C.purple, borderWidth:1 },
+        { label:'Cache Read', data:cacheReadData, backgroundColor:'rgba(6,182,212,0.7)', borderColor:C.cyan, borderWidth:1 },
+        { label:'Output', data:outputData, backgroundColor:'rgba(249,115,22,0.7)', borderColor:C.orange, borderWidth:1 },
+        { label:'Input', data:inputData, backgroundColor:'rgba(34,197,94,0.7)', borderColor:C.green, borderWidth:1 },
+      ], 'USD');
+    } else {
+      const totalCostData = daily.map(d => ({ x: d.date + 'T12:00:00Z', y: d.totalCost || 0 }));
+      updateOrCreate('costChart', 'bar', [
+        { label:'Total', data:totalCostData, backgroundColor:'rgba(139,92,246,0.7)', borderColor:C.purple, borderWidth:1 },
+      ], 'USD');
+    }
   } else {
     costBox.style.display = 'none';
     if (charts['costChart']) { charts['costChart'].destroy(); delete charts['costChart']; }
   }
 
-  // Model Split (doughnut) — aggregate from filtered sessions' modelUsage
+  // Model Split (doughnut) — date-scoped modelDaily is authoritative.
   const modelTotals = {};
-  for (const s of filteredSessions) {
-    for (const m of (s.usage && s.usage.modelUsage) || []) {
+  const modelDaily = (agg.modelDaily || []).filter(d => d.date >= cutoff);
+  if (modelDaily.length > 0) {
+    for (const m of modelDaily) {
       const key = m.model;
       if (!modelTotals[key]) modelTotals[key] = 0;
-      modelTotals[key] += m.totals.totalTokens || 0;
+      modelTotals[key] += m.tokens || 0;
+    }
+  } else {
+    // Compatibility fallback for gateways that predate modelDaily.
+    for (const s of filteredSessions) {
+      for (const m of (s.usage && s.usage.modelUsage) || []) {
+        const key = m.model;
+        if (!modelTotals[key]) modelTotals[key] = 0;
+        modelTotals[key] += m.totals.totalTokens || 0;
+      }
     }
   }
   const modelBox = document.getElementById('modelBox');
@@ -2033,13 +2095,13 @@ async function refresh() {
   }
 
   const agg = aggregate(snaps);
-  renderGauges(agg.utilization, agg, ccusage);
+  renderGauges(agg.utilization, agg, ccusage, gwData);
   renderStats(agg, gwData);
   renderCronTable(agg.cronJobs);
   renderStaleness(agg.timestamp);
 
   if (typeof Chart !== 'undefined') {
-    buildCharts(snaps, agg, ccusage);
+    buildCharts(snaps, agg, ccusage, gwData);
     buildGatewayCharts(gwData);
   }
 }

@@ -69,12 +69,12 @@ Tracks OpenClaw session activity, token consumption and costs alongside Anthropi
 ### What It Shows
 
 - **Utilization gauges** — 5-hour and 7-day token usage rings (green/amber/red thresholds)
-- **Stat cards** — total cost, total tokens, cron runs, messages sent/received, sessions, errors, gateway restarts
+- **Stat cards** — total cost, all-session total tokens, cron runs, messages sent/received, sessions, errors, gateway restarts
 - **Native iMessage Health** — live OpenClaw channel and `imsg` bridge readiness, configured typing/read-receipt behavior, latest outbound delivery, and privacy-safe seven-day direct-response latency
-- **Token Usage Over Time** — stacked OpenClaw/Codex CLI bars with adaptive hourly or daily buckets
+- **Token Usage Over Time** — stacked daily OpenClaw all-session/Codex CLI bars
 - **Activity chart** — sent/received/cron messages over time
-- **Cost Over Time** — cache write/read/output/input cost breakdown
-- **Model Split** — doughnut chart of per-model token usage from gateway sessions
+- **Cost Over Time** — aggregate daily cost, with a component breakdown when supplied
+- **Model Split** — doughnut chart of date-scoped per-model token usage
 - **Tool Usage** — horizontal bar of most-used tools
 - **Recent Cron Runs** — table with status badges, duration, token counts
 

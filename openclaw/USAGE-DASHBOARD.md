@@ -1,6 +1,6 @@
 # OpenClaw Usage Dashboard
 
-## Status: v7.7 (2026-08-03)
+## Status: v7.8 (2026-08-03)
 
 Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on the Mac Mini with home-LAN and Tailscale-tailnet access.
 
@@ -33,17 +33,17 @@ Single-file Python HTTP server + embedded Chart.js UI. Serves at port 8551 on th
 
 **Utilization gauges** — SVG ring gauges for 5-Hour, 7-Day. Sonnet 7d gauge only appears when there's active Sonnet usage. Color-coded green/amber/red with pacing labels (chill/on-track/hot) and reset countdowns. Two additional gauges show OpenClaw (orange) and Codex CLI (blue) token share of combined usage. Entire section auto-hides when utilization data is unavailable (e.g., stale OAuth token).
 
-**Stat cards** — All cards auto-hide when their value is zero for the selected time range. Available: Total Cost ($), Total Tokens (in/out with cache), Cron Runs (with failure count), Messages (sent/recv), Sessions (with tool calls), Errors, Gateway Restarts. Cost/sessions require gateway RPC data; falls back to "No Activity" when nothing to show.
+**Stat cards** — All cards auto-hide when their value is zero for the selected time range. Available: Total Cost ($), Total Tokens across all OpenClaw sessions (with input/output/cache detail when supplied), Cron Runs (with failure count), Messages (sent/recv), Sessions (with tool calls), Errors, Gateway Restarts. Cost/sessions require gateway RPC data; falls back to "No Activity" when nothing to show.
 
 **Native iMessage Health card** — A 60-second cached, read-only check of the production OpenClaw gateway, its attached `imsg rpc` delivery worker, and the native `imsg` bridge. Shows healthy/degraded/down state, configured typing/read-receipt behavior, `imsg`/SIP runtime details, latest outbound delivery, and seven-day observed direct-chat response latency (latest, median, p95, slow, pending, and unmatched turns). Bridge capability probes still contribute to the overall health state without occupying a separate row. It never sends a synthetic message and does not expose message contents, recipients, chat IDs, GUIDs, command output, or credentials.
 
 **Charts** — all charts auto-hide when they have no data to display:
 - Utilization Over Time — line chart with 100% threshold line
 - Tokens by Job — doughnut chart; when hidden, Token Usage expands to full width
-- Token Usage Over Time — stacked bar chart with adaptive buckets. At 6h/24h shows OpenClaw only (hourly); at 7d/30d adds Codex CLI (daily ccusage data doesn't have sub-day granularity)
+- Token Usage Over Time — stacked daily bars from the Gateway's all-session OpenClaw totals; at 7d/30d it adds Codex CLI from daily ccusage data
 - Activity — stacked bar chart (sent/received/cron), adaptive bucket sizes
-- Cost Over Time — stacked bar chart (cache write/read/output/input cost per day) from gateway RPC
-- Model Split — doughnut chart (per-model token share: Opus/Sonnet/etc.) from gateway RPC
+- Cost Over Time — daily aggregate cost from gateway RPC, with a component stack when the Gateway supplies one
+- Model Split — doughnut chart of date-scoped per-model token share from gateway RPC
 - Tool Usage — horizontal bar chart (call counts per tool: exec, message, read, etc.) from gateway RPC
 
 **Cron table** — Recent runs with job ID, status badge, delivered column (✓/✗), model, duration, tokens, time.
@@ -111,6 +111,12 @@ Since ccusage reads Codex's retained local state at daily granularity, gaps whil
 ---
 
 ## Changelog
+
+### v7.8 (2026-08-03)
+- Added compatibility normalization for the current Gateway daily usage schema (`tokens`/`cost`) and the legacy expanded schema (`totalTokens`/`totalCost`).
+- Switched the Total Tokens card, utilization comparison, and token history chart from cron-only snapshots to all-session Gateway daily totals.
+- Switched Model Split to `aggregates.modelDaily`, preventing older models used earlier in a long-lived session from leaking into the selected date range.
+- Kept the detailed cost component stack for legacy Gateway responses and added an aggregate-cost chart for current responses.
 
 ### v7.7 (2026-08-03)
 - **Codex CLI usage** — replaced the active Claude collector with pinned, explicit Codex daily collection on the Mini and MacBook.
@@ -209,7 +215,6 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
 ```
 {
   totals:     { input, output, cacheRead, cacheWrite, totalTokens, totalCost, ...perCostType }
-  daily:      [{ date, input, output, cacheRead, cacheWrite, totalTokens, totalCost }]
   sessions:   [{ sessionId, agentId, channel, chatType, origin, model, usage: {
                    durationMs, firstActivity, lastActivity, activityDates,
                    dailyBreakdown, dailyMessageCounts, dailyLatency, dailyModelUsage,
@@ -229,10 +234,16 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
     latency:       { count, avgMs, p95Ms, minMs, maxMs }
     dailyLatency:  [{ date, count, avgMs, p95Ms, minMs, maxMs }]
     modelDaily:    [{ date, provider, model, tokens, cost, count }]
-    daily:         [{ date, input, output, cacheRead, cacheWrite, totalTokens, totalCost }]
+    daily:         [{ date, tokens, cost, messages, toolCalls, errors }]
   }
 }
 ```
+
+The dashboard normalizes current `tokens`/`cost` daily fields to stable
+`totalTokens`/`totalCost` aliases while retaining compatibility with the older
+expanded daily schema. The detailed input/output/cache split remains available
+in the all-time root `totals`; current date-scoped daily rows expose aggregate
+tokens and cost.
 
 ### What this unlocks for the dashboard
 
@@ -240,7 +251,7 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
 
 | Chart | Current Source | Gateway RPC Improvement |
 |-------|---------------|------------------------|
-| Token Usage Over Time | SQLite cron-run snapshots (cron jobs only) | `aggregates.daily` — captures ALL sessions (cron + ad-hoc + DM conversations), includes cache tokens |
+| Token Usage Over Time | `aggregates.daily` | Captures all sessions (cron + ad-hoc + DM conversations), including cache tokens |
 | Tokens by Job | SQLite `cron_run_logs.total_tokens` | `sessions[].usage.totalTokens` — per-session totals with cache breakdown, not just cron |
 | Stat cards (Total Tokens) | SQLite cron-run interval sums | `totals` — accurate input/output/cacheRead/cacheWrite with cost |
 | Stat cards (Errors) | Runtime log grep | `aggregates.messages.errors` — structured error count |
@@ -249,8 +260,8 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
 
 | Chart | Data Source | Status |
 |-------|------------|--------|
-| **Cost Over Time** | `aggregates.daily[]` filtered by cutoff | DONE — stacked bar (cache write/read/output/input cost) |
-| **Model Split** | `sessions[].usage.modelUsage` re-aggregated from filtered sessions | DONE — doughnut chart |
+| **Cost Over Time** | `aggregates.daily[]` filtered by cutoff | DONE — component stack for expanded rows; aggregate total for current rows |
+| **Model Split** | `aggregates.modelDaily` filtered by cutoff | DONE — date-scoped doughnut chart |
 | **Tool Usage** | `sessions[].usage.toolUsage` re-aggregated from filtered sessions | DONE — horizontal bar chart |
 | **Cache Efficiency** | `totals.cacheRead` vs `totals.cacheWrite` vs `totals.input` | DEFERRED — stretch goal |
 | **Session Activity** | `sessions[].usage.durationMs`, `firstActivity`, `lastActivity` | DEFERRED — stretch goal |
@@ -268,16 +279,16 @@ Returns all sessions (currently ~50) with no date filtering (filter client-side)
 
 1. **`/api/gateway-usage` endpoint** — DONE. Shells out to `openclaw gateway call sessions.usage --json`, caches result for 5 minutes via `_gw_usage_cache` with threading lock. Loads secrets from `~/.openclaw/.secrets-cache` for gateway auth.
 2. **Frontend parallel fetch** — DONE. `refresh()` calls `fetchData()` and `fetchGatewayUsage()` in parallel via `Promise.all`.
-3. **Stat cards upgraded** — DONE. All cards auto-hide when zero. Gateway-powered: Total Cost, Sessions (with tool calls). Snapshot-powered: Cron Runs, Messages, Errors, Gateway Restarts. Falls back to "No Activity" placeholder when all are zero.
-4. **New charts** — DONE. Cost Over Time (stacked bar: cache write/read/output/input cost), Model Split (doughnut: per-model tokens), Tool Usage (horizontal bar: call counts per tool). All filtered by time range, all auto-hide when no data.
-5. **Time-range filtering** — DONE. Gateway RPC returns all-time data. Client filters: daily arrays by date, sessions by `activityDates`, then re-aggregates model/tool usage from matching sessions.
+3. **Stat cards upgraded** — DONE. All cards auto-hide when zero. Gateway-powered: Total Tokens, Total Cost, Sessions (with tool calls). Snapshot-powered: Cron Runs, Messages, Errors, Gateway Restarts. Falls back to "No Activity" placeholder when all are zero.
+4. **New charts** — DONE. Cost Over Time (component stack for expanded rows, aggregate total for current rows), Model Split (date-scoped `modelDaily` tokens), Tool Usage (horizontal bar: call counts per tool). All filtered by time range and auto-hide when no data.
+5. **Time-range filtering** — DONE. Gateway RPC returns all-time data. Client filters daily and model-daily arrays by date; session activity remains the fallback for gateways without date-scoped model totals.
 6. **Stretch goals** — DEFERRED. Cache Efficiency gauge and Session Activity timeline/heatmap.
 
 ### Known issues this resolves
 
 - ~~**Agent run counting** — Gateway doesn't log agent session start/stop events; count stays 0~~ → `sessions.length` from RPC
 - ~~**Response latencies** — No structured timing data available from gateway~~ → `aggregates.latency` and `aggregates.dailyLatency`
-- ~~**Per-model token attribution** — Anthropic Usage API doesn't always return `seven_day_opus` separately~~ → `aggregates.byModel` gives exact per-model tokens
+- ~~**Per-model token attribution** — Anthropic Usage API doesn't always return `seven_day_opus` separately~~ → `aggregates.modelDaily` gives exact date-scoped per-model tokens
 
 ---
 

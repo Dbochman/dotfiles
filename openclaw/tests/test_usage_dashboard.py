@@ -95,6 +95,70 @@ class CcusageIngestionTests(unittest.TestCase):
         self.assertEqual(usage_dashboard.load_ccusage(), [])
 
 
+class GatewayUsageSchemaTests(unittest.TestCase):
+    def test_current_daily_schema_gets_stable_token_and_cost_aliases(self):
+        data = {
+            "aggregates": {
+                "daily": [{
+                    "date": "2026-08-03",
+                    "tokens": 109134,
+                    "cost": 1.25,
+                    "messages": 25,
+                }],
+            },
+        }
+
+        normalized = usage_dashboard._normalize_gateway_usage(data)
+        row = normalized["aggregates"]["daily"][0]
+
+        self.assertEqual(row["totalTokens"], 109134)
+        self.assertEqual(row["totalCost"], 1.25)
+        self.assertEqual(row["tokens"], 109134)
+        self.assertEqual(row["messages"], 25)
+
+    def test_legacy_daily_schema_remains_supported(self):
+        data = {
+            "aggregates": {
+                "daily": [{
+                    "date": "2026-08-03",
+                    "totalTokens": 42,
+                    "totalCost": 0.5,
+                    "input": 20,
+                    "output": 22,
+                }],
+            },
+        }
+
+        normalized = usage_dashboard._normalize_gateway_usage(data)
+        row = normalized["aggregates"]["daily"][0]
+
+        self.assertEqual(row["totalTokens"], 42)
+        self.assertEqual(row["totalCost"], 0.5)
+        self.assertEqual(row["input"], 20)
+        self.assertEqual(row["output"], 22)
+
+    def test_invalid_daily_numbers_fail_closed_to_zero(self):
+        data = {
+            "aggregates": {
+                "daily": [{"date": "2026-08-03", "tokens": "many", "cost": float("inf")}],
+            },
+        }
+
+        row = usage_dashboard._normalize_gateway_usage(data)["aggregates"]["daily"][0]
+
+        self.assertEqual(row["totalTokens"], 0)
+        self.assertEqual(row["totalCost"], 0)
+
+    def test_dashboard_uses_all_session_and_date_scoped_aggregates(self):
+        html = usage_dashboard.DASHBOARD_HTML
+
+        self.assertIn("renderGauges(agg.utilization, agg, ccusage, gwData)", html)
+        self.assertIn("buildCharts(snaps, agg, ccusage, gwData)", html)
+        self.assertIn("const gatewayDaily = gwData", html)
+        self.assertIn("const modelDaily = (agg.modelDaily || []).filter", html)
+        self.assertIn("modelTotals[key] += m.tokens || 0", html)
+
+
 class LaunchAgentStatusTests(unittest.TestCase):
     def test_running_service_marks_prior_exit_as_not_current(self):
         output = (
