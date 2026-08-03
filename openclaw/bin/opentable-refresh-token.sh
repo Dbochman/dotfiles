@@ -403,8 +403,9 @@ if isinstance(result, str):
 }
 
 wait_for_atk() {
+  local attempts="${1:-15}"
   local token=""
-  for _ in $(seq 1 15); do
+  for _ in $(seq 1 "$attempts"); do
     token=$(extract_atk)
     if is_atk "$token"; then
       printf '%s\n' "$token"
@@ -549,7 +550,23 @@ login_with_email() {
     return 1
   }
   fill_textbox "Enter verification code" "$code" || return 1
-  click_button "Continue" || return 1
+  # OpenTable may auto-submit once the final code digit is filled. Treat the
+  # resulting auth token as success instead of requiring a button that has
+  # already disappeared during the authenticated redirect.
+  local token
+  token=$(wait_for_atk 5 || true)
+  if is_atk "$token"; then
+    printf '%s\n' "$token"
+    return 0
+  fi
+  click_button "Continue" || {
+    token=$(wait_for_atk 3 || true)
+    if is_atk "$token"; then
+      printf '%s\n' "$token"
+      return 0
+    fi
+    return 1
+  }
   wait_for_atk
 }
 

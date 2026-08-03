@@ -162,6 +162,29 @@ printf 'ok\n'
         self.assertEqual(result.stdout, "ok\n")
         self.assertNotIn(token, result.stderr)
 
+    def test_email_code_auto_submit_does_not_require_disappeared_button(self) -> None:
+        token = "auto-submitted-browser-token-123456"
+        result = self.run_shell(
+            f'''
+click_button() {{ printf 'click=%s\n' "$1" >&2; }}
+fill_textbox() {{ :; }}
+wait_for_ref() {{ return 0; }}
+wait_for_email_code() {{ printf '123456\n'; }}
+wait_for_atk() {{ printf '%s\n' "{token}"; }}
+actual=$(login_with_email)
+[[ "$actual" == "{token}" ]]
+printf 'ok\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ok\n")
+        self.assertEqual(
+            result.stderr.splitlines(),
+            ["click=Use email instead", "click=Continue"],
+        )
+        self.assertNotIn(token, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
