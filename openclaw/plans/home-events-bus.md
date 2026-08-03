@@ -599,7 +599,7 @@ read-only status through the existing MBP boundary.
 Only after all shadow gates pass:
 
 1. An unlock or open while confidently vacant opens one incident.
-2. Wait 60–90 seconds for Ring and resident-arrival evidence.
+2. Wait 10 minutes for Ring and resident-arrival evidence.
 3. A fresh resident arrival resolves the incident silently.
 4. If still unexplained, optionally request a current camera image and have
    OpenClaw describe what it sees.
@@ -786,7 +786,7 @@ incident identifiers, and no database path or provider identity.
 - Confirm that only an explicit current-image request invokes `nest-camera`.
 - Healthy Ring, presence, and bridged Nest events become queryable within five
   seconds of durable publication.
-- Ring incident decisions complete within 120 seconds, including the arrival
+- Ring incident decisions complete within 12 minutes, including the arrival
   grace period. Initial August detection may take up to seven minutes.
 - At ten times expected volume, the retained 30-day database plus WAL remains
   below 100 MiB after pruning and checkpointing.

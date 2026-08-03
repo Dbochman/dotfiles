@@ -236,7 +236,7 @@ projection. Current bus health remains reserved for active operational
 failures. August source health and battery transitions use separate incident
 categories. All incidents and consumer acknowledgements survive restarts.
 
-After a 90-second arrival grace period, confirmed-vacant activity records a
+After a 10-minute arrival grace period, confirmed-vacant activity records a
 `shadowed` notification decision, capped at one such decision per site per
 hour. Suppressed, rate-limited, and shadowed reasons are retained separately
 from the incident's latest resolution summary and returned by the

@@ -29,7 +29,7 @@ from home_event_bus import (  # noqa: E402
 
 CONSUMER = "correlator"
 PRESENCE_MAX_AGE = timedelta(minutes=30)
-INCIDENT_GRACE = timedelta(seconds=90)
+INCIDENT_GRACE = timedelta(minutes=10)
 ROUTINE_QUIET = timedelta(minutes=15)
 ACCESS_MAX_AGE = timedelta(hours=24)
 RATE_LIMIT = timedelta(hours=1)
@@ -491,8 +491,6 @@ class ShadowCorrelator:
                 """
             ).fetchall()
             for incident in incidents:
-                if now - parse_time(incident["opened_at"]) < INCIDENT_GRACE:
-                    continue
                 existing_decision = connection.execute(
                     "SELECT 1 FROM incident_decisions WHERE incident_id = ? LIMIT 1",
                     (incident["id"],),
@@ -506,6 +504,11 @@ class ShadowCorrelator:
                 if existing:
                     continue
                 mode = presence.get(incident["site"], "uncertain")
+                if (
+                    mode == "vacant"
+                    and now - parse_time(incident["opened_at"]) < INCIDENT_GRACE
+                ):
+                    continue
                 if mode != "vacant":
                     summary = (
                         "occupied_activity_shadowed"

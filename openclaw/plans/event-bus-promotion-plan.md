@@ -63,7 +63,7 @@ identity or intent. A representative message is:
 
 > Cabin is marked vacant. The driveway and front entry detected activity, and
 > the door was opened. No resident arrival was detected during the following
-> 90 seconds. Do you recognize this activity?
+> 10 minutes. Do you recognize this activity?
 
 ## Policy invariants
 
@@ -144,7 +144,7 @@ Concurrent gate:
 - treat Ring and August health and rollback independently;
 - allow their evidence to join only same-site incidents;
 - require deterministic suppression for occupied/uncertain presence;
-- require unexplained vacant activity decisions within 120 seconds;
+- require unexplained vacant activity decisions within 12 minutes;
 - require zero user-facing sends and zero automatic camera captures throughout
   the soak.
 
@@ -332,6 +332,10 @@ Never retain media in the bus or enable Crosstown camera delivery implicitly.
 - [x] Added durable August successful/failed poll counts and latest/maximum
   successful-observation gaps so a quiet soak can be evaluated without
   publishing heartbeat events.
+- [x] Classified the July 30 Cabin arrival as a grace-period false positive:
+  the shadow decision preceded canonical arrival by roughly seven minutes.
+  Extended the shadow arrival grace from 90 seconds to 10 minutes while the
+  existing direct Ring path remains immediate.
 - [ ] Complete Ring doorbell-ding and restart/reconnect parity evidence before
   limited delivery.
 

@@ -223,16 +223,21 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             ],
         }
 
-    def test_vacant_ring_activity_creates_one_shadow_decision(self) -> None:
+    def test_vacant_ring_activity_waits_ten_minutes_for_arrival(self) -> None:
         self.enqueue("ring", "entry.person_detected")
         self.ingest()
 
         first = self.run_correlator()
-        second = self.run_correlator()
+        before_grace = self.run_correlator()
+        self.NOW = "2026-07-12T15:08:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        after_grace = self.run_correlator()
 
         self.assertEqual(first["acknowledged"], 1)
-        self.assertEqual(first["shadow_decisions"], 1)
-        self.assertEqual(second["claimed"], 0)
+        self.assertEqual(first["shadow_decisions"], 0)
+        self.assertEqual(before_grace["claimed"], 0)
+        self.assertEqual(before_grace["shadow_decisions"], 0)
+        self.assertEqual(after_grace["shadow_decisions"], 1)
         incidents = self.rows("SELECT * FROM incidents")
         self.assertEqual(len(incidents), 1)
         self.assertEqual(incidents[0]["summary_code"], "vacant_activity_shadowed")
@@ -240,6 +245,37 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             len(self.rows("SELECT * FROM notification_outbox WHERE status='shadowed'")),
             1,
         )
+
+    def test_arrival_during_ten_minute_grace_resolves_silently(self) -> None:
+        self.enqueue("ring", "entry.person_detected", sequence="ring")
+        self.ingest()
+        opened = self.run_correlator()
+        self.assertEqual(opened["shadow_decisions"], 0)
+
+        self.NOW = "2026-07-12T15:06:00Z"
+        self.write_presence("occupied", "confirmed_vacant")
+        self.enqueue(
+            "presence",
+            "presence.occupancy_changed",
+            observed_at="2026-07-12T15:06:00Z",
+            attributes={
+                "previous": "confirmed_vacant",
+                "current": "occupied",
+                "confidence": "canonical",
+                "evidence_at": "2026-07-12T15:06:00Z",
+                "state_hash": "d" * 64,
+            },
+            sequence="arrival",
+        )
+        self.ingest()
+
+        arrived = self.run_correlator()
+
+        self.assertEqual(arrived["shadow_decisions"], 0)
+        incident = self.rows("SELECT * FROM incidents")[0]
+        self.assertEqual(incident["state"], "resolved")
+        self.assertEqual(incident["summary_code"], "resident_arrival_silent")
+        self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
 
     def test_fresh_arrival_within_batch_resolves_silently(self) -> None:
         self.write_presence("occupied", "confirmed_vacant")
@@ -333,17 +369,22 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
         self.run_correlator()
 
+        self.NOW = "2026-07-12T15:08:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        first_shadow = self.run_correlator()
+        self.assertEqual(first_shadow["shadow_decisions"], 1)
+
         self.write_presence("confirmed_vacant", "occupied")
         self.enqueue(
             "presence",
             "presence.occupancy_changed",
             site="crosstown",
-            observed_at="2026-07-12T14:59:00Z",
+            observed_at="2026-07-12T15:08:00Z",
             attributes={
                 "previous": "confirmed_vacant",
                 "current": "occupied",
                 "confidence": "canonical",
-                "evidence_at": "2026-07-12T14:59:00Z",
+                "evidence_at": "2026-07-12T15:08:00Z",
                 "state_hash": "c" * 64,
             },
             sequence="arrival",
@@ -351,28 +392,33 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
         self.run_correlator()
 
-        self.NOW = "2026-07-12T15:02:00Z"
+        self.NOW = "2026-07-12T15:10:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         self.enqueue(
             "august",
             "lock.unlocked",
             site="crosstown",
-            observed_at="2026-07-12T15:00:00Z",
+            observed_at="2026-07-12T15:10:00Z",
             attributes={
                 "previous": "locked",
                 "current": "unlocked",
-                "not_before": "2026-07-12T14:59:00Z",
-                "not_after": "2026-07-12T15:00:00Z",
+                "not_before": "2026-07-12T15:08:00Z",
+                "not_after": "2026-07-12T15:10:00Z",
             },
             sequence="second",
         )
         self.ingest()
+        pending_grace = self.run_correlator()
+
+        self.NOW = "2026-07-12T15:20:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
         rate_limited = self.run_correlator()
 
-        self.NOW = "2026-07-12T16:02:00Z"
+        self.NOW = "2026-07-12T16:20:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         after_window = self.run_correlator()
 
+        self.assertEqual(pending_grace["shadow_decisions"], 0)
         self.assertEqual(rate_limited["shadow_decisions"], 0)
         self.assertEqual(after_window["shadow_decisions"], 0)
         incidents = self.rows("SELECT * FROM incidents ORDER BY id")
@@ -469,9 +515,13 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
 
         result = self.run_correlator()
+        self.NOW = "2026-07-12T15:08:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        after_grace = self.run_correlator()
 
         self.assertEqual(result["acknowledged"], 2)
-        self.assertEqual(result["shadow_decisions"], 1)
+        self.assertEqual(result["shadow_decisions"], 0)
+        self.assertEqual(after_grace["shadow_decisions"], 1)
         incidents = self.rows("SELECT * FROM incidents")
         self.assertEqual(len(incidents), 1)
         self.assertEqual(
@@ -528,8 +578,13 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
 
         result = self.run_correlator()
+        self.NOW = "2026-07-12T15:07:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        after_grace = self.run_correlator()
 
         self.assertEqual(result["acknowledged"], 2)
+        self.assertEqual(result["shadow_decisions"], 0)
+        self.assertEqual(after_grace["shadow_decisions"], 1)
         incident = self.rows("SELECT * FROM incidents")[0]
         self.assertEqual(incident["state"], "open")
         self.assertEqual(incident["summary_code"], "vacant_activity_shadowed")
