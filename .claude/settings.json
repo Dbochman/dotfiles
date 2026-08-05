@@ -48,5 +48,40 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "voiceEnabled": true,
-  "showThinkingSummaries": true
+  "showThinkingSummaries": true,
+  "permissions": {
+    "allow": [
+      "WebFetch",
+      "Bash"
+    ],
+    "deny": [
+      "Bash(rm -rf*)",
+      "Bash(rm -fr*)",
+      "Bash(sudo rm*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -fd*)",
+      "Bash(git clean -df*)",
+      "Bash(git checkout .)",
+      "Bash(git restore .)",
+      "Bash(git branch -D*)",
+      "Bash(dd if=*)",
+      "Bash(mkfs*)",
+      "Bash(shutdown*)",
+      "Bash(reboot*)",
+      "Bash(halt*)",
+      "Bash(chmod -R 777 /*)",
+      "Bash(chown -R */*)",
+      "Bash(curl*|*sh)",
+      "Bash(wget*|*sh)",
+      "Bash(npm publish*)",
+      "Bash(gh repo delete*)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "model": "claude-fable-5[1m]",
+  "effortLevel": "xhigh",
+  "tui": "fullscreen",
+  "theme": "dark"
 }
