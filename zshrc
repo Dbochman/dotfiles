@@ -139,10 +139,25 @@ _cmux_mosh_tmux() {
   cmux workspace create --name "$workspace_name" --command "$command" "${cmux_args[@]}"
 }
 
-# Attach (or create) the 'work' tmux session on the Work MBP over Mosh.
+# Attach (or create) a tmux session on the Work MBP over Mosh.
+# Usage: work [session-name] [--no-focus]
 # Mosh keeps the terminal alive across sleep, roaming, and network interruptions.
 work() {
-  _cmux_mosh_tmux "op-research work" work-mac work /opt/homebrew/bin/tmux "$@"
+  local session_name="work"
+  if [[ $# -gt 0 && "$1" != --* ]]; then
+    session_name="$1"
+    shift
+  fi
+
+  if [[ -z "$session_name" || "$session_name" == *[^A-Za-z0-9_.-]* ]]; then
+    echo "work: invalid tmux session name: $session_name" >&2
+    return 2
+  fi
+
+  local workspace_name="work"
+  [[ "$session_name" != "work" ]] && workspace_name="work $session_name"
+
+  _cmux_mosh_tmux "$workspace_name" work-mac "$session_name" /opt/homebrew/bin/tmux "$@"
 }
 
 # Attach (or create) a remote tmux session in a reconnecting cmux workspace.
