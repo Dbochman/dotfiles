@@ -27,9 +27,10 @@ import sys
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = 2
-STATUS_SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+STATUS_SCHEMA_VERSION = 3
 EVENT_SCHEMA_VERSION = 1
+DELIVERY_POLICY_SCHEMA_VERSION = 1
 SERVICE_NAME = "home-events"
 DEFAULT_ROOT = Path("~/.openclaw/home-events").expanduser()
 SOURCES = ("ring", "presence", "august", "nest")
@@ -37,6 +38,7 @@ SITES = ("cabin", "crosstown")
 MAX_STDIN_BYTES = 64 * 1024
 MAX_SPOOL_BYTES = 32 * 1024
 MAX_ATTRIBUTES_BYTES = 2 * 1024
+MAX_DELIVERY_POLICY_BYTES = 16 * 1024
 MAX_QUERY_LIMIT = 100
 ACCEPTED_RETENTION_DAYS = 30
 DEAD_LETTER_RETENTION_DAYS = 90
@@ -81,6 +83,12 @@ EXCURSION_ID_RE = re.compile(r"^exc_[0-9a-f]{32}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 DURATION_RE = re.compile(r"^([1-9][0-9]{0,5})([mhd])$")
+RESERVATION_TOKEN_RE = re.compile(r"^res_[0-9a-f]{32}$")
+RUNTIME_MODES = frozenset({"shadow", "limited_delivery"})
+DELIVERY_INCIDENT_CLASSES = frozenset(
+    {"person_activity", "access_activity", "person_and_access"}
+)
+DELIVERY_ROUTES = frozenset({"dylan"})
 
 LOCAL_PRESENCE_EVENT_TYPES = frozenset(
     {
@@ -324,6 +332,10 @@ class RuntimePaths:
         return self.config / "dedupe.key"
 
     @property
+    def delivery_policy(self) -> Path:
+        return self.config / "delivery-policy.json"
+
+    @property
     def spool(self) -> Path:
         return self.root / "spool"
 
@@ -345,6 +357,10 @@ class RuntimePaths:
     @property
     def ingest_lock(self) -> Path:
         return self.state / "ingest.lock"
+
+    @property
+    def delivery_lock(self) -> Path:
+        return self.state / "delivery.lock"
 
     @property
     def ring_producer_status(self) -> Path:
@@ -1043,6 +1059,123 @@ def _read_private_bytes(path: Path, maximum: int) -> bytes:
         os.close(descriptor)
 
 
+DELIVERY_POLICY_FIELDS = frozenset(
+    {
+        "schema_version",
+        "active",
+        "sites",
+        "incident_classes",
+        "recipient_routes",
+        "arrival_grace_seconds",
+        "cooldown_seconds",
+        "reservation_ttl_seconds",
+        "unresolved_access_escalation_seconds",
+        "camera_enabled",
+    }
+)
+
+
+def validate_delivery_policy(value: Any) -> Mapping[str, Any]:
+    """Validate the deliberately narrow Stage 3 owner-only delivery policy."""
+
+    if not isinstance(value, dict) or frozenset(value) != DELIVERY_POLICY_FIELDS:
+        raise ConfigError("delivery_policy_fields")
+    if value["schema_version"] != DELIVERY_POLICY_SCHEMA_VERSION:
+        raise ConfigError("delivery_policy_schema")
+    if not isinstance(value["active"], bool):
+        raise ConfigError("delivery_policy_active")
+    if not isinstance(value["camera_enabled"], bool) or value["camera_enabled"]:
+        raise ConfigError("delivery_policy_camera")
+
+    normalized: Dict[str, Any] = dict(value)
+    allowed_lists = {
+        "sites": frozenset(SITES),
+        "incident_classes": DELIVERY_INCIDENT_CLASSES,
+        "recipient_routes": DELIVERY_ROUTES,
+    }
+    for key, allowed in allowed_lists.items():
+        items = value[key]
+        if (
+            not isinstance(items, list)
+            or not items
+            or any(not isinstance(item, str) or item not in allowed for item in items)
+            or len(items) != len(set(items))
+        ):
+            raise ConfigError("delivery_policy_" + key)
+        normalized[key] = tuple(items)
+    if normalized["recipient_routes"] != ("dylan",):
+        raise ConfigError("delivery_policy_recipient_routes")
+
+    bounds = {
+        "arrival_grace_seconds": (60, 3600),
+        "cooldown_seconds": (60, 24 * 60 * 60),
+        "reservation_ttl_seconds": (30, 15 * 60),
+        "unresolved_access_escalation_seconds": (5 * 60, 24 * 60 * 60),
+    }
+    for key, (minimum, maximum) in bounds.items():
+        item = value[key]
+        if (
+            not isinstance(item, int)
+            or isinstance(item, bool)
+            or not minimum <= item <= maximum
+        ):
+            raise ConfigError("delivery_policy_" + key)
+    if normalized["arrival_grace_seconds"] != 600:
+        raise ConfigError("delivery_policy_arrival_grace_seconds")
+    return normalized
+
+
+def load_delivery_policy(paths: RuntimePaths) -> Mapping[str, Any]:
+    try:
+        payload = _decode_json(
+            _read_private_bytes(paths.delivery_policy, MAX_DELIVERY_POLICY_BYTES),
+            max_bytes=MAX_DELIVERY_POLICY_BYTES,
+            code="delivery_policy_too_large",
+        )
+    except PayloadError as exc:
+        raise ConfigError("delivery_policy_invalid") from exc
+    return validate_delivery_policy(payload)
+
+
+def install_delivery_policy(paths: RuntimePaths, data: bytes) -> Mapping[str, Any]:
+    try:
+        payload = _decode_json(
+            data,
+            max_bytes=MAX_DELIVERY_POLICY_BYTES,
+            code="delivery_policy_too_large",
+        )
+    except PayloadError as exc:
+        raise ConfigError("delivery_policy_invalid") from exc
+    normalized = validate_delivery_policy(payload)
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8") + b"\n"
+    _atomic_write(paths.delivery_policy, encoded)
+    return normalized
+
+
+def delivery_policy_projection(paths: RuntimePaths) -> Mapping[str, Any]:
+    try:
+        policy = load_delivery_policy(paths)
+        return {
+            "configured": True,
+            "active": policy["active"],
+            "sites": list(policy["sites"]),
+            "incident_classes": list(policy["incident_classes"]),
+            "recipient_scope": "owner_only",
+            "camera_enabled": policy["camera_enabled"],
+        }
+    except (HomeEventError, OSError):
+        return {
+            "configured": False,
+            "active": False,
+            "sites": [],
+            "incident_classes": [],
+            "recipient_scope": "unconfigured",
+            "camera_enabled": False,
+        }
+
+
 def _load_secret(paths: RuntimePaths) -> bytes:
     secret = _read_private_bytes(paths.secret, 64)
     if len(secret) != 32:
@@ -1187,6 +1320,8 @@ def initialize_runtime(root: Path, *, clock: Callable[[], str] = utc_now) -> "Ev
     _load_secret(paths)
     if not paths.ingest_lock.exists():
         _create_private_file(paths.ingest_lock, b"home-events-ingest\n")
+    if not paths.delivery_lock.exists():
+        _create_private_file(paths.delivery_lock, b"home-events-delivery\n")
     store = EventStore(paths, clock=clock)
     store.initialize()
     store.write_status_best_effort()
@@ -1209,6 +1344,8 @@ def validate_runtime(root: Path, *, require_status: bool = False) -> RuntimePath
             descriptor = _open_private_regular(auxiliary, os.O_RDONLY)
             os.close(descriptor)
     descriptor = _open_private_regular(paths.ingest_lock, os.O_RDONLY)
+    os.close(descriptor)
+    descriptor = _open_private_regular(paths.delivery_lock, os.O_RDONLY)
     os.close(descriptor)
     if require_status:
         descriptor = _open_private_regular(paths.status, os.O_RDONLY)
@@ -1326,7 +1463,7 @@ CREATE TABLE IF NOT EXISTS incident_events (
 CREATE TABLE IF NOT EXISTS incident_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     incident_id INTEGER NOT NULL REFERENCES incidents(id),
-    status TEXT NOT NULL CHECK(status IN ('shadowed', 'suppressed', 'rate_limited')),
+    status TEXT NOT NULL CHECK(status IN ('shadowed', 'suppressed', 'rate_limited', 'reserved')),
     reason_code TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(incident_id, status, reason_code)
@@ -1335,10 +1472,15 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     incident_id INTEGER NOT NULL REFERENCES incidents(id),
     site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
-    status TEXT NOT NULL CHECK(status IN ('shadowed', 'reserved', 'sent', 'failed', 'unknown', 'burned')),
+    status TEXT NOT NULL CHECK(status IN ('shadowed', 'reserved', 'sent', 'failed', 'unknown', 'burned', 'dead_letter')),
     reservation_token TEXT,
     reserved_until TEXT,
+    recipient_route TEXT,
+    template_code TEXT,
     attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    sent_at TEXT,
+    error_code TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -1348,12 +1490,21 @@ CREATE TABLE IF NOT EXISTS service_counters (
 );
 CREATE TABLE IF NOT EXISTS runtime_status (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-    mode TEXT NOT NULL CHECK(mode = 'shadow'),
+    mode TEXT NOT NULL CHECK(mode IN ('shadow', 'limited_delivery')),
     health TEXT NOT NULL CHECK(health IN ('starting', 'ok', 'degraded')),
     started_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_ingest_at TEXT,
     last_accepted_at TEXT,
+    last_error_at TEXT,
+    last_error_code TEXT
+);
+CREATE TABLE IF NOT EXISTS delivery_runtime (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    health TEXT NOT NULL CHECK(health IN ('disabled', 'ok', 'degraded')),
+    updated_at TEXT NOT NULL,
+    last_attempt_at TEXT,
+    last_success_at TEXT,
     last_error_at TEXT,
     last_error_code TEXT
 );
@@ -1381,6 +1532,7 @@ EXPECTED_TABLES = frozenset(
         "notification_outbox",
         "service_counters",
         "runtime_status",
+        "delivery_runtime",
     }
 )
 
@@ -1463,7 +1615,12 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
             "status",
             "reservation_token",
             "reserved_until",
+            "recipient_route",
+            "template_code",
             "attempt_count",
+            "last_attempt_at",
+            "sent_at",
+            "error_code",
             "created_at",
             "updated_at",
         }
@@ -1478,6 +1635,17 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
             "updated_at",
             "last_ingest_at",
             "last_accepted_at",
+            "last_error_at",
+            "last_error_code",
+        }
+    ),
+    "delivery_runtime": frozenset(
+        {
+            "singleton",
+            "health",
+            "updated_at",
+            "last_attempt_at",
+            "last_success_at",
             "last_error_at",
             "last_error_code",
         }
@@ -1545,6 +1713,64 @@ MIGRATION_V2_INDEX_SQL = (
     "CREATE INDEX events_type_occurred_idx ON events(event_type, occurred_at DESC)",
 )
 
+MIGRATION_V3_TABLE_SQL = (
+    """
+    CREATE TABLE incident_decisions_v3 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        incident_id INTEGER NOT NULL REFERENCES incidents(id),
+        status TEXT NOT NULL CHECK(status IN ('shadowed', 'suppressed', 'rate_limited', 'reserved')),
+        reason_code TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(incident_id, status, reason_code)
+    )
+    """,
+    """
+    CREATE TABLE notification_outbox_v3 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        incident_id INTEGER NOT NULL REFERENCES incidents(id),
+        site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+        status TEXT NOT NULL CHECK(status IN ('shadowed', 'reserved', 'sent', 'failed', 'unknown', 'burned', 'dead_letter')),
+        reservation_token TEXT,
+        reserved_until TEXT,
+        recipient_route TEXT,
+        template_code TEXT,
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at TEXT,
+        sent_at TEXT,
+        error_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE runtime_status_v3 (
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        mode TEXT NOT NULL CHECK(mode IN ('shadow', 'limited_delivery')),
+        health TEXT NOT NULL CHECK(health IN ('starting', 'ok', 'degraded')),
+        started_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_ingest_at TEXT,
+        last_accepted_at TEXT,
+        last_error_at TEXT,
+        last_error_code TEXT
+    )
+    """,
+)
+
+MIGRATION_V3_COPY_SQL = (
+    "INSERT INTO incident_decisions_v3 SELECT * FROM incident_decisions",
+    """
+    INSERT INTO notification_outbox_v3(
+        id, incident_id, site, status, reservation_token, reserved_until,
+        attempt_count, created_at, updated_at
+    )
+    SELECT id, incident_id, site, status, reservation_token, reserved_until,
+           attempt_count, created_at, updated_at
+    FROM notification_outbox
+    """,
+    "INSERT INTO runtime_status_v3 SELECT * FROM runtime_status",
+)
+
 
 class EventStore:
     """SQLite store with one explicit writer boundary and safe read queries."""
@@ -1599,6 +1825,9 @@ class EventStore:
                 )
             elif [row["version"] for row in versions] == [1]:
                 self._migrate_v1_to_v2(connection, now)
+                self._migrate_v2_to_v3(connection, now)
+            elif [row["version"] for row in versions] == [2]:
+                self._migrate_v2_to_v3(connection, now)
             elif [row["version"] for row in versions] != [SCHEMA_VERSION]:
                 raise ConfigError("database_schema")
             for source in SOURCES:
@@ -1621,6 +1850,14 @@ class EventStore:
                 ON CONFLICT(singleton) DO UPDATE SET updated_at = excluded.updated_at
                 """,
                 (now, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO delivery_runtime(singleton, health, updated_at)
+                VALUES (1, 'disabled', ?)
+                ON CONFLICT(singleton) DO NOTHING
+                """,
+                (now,),
             )
             connection.commit()
         self.check_schema()
@@ -1655,6 +1892,48 @@ class EventStore:
                 connection.execute(statement)
             connection.execute(
                 "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 1",
+                (2, now),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ConfigError("database_foreign_keys")
+
+    @staticmethod
+    def _migrate_v2_to_v3(connection: sqlite3.Connection, now: str) -> None:
+        """Add explicit limited-delivery state without changing journal data."""
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in MIGRATION_V3_TABLE_SQL:
+                connection.execute(statement)
+            for statement in MIGRATION_V3_COPY_SQL:
+                connection.execute(statement)
+            connection.execute("DROP TABLE incident_decisions")
+            connection.execute("DROP TABLE notification_outbox")
+            connection.execute("DROP TABLE runtime_status")
+            connection.execute(
+                "ALTER TABLE incident_decisions_v3 RENAME TO incident_decisions"
+            )
+            connection.execute(
+                "ALTER TABLE notification_outbox_v3 RENAME TO notification_outbox"
+            )
+            connection.execute("ALTER TABLE runtime_status_v3 RENAME TO runtime_status")
+            connection.execute(
+                "CREATE INDEX incident_decisions_incident_idx ON incident_decisions(incident_id, id)"
+            )
+            connection.execute(
+                "CREATE INDEX notification_status_idx ON notification_outbox(status, id)"
+            )
+            connection.execute(
+                "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 2",
                 (SCHEMA_VERSION, now),
             )
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
@@ -1718,6 +1997,76 @@ class EventStore:
             """,
             (name, value),
         )
+
+    def runtime_mode(self) -> str:
+        with contextlib.closing(self.connect(read_only=True)) as connection:
+            row = connection.execute(
+                "SELECT mode FROM runtime_status WHERE singleton = 1"
+            ).fetchone()
+        if row is None or row["mode"] not in RUNTIME_MODES:
+            raise ConfigError("runtime_status_missing")
+        return str(row["mode"])
+
+    def set_runtime_mode(self, mode: str) -> Mapping[str, Any]:
+        descriptor = _open_private_regular(self.paths.delivery_lock, os.O_RDONLY)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            return self._set_runtime_mode_locked(mode)
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+    def _set_runtime_mode_locked(self, mode: str) -> Mapping[str, Any]:
+        if mode not in RUNTIME_MODES:
+            raise ConfigError("runtime_mode_invalid")
+        if mode == "limited_delivery":
+            policy = load_delivery_policy(self.paths)
+            if policy["active"] is not True:
+                raise ConfigError("delivery_policy_inactive")
+        now = self._now()
+        burned = 0
+        unknown = 0
+        with contextlib.closing(self.connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if mode == "shadow":
+                cursor = connection.execute(
+                    """
+                    UPDATE notification_outbox
+                    SET status = 'burned', error_code = 'mode_rollback', updated_at = ?
+                    WHERE status = 'reserved' AND attempt_count = 0
+                    """,
+                    (now,),
+                )
+                burned = cursor.rowcount
+                cursor = connection.execute(
+                    """
+                    UPDATE notification_outbox
+                    SET status = 'unknown',
+                        error_code = 'mode_rollback_after_claim', updated_at = ?
+                    WHERE status = 'reserved' AND attempt_count > 0
+                    """,
+                    (now,),
+                )
+                unknown = cursor.rowcount
+            connection.execute(
+                "UPDATE runtime_status SET mode = ?, updated_at = ? WHERE singleton = 1",
+                (mode, now),
+            )
+            connection.execute(
+                """
+                UPDATE delivery_runtime
+                SET health = ?, updated_at = ?,
+                    last_error_at = CASE WHEN ? = 'shadow' THEN NULL ELSE last_error_at END,
+                    last_error_code = CASE WHEN ? = 'shadow' THEN NULL ELSE last_error_code END
+                WHERE singleton = 1
+                """,
+                ("disabled" if mode == "shadow" else "ok", now, mode, mode),
+            )
+            connection.commit()
+        self.write_status_best_effort()
+        return {"mode": mode, "burned": burned, "unknown": unknown}
 
     @staticmethod
     def _automatic_prune_state(
@@ -2155,9 +2504,13 @@ class EventStore:
             cursor = connection.execute(
                 """
                 DELETE FROM notification_outbox
-                WHERE status != 'reserved' AND updated_at < ?
+                WHERE status != 'reserved'
+                  AND (
+                    (status IN ('dead_letter', 'unknown') AND updated_at < ?)
+                    OR (status NOT IN ('dead_letter', 'unknown') AND updated_at < ?)
+                  )
                 """,
-                (accepted_cutoff,),
+                (dead_cutoff, accepted_cutoff),
             )
             deleted["notification_outbox"] = cursor.rowcount
             cursor = connection.execute(
@@ -2177,7 +2530,7 @@ class EventStore:
                     WHERE state != 'open' AND updated_at < ?
                       AND NOT EXISTS (
                         SELECT 1 FROM notification_outbox n
-                        WHERE n.incident_id = incidents.id AND n.status = 'reserved'
+                        WHERE n.incident_id = incidents.id
                       )
                 )
                 """,
@@ -2192,7 +2545,7 @@ class EventStore:
                     WHERE state != 'open' AND updated_at < ?
                       AND NOT EXISTS (
                         SELECT 1 FROM notification_outbox n
-                        WHERE n.incident_id = incidents.id AND n.status = 'reserved'
+                        WHERE n.incident_id = incidents.id
                       )
                 )
                 """,
@@ -2205,7 +2558,7 @@ class EventStore:
                 WHERE state != 'open' AND updated_at < ?
                   AND NOT EXISTS (
                     SELECT 1 FROM notification_outbox n
-                    WHERE n.incident_id = incidents.id AND n.status = 'reserved'
+                    WHERE n.incident_id = incidents.id
                   )
                 """,
                 (accepted_cutoff,),
@@ -2378,8 +2731,24 @@ class EventStore:
                 "SELECT COUNT(*) FROM consumer_deliveries WHERE status = 'leased'"
             ).fetchone()[0]
             dead_count = connection.execute(
-                "SELECT COUNT(*) FROM producer_inbox WHERE outcome = 'dead_letter'"
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM producer_inbox WHERE outcome = 'dead_letter') +
+                    (SELECT COUNT(*) FROM consumer_deliveries WHERE status = 'dead_letter') +
+                    (SELECT COUNT(*) FROM notification_outbox WHERE status = 'dead_letter')
+                """
             ).fetchone()[0]
+            delivery_runtime = connection.execute(
+                "SELECT * FROM delivery_runtime WHERE singleton = 1"
+            ).fetchone()
+            if delivery_runtime is None:
+                raise ConfigError("delivery_runtime_missing")
+            outbox_counts = {
+                status: count
+                for status, count in connection.execute(
+                    "SELECT status, COUNT(*) FROM notification_outbox GROUP BY status"
+                ).fetchall()
+            }
             consumer_rows = connection.execute(
                 """
                 SELECT c.name,
@@ -2464,6 +2833,24 @@ class EventStore:
                 "last_accepted_at": runtime["last_accepted_at"],
                 "last_error_at": runtime["last_error_at"],
                 "last_error_code": runtime["last_error_code"],
+                "delivery": {
+                    "health": delivery_runtime["health"],
+                    "policy": delivery_policy_projection(self.paths),
+                    "counts": {
+                        status: outbox_counts.get(status, 0)
+                        for status in (
+                            "reserved",
+                            "sent",
+                            "burned",
+                            "unknown",
+                            "dead_letter",
+                        )
+                    },
+                    "last_attempt_at": delivery_runtime["last_attempt_at"],
+                    "last_success_at": delivery_runtime["last_success_at"],
+                    "last_error_at": delivery_runtime["last_error_at"],
+                    "last_error_code": delivery_runtime["last_error_code"],
+                },
                 "attention": {
                     "required": pending_attention > 0,
                     "expired_unresolved": expired_attention,
@@ -2756,6 +3143,9 @@ def build_parser() -> argparse.ArgumentParser:
     operator_commands.add_parser("status")
     operator_commands.add_parser("prune")
     operator_commands.add_parser("review-access-attention")
+    operator_commands.add_parser("install-delivery-policy")
+    set_mode = operator_commands.add_parser("set-mode")
+    set_mode.add_argument("mode", choices=sorted(RUNTIME_MODES))
 
     agent = modes.add_parser("agent", help="read-only agent commands")
     agent_commands = agent.add_subparsers(dest="command", required=True)
@@ -2788,7 +3178,12 @@ def run_operator(args: argparse.Namespace) -> Mapping[str, Any]:
         paths = validate_runtime(root, require_status=True)
         store = EventStore(paths)
         store.check_schema()
-        return {"ok": True, "schema_version": SCHEMA_VERSION, "mode": "shadow"}
+        return {
+            "ok": True,
+            "schema_version": SCHEMA_VERSION,
+            "mode": store.runtime_mode(),
+            "delivery_policy": delivery_policy_projection(paths),
+        }
     if args.command == "enqueue":
         data = sys.stdin.buffer.read(MAX_STDIN_BYTES + 1)
         event = enqueue_event(root, args.source, data)
@@ -2796,6 +3191,19 @@ def run_operator(args: argparse.Namespace) -> Mapping[str, Any]:
     paths = validate_runtime(root)
     store = EventStore(paths)
     store.check_schema()
+    if args.command == "install-delivery-policy":
+        if store.runtime_mode() != "shadow":
+            raise ConfigError("delivery_policy_mode_locked")
+        data = sys.stdin.buffer.read(MAX_DELIVERY_POLICY_BYTES + 1)
+        policy = install_delivery_policy(paths, data)
+        return {
+            "ok": True,
+            "configured": True,
+            "active": policy["active"],
+            "recipient_scope": "owner_only",
+        }
+    if args.command == "set-mode":
+        return {"ok": True, **store.set_runtime_mode(args.mode)}
     if args.command == "ingest-once":
         result = ingest_once(root, limit=args.limit)
         return {"ok": True, **dataclasses.asdict(result)}

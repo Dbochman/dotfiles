@@ -223,20 +223,50 @@ Concurrent:
   observations. Bus health remains `ok` with zero queued August work, backlog,
   or dead letters.
 
+#### Stage 2 closure — `2026-08-05`
+
+- The operator explicitly waived the remaining attended Cabin doorbell press
+  because it would delay the rollout for several days. The waiver applies only
+  to that evidence item; exact Cabin bindings, person-event publication,
+  quarantine recovery, disabled/failure isolation, dedupe, and legacy-path
+  preservation remain covered by live history and focused tests.
+- Crosstown attended ding, supervised direct-message delivery, and two
+  restart/reconnect boundaries passed. Ring remained healthy at 169 accepted
+  and 169 published records with zero failures or drops.
+- August completed the seven-day soak with 492 successful and 25 failed polls,
+  zero consecutive failures, no current error, a 313-second latest successful
+  observation gap, and a 579-second maximum gap. Three organic unavailable /
+  recovered pairs cover the read-only adapter's health projection.
+- Manual August lock/relock transitions crossed polling boundaries. DoorSense
+  remains provider-unknown, so door open/close evidence is closed as
+  not-applicable unless the provider later exposes known data. No automated
+  mutation or synthetic failure was introduced.
+- The bus was healthy with zero pending/leased work, dead letters, ready spool
+  files, or delivery attempts. Stage 2 is closed under this recorded waiver.
+
 ### Stage 3 — Limited-delivery foundation
 
-Implement, but do not activate:
+Implemented and deployed in shadow mode; do not activate without the separate
+Stage 4 operator action:
 
-1. A transactional schema migration from hard-coded `shadow` to explicit
+1. [x] A transactional schema migration from hard-coded `shadow` to explicit
    `shadow|limited_delivery` mode.
-2. A protected owner-only policy containing exact sites, incident classes,
+2. [x] A protected owner-only policy containing exact sites, incident classes,
    recipients, escalation threshold, and camera-disabled defaults.
-3. A separate delivery consumer using durable leases and reserve-before-send.
-4. Fixed safe message templates derived from normalized incident facts; no
+3. [x] A separate delivery worker using durable reserve-before-send and a
+   one-attempt crash boundary.
+4. [x] Fixed safe message templates derived from normalized incident facts; no
    free-form model-authored security claims.
-5. Delivery health, cooldown, burned-slot, unknown-outcome, and dead-letter
+5. [x] Delivery health, cooldown, burned-slot, unknown-outcome, and dead-letter
    status.
-6. Independent rollback to shadow while ingestion and the journal continue.
+6. [x] Independent rollback to shadow while ingestion and the journal continue.
+
+The installed policy is intentionally inactive. Its prepared canary scope is
+both residences, Dylan only, the `person_activity`, `access_activity`, and
+`person_and_access` classes, a fixed 10-minute arrival grace, a one-hour
+per-site cooldown, a five-minute reservation TTL, a recorded 30-minute
+unresolved-access threshold, and cameras disabled. The sender is installed and
+loaded but inert while runtime mode remains `shadow`.
 
 ### Stage 4 — Dylan-only limited canary
 
@@ -336,9 +366,9 @@ Never retain media in the bus or enable Crosstown camera delivery implicitly.
   the shadow decision preceded canonical arrival by roughly seven minutes.
   Extended the shadow arrival grace from 90 seconds to 10 minutes while the
   existing direct Ring path remains immediate.
-- [ ] Complete the remaining Cabin doorbell-ding evidence before limited
-  delivery. Crosstown ding, direct-message transport, and restart/reconnect
-  dedupe passed on August 5.
+- [x] Closed the remaining Cabin doorbell-ding evidence item by explicit
+  operator waiver on August 5. Crosstown ding, direct-message transport, and
+  restart/reconnect dedupe passed the same day.
 
 ### `2026-08-05`
 
@@ -361,18 +391,28 @@ Never retain media in the bus or enable Crosstown camera delivery implicitly.
   contract contains only a fresh `person_motion` signal and safe site alias.
   The attended cutover retained Ring publication at 169/169 with zero failures
   or drops, started each service exactly once, and left the event bus healthy.
-- [ ] Capture the equivalent attended Cabin doorbell press. Existing focused
-  tests continue to prove that Ring publication failure or disablement cannot
-  change legacy ding or dog-walk handling.
+- [x] Waived the equivalent attended Cabin doorbell press because it would
+  block progress for several days. Existing focused tests continue to prove
+  that Ring publication failure or disablement cannot change legacy ding or
+  dog-walk handling.
+- [x] Closed Stage 2 with the operator's explicit Cabin-press waiver and the
+  live Ring/August evidence recorded above.
+- [x] Built Stage 3 schema v3, protected inactive Dylan policy, durable
+  reservation/sender state machine, fixed templates, safe health projection,
+  rollback controls, tests, and attended shadow deployment.
+- [ ] Begin Stage 4 only through a separate explicit activation: install the
+  same policy with `active=true`, then set mode to `limited_delivery`.
 
 ## Decisions required before limited delivery
 
-1. Whether Julia opts into household exception messages.
-2. Which sites and incident classes route to Dylan, Julia, or both.
-3. The unresolved door/unlocked escalation threshold.
-4. Whether the existing direct Ring ding should coexist with, suppress, or
-   eventually yield to a combined bus follow-up.
-5. Whether any exact camera at either site may participate in a later,
-   separately approved rollout.
+1. Julia opt-in remains deferred; Stage 4 is Dylan-only.
+2. Stage 4 scope is both sites and only person, access, or combined
+   person-and-access incidents after confirmed vacancy and the arrival grace.
+3. The protected policy records a 30-minute unresolved-access threshold;
+   escalation remains inactive until separately implemented and approved.
+4. Existing direct Ring ding delivery coexists during Stage 4 and is audited
+   for overlap; it is not suppressed by this rollout.
+5. Camera participation remains disabled and requires a later, separately
+   approved rollout.
 
-No decision above blocks continued shadow evidence collection.
+No remaining decision blocks the Dylan-only canary activation review.

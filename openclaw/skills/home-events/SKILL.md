@@ -4,7 +4,7 @@ description: >-
   Review durable normalized household activity and explain site-scoped incidents
   at the Cabin or Crosstown. Use when asked what happened, what activity was
   seen, who arrived at or left a residence, whether an incident is open, why
-  the home-event correlator shadowed or suppressed activity, or whether the
+  the home-event correlator shadowed, suppressed, reserved, or delivered activity, or whether the
   home-event system is healthy. For a current camera image, combine an explicit
   trusted-owner request with nest-camera. Use presence for a simple who-is-home
   check and ring-doorbell for raw Ring device status. Never use this skill to
@@ -80,8 +80,9 @@ home-events explain 'inc_<opaque-id>' --json
 ```
 
 Explain what evidence was correlated, the canonical presence state used by the
-shadow policy, and why a prospective action was shadowed, rate-limited, or
-suppressed. Never present that simulation as proof that the independent Nest,
+policy, and why an action was shadowed, reserved, delivered, burned,
+rate-limited, or suppressed. Treat an `unknown` delivery outcome as ambiguous,
+never as sent or failed. Never present a shadow simulation as proof that the independent Nest,
 Ring, or messaging path actually acted. The `decisions` array is durable
 history; prefer its reason codes over the incident's latest summary when the
 incident was later resolved. Do not reinterpret stale or ambiguous presence as

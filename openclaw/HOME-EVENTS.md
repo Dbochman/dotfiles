@@ -54,10 +54,10 @@ Sanitized site scans -> local presence adapter -/               |
                                                                |
                                          +---------------------+------------------+
                                          |                                        |
-                                  shadow correlator                   ordered Cabin verifier
-                                         |                              driveway -> front door
-                          read-only CLI and `home-events`                   |
-                                                                Kitchen +30s / +60s
+                                  mode-aware correlator               ordered Cabin verifier
+                                      /      \                           driveway -> front door
+                         read-only CLI   durable owner delivery               |
+                         and `home-events`     (shadow-inert)          Kitchen +30s / +60s
 ```
 
 Producers accept at-least-once delivery. A spool record becomes durable only
@@ -68,9 +68,10 @@ is harmless because the replayed event hits an HMAC-derived unique key.
 
 Only safe aliases, sites, normalized event types, times, and bounded
 allowlisted attributes are retained. Provider payloads and IDs, account or
-network identifiers, coordinates, credentials, recipients, message text,
-camera resources, and media paths are forbidden from the spool, database,
-status projection, and logs.
+network identifiers, coordinates, credentials, recipient identifiers, message
+text, camera resources, and media paths are forbidden from the spool,
+database, status projection, and logs. The database may retain only the fixed
+safe `dylan` policy-route alias; the protected `chat_id` never enters it.
 
 ## Tracked components
 
@@ -80,7 +81,15 @@ status projection, and logs.
   ingest, inspect, and prune.
 - `bin/home-events` is the fixed-root, read-only agent wrapper.
 - `bin/home-event-correlator.py` claims durable consumer rows, groups them into
-  persistent site incidents, and records shadow-only policy decisions.
+  persistent site incidents, and records shadow decisions or policy-scoped
+  reservations. It never performs an external send or camera action.
+- `bin/home-event-delivery.py` is the separate fixed-template Dylan-only
+  sender. It rechecks fresh canonical vacancy immediately before a single
+  attempt and records sent, burned, unknown, or dead-letter outcomes without
+  retaining message text or a receipt identifier.
+- `bin/home-event-delivery-wrapper.sh` resolves only the protected owner route
+  and gateway authentication into a sanitized one-shot process with a bounded
+  owner-only log.
 - `bin/cabin-entry-verifier.py` is a separate future-only consumer. It requires
   Cabin `driveway` activity followed by `front_door` activity within five
   minutes, gates the sequence on confirmed vacancy, captures exact Kitchen
@@ -110,19 +119,51 @@ status projection, and logs.
   and publication are not automation dependencies.
 - `workspace/scripts/presence-detect.sh` remains the canonical presence writer
   and publishes transitions through its protected source outbox.
-- Five attended-install LaunchAgents schedule ingestion, correlation, the
-  disabled-by-default August observer and Nest bridge, and the independently
-  site-gated local-presence adapter.
+- Six attended-install LaunchAgents schedule ingestion, correlation, inert
+  delivery, the disabled-by-default August observer and Nest bridge, and the
+  independently site-gated local-presence adapter.
 - The verifier has its own attended-install KeepAlive LaunchAgent. Merely
   deploying its files does not activate it: initialization, future-only
   consumer registration, and bootstrap are separate operator steps.
+
+## Limited-delivery boundary
+
+Schema v3 supports `shadow` and `limited_delivery`, but a mode change alone is
+insufficient. `limited_delivery` requires a valid mode-`0600` protected policy
+whose `active` field is true. Policy replacement is accepted only while the
+runtime is in `shadow` mode. The tracked
+`home-event-delivery-policy.json` is the exact inactive Stage 3 policy and is
+installed explicitly with:
+
+```bash
+home-eventctl install-delivery-policy \
+  < ~/dotfiles/openclaw/home-event-delivery-policy.json
+```
+
+The correlator reserves an eligible slot only after fresh canonical vacancy
+survives the fixed ten-minute arrival grace. The separate sender records its
+single attempt before calling OpenClaw's supervised iMessage channel, rechecks
+fresh vacancy, and holds the dedicated rollback lock across the send and
+receipt transition without blocking event ingestion. It never retries an
+ambiguous timeout or receipt.
+
+Rollback is always the first operator action:
+
+```bash
+home-eventctl set-mode shadow
+```
+
+That change leaves ingestion and correlation running, burns unattempted
+reservations, and marks an already-claimed reservation `unknown` rather than
+risking replay. Cameras and Julia routing are outside this rollout.
 
 ## Protected runtime
 
 ```text
 ~/.openclaw/home-events/                 0700
 ├── config/                              0700
-│   └── dedupe.key                       0600
+│   ├── dedupe.key                       0600
+│   └── delivery-policy.json             0600
 ├── spool/                               0700
 │   ├── ring/                            0700
 │   ├── presence/                        0700
@@ -130,6 +171,7 @@ status projection, and logs.
 │   └── nest/                            0700
 └── state/                               0700
     ├── events.sqlite3                   0600
+    ├── delivery.lock                    0600
     ├── events.sqlite3-wal/-shm          0600 while SQLite is open
     ├── ingest.lock                      0600
     ├── ring-producer.json               0600 durable safe worker health
@@ -467,7 +509,7 @@ retried, preventing a duplicate.
 ## Attended rollout
 
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
-installed in shadow mode. Canonical presence, Nest metadata, Ring, August, and
+installed in schema-v3 shadow mode. Canonical presence, Nest metadata, Ring, August, and
 Cabin plus Crosstown local-presence enrichment are enabled in the installed
 runtime; the tracked producer defaults remain off. Both sites completed silent
 baselines, duplicate-scan no-ops, and organic departure/return evidence.
@@ -481,9 +523,13 @@ fresh or rebuilt installation must first:
 2. Deploy the bus scripts, source adapters and bridge, skill, and any tracked
    LaunchAgents through the normal dotfiles flow.
 3. Back up the protected home-event database, run `home-eventctl init` to apply the
-   attended schema-v2 migration, then verify every runtime directory is `0700`
+   attended schema-v3 migration, then verify every runtime directory is `0700`
    and every runtime regular file is `0600`.
-4. Run `home-eventctl check-config`, compilation/tests, and `plutil -lint` for
+4. Install the exact protected delivery policy while mode remains `shadow`.
+   Its tracked rollout scope is Dylan only, both sites, three high-confidence
+   activity classes, ten-minute arrival grace, one-hour cooldown, five-minute
+   reservation TTL, 30-minute unresolved-access threshold, and cameras off.
+5. Run `home-eventctl check-config`, compilation/tests, and `plutil -lint` for
    each installed plist.
 
 Rollout status and remaining work:
@@ -502,19 +548,20 @@ Rollout status and remaining work:
 7. Verify one true post-enrollment presence transition is normalized once,
    then correlate a later organic or attended Nest person event against the
    corrected canonical state without changing listener or reviewer behavior.
-8. Complete Ring's attended ding and person-motion tests at each configured
-   site, including restart/dedupe and legacy dog-walk parity evidence.
+8. Stage 2 closed August 5. Crosstown attended ding, transport, and restart
+   evidence passed; the operator explicitly waived the remaining Cabin press
+   because it would block progress for several days.
 9. The attended manual August lock/unlock cycle completed across distinct poll
    boundaries on July 26–27. DoorSense remains `unknown`; attempt door
    open/close evidence only if it begins returning a known state, and never
    invent an event from `unknown`. No automated unlock is authorized.
-10. Soak Ring and August concurrently but assess and roll them back
-    independently. Stop an affected producer for any parity gap, unbounded
-    backlog, duplicate/cross-site incident, mutation-path regression, or
-    outbound delivery attempt.
-11. Follow the separate
-    [event bus promotion plan](plans/event-bus-promotion-plan.md) before
-    considering delivery. Delivery is not part of this shadow rollout.
+10. Ring and August completed the concurrent Stage 2 soak and remain
+    independently reversible.
+11. The Stage 3 delivery foundation and LaunchAgent are installed but inert:
+    the protected policy has `active=false`, runtime mode is `shadow`, cameras
+    are disabled, and no send is authorized. Follow the separate
+    [event bus promotion plan](plans/event-bus-promotion-plan.md) for the
+    explicit Dylan-only Stage 4 activation.
 12. The local-presence adapter is enabled for Cabin and Crosstown. Both silent
     baselines, duplicate-scan no-ops, and organic departure/return intervals
     are verified; local shadow enrichment is established at both sites.

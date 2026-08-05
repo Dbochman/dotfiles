@@ -186,6 +186,27 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             self.root, self.presence, clock=self.clock
         ).run_once()
 
+    def enable_limited_delivery(self) -> None:
+        policy = {
+            "schema_version": 1,
+            "active": True,
+            "sites": ["cabin", "crosstown"],
+            "incident_classes": [
+                "person_activity",
+                "access_activity",
+                "person_and_access",
+            ],
+            "recipient_routes": ["dylan"],
+            "arrival_grace_seconds": 600,
+            "cooldown_seconds": 3600,
+            "reservation_ttl_seconds": 300,
+            "unresolved_access_escalation_seconds": 1800,
+            "camera_enabled": False,
+        }
+        paths = bus.RuntimePaths(self.root)
+        bus.install_delivery_policy(paths, json.dumps(policy).encode("utf-8"))
+        bus.EventStore(paths, clock=self.clock).set_runtime_mode("limited_delivery")
+
     def rows(self, query: str) -> list[sqlite3.Row]:
         connection = sqlite3.connect(self.root / "state" / "events.sqlite3")
         connection.row_factory = sqlite3.Row
@@ -245,6 +266,34 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             len(self.rows("SELECT * FROM notification_outbox WHERE status='shadowed'")),
             1,
         )
+
+    def test_limited_mode_reserves_owner_only_person_alert_after_grace(self) -> None:
+        self.enable_limited_delivery()
+        self.enqueue("ring", "entry.person_detected")
+        self.ingest()
+
+        first = self.run_correlator()
+        self.NOW = "2026-07-12T15:08:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        after_grace = self.run_correlator()
+
+        self.assertEqual(first["reservations"], 0)
+        self.assertEqual(after_grace["mode"], "limited_delivery")
+        self.assertEqual(after_grace["reservations"], 1)
+        rows = self.rows(
+            """
+            SELECT status, recipient_route, template_code, attempt_count,
+                   reservation_token, reserved_until
+            FROM notification_outbox
+            """
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "reserved")
+        self.assertEqual(rows[0]["recipient_route"], "dylan")
+        self.assertEqual(rows[0]["template_code"], "person_activity")
+        self.assertEqual(rows[0]["attempt_count"], 0)
+        self.assertRegex(rows[0]["reservation_token"], r"^res_[0-9a-f]{32}$")
+        self.assertEqual(rows[0]["reserved_until"], "2026-07-12T15:13:00Z")
 
     def test_arrival_during_ten_minute_grace_resolves_silently(self) -> None:
         self.enqueue("ring", "entry.person_detected", sequence="ring")

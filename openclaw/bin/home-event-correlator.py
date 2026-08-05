@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent, shadow-only incident correlation for normalized home events."""
+"""Persistent incident correlation with fail-closed limited delivery."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from home_event_bus import (  # noqa: E402
     EventStore,
     HomeEventError,
     RuntimePaths,
+    load_delivery_policy,
     utc_now,
     validate_runtime,
 )
@@ -478,11 +479,84 @@ class ShadowCorrelator:
             connection.commit()
         return changed
 
-    def _finalize_shadow_decisions(self, presence: Mapping[str, str]) -> int:
+    @staticmethod
+    def _incident_class(
+        connection: sqlite3.Connection, incident_id: int
+    ) -> str | None:
+        event_types = {
+            row["event_type"]
+            for row in connection.execute(
+                """
+                SELECT e.event_type
+                FROM incident_events ie
+                JOIN events e ON e.id = ie.event_id
+                WHERE ie.incident_id = ?
+                """,
+                (incident_id,),
+            )
+        }
+        person = bool(
+            event_types & {"entry.person_detected", "camera.person_detected"}
+        )
+        access = bool(event_types & {"lock.unlocked", "door.opened"})
+        if person and access:
+            return "person_and_access"
+        if person:
+            return "person_activity"
+        if access:
+            return "access_activity"
+        return None
+
+    def _finalize_decisions(self, presence: Mapping[str, str]) -> tuple[int, int]:
         now = self.now()
-        decisions = 0
+        shadow_decisions = 0
+        reservations = 0
+        runtime_mode = self.store.runtime_mode()
+        policy = (
+            load_delivery_policy(self.paths)
+            if runtime_mode == "limited_delivery"
+            else None
+        )
+        grace = timedelta(
+            seconds=(
+                int(policy["arrival_grace_seconds"])
+                if policy is not None
+                else int(INCIDENT_GRACE.total_seconds())
+            )
+        )
+        cooldown = timedelta(
+            seconds=(
+                int(policy["cooldown_seconds"])
+                if policy is not None
+                else int(RATE_LIMIT.total_seconds())
+            )
+        )
         with closing(self.store.connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            transaction_mode = connection.execute(
+                "SELECT mode FROM runtime_status WHERE singleton = 1"
+            ).fetchone()["mode"]
+            if transaction_mode != runtime_mode:
+                runtime_mode = transaction_mode
+                policy = (
+                    load_delivery_policy(self.paths)
+                    if runtime_mode == "limited_delivery"
+                    else None
+                )
+                grace = timedelta(
+                    seconds=(
+                        int(policy["arrival_grace_seconds"])
+                        if policy is not None
+                        else int(INCIDENT_GRACE.total_seconds())
+                    )
+                )
+                cooldown = timedelta(
+                    seconds=(
+                        int(policy["cooldown_seconds"])
+                        if policy is not None
+                        else int(RATE_LIMIT.total_seconds())
+                    )
+                )
             incidents = connection.execute(
                 """
                 SELECT * FROM incidents
@@ -506,7 +580,7 @@ class ShadowCorrelator:
                 mode = presence.get(incident["site"], "uncertain")
                 if (
                     mode == "vacant"
-                    and now - parse_time(incident["opened_at"]) < INCIDENT_GRACE
+                    and now - parse_time(incident["opened_at"]) < grace
                 ):
                     continue
                 if mode != "vacant":
@@ -526,13 +600,50 @@ class ShadowCorrelator:
                         summary,
                     )
                     continue
+                if runtime_mode == "limited_delivery":
+                    incident_class = self._incident_class(
+                        connection, int(incident["id"])
+                    )
+                    if incident_class is None:
+                        connection.execute(
+                            "UPDATE incidents SET summary_code = ?, updated_at = ? WHERE id = ?",
+                            ("delivery_class_ineligible", format_time(now), incident["id"]),
+                        )
+                        self._record_decision(
+                            connection,
+                            int(incident["id"]),
+                            "suppressed",
+                            "delivery_class_ineligible",
+                        )
+                        continue
+                    if (
+                        policy is None
+                        or policy["active"] is not True
+                        or incident["site"] not in policy["sites"]
+                        or incident_class not in policy["incident_classes"]
+                    ):
+                        connection.execute(
+                            "UPDATE incidents SET summary_code = ?, updated_at = ? WHERE id = ?",
+                            ("delivery_policy_suppressed", format_time(now), incident["id"]),
+                        )
+                        self._record_decision(
+                            connection,
+                            int(incident["id"]),
+                            "suppressed",
+                            "delivery_policy_suppressed",
+                        )
+                        continue
+                    status_clause = "AND status != 'shadowed'"
+                else:
+                    incident_class = None
+                    status_clause = ""
                 recent = connection.execute(
                     """
                     SELECT 1 FROM notification_outbox
-                    WHERE site = ? AND created_at >= ?
+                    WHERE site = ? AND created_at >= ? {status_clause}
                     LIMIT 1
-                    """,
-                    (incident["site"], format_time(now - RATE_LIMIT)),
+                    """.format(status_clause=status_clause),
+                    (incident["site"], format_time(now - cooldown)),
                 ).fetchone()
                 if recent:
                     connection.execute(
@@ -546,6 +657,47 @@ class ShadowCorrelator:
                         "rate_limited_shadowed",
                     ):
                         self._increment(connection, "shadow_rate_limited")
+                    continue
+                if runtime_mode == "limited_delivery":
+                    assert policy is not None and incident_class is not None
+                    reservation_token = "res_" + secrets.token_hex(16)
+                    reserved_until = format_time(
+                        now + timedelta(seconds=int(policy["reservation_ttl_seconds"]))
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO notification_outbox(
+                            incident_id, site, status, reservation_token,
+                            reserved_until, recipient_route, template_code,
+                            attempt_count, created_at, updated_at
+                        ) VALUES (?, ?, 'reserved', ?, ?, 'dylan', ?, 0, ?, ?)
+                        """,
+                        (
+                            incident["id"],
+                            incident["site"],
+                            reservation_token,
+                            reserved_until,
+                            incident_class,
+                            format_time(now),
+                            format_time(now),
+                        ),
+                    )
+                    self._record_decision(
+                        connection,
+                        int(incident["id"]),
+                        "reserved",
+                        "limited_delivery_reserved",
+                    )
+                    connection.execute(
+                        "UPDATE incidents SET summary_code = ?, updated_at = ? WHERE id = ?",
+                        (
+                            "vacant_" + incident_class + "_reserved",
+                            format_time(now),
+                            incident["id"],
+                        ),
+                    )
+                    self._increment(connection, "delivery_reservations")
+                    reservations += 1
                     continue
                 self._record_decision(
                     connection,
@@ -566,9 +718,9 @@ class ShadowCorrelator:
                     ("vacant_activity_shadowed", format_time(now), incident["id"]),
                 )
                 self._increment(connection, "shadow_delivery_decisions")
-                decisions += 1
+                shadow_decisions += 1
             connection.commit()
-        return decisions
+        return shadow_decisions, reservations
 
     def run_once(self, *, limit: int = 20) -> Mapping[str, Any]:
         presence = read_presence(self.presence_state, self.now())
@@ -595,21 +747,22 @@ class ShadowCorrelator:
                 else:
                     break
         expired = self._expire_incidents()
-        decisions = self._finalize_shadow_decisions(presence)
+        shadow_decisions, reservations = self._finalize_decisions(presence)
         self.store.write_status_best_effort()
         return {
             "ok": True,
-            "mode": "shadow",
+            "mode": self.store.runtime_mode(),
             "claimed": len(claimed["deliveries"]),
             "acknowledged": acknowledged,
             "dead_lettered": dead,
             "expired": expired,
-            "shadow_decisions": decisions,
+            "shadow_decisions": shadow_decisions,
+            "reservations": reservations,
         }
 
 
 def parser() -> argparse.ArgumentParser:
-    value = argparse.ArgumentParser(description="Shadow-only home event correlator")
+    value = argparse.ArgumentParser(description="Fail-closed home event correlator")
     value.add_argument(
         "--root",
         type=Path,

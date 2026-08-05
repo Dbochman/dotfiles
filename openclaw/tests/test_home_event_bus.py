@@ -168,6 +168,25 @@ def encode(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
 
+def delivery_policy(*, active: bool) -> dict:
+    return {
+        "schema_version": 1,
+        "active": active,
+        "sites": ["cabin", "crosstown"],
+        "incident_classes": [
+            "person_activity",
+            "access_activity",
+            "person_and_access",
+        ],
+        "recipient_routes": ["dylan"],
+        "arrival_grace_seconds": 600,
+        "cooldown_seconds": 3600,
+        "reservation_ttl_seconds": 300,
+        "unresolved_access_escalation_seconds": 1800,
+        "camera_enabled": False,
+    }
+
+
 class HomeEventTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -213,6 +232,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
             self.paths.secret,
             self.paths.database,
             self.paths.ingest_lock,
+            self.paths.delivery_lock,
             self.paths.status,
         ):
             with self.subTest(path=path):
@@ -270,7 +290,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 2)
+        self.assertEqual(status["schema_version"], 3)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -282,6 +302,79 @@ class RuntimeSecurityTests(HomeEventTestCase):
             status["retention_days"], {"accepted": 30, "dead_letter": 90}
         )
         self.assertGreater(status["database_bytes"], 0)
+
+    def test_limited_delivery_requires_active_protected_policy(self) -> None:
+        with self.assertRaisesRegex(
+            home_events.ConfigError, "private_file_unavailable"
+        ):
+            self.store.set_runtime_mode("limited_delivery")
+
+        installed = home_events.install_delivery_policy(
+            self.paths, encode(delivery_policy(active=False))
+        )
+        self.assertFalse(installed["active"])
+        self.assertEqual(stat.S_IMODE(self.paths.delivery_policy.stat().st_mode), 0o600)
+        with self.assertRaisesRegex(
+            home_events.ConfigError, "delivery_policy_inactive"
+        ):
+            self.store.set_runtime_mode("limited_delivery")
+
+        home_events.install_delivery_policy(
+            self.paths, encode(delivery_policy(active=True))
+        )
+        result = self.store.set_runtime_mode("limited_delivery")
+        self.assertEqual(result["mode"], "limited_delivery")
+        self.assertEqual(self.store.runtime_mode(), "limited_delivery")
+
+    def test_shadow_rollback_burns_unattempted_and_isolates_claimed_slot(self) -> None:
+        home_events.install_delivery_policy(
+            self.paths, encode(delivery_policy(active=True))
+        )
+        self.store.set_runtime_mode("limited_delivery")
+        with self.connection() as connection:
+            incident = connection.execute(
+                """
+                INSERT INTO incidents(
+                    incident_uid, site, state, category, summary_code,
+                    opened_at, updated_at
+                ) VALUES (?, 'cabin', 'open', 'activity', 'reserved', ?, ?)
+                """,
+                ("inc_" + ("e" * 32), NOW, NOW),
+            ).lastrowid
+            for attempt, token in ((0, "a"), (1, "b")):
+                connection.execute(
+                    """
+                    INSERT INTO notification_outbox(
+                        incident_id, site, status, reservation_token,
+                        reserved_until, recipient_route, template_code,
+                        attempt_count, created_at, updated_at
+                    ) VALUES (?, 'cabin', 'reserved', ?, ?, 'dylan',
+                              'person_activity', ?, ?, ?)
+                    """,
+                    (
+                        incident,
+                        "res_" + (token * 32),
+                        "2026-07-12T15:05:00Z",
+                        attempt,
+                        NOW,
+                        NOW,
+                    ),
+                )
+
+        result = self.store.set_runtime_mode("shadow")
+
+        self.assertEqual(result, {"mode": "shadow", "burned": 1, "unknown": 1})
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT status, error_code FROM notification_outbox ORDER BY id"
+            ).fetchall()
+        self.assertEqual(
+            [tuple(row) for row in rows],
+            [
+                ("burned", "mode_rollback"),
+                ("unknown", "mode_rollback_after_claim"),
+            ],
+        )
 
     def test_access_attention_review_is_audited_and_preserves_incident(self) -> None:
         with self.connection() as connection:
@@ -461,7 +554,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         with self.connection() as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
-                2,
+                3,
             )
             self.assertEqual(
                 connection.execute(

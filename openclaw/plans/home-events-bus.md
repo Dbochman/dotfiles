@@ -794,29 +794,32 @@ incident identifiers, and no database path or provider identity.
 ## Deployment and remaining rollout
 
 The bus core, correlator, read-only skill, adapters, bridges, and LaunchAgents
-are installed on the Mac Mini with SQLite schema 2 in shadow mode. Presence,
+are installed on the Mac Mini with SQLite schema 3 in shadow mode. The
+separate limited-delivery worker is installed and loaded but inert under an
+inactive Dylan-only protected policy. Presence,
 Nest, Ring, August, and both local-presence sites are enabled in the attended
 runtime. The local adapter completed zero-event baselines and duplicate-scan
 no-ops for Cabin and Crosstown. The remaining order is:
 
 1. Verify one true post-enrollment presence transition and correlate a later
    Nest person event against the corrected canonical state.
-2. Complete Ring's attended ding and person-motion test at each configured
-   site, including restart/dedupe and legacy dog-walk parity.
+2. Retain the completed Crosstown attended ding/restart evidence and the
+   operator's explicit waiver of the remaining Cabin press.
 3. Retain the completed attended August lock/unlock cycle evidence. Attempt
    door open/close evidence only if DoorSense begins returning a known state;
    never infer it from `unknown` or automate unlock.
-4. Soak Ring and August concurrently, assessing and rolling back each source
-   independently.
+4. Retain the completed Ring/August concurrent soak evidence, assessing and
+   rolling back each source independently if later health regresses.
 5. Verify one Cabin local departure/arrival interval and household excursion
    pair with zero canonical-state or incident side effects.
 6. Collect a natural or attended Crosstown local departure/arrival interval
    with zero canonical-state or incident side effects.
 7. Follow the separate
-   [event bus promotion plan](event-bus-promotion-plan.md) before considering
-   limited delivery; no delivery is authorized by this shadow activation.
-8. Consider any limited delivery only under separate explicit authorization;
-   it is not part of the current rollout.
+   [event bus promotion plan](event-bus-promotion-plan.md) for the Stage 4
+   Dylan-only activation. Stage 3 deployment does not authorize a send.
+8. Activate only by installing the same protected policy with `active=true`
+   and then changing runtime mode to `limited_delivery`; rollback mode to
+   `shadow` first if any stop condition occurs.
 
 At each gate, run unit/integration tests, Python compilation, `check-config`,
 plist validation when applicable, permissions checks, safe health/backlog

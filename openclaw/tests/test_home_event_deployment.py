@@ -25,6 +25,7 @@ LABELS = (
     "ai.openclaw.nest-home-event-bridge",
     "ai.openclaw.presence-local-event-adapter",
 )
+DELIVERY_LABEL = "ai.openclaw.home-event-delivery"
 
 
 class HomeEventDeploymentTests(unittest.TestCase):
@@ -70,6 +71,27 @@ class HomeEventDeploymentTests(unittest.TestCase):
                 self.assertEqual(payload["StandardOutPath"], "/dev/null")
                 self.assertEqual(payload["StandardErrorPath"], "/dev/null")
                 self.assertEqual(payload["Umask"], 63)
+        delivery_plist = plistlib.loads(
+            (
+                OPENCLAW
+                / "launchagents"
+                / f"{DELIVERY_LABEL}.plist"
+            ).read_bytes()
+        )
+        self.assertEqual(delivery_plist["Label"], DELIVERY_LABEL)
+        self.assertEqual(
+            delivery_plist["ProgramArguments"][:2],
+            [
+                "/bin/bash",
+                "/Users/dbochman/.openclaw/bin/home-event-delivery-wrapper.sh",
+            ],
+        )
+        self.assertEqual(delivery_plist["StandardOutPath"], "/dev/null")
+        self.assertEqual(delivery_plist["StandardErrorPath"], "/dev/null")
+        self.assertEqual(delivery_plist["Umask"], 63)
+        for filename in ("home-event-delivery.py", "home-event-delivery-wrapper.sh"):
+            path = OPENCLAW / "bin" / filename
+            self.assertTrue(path.stat().st_mode & stat.S_IXUSR)
         august = plistlib.loads(
             (OPENCLAW / "launchagents" / "ai.openclaw.august-event-adapter.plist").read_bytes()
         )
@@ -136,7 +158,7 @@ class HomeEventDeploymentTests(unittest.TestCase):
 
     def test_daily_pull_refreshes_only_attended_installed_jobs(self) -> None:
         source = PULL.read_text(encoding="utf-8")
-        for label in LABELS:
+        for label in (*LABELS, DELIVERY_LABEL):
             self.assertIn(label, source)
         self.assertIn(
             'if [ -e "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]',

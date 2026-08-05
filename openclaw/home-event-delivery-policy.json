@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "active": false,
+  "sites": [
+    "cabin",
+    "crosstown"
+  ],
+  "incident_classes": [
+    "person_activity",
+    "access_activity",
+    "person_and_access"
+  ],
+  "recipient_routes": [
+    "dylan"
+  ],
+  "arrival_grace_seconds": 600,
+  "cooldown_seconds": 3600,
+  "reservation_ttl_seconds": 300,
+  "unresolved_access_escalation_seconds": 1800,
+  "camera_enabled": false
+}
