@@ -3,10 +3,11 @@
 Home events is the Mac Mini's private, durable journal for normalized household
 activity. Ring, canonical presence, a read-only August observer, a metadata-only
 Nest bridge, and a local network-presence adapter publish small site-scoped
-records; one ingester serially commits them to SQLite. The bus producers and
-correlator remain in **shadow mode**: they record and expose evidence but do
-not themselves send a message, capture a camera image, change presence, or
-operate a lock.
+records; one ingester serially commits them to SQLite. Producers remain
+journal-only. During the Dylan-only canary, the correlator may reserve one
+policy-scoped fixed-template message after confirmed vacancy and the arrival
+grace; only the separate delivery worker can send it. The bus cannot capture a
+camera image, change presence, or operate a lock.
 
 One separately authorized consumer is an explicit exception to that shadow
 boundary. The Cabin entry verifier requires ordered live Ring evidence at the
@@ -57,7 +58,7 @@ Sanitized site scans -> local presence adapter -/               |
                                   mode-aware correlator               ordered Cabin verifier
                                       /      \                           driveway -> front door
                          read-only CLI   durable owner delivery               |
-                         and `home-events`     (shadow-inert)          Kitchen +30s / +60s
+                         and `home-events`   Dylan-only fixed sender          |
 ```
 
 Producers accept at-least-once delivery. A spool record becomes durable only
@@ -119,7 +120,7 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   and publication are not automation dependencies.
 - `workspace/scripts/presence-detect.sh` remains the canonical presence writer
   and publishes transitions through its protected source outbox.
-- Six attended-install LaunchAgents schedule ingestion, correlation, inert
+- Six attended-install LaunchAgents schedule ingestion, correlation, bounded
   delivery, the disabled-by-default August observer and Nest bridge, and the
   independently site-gated local-presence adapter.
 - The verifier has its own attended-install KeepAlive LaunchAgent. Merely
@@ -509,7 +510,9 @@ retried, preventing a duplicate.
 ## Attended rollout
 
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
-installed in schema-v3 shadow mode. Canonical presence, Nest metadata, Ring, August, and
+installed at schema v3. The Dylan-only Stage 4 canary entered
+`limited_delivery` at `2026-08-05T15:42:14Z`; the tracked policy remains
+inactive by default. Canonical presence, Nest metadata, Ring, August, and
 Cabin plus Crosstown local-presence enrichment are enabled in the installed
 runtime; the tracked producer defaults remain off. Both sites completed silent
 baselines, duplicate-scan no-ops, and organic departure/return evidence.
@@ -557,11 +560,12 @@ Rollout status and remaining work:
    invent an event from `unknown`. No automated unlock is authorized.
 10. Ring and August completed the concurrent Stage 2 soak and remain
     independently reversible.
-11. The Stage 3 delivery foundation and LaunchAgent are installed but inert:
-    the protected policy has `active=false`, runtime mode is `shadow`, cameras
-    are disabled, and no send is authorized. Follow the separate
-    [event bus promotion plan](plans/event-bus-promotion-plan.md) for the
-    explicit Dylan-only Stage 4 activation.
+11. The Stage 3 delivery foundation and LaunchAgent are installed. Stage 4 was
+    explicitly activated at `2026-08-05T15:42:14Z` with the protected policy
+    active, runtime mode `limited_delivery`, Dylan as the only route, and
+    cameras disabled. Follow the separate
+    [event bus promotion plan](plans/event-bus-promotion-plan.md) for canary
+    evidence and stop conditions.
 12. The local-presence adapter is enabled for Cabin and Crosstown. Both silent
     baselines, duplicate-scan no-ops, and organic departure/return intervals
     are verified; local shadow enrichment is established at both sites.

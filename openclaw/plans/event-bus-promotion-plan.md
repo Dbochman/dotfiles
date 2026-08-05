@@ -246,8 +246,8 @@ Concurrent:
 
 ### Stage 3 — Limited-delivery foundation
 
-Implemented and deployed in shadow mode; do not activate without the separate
-Stage 4 operator action:
+Implemented and initially deployed in shadow mode before the separate Stage 4
+operator action:
 
 1. [x] A transactional schema migration from hard-coded `shadow` to explicit
    `shadow|limited_delivery` mode.
@@ -261,12 +261,12 @@ Stage 4 operator action:
    status.
 6. [x] Independent rollback to shadow while ingestion and the journal continue.
 
-The installed policy is intentionally inactive. Its prepared canary scope is
-both residences, Dylan only, the `person_activity`, `access_activity`, and
-`person_and_access` classes, a fixed 10-minute arrival grace, a one-hour
-per-site cooldown, a five-minute reservation TTL, a recorded 30-minute
-unresolved-access threshold, and cameras disabled. The sender is installed and
-loaded but inert while runtime mode remains `shadow`.
+The tracked policy remains intentionally inactive as the safe deployment
+default. Its canary scope is both residences, Dylan only, the
+`person_activity`, `access_activity`, and `person_and_access` classes, a fixed
+10-minute arrival grace, a one-hour per-site cooldown, a five-minute
+reservation TTL, a recorded 30-minute unresolved-access threshold, and cameras
+disabled.
 
 ### Stage 4 — Dylan-only limited canary
 
@@ -277,6 +277,20 @@ loaded but inert while runtime mode remains `shadow`.
 - Compare every delivered message with its shadow explanation.
 - Stop for any duplicate, wrong-site route, occupied/uncertain delivery,
   unexplained delay, queue growth, or privacy regression.
+
+#### Activation checkpoint — `2026-08-05T15:42:14Z`
+
+- Commit `4d2b77b` passed the combined 181-test suite and was pushed to
+  `origin/main` before activation.
+- The protected runtime policy was installed with `active=true`, retaining the
+  exact Dylan-only, both-site, three-class scope and camera-disabled boundary.
+- Runtime mode changed atomically from `shadow` to `limited_delivery` with zero
+  burned or unknown reservations.
+- The first post-activation projection reports bus and delivery health `ok`,
+  all sources healthy, zero backlog/dead letters, and zero reserved, sent,
+  burned, unknown, or delivery dead-letter rows.
+- The existing occupied Crosstown activity incident already has a terminal
+  suppression decision and is not eligible for replay.
 
 ### Stage 5 — Julia opt-in household route
 
@@ -400,8 +414,9 @@ Never retain media in the bus or enable Crosstown camera delivery implicitly.
 - [x] Built Stage 3 schema v3, protected inactive Dylan policy, durable
   reservation/sender state machine, fixed templates, safe health projection,
   rollback controls, tests, and attended shadow deployment.
-- [ ] Begin Stage 4 only through a separate explicit activation: install the
-  same policy with `active=true`, then set mode to `limited_delivery`.
+- [x] Began Stage 4 at `2026-08-05T15:42:14Z` through the separate explicit
+  activation: installed the same protected policy with `active=true`, then set
+  runtime mode to `limited_delivery`.
 
 ## Decisions required before limited delivery
 

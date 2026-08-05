@@ -1,25 +1,26 @@
 # Durable Home Events — Bus, Presence, Nest, Ring, August, and Agent Skill
 
-## Status: DEPLOYED IN SHADOW MODE
+## Status: DYLAN-ONLY LIMITED CANARY ACTIVE
 
 Canonical presence normalization, the metadata-only Nest bridge, the Ring tee,
 the read-only August observer, and Cabin plus Crosstown local
-arrival/departure enrichment are enabled in the installed shadow runtime.
+arrival/departure enrichment are enabled in the installed runtime.
 Cabin presence uses the approved schema-v2 exact controller and Kitchen-mesh
 bindings; Crosstown uses its separately approved strict scanner and exact
 site-local bindings. Ring and August were promoted concurrently on July 23
 after explicit operator approval; their tracked defaults remain disabled.
-Both sources still need their remaining attended physical evidence, and August
-has not completed its seven-day soak. There is no user-facing delivery or
-physical-mutation path in this bus.
+Stage 2 closed after the operator waived the remaining Cabin press and August
+completed its soak. The Dylan-only fixed-template canary entered
+`limited_delivery` at `2026-08-05T15:42:14Z`. There is no Julia route, camera
+action, or physical-mutation path in this bus.
 
 ## Overview
 
 Operate a private SQLite-backed event journal on the Mac Mini. Canonical
 presence, Cabin's sanitized local scan observations, and already-committed Nest
-person/motion metadata feed it today in shadow mode. Ring and the read-only
-August observer now soak concurrently with independent health and rollback
-boundaries. The Nest listener/reviewer, Ring dog-walk and direct ding behavior,
+person/motion metadata feed it today. Ring and the read-only August observer
+retain independent health and rollback boundaries. The Nest listener/reviewer,
+Ring dog-walk and direct ding behavior,
 vacancy actions, camera policy, and August's guarded mutation workflow remain
 independent.
 
@@ -794,9 +795,10 @@ incident identifiers, and no database path or provider identity.
 ## Deployment and remaining rollout
 
 The bus core, correlator, read-only skill, adapters, bridges, and LaunchAgents
-are installed on the Mac Mini with SQLite schema 3 in shadow mode. The
-separate limited-delivery worker is installed and loaded but inert under an
-inactive Dylan-only protected policy. Presence,
+are installed on the Mac Mini with SQLite schema 3. The separate delivery
+worker is loaded, and the Dylan-only Stage 4 canary entered
+`limited_delivery` at `2026-08-05T15:42:14Z`; the tracked policy remains
+inactive as the safe deployment default. Presence,
 Nest, Ring, August, and both local-presence sites are enabled in the attended
 runtime. The local adapter completed zero-event baselines and duplicate-scan
 no-ops for Cabin and Crosstown. The remaining order is:
@@ -815,11 +817,11 @@ no-ops for Cabin and Crosstown. The remaining order is:
 6. Collect a natural or attended Crosstown local departure/arrival interval
    with zero canonical-state or incident side effects.
 7. Follow the separate
-   [event bus promotion plan](event-bus-promotion-plan.md) for the Stage 4
-   Dylan-only activation. Stage 3 deployment does not authorize a send.
-8. Activate only by installing the same protected policy with `active=true`
-   and then changing runtime mode to `limited_delivery`; rollback mode to
-   `shadow` first if any stop condition occurs.
+   [event bus promotion plan](event-bus-promotion-plan.md) for Stage 4 evidence
+   and stop conditions.
+8. The canary was activated only after installing the same protected policy
+   with `active=true` and changing runtime mode to `limited_delivery`. Roll
+   mode back to `shadow` first if any stop condition occurs.
 
 At each gate, run unit/integration tests, Python compilation, `check-config`,
 plist validation when applicable, permissions checks, safe health/backlog
