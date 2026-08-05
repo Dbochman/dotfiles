@@ -104,8 +104,10 @@ status projection, and logs.
   arrivals/departures and household excursion intervals.
 - `skills/home-events/SKILL.md` constrains OpenClaw to the read-only wrapper and
   delegates only an explicit current-image request to `nest-camera`.
-- `skills/dog-walk/dog-walk-listener.py` remains the only Ring FCM connection
-  and tees normalized events to a dedicated publisher worker.
+- `ai.openclaw.ring-event-listener` remains the only Ring FCM connection and
+  tees normalized events to a dedicated publisher worker. It sends only a
+  fresh safe-site `person_motion` datagram to dog-walk automation; bus health
+  and publication are not automation dependencies.
 - `workspace/scripts/presence-detect.sh` remains the canonical presence writer
   and publishes transitions through its protected source outbox.
 - Five attended-install LaunchAgents schedule ingestion, correlation, the
@@ -267,6 +269,12 @@ v1 for rollback compatibility, projecting aggregate health and cumulative
 counters. Resolved binding defects recover without erasing quarantine history.
 The callback still performs no disk I/O; the dedicated worker owns the bounded
 atomic status write.
+
+The unchanged direct Ring message path uses one bounded request through
+OpenClaw's already-supervised native iMessage channel and requires a strict
+matching receipt. An invalid protected chat target, timeout, or ambiguous
+receipt fails without a retry and cannot block or change Ring publication to
+the bus.
 
 Durability begins at the worker's spool commit, so there is an accepted small
 callback-to-worker crash window. Provider IDs exist only in memory and are

@@ -16,9 +16,11 @@ Collected by `home-state-snapshot.py` via LaunchAgent `ai.openclaw.home-state-sn
 | Eight Sleep Pods | Sleep scores, duration, stages, HRV, HR, RR, snoring for each user | `8sleep sleep <side>` | Previous night |
 | Ring Doorbell | Battery level per doorbell | `ring status` | On-demand |
 
-### Event-Driven (Dog Walk Listener)
+### Event-Driven (Dog Walk Automation)
 
-Collected by `dog-walk-listener.py`, written on each dog walk event.
+Collected by `dog-walk-automation.py`, written on each dog-walk event. Ring
+provider ingress is isolated in `ring-event-listener.py` and passes only a
+fresh safe-site person-motion hint over a protected local socket.
 
 | Source | Data | Trigger |
 |--------|------|---------|

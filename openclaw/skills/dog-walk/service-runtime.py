@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Dog walk automation listener.
+"""Shared runtime for Ring ingress and dog-walk automation.
 
-Detects dog walks via Fi GPS collar departure and manages Roomba automation.
-Uses Ring doorbell motion + WiFi network presence + Fi GPS for return detection.
+The deployed entry points are ``ring-event-listener.py`` and
+``dog-walk-automation.py``. This compatibility module holds their shared
+implementation while the two LaunchAgents keep provider ingress separate from
+dog-walk policy.
 
-Runs as a persistent LaunchAgent (ai.openclaw.dog-walk-listener).
+Do not run this shared module directly; use one of the two role-specific entry
+points.
 """
 
 import asyncio
@@ -13,6 +16,7 @@ import json
 import os
 import queue
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -204,7 +208,10 @@ RING_HOME_EVENT_STATUS = Path(
     )
 )
 
-IMSG_BIN = "/opt/homebrew/bin/imsg"
+OPENCLAW_CLI = "/opt/homebrew/bin/openclaw"
+OPENCLAW_NODE_BIN = "/opt/homebrew/opt/node@22/bin"
+IMESSAGE_SEND_TIMEOUT_SECONDS = 20
+IMSG_MAX_MESSAGE_BYTES = 4096
 _dylan_chat_id = os.environ.get("DYLAN_CHAT_ID", "").strip()
 DYLAN_IMESSAGE_TARGET = os.environ.get("OPENCLAW_DYLAN_IMESSAGE_TARGET", "").strip()
 if not DYLAN_IMESSAGE_TARGET and _dylan_chat_id.isdigit():
@@ -706,6 +713,19 @@ _RING_DEPARTURE_WINDOW = 300  # 5 minutes — Ring motion must be within this wi
 _INBOX_DIR = Path.home() / ".openclaw/dog-walk/inbox"
 _INBOX_POLL_INTERVAL = 5  # seconds
 _INBOX_MAX_AGE = 7200  # 2 hours
+
+# Ring ingress sends only this privacy-minimized, time-sensitive signal to the
+# dog-walk automation process. The event bus is deliberately not an automation
+# dependency: the GPS-only path remains available if this socket is absent.
+RING_AUTOMATION_SOCKET = Path(
+    os.environ.get(
+        "OPENCLAW_RING_AUTOMATION_SOCKET",
+        str(Path.home() / ".openclaw/dog-walk/ring-automation.sock"),
+    )
+)
+_RING_AUTOMATION_SIGNAL_MAX_BYTES = 512
+_RING_AUTOMATION_SIGNAL_MAX_AGE_SECONDS = 90
+_RING_AUTOMATION_SIGNAL_SITES = frozenset(DOORBELL_LOCATIONS.values())
 
 
 def log(msg: str) -> None:
@@ -1596,35 +1616,111 @@ def send_imessage(text: str) -> bool:
     if not DYLAN_IMESSAGE_TARGET:
         log("ERROR sending iMessage: protected Dylan chat target is unavailable")
         return False
-    if DYLAN_IMESSAGE_TARGET.startswith("chat_id:"):
-        target_args = ["--chat-id", DYLAN_IMESSAGE_TARGET.removeprefix("chat_id:")]
-    elif DYLAN_IMESSAGE_TARGET.startswith("chat_guid:"):
-        target_args = ["--chat-guid", DYLAN_IMESSAGE_TARGET.removeprefix("chat_guid:")]
-    elif DYLAN_IMESSAGE_TARGET.startswith("chat_identifier:"):
-        target_args = [
-            "--chat-identifier",
-            DYLAN_IMESSAGE_TARGET.removeprefix("chat_identifier:"),
-        ]
-    elif ";-;" in DYLAN_IMESSAGE_TARGET or ";+;" in DYLAN_IMESSAGE_TARGET:
-        target_args = ["--chat-guid", DYLAN_IMESSAGE_TARGET]
-    else:
-        target_args = ["--to", DYLAN_IMESSAGE_TARGET]
+
+    prefix = "chat_id:"
+    chat_id = DYLAN_IMESSAGE_TARGET.removeprefix(prefix)
+    if (
+        not DYLAN_IMESSAGE_TARGET.startswith(prefix)
+        or not 1 <= len(chat_id) <= 18
+        or chat_id[0] == "0"
+        or any(character < "0" or character > "9" for character in chat_id)
+    ):
+        log("ERROR sending iMessage: protected Dylan chat target is invalid")
+        return False
+    if (
+        not isinstance(text, str)
+        or not text
+        or len(text.encode("utf-8")) > IMSG_MAX_MESSAGE_BYTES
+        or any(ord(character) < 0x20 for character in text)
+    ):
+        log("ERROR sending iMessage: message contract is invalid")
+        return False
+
+    child_env = {
+        "HOME": str(Path.home()),
+        "PATH": f"{OPENCLAW_NODE_BIN}:/opt/homebrew/bin:/usr/bin:/bin",
+        "LANG": "en_US.UTF-8",
+    }
+    for key in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"):
+        value = os.environ.get(key, "")
+        if value:
+            child_env[key] = value
+    if not any(key in child_env for key in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD")):
+        log("ERROR sending iMessage: gateway authentication is unavailable")
+        return False
 
     try:
         result = subprocess.run(
-            [IMSG_BIN, "send", *target_args, "--text", text, "--json"],
+            [
+                OPENCLAW_CLI,
+                "message",
+                "send",
+                "--channel",
+                "imessage",
+                "--target",
+                f"chat_id:{chat_id}",
+                "--message",
+                text,
+                "--json",
+            ],
             capture_output=True,
             text=True,
-            timeout=20,
+            timeout=IMESSAGE_SEND_TIMEOUT_SECONDS,
+            env=child_env,
         )
-        if result.returncode != 0:
-            log(f"ERROR sending iMessage: {result.stderr.strip() or result.stdout.strip()}")
-            return False
-        payload = json.loads(result.stdout)
-        return payload.get("status") == "sent"
-    except Exception as e:
-        log(f"ERROR sending iMessage: {e}")
+    except subprocess.TimeoutExpired:
+        log("ERROR sending iMessage: channel request timed out")
         return False
+    except OSError:
+        log("ERROR sending iMessage: channel command unavailable")
+        return False
+
+    if result.returncode != 0 or result.stderr or not result.stdout:
+        log("ERROR sending iMessage: channel request failed")
+        return False
+    try:
+        lines = result.stdout.splitlines()
+        if len(lines) != 1 or not lines[0]:
+            raise ValueError
+        payload = json.loads(lines[0])
+    except (json.JSONDecodeError, ValueError):
+        log("ERROR sending iMessage: channel receipt is invalid")
+        return False
+    expected_keys = {"action", "channel", "dryRun", "handledBy", "payload"}
+    channel_payload = payload.get("payload") if isinstance(payload, dict) else None
+    channel_result = (
+        channel_payload.get("result") if isinstance(channel_payload, dict) else None
+    )
+    top_message_id = payload.get("messageId") if isinstance(payload, dict) else None
+    nested_message_id = (
+        channel_result.get("messageId") if isinstance(channel_result, dict) else None
+    )
+    message_id = top_message_id or nested_message_id
+    if (
+        not isinstance(payload, dict)
+        or not expected_keys.issubset(payload)
+        or set(payload) - (expected_keys | {"messageId"})
+        or payload.get("action") != "send"
+        or payload.get("channel") != "imessage"
+        or payload.get("dryRun") is not False
+        or payload.get("handledBy") != "core"
+        or not isinstance(channel_payload, dict)
+        or channel_payload.get("channel") != "imessage"
+        or channel_payload.get("to") != f"chat_id:{chat_id}"
+        or channel_payload.get("via") != "gateway"
+        or not isinstance(channel_result, dict)
+        or not isinstance(message_id, str)
+        or not 1 <= len(message_id) <= 128
+        or any(ord(character) < 0x20 for character in message_id)
+        or (
+            top_message_id is not None
+            and nested_message_id is not None
+            and top_message_id != nested_message_id
+        )
+    ):
+        log("ERROR sending iMessage: channel receipt is invalid")
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -2831,6 +2927,179 @@ async def _inbox_poll_loop() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Ring -> dog-walk local signal boundary
+# ---------------------------------------------------------------------------
+
+def _ring_automation_parent_is_safe(*, create: bool = False) -> bool:
+    parent = RING_AUTOMATION_SOCKET.parent
+    if create:
+        try:
+            parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError:
+            return False
+    try:
+        metadata = parent.lstat()
+    except OSError:
+        return False
+    if (
+        create
+        and stat.S_ISDIR(metadata.st_mode)
+        and not parent.is_symlink()
+        and metadata.st_uid == os.getuid()
+        and stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        try:
+            parent.chmod(0o700)
+            metadata = parent.lstat()
+        except OSError:
+            return False
+    return (
+        stat.S_ISDIR(metadata.st_mode)
+        and not parent.is_symlink()
+        and metadata.st_uid == os.getuid()
+        and stat.S_IMODE(metadata.st_mode) == 0o700
+    )
+
+
+def _send_ring_automation_signal(site: str) -> bool:
+    """Send one nonblocking, privacy-minimized person-motion signal."""
+    if site not in _RING_AUTOMATION_SIGNAL_SITES:
+        return False
+    if not _ring_automation_parent_is_safe():
+        log("RING SIGNAL: dog-walk automation boundary unavailable")
+        return False
+    try:
+        metadata = RING_AUTOMATION_SOCKET.lstat()
+        if (
+            RING_AUTOMATION_SOCKET.is_symlink()
+            or not stat.S_ISSOCK(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise ValueError("unsafe_socket")
+        payload = json.dumps(
+            {
+                "schema_version": 1,
+                "signal": "person_motion",
+                "site": site,
+                "observed_at": _utc_timestamp(time.time()),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        if len(payload) > _RING_AUTOMATION_SIGNAL_MAX_BYTES:
+            raise ValueError("oversize_signal")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client:
+            client.setblocking(False)
+            client.sendto(payload, str(RING_AUTOMATION_SOCKET))
+    except (OSError, ValueError):
+        log("RING SIGNAL: dog-walk automation delivery failed")
+        return False
+    log(f"RING SIGNAL: delivered person motion site={site}")
+    return True
+
+
+_ring_automation_signal_sender = _send_ring_automation_signal
+
+
+def _apply_ring_automation_signal(site: str) -> None:
+    """Apply a validated Ring signal inside the dog-walk process only."""
+    global _ring_motion_during_walk
+    if site not in _RING_AUTOMATION_SIGNAL_SITES:
+        return
+    if _return_monitor_active:
+        _ring_motion_during_walk = True
+        log("RING SIGNAL: person motion during walk monitoring — signaling return")
+    else:
+        _ring_departure_motion[site] = time.monotonic()
+        log(f"RING SIGNAL: recorded departure hint site={site}")
+
+
+def _decode_ring_automation_signal(payload: bytes, *, now: datetime | None = None) -> str:
+    if not payload or len(payload) > _RING_AUTOMATION_SIGNAL_MAX_BYTES:
+        raise ValueError("invalid_signal_size")
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid_signal_json") from exc
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"schema_version", "signal", "site", "observed_at"}
+        or value.get("schema_version") != 1
+        or value.get("signal") != "person_motion"
+        or value.get("site") not in _RING_AUTOMATION_SIGNAL_SITES
+        or not isinstance(value.get("observed_at"), str)
+    ):
+        raise ValueError("invalid_signal_contract")
+    try:
+        observed_at = datetime.fromisoformat(value["observed_at"].replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid_signal_time") from exc
+    if observed_at.tzinfo is None:
+        raise ValueError("invalid_signal_time")
+    current = now or datetime.now(timezone.utc)
+    age = (current.astimezone(timezone.utc) - observed_at.astimezone(timezone.utc)).total_seconds()
+    if age < -5 or age > _RING_AUTOMATION_SIGNAL_MAX_AGE_SECONDS:
+        raise ValueError("stale_signal")
+    return value["site"]
+
+
+async def _ring_automation_signal_loop() -> None:
+    """Own the protected datagram endpoint used by Ring ingress."""
+    while True:
+        endpoint: socket.socket | None = None
+        bound_inode: int | None = None
+        try:
+            if not _ring_automation_parent_is_safe(create=True):
+                raise OSError("unsafe_signal_parent")
+            if RING_AUTOMATION_SOCKET.exists() or RING_AUTOMATION_SOCKET.is_symlink():
+                metadata = RING_AUTOMATION_SOCKET.lstat()
+                if (
+                    RING_AUTOMATION_SOCKET.is_symlink()
+                    or not stat.S_ISSOCK(metadata.st_mode)
+                    or metadata.st_uid != os.getuid()
+                ):
+                    raise OSError("unsafe_existing_signal_socket")
+                RING_AUTOMATION_SOCKET.unlink()
+            endpoint = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            endpoint.setblocking(False)
+            endpoint.bind(str(RING_AUTOMATION_SOCKET))
+            RING_AUTOMATION_SOCKET.chmod(0o600)
+            bound_inode = RING_AUTOMATION_SOCKET.lstat().st_ino
+            log("RING SIGNAL: dog-walk automation boundary ready")
+            loop = asyncio.get_running_loop()
+            while True:
+                payload = await loop.sock_recv(
+                    endpoint, _RING_AUTOMATION_SIGNAL_MAX_BYTES + 1
+                )
+                try:
+                    site = _decode_ring_automation_signal(payload)
+                except ValueError:
+                    log("RING SIGNAL: rejected invalid automation signal")
+                    continue
+                _apply_ring_automation_signal(site)
+        except asyncio.CancelledError:
+            raise
+        except OSError:
+            log("RING SIGNAL: automation boundary failed; retrying")
+            await asyncio.sleep(5)
+        finally:
+            if endpoint is not None:
+                endpoint.close()
+            try:
+                metadata = RING_AUTOMATION_SOCKET.lstat()
+                if (
+                    bound_inode is not None
+                    and metadata.st_ino == bound_inode
+                    and metadata.st_uid == os.getuid()
+                    and stat.S_ISSOCK(metadata.st_mode)
+                ):
+                    RING_AUTOMATION_SOCKET.unlink()
+            except OSError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Ring event handling (doorbell dings + return motion signal only)
 # ---------------------------------------------------------------------------
 
@@ -2920,7 +3189,10 @@ def _process_ring_event_on_loop(
 async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
     msg = f"\U0001f514 {device}: Doorbell rang!"
     log("NOTIFY: Ring doorbell message queued")
-    await _send_imessage_async(msg)
+    if await _send_imessage_async(msg):
+        log("NOTIFY: Ring doorbell message sent via supervised channel")
+    else:
+        log("NOTIFY: Ring doorbell message failed")
 
 
 def _utc_timestamp(epoch: float) -> str:
@@ -2995,24 +3267,12 @@ def _normalize_ring_home_event(
 
 
 def _handle_motion(doorbot_id: int, state: str) -> None:
-    """Handle motion — used for return detection AND departure combo trigger.
-
-    Runs on the asyncio loop thread (called from _process_ring_event_on_loop),
-    so access to _ring_departure_motion and _ring_motion_during_walk is safe.
-    """
-    global _ring_motion_during_walk
+    """Forward front-door person motion across the local automation boundary."""
     try:
         person_detected = state.lower() == "human"
-
-        if person_detected and _return_monitor_active:
-            _ring_motion_during_walk = True
-            log("RING MOTION during walk monitoring — signaling return")
-
-        elif person_detected and not _return_monitor_active:
-            # Track motion for departure combo trigger (Ring + Fi disconnect)
-            location = DOORBELL_LOCATIONS.get(doorbot_id)
-            if location:
-                _ring_departure_motion[location] = time.monotonic()
+        location = DOORBELL_LOCATIONS.get(doorbot_id)
+        if person_detected and location:
+            _ring_automation_signal_sender(location)
 
     except Exception as e:
         log(f"ERROR handling motion: {e}")
@@ -3025,13 +3285,9 @@ def _handle_motion(doorbot_id: int, state: str) -> None:
 _ring: Ring | None = None
 
 
-async def main() -> None:
-    global _ring, _main_loop
-    _main_loop = asyncio.get_running_loop()
-    if HOME_EVENTS_RING_ENABLED:
-        _ring_home_event_publisher.start()
-
-    log("Dog walk listener starting...")
+async def _start_dog_walk_automation() -> list[asyncio.Task]:
+    """Start dog-walk policy tasks without creating a Ring connection."""
+    log("Dog-walk automation starting...")
 
     # Safety: reset collar to NORMAL if stuck in LOST_DOG (e.g., after crash/power outage)
     try:
@@ -3043,6 +3299,22 @@ async def main() -> None:
             log(f"STARTUP: Collar mode OK ({fi_result.get('mode', 'unknown')})")
     except Exception as e:
         log(f"STARTUP: Could not check collar mode: {e}")
+
+    return [
+        asyncio.create_task(_ring_automation_signal_loop()),
+        asyncio.create_task(_inbox_poll_loop()),
+        asyncio.create_task(_fi_departure_poll_loop()),
+    ]
+
+
+async def _run_ring_event_listener() -> None:
+    """Own the one Ring FCM session and provider-ingress lifecycle."""
+    global _ring, _main_loop
+    _main_loop = asyncio.get_running_loop()
+    if HOME_EVENTS_RING_ENABLED:
+        _ring_home_event_publisher.start()
+
+    log("Ring event listener starting...")
 
     # Auth
     token = load_ring_token()
@@ -3086,11 +3358,7 @@ async def main() -> None:
         log("ERROR: Failed to start event listener (FCM registration failed)")
         sys.exit(1)
 
-    log("Ring event listener started (doorbell dings + return motion signal)")
-
-    # Start background loops
-    asyncio.create_task(_inbox_poll_loop())
-    asyncio.create_task(_fi_departure_poll_loop())
+    log("Ring event listener started (bus publication + direct dings + dog-walk signal)")
 
     # Watchdog — restart listener if FCM push receiver dies.
     # Poll every 60s with bounded exponential backoff on consecutive restart
@@ -3133,14 +3401,26 @@ async def main() -> None:
         pass
     finally:
         await listener.stop()
-        log("Dog walk listener stopped")
+        log("Ring event listener stopped")
+
+
+async def ring_event_listener_main() -> None:
+    """Dedicated Ring-ingress service entry point."""
+    await _run_ring_event_listener()
+
+
+async def dog_walk_automation_main() -> None:
+    """Dedicated dog-walk policy service entry point."""
+    tasks = await _start_dog_walk_automation()
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        log("Dog-walk automation stopped")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        log("Interrupted — shutting down")
-    except Exception as e:
-        log(f"FATAL: {e}")
-        sys.exit(1)
+    log("FATAL: service-runtime.py is not a service entry point")
+    sys.exit(2)

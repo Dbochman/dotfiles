@@ -336,8 +336,34 @@ Never retain media in the bus or enable Crosstown camera delivery implicitly.
   the shadow decision preceded canonical arrival by roughly seven minutes.
   Extended the shadow arrival grace from 90 seconds to 10 minutes while the
   existing direct Ring path remains immediate.
-- [ ] Complete Ring doorbell-ding and restart/reconnect parity evidence before
-  limited delivery.
+- [ ] Complete the remaining Cabin doorbell-ding evidence before limited
+  delivery. Crosstown ding, direct-message transport, and restart/reconnect
+  dedupe passed on August 5.
+
+### `2026-08-05`
+
+- [x] Captured two attended Crosstown doorbell presses as exactly one
+  `entry.doorbell_rang` event each, with source-time precision, the exact
+  `front_door` binding, zero duplicate IDs, and no Ring publisher failure,
+  drop, backlog, or dead letter.
+- [x] Restarted and reconnected the Ring listener twice while preserving the
+  cumulative publisher counters. Neither restart replayed either press or
+  changed the healthy bus projection.
+- [x] Repaired the legacy direct Ring notification path. The old standalone
+  `imsg send` command and a competing direct RPC worker both timed out beside
+  OpenClaw's persistent native channel. The listener now makes one bounded
+  send through that already-supervised channel, requires a matching receipt,
+  and never retries an ambiguous outcome. A labeled deployed transport canary
+  produced a local outgoing Messages row and Dylan confirmed receipt.
+- [x] Split the former combined dog-walk listener into the sole
+  `ai.openclaw.ring-event-listener` FCM ingress and independent
+  `ai.openclaw.dog-walk-automation` policy service. Their protected local
+  contract contains only a fresh `person_motion` signal and safe site alias.
+  The attended cutover retained Ring publication at 169/169 with zero failures
+  or drops, started each service exactly once, and left the event bus healthy.
+- [ ] Capture the equivalent attended Cabin doorbell press. Existing focused
+  tests continue to prove that Ring publication failure or disablement cannot
+  change legacy ding or dog-walk handling.
 
 ## Decisions required before limited delivery
 

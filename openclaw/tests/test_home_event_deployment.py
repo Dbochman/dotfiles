@@ -28,6 +28,31 @@ LABELS = (
 
 
 class HomeEventDeploymentTests(unittest.TestCase):
+    def test_ring_ingress_and_dog_walk_policy_have_distinct_service_contracts(self) -> None:
+        ring_path = OPENCLAW / "launchagents" / "ai.openclaw.ring-event-listener.plist"
+        dog_path = OPENCLAW / "launchagents" / "ai.openclaw.dog-walk-automation.plist"
+        ring = plistlib.loads(ring_path.read_bytes())
+        dog = plistlib.loads(dog_path.read_bytes())
+
+        self.assertEqual(ring["Label"], "ai.openclaw.ring-event-listener")
+        self.assertEqual(dog["Label"], "ai.openclaw.dog-walk-automation")
+        self.assertIn("ring-event-listener-wrapper.sh", ring["ProgramArguments"][1])
+        self.assertIn("dog-walk-automation-wrapper.sh", dog["ProgramArguments"][1])
+        self.assertNotEqual(ring["StandardOutPath"], dog["StandardOutPath"])
+        self.assertIn("HOME_EVENTS_RING_ENABLED", ring["EnvironmentVariables"])
+        self.assertNotIn("HOME_EVENTS_RING_ENABLED", dog["EnvironmentVariables"])
+        self.assertFalse(
+            (OPENCLAW / "launchagents" / "ai.openclaw.dog-walk-listener.plist").exists()
+        )
+
+        skill = OPENCLAW / "skills" / "dog-walk"
+        ring_entry = (skill / "ring-event-listener.py").read_text(encoding="utf-8")
+        dog_entry = (skill / "dog-walk-automation.py").read_text(encoding="utf-8")
+        self.assertIn("ring_event_listener_main", ring_entry)
+        self.assertNotIn("dog_walk_automation_main", ring_entry)
+        self.assertIn("dog_walk_automation_main", dog_entry)
+        self.assertNotIn("ring_event_listener_main", dog_entry)
+
     def test_plists_are_shadow_safe_and_wrapper_owned(self) -> None:
         for label in LABELS:
             with self.subTest(label=label):
@@ -90,7 +115,7 @@ class HomeEventDeploymentTests(unittest.TestCase):
         )
         producer_flags = (
             (
-                "ai.openclaw.dog-walk-listener.plist",
+                "ai.openclaw.ring-event-listener.plist",
                 "HOME_EVENTS_RING_ENABLED",
             ),
             (

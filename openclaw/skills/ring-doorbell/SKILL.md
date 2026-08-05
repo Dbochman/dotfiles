@@ -93,7 +93,11 @@ Too many auth attempts. Wait a few minutes. Token caching prevents this under no
 
 ## Skill Boundaries
 
-This skill handles Ring device CLI queries only.
+This skill handles on-demand Ring device CLI queries only. The independent
+`ai.openclaw.ring-event-listener` service owns the sole persistent FCM
+connection, normalized home-event publication, direct dings, and the narrow
+safe-site signal consumed by dog-walk automation; do not start another Ring
+listener from this skill.
 
 For related tasks, switch to:
 - **dog-walk**: Automated dog walk detection + Roomba automation (uses Ring for return monitoring only)

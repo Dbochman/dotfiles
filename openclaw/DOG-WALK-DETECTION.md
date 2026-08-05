@@ -1,6 +1,8 @@
 # Dog Walk Detection — Implementation Spec
 
-Implementation details for the departure and return detection logic in `dog-walk-listener.py`. This document covers signal sources, timing, state machines, and known edge cases.
+Implementation details for the departure and return detection logic in
+`dog-walk-automation.py`. This document covers signal sources, timing, state
+machines, and known edge cases.
 
 For operational docs (deploy, snooze, dashboard), see `skills/dog-walk/SKILL.md`.
 
@@ -8,16 +10,22 @@ For operational docs (deploy, snooze, dashboard), see `skills/dog-walk/SKILL.md`
 
 ## Architecture Overview
 
-A single Python asyncio process (`ai.openclaw.dog-walk-listener` LaunchAgent) runs three concurrent loops plus an event-driven callback:
+Dog-walk policy and Ring provider ingress run as separate processes. The split
+keeps the sole Ring FCM connection in `ai.openclaw.ring-event-listener` while
+`ai.openclaw.dog-walk-automation` runs three policy loops and receives one
+strict local signal:
 
 | Component | Type | Purpose |
 |-----------|------|---------|
 | `_fi_departure_poll_loop` | asyncio task | Polls Fi GPS API to detect departures |
 | `_return_poll_loop` | asyncio task | Polls Fi GPS + WiFi to detect returns (spawned per walk) |
 | `_inbox_poll_loop` | asyncio task | Watches filesystem inbox for manual trigger IPC |
-| `on_event` (FCM callback) | Sync callback on FCM thread | Receives Ring doorbell events in real-time |
+| `_ring_automation_signal_loop` | Unix datagram receiver | Accepts only a fresh `person_motion` signal and safe site alias from Ring ingress |
 
-All loops share state via module-level globals. The FCM callback runs on a **background thread** (not the asyncio event loop) and bridges events to the main loop via `call_soon_threadsafe`. See [Thread Safety](#thread-safety-fcm-callback).
+The dog-walk loops share state only within the policy process. The FCM callback
+runs in the independent Ring process, bridges to that process's asyncio loop,
+and sends the nonblocking local signal. Ring provider IDs, device names, and
+event IDs never cross the automation boundary.
 
 ---
 
@@ -37,7 +45,8 @@ All loops share state via module-level globals. The FCM callback runs on a **bac
 
 ### Ring Doorbell (FCM Push)
 
-- **Delivery**: Firebase Cloud Messaging push → `ring_doorbell` Python library → `on_event` callback
+- **Delivery**: Firebase Cloud Messaging push → `ring_doorbell` Python library
+  → `ai.openclaw.ring-event-listener` → protected local datagram
 - **Event types**: `motion` (with `state`: `human` / `other`), `ding` (doorbell press)
 - **Latency**: Near-instant (~1-3s from physical motion to callback)
 - **Coverage**: Front door only (no back door coverage at either location)
@@ -101,11 +110,13 @@ The fastest departure path. Two independent signals confirm departure without ne
 
 **Sequence:**
 1. Person walks out front door → Ring doorbell detects human motion
-2. `on_event` callback fires on FCM thread → `_handle_motion_sync` sets `_ring_departure_motion[location] = time.monotonic()`
-3. On next Fi poll iteration, `has_recent_ring` evaluates True → poll interval drops to 30s (`FI_FAST_POLL_INTERVAL`)
-4. Fi API response shows `connection` transitioned from `"Base"` to `"User"` or `"Cellular"` → `base_just_disconnected = True`
-5. Combo check: `home_anchor in _ring_departure_motion` AND `ring_age <= 300s` → **departure confirmed immediately**
-6. No GPS geofence confirmation needed
+2. The Ring process maps the exact device binding to a safe site alias and
+   sends one fresh `person_motion` datagram
+3. Dog-walk automation stores `_ring_departure_motion[location] = time.monotonic()`
+4. On next Fi poll iteration, `has_recent_ring` evaluates True → poll interval drops to 30s (`FI_FAST_POLL_INTERVAL`)
+5. Fi API response shows `connection` transitioned from `"Base"` to `"User"` or `"Cellular"` → `base_just_disconnected = True`
+6. Combo check: `home_anchor in _ring_departure_motion` AND `ring_age <= 300s` → **departure confirmed immediately**
+7. No GPS geofence confirmation needed
 
 **Timing budget:**
 | Step | Duration | Cumulative |
@@ -427,9 +438,14 @@ def on_event(event: RingEvent) -> None:
     )
 ```
 
-`_process_ring_event_on_loop` runs on the main asyncio thread and owns all shared state writes (`_ring_departure_motion`, `_ring_motion_during_walk`, `_recent_events`). No shared mutable state is touched from the FCM thread.
+`_process_ring_event_on_loop` runs on the Ring process's asyncio thread and owns
+Ring deduplication, publication, and notification scheduling. Front-door person
+motion is reduced to a safe site alias and sent over a nonblocking Unix
+datagram; no dog-walk state is shared with the Ring process.
 
-The `_main_loop` reference is set once in `main()` via `asyncio.get_running_loop()` before the Ring listener starts. Events that arrive before this (startup race) are logged and dropped.
+The `_main_loop` reference is set once in `ring_event_listener_main()` before
+the Ring listener starts. Events that arrive before this startup boundary are
+logged and dropped.
 
 ### Blocking I/O Off the Event Loop
 
@@ -447,14 +463,14 @@ workers cannot overwrite enrichment or classification fields with stale data.
 
 ### Shared State Model (Post-Hardening)
 
-All shared state is now accessed exclusively from the asyncio loop thread:
+Each process accesses its own mutable state exclusively from its asyncio loop:
 
 | Variable | Written by | Read by | Notes |
 |----------|-----------|---------|-------|
-| `_ring_departure_motion` | loop thread (via bridge) | loop thread (Fi poll) | Single-thread access |
-| `_ring_motion_during_walk` | loop thread (via bridge) | loop thread (return poll) | Single-thread access |
-| `_return_monitor_active` | loop thread | loop thread (bridge reads it) | Single-thread access |
-| `_recent_events` | loop thread (via bridge) | loop thread (via bridge) | Single-thread access |
+| `_ring_departure_motion` | dog-walk signal loop | dog-walk Fi poll | Dog-walk process only |
+| `_ring_motion_during_walk` | dog-walk signal loop | dog-walk return poll | Dog-walk process only |
+| `_return_monitor_active` | dog-walk loop | dog-walk loops | Dog-walk process only |
+| `_recent_events` | Ring event loop | Ring event loop | Ring process only |
 
 ---
 
@@ -522,12 +538,14 @@ The Fi collar can briefly report coordinates just outside the geofence radius du
 ### Car Trips (Round-Trip)
 A departure to run errands (Crosstown → store → Crosstown) triggers departure detection like any walk. The car speed check switches the collar to NORMAL after 6 minutes at >30 mph, and marks the route with `is_car_trip: true` on finalization. The `is_interhome_transit` flag only catches walks that end at a *different* known location, so round-trip car errands need this separate flag. The dashboard filters both `is_car_trip` and `is_interhome_transit` from the walk list.
 
-### Listener Restarts
-The listener process may restart (KeepAlive LaunchAgent). On restart:
+### Service Restarts
+Either process may restart independently under `KeepAlive`:
 - Home anchor is bootstrapped from `state.json`
-- Collar mode is checked and reset to NORMAL if stuck in LOST_DOG
-- All in-memory state (`_ring_departure_motion`, candidates, etc.) is lost
-- FCM credentials are reloaded for Ring event listener
+- Dog-walk automation checks and resets a collar stuck in LOST_DOG mode
+- Dog-walk in-memory hints and candidates are lost, but GPS-only detection remains
+- Ring ingress reloads FCM credentials without resetting dog-walk policy state
+- A Ring restart never creates a second FCM connection because dog-walk
+  automation does not import provider lifecycle into its entry point
 
 ---
 
@@ -543,11 +561,13 @@ The listener process may restart (KeepAlive LaunchAgent). On restart:
 │       └── YYYY-MM-DD/
 │           └── <walk_id>.json  # GPS route + metadata per walk
 ├── inbox/                      # IPC for manual trigger (dog-walk-start)
+├── ring-automation.sock        # 0600 short-lived Ring person-motion datagrams
 ├── snooze.json                 # Roomba snooze state per location
-└── fcm-credentials.json        # Ring FCM push credentials
+└── fcm-credentials.json        # Ring ingress FCM push credentials
 
 ~/.openclaw/logs/
-└── dog-walk-listener.log       # Operational log (local timestamps)
+├── dog-walk-automation.log     # Fi/network/route/Roomba policy
+└── ring-event-listener.log     # Ring ingress and publication health
 ```
 
 ---

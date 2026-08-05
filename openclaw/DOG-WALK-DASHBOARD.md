@@ -10,7 +10,8 @@ Single-file Python HTTP server with embedded Chart.js and Leaflet UI. Visualizes
 
 | Component | Source | Data |
 |-----------|--------|------|
-| Dog Walk Listener | `dog-walk-listener.py` (LaunchAgent) | Fi GPS departure detection, return monitoring, dock lifecycle |
+| Dog Walk Automation | `dog-walk-automation.py` (LaunchAgent) | Fi GPS departure detection, return monitoring, dock lifecycle |
+| Ring Event Listener | `ring-event-listener.py` (LaunchAgent) | Sole Ring FCM ingress and safe-site motion signal |
 | Walk and route history | JSONL events + per-walk route files | Lifecycle, return signals, distance, walkers, and Fi points |
 | Fi GPS Collar | `fi-collar status` | Potato's GPS, battery, activity, connection |
 | Network Presence | `presence-detect.sh` | WiFi scans (Starlink gRPC for cabin, ARP for crosstown) |
@@ -25,12 +26,15 @@ Two locations: **Cabin** (Phillipston) and **Crosstown** (West Roxbury).
 
 ```
 Mac Mini (dylans-mac-mini)
-├── Dog Walk Listener: ~/.openclaw/skills/dog-walk/dog-walk-listener.py
+├── Dog Walk Automation: ~/.openclaw/skills/dog-walk/dog-walk-automation.py
 │   ├── State: ~/.openclaw/dog-walk/state.json
 │   ├── History: ~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl
 │   ├── Routes: ~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json
 │   ├── Inbox: ~/.openclaw/dog-walk/inbox/ (dog-walk-start IPC)
-│   ├── Home anchor: last Fi geofence Potato was inside (`home_location`)
+│   └── Home anchor: last Fi geofence Potato was inside (`home_location`)
+│
+├── Ring Event Listener: ~/.openclaw/skills/dog-walk/ring-event-listener.py
+│   ├── Local signal: ~/.openclaw/dog-walk/ring-automation.sock
 │   └── FCM credentials: ~/.openclaw/dog-walk/fcm-credentials.json
 │
 ├── Dashboard Server: ~/.openclaw/bin/dog-walk-dashboard.py (port 8552)
@@ -54,7 +58,8 @@ Mac Mini (dylans-mac-mini)
 
 | Label | Type | Command | Port/Logs |
 |-------|------|---------|-----------|
-| `ai.openclaw.dog-walk-listener` | KeepAlive | `dog-walk-listener-wrapper.sh` | `~/.openclaw/logs/dog-walk-listener.log` |
+| `ai.openclaw.dog-walk-automation` | KeepAlive | `dog-walk-automation-wrapper.sh` | `~/.openclaw/logs/dog-walk-automation.log` |
+| `ai.openclaw.ring-event-listener` | KeepAlive | `ring-event-listener-wrapper.sh` | `~/.openclaw/logs/ring-event-listener.log` |
 | `ai.openclaw.dog-walk-dashboard` | KeepAlive | `python3 ~/.openclaw/bin/dog-walk-dashboard.py` | `~/.openclaw/logs/dog-walk-dashboard.{log,err.log}` |
 
 ---

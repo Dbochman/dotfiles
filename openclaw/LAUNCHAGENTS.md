@@ -17,7 +17,8 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.home-dashboard` | `home-dashboard.py` | 8558 | Home Control Plane dashboard and provider status API |
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
 | `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
-| `ai.openclaw.dog-walk-listener` | `dog-walk-listener-wrapper.sh` | — | Dog walk automation (Fi GPS departure, Ring/WiFi/Fi return monitoring) |
+| `ai.openclaw.ring-event-listener` | `ring-event-listener-wrapper.sh` | — | Sole Ring FCM ingress, home-event publication, direct dings, and a narrow local dog-walk signal |
+| `ai.openclaw.dog-walk-automation` | `dog-walk-automation-wrapper.sh` | — | Fi/network departure and return policy, route tracking, collar modes, and Roomba lifecycle |
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary over explicit iMessage RPC bridge transport, hard-limited to one send attempt/hour |
 | `ai.openclaw.cabin-entry-verifier` | `cabin-entry-verifier-wrapper.sh` | — | Ordered Cabin Ring driveway → front-door consumer; exact Kitchen stills at +30/+60 seconds, ephemeral media, fixed positive confirmation |
@@ -413,6 +414,12 @@ The script owns its bounded log at
 `/dev/null`. The daily dotfiles pull deploys the script and reloads this one
 repo-managed LaunchAgent when its plist changes. Other service plists retain
 their manual deployment policy.
+
+The Ring event listener's direct dings and dog-walk automation's operational
+warnings each use one bounded request through OpenClaw's already-supervised
+native iMessage channel. They require the protected exact chat ID and do not
+retry an ambiguous timeout. Ring FCM handling, home-event publication, and the
+local dog-walk signal remain independent of message delivery.
 
 Post-reboot verification:
 

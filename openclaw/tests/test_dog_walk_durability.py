@@ -20,7 +20,7 @@ from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LISTENER_PATH = REPO_ROOT / "openclaw/skills/dog-walk/dog-walk-listener.py"
+LISTENER_PATH = REPO_ROOT / "openclaw/skills/dog-walk/service-runtime.py"
 
 
 def load_listener(fake_home: Path):

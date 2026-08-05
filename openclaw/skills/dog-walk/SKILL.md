@@ -11,7 +11,12 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
 
 ## Current Model
 
-- Departure detection is **Fi-only**. Ring and presence no longer decide whether a walk started.
+- Departure decisions remain **Fi-owned**. A recent front-door Ring person signal
+  may accelerate Fi confirmation, but Ring alone never starts a walk.
+- `ai.openclaw.ring-event-listener` owns the sole Ring FCM connection. It sends
+  only a short-lived local `person_motion` hint to
+  `ai.openclaw.dog-walk-automation`; the dog-walk service owns Fi, network,
+  route, collar, and Roomba policy.
 - The listener uses Potato's Fi GPS/geofence result to choose the home, and stores the last confirmed in-geofence home as `home_location`.
 - Walks now get immutable `walk_id` and `origin_location` fields at departure.
 - Route files are persisted atomically during return monitoring at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`; per-route locking keeps concurrent polling, finalization, car marking, and delayed Fi enrichment from dropping one another's fields.
@@ -27,9 +32,11 @@ Departure uses **combo triggers** for fast detection (~1 min), with a GPS geofen
 
 #### Combo Trigger 1: Ring + Fi Base Disconnect
 
-1. Ring doorbell detects human motion → timestamp stored per location
-2. Polling immediately switches from 3min to 30s intervals
-3. When Fi collar disconnects from base station AND recent Ring motion exists (within 5min) → **departure confirmed immediately**
+1. Ring doorbell detects human motion → the Ring ingress sends a protected
+   local signal containing only the safe site alias
+2. Dog-walk automation stores the short-lived timestamp per location
+3. Polling immediately switches from 3min to 30s intervals
+4. When Fi collar disconnects from base station AND recent Ring motion exists (within 5min) → **departure confirmed immediately**
 
 **Typical latency:** ~1 minute
 
@@ -97,6 +104,11 @@ After departure, the return monitor uses three signals — any one triggers Room
 - **Resilient finalization:** once a return signal is confirmed, the loop always exits. Walk path capture, dock, and state updates are each wrapped in individual try/except blocks so a failure in any step cannot cause the monitor to loop back and re-trigger
 - **Dock sends stop first:** the `crosstown-roomba dock` command sends `stop` before `dock` because iRobot's MQTT `dock` is silently ignored during active cleaning. The CLI now skips stop+dock for any robot whose `phase` is `charge` (already on dock), so the verify-retry path doesn't re-stop a docked robot when only one needs a re-dock.
 - **Post-dock verification:** 3 minutes after the dock command, a background thread checks if roombas are actually on the dock (`Charging (on dock)` in status). If not, it retries the dock command up to 2 times (3min between each). If still not docked after all retries, sends an iMessage warning. State is updated with `dock_verified: true/false` and `dock_retry_count`.
+- Dog-walk operational warnings use one bounded send through OpenClaw's
+  already-supervised native iMessage channel. Delivery requires the protected
+  exact `chat_id` target, accepts only a matching channel receipt, and never
+  retries an ambiguous timeout. Direct Ring dings belong to the independent
+  Ring ingress service.
 
 ### GPS Tracking Mode (Lost Dog)
 
@@ -133,7 +145,7 @@ Start commands have a 2-hour cooldown to prevent re-triggering. Dock commands al
 dog-walk-start <location>    # "cabin" or "crosstown"
 ```
 
-Starts Roombas and signals the listener to begin return monitoring via inbox IPC.
+Starts Roombas and signals dog-walk automation to begin return monitoring via inbox IPC.
 
 ## State Tracking
 
@@ -142,27 +154,35 @@ Starts Roombas and signals the listener to begin return monitoring via inbox IPC
 - Per-walk routes: `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`
 - Inbox (IPC): `~/.openclaw/dog-walk/inbox/`
 
-## LaunchAgent
+## LaunchAgents
 
-The listener runs as a persistent `KeepAlive` LaunchAgent (`ai.openclaw.dog-walk-listener`).
+Two persistent `KeepAlive` services have explicit ownership:
+
+- `ai.openclaw.dog-walk-automation`: Fi departure and return policy, network
+  observation, routes, collar modes, and Roomba lifecycle.
+- `ai.openclaw.ring-event-listener`: sole Ring FCM ingress, event-bus
+  publication, direct dings, and the narrow local dog-walk signal.
 
 To check:
 ```bash
-launchctl list | grep dog-walk-listener    # should show PID
-tail -f ~/.openclaw/logs/dog-walk-listener.log
+launchctl list | grep -E 'dog-walk-automation|ring-event-listener'
+tail -f ~/.openclaw/logs/dog-walk-automation.log
+tail -f ~/.openclaw/logs/ring-event-listener.log
 ```
 
 To restart:
 ```bash
-launchctl unload ~/Library/LaunchAgents/ai.openclaw.dog-walk-listener.plist
-launchctl load ~/Library/LaunchAgents/ai.openclaw.dog-walk-listener.plist
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-automation
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.ring-event-listener
 ```
 
 ## Deploy Notes
 
 Recent dog-walk changes touched these paths:
 
-- `openclaw/skills/dog-walk/dog-walk-listener.py`
+- `openclaw/skills/dog-walk/dog-walk-automation.py`
+- `openclaw/skills/dog-walk/ring-event-listener.py`
+- `openclaw/skills/dog-walk/service-runtime.py` (shared implementation; never a service entry point)
 - `openclaw/bin/dog-walk-dashboard.py`
 - `openclaw/bin/roomba-dashboard.py`
 - `openclaw/skills/fi-collar/fi-api.py`
@@ -170,7 +190,8 @@ Recent dog-walk changes touched these paths:
 If deploying to the Mac Mini, make sure the updated files are present under `~/.openclaw/`, then restart:
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-listener
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-automation
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.ring-event-listener
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.dog-walk-dashboard
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.roomba-dashboard
 ```
@@ -178,7 +199,8 @@ launchctl kickstart -k gui/$(id -u)/ai.openclaw.roomba-dashboard
 Quick verification:
 
 ```bash
-tail -20 ~/.openclaw/logs/dog-walk-listener.log
+tail -20 ~/.openclaw/logs/dog-walk-automation.log
+tail -20 ~/.openclaw/logs/ring-event-listener.log
 tail -20 ~/.openclaw/logs/dog-walk-dashboard.log
 tail -20 ~/.openclaw/logs/roomba-dashboard.log
 curl -s http://localhost:8552/api/routes?days=30 | jq '.meta'

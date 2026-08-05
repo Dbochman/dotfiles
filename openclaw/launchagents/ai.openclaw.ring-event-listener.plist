@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.ring-event-listener</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/dbochman/.openclaw/skills/dog-walk/ring-event-listener-wrapper.sh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/dbochman</string>
+        <key>HOME_EVENTS_RING_ENABLED</key>
+        <string>0</string>
+    </dict>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/dbochman/.openclaw/logs/ring-event-listener.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dbochman/.openclaw/logs/ring-event-listener.log</string>
+</dict>
+</plist>

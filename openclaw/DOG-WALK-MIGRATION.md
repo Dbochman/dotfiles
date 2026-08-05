@@ -1,5 +1,11 @@
 # Dog Walk Skill Migration (2026-04-04)
 
+> Historical migration record. As of 2026-08-05, the combined
+> `ai.openclaw.dog-walk-listener` described below has been split into
+> `ai.openclaw.ring-event-listener` and
+> `ai.openclaw.dog-walk-automation`. Current operations live in
+> `skills/dog-walk/SKILL.md` and `DOG-WALK-DETECTION.md`.
+
 ## Summary
 
 The dog walk automation system was extracted from the `ring-doorbell` skill into a standalone `dog-walk` skill. The primary change is architectural: **departure detection now uses Fi GPS exclusively** (Potato's collar leaving the geofence), replacing Ring doorbell vision analysis. Return monitoring is unchanged (Ring motion + WiFi + Fi GPS).

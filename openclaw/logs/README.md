@@ -27,7 +27,8 @@ Each service uses one of two patterns:
 
 | Log file | Service | Description |
 |----------|---------|-------------|
-| `dog-walk-listener.log` | `ai.openclaw.dog-walk-listener` | Dog walk detection (Fi GPS departure, multi-signal return) |
+| `dog-walk-automation.log` | `ai.openclaw.dog-walk-automation` | Fi/network dog-walk policy, route tracking, collar mode, and Roomba lifecycle |
+| `ring-event-listener.log` | `ai.openclaw.ring-event-listener` | Sole Ring FCM ingress, normalized publication, direct dings, and local signal health |
 | `ola-webhook-bridge.log` / `.err.log` | `ai.openclaw.ola-webhook-bridge` | Owner-only operational metadata and stderr for the HMAC-verifying Ola wake bridge; never callback bodies, signatures, or credentials |
 | `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Cielo AC token refresh via pinchtab |
 | `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh; stdout and stderr share this file |
@@ -55,7 +56,7 @@ diagnostics can share one provider log; check both `resy.log` and
 | Current and recovery gateway logs | Truncate to last 1000 lines when >5MB | Gateway wrapper on startup/restart |
 | `nest-cron.log` | Truncate to last 50 lines when >100KB | Nest snapshot plist inline bash |
 | `presence-detect.log` | Rotate at 100MiB, keep 3 prior files | Presence script startup, with a directory lock shared by scan and receive paths |
-| `dog-walk-listener.log` | Rotate at 100MB, keep 3 prior files; stderr duplicate/rate guard forces restart on sustained spam | Listener restart wrapper |
+| `dog-walk-automation.log` / `ring-event-listener.log` | Rotate each at 100MB, keep 3 prior files; stderr duplicate/rate guard forces restart on sustained spam | Respective service wrapper |
 | All others | No automatic rotation | Low-volume scheduled output; monitor size periodically |
 
 `presence-receive` is a script-owned, one-shot WatchPaths job. Its plist sends
@@ -74,7 +75,8 @@ To check log sizes: `ls -lhS ~/.openclaw/logs/*.log`
 
 ```bash
 # Live tail a service log
-tail -f ~/.openclaw/logs/dog-walk-listener.log
+tail -f ~/.openclaw/logs/dog-walk-automation.log
+tail -f ~/.openclaw/logs/ring-event-listener.log
 
 # Live tail the generated gateway service
 tail -f ~/Library/Logs/openclaw/gateway.log

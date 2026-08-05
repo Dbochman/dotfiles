@@ -15,12 +15,13 @@ import threading
 import time
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LISTENER_PATH = REPO_ROOT / "openclaw/skills/dog-walk/dog-walk-listener.py"
+LISTENER_PATH = REPO_ROOT / "openclaw/skills/dog-walk/service-runtime.py"
 
 
 def load_listener(fake_home: Path):
@@ -98,6 +99,8 @@ class RingHomeEventTests(unittest.TestCase):
         self.module._return_monitor_active = False
         self.module._ring_motion_during_walk = False
         self.module.HOME_EVENTS_RING_ENABLED = True
+        self.signals: list[str] = []
+        self.module._ring_automation_signal_sender = self.signals.append
 
     def process(self, **overrides) -> None:
         values = {
@@ -169,8 +172,7 @@ class RingHomeEventTests(unittest.TestCase):
         self.assertEqual(payload["entity_kind"], "doorbell")
         self.assertEqual(payload["entity_alias"], "front_door")
         self.assertEqual(payload["source_event_id"], "697442349:123457")
-        self.assertIn("cabin", self.module._ring_departure_motion)
-        self.assertNotIn("crosstown", self.module._ring_departure_motion)
+        self.assertEqual(self.signals, ["cabin"])
         self.assertEqual(self.publisher.quarantined, 0)
 
         combined_logs = "\n".join(self.logs)
@@ -207,7 +209,7 @@ class RingHomeEventTests(unittest.TestCase):
             f"{driveway_id}:123458",
         )
         self.assertNotIn(driveway_id, self.module.DOORBELL_LOCATIONS)
-        self.assertEqual(self.module._ring_departure_motion, {})
+        self.assertEqual(self.signals, [])
         self.assertEqual(self.publisher.quarantined, 0)
 
         combined_logs = "\n".join(self.logs)
@@ -266,19 +268,15 @@ class RingHomeEventTests(unittest.TestCase):
             )
         )
 
-    def test_dedupe_precedes_bus_tee_and_legacy_person_motion_is_preserved(self) -> None:
+    def test_dedupe_precedes_bus_tee_and_automation_signal(self) -> None:
         self.process()
-        first_departure_timestamp = self.module._ring_departure_motion["crosstown"]
         self.process()
 
         self.assertEqual(len(self.publisher.payloads), 1)
         self.assertEqual(
             self.publisher.payloads[0]["event_type"], "entry.person_detected"
         )
-        self.assertEqual(
-            self.module._ring_departure_motion["crosstown"],
-            first_departure_timestamp,
-        )
+        self.assertEqual(self.signals, ["crosstown"])
 
     def test_delayed_ring_events_are_bounded_backfill_and_never_drive_legacy(self) -> None:
         with mock.patch.object(self.module.time, "time", return_value=1_788_001_000.0):
@@ -288,7 +286,7 @@ class RingHomeEventTests(unittest.TestCase):
         payload = self.publisher.payloads[0]
         self.assertEqual(payload["time_precision"], "backfill")
         self.assertTrue(payload["attributes"]["backfill"])
-        self.assertNotIn("crosstown", self.module._ring_departure_motion)
+        self.assertEqual(self.signals, [])
 
         self.module._recent_events.clear()
         self.publisher.payloads.clear()
@@ -296,17 +294,16 @@ class RingHomeEventTests(unittest.TestCase):
             self.process(event_id=123457, occurred_at_epoch=1_788_000_000.0)
 
         self.assertEqual(self.publisher.payloads, [])
-        self.assertNotIn("crosstown", self.module._ring_departure_motion)
+        self.assertEqual(self.signals, [])
         self.assertIn("reason=stale_backfill", "\n".join(self.logs))
 
-    def test_unknown_device_is_quarantined_but_legacy_motion_continues(self) -> None:
+    def test_unknown_device_is_quarantined_without_crossing_automation_boundary(self) -> None:
         self.module._return_monitor_active = True
         self.process(doorbot_id=999999999)
 
         self.assertEqual(self.publisher.payloads, [])
         self.assertEqual(self.publisher.quarantined, 1)
-        self.assertTrue(self.module._ring_motion_during_walk)
-        self.assertEqual(self.module._ring_departure_motion, {})
+        self.assertEqual(self.signals, [])
         combined_logs = "\n".join(self.logs)
         self.assertIn("reason=unknown_device", combined_logs)
         self.assertNotIn("site=cabin", combined_logs)
@@ -321,7 +318,78 @@ class RingHomeEventTests(unittest.TestCase):
 
         self.assertEqual(self.publisher.payloads, [])
         self.assertIn("reason=producer_disabled", "\n".join(self.logs))
+        self.assertEqual(self.signals, ["crosstown"])
+
+    def test_validated_automation_signal_updates_only_dog_walk_state(self) -> None:
+        observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        payload = json.dumps(
+            {
+                "schema_version": 1,
+                "signal": "person_motion",
+                "site": "crosstown",
+                "observed_at": observed_at,
+            }
+        ).encode()
+
+        site = self.module._decode_ring_automation_signal(payload)
+        self.module._apply_ring_automation_signal(site)
         self.assertIn("crosstown", self.module._ring_departure_motion)
+
+        self.module._return_monitor_active = True
+        self.module._apply_ring_automation_signal(site)
+        self.assertTrue(self.module._ring_motion_during_walk)
+
+    def test_automation_signal_contract_rejects_stale_or_expanded_payloads(self) -> None:
+        stale = {
+            "schema_version": 1,
+            "signal": "person_motion",
+            "site": "crosstown",
+            "observed_at": "2026-08-05T12:00:00Z",
+        }
+        now = datetime(2026, 8, 5, 12, 2, tzinfo=timezone.utc)
+        with self.assertRaisesRegex(ValueError, "stale_signal"):
+            self.module._decode_ring_automation_signal(
+                json.dumps(stale).encode(), now=now
+            )
+        stale["provider_id"] = 123456
+        with self.assertRaisesRegex(ValueError, "invalid_signal_contract"):
+            self.module._decode_ring_automation_signal(
+                json.dumps(stale).encode(), now=now
+            )
+
+    def test_protected_local_socket_delivers_ring_signal_to_dog_walk_process(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "dog-walk"
+            root.mkdir(mode=0o700)
+            endpoint = root / "ring-automation.sock"
+
+            async def scenario() -> None:
+                task = asyncio.create_task(self.module._ring_automation_signal_loop())
+                try:
+                    deadline = time.monotonic() + 1
+                    while not endpoint.exists() and time.monotonic() < deadline:
+                        await asyncio.sleep(0.01)
+                    self.assertTrue(endpoint.exists())
+                    self.assertEqual(endpoint.stat().st_mode & 0o777, 0o600)
+                    self.assertTrue(
+                        self.module._send_ring_automation_signal("crosstown")
+                    )
+                    deadline = time.monotonic() + 1
+                    while (
+                        "crosstown" not in self.module._ring_departure_motion
+                        and time.monotonic() < deadline
+                    ):
+                        await asyncio.sleep(0.01)
+                    self.assertIn("crosstown", self.module._ring_departure_motion)
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+            with mock.patch.object(
+                self.module, "RING_AUTOMATION_SOCKET", endpoint
+            ):
+                asyncio.run(scenario())
+            self.assertFalse(endpoint.exists())
 
     def test_ding_message_is_unchanged_while_logs_use_safe_aliases(self) -> None:
         sent: list[str] = []
@@ -345,9 +413,121 @@ class RingHomeEventTests(unittest.TestCase):
         )
         combined_logs = "\n".join(self.logs)
         self.assertIn("site=crosstown entity=front_door", combined_logs)
+        self.assertIn("Ring doorbell message sent via supervised channel", combined_logs)
         self.assertNotIn("Provider Front Door Name", combined_logs)
         self.assertNotIn("684794187", combined_logs)
         self.assertNotIn("123456", combined_logs)
+
+    def test_imessage_delivery_uses_one_supervised_channel_request(self) -> None:
+        receipt = {
+            "action": "send",
+            "channel": "imessage",
+            "dryRun": False,
+            "handledBy": "core",
+            "messageId": "test-message-guid",
+            "payload": {
+                "channel": "imessage",
+                "to": "chat_id:171",
+                "via": "gateway",
+                "result": {"messageId": "test-message-guid"},
+            },
+        }
+        completed = subprocess.CompletedProcess(
+            [self.module.OPENCLAW_CLI, "message", "send"],
+            0,
+            stdout=json.dumps(receipt) + "\n",
+            stderr="",
+        )
+
+        with (
+            mock.patch.object(
+                self.module,
+                "DYLAN_IMESSAGE_TARGET",
+                "chat_id:171",
+            ),
+            mock.patch.object(
+                self.module.subprocess,
+                "run",
+                return_value=completed,
+            ) as run,
+            mock.patch.dict(
+                self.module.os.environ,
+                {
+                    "HOME": str(Path.home()),
+                    "OPENCLAW_GATEWAY_TOKEN": "test-gateway-token",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertTrue(
+                self.module.send_imessage(
+                    "\U0001f514 Provider Front Door Name: Doorbell rang!"
+                )
+            )
+
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        options = run.call_args.kwargs
+        self.assertEqual(
+            command,
+            [
+                self.module.OPENCLAW_CLI,
+                "message",
+                "send",
+                "--channel",
+                "imessage",
+                "--target",
+                "chat_id:171",
+                "--message",
+                "\U0001f514 Provider Front Door Name: Doorbell rang!",
+                "--json",
+            ],
+        )
+        self.assertEqual(options["timeout"], self.module.IMESSAGE_SEND_TIMEOUT_SECONDS)
+        self.assertTrue(options["capture_output"])
+        self.assertTrue(options["text"])
+        self.assertEqual(
+            options["env"],
+            {
+                "HOME": str(Path.home()),
+                "PATH": f"{self.module.OPENCLAW_NODE_BIN}:/opt/homebrew/bin:/usr/bin:/bin",
+                "LANG": "en_US.UTF-8",
+                "OPENCLAW_GATEWAY_TOKEN": "test-gateway-token",
+            },
+        )
+
+    def test_imessage_channel_timeout_is_not_retried_or_logged_with_payload(self) -> None:
+        message = "\U0001f514 Private Provider Name: Doorbell rang!"
+        with (
+            mock.patch.object(
+                self.module,
+                "DYLAN_IMESSAGE_TARGET",
+                "chat_id:171",
+            ),
+            mock.patch.object(
+                self.module.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(
+                    [self.module.OPENCLAW_CLI, "message", "send"],
+                    self.module.IMESSAGE_SEND_TIMEOUT_SECONDS,
+                ),
+            ) as run,
+            mock.patch.dict(
+                self.module.os.environ,
+                {
+                    "HOME": str(Path.home()),
+                    "OPENCLAW_GATEWAY_TOKEN": "test-gateway-token",
+                },
+                clear=True,
+            ),
+        ):
+            self.assertFalse(self.module.send_imessage(message))
+
+        run.assert_called_once()
+        combined_logs = "\n".join(self.logs)
+        self.assertIn("channel request timed out", combined_logs)
+        self.assertNotIn(message, combined_logs)
+        self.assertNotIn("171", combined_logs)
 
     def test_fcm_callback_only_bridges_plain_fields_to_the_event_loop(self) -> None:
         calls: list[tuple] = []
