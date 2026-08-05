@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "active": false,
   "sites": [
     "cabin",
@@ -17,5 +17,14 @@
   "cooldown_seconds": 3600,
   "reservation_ttl_seconds": 300,
   "unresolved_access_escalation_seconds": 1800,
-  "camera_enabled": false
+  "camera_enabled": false,
+  "camera_bindings": {
+    "cabin": "Kitchen",
+    "crosstown": "Living Room Wired"
+  },
+  "camera_snapshot_offsets_seconds": [
+    30,
+    60
+  ],
+  "camera_result_mode": "structured_text"
 }

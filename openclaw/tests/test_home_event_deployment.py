@@ -26,6 +26,7 @@ LABELS = (
     "ai.openclaw.presence-local-event-adapter",
 )
 DELIVERY_LABEL = "ai.openclaw.home-event-delivery"
+CAMERA_LABEL = "ai.openclaw.home-event-camera"
 
 
 class HomeEventDeploymentTests(unittest.TestCase):
@@ -90,6 +91,25 @@ class HomeEventDeploymentTests(unittest.TestCase):
         self.assertEqual(delivery_plist["StandardErrorPath"], "/dev/null")
         self.assertEqual(delivery_plist["Umask"], 63)
         for filename in ("home-event-delivery.py", "home-event-delivery-wrapper.sh"):
+            path = OPENCLAW / "bin" / filename
+            self.assertTrue(path.stat().st_mode & stat.S_IXUSR)
+        camera_plist = plistlib.loads(
+            (
+                OPENCLAW / "launchagents" / f"{CAMERA_LABEL}.plist"
+            ).read_bytes()
+        )
+        self.assertEqual(camera_plist["Label"], CAMERA_LABEL)
+        self.assertEqual(
+            camera_plist["ProgramArguments"][:2],
+            [
+                "/bin/bash",
+                "/Users/dbochman/.openclaw/bin/home-event-camera-wrapper.sh",
+            ],
+        )
+        self.assertEqual(camera_plist["StandardOutPath"], "/dev/null")
+        self.assertEqual(camera_plist["StandardErrorPath"], "/dev/null")
+        self.assertEqual(camera_plist["Umask"], 63)
+        for filename in ("home-event-camera.py", "home-event-camera-wrapper.sh"):
             path = OPENCLAW / "bin" / filename
             self.assertTrue(path.stat().st_mode & stat.S_IXUSR)
         august = plistlib.loads(
@@ -158,7 +178,7 @@ class HomeEventDeploymentTests(unittest.TestCase):
 
     def test_daily_pull_refreshes_only_attended_installed_jobs(self) -> None:
         source = PULL.read_text(encoding="utf-8")
-        for label in (*LABELS, DELIVERY_LABEL):
+        for label in (*LABELS, DELIVERY_LABEL, CAMERA_LABEL):
             self.assertIn(label, source)
         self.assertIn(
             'if [ -e "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]',

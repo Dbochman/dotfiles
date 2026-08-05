@@ -221,6 +221,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
             self.paths.config,
             self.paths.spool,
             self.paths.state,
+            self.paths.camera_images,
             *(self.paths.source_spool(source) for source in home_events.SOURCES),
         ]
         for directory in directories:
@@ -290,7 +291,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 3)
+        self.assertEqual(status["schema_version"], 4)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -325,6 +326,41 @@ class RuntimeSecurityTests(HomeEventTestCase):
         result = self.store.set_runtime_mode("limited_delivery")
         self.assertEqual(result["mode"], "limited_delivery")
         self.assertEqual(self.store.runtime_mode(), "limited_delivery")
+
+    def test_schema_two_camera_policy_is_exact_and_projects_safe_bindings(self) -> None:
+        policy = delivery_policy(active=True)
+        policy.update(
+            {
+                "schema_version": 2,
+                "camera_enabled": True,
+                "camera_bindings": {
+                    "cabin": "Kitchen",
+                    "crosstown": "Living Room Wired",
+                },
+                "camera_snapshot_offsets_seconds": [30, 60],
+                "camera_result_mode": "structured_text",
+            }
+        )
+        installed = home_events.install_delivery_policy(
+            self.paths, encode(policy)
+        )
+        self.assertTrue(installed["camera_enabled"])
+        self.assertEqual(
+            installed["camera_bindings"],
+            {"cabin": "Kitchen", "crosstown": "Living Room Wired"},
+        )
+        self.store.set_runtime_mode("limited_delivery")
+        self.assertEqual(self.store.status_snapshot()["camera"]["health"], "ok")
+
+        malformed = dict(policy)
+        malformed["camera_bindings"] = {
+            "cabin": "Kitchen",
+            "crosstown": "Living Room",
+        }
+        with self.assertRaisesRegex(
+            home_events.ConfigError, "delivery_policy_camera_bindings"
+        ):
+            home_events.install_delivery_policy(self.paths, encode(malformed))
 
     def test_shadow_rollback_burns_unattempted_and_isolates_claimed_slot(self) -> None:
         home_events.install_delivery_policy(
@@ -363,7 +399,15 @@ class RuntimeSecurityTests(HomeEventTestCase):
 
         result = self.store.set_runtime_mode("shadow")
 
-        self.assertEqual(result, {"mode": "shadow", "burned": 1, "unknown": 1})
+        self.assertEqual(
+            result,
+            {
+                "mode": "shadow",
+                "burned": 1,
+                "unknown": 1,
+                "camera_cancelled": 0,
+            },
+        )
         with self.connection() as connection:
             rows = connection.execute(
                 "SELECT status, error_code FROM notification_outbox ORDER BY id"
@@ -554,7 +598,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         with self.connection() as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
-                3,
+                4,
             )
             self.assertEqual(
                 connection.execute(

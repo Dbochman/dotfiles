@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from home_event_bus import (  # noqa: E402
+    CAMERA_SNAPSHOT_OFFSETS_SECONDS,
     EventStore,
     HomeEventError,
     RuntimePaths,
@@ -34,6 +35,12 @@ INCIDENT_GRACE = timedelta(minutes=10)
 ROUTINE_QUIET = timedelta(minutes=15)
 ACCESS_MAX_AGE = timedelta(hours=24)
 RATE_LIMIT = timedelta(hours=1)
+CAMERA_TRIGGER_MAX_AGE = timedelta(seconds=90)
+CAMERA_TRIGGER_FUTURE_SKEW = timedelta(seconds=10)
+CAMERA_COALESCE = timedelta(seconds=120)
+CAMERA_TRIGGER_TYPES = frozenset(
+    {"entry.person_detected", "camera.person_detected", "lock.unlocked", "door.opened"}
+)
 SAFE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 LOCAL_PRESENCE_SHADOW_COUNTERS = {
     "presence.local_departure_inferred": "local_departure_inferred_shadowed",
@@ -212,6 +219,90 @@ class ShadowCorrelator:
             (incident_id, status, reason_code, format_time(self.now())),
         )
         return cursor.rowcount == 1
+
+    def _schedule_camera_evaluation(
+        self,
+        connection: sqlite3.Connection,
+        delivery: Mapping[str, Any],
+        presence_mode: str,
+    ) -> None:
+        """Schedule bounded evidence only; camera results never affect eligibility."""
+
+        if (
+            presence_mode != "vacant"
+            or delivery.get("event_type") not in CAMERA_TRIGGER_TYPES
+            or delivery.get("time_precision") == "backfill"
+            or delivery.get("attributes", {}).get("backfill") is True
+        ):
+            return
+        runtime = connection.execute(
+            "SELECT mode FROM runtime_status WHERE singleton = 1"
+        ).fetchone()
+        if runtime is None or runtime["mode"] != "limited_delivery":
+            return
+        policy = load_delivery_policy(self.paths)
+        site = delivery.get("site")
+        if (
+            policy["active"] is not True
+            or policy["camera_enabled"] is not True
+            or site not in policy["sites"]
+            or site not in policy["camera_bindings"]
+        ):
+            return
+        event_at = parse_time(delivery.get("occurred_at"))
+        age = self.now() - event_at
+        if age > CAMERA_TRIGGER_MAX_AGE or age < -CAMERA_TRIGGER_FUTURE_SKEW:
+            self._increment(connection, "camera_triggers_expired")
+            return
+        event_id = int(delivery["event_id"])
+        window_start = format_time(event_at - CAMERA_COALESCE)
+        evaluation = connection.execute(
+            """
+            SELECT * FROM camera_evaluations
+            WHERE site = ? AND state = 'pending' AND trigger_at >= ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (site, window_start),
+        ).fetchone()
+        relation = "context"
+        now = format_time(self.now())
+        if evaluation is None:
+            offsets = policy["camera_snapshot_offsets_seconds"]
+            connection.execute(
+                """
+                INSERT INTO camera_evaluations(
+                    evaluation_uid, site, camera_alias, state, trigger_at,
+                    due_30_at, due_60_at, snapshot_30_result,
+                    snapshot_60_result, created_at, updated_at
+                ) VALUES (?, ?, ?, 'pending', ?, ?, ?, 'pending', 'pending', ?, ?)
+                """,
+                (
+                    "cam_" + secrets.token_hex(16),
+                    site,
+                    policy["camera_bindings"][site],
+                    format_time(event_at),
+                    format_time(event_at + timedelta(seconds=int(offsets[0]))),
+                    format_time(event_at + timedelta(seconds=int(offsets[1]))),
+                    now,
+                    now,
+                ),
+            )
+            evaluation = connection.execute(
+                "SELECT * FROM camera_evaluations WHERE id = last_insert_rowid()"
+            ).fetchone()
+            assert evaluation is not None
+            relation = "trigger"
+            self._increment(connection, "camera_evaluations_scheduled")
+        else:
+            self._increment(connection, "camera_evaluations_coalesced")
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO camera_evaluation_events(
+                evaluation_id, event_id, relation, created_at
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (evaluation["id"], event_id, relation, now),
+        )
 
     def _resolve(
         self,
@@ -395,6 +486,7 @@ class ShadowCorrelator:
                     self._resolve(connection, incident, "battery_recovered_silently")
             else:
                 raise CorrelatorError("unsupported_event")
+            self._schedule_camera_evaluation(connection, delivery, mode)
             acknowledged = connection.execute(
                 """
                 UPDATE consumer_deliveries SET
@@ -506,6 +598,24 @@ class ShadowCorrelator:
         if access:
             return "access_activity"
         return None
+
+    @staticmethod
+    def _camera_evidence(
+        connection: sqlite3.Connection, incident_id: int
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """
+            SELECT ce.id, ce.result
+            FROM camera_evaluations ce
+            JOIN camera_evaluation_events cee ON cee.evaluation_id = ce.id
+            JOIN incident_events ie ON ie.event_id = cee.event_id
+            WHERE ie.incident_id = ?
+              AND ce.state IN ('complete', 'failed')
+              AND ce.result IS NOT NULL
+            ORDER BY ce.id DESC LIMIT 1
+            """,
+            (incident_id,),
+        ).fetchone()
 
     def _finalize_decisions(self, presence: Mapping[str, str]) -> tuple[int, int]:
         now = self.now()
@@ -660,6 +770,11 @@ class ShadowCorrelator:
                     continue
                 if runtime_mode == "limited_delivery":
                     assert policy is not None and incident_class is not None
+                    camera_evidence = (
+                        self._camera_evidence(connection, int(incident["id"]))
+                        if policy["camera_enabled"]
+                        else None
+                    )
                     reservation_token = "res_" + secrets.token_hex(16)
                     reserved_until = format_time(
                         now + timedelta(seconds=int(policy["reservation_ttl_seconds"]))
@@ -669,8 +784,9 @@ class ShadowCorrelator:
                         INSERT INTO notification_outbox(
                             incident_id, site, status, reservation_token,
                             reserved_until, recipient_route, template_code,
-                            attempt_count, created_at, updated_at
-                        ) VALUES (?, ?, 'reserved', ?, ?, 'dylan', ?, 0, ?, ?)
+                            attempt_count, camera_evaluation_id, camera_result,
+                            created_at, updated_at
+                        ) VALUES (?, ?, 'reserved', ?, ?, 'dylan', ?, 0, ?, ?, ?, ?)
                         """,
                         (
                             incident["id"],
@@ -678,6 +794,8 @@ class ShadowCorrelator:
                             reservation_token,
                             reserved_until,
                             incident_class,
+                            camera_evidence["id"] if camera_evidence else None,
+                            camera_evidence["result"] if camera_evidence else None,
                             format_time(now),
                             format_time(now),
                         ),

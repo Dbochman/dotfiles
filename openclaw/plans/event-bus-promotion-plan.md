@@ -2,10 +2,11 @@
 
 ## Status
 
-IN PROGRESS — Cabin and Crosstown local-presence shadow enrichment are
-established, and the Ring/August concurrent shadow evidence inventory is
-current through August 3. User-facing delivery, automatic camera work, and
-physical mutation remain disabled.
+IN PROGRESS — Cabin and Crosstown local-presence enrichment are established,
+the Ring/August concurrent shadow evidence inventory is closed, and the
+Dylan-only limited-delivery canary is active. Its separately approved camera
+evidence layer uses short-lived exact +30/+60 stills and retains only a bounded
+structured result. Julia routing and physical mutation remain disabled.
 
 The starting production snapshot at `2026-07-26T19:45:02Z` was:
 
@@ -272,7 +273,8 @@ disabled.
 
 - Start with unexplained person, unlock, and door-open incidents while
   confidently vacant.
-- Keep camera work disabled.
+- Begin with camera work disabled, then enable it only through the separate
+  Stage 6 exact-camera gate.
 - Preserve existing direct Ring routes and explicitly audit overlap.
 - Compare every delivered message with its shadow explanation.
 - Stop for any duplicate, wrong-site route, occupied/uncertain delivery,
@@ -302,10 +304,45 @@ disabled.
 
 ### Stage 6 — Optional camera evidence
 
-This is a separate rollout, not a consequence of delivery activation. Decide
-per site and exact camera whether an unexplained, confidently vacant incident
-may request one current short-lived image and return a bounded description.
-Never retain media in the bus or enable Crosstown camera delivery implicitly.
+This remains a separate rollout rather than a consequence of delivery
+activation. The approved implementation binds Cabin to exact `Kitchen` and
+Crosstown to exact `Living Room Wired`. A fresh person, unlock, or door-open
+event may schedule stills at +30 and +60 seconds only while the site is
+canonically confirmed vacant and the camera policy is active. Backfill,
+generic motion, stale events, uncertain/occupied presence, source health, and
+local-presence inference never capture.
+
+Each still is owner-only, validated, classified locally as only visible person
+or no visible person with bounded uncertainty, and deleted immediately. The
+bus retains only `person_visible`, `no_person_visible`, `uncertain`, or
+`unavailable`; no image path, prose, identity, or frame enters the journal or
+message. This evidence may add one fixed clause to an independently eligible
+Dylan notification. It never creates, suppresses, accelerates, or delays one.
+Rollback to `shadow` cancels pending evaluations under the same lock used by
+capture and delivery.
+
+#### Camera activation checkpoint — `2026-08-05T16:34:03Z`
+
+- The focused 89-test home-event suite and complete OpenClaw Python test
+  discovery passed before deployment; Python compilation, shell syntax, plist
+  validation, and diff hygiene also passed.
+- The canary returned to `shadow` with zero burned or unknown reservations.
+  All six existing jobs were stopped before the attended schema 3 to schema 4
+  migration, and a mode-`0600` SQLite backup passed `quick_check`.
+- Fresh attended probes confirmed exact Cabin `Kitchen` and Crosstown
+  `Living Room Wired` still capture. The non-wired `Living Room` alias rejected
+  live capture, so it was not selected. Every probe frame was removed before
+  deployment.
+- The protected schema-v2 policy was installed with `active=true` and
+  `camera_enabled=true`. The tracked policy remains inactive and camera-off as
+  the safe deployment default while retaining the reviewed exact bindings.
+- All seven jobs loaded in shadow before the atomic return to
+  `limited_delivery`. The first active projection reports schema 4, bus,
+  delivery, and camera health `ok`; all sources are healthy; queues, ready
+  spools, pending evaluations, reservations, outcomes, and dead letters are
+  zero; and the protected camera image directory is empty.
+- No synthetic household event or capture was injected. The first organic
+  eligible event remains the live camera-evidence evaluation point.
 
 ## Progress ledger
 

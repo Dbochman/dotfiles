@@ -12,7 +12,10 @@ after explicit operator approval; their tracked defaults remain disabled.
 Stage 2 closed after the operator waived the remaining Cabin press and August
 completed its soak. The Dylan-only fixed-template canary entered
 `limited_delivery` at `2026-08-05T15:42:14Z`. There is no Julia route, camera
-action, or physical-mutation path in this bus.
+image delivery, or physical-mutation path in this bus. A separately gated
+evidence worker may reduce exact +30/+60 per-site stills to a structured result
+without changing incident or delivery eligibility; that worker entered the
+canary at `2026-08-05T16:34:03Z`.
 
 ## Overview
 
@@ -795,8 +798,8 @@ incident identifiers, and no database path or provider identity.
 ## Deployment and remaining rollout
 
 The bus core, correlator, read-only skill, adapters, bridges, and LaunchAgents
-are installed on the Mac Mini with SQLite schema 3. The separate delivery
-worker is loaded, and the Dylan-only Stage 4 canary entered
+are installed on the Mac Mini with SQLite schema 4. The separate delivery and
+bounded camera-evidence workers are loaded, and the Dylan-only Stage 4 canary entered
 `limited_delivery` at `2026-08-05T15:42:14Z`; the tracked policy remains
 inactive as the safe deployment default. Presence,
 Nest, Ring, August, and both local-presence sites are enabled in the attended
@@ -822,6 +825,9 @@ no-ops for Cabin and Crosstown. The remaining order is:
 8. The canary was activated only after installing the same protected policy
    with `active=true` and changing runtime mode to `limited_delivery`. Roll
    mode back to `shadow` first if any stop condition occurs.
+9. Camera evidence is independently policy-gated. It uses only exact Cabin
+   `Kitchen` and Crosstown `Living Room Wired` aliases, deletes every +30/+60
+   frame after bounded analysis, and cannot affect eligibility.
 
 At each gate, run unit/integration tests, Python compilation, `check-config`,
 plist validation when applicable, permissions checks, safe health/backlog

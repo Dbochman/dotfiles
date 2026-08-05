@@ -7,7 +7,10 @@ records; one ingester serially commits them to SQLite. Producers remain
 journal-only. During the Dylan-only canary, the correlator may reserve one
 policy-scoped fixed-template message after confirmed vacancy and the arrival
 grace; only the separate delivery worker can send it. The bus cannot capture a
-camera image, change presence, or operate a lock.
+camera image, change presence, or operate a lock unless the separately gated
+camera-evidence policy is active. That policy permits only the dedicated
+camera worker to reduce exact, short-lived +30/+60 stills to a fixed structured
+result; it never changes incident or delivery eligibility.
 
 One separately authorized consumer is an explicit exception to that shadow
 boundary. The Cabin entry verifier requires ordered live Ring evidence at the
@@ -35,6 +38,13 @@ parity checks are pending. The local adapter baselined both enabled sites with
 zero events and treated each repeated scan as a no-op. The tracked plist
 defaults remain disabled so a fresh install cannot silently activate any
 producer.
+
+The Dylan-only canary is now on SQLite schema v4. Its separate camera policy
+was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
+`Living Room Wired` probes, a protected schema backup, full tests, and a
+shadow-first migration. The first active projection was healthy with no queue,
+reservation, camera evaluation, delivery outcome, dead letter, or retained
+image.
 
 Cabin production schema v2 has exact controller and Kitchen-mesh bindings for
 both residents. After two clean scheduled ticks, 12/12 live observations, and
@@ -91,6 +101,13 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
 - `bin/home-event-delivery-wrapper.sh` resolves only the protected owner route
   and gateway authentication into a sanitized one-shot process with a bounded
   owner-only log.
+- `bin/home-event-camera.py` claims only fresh, confirmed-vacant camera
+  evaluations already scheduled by the correlator. It captures the exact
+  per-site alias at +30/+60 seconds, makes only a person-visible decision,
+  deletes each frame immediately, and retains no model prose or media path.
+- `bin/home-event-camera-wrapper.sh` supplies protected gateway authentication
+  to that one-shot worker in a sanitized environment. Camera and delivery
+  share the rollback lock, so mode rollback cannot race a capture or send.
 - `bin/cabin-entry-verifier.py` is a separate future-only consumer. It requires
   Cabin `driveway` activity followed by `front_door` activity within five
   minutes, gates the sequence on confirmed vacancy, captures exact Kitchen
@@ -120,16 +137,16 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   and publication are not automation dependencies.
 - `workspace/scripts/presence-detect.sh` remains the canonical presence writer
   and publishes transitions through its protected source outbox.
-- Six attended-install LaunchAgents schedule ingestion, correlation, bounded
-  delivery, the disabled-by-default August observer and Nest bridge, and the
-  independently site-gated local-presence adapter.
+- Seven attended-install LaunchAgents schedule ingestion, correlation, bounded
+  delivery, bounded camera evidence, the disabled-by-default August observer
+  and Nest bridge, and the independently site-gated local-presence adapter.
 - The verifier has its own attended-install KeepAlive LaunchAgent. Merely
   deploying its files does not activate it: initialization, future-only
   consumer registration, and bootstrap are separate operator steps.
 
 ## Limited-delivery boundary
 
-Schema v3 supports `shadow` and `limited_delivery`, but a mode change alone is
+Schema v4 supports `shadow` and `limited_delivery`, but a mode change alone is
 insufficient. `limited_delivery` requires a valid mode-`0600` protected policy
 whose `active` field is true. Policy replacement is accepted only while the
 runtime is in `shadow` mode. The tracked
@@ -148,6 +165,15 @@ fresh vacancy, and holds the dedicated rollback lock across the send and
 receipt transition without blocking event ingestion. It never retries an
 ambiguous timeout or receipt.
 
+The schema-v2 protected policy separately binds Cabin to exact `Kitchen` and
+Crosstown to exact `Living Room Wired`. While camera evidence is enabled, a
+fresh person, unlock, or door-open event at a confidently vacant site may
+schedule +30/+60 stills. Old/backfilled events, generic motion, occupied or
+uncertain presence, source health, and local-presence inference never schedule
+camera work. The resulting `person_visible`, `no_person_visible`, `uncertain`,
+or `unavailable` value may add one fixed sentence to a later eligible Dylan
+message; it cannot create, suppress, accelerate, or delay that message.
+
 Rollback is always the first operator action:
 
 ```bash
@@ -155,8 +181,9 @@ home-eventctl set-mode shadow
 ```
 
 That change leaves ingestion and correlation running, burns unattempted
-reservations, and marks an already-claimed reservation `unknown` rather than
-risking replay. Cameras and Julia routing are outside this rollout.
+reservations, marks an already-claimed reservation `unknown`, and cancels
+pending camera evaluations rather than risking replay. Julia routing remains
+outside this rollout.
 
 ## Protected runtime
 
@@ -173,6 +200,7 @@ risking replay. Cameras and Julia routing are outside this rollout.
 └── state/                               0700
     ├── events.sqlite3                   0600
     ├── delivery.lock                    0600
+    ├── camera-images/                   0700 normally empty; frames are 0600
     ├── events.sqlite3-wal/-shm          0600 while SQLite is open
     ├── ingest.lock                      0600
     ├── ring-producer.json               0600 durable safe worker health
@@ -209,15 +237,17 @@ repair prune. Process restarts do not reset the gate. An explicit
 `home-eventctl prune` remains a forced maintenance operation and checkpoints
 the WAL. The internal maintenance marker is not exposed through safe status.
 Status includes bus-observed per-source health and safe failure state, consumer
-depth and oldest unfinished time, retention, database size, and a separate
-access-attention projection. An access incident that expires without a
+depth and oldest unfinished time, retention, database size, camera-evaluation
+health/counts, and a separate access-attention projection. An access incident
+that expires without a
 matching lock/close remains durable historical evidence and increments
 attention without redefining current bus health. The operator-only
 `review-access-attention` command records that every currently pending access
 expiry was reviewed; it never deletes or rewrites the incident. A source with
 no evidence remains `unknown`; this does not claim that its process is running.
 
-The verifier stores no provider identifiers, model prose, image path,
+The event-bus camera evaluator and Cabin verifier store no provider identifiers,
+model prose, image path,
 recipient, message body, or receipt. The driveway candidate, front-door match,
 two capture outcomes, two strict vision decisions, final result, counters, and
 sanitized error codes are the complete durable contract.
@@ -256,8 +286,9 @@ home-events explain 'inc_<32-lowercase-hex>' --json
 
 The agent wrapper has no root override and cannot invoke initialization,
 enqueue, ingestion, retention, queue acknowledgement, policy, or adapter
-control. The journal stores no historical images. An explicit trusted-owner
-request for a current frame uses `nest-camera` under that skill's exact-camera,
+control. The journal stores no historical images. The event-bus camera worker
+is not an image-retrieval interface and never sends a frame. An explicit
+trusted-owner request for a current frame uses `nest-camera` under that skill's exact-camera,
 authorization, delivery-route, and cleanup rules; general activity questions
 must never trigger capture.
 

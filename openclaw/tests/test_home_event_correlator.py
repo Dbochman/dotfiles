@@ -186,9 +186,9 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             self.root, self.presence, clock=self.clock
         ).run_once()
 
-    def enable_limited_delivery(self) -> None:
+    def enable_limited_delivery(self, *, camera: bool = False) -> None:
         policy = {
-            "schema_version": 1,
+            "schema_version": 2 if camera else 1,
             "active": True,
             "sites": ["cabin", "crosstown"],
             "incident_classes": [
@@ -201,8 +201,19 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             "cooldown_seconds": 3600,
             "reservation_ttl_seconds": 300,
             "unresolved_access_escalation_seconds": 1800,
-            "camera_enabled": False,
+            "camera_enabled": camera,
         }
+        if camera:
+            policy.update(
+                {
+                    "camera_bindings": {
+                        "cabin": "Kitchen",
+                        "crosstown": "Living Room Wired",
+                    },
+                    "camera_snapshot_offsets_seconds": [30, 60],
+                    "camera_result_mode": "structured_text",
+                }
+            )
         paths = bus.RuntimePaths(self.root)
         bus.install_delivery_policy(paths, json.dumps(policy).encode("utf-8"))
         bus.EventStore(paths, clock=self.clock).set_runtime_mode("limited_delivery")
@@ -294,6 +305,56 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.assertEqual(rows[0]["attempt_count"], 0)
         self.assertRegex(rows[0]["reservation_token"], r"^res_[0-9a-f]{32}$")
         self.assertEqual(rows[0]["reserved_until"], "2026-07-12T15:13:00Z")
+
+    def test_camera_evidence_is_scheduled_early_and_attached_only_as_context(self) -> None:
+        self.enable_limited_delivery(camera=True)
+        self.enqueue(
+            "ring",
+            "entry.person_detected",
+            occurred_at=self.NOW,
+            observed_at=self.NOW,
+        )
+        self.ingest()
+
+        opened = self.run_correlator()
+        self.assertEqual(opened["reservations"], 0)
+        evaluations = self.rows("SELECT * FROM camera_evaluations")
+        self.assertEqual(len(evaluations), 1)
+        self.assertEqual(evaluations[0]["camera_alias"], "Kitchen")
+        self.assertEqual(evaluations[0]["due_30_at"], "2026-07-12T15:00:30Z")
+        self.assertEqual(evaluations[0]["due_60_at"], "2026-07-12T15:01:00Z")
+        self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
+
+        self.execute(
+            """
+            UPDATE camera_evaluations
+            SET state='complete', snapshot_30_result='clear',
+                snapshot_60_result='clear', result='no_person_visible',
+                completed_at='2026-07-12T15:01:00Z',
+                updated_at='2026-07-12T15:01:00Z';
+            """
+        )
+        self.NOW = "2026-07-12T15:10:01Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        reserved = self.run_correlator()
+
+        self.assertEqual(reserved["reservations"], 1)
+        outbox = self.rows("SELECT * FROM notification_outbox")[0]
+        self.assertEqual(outbox["camera_evaluation_id"], evaluations[0]["id"])
+        self.assertEqual(outbox["camera_result"], "no_person_visible")
+
+    def test_camera_never_schedules_without_confirmed_vacancy(self) -> None:
+        self.enable_limited_delivery(camera=True)
+        self.write_presence("occupied", "confirmed_vacant")
+        self.enqueue(
+            "ring",
+            "entry.person_detected",
+            occurred_at=self.NOW,
+            observed_at=self.NOW,
+        )
+        self.ingest()
+        self.run_correlator()
+        self.assertEqual(self.rows("SELECT * FROM camera_evaluations"), [])
 
     def test_arrival_during_ten_minute_grace_resolves_silently(self) -> None:
         self.enqueue("ring", "entry.person_detected", sequence="ring")

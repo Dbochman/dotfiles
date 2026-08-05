@@ -27,10 +27,10 @@ import sys
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = 3
-STATUS_SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+STATUS_SCHEMA_VERSION = 4
 EVENT_SCHEMA_VERSION = 1
-DELIVERY_POLICY_SCHEMA_VERSION = 1
+DELIVERY_POLICY_SCHEMA_VERSION = 2
 SERVICE_NAME = "home-events"
 DEFAULT_ROOT = Path("~/.openclaw/home-events").expanduser()
 SOURCES = ("ring", "presence", "august", "nest")
@@ -89,6 +89,11 @@ DELIVERY_INCIDENT_CLASSES = frozenset(
     {"person_activity", "access_activity", "person_and_access"}
 )
 DELIVERY_ROUTES = frozenset({"dylan"})
+CAMERA_BINDINGS = {"cabin": "Kitchen", "crosstown": "Living Room Wired"}
+CAMERA_SNAPSHOT_OFFSETS_SECONDS = (30, 60)
+CAMERA_RESULTS = frozenset(
+    {"person_visible", "no_person_visible", "uncertain", "unavailable"}
+)
 
 LOCAL_PRESENCE_EVENT_TYPES = frozenset(
     {
@@ -361,6 +366,10 @@ class RuntimePaths:
     @property
     def delivery_lock(self) -> Path:
         return self.state / "delivery.lock"
+
+    @property
+    def camera_images(self) -> Path:
+        return self.state / "camera-images"
 
     @property
     def ring_producer_status(self) -> Path:
@@ -1059,7 +1068,7 @@ def _read_private_bytes(path: Path, maximum: int) -> bytes:
         os.close(descriptor)
 
 
-DELIVERY_POLICY_FIELDS = frozenset(
+DELIVERY_POLICY_V1_FIELDS = frozenset(
     {
         "schema_version",
         "active",
@@ -1073,18 +1082,35 @@ DELIVERY_POLICY_FIELDS = frozenset(
         "camera_enabled",
     }
 )
+DELIVERY_POLICY_V2_FIELDS = DELIVERY_POLICY_V1_FIELDS | {
+    "camera_bindings",
+    "camera_snapshot_offsets_seconds",
+    "camera_result_mode",
+}
 
 
 def validate_delivery_policy(value: Any) -> Mapping[str, Any]:
     """Validate the deliberately narrow Stage 3 owner-only delivery policy."""
 
-    if not isinstance(value, dict) or frozenset(value) != DELIVERY_POLICY_FIELDS:
+    if not isinstance(value, dict):
         raise ConfigError("delivery_policy_fields")
-    if value["schema_version"] != DELIVERY_POLICY_SCHEMA_VERSION:
+    schema_version = value.get("schema_version")
+    expected_fields = (
+        DELIVERY_POLICY_V1_FIELDS
+        if schema_version == 1
+        else DELIVERY_POLICY_V2_FIELDS
+        if schema_version == DELIVERY_POLICY_SCHEMA_VERSION
+        else None
+    )
+    if expected_fields is None:
         raise ConfigError("delivery_policy_schema")
+    if frozenset(value) != expected_fields:
+        raise ConfigError("delivery_policy_fields")
     if not isinstance(value["active"], bool):
         raise ConfigError("delivery_policy_active")
-    if not isinstance(value["camera_enabled"], bool) or value["camera_enabled"]:
+    if not isinstance(value["camera_enabled"], bool):
+        raise ConfigError("delivery_policy_camera")
+    if schema_version == 1 and value["camera_enabled"]:
         raise ConfigError("delivery_policy_camera")
 
     normalized: Dict[str, Any] = dict(value)
@@ -1122,6 +1148,27 @@ def validate_delivery_policy(value: Any) -> Mapping[str, Any]:
             raise ConfigError("delivery_policy_" + key)
     if normalized["arrival_grace_seconds"] != 600:
         raise ConfigError("delivery_policy_arrival_grace_seconds")
+    if schema_version == 1:
+        normalized["camera_bindings"] = dict(CAMERA_BINDINGS)
+        normalized["camera_snapshot_offsets_seconds"] = (
+            CAMERA_SNAPSHOT_OFFSETS_SECONDS
+        )
+        normalized["camera_result_mode"] = "structured_text"
+    else:
+        bindings = value["camera_bindings"]
+        if (
+            not isinstance(bindings, dict)
+            or bindings != CAMERA_BINDINGS
+            or any(not isinstance(item, str) for item in bindings.values())
+        ):
+            raise ConfigError("delivery_policy_camera_bindings")
+        offsets = value["camera_snapshot_offsets_seconds"]
+        if offsets != list(CAMERA_SNAPSHOT_OFFSETS_SECONDS):
+            raise ConfigError("delivery_policy_camera_offsets")
+        if value["camera_result_mode"] != "structured_text":
+            raise ConfigError("delivery_policy_camera_result_mode")
+        normalized["camera_bindings"] = dict(bindings)
+        normalized["camera_snapshot_offsets_seconds"] = tuple(offsets)
     return normalized
 
 
@@ -1164,6 +1211,12 @@ def delivery_policy_projection(paths: RuntimePaths) -> Mapping[str, Any]:
             "incident_classes": list(policy["incident_classes"]),
             "recipient_scope": "owner_only",
             "camera_enabled": policy["camera_enabled"],
+            "camera_bindings": (
+                dict(policy["camera_bindings"])
+                if policy["camera_enabled"]
+                else {}
+            ),
+            "camera_result_mode": policy["camera_result_mode"],
         }
     except (HomeEventError, OSError):
         return {
@@ -1173,6 +1226,8 @@ def delivery_policy_projection(paths: RuntimePaths) -> Mapping[str, Any]:
             "incident_classes": [],
             "recipient_scope": "unconfigured",
             "camera_enabled": False,
+            "camera_bindings": {},
+            "camera_result_mode": "unconfigured",
         }
 
 
@@ -1311,7 +1366,7 @@ def initialize_runtime(root: Path, *, clock: Callable[[], str] = utc_now) -> "Ev
     _assert_absolute_root(root)
     paths = RuntimePaths(root)
     _assert_private_directory(paths.root, create=True)
-    for directory in (paths.config, paths.spool, paths.state):
+    for directory in (paths.config, paths.spool, paths.state, paths.camera_images):
         _assert_private_directory(directory, create=True)
     for source in SOURCES:
         _assert_private_directory(paths.source_spool(source), create=True)
@@ -1331,7 +1386,13 @@ def initialize_runtime(root: Path, *, clock: Callable[[], str] = utc_now) -> "Ev
 def validate_runtime(root: Path, *, require_status: bool = False) -> RuntimePaths:
     _assert_absolute_root(root)
     paths = RuntimePaths(root)
-    for directory in (paths.root, paths.config, paths.spool, paths.state):
+    for directory in (
+        paths.root,
+        paths.config,
+        paths.spool,
+        paths.state,
+        paths.camera_images,
+    ):
         _assert_private_directory(directory)
     for source in SOURCES:
         _assert_private_directory(paths.source_spool(source))
@@ -1481,6 +1542,8 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
     last_attempt_at TEXT,
     sent_at TEXT,
     error_code TEXT,
+    camera_evaluation_id INTEGER REFERENCES camera_evaluations(id),
+    camera_result TEXT CHECK(camera_result IS NULL OR camera_result IN ('person_visible', 'no_person_visible', 'uncertain', 'unavailable')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -1508,6 +1571,39 @@ CREATE TABLE IF NOT EXISTS delivery_runtime (
     last_error_at TEXT,
     last_error_code TEXT
 );
+CREATE TABLE IF NOT EXISTS camera_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evaluation_uid TEXT NOT NULL UNIQUE,
+    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+    camera_alias TEXT NOT NULL CHECK(camera_alias IN ('Kitchen', 'Living Room Wired')),
+    state TEXT NOT NULL CHECK(state IN ('pending', 'complete', 'failed')),
+    trigger_at TEXT NOT NULL,
+    due_30_at TEXT NOT NULL,
+    due_60_at TEXT NOT NULL,
+    snapshot_30_result TEXT NOT NULL CHECK(snapshot_30_result IN ('pending', 'capturing', 'person', 'clear', 'uncertain', 'failed')),
+    snapshot_60_result TEXT NOT NULL CHECK(snapshot_60_result IN ('pending', 'capturing', 'person', 'clear', 'uncertain', 'failed')),
+    result TEXT CHECK(result IS NULL OR result IN ('person_visible', 'no_person_visible', 'uncertain', 'unavailable')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    error_code TEXT
+);
+CREATE TABLE IF NOT EXISTS camera_evaluation_events (
+    evaluation_id INTEGER NOT NULL REFERENCES camera_evaluations(id) ON DELETE CASCADE,
+    event_id INTEGER NOT NULL REFERENCES events(id),
+    relation TEXT NOT NULL CHECK(relation IN ('trigger', 'context')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(evaluation_id, event_id)
+);
+CREATE TABLE IF NOT EXISTS camera_runtime (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+    health TEXT NOT NULL CHECK(health IN ('disabled', 'ok', 'degraded')),
+    updated_at TEXT NOT NULL,
+    last_attempt_at TEXT,
+    last_success_at TEXT,
+    last_error_at TEXT,
+    last_error_code TEXT
+);
 CREATE INDEX IF NOT EXISTS producer_inbox_received_idx ON producer_inbox(received_at);
 CREATE INDEX IF NOT EXISTS events_created_idx ON events(created_at);
 CREATE INDEX IF NOT EXISTS events_site_occurred_idx ON events(site, occurred_at DESC);
@@ -1516,6 +1612,8 @@ CREATE INDEX IF NOT EXISTS deliveries_status_idx ON consumer_deliveries(status, 
 CREATE INDEX IF NOT EXISTS incidents_site_updated_idx ON incidents(site, updated_at DESC);
 CREATE INDEX IF NOT EXISTS incident_decisions_incident_idx ON incident_decisions(incident_id, id);
 CREATE INDEX IF NOT EXISTS notification_status_idx ON notification_outbox(status, id);
+CREATE INDEX IF NOT EXISTS camera_evaluations_state_idx ON camera_evaluations(state, due_30_at, due_60_at, id);
+CREATE INDEX IF NOT EXISTS camera_evaluation_events_event_idx ON camera_evaluation_events(event_id, evaluation_id);
 """
 
 EXPECTED_TABLES = frozenset(
@@ -1533,6 +1631,9 @@ EXPECTED_TABLES = frozenset(
         "service_counters",
         "runtime_status",
         "delivery_runtime",
+        "camera_evaluations",
+        "camera_evaluation_events",
+        "camera_runtime",
     }
 )
 
@@ -1621,6 +1722,8 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
             "last_attempt_at",
             "sent_at",
             "error_code",
+            "camera_evaluation_id",
+            "camera_result",
             "created_at",
             "updated_at",
         }
@@ -1640,6 +1743,39 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
         }
     ),
     "delivery_runtime": frozenset(
+        {
+            "singleton",
+            "health",
+            "updated_at",
+            "last_attempt_at",
+            "last_success_at",
+            "last_error_at",
+            "last_error_code",
+        }
+    ),
+    "camera_evaluations": frozenset(
+        {
+            "id",
+            "evaluation_uid",
+            "site",
+            "camera_alias",
+            "state",
+            "trigger_at",
+            "due_30_at",
+            "due_60_at",
+            "snapshot_30_result",
+            "snapshot_60_result",
+            "result",
+            "created_at",
+            "updated_at",
+            "completed_at",
+            "error_code",
+        }
+    ),
+    "camera_evaluation_events": frozenset(
+        {"evaluation_id", "event_id", "relation", "created_at"}
+    ),
+    "camera_runtime": frozenset(
         {
             "singleton",
             "health",
@@ -1826,8 +1962,12 @@ class EventStore:
             elif [row["version"] for row in versions] == [1]:
                 self._migrate_v1_to_v2(connection, now)
                 self._migrate_v2_to_v3(connection, now)
+                self._migrate_v3_to_v4(connection, now)
             elif [row["version"] for row in versions] == [2]:
                 self._migrate_v2_to_v3(connection, now)
+                self._migrate_v3_to_v4(connection, now)
+            elif [row["version"] for row in versions] == [3]:
+                self._migrate_v3_to_v4(connection, now)
             elif [row["version"] for row in versions] != [SCHEMA_VERSION]:
                 raise ConfigError("database_schema")
             for source in SOURCES:
@@ -1854,6 +1994,14 @@ class EventStore:
             connection.execute(
                 """
                 INSERT INTO delivery_runtime(singleton, health, updated_at)
+                VALUES (1, 'disabled', ?)
+                ON CONFLICT(singleton) DO NOTHING
+                """,
+                (now,),
+            )
+            connection.execute(
+                """
+                INSERT INTO camera_runtime(singleton, health, updated_at)
                 VALUES (1, 'disabled', ?)
                 ON CONFLICT(singleton) DO NOTHING
                 """,
@@ -1934,7 +2082,7 @@ class EventStore:
             )
             connection.execute(
                 "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 2",
-                (SCHEMA_VERSION, now),
+                (3, now),
             )
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise ConfigError("database_migration_integrity")
@@ -1946,6 +2094,40 @@ class EventStore:
             connection.execute("PRAGMA foreign_keys = ON")
         if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
             raise ConfigError("database_foreign_keys")
+
+    @staticmethod
+    def _migrate_v3_to_v4(connection: sqlite3.Connection, now: str) -> None:
+        """Add bounded camera evaluation evidence without changing eligibility."""
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                ALTER TABLE notification_outbox
+                ADD COLUMN camera_evaluation_id INTEGER
+                    REFERENCES camera_evaluations(id)
+                """
+            )
+            connection.execute(
+                """
+                ALTER TABLE notification_outbox
+                ADD COLUMN camera_result TEXT
+                    CHECK(camera_result IS NULL OR camera_result IN (
+                        'person_visible', 'no_person_visible',
+                        'uncertain', 'unavailable'
+                    ))
+                """
+            )
+            connection.execute(
+                "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 3",
+                (SCHEMA_VERSION, now),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
     def check_schema(self) -> None:
         with contextlib.closing(self.connect(read_only=True)) as connection:
@@ -2028,6 +2210,7 @@ class EventStore:
         now = self._now()
         burned = 0
         unknown = 0
+        camera_cancelled = 0
         with contextlib.closing(self.connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             if mode == "shadow":
@@ -2050,6 +2233,16 @@ class EventStore:
                     (now,),
                 )
                 unknown = cursor.rowcount
+                cursor = connection.execute(
+                    """
+                    UPDATE camera_evaluations
+                    SET state = 'failed', result = 'unavailable',
+                        error_code = 'mode_rollback', completed_at = ?, updated_at = ?
+                    WHERE state = 'pending'
+                    """,
+                    (now, now),
+                )
+                camera_cancelled = cursor.rowcount
             connection.execute(
                 "UPDATE runtime_status SET mode = ?, updated_at = ? WHERE singleton = 1",
                 (mode, now),
@@ -2064,9 +2257,28 @@ class EventStore:
                 """,
                 ("disabled" if mode == "shadow" else "ok", now, mode, mode),
             )
+            camera_health = "disabled"
+            if mode == "limited_delivery":
+                assert policy is not None
+                camera_health = "ok" if policy["camera_enabled"] else "disabled"
+            connection.execute(
+                """
+                UPDATE camera_runtime
+                SET health = ?, updated_at = ?,
+                    last_error_at = CASE WHEN ? = 'disabled' THEN NULL ELSE last_error_at END,
+                    last_error_code = CASE WHEN ? = 'disabled' THEN NULL ELSE last_error_code END
+                WHERE singleton = 1
+                """,
+                (camera_health, now, camera_health, camera_health),
+            )
             connection.commit()
         self.write_status_best_effort()
-        return {"mode": mode, "burned": burned, "unknown": unknown}
+        return {
+            "mode": mode,
+            "burned": burned,
+            "unknown": unknown,
+            "camera_cancelled": camera_cancelled,
+        }
 
     @staticmethod
     def _automatic_prune_state(
@@ -2515,6 +2727,33 @@ class EventStore:
             deleted["notification_outbox"] = cursor.rowcount
             cursor = connection.execute(
                 """
+                DELETE FROM camera_evaluation_events
+                WHERE evaluation_id IN (
+                    SELECT ce.id FROM camera_evaluations ce
+                    WHERE ce.state != 'pending' AND ce.updated_at < ?
+                      AND NOT EXISTS (
+                        SELECT 1 FROM notification_outbox n
+                        WHERE n.camera_evaluation_id = ce.id
+                      )
+                )
+                """,
+                (accepted_cutoff,),
+            )
+            deleted["camera_evaluation_events"] = cursor.rowcount
+            cursor = connection.execute(
+                """
+                DELETE FROM camera_evaluations
+                WHERE state != 'pending' AND updated_at < ?
+                  AND NOT EXISTS (
+                    SELECT 1 FROM notification_outbox n
+                    WHERE n.camera_evaluation_id = camera_evaluations.id
+                  )
+                """,
+                (accepted_cutoff,),
+            )
+            deleted["camera_evaluations"] = cursor.rowcount
+            cursor = connection.execute(
+                """
                 DELETE FROM consumer_deliveries
                 WHERE (status = 'acknowledged' AND updated_at < ?)
                    OR (status = 'dead_letter' AND updated_at < ?)
@@ -2743,10 +2982,21 @@ class EventStore:
             ).fetchone()
             if delivery_runtime is None:
                 raise ConfigError("delivery_runtime_missing")
+            camera_runtime = connection.execute(
+                "SELECT * FROM camera_runtime WHERE singleton = 1"
+            ).fetchone()
+            if camera_runtime is None:
+                raise ConfigError("camera_runtime_missing")
             outbox_counts = {
                 status: count
                 for status, count in connection.execute(
                     "SELECT status, COUNT(*) FROM notification_outbox GROUP BY status"
+                ).fetchall()
+            }
+            camera_counts = {
+                state: count
+                for state, count in connection.execute(
+                    "SELECT state, COUNT(*) FROM camera_evaluations GROUP BY state"
                 ).fetchall()
             }
             consumer_rows = connection.execute(
@@ -2850,6 +3100,17 @@ class EventStore:
                     "last_success_at": delivery_runtime["last_success_at"],
                     "last_error_at": delivery_runtime["last_error_at"],
                     "last_error_code": delivery_runtime["last_error_code"],
+                },
+                "camera": {
+                    "health": camera_runtime["health"],
+                    "counts": {
+                        state: camera_counts.get(state, 0)
+                        for state in ("pending", "complete", "failed")
+                    },
+                    "last_attempt_at": camera_runtime["last_attempt_at"],
+                    "last_success_at": camera_runtime["last_success_at"],
+                    "last_error_at": camera_runtime["last_error_at"],
+                    "last_error_code": camera_runtime["last_error_code"],
                 },
                 "attention": {
                     "required": pending_attention > 0,

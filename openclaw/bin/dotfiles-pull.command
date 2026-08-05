@@ -475,6 +475,7 @@ HOME_EVENT_AUGUST_CHANGED=0
 HOME_EVENT_NEST_CHANGED=0
 HOME_EVENT_LOCAL_PRESENCE_CHANGED=0
 HOME_EVENT_DELIVERY_CHANGED=0
+HOME_EVENT_CAMERA_CHANGED=0
 for wrapper in "$BIN_SRC"/*; do
   [ -f "$wrapper" ] || continue
   fname=$(basename "$wrapper")
@@ -543,7 +544,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
   case "$fname" in
-    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|home-event-delivery.py|home-event-delivery-wrapper.sh|august-event-adapter.py|presence-local-event-adapter.py)
+    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|home-event-delivery.py|home-event-delivery-wrapper.sh|home-event-camera.py|home-event-camera-wrapper.sh|august-event-adapter.py|presence-local-event-adapter.py)
       [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -eq 1 ] || continue
       ;;
     nest-home-event-bridge.py)
@@ -590,6 +591,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_NEST_CHANGED=1
         HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
         HOME_EVENT_DELIVERY_CHANGED=1
+        HOME_EVENT_CAMERA_CHANGED=1
       fi
       ;;
     home-event-correlator.py)
@@ -600,6 +602,11 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
     home-event-delivery.py|home-event-delivery-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         HOME_EVENT_DELIVERY_CHANGED=1
+      fi
+      ;;
+    home-event-camera.py|home-event-camera-wrapper.sh)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_CAMERA_CHANGED=1
       fi
       ;;
     august-event-adapter.py)
@@ -866,6 +873,7 @@ for HOME_EVENT_AGENT_LABEL in \
   ai.openclaw.home-event-ingest \
   ai.openclaw.home-event-correlator \
   ai.openclaw.home-event-delivery \
+  ai.openclaw.home-event-camera \
   ai.openclaw.august-event-adapter \
   ai.openclaw.nest-home-event-bridge \
   ai.openclaw.presence-local-event-adapter; do
@@ -977,6 +985,9 @@ for HOME_EVENT_AGENT_LABEL in \
         ;;
       ai.openclaw.home-event-delivery)
         HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_DELIVERY_CHANGED"
+        ;;
+      ai.openclaw.home-event-camera)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_CAMERA_CHANGED"
         ;;
       ai.openclaw.august-event-adapter)
         HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_AUGUST_CHANGED"

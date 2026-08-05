@@ -55,6 +55,17 @@ TEMPLATES = {
     ),
 }
 
+CAMERA_CLAUSES = {
+    "person_visible": (
+        "A person was visible in at least one time-aligned interior camera check."
+    ),
+    "no_person_visible": (
+        "Neither time-aligned interior camera check showed a visible person."
+    ),
+    "uncertain": "The time-aligned interior camera checks were inconclusive.",
+    "unavailable": "The time-aligned interior camera checks were unavailable.",
+}
+
 
 class DeliveryError(Exception):
     def __init__(self, code: str, *, uncertain: bool = False):
@@ -317,6 +328,18 @@ class DeliveryWorker:
                 or row["recipient_route"] not in policy["recipient_routes"]
                 or not isinstance(row["reservation_token"], str)
                 or RESERVATION_RE.fullmatch(row["reservation_token"]) is None
+                or (
+                    row["camera_result"] is not None
+                    and (
+                        policy["camera_enabled"] is not True
+                        or row["camera_result"] not in CAMERA_CLAUSES
+                        or type(row["camera_evaluation_id"]) is not int
+                    )
+                )
+                or (
+                    row["camera_result"] is None
+                    and row["camera_evaluation_id"] is not None
+                )
             ):
                 connection.execute(
                     """
@@ -384,6 +407,9 @@ class DeliveryWorker:
         message = TEMPLATES[row["template_code"]].format(
             site="Cabin" if row["site"] == "cabin" else "Crosstown"
         )
+        camera_result = row.get("camera_result")
+        if camera_result is not None:
+            message += " " + CAMERA_CLAUSES[camera_result]
         now = format_time(now_dt)
         with closing(self.store.connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")

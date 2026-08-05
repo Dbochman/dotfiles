@@ -67,9 +67,9 @@ class HomeEventDeliveryTests(unittest.TestCase):
         )
         self.presence.chmod(0o600)
 
-    def policy(self) -> dict:
-        return {
-            "schema_version": 1,
+    def policy(self, *, camera: bool = False) -> dict:
+        policy = {
+            "schema_version": 2 if camera else 1,
             "active": True,
             "sites": ["cabin", "crosstown"],
             "incident_classes": [
@@ -82,16 +82,33 @@ class HomeEventDeliveryTests(unittest.TestCase):
             "cooldown_seconds": 3600,
             "reservation_ttl_seconds": 300,
             "unresolved_access_escalation_seconds": 1800,
-            "camera_enabled": False,
+            "camera_enabled": camera,
         }
+        if camera:
+            policy.update(
+                {
+                    "camera_bindings": {
+                        "cabin": "Kitchen",
+                        "crosstown": "Living Room Wired",
+                    },
+                    "camera_snapshot_offsets_seconds": [30, 60],
+                    "camera_result_mode": "structured_text",
+                }
+            )
+        return policy
 
-    def activate(self) -> None:
+    def activate(self, *, camera: bool = False) -> None:
         bus.install_delivery_policy(
-            self.paths, json.dumps(self.policy()).encode("utf-8")
+            self.paths, json.dumps(self.policy(camera=camera)).encode("utf-8")
         )
         self.store.set_runtime_mode("limited_delivery")
 
-    def reserve(self, template: str = "person_activity") -> None:
+    def reserve(
+        self,
+        template: str = "person_activity",
+        *,
+        camera_result: str | None = None,
+    ) -> None:
         with self.store.connect() as connection:
             incident = connection.execute(
                 """
@@ -102,19 +119,45 @@ class HomeEventDeliveryTests(unittest.TestCase):
                 """,
                 ("inc_" + ("a" * 32), self.NOW, self.NOW),
             ).lastrowid
+            camera_id = None
+            if camera_result is not None:
+                camera_id = connection.execute(
+                    """
+                    INSERT INTO camera_evaluations(
+                        evaluation_uid, site, camera_alias, state, trigger_at,
+                        due_30_at, due_60_at, snapshot_30_result,
+                        snapshot_60_result, result, created_at, updated_at,
+                        completed_at
+                    ) VALUES (?, 'cabin', 'Kitchen', 'complete', ?, ?, ?,
+                              'clear', 'clear', ?, ?, ?, ?)
+                    """,
+                    (
+                        "cam_" + ("c" * 32),
+                        self.NOW,
+                        self.NOW,
+                        self.NOW,
+                        camera_result,
+                        self.NOW,
+                        self.NOW,
+                        self.NOW,
+                    ),
+                ).lastrowid
             connection.execute(
                 """
                 INSERT INTO notification_outbox(
                     incident_id, site, status, reservation_token,
                     reserved_until, recipient_route, template_code,
-                    attempt_count, created_at, updated_at
-                ) VALUES (?, 'cabin', 'reserved', ?, ?, 'dylan', ?, 0, ?, ?)
+                    attempt_count, camera_evaluation_id, camera_result,
+                    created_at, updated_at
+                ) VALUES (?, 'cabin', 'reserved', ?, ?, 'dylan', ?, 0, ?, ?, ?, ?)
                 """,
                 (
                     incident,
                     "res_" + ("b" * 32),
                     "2026-07-12T15:05:00Z",
                     template,
+                    camera_id,
+                    camera_result,
                     self.NOW,
                     self.NOW,
                 ),
@@ -181,6 +224,22 @@ class HomeEventDeliveryTests(unittest.TestCase):
         self.assertEqual(message, delivery.TEMPLATES["person_activity"].format(site="Cabin"))
         self.assertNotIn("inc_", message)
         self.assertNotIn("res_", message)
+
+    def test_structured_camera_result_adds_only_fixed_context_clause(self) -> None:
+        self.activate(camera=True)
+        self.reserve(camera_result="no_person_visible")
+        with mock.patch.object(
+            delivery.subprocess, "run", return_value=self.receipt()
+        ) as run:
+            result = self.worker().run_once()
+
+        self.assertEqual(result["outcome"], "sent")
+        command = run.call_args.args[0]
+        message = command[command.index("--message") + 1]
+        self.assertTrue(
+            message.endswith(delivery.CAMERA_CLAUSES["no_person_visible"])
+        )
+        self.assertNotIn("cam_", message)
 
     def test_presence_change_after_reservation_burns_without_send(self) -> None:
         self.activate()
