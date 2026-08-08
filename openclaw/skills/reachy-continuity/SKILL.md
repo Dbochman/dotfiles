@@ -8,7 +8,7 @@ metadata: {"openclaw":{"emoji":"🔗"}}
 
 Use this skill only for explicit continuity operations in these exact authenticated sessions:
 
-- Dylan iMessage: `agent:main:imessage:direct:dylanbochman@gmail.com`
+- Dylan iMessage: `agent:main:imessage:direct:${DYLAN_EMAIL}`
 - Reachy voice: `agent:main:reachy`
 
 The `reachy-continuity` gateway plugin handles every-turn context automatically from the trusted runtime session key. It stores only expiring semantic summaries: at most 12 for four hours, with explicit handoffs retained for 24 hours. Never inspect or merge either raw transcript.
@@ -18,7 +18,7 @@ The `reachy-continuity` gateway plugin handles every-turn context automatically 
 Treat “take this to text,” “send this to iMessage,” “pick this up on Reachy,” “continue this with Reachy,” and close equivalents as deliberate requests.
 
 1. Call `reachy_continuity_handoff` with a concise paraphrase of only the requested discussion context.
-2. From Reachy to iMessage, send that concise handoff only to Dylan's verified handle `dylanbochman@gmail.com`. Do not send the capsule.
+2. From Reachy to iMessage, send that concise handoff only to Dylan's verified handle `${DYLAN_EMAIL}`. Do not send the capsule.
 3. From iMessage to Reachy, tell Dylan the handoff is queued. Do not make Reachy speak immediately unless he also asks.
 4. After using a pending handoff, call `reachy_continuity_consume` with its exact ID. Never consume another handoff.
 
