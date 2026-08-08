@@ -78,7 +78,7 @@ class HomeEventDeliveryTests(unittest.TestCase):
                 "person_and_access",
             ],
             "recipient_routes": ["dylan"],
-            "arrival_grace_seconds": 600,
+            "arrival_grace_seconds": 900,
             "cooldown_seconds": 3600,
             "reservation_ttl_seconds": 300,
             "unresolved_access_escalation_seconds": 1800,
@@ -267,6 +267,37 @@ class HomeEventDeliveryTests(unittest.TestCase):
         self.assertEqual(second["outcome"], "idle")
         self.assertEqual(run.call_count, 1)
         self.assertEqual(self.row()["status"], "unknown")
+        before = self.store.status_snapshot()
+        self.assertEqual(before["delivery"]["health"], "degraded")
+        self.assertEqual(
+            before["delivery"]["attention"],
+            {
+                "required": True,
+                "unknown_unreviewed": 1,
+                "latest_at": self.NOW,
+                "last_reviewed_at": None,
+                "last_review_outcome": None,
+            },
+        )
+        self.assertTrue(before["attention"]["required"])
+
+        reviewed = self.store.review_delivery_attention("not_received")
+        after = self.store.status_snapshot()
+
+        self.assertEqual(
+            reviewed,
+            {"reviewed": 1, "pending": 0, "outcome": "not_received"},
+        )
+        row = self.row()
+        self.assertEqual(row["status"], "unknown")
+        self.assertEqual(row["reviewed_at"], self.NOW)
+        self.assertEqual(row["review_outcome"], "not_received")
+        self.assertEqual(after["delivery"]["health"], "ok")
+        self.assertFalse(after["delivery"]["attention"]["required"])
+        self.assertEqual(
+            after["delivery"]["attention"]["last_review_outcome"],
+            "not_received",
+        )
 
 
 if __name__ == "__main__":

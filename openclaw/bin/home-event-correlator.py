@@ -31,8 +31,8 @@ from home_event_bus import (  # noqa: E402
 
 CONSUMER = "correlator"
 PRESENCE_MAX_AGE = timedelta(minutes=30)
-INCIDENT_GRACE = timedelta(minutes=10)
-ROUTINE_QUIET = timedelta(minutes=15)
+INCIDENT_GRACE = timedelta(minutes=15)
+ROUTINE_QUIET = timedelta(minutes=20)
 ACCESS_MAX_AGE = timedelta(hours=24)
 RATE_LIMIT = timedelta(hours=1)
 CAMERA_TRIGGER_MAX_AGE = timedelta(seconds=90)
@@ -219,6 +219,60 @@ class ShadowCorrelator:
             (incident_id, status, reason_code, format_time(self.now())),
         )
         return cursor.rowcount == 1
+
+    def _carry_open_access_into_vacancy(
+        self,
+        connection: sqlite3.Connection,
+        incident: sqlite3.Row,
+        presence_event_id: int,
+        event_time: str,
+    ) -> sqlite3.Row | None:
+        """Create a fresh decision boundary when vacancy inherits open access."""
+
+        has_access, lock_open, door_open = self._access_state(
+            connection, int(incident["id"])
+        )
+        if not has_access or (lock_open is not True and door_open is not True):
+            return None
+        access_event_ids = [
+            int(row["id"])
+            for row in connection.execute(
+                """
+                SELECT e.id
+                FROM incident_events ie
+                JOIN events e ON e.id = ie.event_id
+                WHERE ie.incident_id = ?
+                  AND e.event_type IN (
+                    'lock.unlocked', 'lock.locked', 'door.opened', 'door.closed'
+                  )
+                ORDER BY e.observed_at, e.id
+                """,
+                (incident["id"],),
+            )
+        ]
+        self._resolve(connection, incident, "access_carried_into_vacancy")
+        carried = self._ensure_incident(
+            connection,
+            site=str(incident["site"]),
+            category="activity",
+            summary_code="vacant_access_pending",
+            event_time=event_time,
+        )
+        for access_event_id in access_event_ids:
+            self._attach(
+                connection,
+                int(carried["id"]),
+                access_event_id,
+                "carried_access",
+            )
+        self._attach(
+            connection,
+            int(carried["id"]),
+            presence_event_id,
+            "presence_context",
+        )
+        self._increment(connection, "vacancy_access_reopened")
+        return carried
 
     def _schedule_camera_evaluation(
         self,
@@ -441,6 +495,13 @@ class ShadowCorrelator:
                     current = delivery.get("attributes", {}).get("current")
                     if current == "occupied" and mode == "occupied":
                         self._resolve(connection, incident, "resident_arrival_silent")
+                    elif current == "confirmed_vacant" and mode == "vacant":
+                        self._carry_open_access_into_vacancy(
+                            connection,
+                            incident,
+                            event_id,
+                            event_time,
+                        )
                     elif current != "confirmed_vacant":
                         connection.execute(
                             "UPDATE incidents SET summary_code = ?, updated_at = ? WHERE id = ?",

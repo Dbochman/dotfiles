@@ -68,7 +68,7 @@ class HomeEventCameraTests(unittest.TestCase):
                 "person_and_access",
             ],
             "recipient_routes": ["dylan"],
-            "arrival_grace_seconds": 600,
+            "arrival_grace_seconds": 900,
             "cooldown_seconds": 3600,
             "reservation_ttl_seconds": 300,
             "unresolved_access_escalation_seconds": 1800,

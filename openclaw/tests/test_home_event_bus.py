@@ -179,7 +179,7 @@ def delivery_policy(*, active: bool) -> dict:
             "person_and_access",
         ],
         "recipient_routes": ["dylan"],
-        "arrival_grace_seconds": 600,
+        "arrival_grace_seconds": 900,
         "cooldown_seconds": 3600,
         "reservation_ttl_seconds": 300,
         "unresolved_access_escalation_seconds": 1800,
@@ -291,7 +291,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 4)
+        self.assertEqual(status["schema_version"], 5)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -361,6 +361,13 @@ class RuntimeSecurityTests(HomeEventTestCase):
             home_events.ConfigError, "delivery_policy_camera_bindings"
         ):
             home_events.install_delivery_policy(self.paths, encode(malformed))
+
+        old_grace = dict(policy)
+        old_grace["arrival_grace_seconds"] = 600
+        with self.assertRaisesRegex(
+            home_events.ConfigError, "delivery_policy_arrival_grace_seconds"
+        ):
+            home_events.install_delivery_policy(self.paths, encode(old_grace))
 
     def test_shadow_rollback_burns_unattempted_and_isolates_claimed_slot(self) -> None:
         home_events.install_delivery_policy(
@@ -598,7 +605,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         with self.connection() as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
-                4,
+                5,
             )
             self.assertEqual(
                 connection.execute(
@@ -624,6 +631,13 @@ class RuntimeSecurityTests(HomeEventTestCase):
                     "SELECT source FROM producer_state WHERE source='nest'"
                 ).fetchone()
             )
+            outbox_columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(notification_outbox)"
+                )
+            }
+            self.assertTrue({"reviewed_at", "review_outcome"}.issubset(outbox_columns))
 
     def test_ring_worker_health_projection_is_bounded_and_explicit(self) -> None:
         self.paths.ring_producer_status.write_text(

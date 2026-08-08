@@ -39,10 +39,12 @@ zero events and treated each repeated scan as a no-op. The tracked plist
 defaults remain disabled so a fresh install cannot silently activate any
 producer.
 
-The Dylan-only canary is now on SQLite schema v4. Its separate camera policy
+The Dylan-only canary is now on SQLite schema v5. Its separate camera policy
 was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
 `Living Room Wired` probes, a protected schema backup, full tests, and a
-shadow-first migration. The first active projection was healthy with no queue,
+shadow-first migration. Schema v5 was activated at `2026-08-07T22:40:59Z`
+after another protected backup and shadow-first migration. The first active
+projection was healthy with no queue,
 reservation, camera evaluation, delivery outcome, dead letter, or retained
 image.
 
@@ -146,7 +148,7 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
 
 ## Limited-delivery boundary
 
-Schema v4 supports `shadow` and `limited_delivery`, but a mode change alone is
+Schema v5 supports `shadow` and `limited_delivery`, but a mode change alone is
 insufficient. `limited_delivery` requires a valid mode-`0600` protected policy
 whose `active` field is true. Policy replacement is accepted only while the
 runtime is in `shadow` mode. The tracked
@@ -159,11 +161,14 @@ home-eventctl install-delivery-policy \
 ```
 
 The correlator reserves an eligible slot only after fresh canonical vacancy
-survives the fixed ten-minute arrival grace. The separate sender records its
+survives the fixed fifteen-minute arrival grace. The separate sender records its
 single attempt before calling OpenClaw's supervised iMessage channel, rechecks
 fresh vacancy, and holds the dedicated rollback lock across the send and
 receipt transition without blocking event ingestion. It never retries an
-ambiguous timeout or receipt.
+ambiguous timeout or receipt. An unknown outcome keeps delivery health and the
+operator-attention projection degraded until an explicit operator review
+records `received`, `not_received`, or `uncertain`; review never retries or
+rewrites the outcome.
 
 The schema-v2 protected policy separately binds Cabin to exact `Kitchen` and
 Crosstown to exact `Living Room Wired`. While camera evidence is enabled, a
@@ -238,8 +243,8 @@ repair prune. Process restarts do not reset the gate. An explicit
 the WAL. The internal maintenance marker is not exposed through safe status.
 Status includes bus-observed per-source health and safe failure state, consumer
 depth and oldest unfinished time, retention, database size, camera-evaluation
-health/counts, and a separate access-attention projection. An access incident
-that expires without a
+health/counts, unresolved delivery-outcome attention, and a separate
+access-attention projection. An access incident that expires without a
 matching lock/close remains durable historical evidence and increments
 attention without redefining current bus health. The operator-only
 `review-access-attention` command records that every currently pending access
@@ -262,6 +267,7 @@ home-eventctl init
 home-eventctl check-config
 home-eventctl status
 home-eventctl review-access-attention
+home-eventctl review-delivery-attention --outcome not_received
 home-eventctl ingest-once --limit 100
 home-eventctl prune
 printf '%s\n' '<strict normalized JSON>' | \
@@ -305,14 +311,19 @@ events but is deliberately non-actionable: it neither opens nor extends an
 incident and produces no notification decision. A fresh arrival resolves an
 activity incident silently. Lock/close evidence resolves it only after every
 observed open-door and unlocked-lock condition is cleared; a close event
-cannot hide an unlocked lock, and vice versa. Routine activity closes after 15
+cannot hide an unlocked lock, and vice versa. Routine activity closes after 20
 quiet minutes, while an unresolved access incident becomes
 `expired_unresolved` after 24 hours and enters the separate operator-attention
 projection. Current bus health remains reserved for active operational
-failures. August source health and battery transitions use separate incident
+failures. If a site becomes
+confirmed vacant while an access incident still records an unlocked lock or
+open door, the correlator closes the occupied decision boundary and opens a
+fresh vacancy-scoped access incident. A matching lock/close during the new
+fifteen-minute grace resolves it silently; otherwise it becomes independently
+eligible. August source health and battery transitions use separate incident
 categories. All incidents and consumer acknowledgements survive restarts.
 
-After a 10-minute arrival grace period, confirmed-vacant activity records a
+After a 15-minute arrival grace period, confirmed-vacant activity records a
 `shadowed` notification decision, capped at one such decision per site per
 hour. Suppressed, rate-limited, and shadowed reasons are retained separately
 from the incident's latest resolution summary and returned by the
@@ -541,9 +552,10 @@ retried, preventing a duplicate.
 ## Attended rollout
 
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
-installed at schema v3. The Dylan-only Stage 4 canary entered
-`limited_delivery` at `2026-08-05T15:42:14Z`; the tracked policy remains
-inactive by default. Canonical presence, Nest metadata, Ring, August, and
+installed at schema v5. The Dylan-only Stage 4 canary entered
+`limited_delivery` at `2026-08-05T15:42:14Z`; the tracked delivery policy is
+active for both residences with camera evidence disabled. Canonical presence,
+Nest metadata, Ring, August, and
 Cabin plus Crosstown local-presence enrichment are enabled in the installed
 runtime; the tracked producer defaults remain off. Both sites completed silent
 baselines, duplicate-scan no-ops, and organic departure/return evidence.
@@ -561,7 +573,7 @@ fresh or rebuilt installation must first:
    and every runtime regular file is `0600`.
 4. Install the exact protected delivery policy while mode remains `shadow`.
    Its tracked rollout scope is Dylan only, both sites, three high-confidence
-   activity classes, ten-minute arrival grace, one-hour cooldown, five-minute
+   activity classes, fifteen-minute arrival grace, one-hour cooldown, five-minute
    reservation TTL, 30-minute unresolved-access threshold, and cameras off.
 5. Run `home-eventctl check-config`, compilation/tests, and `plutil -lint` for
    each installed plist.

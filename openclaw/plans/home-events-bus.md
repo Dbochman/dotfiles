@@ -603,7 +603,7 @@ read-only status through the existing MBP boundary.
 Only after all shadow gates pass:
 
 1. An unlock or open while confidently vacant opens one incident.
-2. Wait 10 minutes for Ring and resident-arrival evidence.
+2. Wait 15 minutes for Ring and resident-arrival evidence.
 3. A fresh resident arrival resolves the incident silently.
 4. If still unexplained, optionally request a current camera image and have
    OpenClaw describe what it sees.
@@ -798,10 +798,10 @@ incident identifiers, and no database path or provider identity.
 ## Deployment and remaining rollout
 
 The bus core, correlator, read-only skill, adapters, bridges, and LaunchAgents
-are installed on the Mac Mini with SQLite schema 4. The separate delivery and
+are installed on the Mac Mini with SQLite schema 5. The separate delivery and
 bounded camera-evidence workers are loaded, and the Dylan-only Stage 4 canary entered
-`limited_delivery` at `2026-08-05T15:42:14Z`; the tracked policy remains
-inactive as the safe deployment default. Presence,
+`limited_delivery` at `2026-08-05T15:42:14Z`; the tracked delivery policy is
+active for both residences while camera evidence remains disabled. Presence,
 Nest, Ring, August, and both local-presence sites are enabled in the attended
 runtime. The local adapter completed zero-event baselines and duplicate-scan
 no-ops for Cabin and Crosstown. The remaining order is:

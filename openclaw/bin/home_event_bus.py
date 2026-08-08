@@ -27,8 +27,8 @@ import sys
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = 4
-STATUS_SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
+STATUS_SCHEMA_VERSION = 5
 EVENT_SCHEMA_VERSION = 1
 DELIVERY_POLICY_SCHEMA_VERSION = 2
 SERVICE_NAME = "home-events"
@@ -1146,7 +1146,7 @@ def validate_delivery_policy(value: Any) -> Mapping[str, Any]:
             or not minimum <= item <= maximum
         ):
             raise ConfigError("delivery_policy_" + key)
-    if normalized["arrival_grace_seconds"] != 600:
+    if normalized["arrival_grace_seconds"] != 900:
         raise ConfigError("delivery_policy_arrival_grace_seconds")
     if schema_version == 1:
         normalized["camera_bindings"] = dict(CAMERA_BINDINGS)
@@ -1210,6 +1210,7 @@ def delivery_policy_projection(paths: RuntimePaths) -> Mapping[str, Any]:
             "sites": list(policy["sites"]),
             "incident_classes": list(policy["incident_classes"]),
             "recipient_scope": "owner_only",
+            "arrival_grace_seconds": policy["arrival_grace_seconds"],
             "camera_enabled": policy["camera_enabled"],
             "camera_bindings": (
                 dict(policy["camera_bindings"])
@@ -1225,6 +1226,7 @@ def delivery_policy_projection(paths: RuntimePaths) -> Mapping[str, Any]:
             "sites": [],
             "incident_classes": [],
             "recipient_scope": "unconfigured",
+            "arrival_grace_seconds": None,
             "camera_enabled": False,
             "camera_bindings": {},
             "camera_result_mode": "unconfigured",
@@ -1544,6 +1546,8 @@ CREATE TABLE IF NOT EXISTS notification_outbox (
     error_code TEXT,
     camera_evaluation_id INTEGER REFERENCES camera_evaluations(id),
     camera_result TEXT CHECK(camera_result IS NULL OR camera_result IN ('person_visible', 'no_person_visible', 'uncertain', 'unavailable')),
+    reviewed_at TEXT,
+    review_outcome TEXT CHECK(review_outcome IS NULL OR review_outcome IN ('received', 'not_received', 'uncertain')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -1724,6 +1728,8 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
             "error_code",
             "camera_evaluation_id",
             "camera_result",
+            "reviewed_at",
+            "review_outcome",
             "created_at",
             "updated_at",
         }
@@ -1963,11 +1969,16 @@ class EventStore:
                 self._migrate_v1_to_v2(connection, now)
                 self._migrate_v2_to_v3(connection, now)
                 self._migrate_v3_to_v4(connection, now)
+                self._migrate_v4_to_v5(connection, now)
             elif [row["version"] for row in versions] == [2]:
                 self._migrate_v2_to_v3(connection, now)
                 self._migrate_v3_to_v4(connection, now)
+                self._migrate_v4_to_v5(connection, now)
             elif [row["version"] for row in versions] == [3]:
                 self._migrate_v3_to_v4(connection, now)
+                self._migrate_v4_to_v5(connection, now)
+            elif [row["version"] for row in versions] == [4]:
+                self._migrate_v4_to_v5(connection, now)
             elif [row["version"] for row in versions] != [SCHEMA_VERSION]:
                 raise ConfigError("database_schema")
             for source in SOURCES:
@@ -2120,7 +2131,36 @@ class EventStore:
             )
             connection.execute(
                 "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 3",
-                (SCHEMA_VERSION, now),
+                (4, now),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+
+    @staticmethod
+    def _migrate_v4_to_v5(connection: sqlite3.Connection, now: str) -> None:
+        """Add explicit review evidence for uncertain delivery outcomes."""
+
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "ALTER TABLE notification_outbox ADD COLUMN reviewed_at TEXT"
+            )
+            connection.execute(
+                """
+                ALTER TABLE notification_outbox
+                ADD COLUMN review_outcome TEXT
+                    CHECK(review_outcome IS NULL OR review_outcome IN (
+                        'received', 'not_received', 'uncertain'
+                    ))
+                """
+            )
+            connection.execute(
+                "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 4",
+                (5, now),
             )
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise ConfigError("database_migration_integrity")
@@ -2227,7 +2267,8 @@ class EventStore:
                     """
                     UPDATE notification_outbox
                     SET status = 'unknown',
-                        error_code = 'mode_rollback_after_claim', updated_at = ?
+                        error_code = 'mode_rollback_after_claim',
+                        reviewed_at = NULL, review_outcome = NULL, updated_at = ?
                     WHERE status = 'reserved' AND attempt_count > 0
                     """,
                     (now,),
@@ -2929,6 +2970,74 @@ class EventStore:
             "runtime_health_cleared": cleared,
         }
 
+    def review_delivery_attention(self, outcome: str) -> Mapping[str, Any]:
+        """Record operator review of unknown sends without retrying or erasing them."""
+
+        if outcome not in {"received", "not_received", "uncertain"}:
+            raise ConfigError("delivery_review_outcome_invalid")
+        descriptor = _open_private_regular(self.paths.delivery_lock, os.O_RDONLY)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            now = self._now()
+            with contextlib.closing(self.connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                reviewed_error_codes = {
+                    row["error_code"]
+                    for row in connection.execute(
+                        """
+                        SELECT DISTINCT error_code FROM notification_outbox
+                        WHERE status = 'unknown' AND reviewed_at IS NULL
+                          AND error_code IS NOT NULL
+                        """
+                    )
+                }
+                cursor = connection.execute(
+                    """
+                    UPDATE notification_outbox
+                    SET reviewed_at = ?, review_outcome = ?, updated_at = ?
+                    WHERE status = 'unknown' AND reviewed_at IS NULL
+                    """,
+                    (now, outcome, now),
+                )
+                reviewed = cursor.rowcount
+                pending = connection.execute(
+                    """
+                    SELECT COUNT(*) FROM notification_outbox
+                    WHERE status = 'unknown' AND reviewed_at IS NULL
+                    """
+                ).fetchone()[0]
+                if pending == 0:
+                    mode = connection.execute(
+                        "SELECT mode FROM runtime_status WHERE singleton = 1"
+                    ).fetchone()["mode"]
+                    if mode == "shadow":
+                        connection.execute(
+                            """
+                            UPDATE delivery_runtime
+                            SET health = 'disabled', updated_at = ?
+                            WHERE singleton = 1
+                            """,
+                            (now,),
+                        )
+                    elif reviewed_error_codes:
+                        placeholders = ",".join("?" for _ in reviewed_error_codes)
+                        connection.execute(
+                            """
+                            UPDATE delivery_runtime SET health = 'ok', updated_at = ?
+                            WHERE singleton = 1 AND last_error_code IN ("""
+                            + placeholders
+                            + ")",
+                            (now, *sorted(reviewed_error_codes)),
+                        )
+                connection.commit()
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+        self.write_status_best_effort()
+        return {"reviewed": reviewed, "pending": pending, "outcome": outcome}
+
     def prune_if_due(self, *, checkpoint: bool = False) -> bool:
         now = self._now()
         now_epoch = int(_parse_now(now).timestamp())
@@ -2993,6 +3102,21 @@ class EventStore:
                     "SELECT status, COUNT(*) FROM notification_outbox GROUP BY status"
                 ).fetchall()
             }
+            delivery_attention = connection.execute(
+                """
+                SELECT COUNT(*) AS pending, MAX(updated_at) AS latest_at
+                FROM notification_outbox
+                WHERE status = 'unknown' AND reviewed_at IS NULL
+                """
+            ).fetchone()
+            latest_delivery_review = connection.execute(
+                """
+                SELECT reviewed_at, review_outcome
+                FROM notification_outbox
+                WHERE status = 'unknown' AND reviewed_at IS NOT NULL
+                ORDER BY reviewed_at DESC, id DESC LIMIT 1
+                """
+            ).fetchone()
             camera_counts = {
                 state: count
                 for state, count in connection.execute(
@@ -3084,7 +3208,11 @@ class EventStore:
                 "last_error_at": runtime["last_error_at"],
                 "last_error_code": runtime["last_error_code"],
                 "delivery": {
-                    "health": delivery_runtime["health"],
+                    "health": (
+                        "degraded"
+                        if delivery_attention["pending"] > 0
+                        else delivery_runtime["health"]
+                    ),
                     "policy": delivery_policy_projection(self.paths),
                     "counts": {
                         status: outbox_counts.get(status, 0)
@@ -3100,6 +3228,21 @@ class EventStore:
                     "last_success_at": delivery_runtime["last_success_at"],
                     "last_error_at": delivery_runtime["last_error_at"],
                     "last_error_code": delivery_runtime["last_error_code"],
+                    "attention": {
+                        "required": delivery_attention["pending"] > 0,
+                        "unknown_unreviewed": delivery_attention["pending"],
+                        "latest_at": delivery_attention["latest_at"],
+                        "last_reviewed_at": (
+                            latest_delivery_review["reviewed_at"]
+                            if latest_delivery_review is not None
+                            else None
+                        ),
+                        "last_review_outcome": (
+                            latest_delivery_review["review_outcome"]
+                            if latest_delivery_review is not None
+                            else None
+                        ),
+                    },
                 },
                 "camera": {
                     "health": camera_runtime["health"],
@@ -3113,12 +3256,15 @@ class EventStore:
                     "last_error_code": camera_runtime["last_error_code"],
                 },
                 "attention": {
-                    "required": pending_attention > 0,
+                    "required": (
+                        pending_attention > 0 or delivery_attention["pending"] > 0
+                    ),
                     "expired_unresolved": expired_attention,
                     "reviewed": min(reviewed_attention, expired_attention),
                     "pending": pending_attention,
                     "latest_at": latest_attention,
                     "last_reviewed_at": last_reviewed_at,
+                    "delivery_unknown_unreviewed": delivery_attention["pending"],
                 },
                 "counts": {
                     "events": event_count,
@@ -3404,6 +3550,12 @@ def build_parser() -> argparse.ArgumentParser:
     operator_commands.add_parser("status")
     operator_commands.add_parser("prune")
     operator_commands.add_parser("review-access-attention")
+    review_delivery = operator_commands.add_parser("review-delivery-attention")
+    review_delivery.add_argument(
+        "--outcome",
+        required=True,
+        choices=("received", "not_received", "uncertain"),
+    )
     operator_commands.add_parser("install-delivery-policy")
     set_mode = operator_commands.add_parser("set-mode")
     set_mode.add_argument("mode", choices=sorted(RUNTIME_MODES))
@@ -3474,6 +3626,8 @@ def run_operator(args: argparse.Namespace) -> Mapping[str, Any]:
         return {"ok": True, "deleted": store.prune()}
     if args.command == "review-access-attention":
         return {"ok": True, **store.review_access_attention()}
+    if args.command == "review-delivery-attention":
+        return {"ok": True, **store.review_delivery_attention(args.outcome)}
     raise StateError("unknown_command")
 
 

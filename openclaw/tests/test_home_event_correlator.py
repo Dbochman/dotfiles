@@ -197,7 +197,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
                 "person_and_access",
             ],
             "recipient_routes": ["dylan"],
-            "arrival_grace_seconds": 600,
+            "arrival_grace_seconds": 900,
             "cooldown_seconds": 3600,
             "reservation_ttl_seconds": 300,
             "unresolved_access_escalation_seconds": 1800,
@@ -255,13 +255,13 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             ],
         }
 
-    def test_vacant_ring_activity_waits_ten_minutes_for_arrival(self) -> None:
+    def test_vacant_ring_activity_waits_fifteen_minutes_for_arrival(self) -> None:
         self.enqueue("ring", "entry.person_detected")
         self.ingest()
 
         first = self.run_correlator()
         before_grace = self.run_correlator()
-        self.NOW = "2026-07-12T15:08:00Z"
+        self.NOW = "2026-07-12T15:13:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         after_grace = self.run_correlator()
 
@@ -284,7 +284,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
 
         first = self.run_correlator()
-        self.NOW = "2026-07-12T15:08:00Z"
+        self.NOW = "2026-07-12T15:13:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         after_grace = self.run_correlator()
 
@@ -304,7 +304,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.assertEqual(rows[0]["template_code"], "person_activity")
         self.assertEqual(rows[0]["attempt_count"], 0)
         self.assertRegex(rows[0]["reservation_token"], r"^res_[0-9a-f]{32}$")
-        self.assertEqual(rows[0]["reserved_until"], "2026-07-12T15:13:00Z")
+        self.assertEqual(rows[0]["reserved_until"], "2026-07-12T15:18:00Z")
 
     def test_camera_evidence_is_scheduled_early_and_attached_only_as_context(self) -> None:
         self.enable_limited_delivery(camera=True)
@@ -334,7 +334,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
                 updated_at='2026-07-12T15:01:00Z';
             """
         )
-        self.NOW = "2026-07-12T15:10:01Z"
+        self.NOW = "2026-07-12T15:15:01Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         reserved = self.run_correlator()
 
@@ -356,7 +356,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.run_correlator()
         self.assertEqual(self.rows("SELECT * FROM camera_evaluations"), [])
 
-    def test_arrival_during_ten_minute_grace_resolves_silently(self) -> None:
+    def test_arrival_during_fifteen_minute_grace_resolves_silently(self) -> None:
         self.enqueue("ring", "entry.person_detected", sequence="ring")
         self.ingest()
         opened = self.run_correlator()
@@ -447,6 +447,138 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         )
         self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
 
+    def test_vacancy_reopens_unresolved_access_under_a_fresh_grace(self) -> None:
+        self.enable_limited_delivery()
+        self.write_presence("confirmed_vacant", "occupied")
+        self.enqueue(
+            "august",
+            "lock.unlocked",
+            site="crosstown",
+            observed_at=self.NOW,
+            attributes={
+                "previous": "locked",
+                "current": "unlocked",
+                "not_before": "2026-07-12T14:55:00Z",
+                "not_after": self.NOW,
+            },
+            sequence="occupied-unlock",
+        )
+        self.ingest()
+        self.run_correlator()
+        self.assertEqual(
+            [tuple(row) for row in self.rows(
+                "SELECT status, reason_code FROM incident_decisions ORDER BY id"
+            )],
+            [("suppressed", "occupied_activity_shadowed")],
+        )
+
+        self.NOW = "2026-07-12T15:05:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        self.enqueue(
+            "presence",
+            "presence.occupancy_changed",
+            site="crosstown",
+            observed_at=self.NOW,
+            attributes={
+                "previous": "occupied",
+                "current": "confirmed_vacant",
+                "confidence": "canonical",
+                "evidence_at": self.NOW,
+                "state_hash": "e" * 64,
+            },
+            sequence="vacancy",
+        )
+        self.ingest()
+        transitioned = self.run_correlator()
+
+        self.assertEqual(transitioned["reservations"], 0)
+        incidents = self.rows("SELECT * FROM incidents ORDER BY id")
+        self.assertEqual(len(incidents), 2)
+        self.assertEqual(incidents[0]["state"], "resolved")
+        self.assertEqual(incidents[0]["summary_code"], "access_carried_into_vacancy")
+        self.assertEqual(incidents[1]["state"], "open")
+        self.assertEqual(incidents[1]["summary_code"], "vacant_access_pending")
+
+        self.NOW = "2026-07-12T15:20:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        alerted = self.run_correlator()
+
+        self.assertEqual(alerted["reservations"], 1)
+        outbox = self.rows("SELECT * FROM notification_outbox")
+        self.assertEqual(len(outbox), 1)
+        self.assertEqual(outbox[0]["incident_id"], incidents[1]["id"])
+        self.assertEqual(outbox[0]["template_code"], "access_activity")
+        counter = self.rows(
+            "SELECT value FROM service_counters WHERE name='vacancy_access_reopened'"
+        )
+        self.assertEqual([row["value"] for row in counter], [1])
+
+    def test_locking_carried_access_during_grace_resolves_without_alert(self) -> None:
+        self.enable_limited_delivery()
+        self.write_presence("confirmed_vacant", "occupied")
+        self.enqueue(
+            "august",
+            "lock.unlocked",
+            site="crosstown",
+            observed_at=self.NOW,
+            attributes={
+                "previous": "locked",
+                "current": "unlocked",
+                "not_before": "2026-07-12T14:55:00Z",
+                "not_after": self.NOW,
+            },
+            sequence="occupied-unlock",
+        )
+        self.ingest()
+        self.run_correlator()
+
+        self.NOW = "2026-07-12T15:05:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        self.enqueue(
+            "presence",
+            "presence.occupancy_changed",
+            site="crosstown",
+            observed_at=self.NOW,
+            attributes={
+                "previous": "occupied",
+                "current": "confirmed_vacant",
+                "confidence": "canonical",
+                "evidence_at": self.NOW,
+                "state_hash": "f" * 64,
+            },
+            sequence="vacancy",
+        )
+        self.ingest()
+        self.run_correlator()
+
+        self.NOW = "2026-07-12T15:10:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        self.enqueue(
+            "august",
+            "lock.locked",
+            site="crosstown",
+            observed_at=self.NOW,
+            attributes={
+                "previous": "unlocked",
+                "current": "locked",
+                "not_before": "2026-07-12T15:05:00Z",
+                "not_after": self.NOW,
+            },
+            sequence="locked",
+        )
+        self.ingest()
+        self.run_correlator()
+
+        self.NOW = "2026-07-12T15:20:00Z"
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+        final = self.run_correlator()
+        incidents = self.rows("SELECT * FROM incidents ORDER BY id")
+
+        self.assertEqual(final["reservations"], 0)
+        self.assertEqual(incidents[1]["state"], "resolved")
+        self.assertEqual(incidents[1]["summary_code"], "access_resolved_silently")
+        self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
+
     def test_uncertain_decision_remains_terminal_after_site_becomes_vacant(self) -> None:
         self.write_presence("possibly_vacant", "confirmed_vacant")
         self.enqueue("ring", "entry.doorbell_rang")
@@ -479,7 +611,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
         self.run_correlator()
 
-        self.NOW = "2026-07-12T15:08:00Z"
+        self.NOW = "2026-07-12T15:13:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         first_shadow = self.run_correlator()
         self.assertEqual(first_shadow["shadow_decisions"], 1)
@@ -489,12 +621,12 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             "presence",
             "presence.occupancy_changed",
             site="crosstown",
-            observed_at="2026-07-12T15:08:00Z",
+            observed_at="2026-07-12T15:13:00Z",
             attributes={
                 "previous": "confirmed_vacant",
                 "current": "occupied",
                 "confidence": "canonical",
-                "evidence_at": "2026-07-12T15:08:00Z",
+                "evidence_at": "2026-07-12T15:13:00Z",
                 "state_hash": "c" * 64,
             },
             sequence="arrival",
@@ -502,29 +634,29 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
         self.run_correlator()
 
-        self.NOW = "2026-07-12T15:10:00Z"
+        self.NOW = "2026-07-12T15:15:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         self.enqueue(
             "august",
             "lock.unlocked",
             site="crosstown",
-            observed_at="2026-07-12T15:10:00Z",
+            observed_at="2026-07-12T15:15:00Z",
             attributes={
                 "previous": "locked",
                 "current": "unlocked",
-                "not_before": "2026-07-12T15:08:00Z",
-                "not_after": "2026-07-12T15:10:00Z",
+                "not_before": "2026-07-12T15:13:00Z",
+                "not_after": "2026-07-12T15:15:00Z",
             },
             sequence="second",
         )
         self.ingest()
         pending_grace = self.run_correlator()
 
-        self.NOW = "2026-07-12T15:20:00Z"
+        self.NOW = "2026-07-12T15:30:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         rate_limited = self.run_correlator()
 
-        self.NOW = "2026-07-12T16:20:00Z"
+        self.NOW = "2026-07-12T16:30:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         after_window = self.run_correlator()
 
@@ -625,7 +757,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
 
         result = self.run_correlator()
-        self.NOW = "2026-07-12T15:08:00Z"
+        self.NOW = "2026-07-12T15:13:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         after_grace = self.run_correlator()
 
@@ -688,7 +820,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.ingest()
 
         result = self.run_correlator()
-        self.NOW = "2026-07-12T15:07:00Z"
+        self.NOW = "2026-07-12T15:12:00Z"
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         after_grace = self.run_correlator()
 
@@ -1007,6 +1139,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
                 "pending": 1,
                 "latest_at": "2026-07-12T15:00:00Z",
                 "last_reviewed_at": None,
+                "delivery_unknown_unreviewed": 0,
             },
         )
 

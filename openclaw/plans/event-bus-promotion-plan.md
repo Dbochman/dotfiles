@@ -64,7 +64,7 @@ identity or intent. A representative message is:
 
 > Cabin is marked vacant. The driveway and front entry detected activity, and
 > the door was opened. No resident arrival was detected during the following
-> 10 minutes. Do you recognize this activity?
+> 15 minutes. Do you recognize this activity?
 
 ## Policy invariants
 
@@ -262,10 +262,10 @@ operator action:
    status.
 6. [x] Independent rollback to shadow while ingestion and the journal continue.
 
-The tracked policy remains intentionally inactive as the safe deployment
-default. Its canary scope is both residences, Dylan only, the
+The tracked delivery policy is active for the Stage 4 canary. Its scope is both
+residences, Dylan only, the
 `person_activity`, `access_activity`, and `person_and_access` classes, a fixed
-10-minute arrival grace, a one-hour per-site cooldown, a five-minute
+15-minute arrival grace, a one-hour per-site cooldown, a five-minute
 reservation TTL, a recorded 30-minute unresolved-access threshold, and cameras
 disabled.
 
@@ -334,8 +334,8 @@ capture and delivery.
   live capture, so it was not selected. Every probe frame was removed before
   deployment.
 - The protected schema-v2 policy was installed with `active=true` and
-  `camera_enabled=true`. The tracked policy remains inactive and camera-off as
-  the safe deployment default while retaining the reviewed exact bindings.
+  `camera_enabled=true`. The tracked policy now enables delivery but remains
+  camera-off while retaining the reviewed exact bindings.
 - All seven jobs loaded in shadow before the atomic return to
   `limited_delivery`. The first active projection reports schema 4, bus,
   delivery, and camera health `ok`; all sources are healthy; queues, ready
@@ -343,6 +343,27 @@ capture and delivery.
   zero; and the protected camera image directory is empty.
 - No synthetic household event or capture was injected. The first organic
   eligible event remains the live camera-evidence evaluation point.
+
+#### Arrival and delivery correction checkpoint — `2026-08-07T22:40:59Z`
+
+- The first organic camera-backed Cabin reservation ended in an ambiguous
+  sender timeout. Dylan confirmed that no message arrived. Schema 5 retains
+  the `unknown` outcome, records the explicit `not_received` review, and keeps
+  delivery attention degraded until that review is present; it never retries
+  the send.
+- The arrival grace is now fifteen minutes. The correlator also creates a new
+  vacancy-scoped decision boundary when an occupied incident still records an
+  unlocked lock or open door as the site becomes confirmed vacant. A matching
+  lock/close during that new grace resolves the carried state silently.
+- The Crosstown manual lock was observed at `2026-08-07T22:23:02Z` and resolved
+  the live incident four seconds later. Its history retained the exact repaired
+  shape: an occupied terminal decision, a later unlock, then the household
+  vacancy transition.
+- A mode-`0600` schema-4 backup passed `quick_check`; all seven jobs then passed
+  schema-5 shadow smoke runs with exit code 0. The active projection reports
+  the fixed 900-second grace, exact camera bindings, healthy bus/delivery/camera
+  state, zero pending or leased work, zero dead letters, no unreviewed delivery
+  outcomes, and an empty camera-image directory.
 
 ## Progress ledger
 

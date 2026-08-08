@@ -91,7 +91,7 @@ boundaries.
 | Script | Description |
 |--------|-------------|
 | `home_event_bus.py` | Durable Ring, presence, August, and Nest household event journal with explicit `shadow` / `limited_delivery` modes: strict source validation, HMAC-minimized atomic spools, single-writer SQLite ingestion, retention, protected owner policy, safe status, and bounded read queries. |
-| `home-eventctl` | Operator-only wrapper for `init`, `check-config`, producer `enqueue`, `ingest-once`, `status`, access-attention review, delivery-policy installation, mode changes, and `prune`; producers and policy installation use strict JSON on stdin. |
+| `home-eventctl` | Operator-only wrapper for `init`, `check-config`, producer `enqueue`, `ingest-once`, `status`, access/delivery-attention review, delivery-policy installation, mode changes, and `prune`; producers and policy installation use strict JSON on stdin. |
 | `home-events` | Fixed-root, read-only JSON CLI exposed to the OpenClaw `home-events` skill for status, recent activity, incidents, and explanations. |
 | `home-event-correlator.py` | Persistent correlator that claims durable consumer rows, applies fail-closed canonical presence context, groups site incidents, records rate-limited shadow decisions or owner-only reservations, and schedules camera evidence only under the separately active exact-camera policy. |
 | `home-event-delivery.py` | Separate one-attempt fixed-template sender for policy-scoped Dylan reservations; rechecks fresh vacancy, records sent/burned/unknown/dead-letter outcomes, and never stores message text or receipts. |

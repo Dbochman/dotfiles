@@ -40,18 +40,18 @@ MAX_RECEIPT_BYTES = 64 * 1024
 TEMPLATES = {
     "person_activity": (
         "{site} is marked vacant. Person activity was detected, and no resident "
-        "arrival was detected during the following 10 minutes. Do you recognize "
+        "arrival was detected during the following 15 minutes. Do you recognize "
         "this activity?"
     ),
     "access_activity": (
-        "{site} is marked vacant. The front entry was unlocked or opened, and no "
-        "resident arrival was detected during the following 10 minutes. Do you "
-        "recognize this activity?"
+        "{site} is marked vacant. The front entry is recorded as unlocked or open, "
+        "and no resident presence was confirmed during the following 15 minutes. "
+        "Do you recognize this state?"
     ),
     "person_and_access": (
         "{site} is marked vacant. Person activity and an unlock or door opening "
         "were detected, and no resident arrival was detected during the following "
-        "10 minutes. Do you recognize this activity?"
+        "15 minutes. Do you recognize this activity?"
     ),
 }
 
@@ -292,7 +292,7 @@ class DeliveryWorker:
                 """
                 UPDATE notification_outbox
                 SET status = 'unknown', error_code = 'prior_attempt_uncertain',
-                    updated_at = ?
+                    reviewed_at = NULL, review_outcome = NULL, updated_at = ?
                 WHERE status = 'reserved' AND attempt_count > 0
                 """,
                 (now,),
@@ -448,10 +448,20 @@ class DeliveryWorker:
                 connection.execute(
                     """
                     UPDATE notification_outbox
-                    SET status = ?, error_code = ?, updated_at = ?
+                    SET status = ?, error_code = ?,
+                        reviewed_at = CASE WHEN ? = 'unknown' THEN NULL ELSE reviewed_at END,
+                        review_outcome = CASE WHEN ? = 'unknown' THEN NULL ELSE review_outcome END,
+                        updated_at = ?
                     WHERE id = ? AND status = 'reserved' AND attempt_count = 1
                     """,
-                    (status_value, exc.code, now, row["id"]),
+                    (
+                        status_value,
+                        exc.code,
+                        status_value,
+                        status_value,
+                        now,
+                        row["id"],
+                    ),
                 )
                 self._runtime_update(
                     connection,
