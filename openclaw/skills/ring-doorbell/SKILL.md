@@ -99,6 +99,11 @@ connection, normalized home-event publication, direct dings, and the narrow
 safe-site signal consumed by dog-walk automation; do not start another Ring
 listener from this skill.
 
+The home-event camera worker may call the private exact-binding snapshot
+boundary for Cabin `driveway`/`front_door` and Crosstown `front_door` evidence.
+That boundary accepts safe site/alias keys only; it does not expose provider
+identifiers to the event journal, status projection, or OpenClaw prompt.
+
 For related tasks, switch to:
 - **dog-walk**: Automated dog walk detection + Roomba automation (uses Ring for return monitoring only)
 - **presence**: Check who is home

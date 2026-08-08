@@ -801,9 +801,11 @@ The bus core, correlator, read-only skill, adapters, bridges, and LaunchAgents
 are installed on the Mac Mini with SQLite schema 5. The separate delivery and
 bounded camera-evidence workers are loaded, and the Dylan-only Stage 4 canary entered
 `limited_delivery` at `2026-08-05T15:42:14Z`; the tracked delivery policy is
-active for both residences while camera evidence remains disabled. Presence,
-Nest, Ring, August, and both local-presence sites are enabled in the attended
-runtime. The local adapter completed zero-event baselines and duplicate-scan
+active for both residences with exact Cabin Ring `driveway`/`front_door` plus
+Nest `Kitchen` and Crosstown Ring `front_door` plus Nest `Living Room Wired`
+camera evidence. Presence, Nest, Ring, August, and both local-presence sites are
+enabled in the attended runtime. The local adapter
+completed zero-event baselines and duplicate-scan
 no-ops for Cabin and Crosstown. The remaining order is:
 
 1. Verify one true post-enrollment presence transition and correlate a later
@@ -826,7 +828,8 @@ no-ops for Cabin and Crosstown. The remaining order is:
    with `active=true` and changing runtime mode to `limited_delivery`. Roll
    mode back to `shadow` first if any stop condition occurs.
 9. Camera evidence is independently policy-gated. It uses only exact Cabin
-   `Kitchen` and Crosstown `Living Room Wired` aliases, deletes every +30/+60
+   Ring `driveway`/`front_door` plus Nest `Kitchen` and Crosstown Ring
+   `front_door` plus Nest `Living Room Wired` aliases, deletes every +30/+60
    frame after bounded analysis, and cannot affect eligibility.
 
 At each gate, run unit/integration tests, Python compilation, `check-config`,

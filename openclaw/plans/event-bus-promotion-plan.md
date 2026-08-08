@@ -49,8 +49,8 @@ opts in, her route should contain only high-confidence household exceptions:
 
 Occupied-site activity, local network departures and returns, source health,
 adapter failures, battery recovery, and routine resolutions remain silent.
-Operational telemetry is not a household notification. Images remain disabled
-unless a separate site-and-camera policy is explicitly approved.
+Operational telemetry is not a household notification. Images are captured
+only under the separately approved exact site-and-camera policy.
 
 ### Dylan
 
@@ -266,8 +266,9 @@ The tracked delivery policy is active for the Stage 4 canary. Its scope is both
 residences, Dylan only, the
 `person_activity`, `access_activity`, and `person_and_access` classes, a fixed
 15-minute arrival grace, a one-hour per-site cooldown, a five-minute
-reservation TTL, a recorded 30-minute unresolved-access threshold, and cameras
-disabled.
+reservation TTL, a recorded 30-minute unresolved-access threshold, and exact
+Cabin Ring `driveway`/`front_door` plus Nest `Kitchen` and Crosstown Ring
+`front_door` plus Nest `Living Room Wired` camera evidence.
 
 ### Stage 4 — Dylan-only limited canary
 
@@ -302,15 +303,17 @@ disabled.
 - Verify no message exposes routine movement, raw identifiers, provider
   payloads, or unsupported certainty.
 
-### Stage 6 — Optional camera evidence
+### Stage 6 — Active exact camera evidence
 
 This remains a separate rollout rather than a consequence of delivery
-activation. The approved implementation binds Cabin to exact `Kitchen` and
-Crosstown to exact `Living Room Wired`. A fresh person, unlock, or door-open
-event may schedule stills at +30 and +60 seconds only while the site is
-canonically confirmed vacant and the camera policy is active. Backfill,
-generic motion, stale events, uncertain/occupied presence, source health, and
-local-presence inference never capture.
+activation. The approved schema-v3 implementation binds Cabin Ring `driveway`
+and `front_door` plus Nest `Kitchen`, and Crosstown Ring `front_door` plus Nest
+`Living Room Wired`. A fresh person, unlock, or door-open event may schedule
+evidence at +30 and +60 seconds only while the site is canonically confirmed
+vacant and the camera policy is active. An attached Ring event selects its
+exact camera; access- and Nest-only triggers fall back to the site's Ring front
+door. Backfill, generic motion, stale events, uncertain/occupied presence,
+source health, and local-presence inference never capture.
 
 Each still is owner-only, validated, classified locally as only visible person
 or no visible person with bounded uncertainty, and deleted immediately. The
@@ -320,6 +323,12 @@ message. This evidence may add one fixed clause to an independently eligible
 Dylan notification. It never creates, suppresses, accelerates, or delays one.
 Rollback to `shadow` cancels pending evaluations under the same lock used by
 capture and delivery.
+
+Each +30/+60 slot aggregates its exact Ring and Nest targets. Any
+medium-or-high-confidence visible person produces `person_visible`; every
+target must return a clear result for `no_person_visible`. A partial provider
+failure produces bounded uncertainty and degrades camera health without
+discarding successful evidence from the other provider.
 
 #### Camera activation checkpoint — `2026-08-05T16:34:03Z`
 
@@ -334,8 +343,8 @@ capture and delivery.
   live capture, so it was not selected. Every probe frame was removed before
   deployment.
 - The protected schema-v2 policy was installed with `active=true` and
-  `camera_enabled=true`. The tracked policy now enables delivery but remains
-  camera-off while retaining the reviewed exact bindings.
+  `camera_enabled=true`. The tracked schema-v3 policy retains those exact Nest
+  bindings and adds the reviewed exact Ring `driveway`/`front_door` bindings.
 - All seven jobs loaded in shadow before the atomic return to
   `limited_delivery`. The first active projection reports schema 4, bus,
   delivery, and camera health `ok`; all sources are healthy; queues, ready
@@ -364,6 +373,35 @@ capture and delivery.
   the fixed 900-second grace, exact camera bindings, healthy bus/delivery/camera
   state, zero pending or leased work, zero dead letters, no unreviewed delivery
   outcomes, and an empty camera-image directory.
+
+#### Ring-plus-Nest camera expansion checkpoint — `2026-08-08T02:27:42Z`
+
+- Delivery policy schema 3 now names exact provider bundles. Cabin allows Ring
+  `driveway`/`front_door` plus Nest `Kitchen`; Crosstown allows Ring
+  `front_door` plus Nest `Living Room Wired`. Provider identifiers remain
+  behind the Ring safe-binding boundary and never enter policy, status, the
+  journal, or an image-analysis prompt.
+- The worker selects attached Ring trigger aliases, falling back to the site's
+  Ring front door for access- and Nest-only incidents, and combines that view
+  with the site's Nest interior camera. Every target must be clear for a
+  `no_person_visible` result; a partial provider failure stays uncertain and
+  degrades camera health without discarding the other provider's evidence.
+- Python compilation, Ring shell syntax, JSON validation, diff hygiene, and
+  the combined 127-test event-bus/Ring/deployment suite passed. The Ring
+  capture binding is also checked against the listener's exact device map.
+- A mode-`0600` database backup passed `quick_check`, and the prior protected
+  policy was backed up. The canary moved to shadow with zero burned/unknown
+  reservations and zero pending evaluations before the compatible runtime and
+  protected policy were installed.
+- A non-viewing exact Cabin `front_door` probe returned a private 720x720 JPEG
+  and was deleted. Dormant Cabin `driveway` and Crosstown `front_door` probes
+  returned sanitized Ring snapshot failures; this remains an organic-event
+  validation item because an actual motion event may wake a battery camera.
+  No probe image remains on disk.
+- All seven shadow jobs completed cleanly before returning to
+  `limited_delivery`. The active projection is healthy with the exact nested
+  bindings, zero pending/leased work, zero dead letters, no unreviewed delivery
+  outcome, and an empty camera-image directory.
 
 ## Progress ledger
 

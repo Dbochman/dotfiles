@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, T
 SCHEMA_VERSION = 5
 STATUS_SCHEMA_VERSION = 5
 EVENT_SCHEMA_VERSION = 1
-DELIVERY_POLICY_SCHEMA_VERSION = 2
+DELIVERY_POLICY_SCHEMA_VERSION = 3
 SERVICE_NAME = "home-events"
 DEFAULT_ROOT = Path("~/.openclaw/home-events").expanduser()
 SOURCES = ("ring", "presence", "august", "nest")
@@ -89,7 +89,11 @@ DELIVERY_INCIDENT_CLASSES = frozenset(
     {"person_activity", "access_activity", "person_and_access"}
 )
 DELIVERY_ROUTES = frozenset({"dylan"})
-CAMERA_BINDINGS = {"cabin": "Kitchen", "crosstown": "Living Room Wired"}
+NEST_CAMERA_BINDINGS = {"cabin": "Kitchen", "crosstown": "Living Room Wired"}
+RING_CAMERA_BINDINGS = {
+    "cabin": ("driveway", "front_door"),
+    "crosstown": ("front_door",),
+}
 CAMERA_SNAPSHOT_OFFSETS_SECONDS = (30, 60)
 CAMERA_RESULTS = frozenset(
     {"person_visible", "no_person_visible", "uncertain", "unavailable"}
@@ -1099,7 +1103,7 @@ def validate_delivery_policy(value: Any) -> Mapping[str, Any]:
         DELIVERY_POLICY_V1_FIELDS
         if schema_version == 1
         else DELIVERY_POLICY_V2_FIELDS
-        if schema_version == DELIVERY_POLICY_SCHEMA_VERSION
+        if schema_version in {2, DELIVERY_POLICY_SCHEMA_VERSION}
         else None
     )
     if expected_fields is None:
@@ -1149,25 +1153,46 @@ def validate_delivery_policy(value: Any) -> Mapping[str, Any]:
     if normalized["arrival_grace_seconds"] != 900:
         raise ConfigError("delivery_policy_arrival_grace_seconds")
     if schema_version == 1:
-        normalized["camera_bindings"] = dict(CAMERA_BINDINGS)
+        normalized["camera_bindings"] = {
+            "nest": dict(NEST_CAMERA_BINDINGS),
+            "ring": {},
+        }
         normalized["camera_snapshot_offsets_seconds"] = (
             CAMERA_SNAPSHOT_OFFSETS_SECONDS
         )
         normalized["camera_result_mode"] = "structured_text"
     else:
         bindings = value["camera_bindings"]
-        if (
-            not isinstance(bindings, dict)
-            or bindings != CAMERA_BINDINGS
-            or any(not isinstance(item, str) for item in bindings.values())
-        ):
-            raise ConfigError("delivery_policy_camera_bindings")
+        if schema_version == 2:
+            if (
+                not isinstance(bindings, dict)
+                or bindings != NEST_CAMERA_BINDINGS
+                or any(not isinstance(item, str) for item in bindings.values())
+            ):
+                raise ConfigError("delivery_policy_camera_bindings")
+            normalized["camera_bindings"] = {
+                "nest": dict(NEST_CAMERA_BINDINGS),
+                "ring": {},
+            }
+        else:
+            expected_bindings = {
+                "nest": dict(NEST_CAMERA_BINDINGS),
+                "ring": {
+                    site: list(aliases)
+                    for site, aliases in RING_CAMERA_BINDINGS.items()
+                },
+            }
+            if bindings != expected_bindings:
+                raise ConfigError("delivery_policy_camera_bindings")
+            normalized["camera_bindings"] = {
+                "nest": dict(NEST_CAMERA_BINDINGS),
+                "ring": dict(RING_CAMERA_BINDINGS),
+            }
         offsets = value["camera_snapshot_offsets_seconds"]
         if offsets != list(CAMERA_SNAPSHOT_OFFSETS_SECONDS):
             raise ConfigError("delivery_policy_camera_offsets")
         if value["camera_result_mode"] != "structured_text":
             raise ConfigError("delivery_policy_camera_result_mode")
-        normalized["camera_bindings"] = dict(bindings)
         normalized["camera_snapshot_offsets_seconds"] = tuple(offsets)
     return normalized
 
@@ -1213,7 +1238,13 @@ def delivery_policy_projection(paths: RuntimePaths) -> Mapping[str, Any]:
             "arrival_grace_seconds": policy["arrival_grace_seconds"],
             "camera_enabled": policy["camera_enabled"],
             "camera_bindings": (
-                dict(policy["camera_bindings"])
+                {
+                    "nest": dict(policy["camera_bindings"]["nest"]),
+                    "ring": {
+                        site: list(aliases)
+                        for site, aliases in policy["camera_bindings"]["ring"].items()
+                    },
+                }
                 if policy["camera_enabled"]
                 else {}
             ),

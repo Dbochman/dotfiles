@@ -48,6 +48,13 @@ projection was healthy with no queue,
 reservation, camera evaluation, delivery outcome, dead letter, or retained
 image.
 
+Policy schema 3 added exact Ring evidence at `2026-08-08T02:27:42Z`. Cabin
+allows Ring `driveway`/`front_door` plus Nest `Kitchen`; Crosstown allows Ring
+`front_door` plus Nest `Living Room Wired`. A non-viewing Cabin front-door
+probe succeeded and was deleted. Dormant Cabin driveway and Crosstown
+front-door probes failed safely and remain organic-event validation items;
+Nest fallback and partial-provider health remain active.
+
 Cabin production schema v2 has exact controller and Kitchen-mesh bindings for
 both residents. After two clean scheduled ticks, 12/12 live observations, and
 the full test suite, the operator explicitly waived the remaining two canary
@@ -104,9 +111,11 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   and gateway authentication into a sanitized one-shot process with a bounded
   owner-only log.
 - `bin/home-event-camera.py` claims only fresh, confirmed-vacant camera
-  evaluations already scheduled by the correlator. It captures the exact
-  per-site alias at +30/+60 seconds, makes only a person-visible decision,
-  deletes each frame immediately, and retains no model prose or media path.
+  evaluations already scheduled by the correlator. At +30/+60 seconds it
+  combines the exact triggering Ring camera (or the site's Ring front door)
+  with the exact Nest interior camera, makes only an aggregate person-visible
+  decision, deletes every frame immediately, and retains no model prose or
+  media path.
 - `bin/home-event-camera-wrapper.sh` supplies protected gateway authentication
   to that one-shot worker in a sanitized environment. Camera and delivery
   share the rollback lock, so mode rollback cannot race a capture or send.
@@ -152,7 +161,7 @@ Schema v5 supports `shadow` and `limited_delivery`, but a mode change alone is
 insufficient. `limited_delivery` requires a valid mode-`0600` protected policy
 whose `active` field is true. Policy replacement is accepted only while the
 runtime is in `shadow` mode. The tracked
-`home-event-delivery-policy.json` is the exact inactive Stage 3 policy and is
+`home-event-delivery-policy.json` is the exact active Stage 4 policy and is
 installed explicitly with:
 
 ```bash
@@ -170,14 +179,21 @@ operator-attention projection degraded until an explicit operator review
 records `received`, `not_received`, or `uncertain`; review never retries or
 rewrites the outcome.
 
-The schema-v2 protected policy separately binds Cabin to exact `Kitchen` and
-Crosstown to exact `Living Room Wired`. While camera evidence is enabled, a
-fresh person, unlock, or door-open event at a confidently vacant site may
-schedule +30/+60 stills. Old/backfilled events, generic motion, occupied or
+The schema-v3 protected policy binds Cabin Ring `driveway` and `front_door`
+plus Nest `Kitchen`, and Crosstown Ring `front_door` plus Nest
+`Living Room Wired`. While camera evidence is enabled, a fresh person, unlock,
+or door-open event at a confidently vacant site may schedule +30/+60 evidence.
+An attached Ring trigger selects its exact safe alias; an access- or Nest-only
+trigger uses that site's Ring front door. The Nest interior camera is always
+the secondary view. Old/backfilled events, generic motion, occupied or
 uncertain presence, source health, and local-presence inference never schedule
 camera work. The resulting `person_visible`, `no_person_visible`, `uncertain`,
 or `unavailable` value may add one fixed sentence to a later eligible Dylan
 message; it cannot create, suppress, accelerate, or delay that message.
+Any medium-or-high-confidence person result wins across the exact targets;
+every target must be clear for `no_person_visible`. A partial Ring or Nest
+failure yields bounded uncertainty and degraded camera health while preserving
+the other provider's successful evidence. Every image is deleted immediately.
 
 Rollback is always the first operator action:
 
@@ -554,8 +570,10 @@ retried, preventing a duplicate.
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
 installed at schema v5. The Dylan-only Stage 4 canary entered
 `limited_delivery` at `2026-08-05T15:42:14Z`; the tracked delivery policy is
-active for both residences with camera evidence disabled. Canonical presence,
-Nest metadata, Ring, August, and
+active for both residences with exact Ring-plus-Nest camera evidence enabled.
+Cabin uses Ring `driveway`/`front_door` plus Nest `Kitchen`; Crosstown uses
+Ring `front_door` plus Nest `Living Room Wired`. Canonical presence, Nest
+metadata, Ring, August, and
 Cabin plus Crosstown local-presence enrichment are enabled in the installed
 runtime; the tracked producer defaults remain off. Both sites completed silent
 baselines, duplicate-scan no-ops, and organic departure/return evidence.
@@ -569,12 +587,14 @@ fresh or rebuilt installation must first:
 2. Deploy the bus scripts, source adapters and bridge, skill, and any tracked
    LaunchAgents through the normal dotfiles flow.
 3. Back up the protected home-event database, run `home-eventctl init` to apply the
-   attended schema-v3 migration, then verify every runtime directory is `0700`
+   attended schema-v5 migration, then verify every runtime directory is `0700`
    and every runtime regular file is `0600`.
 4. Install the exact protected delivery policy while mode remains `shadow`.
    Its tracked rollout scope is Dylan only, both sites, three high-confidence
    activity classes, fifteen-minute arrival grace, one-hour cooldown, five-minute
-   reservation TTL, 30-minute unresolved-access threshold, and cameras off.
+   reservation TTL, 30-minute unresolved-access threshold, and exact Cabin
+   Ring `driveway`/`front_door` plus Nest `Kitchen` and Crosstown Ring
+   `front_door` plus Nest `Living Room Wired` evidence.
 5. Run `home-eventctl check-config`, compilation/tests, and `plutil -lint` for
    each installed plist.
 
@@ -606,7 +626,10 @@ Rollout status and remaining work:
 11. The Stage 3 delivery foundation and LaunchAgent are installed. Stage 4 was
     explicitly activated at `2026-08-05T15:42:14Z` with the protected policy
     active, runtime mode `limited_delivery`, Dylan as the only route, and
-    cameras disabled. Follow the separate
+    cameras initially disabled. Exact Nest `Kitchen` and `Living Room Wired`
+    evidence was activated separately at `2026-08-05T16:34:03Z`; schema-v3
+    policy later added the exact Ring `driveway` and `front_door` views. Follow
+    the separate
     [event bus promotion plan](plans/event-bus-promotion-plan.md) for canary
     evidence and stop conditions.
 12. The local-presence adapter is enabled for Cabin and Crosstown. Both silent

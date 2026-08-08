@@ -327,9 +327,9 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertEqual(result["mode"], "limited_delivery")
         self.assertEqual(self.store.runtime_mode(), "limited_delivery")
 
-    def test_schema_two_camera_policy_is_exact_and_projects_safe_bindings(self) -> None:
-        policy = delivery_policy(active=True)
-        policy.update(
+    def test_camera_policy_versions_are_exact_and_project_safe_bindings(self) -> None:
+        legacy = delivery_policy(active=True)
+        legacy.update(
             {
                 "schema_version": 2,
                 "camera_enabled": True,
@@ -342,20 +342,64 @@ class RuntimeSecurityTests(HomeEventTestCase):
             }
         )
         installed = home_events.install_delivery_policy(
-            self.paths, encode(policy)
+            self.paths, encode(legacy)
         )
         self.assertTrue(installed["camera_enabled"])
         self.assertEqual(
             installed["camera_bindings"],
-            {"cabin": "Kitchen", "crosstown": "Living Room Wired"},
+            {
+                "nest": {
+                    "cabin": "Kitchen",
+                    "crosstown": "Living Room Wired",
+                },
+                "ring": {},
+            },
+        )
+
+        policy = dict(legacy)
+        policy["schema_version"] = 3
+        policy["camera_bindings"] = {
+            "nest": {
+                "cabin": "Kitchen",
+                "crosstown": "Living Room Wired",
+            },
+            "ring": {
+                "cabin": ["driveway", "front_door"],
+                "crosstown": ["front_door"],
+            },
+        }
+        installed = home_events.install_delivery_policy(self.paths, encode(policy))
+        self.assertEqual(
+            installed["camera_bindings"],
+            {
+                "nest": {
+                    "cabin": "Kitchen",
+                    "crosstown": "Living Room Wired",
+                },
+                "ring": {
+                    "cabin": ("driveway", "front_door"),
+                    "crosstown": ("front_door",),
+                },
+            },
         )
         self.store.set_runtime_mode("limited_delivery")
-        self.assertEqual(self.store.status_snapshot()["camera"]["health"], "ok")
+        status = self.store.status_snapshot()
+        self.assertEqual(status["camera"]["health"], "ok")
+        self.assertEqual(
+            status["delivery"]["policy"]["camera_bindings"]["ring"],
+            {
+                "cabin": ["driveway", "front_door"],
+                "crosstown": ["front_door"],
+            },
+        )
 
         malformed = dict(policy)
         malformed["camera_bindings"] = {
-            "cabin": "Kitchen",
-            "crosstown": "Living Room",
+            "nest": policy["camera_bindings"]["nest"],
+            "ring": {
+                "cabin": ["front_door"],
+                "crosstown": ["front_door"],
+            },
         }
         with self.assertRaisesRegex(
             home_events.ConfigError, "delivery_policy_camera_bindings"

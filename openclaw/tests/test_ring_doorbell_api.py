@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
 import importlib.util
 import io
 import json
+import stat
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -16,6 +19,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 API_PATH = REPO_ROOT / "openclaw" / "skills" / "ring-doorbell" / "ring-api.py"
+RUNTIME_PATH = (
+    REPO_ROOT / "openclaw" / "skills" / "dog-walk" / "service-runtime.py"
+)
 
 
 def load_api():
@@ -49,6 +55,7 @@ class FakeDevices:
     def __init__(self, doorbell) -> None:
         self.doorbots = [doorbell]
         self.authorized_doorbots = []
+        self.video_devices = [doorbell]
 
 
 class FakeRing:
@@ -87,6 +94,12 @@ class MechanicalChimeDoorbell(BaseDoorbell):
     existing_doorbell_type = "mechanical"
 
 
+class SnapshotDoorbell(BaseDoorbell):
+    async def async_get_snapshot(self, *, retries, delay):
+        self.snapshot_request = (retries, delay)
+        return b"\xff\xd8\xfffixture\xff\xd9"
+
+
 class RingDoorbellApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -115,6 +128,79 @@ class RingDoorbellApiTests(unittest.TestCase):
         payload = self.status(MechanicalChimeDoorbell())
 
         self.assertEqual(payload["doorbells"][0]["chimeType"], "mechanical")
+
+    def test_camera_bindings_match_the_event_listener(self) -> None:
+        tree = ast.parse(RUNTIME_PATH.read_text(encoding="utf-8"))
+        event_bindings = None
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "RING_EVENT_DEVICES"
+            ):
+                event_bindings = ast.literal_eval(node.value)
+                break
+        self.assertIsNotNone(event_bindings)
+        expected = {
+            (binding["site"], binding["entity_alias"]): provider_id
+            for provider_id, binding in event_bindings.items()
+        }
+        self.assertEqual(self.module.RING_CAMERA_BINDINGS, expected)
+
+    def test_bound_snapshot_uses_safe_alias_and_private_file(self) -> None:
+        doorbell = SnapshotDoorbell()
+
+        async def fake_get_ring():
+            return FakeRing(doorbell)
+
+        self.module.get_ring = fake_get_ring
+        previous = self.module.RING_CAMERA_BINDINGS
+        self.module.RING_CAMERA_BINDINGS = {("cabin", "driveway"): doorbell.id}
+        self.addCleanup(
+            setattr, self.module, "RING_CAMERA_BINDINGS", previous
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ring.jpg"
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                asyncio.run(
+                    self.module.cmd_snapshot_bound(
+                        "cabin", "driveway", str(path)
+                    )
+                )
+            payload = json.loads(output.getvalue())
+
+            self.assertEqual(
+                payload,
+                {
+                    "ok": True,
+                    "site": "cabin",
+                    "alias": "driveway",
+                    "size": len(b"\xff\xd8\xfffixture\xff\xd9"),
+                },
+            )
+            self.assertEqual(doorbell.snapshot_request, (3, 2))
+            self.assertEqual(path.read_bytes(), b"\xff\xd8\xfffixture\xff\xd9")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertNotIn(str(doorbell.id), output.getvalue())
+            self.assertNotIn(doorbell.name, output.getvalue())
+
+    def test_bound_snapshot_rejects_unknown_safe_alias_before_auth(self) -> None:
+        async def unexpected_get_ring():
+            self.fail("unknown bindings must fail before Ring authentication")
+
+        self.module.get_ring = unexpected_get_ring
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit):
+            asyncio.run(
+                self.module.cmd_snapshot_bound(
+                    "crosstown", "driveway", "/tmp/never-written.jpg"
+                )
+            )
+        self.assertEqual(
+            json.loads(output.getvalue()), {"error": "camera_binding_invalid"}
+        )
 
 
 if __name__ == "__main__":

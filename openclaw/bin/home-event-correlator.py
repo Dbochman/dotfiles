@@ -300,7 +300,7 @@ class ShadowCorrelator:
             policy["active"] is not True
             or policy["camera_enabled"] is not True
             or site not in policy["sites"]
-            or site not in policy["camera_bindings"]
+            or site not in policy["camera_bindings"]["nest"]
         ):
             return
         event_at = parse_time(delivery.get("occurred_at"))
@@ -333,7 +333,7 @@ class ShadowCorrelator:
                 (
                     "cam_" + secrets.token_hex(16),
                     site,
-                    policy["camera_bindings"][site],
+                    policy["camera_bindings"]["nest"][site],
                     format_time(event_at),
                     format_time(event_at + timedelta(seconds=int(offsets[0]))),
                     format_time(event_at + timedelta(seconds=int(offsets[1]))),

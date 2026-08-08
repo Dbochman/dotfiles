@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "active": true,
   "sites": [
     "cabin",
@@ -17,10 +17,21 @@
   "cooldown_seconds": 3600,
   "reservation_ttl_seconds": 300,
   "unresolved_access_escalation_seconds": 1800,
-  "camera_enabled": false,
+  "camera_enabled": true,
   "camera_bindings": {
-    "cabin": "Kitchen",
-    "crosstown": "Living Room Wired"
+    "nest": {
+      "cabin": "Kitchen",
+      "crosstown": "Living Room Wired"
+    },
+    "ring": {
+      "cabin": [
+        "driveway",
+        "front_door"
+      ],
+      "crosstown": [
+        "front_door"
+      ]
+    }
   },
   "camera_snapshot_offsets_seconds": [
     30,

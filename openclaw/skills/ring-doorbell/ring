@@ -230,6 +230,12 @@ case "${1:-}" in
   snapshot)
     run_api snapshot ${2:+"$2"} ${3:+"$3"} | parse_snapshot
     ;;
+  _snapshot-bound)
+    if [[ $# -ne 4 ]]; then
+      exit 1
+    fi
+    run_api _snapshot-bound "$2" "$3" "$4"
+    ;;
   download)
     if [[ -z "${2:-}" || -z "${3:-}" ]]; then
       echo "Usage: ring download <recording-id> <filename>" >&2

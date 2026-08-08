@@ -13,6 +13,7 @@ Usage:
 
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -29,6 +30,14 @@ CONFIG_FILE = CONFIG_DIR / "config.yaml"
 TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 
 USER_AGENT = "OpenClaw/1.0"
+
+# Exact provider identifiers remain behind this safe site/alias boundary. The
+# event bus and camera worker pass only the keys and never persist these values.
+RING_CAMERA_BINDINGS = {
+    ("crosstown", "front_door"): 684794187,
+    ("cabin", "front_door"): 697442349,
+    ("cabin", "driveway"): 760125217,
+}
 
 
 def load_config():
@@ -200,6 +209,83 @@ def find_doorbell(doorbells, identifier=None):
         if db.has_subscription:
             return db
     return doorbells[0] if doorbells else None
+
+
+def video_inventory(devices):
+    """Return the complete Ring video inventory across SDK versions."""
+
+    try:
+        values = devices.video_devices
+    except AttributeError:
+        values = [
+            *devices.doorbots,
+            *devices.authorized_doorbots,
+            *getattr(devices, "stickup_cams", ()),
+        ]
+    if callable(values):
+        values = values()
+    return tuple(values)
+
+
+def find_bound_camera(devices, site, alias):
+    provider_id = RING_CAMERA_BINDINGS.get((site, alias))
+    if provider_id is None:
+        return None
+    for camera in video_inventory(devices):
+        if camera.id == provider_id:
+            return camera
+    return None
+
+
+def write_private_snapshot(filename, data):
+    path = Path(filename)
+    if not path.is_absolute() or not isinstance(data, bytes) or not data:
+        raise ValueError("snapshot_invalid")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        view = memoryview(data)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("snapshot_write_failed")
+            view = view[written:]
+        os.fsync(descriptor)
+    except Exception:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(descriptor)
+
+
+async def cmd_snapshot_bound(site, alias, filename):
+    """Capture an exact safe-bound Ring camera without exposing its identity."""
+
+    if (site, alias) not in RING_CAMERA_BINDINGS:
+        print(json.dumps({"error": "camera_binding_invalid"}))
+        sys.exit(1)
+    try:
+        ring = await get_ring()
+        camera = find_bound_camera(ring.devices(), site, alias)
+        if camera is None:
+            print(json.dumps({"error": "camera_binding_unavailable"}))
+            sys.exit(1)
+        data = await camera.async_get_snapshot(retries=3, delay=2)
+        write_private_snapshot(filename, data)
+    except SystemExit:
+        raise
+    except Exception:
+        print(json.dumps({"error": "snapshot_failed"}))
+        sys.exit(1)
+    print(
+        json.dumps(
+            {"ok": True, "site": site, "alias": alias, "size": len(data)},
+            separators=(",", ":"),
+        )
+    )
 
 
 async def cmd_video(recording_id=None):
@@ -397,6 +483,11 @@ def main():
         filename = sys.argv[2] if len(sys.argv) > 2 else None
         device_id = sys.argv[3] if len(sys.argv) > 3 else None
         asyncio.run(cmd_snapshot(filename, device_id))
+    elif cmd == "_snapshot-bound":
+        if len(sys.argv) != 5:
+            print(json.dumps({"error": "missing_arg"}))
+            sys.exit(1)
+        asyncio.run(cmd_snapshot_bound(sys.argv[2], sys.argv[3], sys.argv[4]))
     elif cmd == "download":
         if len(sys.argv) < 4:
             print(json.dumps({"error": "missing_arg",

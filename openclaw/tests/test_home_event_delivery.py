@@ -69,7 +69,7 @@ class HomeEventDeliveryTests(unittest.TestCase):
 
     def policy(self, *, camera: bool = False) -> dict:
         policy = {
-            "schema_version": 2 if camera else 1,
+            "schema_version": 3 if camera else 1,
             "active": True,
             "sites": ["cabin", "crosstown"],
             "incident_classes": [
@@ -88,8 +88,14 @@ class HomeEventDeliveryTests(unittest.TestCase):
             policy.update(
                 {
                     "camera_bindings": {
-                        "cabin": "Kitchen",
-                        "crosstown": "Living Room Wired",
+                        "nest": {
+                            "cabin": "Kitchen",
+                            "crosstown": "Living Room Wired",
+                        },
+                        "ring": {
+                            "cabin": ["driveway", "front_door"],
+                            "crosstown": ["front_door"],
+                        },
                     },
                     "camera_snapshot_offsets_seconds": [30, 60],
                     "camera_result_mode": "structured_text",

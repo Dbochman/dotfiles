@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -32,12 +33,25 @@ camera = load_module("home_event_camera", BIN_DIR / "home-event-camera.py")
 
 
 class FakeCommands:
-    def __init__(self, decisions: list[camera.VisionDecision] | None = None):
+    def __init__(
+        self,
+        decisions: list[camera.VisionDecision] | None = None,
+        failures: set[tuple[str, str, str]] | None = None,
+    ):
         self.decisions = list(decisions or [])
-        self.captures: list[str] = []
+        self.failures = set(failures or set())
+        self.captures: list[tuple[str, str, str]] = []
 
-    def capture(self, alias: str, path: Path) -> None:
-        self.captures.append(alias)
+    def capture(
+        self,
+        provider: str,
+        site: str,
+        alias: str,
+        path: Path,
+    ) -> None:
+        self.captures.append((provider, site, alias))
+        if (provider, site, alias) in self.failures:
+            raise camera.CameraError(provider + "_capture_command_failed")
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
             os.write(descriptor, b"\xff\xd8\xfffixture\xff\xd9")
@@ -59,7 +73,7 @@ class HomeEventCameraTests(unittest.TestCase):
         self.store = bus.initialize_runtime(self.root, clock=self.clock)
         self.paths = bus.RuntimePaths(self.root)
         policy = {
-            "schema_version": 2,
+            "schema_version": 3,
             "active": True,
             "sites": ["cabin", "crosstown"],
             "incident_classes": [
@@ -74,8 +88,14 @@ class HomeEventCameraTests(unittest.TestCase):
             "unresolved_access_escalation_seconds": 1800,
             "camera_enabled": True,
             "camera_bindings": {
-                "cabin": "Kitchen",
-                "crosstown": "Living Room Wired",
+                "nest": {
+                    "cabin": "Kitchen",
+                    "crosstown": "Living Room Wired",
+                },
+                "ring": {
+                    "cabin": ["driveway", "front_door"],
+                    "crosstown": ["front_door"],
+                },
             },
             "camera_snapshot_offsets_seconds": [30, 60],
             "camera_result_mode": "structured_text",
@@ -91,7 +111,7 @@ class HomeEventCameraTests(unittest.TestCase):
         first: str = "pending",
         second: str = "pending",
     ) -> int:
-        with self.store.connect() as connection:
+        with closing(self.store.connect()) as connection:
             row_id = connection.execute(
                 """
                 INSERT INTO camera_evaluations(
@@ -120,12 +140,48 @@ class HomeEventCameraTests(unittest.TestCase):
                 "SELECT * FROM camera_evaluations WHERE id = ?", (row_id,)
             ).fetchone()
 
+    def attach_ring_event(self, evaluation_id: int, alias: str) -> None:
+        payload = {
+            "schema_version": 1,
+            "source_event_id": "private-device:private-event-" + alias,
+            "event_type": "entry.person_detected",
+            "site": "cabin",
+            "entity_kind": "doorbell",
+            "entity_alias": alias,
+            "occurred_at": self.NOW,
+            "observed_at": self.NOW,
+            "time_precision": "source",
+            "attributes": {"classification": "person"},
+        }
+        bus.enqueue_event(
+            self.root,
+            "ring",
+            json.dumps(payload).encode("utf-8"),
+            clock=self.clock,
+        )
+        bus.ingest_once(self.root, clock=self.clock)
+        with closing(self.store.connect()) as connection:
+            event_id = connection.execute(
+                "SELECT id FROM events ORDER BY id DESC LIMIT 1"
+            ).fetchone()["id"]
+            connection.execute(
+                """
+                INSERT INTO camera_evaluation_events(
+                    evaluation_id, event_id, relation, created_at
+                ) VALUES (?, ?, 'trigger', ?)
+                """,
+                (evaluation_id, event_id, self.NOW),
+            )
+            connection.commit()
+
     def test_two_slots_reduce_to_structured_result_and_delete_images(self) -> None:
         row_id = self.insert_evaluation()
         commands = FakeCommands(
             [
                 camera.VisionDecision(False, "high"),
+                camera.VisionDecision(False, "high"),
                 camera.VisionDecision(True, "medium"),
+                camera.VisionDecision(False, "high"),
             ]
         )
         worker = camera.CameraWorker(
@@ -140,9 +196,76 @@ class HomeEventCameraTests(unittest.TestCase):
         row = self.row(row_id)
         self.assertEqual(row["state"], "complete")
         self.assertEqual(row["result"], "person_visible")
-        self.assertEqual(commands.captures, ["Kitchen", "Kitchen"])
+        self.assertEqual(
+            commands.captures,
+            [
+                ("ring", "cabin", "front_door"),
+                ("nest", "cabin", "Kitchen"),
+                ("ring", "cabin", "front_door"),
+                ("nest", "cabin", "Kitchen"),
+            ],
+        )
         self.assertEqual(list(self.paths.camera_images.iterdir()), [])
         self.assertEqual(self.store.status_snapshot()["camera"]["health"], "ok")
+
+    def test_ring_trigger_selects_its_exact_alias_plus_nest(self) -> None:
+        row_id = self.insert_evaluation()
+        self.attach_ring_event(row_id, "driveway")
+        commands = FakeCommands(
+            [
+                camera.VisionDecision(False, "high"),
+                camera.VisionDecision(False, "high"),
+            ]
+        )
+
+        result = camera.CameraWorker(
+            self.root, clock=self.clock, commands=commands
+        ).run_once()
+
+        self.assertEqual(result["outcome"], "clear")
+        self.assertEqual(
+            commands.captures,
+            [
+                ("ring", "cabin", "driveway"),
+                ("nest", "cabin", "Kitchen"),
+            ],
+        )
+
+    def test_ring_failure_keeps_nest_evidence_but_marks_slot_uncertain(self) -> None:
+        row_id = self.insert_evaluation()
+        commands = FakeCommands(
+            [camera.VisionDecision(False, "high")],
+            failures={("ring", "cabin", "front_door")},
+        )
+
+        result = camera.CameraWorker(
+            self.root, clock=self.clock, commands=commands
+        ).run_once()
+
+        self.assertEqual(result["outcome"], "uncertain")
+        row = self.row(row_id)
+        self.assertEqual(row["snapshot_30_result"], "uncertain")
+        self.assertEqual(row["error_code"], "camera_target_partial")
+        self.assertEqual(self.store.status_snapshot()["camera"]["health"], "degraded")
+        self.assertEqual(list(self.paths.camera_images.iterdir()), [])
+
+    def test_real_commands_dispatch_ring_only_through_safe_binding(self) -> None:
+        commands = camera.CameraCommands()
+        path = Path("/private/tmp/event-camera-test.jpg")
+        with mock.patch.object(commands, "_run") as run:
+            commands.capture("ring", "cabin", "driveway", path)
+
+        run.assert_called_once_with(
+            [
+                camera.RING_BIN,
+                "_snapshot-bound",
+                "cabin",
+                "driveway",
+                str(path),
+            ],
+            timeout=25,
+            code="ring_capture_command_failed",
+        )
 
     def test_uncertain_prior_capture_is_failed_without_retry(self) -> None:
         row_id = self.insert_evaluation(first="capturing", second="failed")
