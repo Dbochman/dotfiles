@@ -860,6 +860,33 @@ function buildTimeSeries(snapshots) {
   return series;
 }
 
+const MIDEA_FAN_ACTIVE_PERCENT = Object.freeze({
+  silent: 20,
+  low: 40,
+  medium: 60,
+  high: 80,
+  full: 100,
+});
+
+function mideaFanActivePercent(room) {
+  if (room.hvac === 'OFF') return 0;
+  if (Number.isFinite(room.fan)) {
+    return Math.min(100, Math.max(0, room.fan));
+  }
+  if (typeof room.fan === 'string') {
+    const fan = room.fan.trim().toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(MIDEA_FAN_ACTIVE_PERCENT, fan)) {
+      return MIDEA_FAN_ACTIVE_PERCENT[fan];
+    }
+    const numericFan = Number(fan);
+    if (Number.isFinite(numericFan)) {
+      return Math.min(100, Math.max(0, numericFan));
+    }
+  }
+  // Auto and unknown fan modes do not expose a fixed percentage.
+  return 100;
+}
+
 function computeHvacDuty(snapshots) {
   // For each room, bucket snapshots by hour.
   // Duty cycle = count(hvac is active) / total snapshots in that hour bucket.
@@ -881,8 +908,10 @@ function computeHvacDuty(snapshots) {
       if (r.connectivity === 'OFFLINE' || !r.hvac || r.hvac === '?') continue;
       if (!buckets[name][hourKey]) buckets[name][hourKey] = { dutySum: 0, total: 0 };
       buckets[name][hourKey].total++;
-      // Use real duty_pct if available (Mysa), otherwise binary 100/0 from HVAC status
-      if (r.duty_pct != null) {
+      // Midea uses fan speed as active percentage; Mysa exposes real duty_pct.
+      if (r.source === 'midea') {
+        buckets[name][hourKey].dutySum += mideaFanActivePercent(r);
+      } else if (r.duty_pct != null) {
         buckets[name][hourKey].dutySum += r.duty_pct;
       } else if (r.hvac && r.hvac !== 'OFF' && r.hvac !== '?') {
         buckets[name][hourKey].dutySum += 100;

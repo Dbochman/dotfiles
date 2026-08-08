@@ -43,7 +43,7 @@ Each room entry has a `source` field (`"nest"`, `"cielo"`, `"mysa"`, or `"midea"
 }
 ```
 
-**Mysa-specific fields:** `duty_pct` (0-100) gives real heater duty cycle. Other sources use binary HEATING/OFF.
+**Mysa-specific fields:** `duty_pct` (0-100) gives real heater duty cycle. Nest and Cielo use binary active/off duty. Midea uses its fan setting as active percentage when on: silent 20%, low 40%, medium 60%, high 80%, and full 100%; auto or unknown fan data falls back to binary active.
 
 **Midea-specific fields:** `power`, `fan`, and `power_w` preserve AC operating and energy telemetry. A locally unavailable unit remains in the current snapshot with `connectivity: "OFFLINE"` and null measurements; the dashboard shows it as unavailable and excludes the unknown sample from charts.
 
@@ -83,7 +83,8 @@ File-per-day structure acts as a natural date index.
 - **Humidity chart** (line): Per-room + outdoor humidity
 - **HVAC duty cycle chart** (bar): Heating percentage per hour per room
   - Mysa rooms: uses real `duty_pct` (weighted average per hour)
-  - Nest/Cielo/Midea rooms: binary 100%/0% based on HVAC status (active vs OFF)
+  - Midea rooms: uses fan percentage while active and 0% while off; auto or unknown fan data falls back to binary active
+  - Nest/Cielo rooms: binary 100%/0% based on HVAC status (active vs OFF)
 - **Time range buttons:** 24h, 7d, 30d, 1Y
 - **Auto-refresh:** Every 5 minutes via `setInterval`
 - **Dark mode** by default, respects `prefers-color-scheme`

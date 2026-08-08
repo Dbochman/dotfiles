@@ -153,7 +153,7 @@ When the same structure and short room name are reported by multiple sources, th
 |-------|------|-------|------|-------|
 | `mode` | `HEAT`, `COOL`, `HEATCOOL`, `OFF` | `heat`, `cool`, `auto`, `fan`, `dry` | `heat`, `off` | `auto`, `cool`, `dry`, `heat`, `fan` |
 | `hvac` | `HEATING`, `COOLING`, `OFF` | Mapped: `HEATING`, `COOLING`, `AUTO`, `FAN`, `DRY`, `OFF` | `HEATING` if duty > 0, else `OFF` | Mapped active mode, or `OFF` when power is off |
-| `duty_pct` | absent | absent | 0–100 (real heater duty cycle) | absent; active state is binary |
+| `duty_pct` | absent | absent | 0–100 (real heater duty cycle) | absent; the duty chart derives active percentage from `fan` while power is on |
 | `connectivity` | from API trait | `ONLINE`/`OFFLINE` from `deviceStatus` | always `ONLINE` | Local discovery/readback result |
 | Temperature | `ambientTemperatureCelsius` (C primary) | `latEnv.temp` (F primary) | `CorrectedTemp` (C primary, converted) | Local indoor sensor (F normalized) |
 | Extra telemetry | — | — | — | `power`, `fan`, `power_w`, `error_code` |
@@ -251,7 +251,8 @@ Unique rooms (Solarium, Cat Room, Dylan's Office) keep short names in all views.
 
 For each room, snapshots are bucketed by hour. Duty cycle per bucket:
 - **Mysa:** Uses real `duty_pct` (0–100)
-- **Nest/Cielo/Midea:** Binary 100/0 based on `hvac` status (active = 100, OFF = 0)
+- **Midea:** Uses fan speed as active percentage while HVAC is active: silent 20%, low 40%, medium 60%, high 80%, and full 100%. Off is 0%; auto or unknown fan data retains the binary 100% active fallback.
+- **Nest/Cielo:** Binary 100/0 based on `hvac` status (active = 100, OFF = 0)
 - **Displayed:** `Math.round(sum(duty) / count(snapshots))` per hourly bucket
 
 ### Presence Overlay

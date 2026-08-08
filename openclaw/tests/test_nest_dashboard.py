@@ -177,6 +177,35 @@ class ClimateSourceHtmlContractTests(unittest.TestCase):
         self.assertIn("r.connectivity === 'OFFLINE'", html)
         self.assertIn("'Unavailable'", html)
 
+    def test_midea_hvac_duty_uses_fan_active_percentage(self):
+        html = nest_dashboard.DASHBOARD_HTML
+        duty = html.split("const MIDEA_FAN_ACTIVE_PERCENT", 1)[1].split(
+            "// ── Presence rendering", 1
+        )[0]
+
+        for name, percent in (
+            ("silent", 20),
+            ("low", 40),
+            ("medium", 60),
+            ("high", 80),
+            ("full", 100),
+        ):
+            with self.subTest(name=name):
+                self.assertIn(f"{name}: {percent}", duty)
+        self.assertIn("if (room.hvac === 'OFF') return 0;", duty)
+        self.assertIn("Math.min(100, Math.max(0, room.fan))", duty)
+        self.assertIn("return 100;", duty)
+        self.assertIn("if (r.source === 'midea')", duty)
+        self.assertIn(
+            "buckets[name][hourKey].dutySum += "
+            "mideaFanActivePercent(r);",
+            duty,
+        )
+        self.assertLess(
+            duty.index("if (r.source === 'midea')"),
+            duty.index("else if (r.duty_pct != null)"),
+        )
+
     def test_unknown_measurements_are_not_plotted_as_zero(self):
         html = nest_dashboard.DASHBOARD_HTML
 
