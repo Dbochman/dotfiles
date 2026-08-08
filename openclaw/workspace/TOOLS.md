@@ -159,6 +159,7 @@ restaurant-book run --job-id <canonical-job-id>
 - Google Nest cameras
 - Google smart speakers
 - Petlibro feeder + fountain (unplugged, seasonal)
+- Two Midea Wi-Fi air conditioners (local LAN V3): `cabin-air-conditioner` and `cabin-lil-air-conditioner`
 
 ### Crosstown (West Roxbury)
 - Philips Hue lights
@@ -173,6 +174,28 @@ restaurant-book run --job-id <canonical-job-id>
 
 ### Vacancy Automation
 When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), locks the Crosstown front door, and starts all Roombas. Independently, each person's sticky detected location is made current on Eight Sleep and their side on the other Pod becomes away. iMessage notification is sent for lock status.
+
+## Midea Air Conditioners
+
+CLI at `/opt/homebrew/bin/midea-ac`. Two Cabin units use exact local bindings;
+ordinary status and controls do not require the Midea cloud account.
+
+```bash
+midea-ac status --json
+midea-ac devices --json
+midea-ac temperature cabin-air-conditioner 72 --json
+midea-ac mode cabin-lil-air-conditioner cool --json
+midea-ac fan cabin-air-conditioner medium --json
+```
+
+- Use only exact aliases returned by `devices`; never substitute the other AC.
+- The owner-only binding is `~/.openclaw/midea-ac/bindings.json` (mode `0600`).
+- The locked Python runtime is `~/.openclaw/venvs/midea-ac` and is pinned by
+  the deployed skill's `uv.lock`.
+- Cloud credentials are attended-enrollment inputs only and are never retained.
+- Continuous temperature or energy samples do not belong on the home-event
+  bus. Consider only debounced availability and nonzero error transitions
+  after a clean status soak.
 
 ## Eight Sleep Pod
 

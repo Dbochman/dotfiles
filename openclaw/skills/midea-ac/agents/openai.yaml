@@ -1,0 +1,4 @@
+interface:
+  display_name: "Midea AC"
+  short_description: "Control local Midea air conditioners"
+  default_prompt: "Use $midea-ac to check and control the household Midea air conditioners."

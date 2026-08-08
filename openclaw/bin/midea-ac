@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# midea-ac — exact locally enrolled Midea air-conditioner control
+SKILL_DIR="$HOME/.openclaw/skills/midea-ac"
+exec "$SKILL_DIR/midea-ac" "$@"

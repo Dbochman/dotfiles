@@ -1,0 +1,11 @@
+[project]
+name = "openclaw-midea-ac"
+version = "0.1.0"
+description = "Locked runtime dependency for the OpenClaw Midea AC skill"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "midea-local @ git+https://github.com/midea-lan/midea-local@f1ce82cbaf3519cc911b308e638f7d91cd6beb0a",
+]
+
+[tool.uv]
+package = false

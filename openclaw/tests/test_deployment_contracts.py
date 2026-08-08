@@ -69,6 +69,8 @@ CABIN_ENTRY_VERIFIER_PLIST = (
 
 REQUIRED_HELPERS = {
     "bin/august": "august wrapper\n",
+    "bin/midea-ac": "midea ac wrapper\n",
+    "bin/midea-ac-enroll": "midea enrollment helper\n",
     "bin/pinchtab-headless-instance": "pinchtab helper\n",
     "bin/plant-tracker": "plant tracker wrapper\n",
     "bin/presence-cabin-enroll": "presence enrollment helper\n",
@@ -86,6 +88,7 @@ REQUIRED_HELPERS = {
     "workspace/scripts/opentable-book-state.py": "state helper\n",
 }
 STANDALONE_SKILL_WRAPPERS = {
+    "midea-ac",
     "opentable-book",
     "opentable-reservations",
     "pinchtab-headless-instance",

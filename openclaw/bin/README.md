@@ -75,6 +75,13 @@ active post-deploy checks.
 | `reolink-camera` | Thin wrapper for safe status, exact-channel fresh stills, token-scoped image commentary, protected Dylan/Julia/household sharing, and verified manual spotlight state through the pinned local Home Hub binding. |
 | `reolink-camera-enroll` | Attended operator-only enrollment for one exact private-LAN Hub channel. It requires pinned TLS and exact `TRUST`, verifies the approved local account with exact-channel status and a fresh in-memory snapshot, and only then activates owner-only generation-matched binding and credential state. Public runtime commands remain bounded; enrollment, users, firmware, arbitrary API calls, and network configuration stay outside the skill. |
 
+### Midea AC Integration
+
+| Script | Description |
+|--------|-------------|
+| `midea-ac` | Exact-alias LAN status and once-only verified controls for enrolled Midea ACs, including temperature, mode, fan, swing, features, energy telemetry, and safe device errors. |
+| `midea-ac-enroll` | Attended operator-only V3 enrollment. It uses cloud credentials only long enough to obtain and verify each per-device LAN token/key, then retains only an owner-only local binding. |
+
 See [`../REOLINK-CAMERA.md`](../REOLINK-CAMERA.md) for the private runtime
 contract, attended rollout, optional macOS Client role, verification, and V2
 boundaries.

@@ -797,6 +797,8 @@ install_openclaw_guarded_helpers() {
   local spec src_rel dst_rel mode label src dst
   local helper_specs=(
     "bin/august|bin/august|755|August guarded unlock wrapper"
+    "bin/midea-ac|bin/midea-ac|755|Midea local AC wrapper"
+    "bin/midea-ac-enroll|bin/midea-ac-enroll|755|Midea attended enrollment helper"
     "bin/pinchtab-headless-instance|bin/pinchtab-headless-instance|755|managed PinchTab instance helper"
     "bin/plant-tracker|bin/plant-tracker|755|private plant tracker wrapper"
     "bin/presence-cabin-enroll|bin/presence-cabin-enroll|755|Cabin Starlink presence enrollment helper"
@@ -833,6 +835,7 @@ publish_openclaw_standalone_skill_wrappers() {
   local standalone_bin_dir="${OPENCLAW_STANDALONE_BIN_DIR:-/opt/homebrew/bin}"
   local skill_wrapper src dst
   local skill_wrappers=(
+    midea-ac
     opentable-book
     opentable-reservations
     pinchtab-headless-instance
@@ -857,6 +860,37 @@ publish_openclaw_standalone_skill_wrappers() {
     fi
     link_file "$src" "$dst" || return 1
   done
+}
+
+install_openclaw_midea_runtime() {
+  local openclaw_home="${1%/}"
+  local skill_dir="$openclaw_home/skills/midea-ac"
+  local venv_dir="$openclaw_home/venvs/midea-ac"
+  local uv_bin="/opt/homebrew/bin/uv"
+
+  if [[ "$DRY_RUN" = true ]]; then
+    log "  [dry-run] Would sync locked Midea runtime: $venv_dir"
+    return 0
+  fi
+  if [[ ! -f "$skill_dir/pyproject.toml" || -L "$skill_dir/pyproject.toml" \
+      || ! -f "$skill_dir/uv.lock" || -L "$skill_dir/uv.lock" \
+      || ! -x "$uv_bin" ]]; then
+    log_error "Required locked Midea runtime inputs are unavailable"
+    EXIT_CODE=1
+    return 1
+  fi
+  if [[ -L "$openclaw_home/venvs" || -L "$venv_dir" ]]; then
+    log_error "Midea runtime path is unsafe"
+    EXIT_CODE=1
+    return 1
+  fi
+  mkdir -p "$openclaw_home/venvs"
+  if ! UV_PROJECT_ENVIRONMENT="$venv_dir" \
+      "$uv_bin" sync --frozen --no-dev --project "$skill_dir"; then
+    log_error "Could not sync locked Midea runtime"
+    EXIT_CODE=1
+    return 1
+  fi
 }
 
 install_managed_launchagent() {
@@ -1307,6 +1341,9 @@ install_dotfiles() {
             deploy_openclaw_skill_copy "$skill_dir" "$HOME/.openclaw/skills/$skill_name"
           fi
         done
+        if ! install_openclaw_midea_runtime "$HOME/.openclaw"; then
+          EXIT_CODE=1
+        fi
       fi
     else
       log "  Detected remote client: $hostname"

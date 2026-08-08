@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# midea-ac-enroll — attended one-time Midea V3 local binding enrollment
+set -euo pipefail
+
+SKILL_DIR="$HOME/.openclaw/skills/midea-ac"
+case "${1:-}" in
+  inspect)
+    shift
+    exec /usr/bin/env MIDEA_AC_OPERATOR=1 "$SKILL_DIR/midea-ac" operator-inspect "$@"
+    ;;
+  enroll)
+    shift
+    exec /usr/bin/env MIDEA_AC_OPERATOR=1 "$SKILL_DIR/midea-ac" operator-enroll "$@"
+    ;;
+  *)
+    exec /usr/bin/env MIDEA_AC_OPERATOR=1 "$SKILL_DIR/midea-ac" operator-enroll "$@"
+    ;;
+esac

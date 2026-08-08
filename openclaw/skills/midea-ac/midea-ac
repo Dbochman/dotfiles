@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly PYTHON="${MIDEA_AC_PYTHON:-$HOME/.openclaw/venvs/midea-ac/bin/python}"
+
+if [ ! -x "$PYTHON" ]; then
+  printf '%s\n' 'midea-ac: dedicated runtime is unavailable' >&2
+  exit 1
+fi
+
+if [ "${MIDEA_AC_OPERATOR:-}" = "1" ]; then
+  exec /usr/bin/env -i \
+    HOME="$HOME" \
+    PATH="/usr/bin:/bin" \
+    MIDEA_AC_OPERATOR=1 \
+    MIDEA_USERNAME="${MIDEA_USERNAME:-}" \
+    MIDEA_PASSWORD="${MIDEA_PASSWORD:-}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    "$PYTHON" "$SCRIPT_DIR/scripts/midea_ac.py" "$@"
+fi
+
+exec /usr/bin/env -i \
+  HOME="$HOME" \
+  PATH="/usr/bin:/bin" \
+  PYTHONDONTWRITEBYTECODE=1 \
+  "$PYTHON" "$SCRIPT_DIR/scripts/midea_ac.py" "$@"

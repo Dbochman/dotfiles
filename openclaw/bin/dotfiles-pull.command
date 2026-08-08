@@ -391,6 +391,27 @@ if [ -d "$SKILLS_SRC" ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) skills: deployed $DEPLOYED skills to $SKILLS_DST" >> "$LOG"
 fi
 
+MIDEA_SKILL_DIR="$SKILLS_DST/midea-ac"
+MIDEA_VENV_DIR="$HOME/.openclaw/venvs/midea-ac"
+if [ ! -f "$MIDEA_SKILL_DIR/pyproject.toml" ] \
+  || [ -L "$MIDEA_SKILL_DIR/pyproject.toml" ] \
+  || [ ! -f "$MIDEA_SKILL_DIR/uv.lock" ] \
+  || [ -L "$MIDEA_SKILL_DIR/uv.lock" ] \
+  || [ ! -x /opt/homebrew/bin/uv ] \
+  || [ -L "$HOME/.openclaw/venvs" ] \
+  || [ -L "$MIDEA_VENV_DIR" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) midea-ac: FATAL locked runtime inputs are unavailable or unsafe" >> "$LOG"
+  exit 1
+fi
+mkdir -p "$HOME/.openclaw/venvs"
+if ! UV_PROJECT_ENVIRONMENT="$MIDEA_VENV_DIR" \
+  /opt/homebrew/bin/uv sync --frozen --no-dev --project "$MIDEA_SKILL_DIR" \
+  >> "$LOG" 2>&1; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) midea-ac: FATAL locked runtime sync failed" >> "$LOG"
+  exit 1
+fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) midea-ac: locked runtime ready" >> "$LOG"
+
 # Deploy CLI wrappers and scripts to ~/.openclaw/bin/
 BIN_SRC="$REPO/openclaw/bin"
 BIN_DST="$HOME/.openclaw/bin"
@@ -508,6 +529,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BI
 # binaries appear unavailable, so publish managed skill wrappers in Homebrew's
 # PATH too.
 STANDALONE_SKILL_WRAPPERS=(
+  midea-ac
   reachyctl
   opentable-book
   opentable-reservations
