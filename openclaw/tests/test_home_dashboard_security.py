@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -157,7 +158,7 @@ class HomeDashboardSecurityTests(unittest.TestCase):
         response.handler._respond(200, {"ok": True})
         self.assertNotIn("access-control-allow-origin", response.header_names)
 
-    def test_nest_and_petlibro_builders_are_exact_and_bounded(self) -> None:
+    def test_nest_midea_and_petlibro_builders_are_exact_and_bounded(self) -> None:
         commands = self.dashboard.COMMANDS
         self.assertEqual(
             commands["nest"]["set"]({"room": "Bedroom", "temp": "72"}),
@@ -181,6 +182,34 @@ class HomeDashboardSecurityTests(unittest.TestCase):
                 str(Path(self.dashboard.CAMERA_SNAP_DIR) / "laundry.jpg"),
             ],
         )
+        self.assertEqual(
+            commands["midea"]["on"]({"alias": "cabin-air-conditioner"}),
+            ["midea-ac", "on", "cabin-air-conditioner"],
+        )
+        self.assertEqual(
+            commands["midea"]["temperature"](
+                {"alias": "cabin-lil-air-conditioner", "temp": "72"}
+            ),
+            ["midea-ac", "temperature", "cabin-lil-air-conditioner", "72"],
+        )
+        self.assertEqual(
+            commands["midea"]["mode"](
+                {"alias": "cabin-air-conditioner", "mode": "cool"}
+            ),
+            ["midea-ac", "mode", "cabin-air-conditioner", "cool"],
+        )
+        self.assertEqual(
+            commands["midea"]["fan"](
+                {"alias": "cabin-air-conditioner", "fan": "silent"}
+            ),
+            ["midea-ac", "fan", "cabin-air-conditioner", "silent"],
+        )
+        self.assertEqual(
+            commands["midea"]["eco"](
+                {"alias": "cabin-air-conditioner", "state": "off"}
+            ),
+            ["midea-ac", "eco", "cabin-air-conditioner", "off"],
+        )
         for portions in (1, "2", 3):
             with self.subTest(portions=portions):
                 self.assertEqual(
@@ -198,6 +227,13 @@ class HomeDashboardSecurityTests(unittest.TestCase):
             {"device": "nest", "action": "mode", "args": {"room": "Bedroom", "mode": "heat"}},
             {"device": "nest", "action": "eco", "args": {"room": "Bedroom", "mode": "OFF"}},
             {"device": "nest_camera", "action": "snap", "args": {"room": "../../tmp"}},
+            {"device": "midea", "action": "on", "args": {"alias": "air-conditioner"}},
+            {"device": "midea", "action": "on", "args": {"alias": "cabin-air-conditioner; id"}},
+            {"device": "midea", "action": "temperature", "args": {"alias": "cabin-air-conditioner", "temp": "nan"}},
+            {"device": "midea", "action": "temperature", "args": {"alias": "cabin-air-conditioner", "temp": 59}},
+            {"device": "midea", "action": "mode", "args": {"alias": "cabin-air-conditioner", "mode": "Cool"}},
+            {"device": "midea", "action": "fan", "args": {"alias": "cabin-air-conditioner", "fan": "turbo"}},
+            {"device": "midea", "action": "eco", "args": {"alias": "cabin-air-conditioner", "state": True}},
         )
         with patch.object(self.dashboard.subprocess, "run") as run:
             for payload in cases:
@@ -206,6 +242,95 @@ class HomeDashboardSecurityTests(unittest.TestCase):
                     self.assertEqual(status, 400)
                     self.assertFalse(response["success"])
         run.assert_not_called()
+
+    def test_midea_collector_uses_safe_json_status_contract(self) -> None:
+        expected = {"ok": True, "devices": []}
+        with patch.object(
+            self.dashboard,
+            "_run_cli",
+            return_value=expected,
+        ) as run:
+            result = self.dashboard.collect_midea()
+
+        self.assertEqual(result, expected)
+        run.assert_called_once_with(
+            ["midea-ac", "status", "--json"],
+            parse_json=True,
+        )
+
+    def test_midea_ui_is_source_specific_and_exact_alias_only(self) -> None:
+        html = self.dashboard.DASHBOARD_HTML
+
+        self.assertIn('id="mideaContent"', html)
+        self.assertIn('data-device="midea"', html)
+        self.assertIn('value="cabin-air-conditioner"', html)
+        self.assertIn('value="cabin-lil-air-conditioner"', html)
+        self.assertIn(
+            "filter((room) => !room.source || room.source === 'nest')",
+            html,
+        )
+        self.assertIn("else if (device === 'midea')", html)
+        self.assertIn("data.result && data.result.status", html)
+
+    def test_midea_command_reuses_verified_readback_without_second_poll(self) -> None:
+        self.dashboard.STATUS_CACHE["midea"] = {
+            "data": {
+                "ok": True,
+                "devices": [
+                    {"alias": "cabin-air-conditioner", "online": True, "mode": "cool"},
+                    {"alias": "cabin-lil-air-conditioner", "online": True, "mode": "cool"},
+                ],
+            },
+            "timestamp": 1,
+        }
+        verified = {
+            "ok": True,
+            "alias": "cabin-air-conditioner",
+            "command": "mode",
+            "changed": True,
+            "verified": True,
+            "status": {
+                "alias": "cabin-air-conditioner",
+                "online": True,
+                "mode": "fan",
+            },
+        }
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(verified),
+            stderr="",
+        )
+
+        with patch.object(
+            self.dashboard.subprocess,
+            "run",
+            return_value=completed,
+        ) as run:
+            status, response = self.dashboard.execute_command(
+                {
+                    "device": "midea",
+                    "action": "mode",
+                    "args": {"alias": "cabin-air-conditioner", "mode": "fan"},
+                }
+            )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(response["success"])
+        self.assertEqual(response["result"], verified)
+        run.assert_called_once_with(
+            ["midea-ac", "mode", "cabin-air-conditioner", "fan"],
+            capture_output=True,
+            timeout=self.dashboard.COMMAND_TIMEOUT_SECONDS,
+            text=True,
+        )
+        cached = self.dashboard.STATUS_CACHE["midea"]["data"]["devices"]
+        self.assertEqual(
+            {item["alias"]: item["mode"] for item in cached},
+            {
+                "cabin-air-conditioner": "fan",
+                "cabin-lil-air-conditioner": "cool",
+            },
+        )
 
 
 if __name__ == "__main__":

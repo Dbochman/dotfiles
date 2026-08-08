@@ -11,7 +11,7 @@ Unified control plane for smart home devices across Crosstown and Cabin. The das
 Cards are grouped into collapsible sections:
 
 1. **Lighting** — Hue Crosstown, Hue Cabin
-2. **Temperature** — Nest, Cielo, Mysa, Eight Sleep
+2. **Temperature** — Nest, Midea AC, Cielo, Mysa, Eight Sleep
 3. **Security** — August Lock, Ring Doorbell, Nest Cameras (Kitchen @ Cabin; Laundry + Living Room @ Crosstown)
 4. **Pets** — Litter-Robot, Petlibro, Dog Walk
 5. **Misc** — TV, Speakers, Cabin Speakers, Roombas (Crosstown + Cabin)
@@ -83,6 +83,11 @@ All controls use selectors with predefined room/device values.
   successful only after the API response is valid and a bounded device readback
   confirms the requested state.
 - **Cielo:** on/off, set temp, set mode
+- **Midea AC:** exact-device on/off, set temp (60–86°F), set mode, set fan,
+  and eco on/off. The local CLI sends a control once and verifies it with one
+  device readback before the dashboard reports success. The dashboard consumes
+  that verified result directly instead of opening an immediate second LAN
+  session to refresh the card.
 - **August:** lock/unlock
 - **Ring/Nest Cameras:** take snapshots — Ring (Crosstown + Cabin doorbells), Nest (Kitchen @ Cabin, Laundry + Living Room @ Crosstown). Nest device discovery uses customName as a fallback to room name for cameras whose Google Home room doesn't match the dashboard label (e.g. "laundry camera" lives in the "Garage" room). Adding new Nest devices requires `nest reauth` to re-run Google Device Access OAuth consent.
 - **Litter-Robot:** clean/reset
@@ -97,7 +102,7 @@ All controls use selectors with predefined room/device values.
 - Nest latest snapshot: `~/.openclaw/nest-history/*.jsonl`
 - Dog walk state: `~/.openclaw/dog-walk/state.json`
 - Camera snapshots: `~/.openclaw/camera-snaps/*.jpg`
-- Device CLIs: `hue`, `nest`, `cielo`, `mysa`, `august`, `crosstown-roomba`, `roomba`, `samsung-tv`, `speaker`, `litter-robot`, `petlibro`, `8sleep`, `ring`
+- Device CLIs: `hue`, `nest`, `midea-ac`, `cielo`, `mysa`, `august`, `crosstown-roomba`, `roomba`, `samsung-tv`, `speaker`, `litter-robot`, `petlibro`, `8sleep`, `ring`
 
 ## Files and Logs
 
@@ -140,6 +145,9 @@ PY"
   Keep `nest-camera-snap.py` pinned to H.264 profile `42e01f`; advertising both
   aiortc baseline profiles can produce duplicated payload IDs in Nest's answer.
 - Cielo and Mysa status collectors never prompt from the dashboard process. An expired provider session is shown as an actionable reauthentication state rather than raw CLI output.
+- Midea status and control stay on the Cabin LAN and use only the exact aliases
+  enrolled in the owner-only local binding file. The dashboard does not load or
+  retain Midea cloud credentials.
 - The `Mysa` item in the `OpenClaw` 1Password vault, with `username` and `password` fields, is cached as `MYSA_USERNAME` and `MYSA_PASSWORD` by `openclaw-refresh-secrets`. When present, those values renew an expired Mysa token without an interactive prompt.
 - Cielo's 30-minute refresher uses a dedicated PinchTab tab and restores the previously active tab. It refreshes an existing browser session, but does not repeatedly submit credentials through reCAPTCHA; a logged-out Cielo session requires a manual sign-in.
 - Samsung TV and Google Cast status polls treat an unreachable local port as an offline or standby device. Speaker checks fail fast before invoking Cast discovery, so an offline device does not hold up the dashboard refresh.

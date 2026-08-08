@@ -198,6 +198,10 @@ def collect_mysa():
     return result
 
 
+def collect_midea():
+    return _run_cli(["midea-ac", "status", "--json"], parse_json=True)
+
+
 def collect_lock():
     return _run_cli(["august", "status"], parse_json=True)
 
@@ -264,6 +268,7 @@ COLLECTORS = {
     "nest": collect_nest,
     "cielo": collect_cielo,
     "mysa": collect_mysa,
+    "midea": collect_midea,
     "lock": collect_lock,
     "roombas_crosstown": collect_roombas_crosstown,
     "roombas_cabin": collect_roombas_cabin,
@@ -390,6 +395,12 @@ class CommandValidationError(ValueError):
 
 _NEST_THERMOSTAT_ROOMS = {"Solarium", "Living Room", "Bedroom"}
 _NEST_CAMERA_ROOMS = {"kitchen", "laundry", "livingroom"}
+_MIDEA_AC_ALIASES = {
+    "cabin-air-conditioner",
+    "cabin-lil-air-conditioner",
+}
+_MIDEA_AC_MODES = {"auto", "cool", "dry", "heat", "fan"}
+_MIDEA_AC_FANS = {"auto", "silent", "low", "medium", "high", "full"}
 
 
 def _require_args(args, *, required, optional=()):
@@ -443,6 +454,40 @@ def _build_nest_camera_command(args):
     return ["nest", "camera", "snap", room, os.path.join(CAMERA_SNAP_DIR, f"{room}.jpg")]
 
 
+def _build_midea_power_command(action, args):
+    _require_args(args, required=("alias",))
+    alias = _require_choice(args["alias"], _MIDEA_AC_ALIASES, "Midea alias")
+    return ["midea-ac", action, alias]
+
+
+def _build_midea_temperature_command(args):
+    _require_args(args, required=("alias", "temp"))
+    alias = _require_choice(args["alias"], _MIDEA_AC_ALIASES, "Midea alias")
+    raw_temp = args["temp"]
+    if isinstance(raw_temp, bool) or not isinstance(raw_temp, (int, float, str)):
+        raise CommandValidationError("invalid temperature")
+    try:
+        temp = float(raw_temp)
+    except (TypeError, ValueError):
+        raise CommandValidationError("invalid temperature") from None
+    if not math.isfinite(temp) or not 60 <= temp <= 86:
+        raise CommandValidationError(
+            "temperature must be between 60 and 86 degrees Fahrenheit"
+        )
+    return ["midea-ac", "temperature", alias, format(temp, "g")]
+
+
+def _build_midea_choice_command(command, choices, field, args):
+    _require_args(args, required=("alias", field))
+    alias = _require_choice(args["alias"], _MIDEA_AC_ALIASES, "Midea alias")
+    value = _require_choice(args[field], choices, field)
+    return ["midea-ac", command, alias, value]
+
+
+def _build_midea_eco_command(args):
+    return _build_midea_choice_command("eco", {"on", "off"}, "state", args)
+
+
 def _build_petlibro_feed_command(args):
     _require_args(args, required=("portions",))
     portions = args["portions"]
@@ -480,6 +525,18 @@ COMMANDS = {
         "off": lambda a: ["cielo", "off", "-d", a["device"]],
         "temp": lambda a: ["cielo", "temp", str(a["temp"]), "-d", a["device"]],
         "mode": lambda a: ["cielo", "mode", a["mode"], "-d", a["device"]],
+    },
+    "midea": {
+        "on": lambda a: _build_midea_power_command("on", a),
+        "off": lambda a: _build_midea_power_command("off", a),
+        "temperature": _build_midea_temperature_command,
+        "mode": lambda a: _build_midea_choice_command(
+            "mode", _MIDEA_AC_MODES, "mode", a
+        ),
+        "fan": lambda a: _build_midea_choice_command(
+            "fan", _MIDEA_AC_FANS, "fan", a
+        ),
+        "eco": _build_midea_eco_command,
     },
     "august": {
         "lock": lambda a: ["august", "lock"],
@@ -587,10 +644,29 @@ def execute_command(payload):
         "error": stderr,
         "returncode": result.returncode,
     }
+    structured_output = _parse_cli_json(stdout)
+    if structured_output is not None:
+        response["result"] = structured_output
 
     if result.returncode == 0:
         with STATUS_CACHE_LOCK:
+            previous_midea = STATUS_CACHE.get("midea", {}).get("data", {})
             STATUS_CACHE.clear()
+            if device == "midea" and isinstance(structured_output, dict):
+                verified_status = structured_output.get("status")
+                if isinstance(verified_status, dict):
+                    prior_devices = previous_midea.get("devices", [])
+                    devices = [
+                        item
+                        for item in prior_devices
+                        if isinstance(item, dict)
+                        and item.get("alias") != verified_status.get("alias")
+                    ]
+                    devices.append(verified_status)
+                    STATUS_CACHE["midea"] = {
+                        "data": {"ok": True, "devices": devices},
+                        "timestamp": time.time(),
+                    }
         return 200, response
 
     return 502, response
@@ -974,6 +1050,52 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
             <button type="button" data-command data-device="nest" data-action="mode" data-form="nest-form" data-fields="room,mode">Set Mode</button>
             <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room">Eco On</button>
             <button type="button" data-command data-device="nest" data-action="eco" data-form="nest-form" data-fields="room,mode" data-extra='{"mode":"off"}'>Eco Off</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Temperature</div>
+            <h2>Midea AC</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
+        </div>
+        <div id="mideaContent" class="content"></div>
+        <div class="controls">
+          <form id="midea-form" class="controls-grid">
+            <select name="alias">
+              <option value="cabin-air-conditioner">Air Conditioner</option>
+              <option value="cabin-lil-air-conditioner">Lil Air Conditioner</option>
+            </select>
+            <input name="temp" type="number" min="60" max="86" step="1" placeholder="Temp °F (60-86)">
+            <select name="mode">
+              <option value="">Mode...</option>
+              <option value="auto">Auto</option>
+              <option value="cool">Cool</option>
+              <option value="dry">Dry</option>
+              <option value="heat">Heat</option>
+              <option value="fan">Fan</option>
+            </select>
+            <select name="fan">
+              <option value="">Fan...</option>
+              <option value="auto">Auto</option>
+              <option value="silent">Silent</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="full">Full</option>
+            </select>
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="midea" data-action="on" data-form="midea-form" data-fields="alias">On</button>
+            <button type="button" data-command data-device="midea" data-action="off" data-form="midea-form" data-fields="alias">Off</button>
+            <button type="button" data-command data-device="midea" data-action="temperature" data-form="midea-form" data-fields="alias,temp">Set Temp</button>
+            <button type="button" data-command data-device="midea" data-action="mode" data-form="midea-form" data-fields="alias,mode">Set Mode</button>
+            <button type="button" data-command data-device="midea" data-action="fan" data-form="midea-form" data-fields="alias,fan">Set Fan</button>
+            <button type="button" data-command data-device="midea" data-action="eco" data-form="midea-form" data-fields="alias" data-extra='{"state":"on"}'>Eco On</button>
+            <button type="button" data-command data-device="midea" data-action="eco" data-form="midea-form" data-fields="alias" data-extra='{"state":"off"}'>Eco Off</button>
           </div>
         </div>
       </article>
@@ -1483,8 +1605,9 @@ function roomTemp(room) {
 
 function roomMeta(room) {
   const parts = [];
-  if (room.humidity !== undefined) parts.push(`Humidity ${room.humidity}%`);
-  if (room.target_f !== undefined) parts.push(`Target ${room.target_f}°`);
+  if (room.humidity !== undefined && room.humidity !== null) parts.push(`Humidity ${room.humidity}%`);
+  const setpoint = room.setpoint_f ?? room.target_f;
+  if (Number.isFinite(setpoint) && setpoint > 32) parts.push(`Target ${setpoint}°`);
   if (room.mode) parts.push(String(room.mode));
   return parts.join(' · ') || 'No extra metrics';
 }
@@ -1531,6 +1654,41 @@ function renderMysa(result) {
       <div class="room-name">${escapeHtml(name)}</div>
       <div class="room-temp">${escapeHtml(temp)}</div>
       <div class="room-meta">Set: ${escapeHtml(setpoint)} · Humidity: ${escapeHtml(humidity)} · Duty: ${escapeHtml(duty)}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function mideaLabel(alias) {
+  const labels = {
+    'cabin-air-conditioner': 'Air Conditioner',
+    'cabin-lil-air-conditioner': 'Lil Air Conditioner',
+  };
+  return labels[alias] || alias || 'Air Conditioner';
+}
+
+function renderMidea(result) {
+  if (!result) return '<div class="muted">No Midea data</div>';
+  if (isPending(result)) return renderPending();
+  if (result.error) return renderError(result);
+  const devices = result.devices || (Array.isArray(result.data) ? result.data : null);
+  if (!devices) return renderSimpleObject(result);
+  return '<div class="room-grid">' + devices.map((d) => {
+    const online = d.online === true;
+    const stateDot = online ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
+    const state = online ? (d.power ? 'On' : 'Off') : 'Unavailable';
+    const temp = Number.isFinite(d.indoor_temperature_f) ? `${d.indoor_temperature_f}°F` : '—';
+    const meta = [];
+    if (Number.isFinite(d.target_temperature_f)) meta.push(`Set: ${d.target_temperature_f}°F`);
+    if (online && d.mode) meta.push(String(d.mode));
+    if (online && d.fan !== undefined && d.fan !== null) meta.push(`Fan: ${d.fan}`);
+    if (online && d.eco) meta.push('Eco');
+    if (online && d.energy && Number.isFinite(d.energy.realtime_power_w)) {
+      meta.push(`${Math.round(d.energy.realtime_power_w)} W`);
+    }
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(mideaLabel(d.alias))}</div>
+      <div class="room-temp">${stateDot} ${escapeHtml(temp)} · ${escapeHtml(state)}</div>
+      <div class="room-meta">${escapeHtml(meta.join(' · ') || 'No current metrics')}</div>
     </div>`;
   }).join('') + '</div>';
 }
@@ -1909,7 +2067,7 @@ function renderNest(result) {
   if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
   if (!Array.isArray(result.rooms)) return renderSimpleObject(result);
-  const rooms = result.rooms.map((room) => `
+  const rooms = result.rooms.filter((room) => !room.source || room.source === 'nest').map((room) => `
     <div class="room-chip">
       <div class="room-name">${escapeHtml(roomLabel(room.room || room.name))}</div>
       <div class="room-temp">${escapeHtml(roomTemp(room))}</div>
@@ -1942,6 +2100,7 @@ function renderDashboard() {
   setContent('hueCrosstownContent', renderHue(data.hue_crosstown));
   setContent('hueCabinContent', renderHue(data.hue_cabin));
   setContent('nestContent', renderNest(data.nest));
+  setContent('mideaContent', renderMidea(data.midea));
   setContent('cieloContent', renderCielo(data.cielo));
   setContent('mysaContent', renderMysa(data.mysa));
   setContent('lockContent', renderLock(data.lock));
@@ -1993,6 +2152,7 @@ const DEVICE_TO_COLLECTOR = {
   hue_cabin: 'hue_cabin',
   nest: 'nest',
   cielo: 'cielo',
+  midea: 'midea',
   august: 'lock',
   crosstown_roomba: 'roombas_crosstown',
   cabin_roomba: 'roombas_cabin',
@@ -2073,6 +2233,17 @@ async function postCommand(button) {
       loadCameraSnap(room, containerId);
     } else if (device === 'ring_camera' && action === 'snap') {
       loadCameraSnap('ring-' + (args.doorbell || 'crosstown'), 'ringSnapContent');
+    } else if (device === 'midea') {
+      const verifiedStatus = normalizeObject(data.result && data.result.status);
+      if (verifiedStatus && state.data) {
+        const previous = normalizeObject(state.data.midea) || {};
+        const devices = Array.isArray(previous.devices)
+          ? previous.devices.filter((item) => item && item.alias !== verifiedStatus.alias)
+          : [];
+        devices.push(verifiedStatus);
+        state.data.midea = { ok: true, devices };
+        renderDashboard();
+      }
     } else {
       await refreshDevice(collectorKey);
     }

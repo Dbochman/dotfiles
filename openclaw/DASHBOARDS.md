@@ -20,7 +20,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 
 **Port 8550** · [Full spec](NEST-CLIMATE-DASHBOARD.md)
 
-Monitors thermostats and weather across two locations via three heating/cooling systems.
+Monitors thermostats and weather across two locations via four heating/cooling systems.
 
 ### What It Shows
 
@@ -37,6 +37,7 @@ Monitors thermostats and weather across two locations via three heating/cooling 
 | Nest SDM API | 30 min | Thermostat temps, setpoints, HVAC mode |
 | Cielo CLI | 30 min | Minisplit AC status (Crosstown) |
 | Mysa API | 30 min | Baseboard heater temps + duty cycle (Crosstown) |
+| Midea local LAN | 30 min | Portable/window AC status, setpoints, and energy telemetry (Cabin) |
 | Open-Meteo | 30 min | Outdoor weather (no API key needed) |
 | Presence scanner | Continuous | WiFi-based occupancy per location |
 
@@ -47,6 +48,7 @@ Monitors thermostats and weather across two locations via three heating/cooling 
 | Cabin (Philly) | Nest central HVAC | Solarium, Living Room, Bedroom |
 | Crosstown (19Crosstown) | Cielo minisplit | Living Room, Basement, Dylan's Office, Bedroom |
 | Crosstown (19Crosstown) | Mysa baseboard | Cat Room, Basement door, Movie room |
+| Cabin (Philly) | Midea AC | Air Conditioner, Lil Air Conditioner |
 
 ### Files
 
@@ -283,14 +285,14 @@ ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8586/api/monthly-operating-tasks
 
 **Port 8558** · [Full spec](HOME-CONTROL-PLANE-DASHBOARD.md)
 
-Unified control plane for smart home devices across both locations. Seventeen status collectors provide a single pane of glass for monitoring and control, organized into five collapsible sections.
+Unified control plane for smart home devices across both locations. Eighteen status collectors provide a single pane of glass for monitoring and control, organized into five collapsible sections.
 
 ### Layout
 
 Cards are grouped into collapsible sections (all open by default, click header to collapse):
 
 1. **Lighting** — Hue Crosstown, Hue Cabin
-2. **Temperature** — Nest, Cielo, Mysa, Eight Sleep
+2. **Temperature** — Nest, Midea AC, Cielo, Mysa, Eight Sleep
 3. **Security** — August Lock, Ring Doorbell, Nest Camera
 4. **Pets** — Litter-Robot, Petlibro, Dog Walk
 5. **Misc** — TV, Speakers, Cabin Speakers, Roombas (Crosstown + Cabin)
@@ -301,6 +303,7 @@ Command feedback (Running/Success/Error) appears inline below the section header
 
 - **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label e.g. "Warm White") with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
 - **Nest Thermostat** — per-room temp, setpoint, HVAC mode with set temp / set mode / eco controls (Cabin: 3 rooms)
+- **Midea AC** — per-unit temperature, setpoint, power, mode, fan, eco, and live wattage with exact-device on/off, temp, mode, fan, and eco controls (Cabin: 2 units)
 - **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)
 - **Mysa Heaters** — per-heater temp, setpoint, humidity, duty cycle (read-only; Crosstown: 3 units)
 - **Eight Sleep** — chip cards per side (bed temp °F, active/idle status) with on/off/set temp
@@ -329,7 +332,7 @@ Browser → home-dashboard.py (port 8558)
 ```
 
 - **Progressive loading** — `GET /api/status` returns cached data instantly (no blocking). Uncached devices listed in `meta.pending`; frontend polls them individually in background. Cards render as data arrives.
-- **Precache on startup** — all 17 collectors run in parallel via `ThreadPoolExecutor` at boot
+- **Precache on startup** — all 18 collectors run in parallel via `ThreadPoolExecutor` at boot
 - **Background refresh** — every 5 minutes, most collectors re-run in background; speakers/cabin_speakers are excluded to avoid Cast connections that cause chimes on idle Google Home devices (polled on page load only)
 - **Per-device refresh** — `GET /api/status/<device_name>` refreshes one collector and updates cache
 - **60s cache TTL** — CLI results cached to avoid hammering APIs
@@ -338,6 +341,7 @@ Browser → home-dashboard.py (port 8558)
 - **Custom renderers** — all device categories have dedicated JS renderers with room-chip card layout; TV and Speakers show friendly messages when devices are off/asleep; Hue shows human-readable color temp (Warm White, Daylight, etc.) only when lights are on
 - **Camera snapshots** — Nest (WebRTC) and Ring snapshots saved to `~/.openclaw/camera-snaps/`, served via `/api/camera-snap/<name>` with timestamp header; loaded on page refresh
 - **Inline feedback** — command status messages appear below the section header of the clicked card, auto-dismiss success/error after 4s
+- **Midea verified refresh** — successful Midea controls update the device card and server cache from the CLI's verified readback, avoiding a redundant immediate LAN session
 
 ### Controls
 
@@ -348,6 +352,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Hue Crosstown | 9 rooms + **All Lights** dropdown | Brightness, Color (warm/cool/daylight/red/blue/green/purple/orange/pink). In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle |
 | Hue Cabin | 8 rooms + **All Lights** dropdown | Brightness, Color. In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle |
 | Nest | 3 rooms dropdown | Temp °F, Mode (HEAT/OFF), Eco on/off |
+| Midea AC | 2 exact-device aliases | Temp °F (60–86), Mode (auto/cool/dry/heat/fan), Fan (auto/silent/low/medium/high/full), Eco on/off |
 | Cielo | 4 devices dropdown | Temp °F, Mode (cool/heat/auto/dry/fan) |
 | Eight Sleep | Side (Dylan/Julia) | Level (-100 to +100), On / Off |
 | August | — | Lock / Unlock |
@@ -367,6 +372,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | `~/.openclaw/presence/state.json` | File | Occupancy per location |
 | `hue --crosstown/--cabin status` | CLI | Room-by-room light status |
 | `~/.openclaw/nest-history/*.jsonl` | File | Latest Nest snapshot |
+| `midea-ac status --json` | CLI | Locally enrolled Cabin AC status and energy telemetry |
 | `cielo status --json` | CLI | Minisplit status (JSON) |
 | `mysa` | CLI | Baseboard heater status (JSON) |
 | `august status` | CLI | Lock state (JSON, via SSH to MBP) |
@@ -389,6 +395,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 |--------|-----------|-------|
 | Hue Lights | Entryway, Kitchen, Bedroom, Movie, Living, Office, Upstairs, Downstairs, Master | Kitchen, Living, Bathroom, Hallway, Bedroom, Office, Solarium, Staircase |
 | Nest | — | Solarium, Living Room, Bedroom |
+| Midea AC | — | Air Conditioner, Lil Air Conditioner |
 | Cielo AC | Basement, Living Room, Dylan's Office, Bedroom | — |
 | Mysa Heaters | Cat Room, Basement door, Movie room | — |
 | August Lock | Front Door | — |
@@ -415,6 +422,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 ### Known Limitations
 
 - **Mysa is read-only** — the Mysa API doesn't expose setpoint changes or on/off; use the Mysa app or physical thermostat
+- **Midea is LAN-local** — status and controls require the Mac mini to be on the same Cabin network as the enrolled units; no cloud fallback is retained
 - **Cabin Roombas use Google Assistant** — responses are natural language text, not structured JSON
 - **Petlibro/8sleep** require env vars from `~/.openclaw/.secrets-cache` — if secrets are stale, these collectors will error
 - **Crosstown Roombas and Speakers** route through SSH to MBP — if MBP is offline, these time out
