@@ -314,7 +314,7 @@ class NestMutationSafetyTests(unittest.TestCase):
         self.assertIn("latitude=40.1234", request["url"])
         self.assertIn("longitude=-70.5678", request["url"])
 
-    def test_snapshot_keeps_cielo_and_mysa_sources(self) -> None:
+    def test_snapshot_keeps_cielo_mysa_and_midea_sources(self) -> None:
         self._write_executable(
             self.fake_bin / "cielo",
             """#!/bin/sh
@@ -325,6 +325,12 @@ printf '%s\n' '[{"deviceName":"Bedroom","deviceStatus":1,"latEnv":{"temp":76,"hu
             self.fake_bin / "mysa",
             """#!/bin/sh
 printf '%s\n' '{"devices":[{"name":"Cat Room","temp_f":71.5,"humidity":42,"setpoint_f":68,"duty_pct":15}]}'
+""",
+        )
+        self._write_executable(
+            self.fake_bin / "midea-ac",
+            """#!/bin/sh
+printf '%s\n' '{"ok":true,"devices":[{"alias":"cabin-air-conditioner","site":"cabin","online":true,"power":true,"mode":"cool","target_temperature_f":74.3,"indoor_temperature_f":73.4,"humidity_percent":null,"fan":50,"eco":true,"error_code":0,"energy":{"realtime_power_w":53.4}},{"alias":"cabin-lil-air-conditioner","site":"cabin","online":false,"error":"not_discovered"}]}'
 """,
         )
 
@@ -339,6 +345,17 @@ printf '%s\n' '{"devices":[{"name":"Cat Room","temp_f":71.5,"humidity":42,"setpo
         self.assertEqual(rooms["19Crosstown Bedroom"]["temp_f"], 76.0)
         self.assertEqual(rooms["19Crosstown Cat Room"]["source"], "mysa")
         self.assertEqual(rooms["19Crosstown Cat Room"]["duty_pct"], 15.0)
+        self.assertEqual(rooms["Air Conditioner"]["source"], "midea")
+        self.assertEqual(rooms["Air Conditioner"]["temp_f"], 73.4)
+        self.assertEqual(rooms["Air Conditioner"]["setpoint_f"], 74.3)
+        self.assertEqual(rooms["Air Conditioner"]["hvac"], "COOLING")
+        self.assertEqual(rooms["Air Conditioner"]["eco"], "ON")
+        self.assertEqual(rooms["Air Conditioner"]["fan"], 50)
+        self.assertEqual(rooms["Air Conditioner"]["power_w"], 53.4)
+        self.assertIsNone(rooms["Air Conditioner"]["humidity"])
+        self.assertEqual(rooms["Lil Air Conditioner"]["source"], "midea")
+        self.assertEqual(rooms["Lil Air Conditioner"]["connectivity"], "OFFLINE")
+        self.assertIsNone(rooms["Lil Air Conditioner"]["temp_f"])
 
     def test_secure_location_file_overrides_protected_cache(self) -> None:
         self._write_assignments(

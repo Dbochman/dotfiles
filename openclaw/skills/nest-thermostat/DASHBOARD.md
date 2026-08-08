@@ -1,6 +1,6 @@
 # Climate Dashboard
 
-Self-hosted web dashboard for visualizing thermostat + weather history data across all heating/cooling systems: Nest (central HVAC), Cielo (minisplit AC), and Mysa (baseboard heaters).
+Self-hosted web dashboard for visualizing thermostat + weather history data across all heating/cooling systems: Nest (central HVAC), Cielo (minisplit AC), Mysa (baseboard heaters), and Midea (portable/window ACs).
 
 ## Architecture
 
@@ -17,15 +17,16 @@ Mac Mini (dylans-mac-mini)
 
 ## Data Sources
 
-The `nest snapshot` LaunchAgent runs every 30 minutes, collecting data from three systems and writing unified JSONL to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`.
+The `nest snapshot` LaunchAgent runs every 30 minutes, collecting data from four climate systems and writing unified JSONL to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`.
 
 | Source | Devices | Location | How |
 |--------|---------|----------|-----|
 | **Nest** (SDM API) | Solarium, Living Room, Bedroom | Cabin (Philly) | Google Nest SDM REST API |
 | **Cielo** (cli.js) | Basement, Living Room, Dylan's Office, Bedroom | Crosstown | `cielo-cli status --json` |
 | **Mysa** (mysotherm) | Cat Room, Basement door, Movie room | Crosstown | `mysa-status.py` via REST API |
+| **Midea** (midea-local) | Air Conditioner, Lil Air Conditioner | Cabin | `midea-ac status --json` over the local LAN |
 
-Each room entry has a `source` field (`"nest"`, `"cielo"`, or `"mysa"`) and Crosstown rooms are prefixed with `19Crosstown`.
+Each room entry has a `source` field (`"nest"`, `"cielo"`, `"mysa"`, or `"midea"`) and Crosstown rooms are prefixed with `19Crosstown`.
 
 ```json
 {
@@ -43,6 +44,8 @@ Each room entry has a `source` field (`"nest"`, `"cielo"`, or `"mysa"`) and Cros
 ```
 
 **Mysa-specific fields:** `duty_pct` (0-100) gives real heater duty cycle. Other sources use binary HEATING/OFF.
+
+**Midea-specific fields:** `power`, `fan`, and `power_w` preserve AC operating and energy telemetry. A locally unavailable unit remains in the current snapshot with `connectivity: "OFFLINE"` and null measurements; the dashboard shows it as unavailable and excludes the unknown sample from charts.
 
 **Weather format:** Per-structure dict keyed by structure name. Old flat-dict snapshots are backwards compatible.
 
@@ -75,17 +78,19 @@ File-per-day structure acts as a natural date index.
 
 - **Structure filter buttons:** Both, Philly, Crosstown — filters room cards, weather cards, and all charts
 - **Vacancy badges:** Uses `occupied`, `confirmed_vacant`, and `possibly_vacant` directly; Potato's informational Fi location is excluded
-- **Status cards:** Current temp, setpoint, HVAC status, humidity per room + outdoor weather per structure
+- **Status cards:** Current temp, setpoint, HVAC status, humidity per room + outdoor weather per structure; Midea cards also show eco, fan, and live wattage when available
 - **Temperature chart** (line): Per-room temps + outdoor temp + setpoint lines (dotted)
 - **Humidity chart** (line): Per-room + outdoor humidity
 - **HVAC duty cycle chart** (bar): Heating percentage per hour per room
   - Mysa rooms: uses real `duty_pct` (weighted average per hour)
-  - Nest/Cielo rooms: binary 100%/0% based on HVAC status (HEATING vs OFF)
+  - Nest/Cielo/Midea rooms: binary 100%/0% based on HVAC status (active vs OFF)
 - **Time range buttons:** 24h, 7d, 30d, 1Y
 - **Auto-refresh:** Every 5 minutes via `setInterval`
 - **Dark mode** by default, respects `prefers-color-scheme`
 
 **Room name disambiguation:** When viewing "Both" structures, rooms that exist in both locations get a suffix — e.g., "Bedroom (Cabin)" and "Bedroom (XTown)". Rooms unique to one structure (Solarium, Basement, Dylan's Office) keep their short name. When viewing a single structure, all names are short. This is automatic based on collision detection across structures.
+
+**Source disambiguation:** If more than one system reports the same room name at the same structure, the dashboard keeps separate device series and adds the system name to cards, legends, and tooltips (for example, `Living Room (Nest)` and `Living Room (Cielo)`). This prevents historical samples from being merged when one source is temporarily absent from the latest snapshot.
 
 **Room colors:**
 | Room | Color | Source |
@@ -98,6 +103,8 @@ File-per-day structure acts as a natural date index.
 | Cat Room | `#EC4899` (pink) | Mysa |
 | Basement door | `#06B6D4` (cyan) | Mysa |
 | Movie room | `#84CC16` (lime) | Mysa |
+| Air Conditioner | `#22C55E` (green) | Midea |
+| Lil Air Conditioner | `#84CC16` (lime) | Midea |
 | Outside (Cabin) | `#6B7280` (gray) | Weather |
 | Outside (Crosstown) | `#9CA3AF` (light gray) | Weather |
 

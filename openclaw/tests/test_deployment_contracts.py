@@ -856,8 +856,10 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("NEST_CLIENT_ID", nest_text)
         self.assertIn("_get_cielo_status", nest_text)
         self.assertIn("_get_mysa_status", nest_text)
+        self.assertIn("_get_midea_status", nest_text)
         self.assertIn("'source': 'cielo'", nest_text)
         self.assertIn("'source': 'mysa'", nest_text)
+        self.assertIn("'source': 'midea'", nest_text)
 
     def test_nest_event_listener_deployment_is_private_and_explicit(self) -> None:
         wrapper_text = NEST_EVENT_LISTENER_WRAPPER.read_text(encoding="utf-8")

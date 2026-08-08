@@ -1,8 +1,8 @@
-# Nest Climate Dashboard — Implementation Spec
+# Home Climate Dashboard — Implementation Spec
 
-## Status: v2.1 (2026-03-09)
+## Status: v2.2 (2026-08-07)
 
-Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats and weather across two locations via three heating/cooling systems. Serves at port 8550 on the Mac Mini with home-LAN and Tailscale-tailnet access.
+Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats, air conditioners, and weather across two locations via four heating/cooling systems. Serves at port 8550 on the Mac Mini with home-LAN and Tailscale-tailnet access.
 
 ---
 
@@ -11,6 +11,7 @@ Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats a
 | Location | System | Devices | Source Tag |
 |----------|--------|---------|------------|
 | Cabin (Philly) | Nest (central HVAC) | Solarium, Living Room, Bedroom | `nest` |
+| Cabin (Philly) | Midea (local AC) | Air Conditioner, Lil Air Conditioner | `midea` |
 | Crosstown (19Crosstown) | Cielo (minisplit AC) | Living Room, Basement, Dylan's Office, Bedroom | `cielo` |
 | Crosstown (19Crosstown) | Mysa (baseboard heater) | Cat Room, Basement door, Movie room | `mysa` |
 
@@ -25,6 +26,8 @@ Mac Mini (dylans-mac-mini)
 ├── CLI: /opt/homebrew/bin/nest → ~/dotfiles/bin/nest
 ├── Dashboard Server: ~/.openclaw/bin/nest-dashboard.py (port 8550)
 ├── Mysa Wrapper: ~/.openclaw/bin/mysa-status.py
+├── Midea Wrapper: ~/.openclaw/bin/midea-ac
+├── Midea LAN Bindings: ~/.openclaw/midea-ac/bindings.json
 ├── Camera Media: ~/.openclaw/bin/nest-camera-snap.py
 ├── History: ~/.openclaw/nest-history/YYYY-MM-DD.jsonl
 ├── Presence: ~/.openclaw/presence/state.json + history/
@@ -48,7 +51,7 @@ The snapshot agent shows `-` for PID in `launchctl list` — this is normal (run
 
 ### Snapshot Command (`nest snapshot`)
 
-Runs every 30 minutes. Queries four data sources sequentially, merges into a single JSONL record, appends to the daily history file.
+Runs every 30 minutes. Queries four climate systems plus weather, merges them into a single JSONL record, and appends it to the daily history file.
 
 **Pipeline:**
 
@@ -56,9 +59,10 @@ Runs every 30 minutes. Queries four data sources sequentially, merges into a sin
 2. **Open-Meteo Weather API** — Per-structure lat/lon, current conditions
 3. **Cielo CLI** — `cielo status --json` for minisplit AC units
 4. **Mysa API** — `~/.openclaw/bin/mysa-status.py` via mysotherm library
-5. **Merge** — All devices assembled into `rooms[]` array with structure prefix and `source` tag
-6. **Write** — Append JSON line to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`
-7. **Prune** — Delete history files older than 1000 days
+5. **Midea local LAN** — `midea-ac status --json` using enrolled per-device token/key bindings
+6. **Merge** — All devices assembled into `rooms[]` array with structure prefix and `source` tag
+7. **Write** — Append JSON line to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`
+8. **Prune** — Delete history files older than 1000 days
 
 ### Room Name Convention
 
@@ -70,8 +74,12 @@ Raw room names include a structure prefix for multi-structure disambiguation:
 | `Living Room` | Philly | Living Room | Living Room (Cabin) |
 | `19Crosstown Living Room` | 19Crosstown | Living Room | Living Room (XTown) |
 | `19Crosstown Dylan's Office` | 19Crosstown | Dylan's Office | Dylan's Office |
+| `Air Conditioner` | Philly | Air Conditioner | Air Conditioner |
+| `Lil Air Conditioner` | Philly | Lil Air Conditioner | Lil Air Conditioner |
 
 Rooms without a prefix default to Philly (Cabin). Crosstown rooms are prefixed with `19Crosstown `.
+
+When the same structure and short room name are reported by multiple sources, the dashboard adds a source suffix and keeps independent time series. For example, the two Crosstown Living Room feeds render as `Living Room (Nest)` and `Living Room (Cielo)` rather than merging their samples. The suffix is conditional, so rooms with a single source keep their concise names.
 
 **Note:** The apostrophe in "Dylan's Office" is Unicode U+2019 (right single quotation mark `'`), not ASCII U+0027 (`'`). This comes from the Nest SDM API's room naming. The dashboard COLORS map includes both variants for safety.
 
@@ -141,13 +149,14 @@ Rooms without a prefix default to Philly (Cabin). Crosstown rooms are prefixed w
 
 ### Field Differences by Source
 
-| Field | Nest | Cielo | Mysa |
-|-------|------|-------|------|
-| `mode` | `HEAT`, `COOL`, `HEATCOOL`, `OFF` | `heat`, `cool`, `auto`, `fan`, `dry` | `heat`, `off` |
-| `hvac` | `HEATING`, `COOLING`, `OFF` | Mapped: `HEATING`, `COOLING`, `AUTO`, `FAN`, `DRY`, `OFF` | `HEATING` if duty > 0, else `OFF` |
-| `duty_pct` | absent | absent | 0–100 (real heater duty cycle) |
-| `connectivity` | from API trait | `ONLINE`/`OFFLINE` from `deviceStatus` | always `ONLINE` |
-| Temperature | `ambientTemperatureCelsius` (C primary) | `latEnv.temp` (F primary) | `CorrectedTemp` (C primary, converted) |
+| Field | Nest | Cielo | Mysa | Midea |
+|-------|------|-------|------|-------|
+| `mode` | `HEAT`, `COOL`, `HEATCOOL`, `OFF` | `heat`, `cool`, `auto`, `fan`, `dry` | `heat`, `off` | `auto`, `cool`, `dry`, `heat`, `fan` |
+| `hvac` | `HEATING`, `COOLING`, `OFF` | Mapped: `HEATING`, `COOLING`, `AUTO`, `FAN`, `DRY`, `OFF` | `HEATING` if duty > 0, else `OFF` | Mapped active mode, or `OFF` when power is off |
+| `duty_pct` | absent | absent | 0–100 (real heater duty cycle) | absent; active state is binary |
+| `connectivity` | from API trait | `ONLINE`/`OFFLINE` from `deviceStatus` | always `ONLINE` | Local discovery/readback result |
+| Temperature | `ambientTemperatureCelsius` (C primary) | `latEnv.temp` (F primary) | `CorrectedTemp` (C primary, converted) | Local indoor sensor (F normalized) |
+| Extra telemetry | — | — | — | `power`, `fan`, `power_w`, `error_code` |
 
 ---
 
@@ -195,7 +204,7 @@ For time ranges > 7 days (168 hours), snapshots are downsampled to ~1 per hour. 
 ### Layout
 
 1. **Vacancy Cards** — Per-location canonical state (Occupied/Confirmed Vacant/Possibly Vacant), Dylan/Julia names, duration since last state change
-2. **Status Cards** — Current temperature, setpoint, HVAC status, humidity, source tag per room
+2. **Status Cards** — Current temperature, setpoint, HVAC status, humidity, source tag per room; Midea cards add eco, fan, and live wattage when available
 3. **Structure Filter** — Both | Cabin | Crosstown
 4. **Time Range** — 24h | 7d | 30d | 1Y
 5. **Temperature Chart** — Line chart with setpoint overlays (dotted lines)
@@ -242,7 +251,7 @@ Unique rooms (Solarium, Cat Room, Dylan's Office) keep short names in all views.
 
 For each room, snapshots are bucketed by hour. Duty cycle per bucket:
 - **Mysa:** Uses real `duty_pct` (0–100)
-- **Nest/Cielo:** Binary 100/0 based on `hvac` status (HEATING/COOLING = 100, OFF = 0)
+- **Nest/Cielo/Midea:** Binary 100/0 based on `hvac` status (active = 100, OFF = 0)
 - **Displayed:** `Math.round(sum(duty) / count(snapshots))` per hourly bucket
 
 ### Presence Overlay

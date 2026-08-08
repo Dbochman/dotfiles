@@ -282,7 +282,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nest Climate Dashboard</title>
+<title>Home Climate Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌡️</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
@@ -370,7 +370,7 @@ canvas { width: 100% !important; }
 </style>
 </head>
 <body>
-<h1>Nest Climate Dashboard <span class="updated" id="lastUpdate"></span></h1>
+<h1>Home Climate Dashboard <span class="updated" id="lastUpdate"></span></h1>
 <div id="locationGroups"><div class="loading">Loading...</div></div>
 <div class="controls-row">
   <div class="controls" id="structureControls">
@@ -407,6 +407,10 @@ const COLORS = {
   'Living Room (Cabin)': '#0EA5E9',
   'Bedroom': '#14B8A6',
   'Bedroom (Cabin)': '#14B8A6',
+  'Air Conditioner': '#22C55E',
+  'Air Conditioner (Cabin)': '#22C55E',
+  'Lil Air Conditioner': '#84CC16',
+  'Lil Air Conditioner (Cabin)': '#84CC16',
   'Outside': '#86EFAC',
   'Outside (Cabin)': '#86EFAC',
   // Crosstown (violet → rose → vermilion → tangerine → gold → sand → linen → white)
@@ -474,20 +478,26 @@ function vacancyStateView(occupancy) {
 const colorCache = {};
 // For disambiguated names like "Bedroom (XTown)", derive a variant of the base color
 const STRUCTURE_COLOR_SHIFT = { 'Cabin': 0, 'XTown': 40 };
+const SOURCE_COLOR_SHIFT = { 'Nest': 0, 'Cielo': 18, 'Mysa': 36, 'Midea': 54 };
 function roomColor(name) {
   // In filtered view, bare names like "Living Room" need structure-aware lookup
   const cacheKey = currentStructure + ':' + name;
   if (colorCache[cacheKey]) return colorCache[cacheKey];
+  const sourceMatch = name.match(/ \((Nest|Cielo|Mysa|Midea)\)/);
+  const colorName = name.replace(/ \((Nest|Cielo|Mysa|Midea)\)/, '');
   let c;
   // Check structure-specific color first (for colliding names like Living Room, Bedroom)
   if (currentStructure === '19Crosstown') {
-    c = COLORS[name + ' (XTown)'] || COLORS[name];
+    c = COLORS[colorName + ' (XTown)'] || COLORS[colorName];
   } else if (currentStructure === 'Philly') {
-    c = COLORS[name + ' (Cabin)'] || COLORS[name];
+    c = COLORS[colorName + ' (Cabin)'] || COLORS[colorName];
   } else {
-    c = COLORS[name];
+    c = COLORS[colorName];
   }
   c = c || '#' + (Math.random().toString(16) + '000000').slice(2, 8);
+  if (sourceMatch && SOURCE_COLOR_SHIFT[sourceMatch[1]]) {
+    c = shiftHue(c, SOURCE_COLOR_SHIFT[sourceMatch[1]]);
+  }
   colorCache[cacheKey] = c;
   return c;
 }
@@ -557,16 +567,43 @@ function displayName(roomName) {
   return stripPrefix(roomName);
 }
 
+const SOURCE_LABELS = {
+  nest: 'Nest',
+  cielo: 'Cielo',
+  mysa: 'Mysa',
+  midea: 'Midea',
+};
+
+function sourceLabel(source) {
+  const normalized = String(source || 'unknown').toLowerCase();
+  return SOURCE_LABELS[normalized] || normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function roomSourceCollisionKey(room) {
+  return roomStructure(room.room) + '\u0000' + stripPrefix(room.room);
+}
+
+function hasSourceCollision(room) {
+  return Boolean(
+    displayName._sourceCollisions
+    && displayName._sourceCollisions.has(roomSourceCollisionKey(room))
+  );
+}
+
 // Pre-compute which short names collide across structures so displayName
 // can disambiguate only when needed (called once per refresh cycle).
 function computeDisplayCollisions(snapshots) {
   const byStructure = {};
+  const bySource = {};
   for (const s of snapshots) {
     for (const r of (s.rooms || [])) {
       const struct = roomStructure(r.room);
       const short = stripPrefix(r.room);
       if (!byStructure[short]) byStructure[short] = new Set();
       byStructure[short].add(struct);
+      const sourceKey = struct + '\u0000' + short;
+      if (!bySource[sourceKey]) bySource[sourceKey] = new Set();
+      bySource[sourceKey].add(String(r.source || 'unknown').toLowerCase());
     }
   }
   // A short name collides if it appears in more than one structure
@@ -575,6 +612,11 @@ function computeDisplayCollisions(snapshots) {
     if (structs.size > 1) collisions.add(short);
   }
   displayName._collisions = collisions;
+  displayName._sourceCollisions = new Set(
+    Object.entries(bySource)
+      .filter(([, sources]) => sources.size > 1)
+      .map(([key]) => key)
+  );
 }
 
 const LOCATION_SHORT = { 'Philly': 'Cabin', '19Crosstown': 'XTown' };
@@ -587,6 +629,15 @@ function displayNameFull(roomName) {
     return short + ' (' + (LOCATION_SHORT[struct] || struct) + ')';
   }
   return short;
+}
+
+function roomSeriesName(room) {
+  const base = displayNameFull(room.room);
+  if (!hasSourceCollision(room)) return base;
+  const sourceSuffix = ' (' + sourceLabel(room.source) + ')';
+  const locationMatch = base.match(/ \((Cabin|XTown|Crosstown)\)$/);
+  if (!locationMatch) return base + sourceSuffix;
+  return base.slice(0, -locationMatch[0].length) + sourceSuffix + locationMatch[0];
 }
 
 // Short legend name: strip location identifier, used for chart legends
@@ -714,15 +765,26 @@ function renderLocationGroups(snapshot, presenceState) {
     }
     html += '<div class="cards">';
     for (const r of rooms) {
-      const label = displayName(r.room);
+      const label = displayName(r.room) + (hasSourceCollision(r) ? ` (${sourceLabel(r.source)})` : '');
       const cardColor = roomColorForCard(r.room);
-      let hvacLabel = r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
+      const isOffline = r.connectivity === 'OFFLINE';
+      const hasTemp = Number.isFinite(r.temp_f);
+      const hasSetpoint = Number.isFinite(r.setpoint_f);
+      const hasHumidity = Number.isFinite(r.humidity);
+      let hvacLabel = r.source !== 'midea' && r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
       if (r.source === 'mysa' && r.duty_pct != null) hvacLabel = r.duty_pct > 0 ? `${r.duty_pct}% duty` : 'OFF';
-      const sourceTag = r.source && r.source !== 'nest' ? ` · <span class="card-tag">${r.source}</span>` : '';
+      const statusBits = [];
+      if (hasSetpoint) statusBits.push(`Set: ${r.setpoint_f.toFixed(0)}°F`);
+      statusBits.push(isOffline ? 'OFFLINE' : hvacLabel);
+      if (!isOffline && r.source === 'midea' && r.eco && r.eco !== 'OFF') statusBits.push('ECO');
+      if (!isOffline && r.source === 'midea' && r.fan != null) statusBits.push(`Fan ${r.fan}`);
+      if (!isOffline && r.source === 'midea' && Number.isFinite(r.power_w)) statusBits.push(`${r.power_w.toFixed(0)} W`);
+      if (hasHumidity) statusBits.push(`${r.humidity.toFixed(0)}% RH`);
+      if (r.source && r.source !== 'nest') statusBits.push(`<span class="card-tag">${r.source}</span>`);
       html += `<div class="card">
         <div class="card-label">${label}</div>
-        <div class="card-value" style="color:${cardColor}">${(r.temp_f ?? 0).toFixed(1)}°F</div>
-        <div class="card-sub">Set: ${(r.setpoint_f ?? 0).toFixed(0)}°F · ${hvacLabel} · ${r.humidity ?? 0}% RH${sourceTag}</div>
+        <div class="card-value" style="color:${cardColor}">${hasTemp ? `${r.temp_f.toFixed(1)}°F` : 'Unavailable'}</div>
+        <div class="card-sub">${statusBits.join(' · ')}</div>
       </div>`;
     }
     // Weather card for this structure
@@ -757,7 +819,7 @@ function buildTimeSeries(snapshots) {
   _seriesStructureMap = {};
   for (const s of snapshots) {
     for (const r of filterRooms(s.rooms || [])) {
-      const dname = displayNameFull(r.room);
+      const dname = roomSeriesName(r);
       roomNames.add(dname);
       _seriesStructureMap[dname] = roomStructure(r.room);
     }
@@ -783,11 +845,11 @@ function buildTimeSeries(snapshots) {
   for (const s of snapshots) {
     const ts = s.timestamp;
     for (const r of filterRooms(s.rooms || [])) {
-      const name = displayNameFull(r.room);
+      const name = roomSeriesName(r);
       if (!series[name]) continue;
-      series[name].temps.push({ x: ts, y: r.temp_f });
-      series[name].humids.push({ x: ts, y: r.humidity });
-      series[name].setpoints.push({ x: ts, y: r.setpoint_f });
+      if (Number.isFinite(r.temp_f)) series[name].temps.push({ x: ts, y: r.temp_f });
+      if (Number.isFinite(r.humidity)) series[name].humids.push({ x: ts, y: r.humidity });
+      if (Number.isFinite(r.setpoint_f)) series[name].setpoints.push({ x: ts, y: r.setpoint_f });
     }
     for (const {label, data: w} of getWeatherEntries(s)) {
       if (!series[label]) series[label] = { temps: [], humids: [] };
@@ -804,7 +866,7 @@ function computeHvacDuty(snapshots) {
   // Active states: HEATING, COOLING, AUTO, FAN, DRY (anything not OFF/?)
   const roomNames = new Set();
   for (const s of snapshots) {
-    for (const r of filterRooms(s.rooms || [])) roomNames.add(displayNameFull(r.room));
+    for (const r of filterRooms(s.rooms || [])) roomNames.add(roomSeriesName(r));
   }
 
   const buckets = {}; // room -> hourKey -> {dutySum: n, total: n}
@@ -814,8 +876,9 @@ function computeHvacDuty(snapshots) {
     const d = new Date(s.timestamp);
     const hourKey = d.toISOString().slice(0, 13) + ':00:00Z'; // YYYY-MM-DDTHH:00:00Z
     for (const r of filterRooms(s.rooms || [])) {
-      const name = displayNameFull(r.room);
+      const name = roomSeriesName(r);
       if (!buckets[name]) continue;
+      if (r.connectivity === 'OFFLINE' || !r.hvac || r.hvac === '?') continue;
       if (!buckets[name][hourKey]) buckets[name][hourKey] = { dutySum: 0, total: 0 };
       buckets[name][hourKey].total++;
       // Use real duty_pct if available (Mysa), otherwise binary 100/0 from HVAC status

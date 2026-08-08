@@ -167,5 +167,41 @@ class PresenceHtmlContractTests(unittest.TestCase):
         self.assertLess(overlay.index(".filter(p =>"), overlay.index(".sort("))
 
 
+class ClimateSourceHtmlContractTests(unittest.TestCase):
+    def test_midea_cards_include_power_and_preserve_unknown_values(self):
+        html = nest_dashboard.DASHBOARD_HTML
+
+        self.assertIn("r.source === 'midea'", html)
+        self.assertIn("Number.isFinite(r.power_w)", html)
+        self.assertIn("`${r.power_w.toFixed(0)} W`", html)
+        self.assertIn("r.connectivity === 'OFFLINE'", html)
+        self.assertIn("'Unavailable'", html)
+
+    def test_unknown_measurements_are_not_plotted_as_zero(self):
+        html = nest_dashboard.DASHBOARD_HTML
+
+        self.assertIn(
+            "if (Number.isFinite(r.temp_f)) series[name].temps.push",
+            html,
+        )
+        self.assertIn(
+            "if (Number.isFinite(r.humidity)) series[name].humids.push",
+            html,
+        )
+        self.assertIn(
+            "if (Number.isFinite(r.setpoint_f)) series[name].setpoints.push",
+            html,
+        )
+
+    def test_same_room_from_multiple_sources_gets_distinct_series(self):
+        html = nest_dashboard.DASHBOARD_HTML
+
+        self.assertIn("function roomSourceCollisionKey(room)", html)
+        self.assertIn("sources.size > 1", html)
+        self.assertIn("function roomSeriesName(room)", html)
+        self.assertIn("roomSeriesName(r)", html)
+        self.assertIn("sourceLabel(r.source)", html)
+
+
 if __name__ == "__main__":
     unittest.main()

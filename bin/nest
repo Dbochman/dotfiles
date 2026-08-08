@@ -462,6 +462,18 @@ _get_mysa_status() {
   if [[ -z "$out" ]]; then echo '{}'; else echo "$out"; fi
 }
 
+_get_midea_status() {
+  # Returns locally enrolled Midea AC statuses; {"devices": []} on failure.
+  local midea_bin out
+  midea_bin=$(command -v midea-ac || true)
+  if [[ -z "$midea_bin" ]]; then
+    echo '{"devices":[]}'
+    return
+  fi
+  out=$("$midea_bin" status --json 2>/dev/null) || true
+  if [[ -z "$out" ]]; then echo '{"devices":[]}'; else echo "$out"; fi
+}
+
 _c_to_f() {
   python3 -c 'import sys; print(round(float(sys.argv[1]) * 9/5 + 32, 1))' "$1"
 }
@@ -789,16 +801,17 @@ cmd_snapshot() {
   fi
 
   weather=$(_get_all_weather)
-  local cielo mysa
+  local cielo mysa midea
   cielo=$(_get_cielo_status)
   mysa=$(_get_mysa_status)
+  midea=$(_get_midea_status)
   ts=$(date -u +%FT%TZ)
   today=$(date +%Y-%m-%d)
 
   _build_structure_map
   WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" \
-    CIELO_JSON="$cielo" MYSA_JSON="$mysa" python3 -c "
-import json, sys, os
+    CIELO_JSON="$cielo" MYSA_JSON="$mysa" MIDEA_JSON="$midea" python3 -c "
+import json, math, sys, os
 data = json.load(sys.stdin)
 ts = os.environ['SNAP_TS']
 weather_raw = os.environ.get('WEATHER_JSON', '{}')
@@ -896,6 +909,72 @@ for md in mysa_data.get('devices', []):
         'connectivity': 'ONLINE',
         'duty_pct': m_duty,
         'source': 'mysa',
+    })
+# Inject locally enrolled Midea air conditioners.
+try:
+    midea_data = json.loads(os.environ.get('MIDEA_JSON', '{\"devices\":[]}'))
+except (TypeError, ValueError, json.JSONDecodeError):
+    midea_data = {'devices': []}
+if not isinstance(midea_data, dict):
+    midea_data = {'devices': []}
+
+def finite_number(value, digits=1):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(number, digits) if math.isfinite(number) else None
+
+for md in midea_data.get('devices', []):
+    if not isinstance(md, dict):
+        continue
+    alias = str(md.get('alias') or 'air-conditioner')
+    site = str(md.get('site') or 'cabin').lower()
+    label_map = {
+        'cabin-air-conditioner': 'Air Conditioner',
+        'cabin-lil-air-conditioner': 'Lil Air Conditioner',
+    }
+    label = label_map.get(alias)
+    if not label:
+        short_alias = alias
+        for site_prefix in ('cabin-', 'crosstown-'):
+            if short_alias.startswith(site_prefix):
+                short_alias = short_alias[len(site_prefix):]
+                break
+        label = short_alias.replace('-', ' ').title()
+    room = ('19Crosstown ' if site == 'crosstown' else '') + label
+    online = md.get('online') is True
+    temp_f = finite_number(md.get('indoor_temperature_f')) if online else None
+    set_f = finite_number(md.get('target_temperature_f')) if online else None
+    humidity = finite_number(md.get('humidity_percent'), 0) if online else None
+    mode = str(md.get('mode') or '?').lower()
+    power = bool(md.get('power')) if online else None
+    hvac_map = {
+        'heat': 'HEATING',
+        'cool': 'COOLING',
+        'auto': 'AUTO',
+        'fan': 'FAN',
+        'dry': 'DRY',
+    }
+    hvac = hvac_map.get(mode, 'ON') if power else ('OFF' if online else '?')
+    energy = md.get('energy') if isinstance(md.get('energy'), dict) else {}
+    snapshot['rooms'].append({
+        'room': room,
+        'temp_f': temp_f,
+        'temp_c': round((temp_f - 32) * 5 / 9, 2) if temp_f is not None else None,
+        'humidity': humidity,
+        'mode': mode,
+        'hvac': hvac,
+        'eco': 'ON' if online and md.get('eco') else 'OFF',
+        'setpoint_f': set_f,
+        'setpoint_c': round((set_f - 32) * 5 / 9, 2) if set_f is not None else None,
+        'connectivity': 'ONLINE' if online else 'OFFLINE',
+        'power': power,
+        'fan': md.get('fan') if online else None,
+        'power_w': finite_number(energy.get('realtime_power_w')) if online else None,
+        'error_code': md.get('error_code') if online else None,
+        'error': md.get('error') if not online else None,
+        'source': 'midea',
     })
 print(json.dumps(snapshot))
 " <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"
