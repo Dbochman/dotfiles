@@ -17,6 +17,8 @@
         <string>/Users/dbochman</string>
         <key>CIELO_PINCHTAB_PROFILE</key>
         <string>cielo</string>
+        <key>CIELO_ALLOW_HEADLESS_LOGIN</key>
+        <string>true</string>
     </dict>
     <key>StartInterval</key>
     <integer>1800</integer>

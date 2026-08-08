@@ -97,24 +97,15 @@ cielo devices --json
 
 ## Token Management
 
-Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes. It first uses the stored refresh token, then falls back to CDP capture in an isolated PinchTab tab when the API refresh is unavailable.
+Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes. It first uses the stored refresh token, then falls back to CDP capture in an isolated PinchTab tab when the API refresh is unavailable. The tracked LaunchAgent enables one bounded managed-credential login attempt per run when the dedicated browser profile is logged out.
 
 ### Automated refresh (default)
-The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` uses the dedicated PinchTab `cielo` profile at `~/.pinchtab/profiles/cielo/`. Browser fallback starts or reuses a managed headless instance, opens an isolated Cielo tab, captures a fresh token through Chrome DevTools Protocol, verifies it, and cleans up only the tab and instance it created. It refuses to navigate a visible PinchTab instance. Logs are at `~/.openclaw/logs/cielo-refresh.log`.
+The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` uses the cataloged dedicated PinchTab `cielo` profile. Browser fallback starts or reuses a managed headless instance, opens an isolated Cielo tab, captures a fresh token through Chrome DevTools Protocol, verifies it, and cleans up only the tab and instance it created. It refuses to navigate a visible PinchTab instance. When that profile is logged out, `CIELO_ALLOW_HEADLESS_LOGIN=true` permits one login using `CIELO_USERNAME` and `CIELO_PASSWORD` from the owner-only OpenClaw secret cache. Passive capture begins before form submission so both the access and refresh tokens are retained. Logs are at `~/.openclaw/logs/cielo-refresh.log`.
 
-### If automated refresh fails (session expired)
-If the persistent browser session expires, reCAPTCHA prevents a fully headless login. Wait until the Mac Mini is not being used for viewing, keep the Cielo LaunchAgent unloaded, and perform a one-time visible login:
-```bash
-INSTANCE_ID=$(pinchtab instance start --profile cielo --mode headed \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
-pinchtab instance navigate "$INSTANCE_ID" "https://home.cielowigle.com/"
-# Sign in manually in the visible browser and solve reCAPTCHA.
-pinchtab instance stop "$INSTANCE_ID"
-~/.openclaw/workspace/scripts/cielo-refresh.sh
-```
-The final command restarts the profile headlessly, captures and verifies a token, then stops its temporary browser instance. Do not enable repeated headless credential login after a CAPTCHA failure; it will not solve the challenge and may trigger rate limiting.
+### If automated refresh fails
+The helper never solves reCAPTCHA and never loops on rejected credentials within a run. If either condition blocks the bounded headless login, use one attended visible login on the dedicated `cielo` profile. An agent must arm `grab-cielo-tokens.py --passive` for that exact tab before the form is submitted, keep the listener active while the user completes any challenge, verify the resulting token with `cielo status --json`, and stop only the browser instance it created. Do not export or retain a raw HAR for routine recovery; it contains bearer and refresh tokens, while the targeted passive capture stores only the required session fields in the existing mode-`0600` config.
 
-When an agent coordinates the visible login, it must start `grab-cielo-tokens.py --passive` before the form is submitted. Set `CIELO_CAPTURE_TIMEOUT_SECONDS=600` to keep that listener armed while the user completes reCAPTCHA. The login response contains the new refresh token; a capture started only after login can recover an access token but misses that refresh token.
+Set `CIELO_CAPTURE_TIMEOUT_SECONDS=600` (or another bounded value up to 900 seconds) for an attended login so the passive listener remains armed while the user completes reCAPTCHA. The login response contains the new refresh token; a capture started only after login can recover an access token but misses that refresh token.
 
 ### Manual token refresh (fallback)
 ```bash

@@ -53,6 +53,39 @@ class CieloRefreshContractTests(unittest.TestCase):
             "cielo",
         )
 
+    def test_launch_agent_enables_bounded_headless_login(self) -> None:
+        script = REFRESH_SCRIPT.read_text(encoding="utf-8")
+        with LAUNCH_AGENT.open("rb") as handle:
+            launch_agent = plistlib.load(handle)
+
+        self.assertEqual(
+            launch_agent["EnvironmentVariables"][
+                "CIELO_ALLOW_HEADLESS_LOGIN"
+            ],
+            "true",
+        )
+        self.assertIn(
+            'if [[ "${CIELO_ALLOW_HEADLESS_LOGIN:-false}" != "true" ]]',
+            script,
+        )
+        self.assertIn(
+            'if [[ -z "${CIELO_USERNAME:-}" ]] || '
+            '[[ -z "${CIELO_PASSWORD:-}" ]]',
+            script,
+        )
+        self.assertIn(
+            '"Login blocked by reCAPTCHA. Manual login required."',
+            script,
+        )
+        self.assertLess(
+            script.index(
+                'CIELO_TAB_ID="$CIELO_TAB_ID" python3 '
+                '"$GRAB_SCRIPT" "$CDP_PORT" --passive'
+            ),
+            script.index('LOGIN_RESULT=$('),
+            "passive token capture must start before login submission",
+        )
+
     def test_tab_operations_are_scoped_to_the_acquired_instance(self) -> None:
         script = REFRESH_SCRIPT.read_text(encoding="utf-8")
 
