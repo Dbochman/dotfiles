@@ -28,7 +28,8 @@ Monitors thermostats and weather across two locations via four heating/cooling s
 - **Temperature cards** — current temp, setpoint, HVAC mode, humidity per room
 - **Temperature chart** — line graph with room temps + setpoints + outdoor weather
 - **Humidity chart** — per-room humidity over time
-- **HVAC Duty Cycle** — hourly bar chart showing heating/cooling activity
+- **HVAC Duty Cycle** — hourly Active % bar chart using real Mysa duty,
+  Midea fan percentage while active, and binary activity for Nest/Cielo
 
 ### Data Sources
 
@@ -406,7 +407,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Petlibro | Feeder + Fountain | (seasonal, unplugged) |
 | Eight Sleep | Pod 3 (dashboard default) | Pod 5 (CLI/vacancy-managed) |
 | Ring Doorbell | Front Door (snap + status) | Front Door (snap + status) |
-| Nest Camera | — | Kitchen (snap) |
+| Nest Camera | Laundry + Living Room (snap) | Kitchen (snap) |
 | Dog Walk | Yes | Yes |
 | Presence | Yes | Yes |
 
