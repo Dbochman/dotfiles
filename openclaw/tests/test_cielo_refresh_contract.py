@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+AUTH_HELPER = REPO_ROOT / "openclaw" / "bin" / "cielo-auth.py"
+REAUTH_HELPER = REPO_ROOT / "openclaw" / "bin" / "cielo-reauth"
+CONTROL_WRAPPER = REPO_ROOT / "openclaw" / "bin" / "cielo"
 REFRESH_SCRIPT = (
     REPO_ROOT / "openclaw" / "workspace" / "scripts" / "cielo-refresh.sh"
 )
@@ -74,9 +77,11 @@ class CieloRefreshContractTests(unittest.TestCase):
             script,
         )
         self.assertIn(
-            '"Login blocked by reCAPTCHA. Manual login required."',
+            '"Cielo headless login did not complete; attended recovery is required."',
             script,
         )
+        self.assertIn("headless_login_backoff_status", script)
+        self.assertNotIn("Login blocked by reCAPTCHA", script)
         self.assertLess(
             script.index(
                 'CIELO_TAB_ID="$CIELO_TAB_ID" python3 '
@@ -117,6 +122,40 @@ class CieloRefreshContractTests(unittest.TestCase):
             'user_id = existing_config.get("userId") or None',
             script,
         )
+
+    def test_current_refresh_contract_is_canonical(self) -> None:
+        auth = AUTH_HELPER.read_text(encoding="utf-8")
+        refresh = REFRESH_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn('REFRESH_PATH = "/web/token/refresh/1"', auth)
+        self.assertIn('"locale": "en"', auth)
+        self.assertNotIn('"/web/token/refresh"', auth)
+        self.assertIn('AUTH_HELPER="$HOME/.openclaw/bin/cielo-auth.py"', refresh)
+        self.assertNotIn("curl -s -X POST", refresh)
+
+    def test_refresh_and_capture_share_atomic_auth_state(self) -> None:
+        auth = AUTH_HELPER.read_text(encoding="utf-8")
+        grab = GRAB_SCRIPT.read_text(encoding="utf-8")
+        wrapper = CONTROL_WRAPPER.read_text(encoding="utf-8")
+
+        self.assertIn("fcntl.flock", auth)
+        self.assertIn("os.replace(temporary_path, path)", auth)
+        self.assertIn("with auth_lock():", grab)
+        self.assertIn('config["refreshTokenCapturedAt"]', grab)
+        self.assertIn('AUTH_HELPER="$HOME/.openclaw/bin/cielo-auth.py"', wrapper)
+        self.assertIn('refresh --quiet', wrapper)
+
+    def test_attended_recovery_is_capture_first_and_bounded(self) -> None:
+        helper = REAUTH_HELPER.read_text(encoding="utf-8")
+
+        self.assertIn('LOGIN_URL = "https://home.cielowigle.com/auth/login"', helper)
+        self.assertLess(
+            helper.index('"--passive"'),
+            helper.index('"awaiting_attended_login"'),
+        )
+        self.assertIn('refresh_token_captured', helper)
+        self.assertIn('[str(AUTH_HELPER), "refresh", "--force"]', helper)
+        self.assertIn('if args.command in ("start", "abort") and not args.attended', helper)
 
 
 if __name__ == "__main__":

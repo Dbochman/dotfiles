@@ -30,7 +30,8 @@ Each service uses one of two patterns:
 | `dog-walk-automation.log` | `ai.openclaw.dog-walk-automation` | Fi/network dog-walk policy, route tracking, collar mode, and Roomba lifecycle |
 | `ring-event-listener.log` | `ai.openclaw.ring-event-listener` | Sole Ring FCM ingress, normalized publication, direct dings, and local signal health |
 | `ola-webhook-bridge.log` / `.err.log` | `ai.openclaw.ola-webhook-bridge` | Owner-only operational metadata and stderr for the HMAC-verifying Ola wake bridge; never callback bodies, signatures, or credentials |
-| `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Cielo AC token refresh via pinchtab |
+| `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Safe Cielo API-refresh outcomes and bounded PinchTab fallback state; never tokens or raw responses |
+| `cielo-passive-grab.log` / `cielo-reauth-capture.log` | Cielo bounded recovery helpers | Token-free CDP capture progress for automated and attended recovery; files remain owner-only |
 | `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh; stdout and stderr share this file |
 | `~/Library/Logs/openclaw/gateway.log` | `ai.openclaw.gateway` | Current generated-service gateway output; the tracked recovery plist instead uses `~/.openclaw/logs/gateway.{log,err.log}` |
 | `nest-cron.log` | `ai.openclaw.nest-snapshot` | Nest thermostat snapshot cron |

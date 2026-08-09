@@ -1,5 +1,20 @@
 #!/bin/bash
 # cielo — Cielo Home AC control
+set -u
+
+AUTH_HELPER="$HOME/.openclaw/bin/cielo-auth.py"
+if [ ! -x "$AUTH_HELPER" ]; then
+  echo "Cielo auth helper is unavailable: $AUTH_HELPER" >&2
+  exit 1
+fi
+
+# Keep the standalone client on a fresh, atomically rotated credential set.
+# The helper is deliberately quiet here so --json output stays machine-safe.
+# If a refresh fails, continue once: the existing access token may still be
+# usable during a transient API failure, and the client will fail closed before
+# issuing a device command if authentication is actually unavailable.
+"$AUTH_HELPER" refresh --quiet >/dev/null 2>&1 || true
+
 if [ -x /opt/homebrew/opt/node@22/bin/node ]; then
   NODE=/opt/homebrew/opt/node@22/bin/node
 elif [ -x /opt/homebrew/bin/node ]; then

@@ -71,7 +71,10 @@ Available profiles include `default`, `cielo`, `grocery`, `opentable`, and
   instances through `~/.openclaw/bin/pinchtab-headless-instance`; that helper
   scopes every tab operation to the acquired instance and releases only
   instances it created. Cielo owns a separate direct headless lifecycle on its
-  dedicated `cielo` profile. Interactive agent work should keep using a
+  dedicated `cielo` profile. Durable Cielo recovery must use
+  `cielo-reauth --attended start` before the visible login and
+  `cielo-reauth finish` afterward so the refresh token is captured and proven;
+  never improvise a post-login access-token-only capture. Interactive agent work should keep using a
   dedicated `PINCHTAB_SESSION` unless a skill explicitly routes through the
   helper.
 - For a new authenticated workflow, use a dedicated low-privilege PinchTab

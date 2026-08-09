@@ -340,7 +340,7 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 - **CLI:** `cielo status --json`
 - **Returns:** JSON array of device objects
 - **Config:** `~/.config/cielo/config.json`
-- **Token refresh:** Every 30 min via `com.openclaw.cielo-refresh` LaunchAgent
+- **Token refresh:** Every 30 min via the locked, atomic `cielo-auth.py` `/web/token/refresh/1` client under `com.openclaw.cielo-refresh`
 - **Fields used:** `deviceName`, `latEnv.temp`, `latEnv.humidity`, `latestAction.mode`, `latestAction.power`, `latestAction.temp`, `deviceStatus`
 
 ### 4. Mysa Baseboard Heaters
@@ -483,7 +483,7 @@ ssh dbochman@dylans-mac-mini "/opt/homebrew/bin/nest snapshot"
 
 - **OAuth consent screen:** If GCP project is in "Testing" mode, refresh tokens expire after 7 days. Must be set to "In production" for long-lived tokens.
 - **Mysa token expiry:** Cognito tokens expire after extended inactivity. Managed credentials in `~/.openclaw/.secrets-cache` normally renew the session automatically; use interactive `mysa --login` on the Mini if managed renewal fails.
-- **Cielo token staleness:** Token refresh depends on `com.openclaw.cielo-refresh` LaunchAgent running.
+- **Cielo token staleness:** Token refresh depends on `com.openclaw.cielo-refresh`. If `cielo-auth.py check` reports an unproven/rejected chain, use `cielo-reauth --attended start`, complete the visible login, and run `cielo-reauth finish`; post-login access-token capture alone is not a durable repair.
 - **1Password over SSH:** `op read` hangs under launchd. Credentials are pre-cached to `~/.cache/nest-sdm/` files with 1-year TTL.
 - **Camera snap timing:** WebRTC handshake takes 5–10 seconds; camera must be online with streaming enabled.
 - **Dylan's Office apostrophe:** Nest API uses Unicode U+2019 (smart quote) in the room name. COLORS map includes both U+2019 and U+0027 variants.

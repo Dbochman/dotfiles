@@ -13,9 +13,62 @@ Uses CDP Fetch domain to intercept response bodies before the page consumes them
 This is necessary because Network.getResponseBody returns empty for fetch() API responses.
 Cielo's /auth/login nests tokens inside data.user (not directly under data).
 """
+import contextlib
+import fcntl
 import json, asyncio, websockets, subprocess, time, os, sys
+from pathlib import Path
+import stat
+import tempfile
 
-CONFIG_FILE = os.path.expanduser("~/.config/cielo/config.json")
+CONFIG_FILE = os.environ.get(
+    "CIELO_CONFIG_FILE", os.path.expanduser("~/.config/cielo/config.json")
+)
+LOCK_FILE = os.environ.get(
+    "CIELO_AUTH_LOCK_FILE",
+    os.path.join(os.path.dirname(CONFIG_FILE), "auth.lock"),
+)
+
+
+@contextlib.contextmanager
+def auth_lock():
+    lock_path = Path(LOCK_FILE)
+    lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(lock_path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise RuntimeError("Cielo auth lock is unsafe")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def atomic_save_config(config):
+    path = Path(CONFIG_FILE)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(config, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary_path.unlink()
 
 async def grab(cdp_port, passive=False):
     tabs_raw = subprocess.check_output(["curl", "-s", f"http://localhost:{cdp_port}/json/list"], text=True)
@@ -217,26 +270,31 @@ async def grab(cdp_port, passive=False):
                 print("The session may have expired.")
             sys.exit(1)
 
-        # Save
-        config = {}
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE) as f:
-                config = json.load(f)
+        # Save under the same lock used by the API refresher. Access-only CDP
+        # captures must preserve the existing refresh token and API key; an
+        # attended login records when a new refresh token was actually seen.
+        captured_at = int(time.time() * 1000)
+        with auth_lock():
+            config = {}
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE) as f:
+                    config = json.load(f)
 
-        config["accessToken"] = token
-        if session_id:
-            config["sessionId"] = session_id
-        if user_id:
-            config["userId"] = user_id
-        if refresh_token:
-            config["refreshToken"] = refresh_token
-        config["apiKey"] = os.environ.get("CIELO_API_KEY", "")
-        config["lastRefresh"] = int(time.time() * 1000)
-
-        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=2)
-        os.chmod(CONFIG_FILE, 0o600)
+            config["accessToken"] = token
+            config["accessTokenCapturedAt"] = captured_at
+            if session_id:
+                config["sessionId"] = session_id
+            if user_id:
+                config["userId"] = user_id
+            if refresh_token:
+                config["refreshToken"] = refresh_token
+                config["refreshTokenCapturedAt"] = captured_at
+                config["refreshTokenSource"] = "login-response"
+            configured_api_key = os.environ.get("CIELO_API_KEY", "").strip()
+            if configured_api_key:
+                config["apiKey"] = configured_api_key
+            config["lastRefresh"] = captured_at
+            atomic_save_config(config)
 
         print(f"\nSaved refreshed Cielo session metadata to {CONFIG_FILE}")
 

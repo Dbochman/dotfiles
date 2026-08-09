@@ -7,54 +7,138 @@
 #
 # Runs as a LaunchAgent every 30 minutes.
 
-export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
-
 # Load credentials (must come before variable expansion)
 if [[ -f "$HOME/.openclaw/.secrets-cache" ]]; then
   set -a; source "$HOME/.openclaw/.secrets-cache"; set +a
 fi
+export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
 
 CONFIG_FILE="$HOME/.config/cielo/config.json"
 API_HOST="api.smartcielo.com"
 API_KEY="${CIELO_API_KEY:?CIELO_API_KEY not set}"
+AUTH_HELPER="$HOME/.openclaw/bin/cielo-auth.py"
 GRAB_SCRIPT="$HOME/.openclaw/workspace/scripts/grab-cielo-tokens.py"
 PINCHTAB="/opt/homebrew/bin/pinchtab"
 PINCHTAB_PROFILE="${CIELO_PINCHTAB_PROFILE:-cielo}"
+BACKOFF_FILE="$HOME/.openclaw/state/cielo-headless-login-backoff.json"
+HEADLESS_LOGIN_BACKOFF_SECONDS="${CIELO_HEADLESS_LOGIN_BACKOFF_SECONDS:-21600}"
+RUN_STARTED_AT_MS=$(python3 -c 'import time; print(int(time.time() * 1000))')
+
+clear_headless_login_backoff() {
+  python3 - "$BACKOFF_FILE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+try:
+    if path.is_file() and not path.is_symlink():
+        path.unlink()
+except OSError:
+    pass
+PY
+}
+
+headless_login_backoff_status() {
+  python3 - "$BACKOFF_FILE" <<'PY'
+import json
+from pathlib import Path
+import stat
+import sys
+import time
+
+path = Path(sys.argv[1])
+try:
+info = path.lstat()
+if not stat.S_ISREG(info.st_mode) or path.is_symlink() or info.st_uid != __import__('os').getuid():
+        raise ValueError
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise ValueError
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    next_attempt = int(payload.get('nextAttemptAt', 0))
+except (FileNotFoundError, OSError, ValueError, TypeError, json.JSONDecodeError):
+    raise SystemExit(1)
+if next_attempt <= int(time.time()):
+    raise SystemExit(1)
+print(json.dumps({
+    'success': False,
+    'error': 'Headless login is in bounded backoff; attended Cielo recovery is required.',
+    'error_kind': 'attended_reauthentication_required',
+    'nextAttemptAt': next_attempt,
+}, separators=(',', ':')))
+PY
+}
+
+record_headless_login_backoff() {
+  local reason="$1"
+  BACKOFF_REASON="$reason" python3 - "$BACKOFF_FILE" "$HEADLESS_LOGIN_BACKOFF_SECONDS" <<'PY'
+import json
+import os
+from pathlib import Path
+import tempfile
+import time
+import sys
+
+path = Path(sys.argv[1])
+try:
+    seconds = int(sys.argv[2])
+except ValueError:
+    seconds = 21600
+if seconds < 300 or seconds > 86400:
+    seconds = 21600
+path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+payload = {
+    'reason': os.environ.get('BACKOFF_REASON', 'login_not_completed'),
+    'recordedAt': int(time.time()),
+    'nextAttemptAt': int(time.time()) + seconds,
+}
+fd, temporary = tempfile.mkstemp(prefix=f'.{path.name}.', dir=path.parent)
+temporary_path = Path(temporary)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        json.dump(payload, handle, separators=(',', ':'), sort_keys=True)
+        handle.write('\n')
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary_path, path)
+    os.chmod(path, 0o600)
+finally:
+    try:
+        temporary_path.unlink()
+    except FileNotFoundError:
+        pass
+PY
+}
 
 # ── Method 1: API refresh token ─────────────────────────────────────────────
-if [[ -f "$CONFIG_FILE" ]]; then
-  REFRESH_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('refreshToken',''))" 2>/dev/null)
-
-  if [[ -n "$REFRESH_TOKEN" ]]; then
-    ACCESS_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('accessToken',''))" 2>/dev/null)
-    RESPONSE=$(curl -s -X POST "https://$API_HOST/web/token/refresh" \
-      -H "Content-Type: application/json; charset=UTF-8" \
-      -H "x-api-key: $API_KEY" \
-      -H "authorization: $ACCESS_TOKEN" \
-      -H "Origin: https://home.cielowigle.com" \
-      -d "{\"local\":\"en\",\"refreshToken\":\"$REFRESH_TOKEN\"}" 2>/dev/null)
-
-    STATUS=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('status',''))" 2>/dev/null)
-
-    if [[ "$STATUS" == "200" ]]; then
-      python3 -c "
-import json, time, os
-response = json.loads('''$RESPONSE''')
-data = response['data']
-config = json.load(open('$CONFIG_FILE'))
-config['accessToken'] = data['accessToken']
-config['refreshToken'] = data.get('refreshToken', config.get('refreshToken', ''))
-config['expiresIn'] = data.get('expiresIn', '')
-config['lastRefresh'] = int(time.time() * 1000)
-with open('$CONFIG_FILE', 'w') as f:
-    json.dump(config, f, indent=2)
-os.chmod('$CONFIG_FILE', 0o600)
-print(json.dumps({'success': True, 'method': 'api-refresh'}))
-"
-      exit 0
-    fi
-  fi
+if [[ ! -x "$AUTH_HELPER" ]]; then
+  echo '{"success":false,"error":"Cielo auth helper is unavailable","error_kind":"configuration_error"}'
+  exit 1
 fi
+
+AUTH_RESULT=$("$AUTH_HELPER" refresh --force 2>&1)
+AUTH_EXIT=$?
+if [[ -n "$AUTH_RESULT" ]]; then
+  printf '%s\n' "$AUTH_RESULT"
+fi
+if [[ $AUTH_EXIT -eq 0 ]]; then
+  clear_headless_login_backoff
+  exit 0
+fi
+
+AUTH_CATEGORY=$(printf '%s' "$AUTH_RESULT" | python3 -c "
+import json, sys
+try:
+    print(json.loads(sys.stdin.read()).get('category', 'unknown'))
+except Exception:
+    print('unknown')
+" 2>/dev/null)
+case "$AUTH_CATEGORY" in
+  network_error|rate_limited|server_error|lock_timeout|lock_unavailable)
+    echo '{"success":false,"error":"Cielo API refresh had a retryable failure; browser fallback was skipped.","error_kind":"retryable_refresh_failure"}'
+    exit 1
+    ;;
+esac
 
 # ── Start pinchtab ──────────────────────────────────────────────────────────
 STARTED_PINCHTAB_INSTANCE=false
@@ -270,6 +354,11 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
     cleanup; exit 1
   fi
 
+  if BACKOFF_STATUS=$(headless_login_backoff_status 2>/dev/null); then
+    printf '%s\n' "$BACKOFF_STATUS"
+    cleanup; exit 1
+  fi
+
   echo '{"info":"Cookies expired, attempting headless login..."}'
 
   # Navigate to login page
@@ -280,7 +369,10 @@ if [[ "$IS_LOGGED_IN" != "yes" ]]; then
 
   # Start passive CDP listener BEFORE login to capture the auth response (refreshToken)
   if [[ -n "$CDP_PORT" ]] && [[ -f "$GRAB_SCRIPT" ]]; then
-    CIELO_TAB_ID="$CIELO_TAB_ID" python3 "$GRAB_SCRIPT" "$CDP_PORT" --passive > /tmp/cielo-passive-grab.log 2>&1 &
+    PASSIVE_LOG="$HOME/.openclaw/logs/cielo-passive-grab.log"
+    : > "$PASSIVE_LOG"
+    chmod 600 "$PASSIVE_LOG"
+    CIELO_TAB_ID="$CIELO_TAB_ID" python3 "$GRAB_SCRIPT" "$CDP_PORT" --passive > "$PASSIVE_LOG" 2>&1 &
     PASSIVE_GRAB_PID=$!
   fi
 
@@ -350,7 +442,8 @@ except:
 " 2>/dev/null)
 
   if [[ "$LOGIN_RESULT" != "SUBMITTED" ]]; then
-    echo "{\"success\":false,\"error\":\"Login form fill failed: $LOGIN_RESULT\"}"
+    record_headless_login_backoff "form_submission_failed"
+    echo '{"success":false,"error":"Cielo headless login form submission failed; attended recovery is required.","error_kind":"attended_reauthentication_required"}'
     cleanup; exit 1
   fi
 
@@ -366,24 +459,30 @@ except: print('')
 " 2>/dev/null)
 
   if [[ "$FINAL_URL" == *"login"* ]] || [[ "$FINAL_URL" == *"auth"* ]]; then
-    # Check if reCAPTCHA is blocking
-    HAS_CAPTCHA=$("$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
-      eval "document.querySelector('iframe[src*=recaptcha]')?.src || 'none'" \
+    # A reCAPTCHA iframe is present on the untouched Cielo login page, so its
+    # presence alone cannot prove that a challenge blocked the submission.
+    # Record only a bounded, generic attended-recovery classification.
+    LOGIN_BLOCK_KIND=$("$PINCHTAB" --server "$PINCHTAB_INSTANCE_URL" \
+      eval "(() => {
+        const captcha = document.querySelector('textarea[name=g-recaptcha-response]');
+        if (captcha && !(captcha.value || '').trim()) return 'challenge_or_interaction_required';
+        const visibleError = Array.from(document.querySelectorAll('.alert-danger,.invalid-feedback,.text-danger'))
+          .some(el => el.offsetParent !== null && (el.textContent || '').trim());
+        return visibleError ? 'credentials_or_validation_rejected' : 'login_not_completed';
+      })()" \
       --tab "$CIELO_TAB_ID" --json 2>/dev/null | python3 -c "
 import json, sys
-try: d = json.loads(sys.stdin.read()); print(d.get('result','none'))
-except: print('none')
+try: d = json.loads(sys.stdin.read()); print(d.get('result','login_not_completed'))
+except: print('login_not_completed')
 " 2>/dev/null)
 
-    if [[ "$HAS_CAPTCHA" != "none" ]]; then
-      echo '{"success":false,"error":"Login blocked by reCAPTCHA. Manual login required."}'
-    else
-      echo '{"success":false,"error":"Login failed (still on login page after submit)"}'
-    fi
+    record_headless_login_backoff "$LOGIN_BLOCK_KIND"
+    echo '{"success":false,"error":"Cielo headless login did not complete; attended recovery is required.","error_kind":"attended_reauthentication_required"}'
     cleanup; exit 1
   fi
 
   IS_LOGGED_IN="yes"
+  clear_headless_login_backoff
   echo '{"info":"Headless login successful"}'
 
   # Wait for passive grabber to capture the login response (refreshToken)
@@ -404,8 +503,15 @@ except: print('none')
     echo '{"info":"Passive Cielo token capture completed"}'
 
     # If passive grab captured tokens, we may be able to skip the normal Method 2 grab
-    PASSIVE_REFRESH=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('refreshToken',''))" 2>/dev/null)
-    if [[ -n "$PASSIVE_REFRESH" ]]; then
+    PASSIVE_REFRESH_CAPTURED=$(python3 -c "
+import json
+try:
+    config = json.load(open('$CONFIG_FILE'))
+    print('yes' if int(config.get('refreshTokenCapturedAt', 0)) >= int('$RUN_STARTED_AT_MS') else 'no')
+except Exception:
+    print('no')
+" 2>/dev/null)
+    if [[ "$PASSIVE_REFRESH_CAPTURED" == "yes" ]]; then
       echo '{"info":"refreshToken captured during login"}'
     fi
   fi
@@ -442,7 +548,18 @@ except:
 " 2>/dev/null)
 
 if [[ "$TEST_RESULT" == "ok" ]]; then
-  echo '{"success":true,"method":"cdp-browser"}'
+  DURABLE_RESULT=$("$AUTH_HELPER" refresh --force 2>&1)
+  DURABLE_EXIT=$?
+  if [[ -n "$DURABLE_RESULT" ]]; then
+    printf '%s\n' "$DURABLE_RESULT"
+  fi
+  if [[ $DURABLE_EXIT -eq 0 ]]; then
+    clear_headless_login_backoff
+    echo '{"success":true,"method":"cdp-browser-reseed","durable":true}'
+    exit 0
+  fi
+  echo '{"success":true,"method":"cdp-browser","durable":false,"warning":"Refresh-token chain remains unavailable; attended recovery is required."}'
+  exit 2
 else
   echo '{"success":false,"error":"Token captured but API verification failed"}'
   exit 1

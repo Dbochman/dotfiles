@@ -149,7 +149,7 @@ PY"
   enrolled in the owner-only local binding file. The dashboard does not load or
   retain Midea cloud credentials.
 - The `Mysa` item in the `OpenClaw` 1Password vault, with `username` and `password` fields, is cached as `MYSA_USERNAME` and `MYSA_PASSWORD` by `openclaw-refresh-secrets`. When present, those values renew an expired Mysa token without an interactive prompt.
-- Cielo's 30-minute refresher uses a dedicated PinchTab profile and an isolated tab. It first attempts token refresh, then browser capture, and finally one bounded credentialed headless login attempt per run when the tracked `CIELO_ALLOW_HEADLESS_LOGIN` gate is active. It never solves reCAPTCHA or loops on rejected credentials within a run; either condition still requires an attended sign-in.
+- Cielo's 30-minute refresher atomically rotates through the current API contract under a shared lock. Retryable API failures do not open a browser. Authentication rejection may use the dedicated PinchTab profile; a failed headless submission enters a six-hour backoff, and access-only capture remains explicitly non-durable until a refresh token is proven.
 - Samsung TV and Google Cast status polls treat an unreachable local port as an offline or standby device. Speaker checks fail fast before invoking Cast discovery, so an offline device does not hold up the dashboard refresh.
 
 To restore an expired provider session from an interactive Mac mini terminal:
@@ -158,7 +158,9 @@ To restore an expired provider session from an interactive Mac mini terminal:
 # Prompts only in an interactive terminal and updates ~/.config/mysotherm.
 mysa --login
 
-# For Cielo, follow the cielo-ac skill's attended recovery. Arm its targeted
-# passive token capture before submitting the visible login; do not retain a
-# raw HAR containing bearer and refresh tokens.
+# Cielo capture-first attended recovery; finish only succeeds after the newly
+# captured refresh token rotates through the API and status is verified.
+cielo-reauth --attended start
+# Complete the visible login over VNC, then:
+cielo-reauth finish
 ```

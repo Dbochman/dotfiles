@@ -1,8 +1,8 @@
 ---
 name: cielo-ac
 description: Control Mr Cool / Cielo Home minisplit AC units. Use when asked about AC, air conditioning, minisplit, heating, cooling, room temperature, thermostat (for minisplits specifically), turning heat on/off, setting temperature on a minisplit, fan speed, or swing position.
-allowed-tools: Bash(cielo:*)
-metadata: {"openclaw":{"emoji":"❄","requires":{"bins":["cielo"]}}}
+allowed-tools: Bash(cielo:*) Bash(cielo-reauth:*)
+metadata: {"openclaw":{"emoji":"❄","requires":{"bins":["cielo","cielo-reauth"]}}}
 ---
 
 # Cielo AC - Mr Cool Minisplit Control
@@ -97,15 +97,24 @@ cielo devices --json
 
 ## Token Management
 
-Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes. It first uses the stored refresh token, then falls back to CDP capture in an isolated PinchTab tab when the API refresh is unavailable. The tracked LaunchAgent enables one bounded managed-credential login attempt per run when the dedicated browser profile is logged out.
+Tokens expire approximately every hour. A LaunchAgent (`com.openclaw.cielo-refresh`) runs every 30 minutes. The canonical `cielo-auth.py` client uses Cielo's current `/web/token/refresh/1` contract, serializes rotating-token use with the wrapper, and atomically replaces the mode-`0600` config. Retryable network/server failures do not open a browser. Authentication rejection may fall back to CDP capture in an isolated PinchTab tab.
 
 ### Automated refresh (default)
-The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` uses the cataloged dedicated PinchTab `cielo` profile. Browser fallback starts or reuses a managed headless instance, opens an isolated Cielo tab, captures a fresh token through Chrome DevTools Protocol, verifies it, and cleans up only the tab and instance it created. It refuses to navigate a visible PinchTab instance. When that profile is logged out, `CIELO_ALLOW_HEADLESS_LOGIN=true` permits one login using `CIELO_USERNAME` and `CIELO_PASSWORD` from the owner-only OpenClaw secret cache. Passive capture begins before form submission so both the access and refresh tokens are retained. Logs are at `~/.openclaw/logs/cielo-refresh.log`.
+The LaunchAgent at `~/Library/LaunchAgents/com.openclaw.cielo-refresh.plist` uses the cataloged dedicated PinchTab `cielo` profile. Browser fallback starts or reuses a managed headless instance, opens an isolated Cielo tab, captures a fresh token through Chrome DevTools Protocol, verifies it, and cleans up only the tab and instance it created. It refuses to navigate a visible PinchTab instance. When that profile is logged out, `CIELO_ALLOW_HEADLESS_LOGIN=true` permits one managed-credential submission after passive capture is armed. A failed submission enters a six-hour backoff rather than retrying every 30 minutes. Access-only capture is reported as non-durable until the API refresh chain is proven. Logs are at `~/.openclaw/logs/cielo-refresh.log`.
 
 ### If automated refresh fails
-The helper never solves reCAPTCHA and never loops on rejected credentials within a run. If either condition blocks the bounded headless login, use one attended visible login on the dedicated `cielo` profile. An agent must arm `grab-cielo-tokens.py --passive` for that exact tab before the form is submitted, keep the listener active while the user completes any challenge, verify the resulting token with `cielo status --json`, and stop only the browser instance it created. Do not export or retain a raw HAR for routine recovery; it contains bearer and refresh tokens, while the targeted passive capture stores only the required session fields in the existing mode-`0600` config.
+The helper never solves reCAPTCHA and never loops on rejected credentials. Use the capture-first attended helper when durable refresh is unavailable:
 
-Set `CIELO_CAPTURE_TIMEOUT_SECONDS=600` (or another bounded value up to 900 seconds) for an attended login so the passive listener remains armed while the user completes reCAPTCHA. The login response contains the new refresh token; a capture started only after login can recover an access token but misses that refresh token.
+```bash
+cielo-reauth --attended start
+# Complete the visible sign-in over VNC.
+cielo-reauth status
+cielo-reauth finish
+```
+
+`start` refuses an already-running Cielo profile, opens only a new headed instance, and arms passive capture before the user submits the form. `finish` requires a refresh token captured during that exact run, proves it by rotating once through the API, verifies `cielo status --json`, and then stops only its own instance. Use `cielo-reauth --attended abort` to clean up an abandoned run. Do not export or retain a raw HAR; it contains bearer and refresh tokens.
+
+The attended helper keeps capture armed for at most 900 seconds. The login response contains the new refresh token; a capture started only after login can recover an access token but misses that refresh token and is not accepted as a durable repair.
 
 ### Manual token refresh (fallback)
 ```bash

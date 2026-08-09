@@ -348,7 +348,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects local Codex CLI daily usage into an atomic mode-`0600` dashboard source |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
-| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Refreshes the Cielo AC API token; browser fallback owns a direct isolated headless lifecycle on PinchTab's dedicated `cielo` profile and may perform one bounded managed-credential login when that profile is logged out |
+| `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Atomically rotates the Cielo AC token through the current `/web/token/refresh/1` contract; only authentication rejection reaches the dedicated PinchTab fallback, whose managed login uses a six-hour failure backoff |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 
 Presence identities are site-local protected JSON bindings. Routine deployment
@@ -445,10 +445,13 @@ through `~/.openclaw/bin/pinchtab-headless-instance`. OpenTable uses the
 helper refuses to navigate a visible PinchTab instance and stops only instances
 that it created. Cielo does not use this helper: its fallback owns a separate
 direct headless lifecycle on `cielo`. The tracked LaunchAgent explicitly sets
-`CIELO_ALLOW_HEADLESS_LOGIN=true`, allowing one bounded login attempt per run
-with the owner-only cached Cielo credentials after passive token capture is
-armed. It never solves reCAPTCHA or loops on a rejected login within a run;
-either condition preserves the attended reauthentication path.
+`CIELO_ALLOW_HEADLESS_LOGIN=true`, allowing one bounded credential submission
+after passive token capture is armed. A failed submission enters a six-hour
+backoff, because the reCAPTCHA iframe is present even before submission and is
+not by itself evidence of a solved or blocked challenge. It never solves a
+challenge. `cielo-reauth --attended start` owns the capture-first visible path,
+and `cielo-reauth finish` requires and immediately proves a newly captured
+refresh token before cleaning up its exact instance.
 The former viewing snooze is retired because scheduled browser work no longer
 needs the display. A visible browser is allowed only for an explicit,
 user-attended authentication flow such as Cielo reCAPTCHA recovery; see the
@@ -567,6 +570,6 @@ Every new LaunchAgent script MUST follow these rules:
       --thinking minimal --timeout 60 --json \
       --message "Reply with exactly AUTH_OK and nothing else."'
   ```
-- **Cielo verification**: require the loaded LaunchAgent environment to contain `CIELO_ALLOW_HEADLESS_LOGIN => true`; a zero exit is necessary but not sufficient. Refresh `http://127.0.0.1:8558/api/status?refresh=true` and require the `cielo` object to have no `error`.
+- **Cielo verification**: require `cielo-auth.py check` to report a protected refresh token and the `web-token-refresh-v1` contract after the first successful rotation. A zero LaunchAgent exit is necessary but not sufficient. Refresh `http://127.0.0.1:8558/api/status?refresh=true` and require the `cielo` object to have no `error`. If the chain is rejected, run the skill's `cielo-reauth --attended start` / `finish` sequence; access-only browser capture is explicitly non-durable.
 - **Pre-upgrade backup**: `ai.openclaw.gateway.plist.pre-upgrade` exists as safety backup — `npm install -g openclaw` may overwrite the plist via post-install hook.
 - **Prefix convention**: Newer agents use `ai.openclaw.*`, older ones use `com.openclaw.*`. Both are functionally equivalent.

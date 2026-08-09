@@ -69,6 +69,9 @@ CABIN_ENTRY_VERIFIER_PLIST = (
 
 REQUIRED_HELPERS = {
     "bin/august": "august wrapper\n",
+    "bin/cielo": "cielo wrapper\n",
+    "bin/cielo-auth.py": "cielo auth helper\n",
+    "bin/cielo-reauth": "cielo reauth helper\n",
     "bin/midea-ac": "midea ac wrapper\n",
     "bin/midea-ac-enroll": "midea enrollment helper\n",
     "bin/pinchtab-headless-instance": "pinchtab helper\n",
@@ -86,8 +89,12 @@ REQUIRED_HELPERS = {
     "bin/resy-read": "resy wrapper\n",
     "workspace/scripts/opentable-book.sh": "opentable helper\n",
     "workspace/scripts/opentable-book-state.py": "state helper\n",
+    "workspace/scripts/cielo-refresh.sh": "cielo refresh helper\n",
+    "workspace/scripts/grab-cielo-tokens.py": "cielo capture helper\n",
 }
 STANDALONE_SKILL_WRAPPERS = {
+    "cielo",
+    "cielo-reauth",
     "midea-ac",
     "opentable-book",
     "opentable-reservations",

@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""Attended, capture-first recovery for the Cielo refresh-token chain."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import stat
+import subprocess
+import tempfile
+import time
+from typing import Any
+
+
+PINCHTAB = Path("/opt/homebrew/bin/pinchtab")
+PYTHON = Path("/opt/homebrew/bin/python3")
+PROFILE_NAME = "cielo"
+LOGIN_URL = "https://home.cielowigle.com/auth/login"
+STATE_FILE = Path.home() / ".openclaw" / "state" / "cielo-reauth.json"
+BACKOFF_FILE = (
+    Path.home() / ".openclaw" / "state" / "cielo-headless-login-backoff.json"
+)
+CAPTURE_LOG = Path.home() / ".openclaw" / "logs" / "cielo-reauth-capture.log"
+CONFIG_FILE = Path.home() / ".config" / "cielo" / "config.json"
+GRAB_SCRIPT = (
+    Path.home() / ".openclaw" / "workspace" / "scripts" / "grab-cielo-tokens.py"
+)
+AUTH_HELPER = Path.home() / ".openclaw" / "bin" / "cielo-auth.py"
+CIELO_WRAPPER = Path.home() / ".openclaw" / "bin" / "cielo"
+
+
+class RecoveryError(RuntimeError):
+    pass
+
+
+def output(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+
+
+def run(
+    arguments: list[str],
+    *,
+    timeout: int = 30,
+    check: bool = True,
+    environment: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        arguments,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=timeout,
+        env=environment,
+    )
+    if check and result.returncode != 0:
+        raise RecoveryError(f"command_failed:{Path(arguments[0]).name}")
+    return result
+
+
+def load_json_output(result: subprocess.CompletedProcess[str]) -> Any:
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RecoveryError("invalid_command_response") from exc
+
+
+def protected_json(path: Path) -> dict[str, Any]:
+    try:
+        info = path.lstat()
+    except FileNotFoundError as exc:
+        raise RecoveryError("recovery_not_started") from exc
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or path.is_symlink()
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) & 0o077
+    ):
+        raise RecoveryError("recovery_state_unsafe")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RecoveryError("recovery_state_invalid") from exc
+    if not isinstance(payload, dict):
+        raise RecoveryError("recovery_state_invalid")
+    return payload
+
+
+def atomic_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary_path.unlink()
+
+
+def remove_owned_file(path: Path) -> None:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISREG(info.st_mode) and not path.is_symlink() and info.st_uid == os.getuid():
+        path.unlink()
+
+
+def pinchtab_profiles() -> list[dict[str, Any]]:
+    payload = load_json_output(run([str(PINCHTAB), "profiles", "--json"]))
+    if not isinstance(payload, list):
+        raise RecoveryError("pinchtab_profiles_invalid")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def pinchtab_instances() -> list[dict[str, Any]]:
+    payload = load_json_output(run([str(PINCHTAB), "instances", "--json"]))
+    if not isinstance(payload, list):
+        raise RecoveryError("pinchtab_instances_invalid")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def profile() -> dict[str, Any]:
+    match = next(
+        (item for item in pinchtab_profiles() if item.get("name") == PROFILE_NAME),
+        None,
+    )
+    if match is None:
+        raise RecoveryError("cielo_profile_missing")
+    path = Path(str(match.get("path", "")))
+    if not path.is_dir() or path.is_symlink():
+        raise RecoveryError("cielo_profile_unsafe")
+    return match
+
+
+def parse_started_instance(result: subprocess.CompletedProcess[str]) -> str:
+    payload = load_json_output(result)
+    if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+        raise RecoveryError("pinchtab_start_invalid")
+    return payload["id"]
+
+
+def instance(instance_id: str) -> dict[str, Any]:
+    match = next(
+        (item for item in pinchtab_instances() if item.get("id") == instance_id),
+        None,
+    )
+    if match is None:
+        raise RecoveryError("cielo_instance_missing")
+    url = str(match.get("url", ""))
+    if not re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):[0-9]+", url):
+        raise RecoveryError("cielo_instance_endpoint_unsafe")
+    return match
+
+
+def wait_for_instance(instance_id: str) -> dict[str, Any]:
+    for _ in range(20):
+        current = instance(instance_id)
+        if current.get("status") == "running":
+            return current
+        time.sleep(0.5)
+    raise RecoveryError("cielo_instance_not_ready")
+
+
+def parse_tab_id(text: str) -> str:
+    stripped = text.strip()
+    if re.fullmatch(r"[A-Za-z0-9_.:-]{4,160}", stripped):
+        return stripped
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        candidate = payload.get("tabId") or payload.get("id")
+        if isinstance(candidate, str) and re.fullmatch(
+            r"[A-Za-z0-9_.:-]{4,160}", candidate
+        ):
+            return candidate
+    raise RecoveryError("cielo_tab_not_created")
+
+
+def cdp_port(profile_path: Path) -> str:
+    processes = run(["/bin/ps", "-axo", "pid=,command="], timeout=10).stdout
+    for line in processes.splitlines():
+        if "--remote-debugging-port=" not in line or "--type=" in line:
+            continue
+        if f"--user-data-dir={profile_path}" not in line:
+            continue
+        match = re.match(r"\s*([0-9]+)\s+", line)
+        configured = re.search(r"--remote-debugging-port=([0-9]+)", line)
+        if configured and configured.group(1) != "0":
+            return configured.group(1)
+        if not match:
+            continue
+        sockets = run(
+            [
+                "/usr/sbin/lsof",
+                "-anP",
+                "-p",
+                match.group(1),
+                "-i",
+                "TCP",
+                "-sTCP:LISTEN",
+            ],
+            timeout=10,
+            check=False,
+        ).stdout
+        socket_match = re.search(r":([0-9]+)\s+\(LISTEN\)", sockets)
+        if socket_match:
+            return socket_match.group(1)
+    raise RecoveryError("cielo_cdp_port_missing")
+
+
+def capture_process_is_owned(pid: int) -> bool:
+    if pid <= 1:
+        return False
+    result = run(
+        ["/bin/ps", "-p", str(pid), "-o", "command="],
+        timeout=5,
+        check=False,
+    )
+    command = result.stdout
+    return "grab-cielo-tokens.py" in command and "--passive" in command
+
+
+def stop_capture(pid: int) -> None:
+    if not capture_process_is_owned(pid):
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGTERM)
+    for _ in range(20):
+        if not capture_process_is_owned(pid):
+            return
+        time.sleep(0.1)
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+
+
+def stop_instance(instance_id: str) -> None:
+    run(
+        [str(PINCHTAB), "instance", "stop", instance_id],
+        timeout=20,
+        check=False,
+    )
+
+
+def start() -> int:
+    if STATE_FILE.exists() or STATE_FILE.is_symlink():
+        raise RecoveryError("recovery_already_started")
+    for current in pinchtab_instances():
+        if current.get("profileName") == PROFILE_NAME and current.get("status") in (
+            "starting",
+            "running",
+        ):
+            raise RecoveryError("cielo_profile_already_in_use")
+    selected_profile = profile()
+    started_id = ""
+    capture_pid = 0
+    try:
+        started_id = parse_started_instance(
+            run(
+                [
+                    str(PINCHTAB),
+                    "instance",
+                    "start",
+                    "--profile",
+                    PROFILE_NAME,
+                    "--mode",
+                    "headed",
+                ],
+                timeout=30,
+            )
+        )
+        current = wait_for_instance(started_id)
+        instance_url = str(current["url"])
+        navigation = run(
+            [
+                str(PINCHTAB),
+                "--server",
+                instance_url,
+                "nav",
+                LOGIN_URL,
+                "--new-tab",
+                "--print-tab-id",
+            ],
+            timeout=30,
+        )
+        tab_id = parse_tab_id(navigation.stdout)
+        port = cdp_port(Path(str(selected_profile["path"])))
+        CAPTURE_LOG.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        log_handle = os.open(
+            CAPTURE_LOG,
+            os.O_CREAT | os.O_WRONLY | os.O_TRUNC,
+            0o600,
+        )
+        environment = os.environ.copy()
+        environment["CIELO_TAB_ID"] = tab_id
+        environment["CIELO_CAPTURE_TIMEOUT_SECONDS"] = "900"
+        process = subprocess.Popen(
+            [str(PYTHON), str(GRAB_SCRIPT), port, "--passive"],
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            env=environment,
+            start_new_session=True,
+        )
+        os.close(log_handle)
+        capture_pid = process.pid
+        started_at = int(time.time() * 1000)
+        atomic_json(
+            STATE_FILE,
+            {
+                "capturePid": capture_pid,
+                "instanceId": started_id,
+                "instanceUrl": instance_url,
+                "profile": PROFILE_NAME,
+                "startedAt": started_at,
+                "tabId": tab_id,
+            },
+        )
+    except Exception:
+        if capture_pid:
+            stop_capture(capture_pid)
+        if started_id:
+            stop_instance(started_id)
+        raise
+    output(
+        {
+            "action": "start",
+            "next": "Complete the visible Cielo sign-in, then run cielo-reauth finish.",
+            "ok": True,
+            "status": "awaiting_attended_login",
+        }
+    )
+    return 0
+
+
+def capture_state(state: dict[str, Any]) -> dict[str, Any]:
+    started_at = int(state.get("startedAt", 0))
+    captured_at = 0
+    try:
+        config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        captured_at = int(config.get("refreshTokenCapturedAt", 0))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    pid = int(state.get("capturePid", 0))
+    return {
+        "capture_running": capture_process_is_owned(pid),
+        "refresh_token_captured": captured_at >= started_at > 0,
+        "started_at": started_at,
+    }
+
+
+def status() -> int:
+    state = protected_json(STATE_FILE)
+    output({"ok": True, "status": "in_progress", **capture_state(state)})
+    return 0
+
+
+def finish() -> int:
+    state = protected_json(STATE_FILE)
+    observed = capture_state(state)
+    if not observed["refresh_token_captured"]:
+        output(
+            {
+                "ok": False,
+                "status": "awaiting_attended_login",
+                "error": "A new refresh token has not been captured yet.",
+            }
+        )
+        return 2
+    capture_pid = int(state.get("capturePid", 0))
+    stop_capture(capture_pid)
+    refresh = run(
+        [str(AUTH_HELPER), "refresh", "--force"],
+        timeout=30,
+        check=False,
+    )
+    try:
+        refresh_payload = json.loads(refresh.stdout)
+    except json.JSONDecodeError:
+        refresh_payload = {}
+    if refresh.returncode != 0 or refresh_payload.get("ok") is not True:
+        output(
+            {
+                "category": refresh_payload.get("category", "refresh_verification_failed"),
+                "ok": False,
+                "status": "refresh_verification_failed",
+            }
+        )
+        return 3
+    controls = run(
+        [str(CIELO_WRAPPER), "status", "--json"],
+        timeout=30,
+        check=False,
+    )
+    if controls.returncode != 0:
+        output(
+            {
+                "ok": False,
+                "status": "control_verification_failed",
+            }
+        )
+        return 4
+    stop_instance(str(state.get("instanceId", "")))
+    remove_owned_file(BACKOFF_FILE)
+    remove_owned_file(STATE_FILE)
+    output(
+        {
+            "api_refresh_verified": True,
+            "controls_verified": True,
+            "ok": True,
+            "status": "complete",
+        }
+    )
+    return 0
+
+
+def abort() -> int:
+    state = protected_json(STATE_FILE)
+    stop_capture(int(state.get("capturePid", 0)))
+    stop_instance(str(state.get("instanceId", "")))
+    remove_owned_file(STATE_FILE)
+    output({"ok": True, "status": "aborted"})
+    return 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--attended", action="store_true")
+    parser.add_argument("command", choices=("start", "status", "finish", "abort"))
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.command in ("start", "abort") and not args.attended:
+        output(
+            {
+                "ok": False,
+                "status": "attended_confirmation_required",
+            }
+        )
+        return 2
+    required_by_command = {
+        "start": (PINCHTAB, PYTHON, GRAB_SCRIPT, AUTH_HELPER, CIELO_WRAPPER),
+        "status": (),
+        "finish": (PINCHTAB, AUTH_HELPER, CIELO_WRAPPER),
+        "abort": (PINCHTAB,),
+    }
+    for required in required_by_command[args.command]:
+        if not required.is_file() or not os.access(required, os.X_OK):
+            output(
+                {
+                    "ok": False,
+                    "status": "required_helper_unavailable",
+                }
+            )
+            return 1
+    try:
+        if args.command == "start":
+            return start()
+        if args.command == "status":
+            return status()
+        if args.command == "finish":
+            return finish()
+        return abort()
+    except RecoveryError as exc:
+        output({"error": str(exc), "ok": False, "status": "error"})
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

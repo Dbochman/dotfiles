@@ -797,6 +797,9 @@ install_openclaw_guarded_helpers() {
   local spec src_rel dst_rel mode label src dst
   local helper_specs=(
     "bin/august|bin/august|755|August guarded unlock wrapper"
+    "bin/cielo|bin/cielo|755|Cielo guarded control wrapper"
+    "bin/cielo-auth.py|bin/cielo-auth.py|755|Cielo atomic auth helper"
+    "bin/cielo-reauth|bin/cielo-reauth|755|Cielo attended recovery helper"
     "bin/midea-ac|bin/midea-ac|755|Midea local AC wrapper"
     "bin/midea-ac-enroll|bin/midea-ac-enroll|755|Midea attended enrollment helper"
     "bin/pinchtab-headless-instance|bin/pinchtab-headless-instance|755|managed PinchTab instance helper"
@@ -815,6 +818,8 @@ install_openclaw_guarded_helpers() {
     "cron/restaurant-booking-scopes.json|restaurant-bookings/scopes.json|600|restaurant booking scope registry"
     "workspace/scripts/opentable-book.sh|workspace/scripts/opentable-book.sh|755|OpenTable guarded booking helper"
     "workspace/scripts/opentable-book-state.py|workspace/scripts/opentable-book-state.py|755|OpenTable approval state helper"
+    "workspace/scripts/cielo-refresh.sh|workspace/scripts/cielo-refresh.sh|755|Cielo scheduled refresh helper"
+    "workspace/scripts/grab-cielo-tokens.py|workspace/scripts/grab-cielo-tokens.py|755|Cielo targeted token capture helper"
   )
 
   for spec in "${helper_specs[@]}"; do
@@ -835,6 +840,8 @@ publish_openclaw_standalone_skill_wrappers() {
   local standalone_bin_dir="${OPENCLAW_STANDALONE_BIN_DIR:-/opt/homebrew/bin}"
   local skill_wrapper src dst
   local skill_wrappers=(
+    cielo
+    cielo-reauth
     midea-ac
     opentable-book
     opentable-reservations
