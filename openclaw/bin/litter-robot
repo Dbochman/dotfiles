@@ -1,4 +1,5 @@
 #!/bin/bash
-# litter-robot — Litter-Robot 4 control
+# litter-robot — guarded multi-device Litter-Robot control
+set -euo pipefail
 SKILL_DIR="$HOME/.openclaw/skills/litter-robot"
 exec "$SKILL_DIR/litter-robot" "$@"

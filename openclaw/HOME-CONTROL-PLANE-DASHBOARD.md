@@ -90,7 +90,7 @@ All controls use selectors with predefined room/device values.
   session to refresh the card.
 - **August:** lock/unlock
 - **Ring/Nest Cameras:** take snapshots — Ring (Crosstown + Cabin doorbells), Nest (Kitchen @ Cabin, Laundry + Living Room @ Crosstown). Nest device discovery uses customName as a fallback to room name for cameras whose Google Home room doesn't match the dashboard label (e.g. "laundry camera" lives in the "Garage" room). Adding new Nest devices requires `nest reauth` to re-run Google Device Access OAuth consent.
-- **Litter-Robot:** clean/reset
+- **Litter-Robot:** separate Crosstown and Cabin cards; clean/reset commands carry an exact protected robot alias
 - **Petlibro:** manual feed
 - **TV:** power on/off
 - **Speakers/Cabin Speakers:** volume and mute/stop actions

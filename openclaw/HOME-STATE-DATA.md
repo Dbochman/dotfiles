@@ -12,7 +12,7 @@ Collected by `home-state-snapshot.py` via LaunchAgent `ai.openclaw.home-state-sn
 
 | Source | Data | CLI | Update Frequency |
 |--------|------|-----|-----------------|
-| Litter-Robot 4 | Cat weights (per cat, per cycle) | `litter-robot pets` | Each litter box visit |
+| Litter-Robot 4 (Crosstown + Cabin) | Cat weights and per-device activity | `litter-robot pets`, `litter-robot history <alias>` | Each litter box visit |
 | Eight Sleep Pods | Sleep scores, duration, stages, HRV, HR, RR, snoring for each user | `8sleep sleep <side>` | Previous night |
 | Ring Doorbell | Battery level per doorbell | `ring status` | On-demand |
 
@@ -221,7 +221,7 @@ The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials befo
 ## Trend Analysis Opportunities
 
 ### Cat Health
-- Weight trends per cat over weeks/months (Sopaipilla ~10 lbs, Burrito ~12 lbs)
+- Weight trends per cat over weeks/months
 - Weight variance (consistent vs fluctuating)
 - Visit frequency from Litter-Robot activity history
 
@@ -247,7 +247,7 @@ The wrapper script sources `~/.openclaw/.secrets-cache` for API credentials befo
 
 | Dependency | Required For | Auth |
 |------------|-------------|------|
-| Litter-Robot venv | Cat weights | Whisker/AWS Cognito at `~/.config/litter-robot/config.yaml` |
+| Locked Litter-Robot venv | Cat weights and two-site LR4 status | Whisker/AWS Cognito at `~/.config/litter-robot/config.yaml`; exact protected bindings at `bindings.json` |
 | Eight Sleep API | Sleep data | Token at `~/.config/eightctl/token-cache.json` |
 | Ring venv | Doorbell dings + return-motion signal | OAuth at `~/.config/ring/token-cache.json` |
 | Fi collar session | Dog walk GPS + geofence checks | `~/.config/fi-collar/session.json` |

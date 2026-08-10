@@ -412,6 +412,29 @@ if ! UV_PROJECT_ENVIRONMENT="$MIDEA_VENV_DIR" \
 fi
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) midea-ac: locked runtime ready" >> "$LOG"
 
+LITTER_ROBOT_SKILL_DIR="$SKILLS_DST/litter-robot"
+LITTER_ROBOT_VENV_DIR="$HOME/.openclaw/venvs/litter-robot"
+if [ ! -f "$LITTER_ROBOT_SKILL_DIR/pyproject.toml" ] \
+  || [ -L "$LITTER_ROBOT_SKILL_DIR/pyproject.toml" ] \
+  || [ ! -f "$LITTER_ROBOT_SKILL_DIR/uv.lock" ] \
+  || [ -L "$LITTER_ROBOT_SKILL_DIR/uv.lock" ] \
+  || [ ! -x /opt/homebrew/bin/uv ] \
+  || [ ! -x /opt/homebrew/bin/python3.14 ] \
+  || [ -L "$HOME/.openclaw/venvs" ] \
+  || [ -L "$LITTER_ROBOT_VENV_DIR" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) litter-robot: FATAL locked runtime inputs are unavailable or unsafe" >> "$LOG"
+  exit 1
+fi
+mkdir -p "$HOME/.openclaw/venvs"
+if ! UV_PROJECT_ENVIRONMENT="$LITTER_ROBOT_VENV_DIR" \
+  UV_PYTHON=/opt/homebrew/bin/python3.14 \
+  /opt/homebrew/bin/uv sync --frozen --no-dev --project "$LITTER_ROBOT_SKILL_DIR" \
+  >> "$LOG" 2>&1; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) litter-robot: FATAL locked runtime sync failed" >> "$LOG"
+  exit 1
+fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) litter-robot: locked runtime ready" >> "$LOG"
+
 AIRTHINGS_SKILL_DIR="$SKILLS_DST/airthings-monitor"
 AIRTHINGS_VENV_DIR="$HOME/.openclaw/venvs/airthings-monitor"
 if [ ! -f "$AIRTHINGS_SKILL_DIR/pyproject.toml" ] \
@@ -555,6 +578,8 @@ STANDALONE_SKILL_WRAPPERS=(
   airthings
   cielo
   cielo-reauth
+  litter-robot
+  litter-robot-enroll
   midea-ac
   reachyctl
   opentable-book

@@ -1,0 +1,19 @@
+#!/bin/bash
+# Attended exact-site enrollment for Litter-Robot devices.
+
+set -euo pipefail
+
+if [[ "${LITTER_ROBOT_ALLOW_ENROLL:-}" != "1" ]]; then
+  echo '{"error":"enrollment_not_allowed","message":"Set LITTER_ROBOT_ALLOW_ENROLL=1 for attended enrollment.","non_retryable":true,"ok":false}' >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="${LITTER_ROBOT_PYTHON:-$HOME/.openclaw/venvs/litter-robot/bin/python3}"
+
+if [[ ! -x "$PYTHON" ]]; then
+  echo '{"error":"runtime_missing","message":"The locked Litter-Robot runtime is unavailable.","ok":false}' >&2
+  exit 1
+fi
+
+exec "$PYTHON" "$SCRIPT_DIR/litter-robot-api.py" enroll "$@"

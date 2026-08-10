@@ -1,92 +1,65 @@
 ---
 name: litter-robot
-description: Control the Litter-Robot 4 at Crosstown (West Roxbury). Use when asked about the litter box, cat litter, waste level, cleaning the litter box, cat weight, Sopaipilla, Burrito, or anything about the Litter-Robot. NOT for Petlibro feeder/fountain (use petlibro skill for those).
+description: Read and control the exact Litter-Robot at Cabin or Crosstown through protected Whisker bindings. Use for litter-box status, waste or litter levels, cleaning cycles, activity history, night lights, robot resets, and cat weight history. Do not use for Petlibro feeders or fountains.
 allowed-tools: Bash(litter-robot:*)
 metadata: {"openclaw":{"emoji":"🐈","requires":{"bins":["litter-robot"]}}}
 ---
 
-# Litter-Robot 4 Control (Crosstown)
+# Litter-Robot control
 
-Control the **Litter-Robot 4** at Crosstown via the Whisker cloud API (pylitterbot).
+Use the guarded `litter-robot` CLI. It resolves protected device serials from
+`~/.config/litter-robot/bindings.json`; never discover or target a robot by
+account order, fuzzy name, or a serial supplied in chat.
 
-## Device
+## Exact aliases
 
-| Name | Model | Serial | Location |
-|------|-------|--------|----------|
-| Litter-Robot 4 | LR4 | LR4C293473 | Crosstown (West Roxbury) |
+- `crosstown-litter-robot`
+- `cabin-litter-robot`
 
-## Cats
+## Read commands
 
-| Name | Weight |
-|------|--------|
-| Sopaipilla | ~10.3 lbs |
-| Burrito | ~11.2 lbs |
-
-## Commands
-
-### Check status
 ```bash
 litter-robot status
-```
-Shows waste level, cycle status, online state, night light, cats and weights.
-
-### Start cleaning cycle
-```bash
-litter-robot clean
-```
-
-### Activity history
-```bash
-litter-robot history        # last 10 entries
-litter-robot history 25     # last 25 entries
-```
-
-### Cat info and weight tracking
-```bash
+litter-robot status cabin-litter-robot
 litter-robot pets
+litter-robot history crosstown-litter-robot
+litter-robot history cabin-litter-robot 25
 ```
 
-### Night light
+Use `--json` before the command when structured output is needed. `status`
+returns both enrolled robots by default and never emits protected identifiers.
+
+## Control commands
+
+Run a control only when the user asks for that action and the exact house is
+known. Ask which house when it is ambiguous.
+
 ```bash
-litter-robot nightlight on
-litter-robot nightlight off
+litter-robot clean cabin-litter-robot
+litter-robot nightlight crosstown-litter-robot on
+litter-robot reset cabin-litter-robot
 ```
 
-### Reset waste drawer gauge
-```bash
-litter-robot reset
-```
-Run after emptying the waste drawer to reset the fill level gauge.
+`reset` is a remote robot reset that clears errors and may trigger a cycle. It
+does not reset the LR4 waste gauge. Never retry a physical action automatically
+when the result says its outcome is unknown.
 
-## Status Values
+## Status interpretation
 
-| Status | Meaning |
-|--------|---------|
-| READY | Idle, ready for use |
-| CLEAN_CYCLE | Currently cycling |
-| CLEAN_CYCLE_COMPLETE | Just finished cycling |
-| CAT_DETECTED | Cat is inside |
-| PAUSED | Cycle paused (interrupted) |
-| DRAWER_FULL | Waste drawer needs emptying |
-| OFF / OFFLINE | Powered off or disconnected |
+- `READY`: idle and ready.
+- `CLEAN_CYCLE`: currently cycling.
+- `CAT_DETECTED`: a cat is inside.
+- `PAUSED`: a cycle was interrupted.
+- `DRAWER_FULL`: empty the waste drawer.
+- `OFF`, `OFFLINE`, or `NOT_FOUND`: unavailable; do not issue controls.
 
-## Architecture
+## Architecture and recovery
 
-```
-Litter-Robot 4 ←─cloud─→ Whisker API ←─HTTPS─→ pylitterbot (Mac Mini venv)
+```text
+Litter-Robot 4 ← cloud → Whisker API ← HTTPS → pylitterbot on Mac mini
 ```
 
-Cloud-only. Auth via AWS Cognito (email+password). Tokens auto-refresh.
-
-## Troubleshooting
-
-### "auth_failed"
-Check `~/.config/litter-robot/config.yaml` on Mac Mini. Uses Whisker/Litter-Robot account credentials.
-
-### Waste level stuck
-Run `litter-robot reset` after physically emptying the drawer.
-
-## Disambiguation
-
-- "litter box", "litter robot", "waste level", "cat weight" → this skill
-- "cat food", "feeder", "fountain", "water" → `petlibro` skill
+The locked runtime is `~/.openclaw/venvs/litter-robot`. Credentials and tokens
+remain owner-only under `~/.config/litter-robot`. If bindings are missing or a
+device is replaced, use the attended `litter-robot-enroll` operator helper;
+OpenClaw should not enroll devices autonomously.

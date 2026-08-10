@@ -1,101 +1,150 @@
-#!/bin/bash
-# litter-robot — control Litter-Robot 4 at Crosstown
+#!/usr/bin/env python3
+"""Human and JSON CLI for the guarded Litter-Robot adapter."""
 
-set -euo pipefail
+from __future__ import annotations
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-API_SCRIPT="$SCRIPT_DIR/litter-robot-api.py"
-PYTHON="$HOME/.openclaw/litter-robot/venv/bin/python3"
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
-run_api() { "$PYTHON" "$API_SCRIPT" "$@"; }  # stderr kept separate — don't mix into JSON stdout
 
-parse_status() {
-  python3 -c "
-import sys, json
-try:
-    d = json.loads(sys.stdin.read())
-except:
-    print('Error: Could not parse response')
-    sys.exit(1)
-if 'error' in d:
-    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
-    sys.exit(1)
+SKILL_DIR = Path(__file__).resolve().parent
+API_SCRIPT = SKILL_DIR / "litter-robot-api.py"
+PYTHON = Path(
+    os.environ.get(
+        "LITTER_ROBOT_PYTHON",
+        Path.home() / ".openclaw/venvs/litter-robot/bin/python3",
+    )
+).expanduser()
 
-for r in d.get('robots', []):
-    status = r.get('status', '?')
-    waste = r.get('wasteLevel', '?')
-    online = 'Online' if r.get('isOnline') else 'Offline'
-    full = ' (FULL!)' if r.get('isWasteFull') else ''
-    print(f'{r.get(\"name\", \"?\")} ({r.get(\"model\", \"?\")}) — {online}')
-    print(f'  Status:      {status}')
-    print(f'  Waste Level: {waste}%{full}')
-    print(f'  Night Light: {\"On\" if r.get(\"nightLight\") else \"Off\"}')
-    print(f'  Panel Lock:  {\"On\" if r.get(\"panelLock\") else \"Off\"}')
-    print(f'  Clean Wait:  {r.get(\"cleanWaitMinutes\", \"?\")} min')
-    cc = r.get('cycleCount')
-    cap = r.get('cycleCapacity')
-    if cc is not None:
-        print(f'  Cycles:      {cc}' + (f' / {cap}' if cap else ''))
-    print()
 
-pets = d.get('pets', [])
-if pets:
-    print('Cats:')
-    for p in pets:
-        print(f'  {p.get(\"name\", \"?\")} — {p.get(\"weight\", \"?\")} lbs')
-"
-}
+def usage() -> str:
+    return """Usage: litter-robot [--json] <command>
 
-parse_action() {
-  python3 -c "
-import sys, json
-try:
-    d = json.loads(sys.stdin.read())
-except:
-    print('Error: Could not parse response')
-    sys.exit(1)
-if 'error' in d:
-    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
-    sys.exit(1)
-action = d.get('action', 'done')
-robot = d.get('robot', '?')
-print(f'{robot}: {action.replace(\"_\", \" \").title()}')
-"
-}
+Commands:
+  status [alias]                 Status for all robots or one exact alias
+  pets                           Cat profiles and recent weights
+  history <alias> [N]            Activity history (default: 10)
+  clean <alias>                  Start one cleaning cycle
+  nightlight <alias> <on|off>    Set the night light
+  reset <alias>                  Reset the robot (may trigger a cycle)
 
-case "${1:-}" in
-  status)
-    run_api status | parse_status
-    ;;
-  clean)
-    run_api clean | parse_action
-    ;;
-  history)
-    run_api history "${2:-10}" | python3 -m json.tool
-    ;;
-  pets)
-    run_api pets | python3 -m json.tool
-    ;;
-  nightlight)
-    if [[ -z "${2:-}" ]]; then
-      echo "Usage: litter-robot nightlight <on|off>" >&2
-      exit 1
-    fi
-    run_api nightlight "$2" | parse_action
-    ;;
-  reset)
-    run_api reset | parse_action
-    ;;
-  *)
-    echo "Usage: litter-robot <command>"
-    echo ""
-    echo "Commands:"
-    echo "  status              Robot status, waste level, cats"
-    echo "  clean               Start a cleaning cycle"
-    echo "  history [N]         Activity history (default: 10)"
-    echo "  pets                Cat info and weights"
-    echo "  nightlight <on|off> Toggle night light"
-    echo "  reset               Reset waste drawer gauge"
-    exit 1
-    ;;
-esac
+Aliases:
+  crosstown-litter-robot
+  cabin-litter-robot"""
+
+
+def _status(payload: dict) -> str:
+    lines: list[str] = []
+    for robot in payload.get("robots", []):
+        alias = robot.get("alias", "unknown")
+        model = robot.get("model", "Litter-Robot")
+        online = "Online" if robot.get("is_online") else "Offline"
+        lines.append(f"{alias} ({model}) — {online}")
+        lines.append(f"  Status:       {robot.get('status_text') or robot.get('status') or '?'}")
+        waste = robot.get("waste_level_pct")
+        waste_text = f"{waste}%" if waste is not None else "?"
+        if robot.get("waste_full"):
+            waste_text += " (FULL)"
+        lines.append(f"  Waste Level:  {waste_text}")
+        litter = robot.get("litter_level_pct")
+        if litter is not None:
+            lines.append(f"  Litter Level: {litter}%")
+        lines.append(f"  Night Light:  {'On' if robot.get('night_light') else 'Off'}")
+        lines.append(f"  Panel Lock:   {'On' if robot.get('panel_lock') else 'Off'}")
+        lines.append(f"  Clean Wait:   {robot.get('clean_wait_minutes', '?')} min")
+        cycles = robot.get("cycle_count")
+        if cycles is not None:
+            lines.append(f"  Cycles:       {cycles}")
+        lines.append("")
+    pets = payload.get("pets", [])
+    if pets:
+        lines.append("Cats:")
+        for pet in pets:
+            lines.append(f"  {pet.get('name', '?')} — {pet.get('weight_lbs', '?')} lbs")
+    return "\n".join(lines).rstrip()
+
+
+def _pets(payload: dict) -> str:
+    lines: list[str] = []
+    for pet in payload.get("pets", []):
+        lines.append(f"{pet.get('name', '?')} — {pet.get('weight_lbs', '?')} lbs")
+        recent = pet.get("recent_weights", [])
+        if recent:
+            latest = recent[0]
+            lines.append(
+                f"  Latest: {latest.get('weight_lbs', '?')} lbs at {latest.get('timestamp', '?')}"
+            )
+    return "\n".join(lines) or "No pet profiles found."
+
+
+def _history(payload: dict) -> str:
+    lines = [f"{payload.get('alias', 'Litter-Robot')} history:"]
+    for item in payload.get("history", []):
+        lines.append(f"  {item.get('timestamp', '?')} — {item.get('action', '?')}")
+    return "\n".join(lines)
+
+
+def _action(payload: dict) -> str:
+    action = str(payload.get("action", "done")).replace("_", " ").title()
+    return f"{payload.get('alias', 'Litter-Robot')}: {action}"
+
+
+def main(argv: list[str]) -> int:
+    json_output = False
+    if argv and argv[0] == "--json":
+        json_output = True
+        argv = argv[1:]
+    elif argv and argv[-1] == "--json":
+        json_output = True
+        argv = argv[:-1]
+
+    if not argv or argv[0] in {"help", "-h", "--help"}:
+        print(usage())
+        return 0 if argv else 1
+    if not PYTHON.is_file() or not os.access(PYTHON, os.X_OK):
+        payload = {
+            "ok": False,
+            "error": "runtime_missing",
+            "message": "The locked Litter-Robot runtime is unavailable.",
+        }
+        if json_output:
+            print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+        else:
+            print(f"Error: {payload['message']}", file=sys.stderr)
+        return 1
+
+    result = subprocess.run(
+        [str(PYTHON), str(API_SCRIPT), *argv],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "error": "invalid_response",
+            "message": "Litter-Robot adapter returned an invalid response.",
+        }
+        result = subprocess.CompletedProcess(result.args, 1, result.stdout, result.stderr)
+
+    if json_output:
+        print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    elif not payload.get("ok"):
+        print(f"Error: {payload.get('message', payload.get('error', 'command failed'))}", file=sys.stderr)
+    elif argv[0] == "status":
+        print(_status(payload))
+    elif argv[0] == "pets":
+        print(_pets(payload))
+    elif argv[0] == "history":
+        print(_history(payload))
+    else:
+        print(_action(payload))
+    return result.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

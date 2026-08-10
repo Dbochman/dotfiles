@@ -173,7 +173,7 @@ restaurant-book run --job-id <canonical-job-id>
 - Eight Sleep Pod 3 (cloud API, both sides: Dylan left, Julia right)
 - Petlibro Granary Smart Feeder + Dockstream 2 Cordless Fountain (cloud API)
 - Google smart speakers
-- Litter-Robot 4 (cloud API via pylitterbot, tracks Sopaipilla + Burrito weights)
+- Two Litter-Robot 4 units (Crosstown + Cabin; exact protected bindings via pylitterbot, tracks Sopaipilla + Burrito weights)
 - August Wi-Fi Smart Lock (5th gen, front door — cloud API via august-api on MBP)
 
 ### Vacancy Automation

@@ -242,7 +242,7 @@ def collect_cabin_speakers():
 
 
 def collect_litter_robot():
-    return _run_cli(["litter-robot", "status"])
+    return _run_cli(["litter-robot", "--json", "status"], parse_json=True)
 
 
 def collect_petlibro():
@@ -401,6 +401,7 @@ _MIDEA_AC_ALIASES = {
 }
 _MIDEA_AC_MODES = {"auto", "cool", "dry", "heat", "fan"}
 _MIDEA_AC_FANS = {"auto", "silent", "low", "medium", "high", "full"}
+_LITTER_ROBOT_ALIASES = {"crosstown-litter-robot", "cabin-litter-robot"}
 
 
 def _require_args(args, *, required, optional=()):
@@ -502,6 +503,12 @@ def _build_petlibro_feed_command(args):
     return ["petlibro", "feed", "crosstown-feeder", str(normalized)]
 
 
+def _build_litter_robot_command(command, args):
+    _require_args(args, required=("robot",))
+    robot = _require_choice(args["robot"], _LITTER_ROBOT_ALIASES, "Litter-Robot alias")
+    return ["litter-robot", command, robot]
+
+
 COMMANDS = {
     "hue_crosstown": {
         "on": lambda a: _build_hue_command("--crosstown", "on", a),
@@ -568,8 +575,8 @@ COMMANDS = {
         "status": lambda a: [CATT_BIN, "-d", _CABIN_SPEAKER_IPS.get(a["name"], a["name"]), "status"],
     },
     "litter_robot": {
-        "clean": lambda a: ["litter-robot", "clean"],
-        "reset": lambda a: ["litter-robot", "reset"],
+        "clean": lambda a: _build_litter_robot_command("clean", a),
+        "reset": lambda a: _build_litter_robot_command("reset", a),
     },
     "petlibro": {
         "feed": _build_petlibro_feed_command,
@@ -1296,11 +1303,28 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
           </div>
           <span class="location-pill">Crosstown</span>
         </div>
-        <div id="litterRobotContent" class="content"></div>
+        <div id="litterRobotCrosstownContent" class="content"></div>
         <div class="controls">
           <div class="command-row">
-            <button type="button" data-command data-device="litter_robot" data-action="clean">Clean</button>
-            <button type="button" data-command data-device="litter_robot" data-action="reset">Reset</button>
+            <button type="button" data-command data-device="litter_robot" data-action="clean" data-extra='{"robot":"crosstown-litter-robot"}'>Clean</button>
+            <button type="button" data-command data-device="litter_robot" data-action="reset" data-extra='{"robot":"crosstown-litter-robot"}'>Reset Robot</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Pets</div>
+            <h2>Litter-Robot</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
+        </div>
+        <div id="litterRobotCabinContent" class="content"></div>
+        <div class="controls">
+          <div class="command-row">
+            <button type="button" data-command data-device="litter_robot" data-action="clean" data-extra='{"robot":"cabin-litter-robot"}'>Clean</button>
+            <button type="button" data-command data-device="litter_robot" data-action="reset" data-extra='{"robot":"cabin-litter-robot"}'>Reset Robot</button>
           </div>
         </div>
       </article>
@@ -1816,39 +1840,31 @@ function renderPetlibro(result) {
   return `<div class="room-grid">${cards}</div>`;
 }
 
-function renderLitterRobot(result) {
+function renderLitterRobot(result, site) {
   if (!result) return '<div class="muted">No Litter-Robot data</div>';
   if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
-  const raw = result.raw || '';
-  if (!raw) return '<div class="muted">No data</div>';
-  // Split into main block and cats block
-  const catSection = raw.match(/Cats:\n([\s\S]+)/);
-  const mainLines = (catSection ? raw.slice(0, catSection.index) : raw).split('\n');
-  const headerMatch = mainLines[0].match(/^(.+?)\s*—\s*(\w+)/);
-  const status = headerMatch ? headerMatch[2] : 'Unknown';
-  const isOnline = status.toLowerCase() === 'online';
+  const robots = Array.isArray(result.robots) ? result.robots : [];
+  const robot = robots.find((item) => item && item.site === site);
+  if (!robot) return '<div class="muted">No enrolled Litter-Robot for this site</div>';
+  const status = robot.status_text || robot.status || 'Unknown';
+  const isOnline = robot.is_online === true;
   const dot = isOnline ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
-  const props = {};
-  mainLines.slice(1).forEach(l => {
-    const kv = l.match(/^\s+(.+?):\s+(.+)$/);
-    if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
-  });
   const meta = [];
-  if (props['status']) meta.push(props['status']);
-  if (props['waste level']) meta.push('🗑️ ' + props['waste level']);
-  if (props['cycles']) meta.push(props['cycles'] + ' cycles');
-  // Parse cats
-  const cats = [];
-  if (catSection) {
-    catSection[1].split('\n').forEach(l => {
-      const cm = l.match(/^\s+(.+?)\s*—\s*(.+)/);
-      if (cm) cats.push(cm[1].trim() + ' · ' + cm[2].trim());
-    });
+  if (robot.waste_level_pct !== null && robot.waste_level_pct !== undefined) {
+    meta.push('🗑️ ' + robot.waste_level_pct + '%' + (robot.waste_full ? ' FULL' : ''));
   }
+  if (robot.litter_level_pct !== null && robot.litter_level_pct !== undefined) {
+    meta.push('Litter ' + robot.litter_level_pct + '%');
+  }
+  if (robot.cycle_count !== null && robot.cycle_count !== undefined) meta.push(robot.cycle_count + ' cycles');
+  const cats = (Array.isArray(result.pets) ? result.pets : []).map((pet) => {
+    const weight = pet.weight_lbs === null || pet.weight_lbs === undefined ? '?' : pet.weight_lbs;
+    return (pet.name || '?') + ' · ' + weight + ' lbs';
+  });
   return `<div class="room-grid"><div class="room-chip">
-    <div class="room-name">Litter-Robot 4</div>
-    <div class="room-temp">${dot} ${escapeHtml(status)}</div>
+    <div class="room-name">${escapeHtml(robot.model || 'Litter-Robot')}</div>
+    <div class="room-temp">${dot} ${escapeHtml(isOnline ? status : 'Offline')}</div>
     ${meta.length ? '<div class="room-meta">' + meta.join(' · ') + '</div>' : ''}
     ${cats.length ? '<div class="room-meta">🐱 ' + cats.map(c => escapeHtml(c)).join(' · ') + '</div>' : ''}
   </div></div>`;
@@ -2109,7 +2125,8 @@ function renderDashboard() {
   setContent('tvContent', renderTV(data.tv));
   setContent('speakersContent', renderSpeakers(data.speakers));
   setContent('cabinSpeakersContent', renderCabinSpeakers(data.cabin_speakers));
-  setContent('litterRobotContent', renderLitterRobot(data.litter_robot));
+  setContent('litterRobotCrosstownContent', renderLitterRobot(data.litter_robot, 'crosstown'));
+  setContent('litterRobotCabinContent', renderLitterRobot(data.litter_robot, 'cabin'));
   setContent('petlibroContent', renderPetlibro(data.petlibro));
   setContent('eightSleepContent', renderEightSleep(data['8sleep']));
   setContent('ringContent', renderRing(data.ring));

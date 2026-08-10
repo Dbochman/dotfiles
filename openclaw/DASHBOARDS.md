@@ -320,7 +320,7 @@ Command feedback (Running/Success/Error) appears inline below the section header
 - **August Lock** — lock state, door state, battery with lock/unlock controls
 - **Ring Doorbell** — chip cards per doorbell (battery, last event with relative time) + snapshot capture with Crosstown/Cabin selector
 - **Nest Cameras** — live snapshot capture via WebRTC, one card per camera with inline image + relative timestamp. Three cameras across two locations: Kitchen (Cabin/Philly), Laundry (Crosstown — physically in the Garage room in Nest), Living Room (Crosstown). Camera discovery in the `nest` CLI matches against `customName` as a fallback to `parentRelations.displayName` so dashboard labels can diverge from Google Home room names. New devices require `nest reauth` (one-time OAuth re-consent) to become visible to SDM
-- **Litter-Robot** — chip card with status, waste level, cycle count, cat weights; clean/reset controls
+- **Litter-Robot** — one card per house with status, waste/litter levels, cycle count, and cat weights; exact-device clean and robot-reset controls
 - **Petlibro** — chip cards per device (fountain: water level, battery, filter alert; feeder: food level, next feed) with manual feed
 - **Dog Walk** — active/inactive status, last walk details (read-only)
 - **Samsung TV** — power state with on/off controls; shows friendly "TV is likely off" when unreachable
@@ -368,7 +368,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | August | — | Lock / Unlock |
 | Ring Doorbell | Crosstown/Cabin dropdown | Take Snapshot |
 | Nest Cameras | One card per camera (Kitchen @ Cabin; Laundry + Living Room @ Crosstown) | Take Snapshot per card |
-| Litter-Robot | — | Clean / Reset |
+| Litter-Robot | Crosstown/Cabin cards | Clean / Reset Robot per card |
 | Petlibro | — | Feed (portions) |
 | Samsung TV | — | Power On / Off |
 | Speakers | Speaker selector | Volume, Mute / Unmute |
@@ -390,7 +390,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | `roomba status <name>` | CLI | Cabin roombas (per-robot, Google Assistant) |
 | `samsung-tv status` | CLI | TV power state |
 | `speaker status` | CLI | Speaker volume/reachability (page load only; excluded from bg refresh to prevent Cast chimes) |
-| `litter-robot status` | CLI | LR4 status |
+| `litter-robot --json status` | CLI | Both enrolled LR4 units through protected site bindings |
 | `petlibro status` | CLI | Feeder + fountain |
 | `8sleep status` | CLI | Pod temp, both sides |
 | `ring status` | CLI | Doorbell battery, motion |
@@ -412,7 +412,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Roombas | 10 Max + J5 (MQTT via MBP) | Floomba + Philly (Google) |
 | Samsung TV | Frame 65 | — |
 | Google Speakers | Bedroom + Living Room | Kitchen + Bedroom |
-| Litter-Robot | LR4 | — |
+| Litter-Robot | LR4 | LR4 |
 | Petlibro | Feeder + Fountain | (seasonal, unplugged) |
 | Eight Sleep | Pod 3 (dashboard default) | Pod 5 (CLI/vacancy-managed) |
 | Ring Doorbell | Front Door (snap + status) | Front Door (snap + status) |

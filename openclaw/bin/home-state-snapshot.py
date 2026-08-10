@@ -18,8 +18,7 @@ HISTORY_DIR = Path.home() / ".openclaw/home-state"
 CURRENT_FILE = HISTORY_DIR / "current.json"
 
 # CLI paths
-LITTER_ROBOT_API = Path.home() / ".openclaw/skills/litter-robot/litter-robot-api.py"
-LITTER_ROBOT_VENV_PYTHON = Path.home() / ".openclaw/litter-robot/venv/bin/python3"
+LITTER_ROBOT_CLI = Path.home() / ".openclaw/bin/litter-robot"
 EIGHTSLEEP_API = Path.home() / ".openclaw/skills/8sleep/8sleep-api.py"
 RING_API = Path.home() / ".openclaw/skills/ring-doorbell/ring-api.py"
 RING_VENV_PYTHON = Path.home() / ".openclaw/ring/venv/bin/python3"
@@ -50,21 +49,21 @@ def run_json(args, timeout=30):
 
 def collect_cat_weights():
     """Get current cat weights from Litter-Robot."""
-    data = run_json([str(LITTER_ROBOT_VENV_PYTHON), str(LITTER_ROBOT_API), "pets"], timeout=30)
+    data = run_json([str(LITTER_ROBOT_CLI), "--json", "pets"], timeout=30)
     if not data:
         return None
 
     cats = []
-    for pet in data:
+    for pet in data.get("pets", []):
         entry = {
             "name": pet.get("name"),
-            "weight_lbs": pet.get("weight"),
+            "weight_lbs": pet.get("weight_lbs"),
             "gender": pet.get("gender"),
         }
         # Include latest weight timestamp if available
-        recent = pet.get("recentWeights", [])
+        recent = pet.get("recent_weights", [])
         if recent:
-            entry["last_weighed"] = recent[-1].get("date")
+            entry["last_weighed"] = recent[0].get("timestamp")
         cats.append(entry)
     return cats
 

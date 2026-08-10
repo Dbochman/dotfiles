@@ -81,6 +81,8 @@ REQUIRED_HELPERS = {
     "bin/cielo": "cielo wrapper\n",
     "bin/cielo-auth.py": "cielo auth helper\n",
     "bin/cielo-reauth": "cielo reauth helper\n",
+    "bin/litter-robot": "litter robot wrapper\n",
+    "bin/litter-robot-enroll": "litter robot enrollment helper\n",
     "bin/midea-ac": "midea ac wrapper\n",
     "bin/midea-ac-enroll": "midea enrollment helper\n",
     "bin/nest-history-append": "history appender\n",
@@ -106,6 +108,8 @@ STANDALONE_SKILL_WRAPPERS = {
     "airthings",
     "cielo",
     "cielo-reauth",
+    "litter-robot",
+    "litter-robot-enroll",
     "midea-ac",
     "opentable-book",
     "opentable-reservations",
@@ -899,6 +903,21 @@ class DeploymentContractTests(unittest.TestCase):
             (skill_dir / "scripts" / "airthings_history_import.py").is_file()
         )
         self.assertTrue((skill_dir / "scripts" / "airthings_snapshot.py").is_file())
+
+    def test_litter_robot_runtime_and_enrollment_are_locked_and_deployed(self) -> None:
+        install_text = INSTALLER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        skill_dir = REPO_ROOT / "openclaw" / "skills" / "litter-robot"
+        project_text = (skill_dir / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertTrue((skill_dir / "uv.lock").is_file())
+        self.assertIn("pylitterbot==2025.6.4", project_text)
+        self.assertIn("install_openclaw_litter_robot_runtime", install_text)
+        self.assertIn("LITTER_ROBOT_VENV_DIR", pull_text)
+        for wrapper in ("litter-robot", "litter-robot-enroll"):
+            self.assertIn(wrapper, install_text)
+            self.assertIn(wrapper, pull_text)
+            self.assertTrue((REPO_ROOT / "openclaw" / "bin" / wrapper).is_file())
 
     def test_airthings_sampler_is_private_five_minute_local_job(self) -> None:
         install_text = INSTALLER.read_text(encoding="utf-8")

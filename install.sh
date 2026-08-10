@@ -803,6 +803,8 @@ install_openclaw_guarded_helpers() {
     "bin/cielo|bin/cielo|755|Cielo guarded control wrapper"
     "bin/cielo-auth.py|bin/cielo-auth.py|755|Cielo atomic auth helper"
     "bin/cielo-reauth|bin/cielo-reauth|755|Cielo attended recovery helper"
+    "bin/litter-robot|bin/litter-robot|755|Litter-Robot guarded control wrapper"
+    "bin/litter-robot-enroll|bin/litter-robot-enroll|755|Litter-Robot attended enrollment helper"
     "bin/midea-ac|bin/midea-ac|755|Midea local AC wrapper"
     "bin/midea-ac-enroll|bin/midea-ac-enroll|755|Midea attended enrollment helper"
     "bin/nest-history-append|bin/nest-history-append|755|shared climate history appender"
@@ -847,6 +849,8 @@ publish_openclaw_standalone_skill_wrappers() {
     airthings
     cielo
     cielo-reauth
+    litter-robot
+    litter-robot-enroll
     midea-ac
     opentable-book
     opentable-reservations
@@ -900,6 +904,38 @@ install_openclaw_midea_runtime() {
   if ! UV_PROJECT_ENVIRONMENT="$venv_dir" \
       "$uv_bin" sync --frozen --no-dev --project "$skill_dir"; then
     log_error "Could not sync locked Midea runtime"
+    EXIT_CODE=1
+    return 1
+  fi
+}
+
+install_openclaw_litter_robot_runtime() {
+  local openclaw_home="${1%/}"
+  local skill_dir="$openclaw_home/skills/litter-robot"
+  local venv_dir="$openclaw_home/venvs/litter-robot"
+  local uv_bin="/opt/homebrew/bin/uv"
+  local python_bin="/opt/homebrew/bin/python3.14"
+
+  if [[ "$DRY_RUN" = true ]]; then
+    log "  [dry-run] Would sync locked Litter-Robot runtime: $venv_dir"
+    return 0
+  fi
+  if [[ ! -f "$skill_dir/pyproject.toml" || -L "$skill_dir/pyproject.toml" \
+      || ! -f "$skill_dir/uv.lock" || -L "$skill_dir/uv.lock" \
+      || ! -x "$uv_bin" || ! -x "$python_bin" ]]; then
+    log_error "Required locked Litter-Robot runtime inputs are unavailable"
+    EXIT_CODE=1
+    return 1
+  fi
+  if [[ -L "$openclaw_home/venvs" || -L "$venv_dir" ]]; then
+    log_error "Litter-Robot runtime path is unsafe"
+    EXIT_CODE=1
+    return 1
+  fi
+  mkdir -p "$openclaw_home/venvs"
+  if ! UV_PROJECT_ENVIRONMENT="$venv_dir" UV_PYTHON="$python_bin" \
+      "$uv_bin" sync --frozen --no-dev --project "$skill_dir"; then
+    log_error "Could not sync locked Litter-Robot runtime"
     EXIT_CODE=1
     return 1
   fi
@@ -1386,6 +1422,9 @@ install_dotfiles() {
           fi
         done
         if ! install_openclaw_midea_runtime "$HOME/.openclaw"; then
+          EXIT_CODE=1
+        fi
+        if ! install_openclaw_litter_robot_runtime "$HOME/.openclaw"; then
           EXIT_CODE=1
         fi
         if ! install_openclaw_airthings_runtime "$HOME/.openclaw"; then

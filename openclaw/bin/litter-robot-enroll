@@ -1,0 +1,5 @@
+#!/bin/bash
+# litter-robot-enroll — attended exact-site binding helper
+set -euo pipefail
+SKILL_DIR="$HOME/.openclaw/skills/litter-robot"
+exec "$SKILL_DIR/litter-robot-enroll" "$@"
