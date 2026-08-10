@@ -7,6 +7,27 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 API_SCRIPT="$SCRIPT_DIR/petlibro-api.py"
 PYTHON="/usr/bin/python3"
 
+JSON_OUTPUT=false
+if [[ "${1:-}" == "--json" ]]; then
+  JSON_OUTPUT=true
+  shift
+elif (( $# > 0 )) && [[ "${!#}" == "--json" ]]; then
+  JSON_OUTPUT=true
+  args=("$@")
+  unset "args[$(($# - 1))]"
+  set -- "${args[@]}"
+fi
+
+if [[ "$JSON_OUTPUT" == true ]]; then
+  # Preserve the public wrapper's explicit-portion safety contract even when
+  # a machine caller requests structured output.
+  if [[ "${1:-}" == "feed" ]] && { [[ $# -ne 3 ]] || [[ ! "$3" =~ ^[1-3]$ ]]; }; then
+    printf '%s\n' '{"success":false,"error":"invalid_arguments","message":"Usage: petlibro feed <crosstown-feeder|cabin-feeder> <1|2|3>"}'
+    exit 2
+  fi
+  exec "$PYTHON" "$API_SCRIPT" "$@"
+fi
+
 run_api() { "$PYTHON" "$API_SCRIPT" "$@" 2>&1; }
 
 parse_status() {

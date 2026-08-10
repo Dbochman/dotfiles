@@ -10,6 +10,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 | 8551 | [OpenClaw Usage](#openclaw-usage-dashboard) | http://dylans-mac-mini:8551 | 5 min (UI) · 15 min (snapshots) |
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
+| 8554 | [Cat Care](#cat-care-dashboard) | http://dylans-mac-mini:8554 | 60s cache · Whisker/Petlibro on demand |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily unified finance refresh at 06:15 + weekly scrapes · API on demand |
 | 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · crypto in 06:15 finance refresh · aggregate ledger capture at 07:35 |
@@ -192,6 +193,37 @@ Roomba status, snooze controls, and run history calendar heatmap for both locati
 | Snooze state | `~/.openclaw/dog-walk/snooze.json` |
 | Run history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
 | Logs | `~/.openclaw/logs/roomba-dashboard.{log,err.log}` |
+
+---
+
+## Cat Care Dashboard
+
+**Port 8554** · [Full spec](CAT-DASHBOARD.md)
+
+A cat-specific care view across both homes, combining Whisker Litter-Robots
+with Petlibro feeders and fountains.
+
+### What It Shows
+
+- **Cat profiles** — current Whisker weight and recent direction
+- **Whisker cards** — one exact enrolled robot per home, including online
+  state, waste, litter, cycle count, and a guarded clean action
+- **Petlibro cards** — live feeder and fountain telemetry plus guarded 1–3
+  portion manual feeding when an enrolled device is reporting
+- **Recent activity** — newest Litter-Robot events across both homes or scoped
+  to Crosstown or Cabin
+- **Attention state** — integration errors, offline robots, and waste drawers
+  that are full or approaching full
+
+### Files
+
+| File | Path |
+|------|------|
+| Server | `openclaw/bin/cat-dashboard.py` → `~/.openclaw/bin/cat-dashboard.py` |
+| LaunchAgent | `openclaw/launchagents/ai.openclaw.cat-dashboard.plist` |
+| Whisker skill | `openclaw/skills/litter-robot/` |
+| Petlibro skill | `openclaw/skills/petlibro/` |
+| Logs | `~/.openclaw/logs/cat-dashboard.{log,err.log}` |
 
 ---
 

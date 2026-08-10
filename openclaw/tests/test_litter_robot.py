@@ -186,6 +186,16 @@ class LitterRobotTests(unittest.TestCase):
         self.assertNotIn("CABIN-SERIAL", json.dumps(payload))
         self.assertEqual(payload["robots"][0]["waste_level_pct"], 24)
 
+    def test_overview_combines_profiles_robot_state_and_recent_activity(self) -> None:
+        payload = asyncio.run(litter_robot_api.command_overview(14))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual([robot["site"] for robot in payload["robots"]], ["crosstown", "cabin"])
+        self.assertTrue(all(robot["recent_activity"] == [] for robot in payload["robots"]))
+        self.assertEqual(payload["pets"][0]["name"], "Test Cat")
+        self.assertIn("recent_weights", payload["pets"][0])
+        self.assertNotIn("CROSS-SERIAL", json.dumps(payload))
+
     def test_mutations_require_exact_alias_and_do_not_choose_first_robot(self) -> None:
         payload = asyncio.run(
             litter_robot_api.command_mutation("clean", "crosstown-litter-robot")

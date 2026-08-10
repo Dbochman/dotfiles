@@ -81,6 +81,7 @@ REQUIRED_HELPERS = {
     "bin/cielo": "cielo wrapper\n",
     "bin/cielo-auth.py": "cielo auth helper\n",
     "bin/cielo-reauth": "cielo reauth helper\n",
+    "bin/cat-dashboard.py": "cat dashboard server\n",
     "bin/litter-robot": "litter robot wrapper\n",
     "bin/litter-robot-enroll": "litter robot enrollment helper\n",
     "bin/midea-ac": "midea ac wrapper\n",

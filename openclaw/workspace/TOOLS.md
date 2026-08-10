@@ -162,6 +162,7 @@ restaurant-book run --job-id <canonical-job-id>
 - Google Nest cameras
 - Google smart speakers
 - Petlibro feeder + fountain (unplugged, seasonal)
+- Litter-Robot 4 (exact protected Cabin binding via pylitterbot)
 - Two Midea Wi-Fi air conditioners (local LAN V3): `cabin-air-conditioner` and `cabin-lil-air-conditioner`
 - Airthings Wave Enhance air-quality monitor (local BLE): `cabin-living-room-airthings`
 
@@ -173,7 +174,7 @@ restaurant-book run --job-id <canonical-job-id>
 - Eight Sleep Pod 3 (cloud API, both sides: Dylan left, Julia right)
 - Petlibro Granary Smart Feeder + Dockstream 2 Cordless Fountain (cloud API)
 - Google smart speakers
-- Two Litter-Robot 4 units (Crosstown + Cabin; exact protected bindings via pylitterbot, tracks Sopaipilla + Burrito weights)
+- Litter-Robot 4 (exact protected Crosstown binding via pylitterbot; Whisker also tracks Sopaipilla + Burrito weights)
 - August Wi-Fi Smart Lock (5th gen, front door — cloud API via august-api on MBP)
 
 ### Vacancy Automation
@@ -513,6 +514,7 @@ Repo `~/repos/Financial Advisor/` on Mini; interactive forecast dashboard on por
 | Nest Climate | 8550 | Thermostat + AC + Airthings air quality + weather + presence |
 | Usage | 8551 | Token consumption + agent activity |
 | Dog Walk | 8552 | Walk history, Fi GPS, Roomba status, route maps |
+| Cat Care | 8554 | Cat weights, litter activity, Whisker robots, and Petlibro food/water |
 | Financial | 8585 | Canonical finance, utilities, mortgage, source reconciliation, and forecast baseline |
 | Forecast | 8586 | Interactive projections seeded from the reconciled current-day baseline |
 

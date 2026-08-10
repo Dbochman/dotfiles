@@ -613,6 +613,7 @@ NEST_EVENT_RUNTIME_CHANGED=0
 NEST_ACTIVITY_RUNTIME_CHANGED=0
 CABIN_ENTRY_RUNTIME_CHANGED=0
 OLA_BRIDGE_RUNTIME_CHANGED=0
+CAT_DASHBOARD_RUNTIME_CHANGED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
@@ -655,6 +656,11 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
     ola-webhook-bridge.py|ola-webhook-bridge-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         OLA_BRIDGE_RUNTIME_CHANGED=1
+      fi
+      ;;
+    cat-dashboard.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        CAT_DASHBOARD_RUNTIME_CHANGED=1
       fi
       ;;
     home_event_bus.py)
@@ -711,6 +717,36 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   SCRIPTS_DEPLOYED=$((SCRIPTS_DEPLOYED + 1))
 done
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) scripts: deployed $SCRIPTS_DEPLOYED to $BIN_DST" >> "$LOG"
+
+# The Cat Care dashboard is a gateway-only, repo-managed local service. Keep
+# its plist and executable synchronized, and reload only when either changed.
+if [ "$IS_GATEWAY_HOST" -eq 1 ]; then
+  CAT_DASHBOARD_LABEL="ai.openclaw.cat-dashboard"
+  CAT_DASHBOARD_SRC="$REPO/openclaw/launchagents/$CAT_DASHBOARD_LABEL.plist"
+  CAT_DASHBOARD_DST="$HOME/Library/LaunchAgents/$CAT_DASHBOARD_LABEL.plist"
+  if [ ! -f "$CAT_DASHBOARD_SRC" ] || [ -L "$CAT_DASHBOARD_SRC" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cat-dashboard: FATAL tracked LaunchAgent is unavailable or unsafe" >> "$LOG"
+    exit 1
+  fi
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.openclaw/logs"
+  CAT_DASHBOARD_AGENT_CHANGED=0
+  if [ ! -f "$CAT_DASHBOARD_DST" ] || [ -L "$CAT_DASHBOARD_DST" ] \
+    || ! cmp -s "$CAT_DASHBOARD_SRC" "$CAT_DASHBOARD_DST"; then
+    atomic_install_managed_file "$CAT_DASHBOARD_SRC" "$CAT_DASHBOARD_DST" 644
+    CAT_DASHBOARD_AGENT_CHANGED=1
+  fi
+  CAT_DASHBOARD_DOMAIN="gui/$(id -u)"
+  if launchctl print "$CAT_DASHBOARD_DOMAIN/$CAT_DASHBOARD_LABEL" >/dev/null 2>&1; then
+    if [ "$CAT_DASHBOARD_AGENT_CHANGED" -eq 1 ] || [ "$CAT_DASHBOARD_RUNTIME_CHANGED" -eq 1 ]; then
+      launchctl bootout "$CAT_DASHBOARD_DOMAIN/$CAT_DASHBOARD_LABEL" >/dev/null 2>&1 || true
+      launchctl bootstrap "$CAT_DASHBOARD_DOMAIN" "$CAT_DASHBOARD_DST"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cat-dashboard: reloaded local service" >> "$LOG"
+    fi
+  else
+    launchctl bootstrap "$CAT_DASHBOARD_DOMAIN" "$CAT_DASHBOARD_DST"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cat-dashboard: bootstrapped local service" >> "$LOG"
+  fi
+fi
 
 # Deploy the standing-authorized restaurant scopes as a protected regular
 # file. The coordinator rejects symlinks, loose permissions, and unknown job

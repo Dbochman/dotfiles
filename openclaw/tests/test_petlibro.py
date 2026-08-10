@@ -472,6 +472,23 @@ class PetlibroTests(unittest.TestCase):
                 self.assertEqual(result.returncode, expected_code)
                 self.assertNotIn("Raw API POST", result.stdout + result.stderr)
 
+    def test_json_wrapper_preserves_explicit_feed_contract(self) -> None:
+        env = {"HOME": str(self.root / "wrapper-home"), "PATH": os.environ["PATH"]}
+        for args in (
+            ["--json", "feed", "crosstown-feeder"],
+            ["feed", "crosstown-feeder", "4", "--json"],
+        ):
+            with self.subTest(args=args):
+                result = subprocess.run(
+                    ["bash", str(CLI_PATH), *args],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(json.loads(result.stdout)["error"], "invalid_arguments")
+
     def test_home_dashboard_builds_exact_crosstown_feed_command(self) -> None:
         dashboard = load_home_dashboard(self.root / "dashboard-home")
         builder = dashboard.COMMANDS["petlibro"]["feed"]

@@ -388,27 +388,64 @@ async def command_history(selector: str, limit: int) -> dict[str, Any]:
     account = await connect_account()
     try:
         robot = _resolve_robot(account, binding)
-        try:
-            history = await robot.get_activity_history(limit=limit)
-        except Exception as exc:
-            raise LitterRobotError(
-                "history_failed", f"Could not retrieve history for {binding['alias']}."
-            ) from exc
-        entries = []
-        for item in history:
-            timestamp = getattr(item, "timestamp", None)
-            action = getattr(item, "action", None)
-            entries.append(
-                {
-                    "timestamp": timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp),
-                    "action": getattr(action, "text", None) or _enum_value(action),
-                }
-            )
+        entries = await _activity_entries(robot, limit)
         return {
             "ok": True,
             "alias": binding["alias"],
             "site": binding["site"],
             "history": entries,
+        }
+    finally:
+        await account.disconnect()
+
+
+async def _activity_entries(robot: object, limit: int) -> list[dict[str, Any]]:
+    try:
+        history = await robot.get_activity_history(limit=limit)
+    except Exception as exc:
+        raise LitterRobotError("history_failed", "Could not retrieve Litter-Robot history.") from exc
+    entries = []
+    for item in history:
+        timestamp = getattr(item, "timestamp", None)
+        action = getattr(item, "action", None)
+        entries.append(
+            {
+                "timestamp": timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp),
+                "action": getattr(action, "text", None) or _enum_value(action),
+            }
+        )
+    return entries
+
+
+async def command_overview(limit: int = 12) -> dict[str, Any]:
+    """Return cat profiles, both robot states, and recent visits in one session."""
+    if limit < 1 or limit > 50:
+        raise LitterRobotError(
+            "invalid_limit", "Overview history limit must be between 1 and 50.", non_retryable=True
+        )
+    bindings = load_bindings()
+    account = await connect_account(load_pets=True)
+    try:
+        by_serial = {
+            getattr(robot, "serial", None): robot for robot in litter_robots(account)
+        }
+        summaries = []
+        for binding in bindings:
+            robot = by_serial.get(binding["serial"])
+            summary = _robot_summary(binding, robot)
+            if robot is not None:
+                try:
+                    summary["recent_activity"] = await _activity_entries(robot, limit)
+                except LitterRobotError:
+                    summary["recent_activity"] = []
+                    summary["history_error"] = "history_unavailable"
+            else:
+                summary["recent_activity"] = []
+            summaries.append(summary)
+        return {
+            "ok": all(not item.get("error") for item in summaries),
+            "robots": summaries,
+            "pets": await _pet_summaries(account, history=True),
         }
     finally:
         await account.disconnect()
@@ -569,6 +606,8 @@ async def dispatch(argv: list[str]) -> dict[str, Any]:
         return await command_status(args[0] if args else None)
     if command == "pets" and not args:
         return await command_pets()
+    if command == "overview" and len(args) <= 1:
+        return await command_overview(_parse_limit(args[0]) if args else 12)
     if command == "history" and 1 <= len(args) <= 2:
         return await command_history(args[0], _parse_limit(args[1]) if len(args) == 2 else 10)
     if command in {"clean", "reset"} and len(args) == 1:

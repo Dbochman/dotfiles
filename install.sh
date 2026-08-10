@@ -803,6 +803,7 @@ install_openclaw_guarded_helpers() {
     "bin/cielo|bin/cielo|755|Cielo guarded control wrapper"
     "bin/cielo-auth.py|bin/cielo-auth.py|755|Cielo atomic auth helper"
     "bin/cielo-reauth|bin/cielo-reauth|755|Cielo attended recovery helper"
+    "bin/cat-dashboard.py|bin/cat-dashboard.py|755|Cat Care dashboard server"
     "bin/litter-robot|bin/litter-robot|755|Litter-Robot guarded control wrapper"
     "bin/litter-robot-enroll|bin/litter-robot-enroll|755|Litter-Robot attended enrollment helper"
     "bin/midea-ac|bin/midea-ac|755|Midea local AC wrapper"
@@ -1373,6 +1374,10 @@ install_dotfiles() {
         "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.imsg-bridge-ensure.plist" \
         "$HOME/Library/LaunchAgents/ai.openclaw.imsg-bridge-ensure.plist" \
         "ai.openclaw.imsg-bridge-ensure"
+      install_managed_launchagent \
+        "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.cat-dashboard.plist" \
+        "$HOME/Library/LaunchAgents/ai.openclaw.cat-dashboard.plist" \
+        "ai.openclaw.cat-dashboard"
 
       # BlueBubbles and its watchdogs are intentionally retired. Current
       # OpenClaw owns Messages through the native imsg bridge; launching both

@@ -21,6 +21,7 @@ account order, fuzzy name, or a serial supplied in chat.
 ```bash
 litter-robot status
 litter-robot status cabin-litter-robot
+litter-robot --json overview
 litter-robot pets
 litter-robot history crosstown-litter-robot
 litter-robot history cabin-litter-robot 25
@@ -28,6 +29,7 @@ litter-robot history cabin-litter-robot 25
 
 Use `--json` before the command when structured output is needed. `status`
 returns both enrolled robots by default and never emits protected identifiers.
+`overview` adds recent per-robot activity and recent cat weights for dashboards.
 
 ## Control commands
 

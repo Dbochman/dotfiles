@@ -25,6 +25,7 @@ def usage() -> str:
 
 Commands:
   status [alias]                 Status for all robots or one exact alias
+  overview [N]                   Cat profiles plus both robots and recent visits
   pets                           Cat profiles and recent weights
   history <alias> [N]            Activity history (default: 10)
   clean <alias>                  Start one cleaning cycle
@@ -135,7 +136,7 @@ def main(argv: list[str]) -> int:
         print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
     elif not payload.get("ok"):
         print(f"Error: {payload.get('message', payload.get('error', 'command failed'))}", file=sys.stderr)
-    elif argv[0] == "status":
+    elif argv[0] in {"status", "overview"}:
         print(_status(payload))
     elif argv[0] == "pets":
         print(_pets(payload))

@@ -29,6 +29,7 @@ the first feeder or fountain returned by the API.
 
 ```bash
 petlibro status
+petlibro --json status
 petlibro devices
 petlibro water crosstown-fountain
 petlibro schedule crosstown-feeder
