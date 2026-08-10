@@ -34,7 +34,7 @@ Each service uses one of two patterns:
 | `cielo-passive-grab.log` / `cielo-reauth-capture.log` | Cielo bounded recovery helpers | Token-free CDP capture progress for automated and attended recovery; files remain owner-only |
 | `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh; stdout and stderr share this file |
 | `~/Library/Logs/openclaw/gateway.log` | `ai.openclaw.gateway` | Current generated-service gateway output; the tracked recovery plist instead uses `~/.openclaw/logs/gateway.{log,err.log}` |
-| `nest-cron.log` | `ai.openclaw.nest-snapshot` | Nest thermostat snapshot cron |
+| `nest-cron.log` | `ai.openclaw.nest-snapshot` | Merged climate and Airthings air-quality snapshot cron; BLE failures use safe categories only |
 | `nest-dashboard.log` / `.err.log` | `ai.openclaw.nest-dashboard` | Nest dashboard HTTP server |
 | `usage-dashboard.log` / `.err.log` | `ai.openclaw.usage-dashboard` | Usage dashboard HTTP server |
 | `usage-snapshot.log` / `.err.log` | `ai.openclaw.usage-snapshot` | Usage metrics snapshot |

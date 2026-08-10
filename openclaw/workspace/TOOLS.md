@@ -163,6 +163,7 @@ restaurant-book run --job-id <canonical-job-id>
 - Google smart speakers
 - Petlibro feeder + fountain (unplugged, seasonal)
 - Two Midea Wi-Fi air conditioners (local LAN V3): `cabin-air-conditioner` and `cabin-lil-air-conditioner`
+- Airthings Wave Enhance air-quality monitor (local BLE): `cabin-living-room-airthings`
 
 ### Crosstown (West Roxbury)
 - Philips Hue lights
@@ -199,6 +200,31 @@ midea-ac fan cabin-air-conditioner medium --json
 - Continuous temperature or energy samples do not belong on the home-event
   bus. Consider only debounced availability and nonzero error transitions
   after a clean status soak.
+
+## Airthings Monitor
+
+CLI at `/opt/homebrew/bin/airthings`. The exact Cabin Living Room Wave Enhance
+uses local BLE only; no Airthings account or cloud credential is retained.
+
+```bash
+airthings status --json
+airthings devices --json
+```
+
+- The protected binding is `~/.openclaw/airthings/config.json` (mode `0600`).
+- The locked runtime is `~/.openclaw/venvs/airthings-monitor`; macOS must list
+  and enable the Homebrew `Python.app` under Privacy & Security → Bluetooth.
+  The wrapper uses that app identity for fresh unattended reads; Terminal's
+  separate Bluetooth grant does not cover the scheduled snapshot.
+- Status includes CO2, VOC, temperature, humidity, pressure, ambient noise,
+  light, battery, and a five-minute cache age when applicable.
+- The readings are environmental context only. They do not prove occupancy,
+  publish to the home-event bus, or authorize HVAC/lighting actions.
+- Enrollment is operator-only and requires `AIRTHINGS_ALLOW_ENROLL=1`;
+  ordinary OpenClaw skill use is read-only.
+- Historical CSV import is also operator-only. Do not invoke
+  `airthings-history-import`; it is intentionally outside this skill's allowed
+  tools and requires an attended environment gate plus `--apply`.
 
 ## Eight Sleep Pod
 
@@ -478,7 +504,7 @@ Repo `~/repos/Financial Advisor/` on Mini; interactive forecast dashboard on por
 
 | Dashboard | Port | Data |
 |---|---|---|
-| Nest Climate | 8550 | Thermostat + weather + presence |
+| Nest Climate | 8550 | Thermostat + AC + Airthings air quality + weather + presence |
 | Usage | 8551 | Token consumption + agent activity |
 | Dog Walk | 8552 | Walk history, Fi GPS, Roomba status, route maps |
 | Financial | 8585 | Canonical finance, utilities, mortgage, source reconciliation, and forecast baseline |

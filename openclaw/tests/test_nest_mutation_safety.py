@@ -314,7 +314,7 @@ class NestMutationSafetyTests(unittest.TestCase):
         self.assertIn("latitude=40.1234", request["url"])
         self.assertIn("longitude=-70.5678", request["url"])
 
-    def test_snapshot_keeps_cielo_mysa_and_midea_sources(self) -> None:
+    def test_snapshot_keeps_cielo_mysa_midea_and_airthings_sources(self) -> None:
         self._write_executable(
             self.fake_bin / "cielo",
             """#!/bin/sh
@@ -331,6 +331,12 @@ printf '%s\n' '{"devices":[{"name":"Cat Room","temp_f":71.5,"humidity":42,"setpo
             self.fake_bin / "midea-ac",
             """#!/bin/sh
 printf '%s\n' '{"ok":true,"devices":[{"alias":"cabin-air-conditioner","site":"cabin","online":true,"power":true,"mode":"cool","target_temperature_f":74.3,"indoor_temperature_f":73.4,"humidity_percent":null,"fan":50,"eco":true,"error_code":0,"energy":{"realtime_power_w":53.4}},{"alias":"cabin-lil-air-conditioner","site":"cabin","online":false,"error":"not_discovered"}]}'
+""",
+        )
+        self._write_executable(
+            self.fake_bin / "airthings",
+            """#!/bin/sh
+printf '%s\n' '{"ok":true,"devices":[{"alias":"cabin-living-room-airthings","site":"cabin","room":"Living Room","model":"Wave Enhance","online":true,"cached":false,"temperature_c":21.27,"temperature_f":70.3,"humidity_percent":33.8,"co2_ppm":732,"voc_ppb":277,"pressure_hpa":975.0,"noise_dba":39,"light_lux":1,"battery_percent":81,"air_quality":{"overall":"fair","co2":"good","voc":"fair","humidity":"good"}}]}'
 """,
         )
 
@@ -356,6 +362,18 @@ printf '%s\n' '{"ok":true,"devices":[{"alias":"cabin-air-conditioner","site":"ca
         self.assertEqual(rooms["Lil Air Conditioner"]["source"], "midea")
         self.assertEqual(rooms["Lil Air Conditioner"]["connectivity"], "OFFLINE")
         self.assertIsNone(rooms["Lil Air Conditioner"]["temp_f"])
+        airthings_room = next(
+            room
+            for room in snapshot["rooms"]
+            if room["room"] == "Living Room" and room["source"] == "airthings"
+        )
+        self.assertEqual(airthings_room["temp_f"], 70.3)
+        self.assertEqual(airthings_room["co2_ppm"], 732)
+        self.assertEqual(airthings_room["voc_ppb"], 277)
+        self.assertEqual(airthings_room["battery_percent"], 81)
+        self.assertEqual(airthings_room["air_quality"]["overall"], "fair")
+        self.assertIsNone(airthings_room["setpoint_f"])
+        self.assertIsNone(airthings_room["hvac"])
 
     def test_secure_location_file_overrides_protected_cache(self) -> None:
         self._write_assignments(

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Airthings Monitor"
+  short_description: "Read local Airthings air quality data"
+  default_prompt: "Use $airthings-monitor to check the Cabin Living Room air quality."

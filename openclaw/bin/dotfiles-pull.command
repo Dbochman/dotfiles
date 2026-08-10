@@ -412,6 +412,29 @@ if ! UV_PROJECT_ENVIRONMENT="$MIDEA_VENV_DIR" \
 fi
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) midea-ac: locked runtime ready" >> "$LOG"
 
+AIRTHINGS_SKILL_DIR="$SKILLS_DST/airthings-monitor"
+AIRTHINGS_VENV_DIR="$HOME/.openclaw/venvs/airthings-monitor"
+if [ ! -f "$AIRTHINGS_SKILL_DIR/pyproject.toml" ] \
+  || [ -L "$AIRTHINGS_SKILL_DIR/pyproject.toml" ] \
+  || [ ! -f "$AIRTHINGS_SKILL_DIR/uv.lock" ] \
+  || [ -L "$AIRTHINGS_SKILL_DIR/uv.lock" ] \
+  || [ ! -x /opt/homebrew/bin/uv ] \
+  || [ ! -x /opt/homebrew/bin/python3.14 ] \
+  || [ -L "$HOME/.openclaw/venvs" ] \
+  || [ -L "$AIRTHINGS_VENV_DIR" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings: FATAL locked runtime inputs are unavailable or unsafe" >> "$LOG"
+  exit 1
+fi
+mkdir -p "$HOME/.openclaw/venvs"
+if ! UV_PROJECT_ENVIRONMENT="$AIRTHINGS_VENV_DIR" \
+  UV_PYTHON=/opt/homebrew/bin/python3.14 \
+  /opt/homebrew/bin/uv sync --frozen --no-dev --project "$AIRTHINGS_SKILL_DIR" \
+  >> "$LOG" 2>&1; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings: FATAL locked runtime sync failed" >> "$LOG"
+  exit 1
+fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings: locked runtime ready" >> "$LOG"
+
 # Deploy CLI wrappers and scripts to ~/.openclaw/bin/
 BIN_SRC="$REPO/openclaw/bin"
 BIN_DST="$HOME/.openclaw/bin"
@@ -529,6 +552,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BI
 # binaries appear unavailable, so publish managed skill wrappers in Homebrew's
 # PATH too.
 STANDALONE_SKILL_WRAPPERS=(
+  airthings
   cielo
   cielo-reauth
   midea-ac

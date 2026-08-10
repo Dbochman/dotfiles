@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+RUNTIME="${AIRTHINGS_RUNTIME:-$OPENCLAW_HOME/venvs/airthings-monitor/bin/python}"
+SCRIPT="${AIRTHINGS_SCRIPT:-$OPENCLAW_HOME/skills/airthings-monitor/scripts/airthings.py}"
+PYTHON_APP="${AIRTHINGS_PYTHON_APP:-/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Resources/Python.app}"
+OPEN_BIN="${AIRTHINGS_OPEN_BIN:-/usr/bin/open}"
+
+if [[ ! -x "$RUNTIME" ]]; then
+  echo '{"error":"runtime_unavailable","ok":false}' >&2
+  exit 12
+fi
+if [[ ! -f "$SCRIPT" || -L "$SCRIPT" ]]; then
+  echo '{"error":"script_unavailable","ok":false}' >&2
+  exit 12
+fi
+
+refresh_via_authorized_app() {
+  local site_packages
+  local -a refresh_args=(status)
+  local arg
+
+  [[ -d "$PYTHON_APP" && -x "$OPEN_BIN" ]] || return 12
+  site_packages=$("$RUNTIME" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') || return 12
+  [[ -d "$site_packages" ]] || return 12
+
+  for arg in "${@:2}"; do
+    case "$arg" in
+      --refresh|--cache-only|--json) ;;
+      *) refresh_args+=("$arg") ;;
+    esac
+  done
+  refresh_args+=(--refresh --json)
+
+  PYTHONPATH="$site_packages${PYTHONPATH:+:$PYTHONPATH}" \
+    "$OPEN_BIN" -g -W -n "$PYTHON_APP" --args \
+      "$SCRIPT" "${refresh_args[@]}" >/dev/null 2>&1
+}
+
+# A GUI-launched Python.app has its own macOS Bluetooth privacy grant. Shells,
+# LaunchAgents, and the OpenClaw gateway do not inherit Terminal's grant, so a
+# stale or explicitly refreshed status read is delegated through LaunchServices.
+# The app updates the protected cache; this wrapper then renders that cache in
+# the caller's requested human or JSON format.
+if [[ "${1:-}" == "status" ]]; then
+  refresh_requested=false
+  probe_args=(status)
+  render_args=()
+  for arg in "$@"; do
+    case "$arg" in
+      --refresh) refresh_requested=true ;;
+      --cache-only|--json) ;;
+      *) probe_args+=("$arg") ;;
+    esac
+    case "$arg" in
+      --refresh|--cache-only) ;;
+      *) render_args+=("$arg") ;;
+    esac
+  done
+  # The command name was already seeded above.
+  probe_args=("${probe_args[@]:1}" --cache-only --json)
+  render_args+=(--cache-only)
+
+  if [[ "$refresh_requested" == false ]]; then
+    probe=$("$RUNTIME" "$SCRIPT" "${probe_args[@]}" 2>/dev/null || true)
+    if [[ "$probe" == *'"online":true'* ]]; then
+      exec "$RUNTIME" "$SCRIPT" "${render_args[@]}"
+    fi
+  fi
+
+  refresh_via_authorized_app "$@" || true
+  exec "$RUNTIME" "$SCRIPT" "${render_args[@]}"
+fi
+
+exec "$RUNTIME" "$SCRIPT" "$@"

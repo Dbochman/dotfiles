@@ -474,6 +474,18 @@ _get_midea_status() {
   if [[ -z "$out" ]]; then echo '{"devices":[]}'; else echo "$out"; fi
 }
 
+_get_airthings_status() {
+  # Returns the exactly enrolled local Airthings sensor; {"devices": []} on failure.
+  local airthings_bin out
+  airthings_bin=$(command -v airthings || true)
+  if [[ -z "$airthings_bin" ]]; then
+    echo '{"devices":[]}'
+    return
+  fi
+  out=$("$airthings_bin" status --json 2>/dev/null) || true
+  if [[ -z "$out" ]]; then echo '{"devices":[]}'; else echo "$out"; fi
+}
+
 _c_to_f() {
   python3 -c 'import sys; print(round(float(sys.argv[1]) * 9/5 + 32, 1))' "$1"
 }
@@ -801,16 +813,18 @@ cmd_snapshot() {
   fi
 
   weather=$(_get_all_weather)
-  local cielo mysa midea
+  local cielo mysa midea airthings
   cielo=$(_get_cielo_status)
   mysa=$(_get_mysa_status)
   midea=$(_get_midea_status)
+  airthings=$(_get_airthings_status)
   ts=$(date -u +%FT%TZ)
   today=$(date +%Y-%m-%d)
 
   _build_structure_map
   WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" \
-    CIELO_JSON="$cielo" MYSA_JSON="$mysa" MIDEA_JSON="$midea" python3 -c "
+    CIELO_JSON="$cielo" MYSA_JSON="$mysa" MIDEA_JSON="$midea" \
+    AIRTHINGS_JSON="$airthings" python3 -c "
 import json, math, sys, os
 data = json.load(sys.stdin)
 ts = os.environ['SNAP_TS']
@@ -975,6 +989,44 @@ for md in midea_data.get('devices', []):
         'error_code': md.get('error_code') if online else None,
         'error': md.get('error') if not online else None,
         'source': 'midea',
+    })
+# Inject the exactly enrolled local Airthings air-quality monitor.
+try:
+    airthings_data = json.loads(os.environ.get('AIRTHINGS_JSON', '{\"devices\":[]}'))
+except (TypeError, ValueError, json.JSONDecodeError):
+    airthings_data = {'devices': []}
+if not isinstance(airthings_data, dict):
+    airthings_data = {'devices': []}
+for ad in airthings_data.get('devices', []):
+    if not isinstance(ad, dict):
+        continue
+    site = str(ad.get('site') or 'cabin').lower()
+    room_name = str(ad.get('room') or 'Living Room')
+    room = ('19Crosstown ' if site == 'crosstown' else '') + room_name
+    online = ad.get('online') is True
+    temp_f = finite_number(ad.get('temperature_f')) if online else None
+    temp_c = finite_number(ad.get('temperature_c'), 2) if online else None
+    snapshot['rooms'].append({
+        'room': room,
+        'temp_f': temp_f,
+        'temp_c': temp_c,
+        'humidity': finite_number(ad.get('humidity_percent')) if online else None,
+        'mode': 'sensor',
+        'hvac': None,
+        'eco': 'OFF',
+        'setpoint_f': None,
+        'setpoint_c': None,
+        'connectivity': 'ONLINE' if online else 'OFFLINE',
+        'co2_ppm': finite_number(ad.get('co2_ppm'), 0) if online else None,
+        'voc_ppb': finite_number(ad.get('voc_ppb'), 0) if online else None,
+        'pressure_hpa': finite_number(ad.get('pressure_hpa')) if online else None,
+        'noise_dba': finite_number(ad.get('noise_dba')) if online else None,
+        'light_lux': finite_number(ad.get('light_lux')) if online else None,
+        'battery_percent': finite_number(ad.get('battery_percent'), 0) if online else None,
+        'air_quality': ad.get('air_quality') if online and isinstance(ad.get('air_quality'), dict) else None,
+        'cached': bool(ad.get('cached')) if online else False,
+        'error': ad.get('error') if not online else None,
+        'source': 'airthings',
     })
 print(json.dumps(snapshot))
 " <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"

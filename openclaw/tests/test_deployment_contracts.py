@@ -68,6 +68,8 @@ CABIN_ENTRY_VERIFIER_PLIST = (
 )
 
 REQUIRED_HELPERS = {
+    "bin/airthings": "airthings wrapper\n",
+    "bin/airthings-history-import": "airthings history importer\n",
     "bin/august": "august wrapper\n",
     "bin/cielo": "cielo wrapper\n",
     "bin/cielo-auth.py": "cielo auth helper\n",
@@ -93,6 +95,7 @@ REQUIRED_HELPERS = {
     "workspace/scripts/grab-cielo-tokens.py": "cielo capture helper\n",
 }
 STANDALONE_SKILL_WRAPPERS = {
+    "airthings",
     "cielo",
     "cielo-reauth",
     "midea-ac",
@@ -864,9 +867,27 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("_get_cielo_status", nest_text)
         self.assertIn("_get_mysa_status", nest_text)
         self.assertIn("_get_midea_status", nest_text)
+        self.assertIn("_get_airthings_status", nest_text)
         self.assertIn("'source': 'cielo'", nest_text)
         self.assertIn("'source': 'mysa'", nest_text)
         self.assertIn("'source': 'midea'", nest_text)
+        self.assertIn("'source': 'airthings'", nest_text)
+
+    def test_airthings_runtime_is_locked_and_deployed(self) -> None:
+        install_text = INSTALLER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        skill_dir = REPO_ROOT / "openclaw" / "skills" / "airthings-monitor"
+
+        self.assertTrue((skill_dir / "pyproject.toml").is_file())
+        self.assertTrue((skill_dir / "uv.lock").is_file())
+        self.assertIn("install_openclaw_airthings_runtime", install_text)
+        self.assertIn("UV_PYTHON=\"$python_bin\"", install_text)
+        self.assertIn("AIRTHINGS_VENV_DIR", pull_text)
+        self.assertIn("UV_PYTHON=/opt/homebrew/bin/python3.14", pull_text)
+        self.assertIn("airthings-history-import", install_text)
+        self.assertTrue(
+            (skill_dir / "scripts" / "airthings_history_import.py").is_file()
+        )
 
     def test_nest_event_listener_deployment_is_private_and_explicit(self) -> None:
         wrapper_text = NEST_EVENT_LISTENER_WRAPPER.read_text(encoding="utf-8")

@@ -20,7 +20,8 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 
 **Port 8550** · [Full spec](NEST-CLIMATE-DASHBOARD.md)
 
-Monitors thermostats and weather across two locations via four heating/cooling systems.
+Monitors thermostats, air conditioners, indoor air quality, and weather across
+two locations via four heating/cooling systems and one local Wave Enhance.
 
 ### What It Shows
 
@@ -28,8 +29,10 @@ Monitors thermostats and weather across two locations via four heating/cooling s
 - **Temperature cards** — current temp, setpoint, HVAC mode, humidity per room
 - **Temperature chart** — line graph with room temps + setpoints + outdoor weather
 - **Humidity chart** — per-room humidity over time
+- **CO2 and VOC charts** — Cabin Living Room Wave Enhance trends in ppm and ppb
 - **HVAC Duty Cycle** — hourly Active % bar chart using real Mysa duty,
-  Midea fan percentage while active, and binary activity for Nest/Cielo
+  Midea fan percentage while active, and binary activity for Nest/Cielo;
+  Airthings is excluded
 
 ### Data Sources
 
@@ -39,6 +42,7 @@ Monitors thermostats and weather across two locations via four heating/cooling s
 | Cielo CLI | 30 min | Minisplit AC status (Crosstown) |
 | Mysa API | 30 min | Baseboard heater temps + duty cycle (Crosstown) |
 | Midea local LAN | 30 min | Portable/window AC status, setpoints, and energy telemetry (Cabin) |
+| Airthings local BLE + attended CSV history | 30 min live; 5 min cache | Wave Enhance CO2, VOC, temperature, humidity, pressure, noise, light, and battery (Cabin); idempotent UTC CSV backfills share the same room series |
 | Open-Meteo | 30 min | Outdoor weather (no API key needed) |
 | Presence scanner | Continuous | WiFi-based occupancy per location |
 
@@ -50,6 +54,7 @@ Monitors thermostats and weather across two locations via four heating/cooling s
 | Crosstown (19Crosstown) | Cielo minisplit | Living Room, Basement, Dylan's Office, Bedroom |
 | Crosstown (19Crosstown) | Mysa baseboard | Cat Room, Basement door, Movie room |
 | Cabin (Philly) | Midea AC | Air Conditioner, Lil Air Conditioner |
+| Cabin (Philly) | Airthings Wave Enhance | Living Room |
 
 ### Files
 

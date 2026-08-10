@@ -347,7 +347,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects local Codex CLI daily usage into an atomic mode-`0600` dashboard source |
-| `ai.openclaw.nest-snapshot` | 30min | Inline bash | Nest thermostat snapshot to JSONL (shows `-` PID — normal, runs and exits) |
+| `ai.openclaw.nest-snapshot` | 30min | Inline bash | Merged Nest/Cielo/Mysa/Midea/Airthings climate and air-quality snapshot to JSONL; stale Airthings reads refresh through its Bluetooth-authorized `Python.app` identity (shows `-` PID — normal, runs and exits) |
 | `com.openclaw.cielo-refresh` | 30min | `cielo-refresh.sh` | Atomically rotates the Cielo AC token through the current `/web/token/refresh/1` contract; only authentication rejection reaches the dedicated PinchTab fallback, whose managed login uses a six-hour failure backoff |
 | `ai.openclaw.oauth-refresh` | 6hr | `oauth-refresh.sh` | Self-contained Anthropic OAuth token refresh (uses `claude auth login` with refresh token, no keychain/laptop needed) |
 

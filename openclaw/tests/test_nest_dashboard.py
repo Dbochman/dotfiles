@@ -168,6 +168,24 @@ class PresenceHtmlContractTests(unittest.TestCase):
 
 
 class ClimateSourceHtmlContractTests(unittest.TestCase):
+    def test_airthings_card_and_air_quality_charts_are_present(self):
+        html = nest_dashboard.DASHBOARD_HTML
+
+        self.assertIn("r.source === 'airthings'", html)
+        for field in (
+            "co2_ppm",
+            "voc_ppb",
+            "noise_dba",
+            "light_lux",
+            "pressure_hpa",
+            "battery_percent",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, html)
+        self.assertIn('canvas id="co2Chart"', html)
+        self.assertIn('canvas id="vocChart"', html)
+        self.assertIn("r.source !== 'airthings'", html)
+
     def test_midea_cards_include_power_and_preserve_unknown_values(self):
         html = nest_dashboard.DASHBOARD_HTML
 
@@ -219,6 +237,14 @@ class ClimateSourceHtmlContractTests(unittest.TestCase):
         )
         self.assertIn(
             "if (Number.isFinite(r.setpoint_f)) series[name].setpoints.push",
+            html,
+        )
+        self.assertIn(
+            "if (Number.isFinite(r.co2_ppm)) series[name].co2.push",
+            html,
+        )
+        self.assertIn(
+            "if (Number.isFinite(r.voc_ppb)) series[name].vocs.push",
             html,
         )
 

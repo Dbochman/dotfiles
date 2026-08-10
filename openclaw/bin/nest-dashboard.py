@@ -337,6 +337,10 @@ h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
 .chart-container h2 { font-size: 0.85rem; font-weight: 600; margin-bottom: 0.75rem; }
 .chart-wrap { position: relative; width: 100%; min-height: 300px; }
 .chart-wrap.short { min-height: 220px; }
+.chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.air-quality.good { color: #22c55e; }
+.air-quality.fair { color: #f59e0b; }
+.air-quality.poor { color: #f87171; }
 canvas { width: 100% !important; }
 .loading { text-align: center; color: var(--text-muted); padding: 2rem; }
 .presence-card .card-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
@@ -367,6 +371,9 @@ canvas { width: 100% !important; }
 .location-group .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin: 0; }
 .location-group.crosstown .cards { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 .location-group .card { border: 1px solid var(--border); }
+@media (max-width: 760px) {
+  .chart-grid { grid-template-columns: 1fr; gap: 0; }
+}
 </style>
 </head>
 <body>
@@ -395,6 +402,10 @@ canvas { width: 100% !important; }
 </div>
 <div class="chart-container"><h2>Temperature</h2><div class="chart-wrap"><canvas id="tempChart"></canvas></div><div class="chart-legend" id="tempLegend"></div></div>
 <div class="chart-container"><h2>Humidity</h2><div class="chart-wrap"><canvas id="humidChart"></canvas></div><div class="chart-legend" id="humidLegend"></div></div>
+<div class="chart-grid">
+  <div class="chart-container"><h2>CO₂</h2><div class="chart-wrap short"><canvas id="co2Chart"></canvas></div><div class="chart-legend" id="co2Legend"></div></div>
+  <div class="chart-container"><h2>VOC</h2><div class="chart-wrap short"><canvas id="vocChart"></canvas></div><div class="chart-legend" id="vocLegend"></div></div>
+</div>
 <div class="chart-container"><h2>HVAC Duty Cycle</h2><div class="chart-wrap short"><canvas id="hvacChart"></canvas></div><div class="chart-legend" id="hvacLegend"></div></div>
 
 <script>
@@ -433,7 +444,7 @@ const COLORS = {
 
 const STRUCTURES = ['Philly', '19Crosstown'];
 
-let tempChart, humidChart, hvacChart;
+let tempChart, humidChart, co2Chart, vocChart, hvacChart;
 let currentHours = 24;
 let currentStructure = 'all';
 let currentPresence = []; // presence history for overlay
@@ -478,13 +489,13 @@ function vacancyStateView(occupancy) {
 const colorCache = {};
 // For disambiguated names like "Bedroom (XTown)", derive a variant of the base color
 const STRUCTURE_COLOR_SHIFT = { 'Cabin': 0, 'XTown': 40 };
-const SOURCE_COLOR_SHIFT = { 'Nest': 0, 'Cielo': 18, 'Mysa': 36, 'Midea': 54 };
+const SOURCE_COLOR_SHIFT = { 'Nest': 0, 'Cielo': 18, 'Mysa': 36, 'Midea': 54, 'Airthings': 72 };
 function roomColor(name) {
   // In filtered view, bare names like "Living Room" need structure-aware lookup
   const cacheKey = currentStructure + ':' + name;
   if (colorCache[cacheKey]) return colorCache[cacheKey];
-  const sourceMatch = name.match(/ \((Nest|Cielo|Mysa|Midea)\)/);
-  const colorName = name.replace(/ \((Nest|Cielo|Mysa|Midea)\)/, '');
+  const sourceMatch = name.match(/ \((Nest|Cielo|Mysa|Midea|Airthings)\)/);
+  const colorName = name.replace(/ \((Nest|Cielo|Mysa|Midea|Airthings)\)/, '');
   let c;
   // Check structure-specific color first (for colliding names like Living Room, Bedroom)
   if (currentStructure === '19Crosstown') {
@@ -572,6 +583,7 @@ const SOURCE_LABELS = {
   cielo: 'Cielo',
   mysa: 'Mysa',
   midea: 'Midea',
+  airthings: 'Airthings',
 };
 
 function sourceLabel(source) {
@@ -774,12 +786,29 @@ function renderLocationGroups(snapshot, presenceState) {
       let hvacLabel = r.source !== 'midea' && r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
       if (r.source === 'mysa' && r.duty_pct != null) hvacLabel = r.duty_pct > 0 ? `${r.duty_pct}% duty` : 'OFF';
       const statusBits = [];
-      if (hasSetpoint) statusBits.push(`Set: ${r.setpoint_f.toFixed(0)}°F`);
-      statusBits.push(isOffline ? 'OFFLINE' : hvacLabel);
-      if (!isOffline && r.source === 'midea' && r.eco && r.eco !== 'OFF') statusBits.push('ECO');
-      if (!isOffline && r.source === 'midea' && r.fan != null) statusBits.push(`Fan ${r.fan}`);
-      if (!isOffline && r.source === 'midea' && Number.isFinite(r.power_w)) statusBits.push(`${r.power_w.toFixed(0)} W`);
-      if (hasHumidity) statusBits.push(`${r.humidity.toFixed(0)}% RH`);
+      if (r.source === 'airthings') {
+        if (isOffline) {
+          statusBits.push('OFFLINE');
+        } else {
+          const overall = r.air_quality?.overall || 'unknown';
+          if (Number.isFinite(r.co2_ppm)) statusBits.push(`CO₂ ${r.co2_ppm.toFixed(0)} ppm`);
+          if (Number.isFinite(r.voc_ppb)) statusBits.push(`VOC ${r.voc_ppb.toFixed(0)} ppb`);
+          if (hasHumidity) statusBits.push(`${r.humidity.toFixed(0)}% RH`);
+          if (Number.isFinite(r.noise_dba)) statusBits.push(`${r.noise_dba.toFixed(0)} dBA`);
+          if (Number.isFinite(r.light_lux)) statusBits.push(`${r.light_lux.toFixed(0)} lux`);
+          if (Number.isFinite(r.pressure_hpa)) statusBits.push(`${r.pressure_hpa.toFixed(0)} hPa`);
+          if (Number.isFinite(r.battery_percent)) statusBits.push(`${r.battery_percent.toFixed(0)}% battery`);
+          if (r.cached) statusBits.push('cached');
+          statusBits.push(`<span class="air-quality ${overall}">AQ ${overall}</span>`);
+        }
+      } else {
+        if (hasSetpoint) statusBits.push(`Set: ${r.setpoint_f.toFixed(0)}°F`);
+        statusBits.push(isOffline ? 'OFFLINE' : hvacLabel);
+        if (!isOffline && r.source === 'midea' && r.eco && r.eco !== 'OFF') statusBits.push('ECO');
+        if (!isOffline && r.source === 'midea' && r.fan != null) statusBits.push(`Fan ${r.fan}`);
+        if (!isOffline && r.source === 'midea' && Number.isFinite(r.power_w)) statusBits.push(`${r.power_w.toFixed(0)} W`);
+        if (hasHumidity) statusBits.push(`${r.humidity.toFixed(0)}% RH`);
+      }
       if (r.source && r.source !== 'nest') statusBits.push(`<span class="card-tag">${r.source}</span>`);
       html += `<div class="card">
         <div class="card-label">${label}</div>
@@ -836,7 +865,7 @@ function buildTimeSeries(snapshots) {
 
   const series = {};
   for (const name of roomNames) {
-    series[name] = { temps: [], humids: [], setpoints: [] };
+    series[name] = { temps: [], humids: [], setpoints: [], co2: [], vocs: [] };
   }
   for (const name of weatherNames) {
     series[name] = { temps: [], humids: [] };
@@ -850,6 +879,8 @@ function buildTimeSeries(snapshots) {
       if (Number.isFinite(r.temp_f)) series[name].temps.push({ x: ts, y: r.temp_f });
       if (Number.isFinite(r.humidity)) series[name].humids.push({ x: ts, y: r.humidity });
       if (Number.isFinite(r.setpoint_f)) series[name].setpoints.push({ x: ts, y: r.setpoint_f });
+      if (Number.isFinite(r.co2_ppm)) series[name].co2.push({ x: ts, y: r.co2_ppm });
+      if (Number.isFinite(r.voc_ppb)) series[name].vocs.push({ x: ts, y: r.voc_ppb });
     }
     for (const {label, data: w} of getWeatherEntries(s)) {
       if (!series[label]) series[label] = { temps: [], humids: [] };
@@ -893,7 +924,9 @@ function computeHvacDuty(snapshots) {
   // Active states: HEATING, COOLING, AUTO, FAN, DRY (anything not OFF/?)
   const roomNames = new Set();
   for (const s of snapshots) {
-    for (const r of filterRooms(s.rooms || [])) roomNames.add(roomSeriesName(r));
+    for (const r of filterRooms(s.rooms || [])) {
+      if (r.source !== 'airthings') roomNames.add(roomSeriesName(r));
+    }
   }
 
   const buckets = {}; // room -> hourKey -> {dutySum: n, total: n}
@@ -903,6 +936,7 @@ function computeHvacDuty(snapshots) {
     const d = new Date(s.timestamp);
     const hourKey = d.toISOString().slice(0, 13) + ':00:00Z'; // YYYY-MM-DDTHH:00:00Z
     for (const r of filterRooms(s.rooms || [])) {
+      if (r.source === 'airthings') continue;
       const name = roomSeriesName(r);
       if (!buckets[name]) continue;
       if (r.connectivity === 'OFFLINE' || !r.hvac || r.hvac === '?') continue;
@@ -1188,6 +1222,35 @@ async function refresh() {
     });
   }
 
+  // Air-quality datasets (Wave Enhance only).
+  const co2DS = [];
+  const vocDS = [];
+  for (const [name, s] of sortByGroup(Object.entries(series))) {
+    const color = roomColor(name);
+    if (s.co2 && s.co2.length > 0) {
+      co2DS.push({
+        label: displayNameLegend(name),
+        data: s.co2,
+        borderColor: color,
+        backgroundColor: color + '22',
+        fill: false,
+        _group: seriesGroup(name),
+        _fullName: name,
+      });
+    }
+    if (s.vocs && s.vocs.length > 0) {
+      vocDS.push({
+        label: displayNameLegend(name),
+        data: s.vocs,
+        borderColor: color,
+        backgroundColor: color + '22',
+        fill: false,
+        _group: seriesGroup(name),
+        _fullName: name,
+      });
+    }
+  }
+
   // HVAC duty datasets
   const hvacDS = [];
   for (const [name, buckets] of sortByGroup(Object.entries(hvacDuty))) {
@@ -1207,12 +1270,18 @@ async function refresh() {
   // Destroy and recreate charts (simpler than updating)
   if (tempChart) tempChart.destroy();
   if (humidChart) humidChart.destroy();
+  if (co2Chart) co2Chart.destroy();
+  if (vocChart) vocChart.destroy();
   if (hvacChart) hvacChart.destroy();
 
   tempChart = createLineChart(document.getElementById('tempChart'), tempDS, '°F');
   renderGroupedLegend(tempChart, 'tempLegend');
   humidChart = createLineChart(document.getElementById('humidChart'), humidDS, '% RH');
   renderGroupedLegend(humidChart, 'humidLegend');
+  co2Chart = createLineChart(document.getElementById('co2Chart'), co2DS, 'ppm');
+  renderGroupedLegend(co2Chart, 'co2Legend');
+  vocChart = createLineChart(document.getElementById('vocChart'), vocDS, 'ppb');
+  renderGroupedLegend(vocChart, 'vocLegend');
   hvacChart = createBarChart(document.getElementById('hvacChart'), hvacDS);
   renderGroupedLegend(hvacChart, 'hvacLegend');
 }

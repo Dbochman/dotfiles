@@ -1,8 +1,11 @@
 # Home Climate Dashboard — Implementation Spec
 
-## Status: v2.2 (2026-08-07)
+## Status: v2.3 (2026-08-10)
 
-Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats, air conditioners, and weather across two locations via four heating/cooling systems. Serves at port 8550 on the Mac Mini with home-LAN and Tailscale-tailnet access.
+Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats,
+air conditioners, indoor air quality, and weather across two locations via four
+heating/cooling systems and one local sensor. Serves at port 8550 on the Mac
+Mini with home-LAN and Tailscale-tailnet access.
 
 ---
 
@@ -12,6 +15,7 @@ Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats, 
 |----------|--------|---------|------------|
 | Cabin (Philly) | Nest (central HVAC) | Solarium, Living Room, Bedroom | `nest` |
 | Cabin (Philly) | Midea (local AC) | Air Conditioner, Lil Air Conditioner | `midea` |
+| Cabin (Philly) | Airthings Wave Enhance (local BLE) | Living Room | `airthings` |
 | Crosstown (19Crosstown) | Cielo (minisplit AC) | Living Room, Basement, Dylan's Office, Bedroom | `cielo` |
 | Crosstown (19Crosstown) | Mysa (baseboard heater) | Cat Room, Basement door, Movie room | `mysa` |
 
@@ -28,6 +32,9 @@ Mac Mini (dylans-mac-mini)
 ├── Mysa Wrapper: ~/.openclaw/bin/mysa-status.py
 ├── Midea Wrapper: ~/.openclaw/bin/midea-ac
 ├── Midea LAN Bindings: ~/.openclaw/midea-ac/bindings.json
+├── Airthings Wrapper: ~/.openclaw/bin/airthings
+├── Airthings Binding: ~/.openclaw/airthings/config.json
+├── Airthings Runtime: ~/.openclaw/venvs/airthings-monitor
 ├── Camera Media: ~/.openclaw/bin/nest-camera-snap.py
 ├── History: ~/.openclaw/nest-history/YYYY-MM-DD.jsonl
 ├── Presence: ~/.openclaw/presence/state.json + history/
@@ -51,7 +58,9 @@ The snapshot agent shows `-` for PID in `launchctl list` — this is normal (run
 
 ### Snapshot Command (`nest snapshot`)
 
-Runs every 30 minutes. Queries four climate systems plus weather, merges them into a single JSONL record, and appends it to the daily history file.
+Runs every 30 minutes. Queries four climate systems, the local Airthings
+monitor, and weather; merges them into a single JSONL record; and appends it to
+the daily history file.
 
 **Pipeline:**
 
@@ -60,9 +69,10 @@ Runs every 30 minutes. Queries four climate systems plus weather, merges them in
 3. **Cielo CLI** — `cielo status --json` for minisplit AC units
 4. **Mysa API** — `~/.openclaw/bin/mysa-status.py` via mysotherm library
 5. **Midea local LAN** — `midea-ac status --json` using enrolled per-device token/key bindings
-6. **Merge** — All devices assembled into `rooms[]` array with structure prefix and `source` tag
-7. **Write** — Append JSON line to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`
-8. **Prune** — Delete history files older than 1000 days
+6. **Airthings local BLE** — `airthings status --json` using the exact protected Wave Enhance binding and a five-minute cache
+7. **Merge** — All devices assembled into `rooms[]` array with structure prefix and `source` tag
+8. **Write** — Append JSON line to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`
+9. **Prune** — Delete history files older than 1000 days
 
 ### Room Name Convention
 
@@ -149,14 +159,14 @@ When the same structure and short room name are reported by multiple sources, th
 
 ### Field Differences by Source
 
-| Field | Nest | Cielo | Mysa | Midea |
-|-------|------|-------|------|-------|
-| `mode` | `HEAT`, `COOL`, `HEATCOOL`, `OFF` | `heat`, `cool`, `auto`, `fan`, `dry` | `heat`, `off` | `auto`, `cool`, `dry`, `heat`, `fan` |
-| `hvac` | `HEATING`, `COOLING`, `OFF` | Mapped: `HEATING`, `COOLING`, `AUTO`, `FAN`, `DRY`, `OFF` | `HEATING` if duty > 0, else `OFF` | Mapped active mode, or `OFF` when power is off |
-| `duty_pct` | absent | absent | 0–100 (real heater duty cycle) | absent; the duty chart derives active percentage from `fan` while power is on |
-| `connectivity` | from API trait | `ONLINE`/`OFFLINE` from `deviceStatus` | always `ONLINE` | Local discovery/readback result |
-| Temperature | `ambientTemperatureCelsius` (C primary) | `latEnv.temp` (F primary) | `CorrectedTemp` (C primary, converted) | Local indoor sensor (F normalized) |
-| Extra telemetry | — | — | — | `power`, `fan`, `power_w`, `error_code` |
+| Field | Nest | Cielo | Mysa | Midea | Airthings |
+|-------|------|-------|------|-------|-----------|
+| `mode` | `HEAT`, `COOL`, `HEATCOOL`, `OFF` | `heat`, `cool`, `auto`, `fan`, `dry` | `heat`, `off` | `auto`, `cool`, `dry`, `heat`, `fan` | `sensor` |
+| `hvac` | `HEATING`, `COOLING`, `OFF` | Mapped: `HEATING`, `COOLING`, `AUTO`, `FAN`, `DRY`, `OFF` | `HEATING` if duty > 0, else `OFF` | Mapped active mode, or `OFF` when power is off | absent; excluded from HVAC duty |
+| `duty_pct` | absent | absent | 0–100 (real heater duty cycle) | absent; the duty chart derives active percentage from `fan` while power is on | absent |
+| `connectivity` | from API trait | `ONLINE`/`OFFLINE` from `deviceStatus` | always `ONLINE` | Local discovery/readback result | Exact-device BLE read result |
+| Temperature | `ambientTemperatureCelsius` (C primary) | `latEnv.temp` (F primary) | `CorrectedTemp` (C primary, converted) | Local indoor sensor (F normalized) | Local Wave Enhance sensor (C primary, converted) |
+| Extra telemetry | — | — | — | `power`, `fan`, `power_w`, `error_code` | `co2_ppm`, `voc_ppb`, `pressure_hpa`, `noise_dba`, `light_lux`, `battery_percent`, `air_quality` |
 
 ---
 
@@ -204,12 +214,13 @@ For time ranges > 7 days (168 hours), snapshots are downsampled to ~1 per hour. 
 ### Layout
 
 1. **Vacancy Cards** — Per-location canonical state (Occupied/Confirmed Vacant/Possibly Vacant), Dylan/Julia names, duration since last state change
-2. **Status Cards** — Current temperature, setpoint, HVAC status, humidity, source tag per room; Midea cards add eco, fan, and live wattage when available
+2. **Status Cards** — Current temperature, setpoint, HVAC status, humidity, source tag per room; Midea cards add eco, fan, and live wattage, while the Airthings card adds CO2, VOC, pressure, noise, light, battery, cache state, and the overall air-quality band
 3. **Structure Filter** — Both | Cabin | Crosstown
 4. **Time Range** — 24h | 7d | 30d | 1Y
 5. **Temperature Chart** — Line chart with setpoint overlays (dotted lines)
 6. **Humidity Chart** — Line chart
-7. **HVAC Duty Cycle Chart** — Bar chart (hourly averages)
+7. **CO2 and VOC Charts** — Independent Wave Enhance line charts in ppm and ppb
+8. **HVAC Duty Cycle Chart** — Bar chart (hourly averages); read-only Airthings rows are excluded
 
 ### Color Scheme
 
@@ -361,7 +372,34 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 - `Duty` → `duty_pct` (0–1 ratio, converted to 0–100 %)
 - Model: BB-V1-1 (Baseboard V1)
 
-### 5. Presence Detection
+### 5. Airthings Wave Enhance
+
+- **CLI:** `airthings status --json`
+- **Transport:** Local BLE through Airthings' maintained `airthings-ble` library; no account, token, or cloud API
+- **Binding:** One exact `cabin-living-room-airthings` device in an owner-only `~/.openclaw/airthings/config.json`
+- **Runtime:** Locked Python environment at `~/.openclaw/venvs/airthings-monitor`; BLE access is serialized, successful readings are cached for five minutes, and stale or explicitly refreshed reads launch the authorized Homebrew `Python.app` through Launch Services so unattended callers do not depend on Terminal's privacy grant
+- **Fields:** CO2, VOC, temperature, humidity, pressure, ambient noise, light, and calculated battery percentage
+- **Bands:** CO2 is good below 800 ppm and poor at 1000 ppm or above; VOC is good below 250 ppb and poor at 2000 ppb or above; the intermediate band is fair
+- **Boundary:** Readings are dashboard/environmental context only. They do not establish occupancy, publish home events, or authorize HVAC actions.
+
+#### Airthings history backfill
+
+`~/.openclaw/bin/airthings-history-import` accepts the Airthings dashboard's
+UTC CSV export. It is attended and dry-run-first; mutation requires both
+`AIRTHINGS_ALLOW_HISTORY_IMPORT=1` and `--apply`. It validates the source
+schema and values, skips existing Airthings timestamps, preserves other room
+records, backs up only affected daily files under the protected Airthings
+state tree, sorts the merged JSONL, and writes mode-`0600` files atomically.
+Imported samples carry `history_origin: airthings_csv_v1` and remain in the
+same Cabin Living Room series as live BLE samples.
+
+The consumer cloud API currently covers device inventory and latest samples,
+not historical series. A future HAR-derived dashboard client may automate CSV
+exports and feed this importer, but it can retrieve only measurements already
+synchronized to Airthings' cloud. A remote Wave still needs a nearby phone,
+compatible Airthings gateway/View device, or local BLE proxy.
+
+### 6. Presence Detection
 
 - **State file:** `~/.openclaw/presence/state.json`
 - **History:** `~/.openclaw/presence/history/YYYY-MM-DD.jsonl`
@@ -415,6 +453,8 @@ live stream and cannot retrieve historical Nest Aware footage.
 | `~/.cache/nest-sdm/` | OAuth access token + credential caches |
 | `~/.config/mysotherm/` | Mysa/Cognito auth tokens |
 | `~/.config/cielo/config.json` | Cielo API credentials |
+| `~/.openclaw/airthings/config.json` | Exact owner-only Wave Enhance BLE binding |
+| `~/.openclaw/airthings/state/` | Owner-only BLE lock and five-minute status cache |
 | `~/.openclaw/nest-history/` | Daily JSONL snapshot files |
 | `~/.openclaw/presence/` | Presence state + history |
 | `~/.openclaw/logs/nest-*.log` | Dashboard and snapshot logs |
@@ -428,6 +468,9 @@ live stream and cannot retrieve historical Nest Aware footage.
 | `bin/nest` | Dotfiles repo + `/opt/homebrew/bin/nest` (symlink) | Main CLI (status, set, snapshot, dashboard mgmt) |
 | `openclaw/bin/nest-dashboard.py` | `~/.openclaw/bin/` on Mini | HTTP server + embedded HTML/JS dashboard |
 | `openclaw/bin/mysa-status.py` | `~/.openclaw/bin/` on Mini | Mysa API wrapper (JSON output) |
+| `openclaw/bin/airthings` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Read-only Airthings runtime wrapper |
+| `openclaw/bin/airthings-history-import` | `~/.openclaw/bin/` on Mini | Attended, guarded Airthings CSV history importer |
+| `openclaw/skills/airthings-monitor/` | `~/.openclaw/skills/airthings-monitor/` | OpenClaw skill, BLE reader, and locked dependency manifest |
 | `openclaw/bin/nest-camera-snap.py` | `~/.openclaw/bin/` on Mini | WebRTC camera still and short-clip capture |
 | `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
 | `openclaw/launchagents/ai.openclaw.nest-snapshot.plist` | `~/Library/LaunchAgents/` on Mini | 30-min snapshot cron |
@@ -484,6 +527,7 @@ ssh dbochman@dylans-mac-mini "/opt/homebrew/bin/nest snapshot"
 - **OAuth consent screen:** If GCP project is in "Testing" mode, refresh tokens expire after 7 days. Must be set to "In production" for long-lived tokens.
 - **Mysa token expiry:** Cognito tokens expire after extended inactivity. Managed credentials in `~/.openclaw/.secrets-cache` normally renew the session automatically; use interactive `mysa --login` on the Mini if managed renewal fails.
 - **Cielo token staleness:** Token refresh depends on `com.openclaw.cielo-refresh`. If `cielo-auth.py check` reports an unproven/rejected chain, use `cielo-reauth --attended start`, complete the visible login, and run `cielo-reauth finish`; post-login access-token capture alone is not a durable repair.
+- **Airthings Bluetooth permission:** macOS must list and enable `/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Resources/Python.app` under Privacy & Security → Bluetooth. Terminal's separate grant is insufficient for the scheduled snapshot. The wrapper refreshes through that app identity and reports `bluetooth_unauthorized` without exposing the device identifier if the grant is absent.
 - **1Password over SSH:** `op read` hangs under launchd. Credentials are pre-cached to `~/.cache/nest-sdm/` files with 1-year TTL.
 - **Camera snap timing:** WebRTC handshake takes 5–10 seconds; camera must be online with streaming enabled.
 - **Dylan's Office apostrophe:** Nest API uses Unicode U+2019 (smart quote) in the room name. COLORS map includes both U+2019 and U+0027 variants.

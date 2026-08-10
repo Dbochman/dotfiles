@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+RUNTIME="${AIRTHINGS_RUNTIME:-$OPENCLAW_HOME/venvs/airthings-monitor/bin/python}"
+SCRIPT="${AIRTHINGS_HISTORY_IMPORT_SCRIPT:-$OPENCLAW_HOME/skills/airthings-monitor/scripts/airthings_history_import.py}"
+
+if [[ ! -x "$RUNTIME" ]]; then
+  echo '{"error":"runtime_unavailable","ok":false}' >&2
+  exit 12
+fi
+if [[ ! -f "$SCRIPT" || -L "$SCRIPT" ]]; then
+  echo '{"error":"script_unavailable","ok":false}' >&2
+  exit 12
+fi
+
+exec "$RUNTIME" "$SCRIPT" "$@"

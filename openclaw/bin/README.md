@@ -49,7 +49,7 @@ active post-deploy checks.
 
 | Script | Port | Description |
 |--------|------|-------------|
-| `nest-dashboard.py` | 8550 | Nest climate dashboard — Chart.js UI over JSONL history. Serves thermostat temperatures, humidity, weather, and presence data over the home LAN and Tailscale tailnet. |
+| `nest-dashboard.py` | 8550 | Home climate dashboard — Chart.js UI over JSONL history. Serves thermostat/AC temperatures, Wave Enhance CO2/VOC data, humidity, weather, and presence over the home LAN and Tailscale tailnet. |
 | `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, cron, and native iMessage health/response latency over the home LAN and Tailscale tailnet. |
 | `dog-walk-dashboard.py` | 8552 | Dog walk history, Fi route maps, coverage/heatmaps, and return-signal telemetry over the home LAN and Tailscale tailnet. |
 | `roomba-dashboard.py` | 8553 | Crosstown/Cabin Roomba status, command, snooze, and run-history dashboard. |
@@ -83,6 +83,13 @@ active post-deploy checks.
 |--------|-------------|
 | `midea-ac` | Exact-alias LAN status and once-only verified controls for enrolled Midea ACs, including temperature, mode, fan, swing, features, energy telemetry, and safe device errors. |
 | `midea-ac-enroll` | Attended operator-only V3 enrollment. It uses cloud credentials only long enough to obtain and verify each per-device LAN token/key, then retains only an owner-only local binding. |
+
+### Airthings Integration
+
+| Script | Description |
+|--------|-------------|
+| `airthings` | Read-only exact-device Wave Enhance wrapper. Uses a locked local BLE runtime, delegates fresh reads through the Bluetooth-authorized Homebrew `Python.app`, serializes connections, caches successful status for five minutes, and omits Bluetooth identifiers and serials from public output. |
+| `airthings-history-import` | Attended, dry-run-first Airthings dashboard CSV importer. Apply requires `AIRTHINGS_ALLOW_HISTORY_IMPORT=1` plus `--apply`; affected daily history files are backed up, merged idempotently, sorted, and written atomically. It is not an OpenClaw skill tool. |
 
 See [`../REOLINK-CAMERA.md`](../REOLINK-CAMERA.md) for the private runtime
 contract, attended rollout, optional macOS Client role, verification, and V2
@@ -160,3 +167,5 @@ qmd mcp                                       # start MCP server for AI agents
 | Script | Description |
 |--------|-------------|
 | `mysa-status.py` | Queries Mysa baseboard heater API for device status (temp, setpoint, mode). Outputs JSON. Uses Cognito auth cached at `~/.config/mysotherm`; an optional cached `Mysa` vault credential renews expired sessions automatically, or run `mysa --login` interactively. |
+| `airthings` | Reads the exact Cabin Living Room Wave Enhance over local BLE for CO2, VOC, temperature, humidity, pressure, noise, light, and battery data. No cloud account is used; unattended reads refresh through the authorized Homebrew `Python.app` identity. |
+| `airthings-history-import` | Imports UTC Airthings dashboard CSV history into the same Airthings room series without duplicating timestamps. This is an attended operator tool, not a scheduled or model-invocable command. |
