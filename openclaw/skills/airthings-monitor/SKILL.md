@@ -38,6 +38,8 @@ plain suggestions such as ventilation when CO2 or VOC is elevated.
   ordinary skill action.
 - Do not invoke `airthings-history-import`; CSV backfill is an attended
   operator workflow outside this skill's allowed tools.
+- Do not invoke `airthings-snapshot`; the five-minute collector is owned by a
+  dedicated LaunchAgent and is not a model-triggered action.
 - Do not infer presence from CO2, noise, light, or any other reading.
 - Do not publish raw samples or threshold crossings to the home-event bus.
 - Do not control HVAC, fans, windows, or other equipment merely because a

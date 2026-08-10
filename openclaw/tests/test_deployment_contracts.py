@@ -39,6 +39,12 @@ OPENCLAW_NEST = REPO_ROOT / "openclaw" / "bin" / "nest"
 NEST_SNAPSHOT_PLIST = (
     REPO_ROOT / "openclaw" / "launchagents" / "ai.openclaw.nest-snapshot.plist"
 )
+AIRTHINGS_SNAPSHOT_PLIST = (
+    REPO_ROOT
+    / "openclaw"
+    / "launchagents"
+    / "ai.openclaw.airthings-snapshot.plist"
+)
 NEST_EVENT_LISTENER_WRAPPER = (
     REPO_ROOT / "openclaw" / "bin" / "nest-event-listener-wrapper.sh"
 )
@@ -70,12 +76,14 @@ CABIN_ENTRY_VERIFIER_PLIST = (
 REQUIRED_HELPERS = {
     "bin/airthings": "airthings wrapper\n",
     "bin/airthings-history-import": "airthings history importer\n",
+    "bin/airthings-snapshot": "airthings snapshot wrapper\n",
     "bin/august": "august wrapper\n",
     "bin/cielo": "cielo wrapper\n",
     "bin/cielo-auth.py": "cielo auth helper\n",
     "bin/cielo-reauth": "cielo reauth helper\n",
     "bin/midea-ac": "midea ac wrapper\n",
     "bin/midea-ac-enroll": "midea enrollment helper\n",
+    "bin/nest-history-append": "history appender\n",
     "bin/pinchtab-headless-instance": "pinchtab helper\n",
     "bin/plant-tracker": "plant tracker wrapper\n",
     "bin/presence-cabin-enroll": "presence enrollment helper\n",
@@ -885,9 +893,39 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("AIRTHINGS_VENV_DIR", pull_text)
         self.assertIn("UV_PYTHON=/opt/homebrew/bin/python3.14", pull_text)
         self.assertIn("airthings-history-import", install_text)
+        self.assertIn("airthings-snapshot", install_text)
+        self.assertIn("nest-history-append", install_text)
         self.assertTrue(
             (skill_dir / "scripts" / "airthings_history_import.py").is_file()
         )
+        self.assertTrue((skill_dir / "scripts" / "airthings_snapshot.py").is_file())
+
+    def test_airthings_sampler_is_private_five_minute_local_job(self) -> None:
+        install_text = INSTALLER.read_text(encoding="utf-8")
+        pull_text = DOTFILES_PULL.read_text(encoding="utf-8")
+        nest_text = OPENCLAW_NEST.read_text(encoding="utf-8")
+        with AIRTHINGS_SNAPSHOT_PLIST.open("rb") as plist_file:
+            sampler = plistlib.load(plist_file)
+
+        self.assertEqual(sampler["Label"], "ai.openclaw.airthings-snapshot")
+        self.assertEqual(sampler["StartInterval"], 300)
+        self.assertTrue(sampler["RunAtLoad"])
+        self.assertEqual(
+            sampler["ProgramArguments"],
+            ["/Users/dbochman/.openclaw/bin/airthings-snapshot"],
+        )
+        self.assertEqual(sampler["Umask"], 0o77)
+        self.assertEqual(sampler["StandardOutPath"], "/dev/null")
+        self.assertIn("install_managed_launchagent \\", install_text)
+        self.assertIn("ai.openclaw.airthings-snapshot", install_text)
+        self.assertLess(
+            install_text.index('install_openclaw_airthings_runtime "$HOME/.openclaw"'),
+            install_text.index(
+                'launchagents/ai.openclaw.airthings-snapshot.plist'
+            ),
+        )
+        self.assertIn("AIRTHINGS_SNAPSHOT_CHANGED", pull_text)
+        self.assertIn("nest-history-append", nest_text)
 
     def test_nest_event_listener_deployment_is_private_and_explicit(self) -> None:
         wrapper_text = NEST_EVENT_LISTENER_WRAPPER.read_text(encoding="utf-8")

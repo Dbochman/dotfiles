@@ -803,7 +803,7 @@ cmd_eco() {
 cmd_snapshot() {
   # Record current state + weather as a JSON line to daily history file
   mkdir -p "$HISTORY_DIR"
-  local data weather ts today
+  local data weather ts snapshot history_append_bin history_path
 
   # Tolerate network failures — skip snapshot rather than crash
   data=$(_api GET /devices) || { echo "Snapshot skipped: Nest API unreachable" >&2; return 0; }
@@ -819,10 +819,9 @@ cmd_snapshot() {
   midea=$(_get_midea_status)
   airthings=$(_get_airthings_status)
   ts=$(date -u +%FT%TZ)
-  today=$(date +%Y-%m-%d)
 
   _build_structure_map
-  WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" \
+  snapshot=$(WEATHER_JSON="$weather" SNAP_TS="$ts" STRUCT_MAP="$_structure_map" \
     CIELO_JSON="$cielo" MYSA_JSON="$mysa" MIDEA_JSON="$midea" \
     AIRTHINGS_JSON="$airthings" python3 -c "
 import json, math, sys, os
@@ -1029,12 +1028,32 @@ for ad in airthings_data.get('devices', []):
         'source': 'airthings',
     })
 print(json.dumps(snapshot))
-" <<< "$data" >> "$HISTORY_DIR/${today}.jsonl"
+" <<< "$data") || {
+    echo "Snapshot skipped: could not build history record" >&2
+    return 1
+  }
+
+  history_append_bin="${NEST_HISTORY_APPEND_BIN:-$HOME/.openclaw/bin/nest-history-append}"
+  if [[ ! -x "$history_append_bin" ]]; then
+    local sibling_append_bin
+    sibling_append_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/nest-history-append"
+    if [[ -x "$sibling_append_bin" ]]; then
+      history_append_bin="$sibling_append_bin"
+    else
+      echo "Snapshot failed: shared history appender unavailable" >&2
+      return 1
+    fi
+  fi
+  if ! "$history_append_bin" --history-dir "$HISTORY_DIR" <<< "$snapshot" >/dev/null; then
+    echo "Snapshot failed: shared history append failed" >&2
+    return 1
+  fi
+  history_path="$HISTORY_DIR/${ts%%T*}.jsonl"
 
   # Prune history files older than 90 days
   find "$HISTORY_DIR" -name '*.jsonl' -mtime +1000 -delete 2>/dev/null || true
 
-  echo "Snapshot recorded at $ts → $HISTORY_DIR/${today}.jsonl"
+  echo "Snapshot recorded at $ts → $history_path"
 }
 
 cmd_history() {

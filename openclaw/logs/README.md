@@ -35,6 +35,7 @@ Each service uses one of two patterns:
 | `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh; stdout and stderr share this file |
 | `~/Library/Logs/openclaw/gateway.log` | `ai.openclaw.gateway` | Current generated-service gateway output; the tracked recovery plist instead uses `~/.openclaw/logs/gateway.{log,err.log}` |
 | `nest-cron.log` | `ai.openclaw.nest-snapshot` | Merged climate and Airthings air-quality snapshot cron; BLE failures use safe categories only |
+| `airthings-snapshot.err.log` | `ai.openclaw.airthings-snapshot` | Safe failures from the five-minute local BLE sampler; protected current health is stored at `~/.openclaw/airthings/snapshot-status.json` |
 | `nest-dashboard.log` / `.err.log` | `ai.openclaw.nest-dashboard` | Nest dashboard HTTP server |
 | `usage-dashboard.log` / `.err.log` | `ai.openclaw.usage-dashboard` | Usage dashboard HTTP server |
 | `usage-snapshot.log` / `.err.log` | `ai.openclaw.usage-snapshot` | Usage metrics snapshot |

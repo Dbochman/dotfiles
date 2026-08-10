@@ -798,12 +798,14 @@ install_openclaw_guarded_helpers() {
   local helper_specs=(
     "bin/airthings|bin/airthings|755|Airthings local monitor wrapper"
     "bin/airthings-history-import|bin/airthings-history-import|755|Airthings attended history importer"
+    "bin/airthings-snapshot|bin/airthings-snapshot|755|Airthings scheduled snapshot wrapper"
     "bin/august|bin/august|755|August guarded unlock wrapper"
     "bin/cielo|bin/cielo|755|Cielo guarded control wrapper"
     "bin/cielo-auth.py|bin/cielo-auth.py|755|Cielo atomic auth helper"
     "bin/cielo-reauth|bin/cielo-reauth|755|Cielo attended recovery helper"
     "bin/midea-ac|bin/midea-ac|755|Midea local AC wrapper"
     "bin/midea-ac-enroll|bin/midea-ac-enroll|755|Midea attended enrollment helper"
+    "bin/nest-history-append|bin/nest-history-append|755|shared climate history appender"
     "bin/pinchtab-headless-instance|bin/pinchtab-headless-instance|755|managed PinchTab instance helper"
     "bin/plant-tracker|bin/plant-tracker|755|private plant tracker wrapper"
     "bin/presence-cabin-enroll|bin/presence-cabin-enroll|755|Cabin Starlink presence enrollment helper"
@@ -1388,6 +1390,11 @@ install_dotfiles() {
         fi
         if ! install_openclaw_airthings_runtime "$HOME/.openclaw"; then
           EXIT_CODE=1
+        else
+          install_managed_launchagent \
+            "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.airthings-snapshot.plist" \
+            "$HOME/Library/LaunchAgents/ai.openclaw.airthings-snapshot.plist" \
+            "ai.openclaw.airthings-snapshot"
         fi
       fi
     else

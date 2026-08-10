@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fcntl
 import hashlib
 import json
 import math
@@ -13,6 +14,7 @@ import shutil
 import stat
 import tempfile
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -122,6 +124,32 @@ def _safe_directory(path: Path, create: bool = False) -> None:
         or metadata.st_uid != os.getuid()
     ):
         raise ImportErrorSafe("unsafe_history_directory")
+
+
+@contextmanager
+def history_lock(history_dir: Path) -> Iterable[None]:
+    """Serialize an attended merge with scheduled climate-history writers."""
+    _safe_directory(history_dir, create=True)
+    lock_path = history_dir / ".history.lock"
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | nofollow, 0o600)
+    except OSError as exc:
+        raise ImportErrorSafe("history_lock_failed") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+        ):
+            raise ImportErrorSafe("unsafe_history_lock")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def _header_map(fieldnames: Iterable[str] | None) -> dict[str, str]:
@@ -443,23 +471,36 @@ def main() -> int:
     args = build_parser().parse_args()
     try:
         samples = load_export(args.csv_file.expanduser())
-        merged, counts = prepare_import(samples, args.history_dir.expanduser())
-        summary: dict[str, Any] = {
-            "ok": True,
-            "mode": "apply" if args.apply else "dry_run",
-            **counts,
-            "first_timestamp": samples[0]["timestamp"],
-            "last_timestamp": samples[-1]["timestamp"],
-        }
+        history_dir = args.history_dir.expanduser()
         if args.apply:
-            backup = apply_import(
-                merged,
-                args.history_dir.expanduser(),
-                args.backup_root.expanduser(),
-                args.csv_file.expanduser(),
-                summary,
-            )
-            summary["backup_created"] = backup is not None
+            if os.environ.get("AIRTHINGS_ALLOW_HISTORY_IMPORT") != "1":
+                raise ImportErrorSafe("import_not_authorized", 13)
+            with history_lock(history_dir):
+                merged, counts = prepare_import(samples, history_dir)
+                summary: dict[str, Any] = {
+                    "ok": True,
+                    "mode": "apply",
+                    **counts,
+                    "first_timestamp": samples[0]["timestamp"],
+                    "last_timestamp": samples[-1]["timestamp"],
+                }
+                backup = apply_import(
+                    merged,
+                    history_dir,
+                    args.backup_root.expanduser(),
+                    args.csv_file.expanduser(),
+                    summary,
+                )
+                summary["backup_created"] = backup is not None
+        else:
+            merged, counts = prepare_import(samples, history_dir)
+            summary = {
+                "ok": True,
+                "mode": "dry_run",
+                **counts,
+                "first_timestamp": samples[0]["timestamp"],
+                "last_timestamp": samples[-1]["timestamp"],
+            }
         if args.json:
             print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
         else:

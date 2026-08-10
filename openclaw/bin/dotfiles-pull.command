@@ -729,6 +729,46 @@ if [ -f "$IMSG_WATCHDOG_SRC" ]; then
   fi
 fi
 
+# Keep the installed five-minute local Airthings sampler synchronized without
+# activating it on machines where the attended installer has not bootstrapped
+# the job and its Bluetooth-authorized runtime.
+AIRTHINGS_SNAPSHOT_LABEL="ai.openclaw.airthings-snapshot"
+AIRTHINGS_SNAPSHOT_SRC="$REPO/openclaw/launchagents/$AIRTHINGS_SNAPSHOT_LABEL.plist"
+AIRTHINGS_SNAPSHOT_DST="$HOME/Library/LaunchAgents/$AIRTHINGS_SNAPSHOT_LABEL.plist"
+if [ -e "$AIRTHINGS_SNAPSHOT_DST" ] || [ -L "$AIRTHINGS_SNAPSHOT_DST" ]; then
+  if [ ! -f "$AIRTHINGS_SNAPSHOT_SRC" ] || [ -L "$AIRTHINGS_SNAPSHOT_SRC" ] \
+    || [ ! -f "$AIRTHINGS_SNAPSHOT_DST" ] || [ -L "$AIRTHINGS_SNAPSHOT_DST" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings-snapshot: FATAL installed LaunchAgent is unavailable or unsafe" >> "$LOG"
+    exit 1
+  fi
+  AIRTHINGS_SNAPSHOT_CHANGED=0
+  if ! cmp -s "$AIRTHINGS_SNAPSHOT_SRC" "$AIRTHINGS_SNAPSHOT_DST"; then
+    atomic_install_managed_file "$AIRTHINGS_SNAPSHOT_SRC" "$AIRTHINGS_SNAPSHOT_DST" 644
+    AIRTHINGS_SNAPSHOT_CHANGED=1
+  fi
+  AIRTHINGS_SNAPSHOT_DOMAIN="gui/$(id -u)"
+  if launchctl print "$AIRTHINGS_SNAPSHOT_DOMAIN/$AIRTHINGS_SNAPSHOT_LABEL" >/dev/null 2>&1; then
+    if [ "$AIRTHINGS_SNAPSHOT_CHANGED" -eq 1 ]; then
+      launchctl bootout "$AIRTHINGS_SNAPSHOT_DOMAIN/$AIRTHINGS_SNAPSHOT_LABEL" >/dev/null 2>&1 || true
+      AIRTHINGS_SNAPSHOT_RELOAD_OK=0
+      for AIRTHINGS_SNAPSHOT_RELOAD_ATTEMPT in 1 2 3 4 5; do
+        if launchctl bootstrap "$AIRTHINGS_SNAPSHOT_DOMAIN" "$AIRTHINGS_SNAPSHOT_DST"; then
+          AIRTHINGS_SNAPSHOT_RELOAD_OK=1
+          break
+        fi
+        sleep 1
+      done
+      if [ "$AIRTHINGS_SNAPSHOT_RELOAD_OK" -ne 1 ]; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings-snapshot: FATAL LaunchAgent reload failed" >> "$LOG"
+        exit 1
+      fi
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings-snapshot: reloaded installed sampler" >> "$LOG"
+    fi
+  elif [ "$AIRTHINGS_SNAPSHOT_CHANGED" -eq 1 ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings-snapshot: refreshed installed plist; LaunchAgent remains unloaded" >> "$LOG"
+  fi
+fi
+
 # Refresh the Ola HMAC bridge only after attended secret enrollment and
 # bootstrap have installed its plist. A routine pull must never publish a new
 # callback listener merely because its tracked implementation exists.

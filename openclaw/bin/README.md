@@ -90,6 +90,8 @@ active post-deploy checks.
 |--------|-------------|
 | `airthings` | Read-only exact-device Wave Enhance wrapper. Uses a locked local BLE runtime, delegates fresh reads through the Bluetooth-authorized Homebrew `Python.app`, serializes connections, caches successful status for five minutes, and omits Bluetooth identifiers and serials from public output. |
 | `airthings-history-import` | Attended, dry-run-first Airthings dashboard CSV importer. Apply requires `AIRTHINGS_ALLOW_HISTORY_IMPORT=1` plus `--apply`; affected daily history files are backed up, merged idempotently, sorted, and written atomically. It is not an OpenClaw skill tool. |
+| `airthings-snapshot` | Non-model five-minute sampler wrapper. Reads only the exact enrolled Wave Enhance, appends one fresh Airthings-only climate row, and maintains protected status-only health. |
+| `nest-history-append` | Shared private JSONL appender for the 5-minute Airthings and 30-minute merged climate jobs. It validates records, uses a common `flock`, and supports exact source/room/timestamp deduplication. |
 
 See [`../REOLINK-CAMERA.md`](../REOLINK-CAMERA.md) for the private runtime
 contract, attended rollout, optional macOS Client role, verification, and V2
@@ -169,3 +171,5 @@ qmd mcp                                       # start MCP server for AI agents
 | `mysa-status.py` | Queries Mysa baseboard heater API for device status (temp, setpoint, mode). Outputs JSON. Uses Cognito auth cached at `~/.config/mysotherm`; an optional cached `Mysa` vault credential renews expired sessions automatically, or run `mysa --login` interactively. |
 | `airthings` | Reads the exact Cabin Living Room Wave Enhance over local BLE for CO2, VOC, temperature, humidity, pressure, noise, light, and battery data. No cloud account is used; unattended reads refresh through the authorized Homebrew `Python.app` identity. |
 | `airthings-history-import` | Imports UTC Airthings dashboard CSV history into the same Airthings room series without duplicating timestamps. This is an attended operator tool, not a scheduled or model-invocable command. |
+| `airthings-snapshot` | Scheduled local-only collector for the exact Airthings binding. It does not call Nest, weather, HVAC providers, or the home-event bus. |
+| `nest-history-append` | Serializes all ordinary climate JSONL writes and rejects unsafe history paths. The attended Airthings importer takes the same lock while merging a backfill. |

@@ -218,6 +218,10 @@ airthings devices --json
   separate Bluetooth grant does not cover the scheduled snapshot.
 - Status includes CO2, VOC, temperature, humidity, pressure, ambient noise,
   light, battery, and a five-minute cache age when applicable.
+- A dedicated `ai.openclaw.airthings-snapshot` LaunchAgent requests one exact
+  local BLE reading every five minutes and writes it to the climate dashboard's
+  shared history. Its protected status-only health lives at
+  `~/.openclaw/airthings/snapshot-status.json`.
 - The readings are environmental context only. They do not prove occupancy,
   publish to the home-event bus, or authorize HVAC/lighting actions.
 - Enrollment is operator-only and requires `AIRTHINGS_ALLOW_ENROLL=1`;
@@ -225,6 +229,8 @@ airthings devices --json
 - Historical CSV import is also operator-only. Do not invoke
   `airthings-history-import`; it is intentionally outside this skill's allowed
   tools and requires an attended environment gate plus `--apply`.
+- Do not invoke `airthings-snapshot`; the scheduled sampler is service-owned,
+  not a model tool.
 
 ## Eight Sleep Pod
 

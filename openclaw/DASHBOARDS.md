@@ -6,7 +6,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 
 | Port | Dashboard | URL | Data Refresh |
 |------|-----------|-----|-------------|
-| 8550 | [Nest Climate](#nest-climate-dashboard) | http://dylans-mac-mini:8550 | 5 min (UI) · 30 min (snapshots) |
+| 8550 | [Nest Climate](#nest-climate-dashboard) | http://dylans-mac-mini:8550 | 5 min (UI/Airthings) · 30 min (HVAC) |
 | 8551 | [OpenClaw Usage](#openclaw-usage-dashboard) | http://dylans-mac-mini:8551 | 5 min (UI) · 15 min (snapshots) |
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
@@ -42,7 +42,7 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 | Cielo CLI | 30 min | Minisplit AC status (Crosstown) |
 | Mysa API | 30 min | Baseboard heater temps + duty cycle (Crosstown) |
 | Midea local LAN | 30 min | Portable/window AC status, setpoints, and energy telemetry (Cabin) |
-| Airthings local BLE + attended CSV history | 30 min live; 5 min cache | Wave Enhance CO2, VOC, temperature, humidity, pressure, noise, light, and battery (Cabin); idempotent UTC CSV backfills share the same room series |
+| Airthings local BLE + attended CSV history | 5 min dedicated sampler | Wave Enhance CO2, VOC, temperature, humidity, pressure, noise, light, and battery (Cabin); idempotent UTC CSV backfills share the same room series |
 | Open-Meteo | 30 min | Outdoor weather (no API key needed) |
 | Presence scanner | Continuous | WiFi-based occupancy per location |
 
@@ -63,6 +63,7 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 | Server | `openclaw/bin/nest-dashboard.py` → `~/.openclaw/bin/nest-dashboard.py` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` |
 | Data | `~/.openclaw/nest-history/YYYY-MM-DD.jsonl` |
+| Airthings sampler health | `~/.openclaw/airthings/snapshot-status.json` |
 | Presence | `~/.openclaw/presence/state.json` + `history/` |
 | Logs | `~/.openclaw/logs/nest-dashboard.{log,err.log}` |
 

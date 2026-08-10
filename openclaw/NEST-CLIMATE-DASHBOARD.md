@@ -48,6 +48,7 @@ Mac Mini (dylans-mac-mini)
 | Label | Interval | Command | Logs |
 |-------|----------|---------|------|
 | `ai.openclaw.nest-snapshot` | 30 min (StartInterval) | `/opt/homebrew/bin/nest snapshot` | `~/.openclaw/logs/nest-cron.{log,err.log}` |
+| `ai.openclaw.airthings-snapshot` | 5 min (StartInterval) | `~/.openclaw/bin/airthings-snapshot` | stderr only: `~/.openclaw/logs/airthings-snapshot.err.log` |
 | `ai.openclaw.nest-dashboard` | KeepAlive | `python3 ~/.openclaw/bin/nest-dashboard.py` | `~/.openclaw/logs/nest-dashboard.{log,err.log}` |
 
 The snapshot agent shows `-` for PID in `launchctl list` — this is normal (runs and exits).
@@ -382,6 +383,17 @@ Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matche
 - **Bands:** CO2 is good below 800 ppm and poor at 1000 ppm or above; VOC is good below 250 ppb and poor at 2000 ppb or above; the intermediate band is fair
 - **Boundary:** Readings are dashboard/environmental context only. They do not establish occupancy, publish home events, or authorize HVAC actions.
 
+The dedicated `ai.openclaw.airthings-snapshot` job requests a refreshed exact
+device reading every five minutes and appends an Airthings-only record with
+`history_origin: airthings_ble_sampler_v1`. It calls no Nest, weather, or HVAC
+provider and continues to work without internet access. The 30-minute merged
+snapshot may still include the current Airthings row, so both writers use
+`~/.openclaw/bin/nest-history-append` and the same owner-only
+`~/.openclaw/nest-history/.history.lock`. An exact Airthings source, structure,
+room, and timestamp is idempotent. Failed or unavailable reads append no
+measurement and update only safe protected health at
+`~/.openclaw/airthings/snapshot-status.json`.
+
 #### Airthings history backfill
 
 `~/.openclaw/bin/airthings-history-import` accepts the Airthings dashboard's
@@ -392,6 +404,8 @@ records, backs up only affected daily files under the protected Airthings
 state tree, sorts the merged JSONL, and writes mode-`0600` files atomically.
 Imported samples carry `history_origin: airthings_csv_v1` and remain in the
 same Cabin Living Room series as live BLE samples.
+The importer holds the shared climate-history lock across its guarded merge,
+so an attended backfill cannot replace a simultaneously arriving live sample.
 
 The consumer cloud API currently covers device inventory and latest samples,
 not historical series. A future HAR-derived dashboard client may automate CSV
@@ -455,6 +469,8 @@ live stream and cannot retrieve historical Nest Aware footage.
 | `~/.config/cielo/config.json` | Cielo API credentials |
 | `~/.openclaw/airthings/config.json` | Exact owner-only Wave Enhance BLE binding |
 | `~/.openclaw/airthings/state/` | Owner-only BLE lock and five-minute status cache |
+| `~/.openclaw/airthings/snapshot-status.json` | Owner-only safe health for the five-minute sampler |
+| `~/.openclaw/nest-history/.history.lock` | Shared writer lock for merged, Airthings-only, and attended import history changes |
 | `~/.openclaw/nest-history/` | Daily JSONL snapshot files |
 | `~/.openclaw/presence/` | Presence state + history |
 | `~/.openclaw/logs/nest-*.log` | Dashboard and snapshot logs |
@@ -470,10 +486,13 @@ live stream and cannot retrieve historical Nest Aware footage.
 | `openclaw/bin/mysa-status.py` | `~/.openclaw/bin/` on Mini | Mysa API wrapper (JSON output) |
 | `openclaw/bin/airthings` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Read-only Airthings runtime wrapper |
 | `openclaw/bin/airthings-history-import` | `~/.openclaw/bin/` on Mini | Attended, guarded Airthings CSV history importer |
+| `openclaw/bin/airthings-snapshot` | `~/.openclaw/bin/` on Mini | Non-model five-minute exact-device sampler |
+| `openclaw/bin/nest-history-append` | `~/.openclaw/bin/` on Mini | Shared validated, locked climate-history appender |
 | `openclaw/skills/airthings-monitor/` | `~/.openclaw/skills/airthings-monitor/` | OpenClaw skill, BLE reader, and locked dependency manifest |
 | `openclaw/bin/nest-camera-snap.py` | `~/.openclaw/bin/` on Mini | WebRTC camera still and short-clip capture |
 | `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` | `~/Library/LaunchAgents/` on Mini | Dashboard KeepAlive service |
 | `openclaw/launchagents/ai.openclaw.nest-snapshot.plist` | `~/Library/LaunchAgents/` on Mini | 30-min snapshot cron |
+| `openclaw/launchagents/ai.openclaw.airthings-snapshot.plist` | `~/Library/LaunchAgents/` on Mini | 5-min local BLE sampler |
 
 ---
 

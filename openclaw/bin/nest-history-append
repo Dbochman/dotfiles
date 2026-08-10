@@ -1,0 +1,218 @@
+#!/usr/bin/python3
+"""Append one validated climate-history record under an interprocess lock."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import stat
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+MAX_INPUT_BYTES = 1_048_576
+MAX_HISTORY_BYTES = 64 * 1_048_576
+
+
+class AppendError(Exception):
+    """Operational error whose category is safe to print."""
+
+    def __init__(self, category: str) -> None:
+        super().__init__(category)
+        self.category = category
+
+
+def _safe_directory(path: Path) -> None:
+    if not path.exists():
+        path.mkdir(parents=True, mode=0o700)
+        os.chmod(path, 0o700)
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+    ):
+        raise AppendError("unsafe_history_directory")
+
+
+def _open_private(path: Path, flags: int, mode: int = 0o600) -> int:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags | nofollow, mode)
+    except OSError as exc:
+        raise AppendError("history_open_failed") from exc
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+    ):
+        os.close(descriptor)
+        raise AppendError("unsafe_history_file")
+    os.fchmod(descriptor, mode)
+    return descriptor
+
+
+def _parse_record(raw: bytes) -> tuple[dict[str, Any], str]:
+    if not raw or len(raw) > MAX_INPUT_BYTES:
+        raise AppendError("invalid_record_size")
+    try:
+        record = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise AppendError("invalid_record_json") from exc
+    if not isinstance(record, dict) or not isinstance(record.get("rooms"), list):
+        raise AppendError("invalid_record_shape")
+    if not record["rooms"] or not all(
+        isinstance(room, dict) for room in record["rooms"]
+    ):
+        raise AppendError("invalid_record_shape")
+    timestamp = record.get("timestamp")
+    if not isinstance(timestamp, str):
+        raise AppendError("invalid_timestamp")
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AppendError("invalid_timestamp") from exc
+    if parsed.tzinfo is None:
+        raise AppendError("invalid_timestamp")
+    day = parsed.astimezone(timezone.utc).date().isoformat()
+    return record, day
+
+
+def _is_duplicate(
+    path: Path,
+    record: dict[str, Any],
+    source: str | None,
+    structure: str | None,
+    room_name: str | None,
+) -> bool:
+    if source is None or not path.exists():
+        return False
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or metadata.st_size > MAX_HISTORY_BYTES
+    ):
+        raise AppendError("unsafe_history_file")
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                existing = json.loads(line)
+                if not isinstance(existing, dict):
+                    raise AppendError("invalid_history_file")
+                if existing.get("timestamp") != record["timestamp"]:
+                    continue
+                for room in existing.get("rooms", []):
+                    if not isinstance(room, dict) or room.get("source") != source:
+                        continue
+                    if structure is not None and room.get("structure") != structure:
+                        continue
+                    if room_name is not None and room.get("room") != room_name:
+                        continue
+                    return True
+    except json.JSONDecodeError as exc:
+        raise AppendError("invalid_history_file") from exc
+    except OSError as exc:
+        raise AppendError("history_read_failed") from exc
+    return False
+
+
+def append_record(
+    record: dict[str, Any],
+    day: str,
+    history_dir: Path,
+    *,
+    dedupe_source: str | None = None,
+    dedupe_structure: str | None = None,
+    dedupe_room: str | None = None,
+) -> str:
+    _safe_directory(history_dir)
+    lock_path = history_dir / ".history.lock"
+    lock_descriptor = _open_private(lock_path, os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
+        target = history_dir / f"{day}.jsonl"
+        if _is_duplicate(
+            target,
+            record,
+            dedupe_source,
+            dedupe_structure,
+            dedupe_room,
+        ):
+            return "duplicate"
+        encoded = (
+            json.dumps(record, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            + b"\n"
+        )
+        descriptor = _open_private(
+            target, os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        )
+        try:
+            offset = 0
+            while offset < len(encoded):
+                offset += os.write(descriptor, encoded[offset:])
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        return "appended"
+    finally:
+        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
+        os.close(lock_descriptor)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="nest-history-append")
+    parser.add_argument(
+        "--history-dir",
+        type=Path,
+        default=Path.home() / ".openclaw" / "nest-history",
+    )
+    parser.add_argument("--dedupe-source")
+    parser.add_argument("--dedupe-structure")
+    parser.add_argument("--dedupe-room")
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    try:
+        record, day = _parse_record(sys.stdin.buffer.read(MAX_INPUT_BYTES + 1))
+        outcome = append_record(
+            record,
+            day,
+            args.history_dir.expanduser(),
+            dedupe_source=args.dedupe_source,
+            dedupe_structure=args.dedupe_structure,
+            dedupe_room=args.dedupe_room,
+        )
+        print(
+            json.dumps(
+                {"ok": True, "outcome": outcome, "timestamp": record["timestamp"]},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        return 0
+    except AppendError as exc:
+        print(
+            json.dumps(
+                {"error": exc.category, "ok": False},
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+        )
+        return 12
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

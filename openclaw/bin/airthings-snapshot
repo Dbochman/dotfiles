@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
+SCRIPT="${AIRTHINGS_SNAPSHOT_SCRIPT:-$OPENCLAW_HOME/skills/airthings-monitor/scripts/airthings_snapshot.py}"
+
+if [[ ! -f "$SCRIPT" || -L "$SCRIPT" ]]; then
+  echo '{"error":"snapshot_script_unavailable","ok":false}' >&2
+  exit 12
+fi
+
+exec /usr/bin/python3 "$SCRIPT"
