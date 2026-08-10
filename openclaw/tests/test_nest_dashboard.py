@@ -135,6 +135,116 @@ class PresenceHistoryTests(unittest.TestCase):
         self.assertEqual(loaded, [valid])
 
 
+class CurrentSnapshotMergeTests(unittest.TestCase):
+    def test_newer_airthings_sample_augments_latest_full_hvac_snapshot(self):
+        full = {
+            "timestamp": "2026-08-10T13:45:00Z",
+            "weather": {"Philly": {"temp_f": 80}},
+            "rooms": [
+                {"room": "Bedroom", "source": "nest", "temp_f": 72},
+                {
+                    "room": "19Crosstown Living Room",
+                    "source": "cielo",
+                    "temp_f": 74,
+                },
+                {"room": "Living Room", "source": "airthings", "co2_ppm": 700},
+            ],
+        }
+        sampler = {
+            "timestamp": "2026-08-10T13:50:00Z",
+            "history_origin": "airthings_ble_sampler_v1",
+            "rooms": [
+                {
+                    "structure": "Philly",
+                    "room": "Living Room",
+                    "source": "airthings",
+                    "co2_ppm": 750,
+                }
+            ],
+        }
+
+        current = nest_dashboard.merge_current_snapshot([full, sampler])
+
+        self.assertEqual(current["timestamp"], sampler["timestamp"])
+        self.assertEqual(len(current["rooms"]), 3)
+        self.assertEqual(current["weather"], full["weather"])
+        self.assertEqual(
+            next(room for room in current["rooms"] if room["source"] == "airthings")[
+                "co2_ppm"
+            ],
+            750,
+        )
+        self.assertEqual(full["rooms"][2]["co2_ppm"], 700)
+        self.assertNotIn("history_origin", current)
+
+    def test_airthings_overlay_does_not_replace_same_room_nest_card(self):
+        full = {
+            "timestamp": "2026-08-10T13:45:00Z",
+            "rooms": [
+                {"room": "Living Room", "source": "nest", "temp_f": 71},
+                {"room": "Living Room", "source": "airthings", "temp_f": 70},
+            ],
+        }
+        sampler = {
+            "timestamp": "2026-08-10T13:50:00Z",
+            "history_origin": "airthings_ble_sampler_v1",
+            "rooms": [
+                {
+                    "structure": "Philly",
+                    "room": "Living Room",
+                    "source": "airthings",
+                    "temp_f": 72,
+                }
+            ],
+        }
+
+        current = nest_dashboard.merge_current_snapshot([full, sampler])
+
+        by_source = {room["source"]: room for room in current["rooms"]}
+        self.assertEqual(by_source["nest"]["temp_f"], 71)
+        self.assertEqual(by_source["airthings"]["temp_f"], 72)
+
+    def test_sampler_older_than_latest_full_snapshot_is_not_overlaid(self):
+        sampler = {
+            "timestamp": "2026-08-10T13:40:00Z",
+            "history_origin": "airthings_ble_sampler_v1",
+            "rooms": [
+                {"room": "Living Room", "source": "airthings", "co2_ppm": 750}
+            ],
+        }
+        full = {
+            "timestamp": "2026-08-10T13:45:00Z",
+            "rooms": [
+                {"room": "Bedroom", "source": "nest", "temp_f": 72},
+                {"room": "Living Room", "source": "airthings", "co2_ppm": 700},
+            ],
+        }
+
+        current = nest_dashboard.merge_current_snapshot([sampler, full])
+
+        self.assertEqual(current["timestamp"], full["timestamp"])
+        self.assertEqual(
+            next(room for room in current["rooms"] if room["source"] == "airthings")[
+                "co2_ppm"
+            ],
+            700,
+        )
+
+    def test_sensor_only_history_still_returns_a_current_card(self):
+        sampler = {
+            "timestamp": "2026-08-10T13:50:00Z",
+            "history_origin": "airthings_ble_sampler_v1",
+            "rooms": [
+                {"room": "Living Room", "source": "airthings", "co2_ppm": 750}
+            ],
+        }
+
+        current = nest_dashboard.merge_current_snapshot([sampler])
+
+        self.assertEqual(current["timestamp"], sampler["timestamp"])
+        self.assertEqual(current["rooms"], sampler["rooms"])
+
+
 class PresenceHtmlContractTests(unittest.TestCase):
     def test_uses_canonical_vacancy_states_without_partial_state(self):
         html = nest_dashboard.DASHBOARD_HTML
@@ -185,6 +295,8 @@ class ClimateSourceHtmlContractTests(unittest.TestCase):
         self.assertIn('canvas id="co2Chart"', html)
         self.assertIn('canvas id="vocChart"', html)
         self.assertIn("r.source !== 'airthings'", html)
+        self.assertIn("const current = data.current ||", html)
+        self.assertIn("renderLocationGroups(current, presState)", html)
 
     def test_midea_cards_include_power_and_preserve_unknown_values(self):
         html = nest_dashboard.DASHBOARD_HTML

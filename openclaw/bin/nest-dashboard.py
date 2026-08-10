@@ -7,6 +7,7 @@ Reads JSONL snapshots from ~/.openclaw/nest-history/YYYY-MM-DD.jsonl
 Intended for home-LAN and Tailscale-tailnet access; not public internet.
 """
 
+import copy
 import json
 import os
 import signal
@@ -24,6 +25,7 @@ PORT = 8550
 MAX_HOURS = 8760  # 1 year
 DOWNSAMPLE_THRESHOLD_HOURS = 168  # 7 days — beyond this, keep ~1 per hour
 VACANCY_PEOPLE = ("Dylan", "Julia")
+AIRTHINGS_SAMPLER_ORIGIN = "airthings_ble_sampler_v1"
 
 
 def load_snapshots(hours):
@@ -97,6 +99,81 @@ def _ts_minute(rec):
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).minute
     except (ValueError, AttributeError):
         return 60
+
+
+def _current_room_key(room):
+    """Return a stable key that preserves same-room, different-source cards."""
+    room_name = room.get("room")
+    if not isinstance(room_name, str):
+        return None
+    structure = room.get("structure")
+    if not isinstance(structure, str) or not structure:
+        structure = "19Crosstown" if room_name.startswith("19Crosstown ") else "Philly"
+    source = room.get("source")
+    if not isinstance(source, str) or not source:
+        source = "unknown"
+    return structure, room_name, source.lower()
+
+
+def merge_current_snapshot(records):
+    """Overlay newer Airthings-only rows onto the latest full snapshot.
+
+    Five-minute Airthings samples intentionally contain only one sensor room.
+    Treating the newest record as the complete current state hides every HVAC
+    card. The latest non-sampler record remains authoritative for the full room
+    inventory, weather, and provider availability; only later sampler rows are
+    overlaid by exact structure, room, and source.
+    """
+    usable = [
+        record
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("rooms"), list)
+    ]
+    if not usable:
+        return None
+
+    base_index = next(
+        (
+            index
+            for index in range(len(usable) - 1, -1, -1)
+            if usable[index].get("history_origin") != AIRTHINGS_SAMPLER_ORIGIN
+        ),
+        None,
+    )
+    if base_index is None:
+        current = {"timestamp": None, "rooms": [], "weather": {}}
+        overlay_records = usable
+    else:
+        current = copy.deepcopy(usable[base_index])
+        current["rooms"] = [
+            room
+            for room in current.get("rooms", [])
+            if isinstance(room, dict) and _current_room_key(room) is not None
+        ]
+        overlay_records = usable[base_index + 1 :]
+
+    room_indexes = {
+        _current_room_key(room): index for index, room in enumerate(current["rooms"])
+    }
+    for record in overlay_records:
+        if record.get("history_origin") != AIRTHINGS_SAMPLER_ORIGIN:
+            continue
+        for room in record.get("rooms", []):
+            if not isinstance(room, dict):
+                continue
+            key = _current_room_key(room)
+            if key is None:
+                continue
+            replacement = copy.deepcopy(room)
+            if key in room_indexes:
+                current["rooms"][room_indexes[key]] = replacement
+            else:
+                room_indexes[key] = len(current["rooms"])
+                current["rooms"].append(replacement)
+        if isinstance(record.get("timestamp"), str):
+            current["timestamp"] = record["timestamp"]
+    current.pop("history_origin", None)
+    return current
 
 
 def normalize_presence_state(state):
@@ -210,6 +287,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _serve_data(self, hours):
         records, clamped_hours = load_snapshots(hours)
+        current_records, _ = load_snapshots(24)
         presence = load_presence_history(hours)
         self._respond(200, {
             "meta": {
@@ -218,14 +296,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "downsampled": clamped_hours > DOWNSAMPLE_THRESHOLD_HOURS,
             },
             "snapshots": records,
+            "current": merge_current_snapshot(current_records),
             "presence": presence,
         })
 
     def _serve_current(self):
-        # Load just today + yesterday to find the latest snapshot
+        # Load today + yesterday and merge newer sensor-only observations onto
+        # the latest full multi-provider snapshot.
         records, _ = load_snapshots(24)
-        if records:
-            self._respond(200, records[-1])
+        current = merge_current_snapshot(records)
+        if current:
+            self._respond(200, current)
         else:
             self._respond(200, {"error": "no data", "timestamp": None, "rooms": [], "weather": {}})
 
@@ -1130,6 +1211,7 @@ function createBarChart(ctx, datasets) {
 async function refresh() {
   const data = await fetchData(currentHours);
   const snaps = data.snapshots || [];
+  const current = data.current || (snaps.length > 0 ? snaps[snaps.length - 1] : null);
   currentPresence = data.presence || [];
 
   // Pre-compute which room short names collide across structures
@@ -1147,7 +1229,7 @@ async function refresh() {
   legend.classList.toggle('visible', currentStructure !== 'all' && currentPresence.length > 0);
 
   // Render location groups (presence + device cards)
-  if (snaps.length > 0) renderLocationGroups(snaps[snaps.length - 1], presState);
+  if (current) renderLocationGroups(current, presState);
 
   if (typeof Chart === 'undefined') return; // CDN unreachable
 

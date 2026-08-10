@@ -75,6 +75,15 @@ the daily history file.
 8. **Write** — Append JSON line to `~/.openclaw/nest-history/YYYY-MM-DD.jsonl`
 9. **Prune** — Delete history files older than 1000 days
 
+### Current-state projection
+
+The history API retains the original full and Airthings-only records so charts
+keep their native sampling cadence. For cards and `/api/current`, the dashboard
+uses the latest non-sampler record as the complete HVAC/weather base and
+overlays only newer `airthings_ble_sampler_v1` rooms by exact structure, room,
+and source. A five-minute sensor row therefore refreshes the Airthings card
+without replacing the Nest, Cielo, Mysa, or Midea inventory.
+
 ### Room Name Convention
 
 Raw room names include a structure prefix for multi-structure disambiguation:

@@ -27,6 +27,9 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 
 - **Vacancy cards** — canonical occupancy per location (Occupied / Confirmed Vacant / Possibly Vacant), with only Dylan and Julia shown
 - **Temperature cards** — current temp, setpoint, HVAC mode, humidity per room
+- **Mixed-cadence current state** — the newest five-minute Airthings reading
+  overlays the latest complete 30-minute HVAC snapshot without hiding any
+  thermostat or air-conditioner cards
 - **Temperature chart** — line graph with room temps + setpoints + outdoor weather
 - **Humidity chart** — per-room humidity over time
 - **CO2 and VOC charts** — Cabin Living Room Wave Enhance trends in ppm and ppb
