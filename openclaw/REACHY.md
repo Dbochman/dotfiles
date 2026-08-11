@@ -78,6 +78,10 @@ ClawBody's deployed `.env` selects:
 REACHY_VOICE_MODE=direct
 OPENAI_MODEL=gpt-realtime-2.1-mini
 OPENAI_VOICE=cedar
+OPENAI_TTS_MODEL=gpt-4o-mini-tts
+OPENAI_TTS_VOICE=cedar
+OPENAI_TTS_FALLBACK_MODEL=tts-1
+OPENAI_TTS_FALLBACK_VOICE=coral
 OPENAI_AUDIO_JITTER_MS=220
 REACHY_BARGE_IN=true
 REACHY_WAKE_WORD_ENABLED=false
@@ -99,9 +103,11 @@ values and must remain mode `0600`.
   entire response.
 - Barge-in is enabled. New speech stops and flushes current native Realtime
   playback and truncates the assistant audio item to what was actually played.
-- Proactive `reachyctl speak` uses the separate OpenAI `tts-1`/Onyx fallback,
-  buffers the complete clip before playback, and suppresses echo input for the
-  clip duration plus a short tail.
+- Proactive `reachyctl speak` inherits `OPENAI_VOICE` and uses the expressive
+  OpenAI speech renderer with lively delivery instructions. If that render
+  fails, ClawBody retries once with `tts-1`/Coral. Both paths buffer the complete
+  clip before playback and suppress echo input for the clip duration plus a
+  short tail; command results identify the model, voice, and fallback state.
 
 ### Visible turn states
 
