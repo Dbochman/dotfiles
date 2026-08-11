@@ -428,7 +428,9 @@ class RingHomeEventTests(unittest.TestCase):
             "payload": {
                 "channel": "imessage",
                 "to": "chat_id:171",
-                "via": "gateway",
+                "via": "direct",
+                "mediaUrl": None,
+                "deliveryStatus": "sent",
                 "result": {"messageId": "test-message-guid"},
             },
         }
@@ -566,6 +568,80 @@ class RingHomeEventTests(unittest.TestCase):
                 1_788_000_000.0,
             ),
         )
+
+    def test_recent_provider_history_recovers_as_inert_backfill_once(self) -> None:
+        now = 1_788_000_000.0
+
+        class FakeDoorbell:
+            id = 684794187
+            name = "Provider Front Door Name"
+
+            async def async_history(self, *, limit: int):
+                self.limit = limit
+                return [
+                    {
+                        "id": "123999",
+                        "kind": "motion",
+                        "created_at": datetime.fromtimestamp(
+                            now - 120, tz=timezone.utc
+                        ),
+                        "cv_properties": {"person_detected": True},
+                    }
+                ]
+
+        doorbell = FakeDoorbell()
+        with mock.patch.object(self.module.time, "time", return_value=now):
+            first = asyncio.run(self.module._reconcile_ring_history([doorbell]))
+            second = asyncio.run(self.module._reconcile_ring_history([doorbell]))
+
+        self.assertEqual(first, (1, 0))
+        self.assertEqual(second, (0, 0))
+        self.assertEqual(doorbell.limit, self.module._RING_RECONCILE_HISTORY_LIMIT)
+        self.assertEqual(len(self.publisher.payloads), 1)
+        self.assertEqual(
+            self.publisher.payloads[0]["attributes"],
+            {"classification": "person", "backfill": True},
+        )
+        self.assertEqual(self.publisher.payloads[0]["time_precision"], "backfill")
+        self.assertEqual(self.signals, [])
+
+    def test_provider_history_is_bounded_and_skips_stale_or_unbound_events(self) -> None:
+        now = 1_788_000_000.0
+
+        class FakeDoorbell:
+            def __init__(self, provider_id: int, created_at: datetime):
+                self.id = provider_id
+                self.name = "Private provider name"
+                self.created_at = created_at
+
+            async def async_history(self, *, limit: int):
+                return [
+                    {
+                        "id": 123998,
+                        "kind": "ding",
+                        "created_at": self.created_at,
+                    }
+                ]
+
+        stale = FakeDoorbell(
+            684794187,
+            datetime.fromtimestamp(
+                now - self.module._RING_BACKFILL_MAX_SECONDS - 1,
+                tz=timezone.utc,
+            ),
+        )
+        unbound = FakeDoorbell(
+            999999999,
+            datetime.fromtimestamp(now - 30, tz=timezone.utc),
+        )
+        with mock.patch.object(self.module.time, "time", return_value=now):
+            result = asyncio.run(
+                self.module._reconcile_ring_history([stale, unbound])
+            )
+
+        self.assertEqual(result, (0, 0))
+        self.assertEqual(self.publisher.payloads, [])
+        self.assertEqual(self.signals, [])
 
     def test_publisher_queue_is_bounded_and_submit_never_runs_subprocess(self) -> None:
         runner = mock.Mock(

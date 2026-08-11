@@ -183,19 +183,30 @@ class HomeEventDeliveryTests(unittest.TestCase):
             return connection.execute("SELECT * FROM notification_outbox").fetchone()
 
     @staticmethod
-    def receipt() -> subprocess.CompletedProcess[str]:
+    def receipt(*, via: str = "direct") -> subprocess.CompletedProcess[str]:
+        channel_payload = {
+            "channel": "imessage",
+            "to": "chat_id:171",
+            "via": via,
+            "result": {"messageId": "message-guid"},
+        }
+        if via == "direct":
+            channel_payload.update(
+                {
+                    "mediaUrl": None,
+                    "deliveryStatus": "sent",
+                    "payloadOutcomes": [
+                        {"index": 0, "status": "sent", "messageId": "message-guid"}
+                    ],
+                }
+            )
         payload = {
             "action": "send",
             "channel": "imessage",
             "dryRun": False,
             "handledBy": "core",
             "messageId": "message-guid",
-            "payload": {
-                "channel": "imessage",
-                "to": "chat_id:171",
-                "via": "gateway",
-                "result": {"messageId": "message-guid"},
-            },
+            "payload": channel_payload,
         }
         return subprocess.CompletedProcess(
             [delivery.OPENCLAW_BIN, "message", "send"],
@@ -203,6 +214,25 @@ class HomeEventDeliveryTests(unittest.TestCase):
             stdout=json.dumps(payload) + "\n",
             stderr="",
         )
+
+    def test_receipt_accepts_legacy_gateway_and_current_native_direct_shapes(
+        self,
+    ) -> None:
+        delivery.validate_receipt(self.receipt(via="gateway").stdout, self.TARGET)
+        delivery.validate_receipt(self.receipt(via="direct").stdout, self.TARGET)
+
+    def test_native_direct_receipt_requires_confirmed_delivery(self) -> None:
+        payload = json.loads(self.receipt(via="direct").stdout)
+        payload["payload"]["deliveryStatus"] = "failed"
+        with self.assertRaisesRegex(delivery.DeliveryError, "message_receipt_invalid"):
+            delivery.validate_receipt(json.dumps(payload), self.TARGET)
+
+    def test_receipt_rejects_unknown_message_identity(self) -> None:
+        payload = json.loads(self.receipt(via="direct").stdout)
+        payload["messageId"] = "unknown"
+        payload["payload"]["result"]["messageId"] = "unknown"
+        with self.assertRaisesRegex(delivery.DeliveryError, "message_receipt_invalid"):
+            delivery.validate_receipt(json.dumps(payload), self.TARGET)
 
     def test_shadow_worker_is_inert_without_target(self) -> None:
         with mock.patch.object(delivery.subprocess, "run") as run:

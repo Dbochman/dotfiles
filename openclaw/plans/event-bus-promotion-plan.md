@@ -403,6 +403,34 @@ discarding successful evidence from the other provider.
   bindings, zero pending/leased work, zero dead letters, no unreviewed delivery
   outcome, and an empty camera-image directory.
 
+#### Ingress, receipt, and camera diagnostics repair — `2026-08-11`
+
+- A live audit found the queues drained and the core bus healthy, but Ring FCM
+  publication had stopped on August 7 while the listener continued emitting
+  hourly heartbeats and current Ring history contained newer events. The SDK's
+  `started` flag therefore was not a sufficient liveness signal.
+- Ring ingress now reconciles at most 20 recent history records per bound
+  device every five minutes. It accepts only records no more than 15 minutes
+  old, forces every recovered record into the inert backfill path, and restarts
+  FCM when a previously unseen record proves a push gap. Backfill cannot send a
+  direct ding or feed dog-walk automation, and the existing event identity
+  remains the dedupe boundary.
+- OpenClaw 2026.7.1 routes iMessage through its native-direct outbound path.
+  The delivery and Ring-notification validators now accept that receipt only
+  with the exact expected target, matching message identity, and
+  `deliveryStatus=sent`; the older gateway receipt remains supported. Ambiguous
+  outcomes are still never retried.
+- An exact Crosstown probe confirmed Nest capture succeeds while the idle
+  battery Ring snapshot endpoint returns `snapshot_failed`. Future evaluations
+  now preserve `ring_*` or `nest_*` failure codes instead of collapsing a
+  single-provider failure into `camera_target_partial`; uncertainty and image
+  deletion rules are unchanged.
+- The dog-walk skill validator, 95 focused event-bus/Ring/deployment tests, and
+  the complete 1,043-test OpenClaw suite passed before deployment. The Ring
+  listener and both interval workers were restarted from byte-identical
+  deployed copies; the replacement listener started with all three bound
+  devices.
+
 ## Progress ledger
 
 ### `2026-07-26`

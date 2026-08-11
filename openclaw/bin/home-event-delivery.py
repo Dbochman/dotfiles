@@ -143,6 +143,15 @@ def validate_receipt(stdout: str, target: str) -> None:
     top_id = payload.get("messageId") if isinstance(payload, dict) else None
     nested_id = result.get("messageId") if isinstance(result, dict) else None
     message_id = top_id or nested_id
+    via = channel_payload.get("via") if isinstance(channel_payload, dict) else None
+    delivery_status = (
+        channel_payload.get("deliveryStatus")
+        if isinstance(channel_payload, dict)
+        else None
+    )
+    transport_valid = via == "gateway" or (
+        via == "direct" and delivery_status == "sent"
+    )
     if (
         not isinstance(payload, dict)
         or not expected.issubset(payload)
@@ -154,11 +163,12 @@ def validate_receipt(stdout: str, target: str) -> None:
         or not isinstance(channel_payload, dict)
         or channel_payload.get("channel") != "imessage"
         or channel_payload.get("to") != target
-        or channel_payload.get("via") != "gateway"
+        or not transport_valid
         or not isinstance(result, dict)
         or not isinstance(message_id, str)
         or not 1 <= len(message_id) <= 128
         or any(ord(character) < 0x20 for character in message_id)
+        or message_id == "unknown"
         or (top_id is not None and nested_id is not None and top_id != nested_id)
     ):
         raise DeliveryError("message_receipt_invalid", uncertain=True)

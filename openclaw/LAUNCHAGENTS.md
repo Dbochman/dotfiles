@@ -17,7 +17,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.home-dashboard` | `home-dashboard.py` | 8558 | Home Control Plane dashboard and provider status API |
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
 | `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
-| `ai.openclaw.ring-event-listener` | `ring-event-listener-wrapper.sh` | — | Sole Ring FCM ingress, home-event publication, direct dings, and a narrow local dog-walk signal |
+| `ai.openclaw.ring-event-listener` | `ring-event-listener-wrapper.sh` | — | Sole Ring FCM ingress, bounded recent-history reconciliation, home-event publication, direct dings, and a narrow local dog-walk signal |
 | `ai.openclaw.dog-walk-automation` | `dog-walk-automation-wrapper.sh` | — | Fi/network departure and return policy, route tracking, collar modes, and Roomba lifecycle |
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary over explicit iMessage RPC bridge transport, hard-limited to one send attempt/hour |

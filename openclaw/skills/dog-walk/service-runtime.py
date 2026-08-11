@@ -333,9 +333,10 @@ _CANDIDATE_EVENT_TYPES = {"departure_candidate", "departure_candidate_reset"}
 # Main event loop reference — set in main(), used by on_event() for thread-safe bridging
 _main_loop: asyncio.AbstractEventLoop | None = None
 
-# Dedup: track recent Ring event IDs
-_recent_events: dict[int, float] = {}
-_DEDUP_WINDOW = 300  # 5 minutes
+# Dedup: track recent Ring provider/device event identities. Keep them longer
+# than the reconciliation window so a quiet device cannot be recovered twice.
+_recent_events: dict[str, float] = {}
+_DEDUP_WINDOW = 20 * 60
 
 # The FCM callback and asyncio event loop only perform a nonblocking memory
 # enqueue. A dedicated daemon thread owns all home-event subprocess I/O.
@@ -343,6 +344,8 @@ _RING_HOME_EVENT_QUEUE_MAX = 256
 _RING_HOME_EVENT_PUBLISH_TIMEOUT = 10
 _RING_BACKFILL_AFTER_SECONDS = 60
 _RING_BACKFILL_MAX_SECONDS = 15 * 60
+_RING_RECONCILE_INTERVAL_SECONDS = 5 * 60
+_RING_RECONCILE_HISTORY_LIMIT = 20
 _RING_STATUS_COMPONENTS = frozenset({"delivery", "bindings"})
 _RING_STATUS_HEALTHS = frozenset({"unknown", "ok", "degraded"})
 _RING_STATUS_RETRY_INITIAL_SECONDS = 5.0
@@ -1696,6 +1699,15 @@ def send_imessage(text: str) -> bool:
         channel_result.get("messageId") if isinstance(channel_result, dict) else None
     )
     message_id = top_message_id or nested_message_id
+    via = channel_payload.get("via") if isinstance(channel_payload, dict) else None
+    delivery_status = (
+        channel_payload.get("deliveryStatus")
+        if isinstance(channel_payload, dict)
+        else None
+    )
+    transport_valid = via == "gateway" or (
+        via == "direct" and delivery_status == "sent"
+    )
     if (
         not isinstance(payload, dict)
         or not expected_keys.issubset(payload)
@@ -1707,11 +1719,12 @@ def send_imessage(text: str) -> bool:
         or not isinstance(channel_payload, dict)
         or channel_payload.get("channel") != "imessage"
         or channel_payload.get("to") != f"chat_id:{chat_id}"
-        or channel_payload.get("via") != "gateway"
+        or not transport_valid
         or not isinstance(channel_result, dict)
         or not isinstance(message_id, str)
         or not 1 <= len(message_id) <= 128
         or any(ord(character) < 0x20 for character in message_id)
+        or message_id == "unknown"
         or (
             top_message_id is not None
             and nested_message_id is not None
@@ -3126,13 +3139,14 @@ def on_event(event: RingEvent) -> None:
 
 
 def _process_ring_event_on_loop(
-    event_id: int,
+    event_id: int | str,
     kind: str,
     device: str,
     doorbot_id: int,
     state: str,
     occurred_at_epoch: float,
-) -> None:
+    force_backfill: bool = False,
+) -> bool:
     """Process a Ring event on the asyncio loop thread.
 
     Owns all mutable state: _recent_events, _ring_departure_motion,
@@ -3141,13 +3155,14 @@ def _process_ring_event_on_loop(
     now = time.time()
 
     # Dedup cleanup
-    expired = [eid for eid, ts in _recent_events.items() if now - ts > _DEDUP_WINDOW]
-    for eid in expired:
-        del _recent_events[eid]
+    expired = [key for key, ts in _recent_events.items() if now - ts > _DEDUP_WINDOW]
+    for key in expired:
+        del _recent_events[key]
 
-    if event_id in _recent_events:
-        return
-    _recent_events[event_id] = now
+    dedupe_key = f"{doorbot_id}:{event_id}"
+    if dedupe_key in _recent_events:
+        return False
+    _recent_events[dedupe_key] = now
 
     home_event = _normalize_ring_home_event(
         event_id=event_id,
@@ -3156,8 +3171,12 @@ def _process_ring_event_on_loop(
         state=state,
         occurred_at_epoch=occurred_at_epoch,
         observed_at_epoch=now,
+        force_backfill=force_backfill,
     )
-    backfill = _ring_event_age_seconds(occurred_at_epoch, now) > _RING_BACKFILL_AFTER_SECONDS
+    backfill = force_backfill or (
+        _ring_event_age_seconds(occurred_at_epoch, now)
+        > _RING_BACKFILL_AFTER_SECONDS
+    )
     if home_event is not None and HOME_EVENTS_RING_ENABLED:
         _ring_home_event_publisher.submit(home_event)
         log(
@@ -3184,6 +3203,7 @@ def _process_ring_event_on_loop(
         asyncio.create_task(_handle_ding(device, doorbot_id, event_id))
     elif kind == "motion" and not backfill:
         _handle_motion(doorbot_id, state)
+    return home_event is not None
 
 
 async def _handle_ding(device: str, doorbot_id: int, event_id: int) -> None:
@@ -3212,12 +3232,13 @@ def _ring_event_age_seconds(occurred_at_epoch: float, observed_at_epoch: float) 
 
 def _normalize_ring_home_event(
     *,
-    event_id: int,
+    event_id: int | str,
     kind: str,
     doorbot_id: int,
     state: str,
     occurred_at_epoch: float,
     observed_at_epoch: float | None = None,
+    force_backfill: bool = False,
 ) -> dict | None:
     """Return the strict, privacy-minimized home-event producer envelope."""
     binding = RING_EVENT_DEVICES.get(doorbot_id)
@@ -3247,7 +3268,7 @@ def _normalize_ring_home_event(
     if age > _RING_BACKFILL_MAX_SECONDS:
         return None
     time_precision = "source"
-    if age > _RING_BACKFILL_AFTER_SECONDS:
+    if force_backfill or age > _RING_BACKFILL_AFTER_SECONDS:
         time_precision = "backfill"
         attributes["backfill"] = True
 
@@ -3264,6 +3285,90 @@ def _normalize_ring_home_event(
         "time_precision": time_precision,
         "attributes": attributes,
     }
+
+
+def _ring_history_event(device, record: object, *, now: float) -> dict | None:
+    """Normalize one bounded provider-history record without retaining raw data."""
+    if not isinstance(record, dict):
+        return None
+    try:
+        doorbot_id = device.id
+        device_name = device.name
+    except Exception:
+        return None
+    if doorbot_id not in RING_EVENT_DEVICES or not isinstance(device_name, str):
+        return None
+
+    event_id = record.get("id")
+    if isinstance(event_id, bool) or not (
+        isinstance(event_id, int) and event_id > 0
+        or isinstance(event_id, str)
+        and event_id.isdigit()
+        and 1 <= len(event_id) <= 32
+    ):
+        return None
+    kind = record.get("kind")
+    if kind not in {"ding", "motion"}:
+        return None
+
+    created_at = record.get("created_at")
+    if isinstance(created_at, datetime):
+        timestamp = created_at
+    elif isinstance(created_at, str) and 1 <= len(created_at) <= 64:
+        try:
+            timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if timestamp.tzinfo is None:
+        return None
+    occurred_at_epoch = timestamp.astimezone(timezone.utc).timestamp()
+    age = now - occurred_at_epoch
+    if age < -5 or age > _RING_BACKFILL_MAX_SECONDS:
+        return None
+
+    cv_properties = record.get("cv_properties")
+    if not isinstance(cv_properties, dict):
+        cv_properties = {}
+    detection_type = cv_properties.get("detection_type")
+    person_detected = cv_properties.get("person_detected") is True or (
+        isinstance(detection_type, str)
+        and detection_type.casefold() in {"human", "person"}
+    )
+    return {
+        "event_id": event_id,
+        "kind": kind,
+        "device": device_name,
+        "doorbot_id": doorbot_id,
+        "state": "human" if person_detected else "",
+        "occurred_at_epoch": occurred_at_epoch,
+    }
+
+
+async def _reconcile_ring_history(doorbells) -> tuple[int, int]:
+    """Recover only recent missed FCM events through bounded read-only history."""
+    recovered = 0
+    failures = 0
+    observed_at = time.time()
+    for device in tuple(doorbells):
+        try:
+            if device.id not in RING_EVENT_DEVICES:
+                continue
+            history = await device.async_history(limit=_RING_RECONCILE_HISTORY_LIMIT)
+        except Exception:
+            failures += 1
+            continue
+        if not isinstance(history, (list, tuple)):
+            failures += 1
+            continue
+        for record in reversed(history):
+            event = _ring_history_event(device, record, now=observed_at)
+            if event is None:
+                continue
+            if _process_ring_event_on_loop(**event, force_backfill=True):
+                recovered += 1
+    return recovered, failures
 
 
 def _handle_motion(doorbot_id: int, state: str) -> None:
@@ -3360,12 +3465,22 @@ async def _run_ring_event_listener() -> None:
 
     log("Ring event listener started (bus publication + direct dings + dog-walk signal)")
 
+    recovered, reconciliation_failures = await _reconcile_ring_history(doorbells)
+    if recovered:
+        log(f"Ring history reconciliation recovered {recovered} recent event(s)")
+    if reconciliation_failures:
+        log(
+            "WARNING: Ring history reconciliation was incomplete "
+            f"for {reconciliation_failures} bound device(s)"
+        )
+
     # Watchdog — restart listener if FCM push receiver dies.
     # Poll every 60s with bounded exponential backoff on consecutive restart
     # failures to avoid hammering Ring/FCM when the service is down.
     try:
         restart_failures = 0
         last_heartbeat = 0.0
+        next_reconciliation = time.monotonic() + _RING_RECONCILE_INTERVAL_SECONDS
         while True:
             await asyncio.sleep(60)
             if not listener.started:
@@ -3394,6 +3509,43 @@ async def _run_ring_event_listener() -> None:
                     await asyncio.sleep(backoff)
             else:
                 now = time.monotonic()
+                if now >= next_reconciliation:
+                    recovered, reconciliation_failures = (
+                        await _reconcile_ring_history(doorbells)
+                    )
+                    next_reconciliation = (
+                        time.monotonic() + _RING_RECONCILE_INTERVAL_SECONDS
+                    )
+                    if reconciliation_failures:
+                        log(
+                            "WARNING: Ring history reconciliation was incomplete "
+                            f"for {reconciliation_failures} bound device(s)"
+                        )
+                    if recovered:
+                        log(
+                            "WARNING: Ring push gap recovered from recent history; "
+                            "restarting listener"
+                        )
+                        try:
+                            await listener.stop()
+                            fcm_creds = load_fcm_credentials()
+                            listener = RingEventListener(
+                                ring,
+                                credentials=fcm_creds,
+                                credentials_updated_callback=save_fcm_credentials,
+                                config=listener_config,
+                            )
+                            listener.add_notification_callback(on_event)
+                            restarted = await listener.start(timeout=30)
+                            if restarted:
+                                restart_failures = 0
+                                log("Event listener restarted after recovered push gap")
+                            else:
+                                restart_failures += 1
+                                log("ERROR: Event listener restart after push gap failed")
+                        except Exception:
+                            restart_failures += 1
+                            log("ERROR: Event listener restart after push gap failed")
                 if now - last_heartbeat > 3600:
                     log("Heartbeat — listener still running")
                     last_heartbeat = now

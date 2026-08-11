@@ -245,9 +245,25 @@ class HomeEventCameraTests(unittest.TestCase):
         self.assertEqual(result["outcome"], "uncertain")
         row = self.row(row_id)
         self.assertEqual(row["snapshot_30_result"], "uncertain")
-        self.assertEqual(row["error_code"], "camera_target_partial")
+        self.assertEqual(row["error_code"], "ring_capture_command_failed")
         self.assertEqual(self.store.status_snapshot()["camera"]["health"], "degraded")
         self.assertEqual(list(self.paths.camera_images.iterdir()), [])
+
+    def test_nest_failure_is_preserved_as_provider_specific_diagnostic(self) -> None:
+        row_id = self.insert_evaluation()
+        commands = FakeCommands(
+            [camera.VisionDecision(False, "high")],
+            failures={("nest", "cabin", "Kitchen")},
+        )
+
+        result = camera.CameraWorker(
+            self.root, clock=self.clock, commands=commands
+        ).run_once()
+
+        self.assertEqual(result["outcome"], "uncertain")
+        self.assertEqual(
+            self.row(row_id)["error_code"], "nest_capture_command_failed"
+        )
 
     def test_real_commands_dispatch_ring_only_through_safe_binding(self) -> None:
         commands = camera.CameraCommands()

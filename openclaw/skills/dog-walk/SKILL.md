@@ -17,6 +17,10 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
   only a short-lived local `person_motion` hint to
   `ai.openclaw.dog-walk-automation`; the dog-walk service owns Fi, network,
   route, collar, and Roomba policy.
+- Ring ingress reconciles bounded read-only provider history every five minutes.
+  Events missed by FCM are accepted only within 15 minutes, marked as backfill,
+  and cannot ring the direct-notification or dog-walk automation paths. Finding
+  a missed event also restarts the push listener so recovery is automatic.
 - The listener uses Potato's Fi GPS/geofence result to choose the home, and stores the last confirmed in-geofence home as `home_location`.
 - Walks now get immutable `walk_id` and `origin_location` fields at departure.
 - Route files are persisted atomically during return monitoring at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`; per-route locking keeps concurrent polling, finalization, car marking, and delayed Fi enrichment from dropping one another's fields.
@@ -106,9 +110,9 @@ After departure, the return monitor uses three signals — any one triggers Room
 - **Post-dock verification:** 3 minutes after the dock command, a background thread checks if roombas are actually on the dock (`Charging (on dock)` in status). If not, it retries the dock command up to 2 times (3min between each). If still not docked after all retries, sends an iMessage warning. State is updated with `dock_verified: true/false` and `dock_retry_count`.
 - Dog-walk operational warnings use one bounded send through OpenClaw's
   already-supervised native iMessage channel. Delivery requires the protected
-  exact `chat_id` target, accepts only a matching channel receipt, and never
-  retries an ambiguous timeout. Direct Ring dings belong to the independent
-  Ring ingress service.
+  exact `chat_id` target, accepts matching successful gateway or native-direct
+  channel receipts, and never retries an ambiguous timeout. Direct Ring dings
+  belong to the independent Ring ingress service.
 
 ### GPS Tracking Mode (Lost Dog)
 

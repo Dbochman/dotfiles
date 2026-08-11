@@ -553,12 +553,19 @@ class CameraWorker:
                 result = "person" if decision.person_visible else "clear"
         except (CameraError, OSError) as exc:
             error_code = getattr(exc, "code", "camera_slot_failed")
+            if not error_code.startswith(provider + "_"):
+                provider_code = f"{provider}_{error_code}"
+                error_code = (
+                    provider_code
+                    if SAFE_CODE_RE.fullmatch(provider_code)
+                    else "camera_slot_failed"
+                )
             result = "failed"
         finally:
             try:
                 self._safe_unlink(path)
             except CameraError:
-                error_code = "image_cleanup_failed"
+                error_code = f"{provider}_image_cleanup_failed"
                 result = "failed"
         return result, error_code
 
@@ -586,11 +593,15 @@ class CameraWorker:
             combined = "uncertain"
         error_code = None
         if errors:
-            error_code = (
-                "camera_targets_unavailable"
-                if combined == "failed"
-                else "camera_target_partial"
-            )
+            unique_errors = set(errors)
+            if len(unique_errors) == 1:
+                error_code = unique_errors.pop()
+            else:
+                error_code = (
+                    "camera_targets_unavailable"
+                    if combined == "failed"
+                    else "camera_targets_partial"
+                )
         return self._record_slot(claim, combined, error_code)
 
     def run_once(self) -> Mapping[str, Any]:
