@@ -6,12 +6,13 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 
 | Plan | Summary |
 |------|---------|
+| [camera-dashboard](camera-dashboard.md) | Image-first Cabin/Crosstown camera wall with exact still capture, protected caching, and session-scoped refresh |
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |
 | [grocery-auth-improvement](grocery-auth-improvement.md) | Improve Star Market grocery reorder auth flow |
 | [home-events-bus](home-events-bus.md) | Deployed shadow bus: presence, Nest, Ring, and August active for shadow evidence |
 | [event-bus-promotion-plan](event-bus-promotion-plan.md) | Promote shadow correlation through Crosstown enrichment, attended source evidence, and narrowly scoped household delivery |
-| [home-events-future-sources](home-events-future-sources.md) | Planned vacancy outcomes, site connectivity, and pet-equipment exception producers |
+| [home-events-future-sources](home-events-future-sources.md) | Vacant-house action confidence, lighting/HVAC promotion, bounded pet care, and deferred connectivity |
 | [cabin-starlink-presence-enrollment](cabin-starlink-presence-enrollment.md) | Cabin exact controller/mesh schema v2 activated; natural transition verification remains |
 | [crosstown-strict-presence-canary](crosstown-strict-presence-canary.md) | Strict Crosstown scanner activated with exact approval and a protected legacy rollback |
 
