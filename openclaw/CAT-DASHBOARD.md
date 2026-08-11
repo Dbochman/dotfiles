@@ -14,23 +14,32 @@ food, and water—rather than around vendor accounts or a generic device grid.
 - **Whisker stations** show connectivity, state, waste level, litter level,
   cycle count, and recent activity for the exact enrolled robot at each home.
 - **Petlibro stations** show live feeder and fountain telemetry when the cloud
-  account returns those devices. An explicit empty state replaces stale or
-  invented values when no devices are reporting.
+  account returns those devices. Feeder cards also show whether the full saved
+  meal schedule is enabled or paused. An explicit empty state replaces stale
+  or invented values when no devices are reporting.
 - **Attention state** calls out unavailable integrations, offline robots, and
   full or nearly-full waste drawers.
 
 ## Controls and safety
 
-The dashboard exposes only two narrow controls:
+The dashboard exposes only three narrow controls:
 
 - Start a clean cycle on an exact enrolled Litter-Robot.
 - Dispense 1–3 portions from an exact enrolled Petlibro feeder.
+- Pause or resume all scheduled meals on an exact enrolled Petlibro feeder.
+
+The schedule control is available only when a fresh state is known. It names
+the selected home in a confirmation step, changes the whole schedule once, and
+then requires a verified readback. Pausing the schedule does not delete meal
+definitions or block manual feeding. An uncertain result is shown as a failure
+and is never retried automatically.
 
 Browser mutations require a per-process bearer token embedded into the served
 page, a same-origin request, a bounded JSON body, and an exact allowlisted
-selector. The underlying skill wrappers retain their own validation and
-outcome-unknown protections. Reset, night-light, enrollment, and arbitrary
-vendor commands are intentionally absent from this care-focused surface.
+selector. The underlying skill wrappers retain their own locking, durable
+audit, validation, and outcome-unknown protections. Reset, night-light,
+enrollment, individual-plan editing, and arbitrary vendor commands are
+intentionally absent from this care-focused surface.
 
 Reads are available on the home LAN and Tailscale tailnet. The service is not
 intended for public-internet exposure or router port forwarding.

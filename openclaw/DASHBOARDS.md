@@ -208,8 +208,9 @@ with Petlibro feeders and fountains.
 - **Cat profiles** — current Whisker weight and recent direction
 - **Whisker cards** — one exact enrolled robot per home, including online
   state, waste, litter, cycle count, and a guarded clean action
-- **Petlibro cards** — live feeder and fountain telemetry plus guarded 1–3
-  portion manual feeding when an enrolled device is reporting
+- **Petlibro cards** — live feeder and fountain telemetry, full-schedule
+  enabled/paused state, guarded pause/resume, and guarded 1–3 portion manual
+  feeding when an enrolled device is reporting
 - **Recent activity** — newest Litter-Robot events across both homes or scoped
   to Crosstown or Cabin
 - **Attention state** — integration errors, offline robots, and waste drawers

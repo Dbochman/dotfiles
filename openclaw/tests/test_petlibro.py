@@ -75,6 +75,8 @@ class PetlibroTests(unittest.TestCase):
         self.state_dir = self.root / "home" / ".cache" / "petlibro"
         self.state_file = self.state_dir / "feed-state.json"
         self.lock_file = self.state_dir / ".feed.lock"
+        self.schedule_state_file = self.state_dir / "schedule-state.json"
+        self.schedule_lock_file = self.state_dir / ".schedule.lock"
         self.config_dir.mkdir(parents=True, mode=0o700)
         self.config_file.write_text(
             "\n".join(
@@ -99,6 +101,8 @@ class PetlibroTests(unittest.TestCase):
             patch.object(petlibro_api, "FEED_STATE_DIR", self.state_dir),
             patch.object(petlibro_api, "FEED_STATE_FILE", self.state_file),
             patch.object(petlibro_api, "FEED_LOCK_FILE", self.lock_file),
+            patch.object(petlibro_api, "SCHEDULE_STATE_FILE", self.schedule_state_file),
+            patch.object(petlibro_api, "SCHEDULE_LOCK_FILE", self.schedule_lock_file),
             patch.dict(
                 os.environ,
                 {
@@ -170,6 +174,10 @@ class PetlibroTests(unittest.TestCase):
 
     def device_list_response(self) -> FakeResponse:
         return FakeResponse({"code": 0, "data": self.devices})
+
+    @staticmethod
+    def schedule_state_response(enabled: bool) -> FakeResponse:
+        return FakeResponse({"code": 0, "data": {"enableFeedingPlan": enabled}})
 
     def test_missing_environment_and_config_are_structured_without_traceback(self) -> None:
         self.token_file.unlink()
@@ -320,6 +328,138 @@ class PetlibroTests(unittest.TestCase):
                 self.assertEqual(payload["error"], "invalid_portions")
                 urlopen.assert_not_called()
 
+    def test_status_includes_verified_schedule_state_for_online_mapped_feeders(self) -> None:
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=[self.device_list_response(), self.schedule_state_response(False)],
+        ) as urlopen:
+            code, payload = self.run_main(["status"])
+
+        self.assertEqual(code, 0)
+        feeders = {item["selector"]: item for item in payload if item["type"] == "feeder"}
+        self.assertIsNone(feeders["cabin-feeder"]["scheduleEnabled"])
+        self.assertEqual(feeders["cabin-feeder"]["scheduleState"], "unavailable")
+        self.assertFalse(feeders["crosstown-feeder"]["scheduleEnabled"])
+        self.assertEqual(feeders["crosstown-feeder"]["scheduleState"], "disabled")
+        state_request = urlopen.call_args_list[1].args[0]
+        self.assertTrue(state_request.full_url.endswith("/device/device/baseInfo"))
+        self.assertEqual(
+            json.loads(state_request.data.decode("utf-8")),
+            {"deviceSn": "CROSS-FEEDER-SN", "id": "CROSS-FEEDER-SN"},
+        )
+
+    def test_schedule_set_is_exact_durable_and_verified(self) -> None:
+        responses = [
+            self.device_list_response(),
+            self.schedule_state_response(True),
+            FakeResponse({"code": 0}),
+            self.schedule_state_response(False),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            code, payload = self.run_main(["schedule-set", "crosstown-feeder", "off"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["device"], "crosstown-feeder")
+        self.assertFalse(payload["scheduleEnabled"])
+        self.assertTrue(payload["verified"])
+        self.assertTrue(payload["mutation_attempted"])
+        mutation_request = urlopen.call_args_list[2].args[0]
+        self.assertTrue(
+            mutation_request.full_url.endswith("/device/setting/updateFeedingPlanSwitch")
+        )
+        self.assertEqual(
+            json.loads(mutation_request.data.decode("utf-8")),
+            {"deviceSn": "CROSS-FEEDER-SN", "enable": False},
+        )
+        audit = json.loads(self.schedule_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(audit["selector"], "crosstown-feeder")
+        self.assertFalse(audit["requested_enabled"])
+        self.assertFalse(audit["observed_enabled"])
+        self.assertEqual(audit["status"], "verified")
+        self.assertNotIn("CROSS-FEEDER-SN", self.schedule_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(stat.S_IMODE(self.schedule_state_file.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(self.schedule_lock_file.stat().st_mode), 0o600)
+
+    def test_schedule_set_same_state_is_verified_without_mutation(self) -> None:
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=[self.device_list_response(), self.schedule_state_response(False)],
+        ) as urlopen:
+            code, payload = self.run_main(["schedule-set", "crosstown-feeder", "off"])
+
+        self.assertEqual(code, 0)
+        self.assertFalse(payload["mutation_attempted"])
+        self.assertTrue(payload["verified"])
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertFalse(self.schedule_state_file.exists())
+
+    def test_schedule_state_is_validated_before_network(self) -> None:
+        for state_value in ("pause", "OFF", "1"):
+            with self.subTest(state=state_value), patch.object(
+                petlibro_api.urllib.request, "urlopen"
+            ) as urlopen:
+                code, payload = self.run_main(
+                    ["schedule-set", "crosstown-feeder", state_value]
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual(payload["error"], "invalid_schedule_state")
+            urlopen.assert_not_called()
+
+    def test_ambiguous_schedule_mutation_is_recorded_and_not_retried(self) -> None:
+        responses = [
+            self.device_list_response(),
+            self.schedule_state_response(True),
+            urllib.error.URLError("lost"),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            code, payload = self.run_main(["schedule-set", "crosstown-feeder", "off"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "schedule_outcome_unknown")
+        self.assertTrue(payload["non_retryable"])
+        self.assertTrue(payload["schedule_may_have_changed"])
+        self.assertEqual(urlopen.call_count, 3)
+        audit = json.loads(self.schedule_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(audit["status"], "unknown")
+
+    def test_unverified_schedule_mutation_is_not_repeated(self) -> None:
+        responses = [
+            self.device_list_response(),
+            self.schedule_state_response(True),
+            FakeResponse({"code": 0}),
+            self.schedule_state_response(True),
+            self.schedule_state_response(True),
+            self.schedule_state_response(True),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen, patch.object(petlibro_api.time, "sleep"):
+            code, payload = self.run_main(["schedule-set", "crosstown-feeder", "off"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "schedule_outcome_unknown")
+        mutation_calls = [
+            call
+            for call in urlopen.call_args_list
+            if call.args[0].full_url.endswith("/device/setting/updateFeedingPlanSwitch")
+        ]
+        self.assertEqual(len(mutation_calls), 1)
+        audit = json.loads(self.schedule_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(audit["status"], "unknown")
+        self.assertTrue(audit["observed_enabled"])
+
     def test_manual_feed_cooldown_blocks_duplicate_before_second_feed_call(self) -> None:
         first_responses = [self.device_list_response(), FakeResponse({"code": 0})]
         with patch.object(
@@ -459,6 +599,11 @@ class PetlibroTests(unittest.TestCase):
             (["water", "crosstown-fountain", "extra"], 2),
             (["schedule"], 2),
             (["schedule", "crosstown-feeder", "extra"], 2),
+            (["schedule-set"], 2),
+            (["schedule-set", "crosstown-feeder"], 2),
+            (["schedule-set", "crosstown-feeder", "pause"], 2),
+            (["schedule-set", "crosstown-fountain", "off"], 2),
+            (["schedule-set", "crosstown-feeder", "off", "extra"], 2),
         )
         for args, expected_code in cases:
             with self.subTest(args=args):
@@ -472,11 +617,13 @@ class PetlibroTests(unittest.TestCase):
                 self.assertEqual(result.returncode, expected_code)
                 self.assertNotIn("Raw API POST", result.stdout + result.stderr)
 
-    def test_json_wrapper_preserves_explicit_feed_contract(self) -> None:
+    def test_json_wrapper_preserves_mutation_contracts(self) -> None:
         env = {"HOME": str(self.root / "wrapper-home"), "PATH": os.environ["PATH"]}
         for args in (
             ["--json", "feed", "crosstown-feeder"],
             ["feed", "crosstown-feeder", "4", "--json"],
+            ["--json", "schedule-set", "crosstown-feeder", "pause"],
+            ["schedule-set", "crosstown-fountain", "off", "--json"],
         ):
             with self.subTest(args=args):
                 result = subprocess.run(

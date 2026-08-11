@@ -1,6 +1,6 @@
 ---
 name: petlibro
-description: Inspect and safely control location-specific Petlibro feeders and fountains at Crosstown or Cabin. Use for Petlibro device status, feeding schedules, water intake, or an explicit request to dispense a bounded amount of food. Require an exact location and device selector for every device-specific command. Do not use for Litter-Robot devices.
+description: Inspect and safely control location-specific Petlibro feeders and fountains at Crosstown or Cabin. Use for Petlibro device status, feeding schedules, pausing or resuming all scheduled meals, water intake, or an explicit request to dispense a bounded amount of food. Require an exact location and device selector for every device-specific command. Do not use for Litter-Robot devices.
 allowed-tools: Bash(petlibro:*)
 metadata: {"openclaw":{"emoji":"🐱","requires":{"bins":["petlibro"]}}}
 ---
@@ -36,7 +36,26 @@ petlibro schedule crosstown-feeder
 ```
 
 `status` and `devices` label configured devices with their exact selectors and
-show unconfigured devices as `unmapped`.
+show unconfigured devices as `unmapped`. For each online mapped feeder,
+`status` also reads and reports whether its full feeding schedule is enabled.
+
+## Scheduled feeding
+
+```bash
+petlibro schedule-set crosstown-feeder off
+petlibro schedule-set cabin-feeder on
+```
+
+`schedule-set` pauses or resumes the feeder's entire saved schedule. It does
+not dispense food, delete individual meals, or prevent a separate manual-feed
+request. Require an exact feeder selector and the literal state `on` or `off`.
+
+The command holds an exclusive lock, reads the current state first, writes a
+protected audit record before a needed mutation, sends at most one update, and
+then verifies the state through a fresh read. A request for an already-matching
+state succeeds without a mutation. If the result contains
+`schedule_outcome_unknown`, never retry automatically; inspect `petlibro
+status` before a new, explicit change.
 
 ## Manual feeding
 
@@ -98,6 +117,8 @@ return structured nonzero failures without deleting the previous cache.
 - Do not bypass the cooldown by changing names, retrying after a timeout, or
   calling the Python implementation directly.
 - Treat `feed_outcome_unknown` and `feed_cooldown` as non-retryable.
+- Treat `schedule_outcome_unknown` as non-retryable until a fresh status read
+  reconciles the feeder's actual schedule state.
 
 ## Troubleshooting
 
@@ -107,5 +128,7 @@ return structured nonzero failures without deleting the previous cache.
 - `environment_missing`: refresh the protected OpenClaw secret cache.
 - `config_unsafe`: repair the local config ownership/type and set mode `0600`.
 - `auth_failed`: verify the secondary Petlibro account credentials locally.
+- `invalid_schedule_state`: use only `on` or `off` with `schedule-set`.
+- `schedule_outcome_unknown`: inspect status; do not repeat the toggle.
 - `network_error`, `http_error`, or `invalid_response`: preserve state and
   retry read-only commands later; never retry an uncertain feed.

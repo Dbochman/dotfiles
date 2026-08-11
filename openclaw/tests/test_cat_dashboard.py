@@ -89,12 +89,32 @@ class CatDashboardTests(unittest.TestCase):
             ),
             [self.dashboard.PETLIBRO_CLI, "--json", "feed", "crosstown-feeder", "2"],
         )
+        self.assertEqual(
+            self.dashboard.build_command(
+                {
+                    "device": "petlibro",
+                    "action": "schedule",
+                    "selector": "cabin-feeder",
+                    "state": "off",
+                }
+            ),
+            [
+                self.dashboard.PETLIBRO_CLI,
+                "--json",
+                "schedule-set",
+                "cabin-feeder",
+                "off",
+            ],
+        )
         invalid = (
             {"device": "whisker", "action": "clean", "selector": "cabin"},
             {"device": "whisker", "action": "reset", "selector": "cabin-litter-robot"},
             {"device": "petlibro", "action": "feed", "selector": "cabin-feeder", "portions": 4},
             {"device": "petlibro", "action": "feed", "selector": "cabin-feeder", "portions": True},
             {"device": "petlibro", "action": "feed", "selector": "cabin-feeder", "portions": 1, "extra": "x"},
+            {"device": "petlibro", "action": "schedule", "selector": "cabin", "state": "off"},
+            {"device": "petlibro", "action": "schedule", "selector": "cabin-feeder", "state": "pause"},
+            {"device": "petlibro", "action": "schedule", "selector": "cabin-feeder", "state": "off", "extra": "x"},
         )
         for payload in invalid:
             with self.subTest(payload=payload), self.assertRaises(ValueError):
@@ -127,6 +147,10 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("<title>Cat Care</title>", text)
         self.assertIn("The cats", text)
         self.assertIn("Recent litter-box activity", text)
+        self.assertIn("Scheduled meals", text)
+        self.assertIn("Pause schedule", text)
+        self.assertIn("Resume schedule", text)
+        self.assertIn("Manual feeding remains available", text)
         self.assertIn("data-site=\"crosstown\"", text)
         self.assertIn(f"const MUTATION_TOKEN = {json.dumps(self.dashboard.MUTATION_TOKEN)};", text)
         self.assertNotIn(self.dashboard.MUTATION_TOKEN_PLACEHOLDER, text)

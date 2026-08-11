@@ -176,6 +176,16 @@ def build_command(payload: object) -> list[str]:
             raise ValueError("portions must be an integer from 1 to 3")
         return [PETLIBRO_CLI, "--json", "feed", str(selector), str(portions)]
 
+    if device == "petlibro" and action == "schedule":
+        if selector not in PETLIBRO_FEEDER_SELECTORS:
+            raise ValueError("use an exact Petlibro feeder selector")
+        if set(payload) != {"device", "action", "selector", "state"}:
+            raise ValueError("unexpected Petlibro schedule fields")
+        state = payload.get("state")
+        if state not in {"on", "off"}:
+            raise ValueError("scheduled feeding state must be on or off")
+        return [PETLIBRO_CLI, "--json", "schedule-set", str(selector), str(state)]
+
     raise ValueError("unsupported cat-care command")
 
 
@@ -192,7 +202,11 @@ def execute_command(payload: object) -> tuple[int, dict[str, object]]:
             STATUS_CACHE.clear()
         return 200, {"ok": True, "result": result}
     if isinstance(result, dict):
-        return 502, {"ok": False, "result": result, "error": result.get("error", "command failed")}
+        return 502, {
+            "ok": False,
+            "result": result,
+            "error": result.get("message", result.get("error", "command failed")),
+        }
     return 502, {"ok": False, "error": "command failed"}
 
 
@@ -359,6 +373,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .bar span { height: 100%; display: block; background: var(--mint); border-radius: inherit; }
     .bar.warn span { background: var(--gold); }
     .actions { display: flex; gap: 8px; align-items: center; margin-top: 17px; }
+    .schedule-actions { justify-content: space-between; border-top: 1px solid var(--line); padding-top: 14px; }
+    .schedule-label { display: flex; flex-direction: column; gap: 2px; }
     .action { border: 1px solid rgba(149,213,178,.3); color: var(--mint); background: rgba(149,213,178,.06); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
     .action:disabled { opacity: .38; cursor: not-allowed; }
     select { color: var(--ink); border: 1px solid var(--line); background: #1c211f; border-radius: 10px; padding: 8px; }
@@ -443,9 +459,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const metrics = feeder
         ? metric('Food', device.foodLevel || '—') + metric('Next meal', device.nextFeedTime || '—') + metric('Portions', number(device.nextFeedPortions))
         : metric('Water', device.waterPercent === '?' ? '—' : `${number(device.waterPercent)}%`) + metric('Today', device.todayDrinkMl === '?' ? '—' : `${number(device.todayDrinkMl)} ml`) + metric('Filter', device.filterDaysRemaining === '?' ? '—' : `${number(device.filterDaysRemaining)} d`);
-      const action = feeder && ['crosstown-feeder','cabin-feeder'].includes(selector)
+      const enrolledFeeder = feeder && ['crosstown-feeder','cabin-feeder'].includes(selector);
+      const action = enrolledFeeder
         ? `<div class="actions"><select aria-label="Portions" data-portions-for="${esc(selector)}"><option value="1">1 portion</option><option value="2">2 portions</option><option value="3">3 portions</option></select><button class="action" ${device.online ? '' : 'disabled'} data-command="feed" data-selector="${esc(selector)}">Feed now</button></div>` : '';
-      return `<article class="card device-card" data-location="${esc(site)}"><div class="card-top"><div><div class="site">${esc(siteName(site))}</div><h3>${feeder ? 'Feeder' : 'Fountain'}</h3><div class="muted">${esc(device.name || device.model || 'Petlibro')}</div></div>${statusPill(device.online)}</div><div class="metric-row">${metrics}</div>${action}</article>`;
+      const scheduleKnown = typeof device.scheduleEnabled === 'boolean';
+      const scheduleEnabled = device.scheduleEnabled === true;
+      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleKnown && scheduleEnabled ? '' : 'warn'}">${scheduleKnown ? (scheduleEnabled ? 'Enabled' : 'Paused') : 'Unavailable'}</span></div><button class="action" ${device.online && scheduleKnown ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
+      return `<article class="card device-card" data-location="${esc(site)}"><div class="card-top"><div><div class="site">${esc(siteName(site))}</div><h3>${feeder ? 'Feeder' : 'Fountain'}</h3><div class="muted">${esc(device.name || device.model || 'Petlibro')}</div></div>${statusPill(device.online)}</div><div class="metric-row">${metrics}</div>${schedule}${action}</article>`;
     }
 
     function renderDevices() {
@@ -489,13 +509,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       button.disabled = true;
       try {
         const response = await fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${MUTATION_TOKEN}`}, body:JSON.stringify(payload)});
-        const result = await response.json(); if (!response.ok || !result.ok) throw new Error(result.error || result.result?.message || 'Command failed'); toast(payload.action === 'feed' ? 'Feed request confirmed.' : 'Clean cycle confirmed.'); await load(true);
+        const result = await response.json(); if (!response.ok || !result.ok) throw new Error(result.result?.message || result.error || 'Command failed');
+        const message = payload.action === 'feed' ? 'Feed request confirmed.' : payload.action === 'schedule' ? `Scheduled feeding ${payload.state === 'on' ? 'resumed' : 'paused'} and verified.` : 'Clean cycle confirmed.';
+        toast(message); await load(true);
       } catch (error) { toast(error.message); } finally { button.disabled = false; }
     }
 
     document.querySelector('.segmented').addEventListener('click', event => { const button = event.target.closest('button[data-site]'); if (!button) return; selectedSite = button.dataset.site; document.querySelectorAll('.segmented button').forEach(x => x.classList.toggle('active', x === button)); renderDevices(); renderActivity(); });
     document.getElementById('refresh').addEventListener('click', () => load(true));
-    document.getElementById('devices').addEventListener('click', event => { const button = event.target.closest('button[data-command]'); if (!button) return; const payload = {device: button.dataset.command === 'clean' ? 'whisker' : 'petlibro', action:button.dataset.command, selector:button.dataset.selector}; if (payload.action === 'feed') { const select = document.querySelector(`[data-portions-for="${CSS.escape(payload.selector)}"]`); payload.portions = Number(select.value); } mutate(payload, button); });
+    document.getElementById('devices').addEventListener('click', event => { const button = event.target.closest('button[data-command]'); if (!button) return; const payload = {device: button.dataset.command === 'clean' ? 'whisker' : 'petlibro', action:button.dataset.command, selector:button.dataset.selector}; if (payload.action === 'feed') { const select = document.querySelector(`[data-portions-for="${CSS.escape(payload.selector)}"]`); payload.portions = Number(select.value); } if (payload.action === 'schedule') { payload.state = button.dataset.state; const location = siteName(String(payload.selector).split('-')[0]); const verb = payload.state === 'on' ? 'Resume' : 'Pause'; if (!window.confirm(`${verb} all scheduled meals at ${location}? Manual feeding remains available.`)) return; } mutate(payload, button); });
     load(); setInterval(() => load(), 60000);
   </script>
 </body>

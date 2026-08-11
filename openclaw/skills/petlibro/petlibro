@@ -25,6 +25,14 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     printf '%s\n' '{"success":false,"error":"invalid_arguments","message":"Usage: petlibro feed <crosstown-feeder|cabin-feeder> <1|2|3>"}'
     exit 2
   fi
+  if [[ "${1:-}" == "schedule-set" ]] && {
+    [[ $# -ne 3 ]] ||
+    [[ ! "${2:-}" =~ ^(crosstown-feeder|cabin-feeder)$ ]] ||
+    [[ ! "${3:-}" =~ ^(on|off)$ ]]
+  }; then
+    printf '%s\n' '{"success":false,"error":"invalid_arguments","message":"Usage: petlibro schedule-set <crosstown-feeder|cabin-feeder> <on|off>"}'
+    exit 2
+  fi
   exec "$PYTHON" "$API_SCRIPT" "$@"
 fi
 
@@ -52,6 +60,9 @@ for d in devices:
         portions = d.get('nextFeedPortions', '?')
         print(f'  Food Level:  {food}')
         print(f'  Next Feed:   {nxt} ({portions} portions)')
+        schedule = d.get('scheduleEnabled')
+        label = 'Enabled' if schedule is True else 'Disabled' if schedule is False else 'Unavailable'
+        print(f'  Schedule:    {label}')
         bowl = d.get('bowlMode')
         if bowl:
             print(f'  Bowl Mode:   {bowl}')
@@ -109,6 +120,26 @@ if avg != '?':
 "
 }
 
+parse_schedule_set() {
+  python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+except:
+    print('Error: Could not parse response')
+    sys.exit(1)
+if 'error' in d:
+    print(f'Error: {d.get(\"message\", d.get(\"error\"))}')
+    sys.exit(1)
+state = 'Enabled' if d.get('scheduleEnabled') else 'Disabled'
+print(f'{d.get(\"device\", \"?\")}: Scheduled feeding {state.lower()} and verified')
+if not d.get('mutation_attempted', True):
+    print('  No change was needed')
+elif d.get('request_id'):
+    print(f'  Request: {d.get(\"request_id\")}')
+"
+}
+
 case "${1:-}" in
   status)
     if [[ $# -ne 1 ]]; then
@@ -143,6 +174,15 @@ case "${1:-}" in
     fi
     run_api schedule "$2" | python3 -m json.tool
     ;;
+  schedule-set)
+    if [[ $# -ne 3 ]] ||
+      [[ ! "${2:-}" =~ ^(crosstown-feeder|cabin-feeder)$ ]] ||
+      [[ ! "${3:-}" =~ ^(on|off)$ ]]; then
+      echo "Usage: petlibro schedule-set <crosstown-feeder|cabin-feeder> <on|off>" >&2
+      exit 2
+    fi
+    run_api schedule-set "$2" "$3" | parse_schedule_set
+    ;;
   devices)
     if [[ $# -ne 1 ]]; then
       echo "Usage: petlibro devices" >&2
@@ -158,6 +198,7 @@ case "${1:-}" in
     echo "  feed <location-feeder> <1|2|3>     Manual feed (explicit portions required)"
     echo "  water <location-fountain>          Today's water intake"
     echo "  schedule <location-feeder>         Today's feeding schedule"
+    echo "  schedule-set <location-feeder> <on|off>  Pause or resume all scheduled feeding"
     echo "  devices                 List all devices"
     echo ""
     echo "Exact selectors: crosstown-feeder, crosstown-fountain, cabin-feeder, cabin-fountain"

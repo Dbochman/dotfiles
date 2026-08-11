@@ -514,7 +514,7 @@ Repo `~/repos/Financial Advisor/` on Mini; interactive forecast dashboard on por
 | Nest Climate | 8550 | Thermostat + AC + Airthings air quality + weather + presence |
 | Usage | 8551 | Token consumption + agent activity |
 | Dog Walk | 8552 | Walk history, Fi GPS, Roomba status, route maps |
-| Cat Care | 8554 | Cat weights, litter activity, Whisker robots, and Petlibro food/water |
+| Cat Care | 8554 | Cat weights, litter activity, Whisker robots, and Petlibro food/water/schedule state |
 | Financial | 8585 | Canonical finance, utilities, mortgage, source reconciliation, and forecast baseline |
 | Forecast | 8586 | Interactive projections seeded from the reconciled current-day baseline |
 

@@ -29,6 +29,8 @@ FEED_STATE_DIR = Path(
 )
 FEED_STATE_FILE = FEED_STATE_DIR / "feed-state.json"
 FEED_LOCK_FILE = FEED_STATE_DIR / ".feed.lock"
+SCHEDULE_STATE_FILE = FEED_STATE_DIR / "schedule-state.json"
+SCHEDULE_LOCK_FILE = FEED_STATE_DIR / ".schedule.lock"
 
 BASE_URL = "https://api.us.petlibro.com"
 APPID = 1
@@ -38,6 +40,8 @@ DEFAULT_MIN_PORTIONS = 1
 DEFAULT_MAX_PORTIONS = 3
 HARD_MAX_PORTIONS = 3
 DEFAULT_FEED_COOLDOWN_SECONDS = 300
+SCHEDULE_VERIFY_ATTEMPTS = 3
+SCHEDULE_VERIFY_INTERVAL_SECONDS = 1
 
 DEVICE_SELECTORS = {
     "crosstown-feeder": ("device_crosstown_feeder", "feeder", "crosstown"),
@@ -471,6 +475,64 @@ class FeedAttempt:
             self.closed = True
 
 
+class ScheduleAttempt:
+    """Serialize whole-schedule mutations and durably record their outcome."""
+
+    def __init__(self, lock_fd: int) -> None:
+        self.lock_fd = lock_fd
+        self.request_id: str | None = None
+        self.record: dict[str, object] | None = None
+        self.closed = False
+
+    @classmethod
+    def begin(cls) -> "ScheduleAttempt":
+        ensure_private_dir(FEED_STATE_DIR)
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            lock_fd = os.open(SCHEDULE_LOCK_FILE, flags, 0o600)
+        except OSError:
+            raise PetlibroError(
+                "schedule_state_unavailable",
+                "Scheduled-feeding lock is unavailable",
+            )
+        os.fchmod(lock_fd, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        return cls(lock_fd)
+
+    def mark_attempting(
+        self,
+        selector: str,
+        requested_enabled: bool,
+        device_serial: str,
+    ) -> None:
+        self.request_id = secrets.token_urlsafe(12)
+        self.record = {
+            "schema_version": 1,
+            "selector": selector,
+            "device_key": hashlib.sha256(device_serial.encode("utf-8")).hexdigest(),
+            "request_id": self.request_id,
+            "requested_enabled": requested_enabled,
+            "attempted_at": int(time.time()),
+            "status": "attempting",
+        }
+        atomic_write_json(SCHEDULE_STATE_FILE, self.record)
+
+    def finish(self, status_value: str, *, observed_enabled: bool | None = None) -> None:
+        if self.record is None:
+            return
+        self.record["status"] = status_value
+        self.record["completed_at"] = int(time.time())
+        if observed_enabled is not None:
+            self.record["observed_enabled"] = observed_enabled
+        atomic_write_json(SCHEDULE_STATE_FILE, self.record)
+
+    def close(self) -> None:
+        if not self.closed:
+            fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+            os.close(self.lock_fd)
+            self.closed = True
+
+
 def alias_for_device(config: dict[str, str], device: dict) -> str | None:
     serial = str(device.get("deviceSn", ""))
     name = str(device.get("name", "")).casefold()
@@ -482,13 +544,29 @@ def alias_for_device(config: dict[str, str], device: dict) -> str | None:
     return aliases[0] if len(aliases) == 1 else None
 
 
+def read_feeding_schedule_state(token: str, device: dict) -> bool:
+    result = api_post(
+        "/device/device/baseInfo",
+        {"deviceSn": device["deviceSn"], "id": device["deviceSn"]},
+        token,
+    )
+    data = require_api_success(result, "scheduled-feeding state")
+    if not isinstance(data, dict) or not isinstance(data.get("enableFeedingPlan"), bool):
+        raise PetlibroError(
+            "invalid_response",
+            "Petlibro returned an invalid scheduled-feeding state",
+        )
+    return data["enableFeedingPlan"]
+
+
 def cmd_status() -> list[dict]:
-    config, _, devices = get_token_and_devices()
+    config, token, devices = get_token_and_devices()
     output = []
     for device in devices:
         kind = device_type(device)
+        selector = alias_for_device(config, device) or "unmapped"
         item = {
-            "selector": alias_for_device(config, device) or "unmapped",
+            "selector": selector,
             "name": device.get("name", "?"),
             "model": device.get("productIdentifier", "?"),
             "type": kind,
@@ -502,8 +580,18 @@ def cmd_status() -> list[dict]:
                     "nextFeedTime": device.get("nextFeedingTime", "?"),
                     "nextFeedPortions": device.get("nextFeedingQuantity", "?"),
                     "bowlMode": device.get("bowlMode"),
+                    "scheduleEnabled": None,
+                    "scheduleState": "unavailable",
                 }
             )
+            if item["online"] and selector != "unmapped":
+                try:
+                    schedule_enabled = read_feeding_schedule_state(token, device)
+                except PetlibroError:
+                    pass
+                else:
+                    item["scheduleEnabled"] = schedule_enabled
+                    item["scheduleState"] = "enabled" if schedule_enabled else "disabled"
         elif kind == "fountain":
             item.update(
                 {
@@ -604,6 +692,114 @@ def cmd_schedule(selector: str) -> object:
     return require_api_success(result, "feeding schedule")
 
 
+def validate_schedule_state(value: str) -> bool:
+    if value == "on":
+        return True
+    if value == "off":
+        return False
+    raise PetlibroError(
+        "invalid_schedule_state",
+        "Scheduled feeding state must be on or off",
+        allowed=["on", "off"],
+    )
+
+
+def cmd_schedule_set(selector: str, requested_enabled: bool) -> dict:
+    config, token, devices = get_token_and_devices()
+    device, location = resolve_device(config, devices, selector, "feeder")
+    attempt = ScheduleAttempt.begin()
+    try:
+        before_enabled = read_feeding_schedule_state(token, device)
+        if before_enabled == requested_enabled:
+            return {
+                "success": True,
+                "device": selector,
+                "location": location,
+                "scheduleEnabled": requested_enabled,
+                "action": "feeding_schedule_enabled" if requested_enabled else "feeding_schedule_disabled",
+                "accepted": True,
+                "verified": True,
+                "mutation_attempted": False,
+            }
+
+        attempt.mark_attempting(selector, requested_enabled, str(device["deviceSn"]))
+        try:
+            result = api_post(
+                "/device/setting/updateFeedingPlanSwitch",
+                {"deviceSn": device["deviceSn"], "enable": requested_enabled},
+                token,
+            )
+            require_api_success(result, "scheduled-feeding update", require_data=False)
+        except PetlibroError as error:
+            try:
+                attempt.finish("unknown")
+            except Exception:
+                pass
+            raise PetlibroError(
+                "schedule_outcome_unknown",
+                "The scheduled-feeding outcome is uncertain; inspect status before another change",
+                cause=error.code,
+                non_retryable=True,
+                schedule_may_have_changed=True,
+                request_id=attempt.request_id,
+            )
+
+        observed_enabled: bool | None = None
+        verification_error: PetlibroError | None = None
+        for verification_attempt in range(SCHEDULE_VERIFY_ATTEMPTS):
+            try:
+                observed_enabled = read_feeding_schedule_state(token, device)
+                verification_error = None
+            except PetlibroError as error:
+                verification_error = error
+            if observed_enabled == requested_enabled:
+                break
+            if verification_attempt + 1 < SCHEDULE_VERIFY_ATTEMPTS:
+                time.sleep(SCHEDULE_VERIFY_INTERVAL_SECONDS)
+
+        if observed_enabled != requested_enabled:
+            try:
+                attempt.finish("unknown", observed_enabled=observed_enabled)
+            except Exception:
+                pass
+            fields: dict[str, object] = {
+                "non_retryable": True,
+                "schedule_may_have_changed": True,
+                "request_id": attempt.request_id,
+            }
+            if verification_error is not None:
+                fields["cause"] = verification_error.code
+            raise PetlibroError(
+                "schedule_outcome_unknown",
+                "The scheduled-feeding update could not be verified; inspect status before another change",
+                **fields,
+            )
+
+        try:
+            attempt.finish("verified", observed_enabled=observed_enabled)
+        except Exception:
+            raise PetlibroError(
+                "schedule_outcome_unknown",
+                "The scheduled-feeding update was verified but its local audit record could not be saved",
+                non_retryable=True,
+                schedule_may_have_changed=True,
+                request_id=attempt.request_id,
+            )
+        return {
+            "success": True,
+            "device": selector,
+            "location": location,
+            "scheduleEnabled": requested_enabled,
+            "action": "feeding_schedule_enabled" if requested_enabled else "feeding_schedule_disabled",
+            "accepted": True,
+            "verified": True,
+            "mutation_attempted": True,
+            "request_id": attempt.request_id,
+        }
+    finally:
+        attempt.close()
+
+
 def require_arg_count(args: list[str], minimum: int, maximum: int, usage: str) -> None:
     if len(args) < minimum or len(args) > maximum:
         raise PetlibroError("invalid_arguments", usage)
@@ -613,7 +809,7 @@ def dispatch(argv: list[str]) -> object:
     if not argv:
         raise PetlibroError(
             "missing_command",
-            "Usage: petlibro-api.py <status|feed|water|schedule|devices>",
+            "Usage: petlibro-api.py <status|feed|water|schedule|schedule-set|devices>",
         )
     command, args = argv[0], argv[1:]
     if command == "status":
@@ -636,6 +832,14 @@ def dispatch(argv: list[str]) -> object:
     if command == "schedule":
         require_arg_count(args, 1, 1, "Usage: petlibro-api.py schedule <location-feeder>")
         return cmd_schedule(args[0])
+    if command == "schedule-set":
+        require_arg_count(
+            args,
+            2,
+            2,
+            "Usage: petlibro-api.py schedule-set <location-feeder> <on|off>",
+        )
+        return cmd_schedule_set(args[0], validate_schedule_state(args[1]))
     raise PetlibroError("unknown_command", f"Unknown Petlibro command: {command}")
 
 
