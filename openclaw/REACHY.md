@@ -167,7 +167,8 @@ purchases, bookings, home control, or other mutations.
 The local Realtime tools and the OpenClaw `reachy-control` skill expose:
 
 - directional look and neutral/idle control;
-- camera capture when visual context is requested;
+- camera description and private ephemeral JPEG capture when visual context or
+  the actual still is requested;
 - the complete installed official emotion and dance catalogs;
 - bundled vocalizations for official emotion presets, including `dance1`,
   `dance2`, and `dance3`;
@@ -229,6 +230,8 @@ TCP port is exposed. Supported commands are:
 reachyctl status
 reachyctl presets
 reachyctl see
+reachyctl capture
+reachyctl cleanup '<cleanupToken>'
 reachyctl look left|right|up|down|front
 reachyctl emotion <preset>
 reachyctl dance <preset>
@@ -238,6 +241,13 @@ reachyctl unmute
 reachyctl stop
 reachyctl idle
 ```
+
+`see` returns an analyzed description. `capture` asks ClawBody for one bounded
+JPEG, streams it through the same authenticated Reachy → MBP → Mac-mini route,
+and creates a mode-`0600` file under the caller's private OpenClaw media
+directory. Its JSON returns only `mediaPath` and `cleanupToken`. After attaching
+the image through OpenClaw's message tool, call `cleanup` exactly once in a
+`finally` path; no camera TCP endpoint or persistent image store is exposed.
 
 ## Reachy Mini Control app
 
@@ -280,8 +290,10 @@ and SSH recovery procedure.
 - Keep the Reachy `.env`, control socket, relay selector, and continuity state
   owner-only. Never commit keys, API credentials, or gateway tokens.
 - Treat only exact `agent:main:reachy` traffic as the physical owner session.
-- Use the camera only when requested or necessary for the current task; do not
-  retain or forward incidental room imagery or conversation.
+- Use the camera only when requested or necessary for the current task. An
+  authenticated owner's explicit request to send a still is allowed, but do
+  not retain or forward incidental room imagery or conversation beyond that
+  task.
 - Let the continuity plugin enforce exact sessions, bounded retention, safe
   parsing, symlink rejection, atomic writes, and explicit memory authorization.
 

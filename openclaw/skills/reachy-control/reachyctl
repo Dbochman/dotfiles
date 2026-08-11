@@ -2,8 +2,11 @@
 # reachyctl — constrained OpenClaw control for the Crosstown Reachy Mini
 set -o pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+media_helper="$script_dir/scripts/reachy_media.py"
+
 usage() {
-  echo 'usage: reachyctl status|presets|see|stop|idle|mute|unmute|look <direction>|emotion <preset>|dance <preset>|speak <text>' >&2
+  echo 'usage: reachyctl status|presets|see|capture|cleanup <token>|stop|idle|mute|unmute|look <direction>|emotion <preset>|dance <preset>|speak <text>' >&2
   exit 2
 }
 
@@ -35,6 +38,18 @@ case "${1:-}" in
     # forward it unchanged instead of trying to encode it a second time.
     [[ "$#" -eq 2 ]] || usage
     [[ -n "$2" && "$2" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] || usage
+    ;;
+  capture)
+    [[ "$#" -eq 1 ]] || usage
+    exec /usr/bin/python3 "$media_helper" capture
+    ;;
+  cleanup)
+    [[ "$#" -eq 2 ]] || usage
+    exec /usr/bin/python3 "$media_helper" cleanup "$2"
+    ;;
+  capture-stream)
+    [[ "$#" -eq 1 ]] || usage
+    exec /usr/bin/python3 "$media_helper" capture-stream
     ;;
   *) usage ;;
 esac

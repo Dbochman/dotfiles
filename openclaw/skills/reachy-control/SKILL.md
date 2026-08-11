@@ -4,8 +4,9 @@ description: >-
   Inspect and control the physically secured Reachy Mini at Crosstown through
   ClawBody. Use for requests to check Reachy, look around, express an emotion,
   play any official emotion or dance preset, speak proactively, mute or unmute
-  its microphone, stop movement, or describe what its camera sees.
-allowed-tools: Bash(reachyctl:*)
+  its microphone, stop movement, describe what its camera sees, or capture and
+  send an ephemeral camera still.
+allowed-tools: Bash(reachyctl:*), message
 metadata: {"openclaw":{"emoji":"🤖","requires":{"bins":["reachyctl"]}}}
 ---
 
@@ -41,7 +42,25 @@ Use the camera:
 
 ```bash
 reachyctl see
+reachyctl capture
+reachyctl cleanup '<cleanupToken>'
 ```
+
+`see` returns a concise visual description. To send the actual current image:
+
+1. Run `reachyctl capture` and accept only `mediaPath` and `cleanupToken` from
+   its success JSON.
+2. Send the JPEG through the current authorized route with
+   `message(action="send", message="<brief caption>", media="<mediaPath>")`.
+   An authenticated owner may explicitly request another admitted owner route;
+   follow the normal channel policy for that destination.
+3. Treat cleanup as `finally`: after the send succeeds, fails, or times out,
+   run `reachyctl cleanup '<cleanupToken>'` exactly once.
+4. After a successful current-route send, return `NO_REPLY` so automatic
+   delivery does not duplicate the caption.
+
+The captured JPEG is a private temporary file on the machine running
+`reachyctl`; never copy it to another path or retain it after the task.
 
 `mute` sets Reachy's daemon-managed microphone volume to zero. `unmute` restores
 the last nonzero volume remembered by the running ClawBody process, defaulting to
@@ -85,8 +104,10 @@ The direct Realtime voice pauses while the command runs, so it is safe to combin
 - Execute a single clearly requested movement without extra confirmation. Ask
   before repeated movements, sustained routines, or scheduled physical actions.
 - Use `see` only when the user asks what Reachy sees or when visual context is
-  necessary for their request. Do not retain or forward camera descriptions
-  beyond that task.
+  necessary for their request. Use `capture` when the task needs the image
+  itself. Do not retain or forward camera images or descriptions beyond that
+  task; an authenticated owner's explicit request to send the still is part of
+  the task and is allowed.
 - Use only the enumerated command arguments. Do not SSH to Reachy directly or
   bypass `reachyctl` for robot control.
 
@@ -95,6 +116,7 @@ The direct Realtime voice pauses while the command runs, so it is safe to combin
 ```text
 OpenClaw -> reachyctl (Mac mini) -> dedicated SSH -> clawbody-control
          -> owner-only Unix socket -> ClawBody local tools -> Reachy
+         <- one JPEG over the same SSH route <- private ephemeral media
 ```
 
 If `reachyctl status` reports that control is unavailable, verify ClawBody is
