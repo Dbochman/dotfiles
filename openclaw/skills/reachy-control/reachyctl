@@ -29,6 +29,13 @@ case "${1:-}" in
     encoded_text="$(printf '%s' "$*" | base64 | tr -d '\n')"
     set -- speak-b64 "$encoded_text"
     ;;
+  speak-b64)
+    # Internal transport form used by the Mac mini -> MBP relay. The first
+    # wrapper has already encoded the text so SSH cannot split it; validate and
+    # forward it unchanged instead of trying to encode it a second time.
+    [[ "$#" -eq 2 ]] || usage
+    [[ -n "$2" && "$2" =~ ^[A-Za-z0-9+/]*={0,2}$ ]] || usage
+    ;;
   *) usage ;;
 esac
 
