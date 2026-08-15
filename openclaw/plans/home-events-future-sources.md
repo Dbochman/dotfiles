@@ -1,18 +1,42 @@
 # Home Events Future Work — Vacant-House Actions, Pet Care, and Connectivity
 
-## Status: PLANNED — DOCUMENTATION ONLY
+## Status: IMPLEMENTATION IN PROGRESS — OBSERVATION ONLY
 
-This plan records possible future implementation work. It does **not** authorize
-code deployment, runtime initialization, producer or action activation,
-LaunchAgent changes, device actions, notifications, or an intentional internet
-outage. Implementation, deployment, observation, and physical-action
-activation remain separate attended decisions.
+On `2026-08-15`, the operator approved the first implementation boundary: a
+protected local source journal around the existing vacancy runner. That
+approval covers code, tests, documentation, routine deployment, and local
+observation initialization only. It does **not** authorize a bus adapter,
+source flag, schema migration, reservation worker, new physical action,
+notification, Julia route, LaunchAgent, connectivity probe, pet mutation, or
+intentional internet outage. Publication, shadow decisions, and every physical
+action promotion remain separate attended decisions.
 
 The next product focus is confident, mostly silent operation of a confirmed-
 vacant house. Expanding the alert audience is deferred. The existing vacancy
 runner remains authoritative until its outcomes are observable and each later
 action cutover meets an independent gate. The Ring, August,
 canonical-presence, Nest, and local-presence producers continue unchanged.
+
+### `2026-08-15` observation checkpoint
+
+- Added `vacancy-action-journal.py`, an owner-only, bounded, local-file helper
+  with strict site/target/action enums and opaque vacancy-cycle, run, and
+  attempt identifiers.
+- Instrumented only the existing site-wide vacancy dispatch blocks. Command
+  order, arguments, marker behavior, Roomba snooze policy, Eight Sleep
+  reconciliation, iMessage behavior, and every existing physical executor are
+  unchanged.
+- The helper accepts a run only when canonical presence and protected producer
+  state have an exact timestamp and recomputed state-hash match and the target
+  site is fresh `confirmed_vacant`. Telemetry failure logs one sanitized
+  warning and remains fail-open for the legacy runner.
+- A stale unfinished intent becomes terminal `outcome_unknown`; it never
+  infers success or retries a command. A run is complete only after the legacy
+  vacancy marker exists.
+- Added isolated journal and fake-device regression coverage. No bus schema,
+  source list, policy, worker, recipient, or service lifecycle changed.
+- The journal is the observation source of record but is not yet published to
+  the event bus. An adapter and schema-6 migration remain future gates.
 
 ## Purpose
 
@@ -927,8 +951,17 @@ checkpoints:
 
 ## Expected tracked implementation surface
 
-No file below is changed by this planning task. A later implementation is
-expected to touch or add:
+The first observation checkpoint changed or added:
+
+- `openclaw/bin/vacancy-action-journal.py`
+- `openclaw/workspace/scripts/vacancy-actions.sh`
+- `openclaw/tests/test_vacancy_action_journal.py`
+- `openclaw/tests/test-vacancy-actions.sh`
+- `openclaw/HOME-EVENTS.md`
+- `openclaw/VACANCY-AUTOMATION.md`
+- `openclaw/bin/README.md`
+
+Later publication and action-promotion work is expected to touch or add:
 
 - `openclaw/bin/home_event_bus.py`
 - `openclaw/bin/home-event-correlator.py`
@@ -936,8 +969,7 @@ expected to touch or add:
 - a tracked disabled action-policy template with protected installed state
 - `openclaw/bin/home-event-service-wrapper.sh`
 - `openclaw/bin/dotfiles-pull.command`
-- `openclaw/workspace/scripts/vacancy-actions.sh`
-- a vacancy source-journal helper and adapter under `openclaw/bin/`
+- a vacancy source-journal adapter under `openclaw/bin/`
 - a site-connectivity observer and cursor-based bridge under `openclaw/bin/`
 - dedicated Petlibro and Litter-Robot observe paths and adapters, plus an exact
   feeder executor only if the scheduled-outcome contract is viable
@@ -952,7 +984,7 @@ expected to touch or add:
 - the exact Hue, Nest, Cielo, Midea, Petlibro, and Litter-Robot control or
   observer documentation affected by an implemented target
 
-## Decisions required before implementation
+## Decisions required before publication or physical promotion
 
 1. Exact vacant profile for central HVAC, every current Cielo target, and both
    Cabin Midea aliases, including whether Basement participates and where a

@@ -20,6 +20,12 @@ Presence Detection (every 15 min)
 
 The vacancy system piggybacks on the [presence detection](skills/presence/SKILL.md) system. When `state.json` changes, `launchd` triggers `vacancy-actions.sh`, which reads the occupancy field for each location and acts accordingly.
 
+The runner also writes an observation-only protected journal around its
+existing site-wide vacancy actions. This records intent and a bounded terminal
+classification without changing a device command, its ordering, retry
+behavior, marker semantics, notification, or exit status. The journal is not
+yet an event-bus producer or action authority.
+
 ## Trigger Conditions
 
 | Occupancy | Meaning | Action |
@@ -110,11 +116,34 @@ fails validation, the guard conservatively pins her back to Crosstown rather
 than trusting an unvalidated Cabin relocation. Dylan's reconciliation is
 unchanged.
 
+## Observation Journal
+
+Before journaling a vacancy run, `vacancy-action-journal.py` requires an exact
+timestamp and recomputed SHA-256 match between canonical `state.json` and the
+protected presence producer state, plus fresh `confirmed_vacant` state for the
+site. It then records opaque vacancy-cycle, run, and per-target attempt IDs in
+owner-only local files.
+
+Outcomes distinguish independently confirmed state, an accepted command,
+failure, policy skip, and an unknown result. A zero command exit is only
+`command_accepted` unless an existing independent readback confirms state.
+Stale unfinished attempts become `outcome_unknown` and are never retried by
+the journal. A run becomes complete only after the legacy vacancy marker is
+present.
+
+Journal errors are deliberately fail-open for legacy vacancy behavior. One
+sanitized warning is written, the existing commands continue, and a partial
+journal is left for honest stale recovery rather than being marked complete.
+The helper has no device, presence-mutation, event-bus, camera, model, or
+messaging interface.
+
 ## Files
 
 | Path | Purpose |
 |------|---------|
 | `~/.openclaw/workspace/scripts/vacancy-actions.sh` | Main script |
+| `~/.openclaw/bin/vacancy-action-journal.py` | Observation-only protected action journal helper |
+| `~/.openclaw/vacancy-actions/journal/` | Owner-only bounded run and vacancy-cycle records |
 | `~/.openclaw/presence/state.json` | Input: occupancy state (from presence detection) |
 | `~/.openclaw/presence/vacancy-dispatched/` | Marker files for dedup |
 | `~/.openclaw/logs/vacancy-actions.log` | Execution log |
@@ -140,6 +169,11 @@ cat ~/.openclaw/presence/state.json | python3 -m json.tool
 Check marker state:
 ```bash
 ls -la ~/.openclaw/presence/vacancy-dispatched/
+```
+
+Check safe aggregate journal status:
+```bash
+~/.openclaw/bin/vacancy-action-journal.py status
 ```
 
 Do not delete vacancy markers, touch `state.json`, or run a live presence scan

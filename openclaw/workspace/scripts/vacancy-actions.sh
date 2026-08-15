@@ -21,11 +21,107 @@ MARKER_DIR="$PRESENCE_DIR/vacancy-dispatched"
 LOG_FILE="$HOME/.openclaw/logs/vacancy-actions.log"
 ROOMBA_SNOOZE_FILE="${ROOMBA_SNOOZE_FILE:-$HOME/.openclaw/dog-walk/snooze.json}"
 PRESENCE_SCANNER="${PRESENCE_SCANNER:-$HOME/.openclaw/workspace/scripts/presence-detect.sh}"
+VACANCY_ACTION_JOURNAL="${VACANCY_ACTION_JOURNAL:-$HOME/.openclaw/bin/vacancy-action-journal.py}"
+VACANCY_JOURNAL_PYTHON="${VACANCY_JOURNAL_PYTHON:-/opt/homebrew/bin/python3}"
+JOURNAL_RUN_ID=""
+JOURNAL_ATTEMPT_ID=""
+JOURNAL_WARNING_EMITTED=0
+JOURNAL_TELEMETRY_FAILED=0
 
 # All CLIs resolved via PATH (~/.openclaw/bin + /opt/homebrew/bin)
 
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_FILE"
+}
+
+# Observation-only telemetry around the existing action runner. Every helper
+# failure is intentionally fail-open: it may add one sanitized warning but can
+# never change a device command, its ordering, or the vacancy marker.
+journal_warn() {
+  JOURNAL_TELEMETRY_FAILED=1
+  if [[ "$JOURNAL_WARNING_EMITTED" -eq 0 ]]; then
+    log "  WARN: Vacancy action telemetry unavailable; legacy actions continue"
+    JOURNAL_WARNING_EMITTED=1
+  fi
+}
+
+journal_recover() {
+  [[ "$JOURNAL_TELEMETRY_FAILED" -eq 0 ]] || return 0
+  if [[ ! -x "$VACANCY_ACTION_JOURNAL" ]]; then
+    journal_warn
+    return 0
+  fi
+  if ! "$VACANCY_ACTION_JOURNAL" recover >/dev/null 2>&1; then
+    journal_warn
+  fi
+  return 0
+}
+
+journal_begin_run() {
+  local site="$1" output
+  JOURNAL_RUN_ID=""
+  [[ "$JOURNAL_TELEMETRY_FAILED" -eq 0 ]] || return 0
+  if [[ ! -x "$VACANCY_ACTION_JOURNAL" ]] || \
+      ! output=$("$VACANCY_ACTION_JOURNAL" begin-run --site "$site" 2>/dev/null); then
+    journal_warn
+    return 0
+  fi
+  JOURNAL_RUN_ID=$(printf '%s' "$output" | "$VACANCY_JOURNAL_PYTHON" -c \
+    'import json,sys; value=json.load(sys.stdin); print(value.get("run_id", ""))' \
+    2>/dev/null || true)
+  if [[ ! "$JOURNAL_RUN_ID" =~ ^run_[0-9a-f]{32}$ ]]; then
+    JOURNAL_RUN_ID=""
+    journal_warn
+  fi
+  return 0
+}
+
+journal_begin_action() {
+  local target="$1" action="$2" output
+  JOURNAL_ATTEMPT_ID=""
+  [[ "$JOURNAL_TELEMETRY_FAILED" -eq 0 ]] || return 0
+  [[ -n "$JOURNAL_RUN_ID" ]] || return 0
+  if ! output=$("$VACANCY_ACTION_JOURNAL" begin-action \
+      --run-id "$JOURNAL_RUN_ID" --target "$target" --action "$action" 2>/dev/null); then
+    journal_warn
+    return 0
+  fi
+  JOURNAL_ATTEMPT_ID=$(printf '%s' "$output" | "$VACANCY_JOURNAL_PYTHON" -c \
+    'import json,sys; value=json.load(sys.stdin); print(value.get("attempt_id", ""))' \
+    2>/dev/null || true)
+  if [[ ! "$JOURNAL_ATTEMPT_ID" =~ ^attempt_[0-9a-f]{32}$ ]]; then
+    JOURNAL_ATTEMPT_ID=""
+    journal_warn
+  fi
+  return 0
+}
+
+journal_finish_action() {
+  local outcome="$1" verification="$2" reason_code="$3"
+  [[ "$JOURNAL_TELEMETRY_FAILED" -eq 0 ]] || return 0
+  [[ -n "$JOURNAL_RUN_ID" && -n "$JOURNAL_ATTEMPT_ID" ]] || return 0
+  if ! "$VACANCY_ACTION_JOURNAL" finish-action \
+      --run-id "$JOURNAL_RUN_ID" \
+      --attempt-id "$JOURNAL_ATTEMPT_ID" \
+      --outcome "$outcome" \
+      --verification "$verification" \
+      --reason-code "$reason_code" >/dev/null 2>&1; then
+    journal_warn
+  fi
+  JOURNAL_ATTEMPT_ID=""
+  return 0
+}
+
+journal_complete_run() {
+  [[ "$JOURNAL_TELEMETRY_FAILED" -eq 0 ]] || return 0
+  [[ -n "$JOURNAL_RUN_ID" ]] || return 0
+  if ! "$VACANCY_ACTION_JOURNAL" complete-run \
+      --run-id "$JOURNAL_RUN_ID" >/dev/null 2>&1; then
+    journal_warn
+  fi
+  JOURNAL_RUN_ID=""
+  JOURNAL_ATTEMPT_ID=""
+  return 0
 }
 
 # Load cached credentials used by the device helper CLIs — no live op reads.
@@ -63,6 +159,7 @@ _send_imessage() {
 # policy fails closed so a broken safety control cannot start a vacuum.
 roomba_start_blocked() {
   local location="$1" snooze_state
+  ROOMBA_BLOCK_REASON=""
 
   [[ -f "$ROOMBA_SNOOZE_FILE" ]] || return 1
 
@@ -93,10 +190,12 @@ PY
   case "$snooze_state" in
     clear) return 1 ;;
     snoozed)
+      ROOMBA_BLOCK_REASON="snoozed"
       log "  ${location} Roomba automation: SKIPPED (snoozed)"
       return 0
       ;;
     *)
+      ROOMBA_BLOCK_REASON="policy_invalid_fail_closed"
       log "  WARN: Invalid Roomba snooze policy; skipping ${location} start"
       return 0
       ;;
@@ -118,6 +217,8 @@ if [[ ! -f "$STATE_FILE" ]]; then
   log "ERROR: state.json not found"
   exit 1
 fi
+
+journal_recover
 
 # Parse the correlated occupancy and sticky per-person location in one read.
 state_values=$(python3 - "$STATE_FILE" <<'PY' 2>/dev/null || printf 'unknown\tunknown\tunknown\tunknown\n'
@@ -142,62 +243,86 @@ log "Check: crosstown=$crosstown_occupancy cabin=$cabin_occupancy dylan=$dylan_l
 # --- Crosstown vacancy ---
 if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/crosstown" ]]; then
   log "Crosstown confirmed vacant — running vacancy actions"
+  journal_begin_run crosstown
 
   # Lights off
+  journal_begin_action all_lights turn_off
   if hue --crosstown all-off >> "$LOG_FILE" 2>&1; then
+    journal_finish_action command_accepted command_exit completed
     log "  Crosstown lights: OFF"
   else
+    journal_finish_action failed command_exit command_failed
     log "  ERROR: Failed to turn off Crosstown lights"
   fi
 
   # Thermostat eco
+  journal_begin_action central_hvac enable_eco
   if nest eco crosstown on >> "$LOG_FILE" 2>&1; then
+    journal_finish_action command_accepted command_exit completed
     log "  Crosstown thermostat: ECO"
   else
+    journal_finish_action failed command_exit command_failed
     log "  ERROR: Failed to set Crosstown eco mode"
   fi
 
   # Cielo minisplits off
   for unit in bedroom office "living room"; do
+    case "$unit" in
+      bedroom) journal_target="cielo_bedroom" ;;
+      office) journal_target="cielo_office" ;;
+      "living room") journal_target="cielo_living_room" ;;
+    esac
+    journal_begin_action "$journal_target" turn_off
     if cielo off -d "$unit" >> "$LOG_FILE" 2>&1; then
+      journal_finish_action command_accepted command_exit completed
       log "  Cielo $unit: OFF"
     else
+      journal_finish_action failed command_exit command_failed
       log "  ERROR: Failed to turn off Cielo $unit"
     fi
   done
 
   # Lock front door
+  journal_begin_action front_door_lock lock
   lock_output=$(august status 2>&1) || true
   lock_state=$(echo "$lock_output" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('state',{}).get('locked','unknown'))" 2>/dev/null || echo "unknown")
   if [[ "$lock_state" == "True" ]]; then
+    journal_finish_action state_confirmed state_confirmed already_satisfied
     log "  Front door: ALREADY LOCKED"
     _send_imessage "🔒 Crosstown vacant — front door was already locked"
   else
     if lock_result=$(august lock 2>&1); then
       locked=$(echo "$lock_result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('state',{}).get('locked',False))" 2>/dev/null || echo "False")
       if [[ "$locked" == "True" ]]; then
+        journal_finish_action state_confirmed state_confirmed completed
         log "  Front door: LOCKED"
         _send_imessage "🔒 Crosstown vacant — front door locked automatically"
       else
+        journal_finish_action outcome_unknown state_confirmed verification_failed
         log "  ERROR: Lock command succeeded but door not confirmed locked"
         _send_imessage "⚠️ Crosstown vacant — lock command sent but could not confirm door is locked"
       fi
     else
+      journal_finish_action failed command_exit command_failed
       log "  ERROR: Failed to lock front door"
       _send_imessage "🚨 Crosstown vacant — FAILED to lock front door! Please check manually"
     fi
   fi
 
   # Start Roombas unless the shared automation snooze is active.
+  journal_begin_action crosstown_roombas start_cleaning
   if roomba_start_blocked crosstown; then
-    :
+    journal_finish_action skipped policy_decision "$ROOMBA_BLOCK_REASON"
   elif crosstown-roomba start all >> "$LOG_FILE" 2>&1; then
+    journal_finish_action command_accepted command_exit completed
     log "  Crosstown Roombas: STARTED"
   else
+    journal_finish_action failed command_exit command_failed
     log "  ERROR: Failed to start Crosstown Roombas (may be offline)"
   fi
 
   date > "$MARKER_DIR/crosstown"
+  journal_complete_run
   log "Crosstown vacancy actions complete"
 
 elif [[ "$crosstown_occupancy" == "occupied" ]] && \
@@ -210,40 +335,57 @@ fi
 # --- Cabin vacancy ---
 if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin" ]]; then
   log "Cabin confirmed vacant — running vacancy actions"
+  journal_begin_run cabin
 
   # Lights off
+  journal_begin_action all_lights turn_off
   if hue --cabin all-off >> "$LOG_FILE" 2>&1; then
+    journal_finish_action command_accepted command_exit completed
     log "  Cabin lights: OFF"
   else
+    journal_finish_action failed command_exit command_failed
     log "  ERROR: Failed to turn off Cabin lights"
   fi
 
   # Thermostat eco
+  journal_begin_action central_hvac enable_eco
   if nest eco cabin on >> "$LOG_FILE" 2>&1; then
+    journal_finish_action command_accepted command_exit completed
     log "  Cabin thermostat: ECO"
   else
+    journal_finish_action failed command_exit command_failed
     log "  ERROR: Failed to set Cabin eco mode"
   fi
 
   # Start Roombas unless the shared automation snooze is active.
   if roomba_start_blocked cabin; then
-    :
+    for journal_target in floomba philly; do
+      journal_begin_action "$journal_target" start_cleaning
+      journal_finish_action skipped policy_decision "$ROOMBA_BLOCK_REASON"
+    done
   else
     started=0
+    journal_begin_action floomba start_cleaning
     if roomba start floomba >> "$LOG_FILE" 2>&1; then
+      journal_finish_action command_accepted command_exit completed
       started=$((started + 1))
     else
+      journal_finish_action failed command_exit command_failed
       log "  ERROR: Failed to start Floomba"
     fi
+    journal_begin_action philly start_cleaning
     if roomba start philly >> "$LOG_FILE" 2>&1; then
+      journal_finish_action command_accepted command_exit completed
       started=$((started + 1))
     else
+      journal_finish_action failed command_exit command_failed
       log "  ERROR: Failed to start Philly"
     fi
     log "  Cabin Roombas: STARTED ($started/2)"
   fi
 
   date > "$MARKER_DIR/cabin"
+  journal_complete_run
   log "Cabin vacancy actions complete"
 
 elif [[ "$cabin_occupancy" == "occupied" ]] && \

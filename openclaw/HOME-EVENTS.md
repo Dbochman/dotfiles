@@ -39,6 +39,14 @@ zero events and treated each repeated scan as a no-op. The tracked plist
 defaults remain disabled so a fresh install cannot silently activate any
 producer.
 
+An observation-only vacancy-action journal was approved and installed on
+`2026-08-15`. It wraps only actions already owned by `vacancy-actions.sh`,
+records protected bounded intent and outcomes, and fails open without changing
+legacy household behavior. It is not yet a bus producer: no new source flag,
+schema migration, adapter, correlation rule, reservation, action worker,
+notification, or recipient route is active. Publication and every physical
+action handoff remain later attended gates.
+
 The Dylan-only canary is now on SQLite schema v5. Its separate camera policy
 was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
 `Living Room Wired` probes, a protected schema backup, full tests, and a
@@ -143,6 +151,10 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
 - `bin/presence-local-event-adapter.py` reads only sanitized exact-binding
   booleans and canonical resident assignments to derive named local
   arrivals/departures and household excursion intervals.
+- `bin/vacancy-action-journal.py` is a local observation-only source journal
+  for the legacy vacancy runner. It validates exact protected presence
+  causality, records only allowlisted site/target/action outcomes, and has no
+  bus publication or device-control interface.
 - `skills/home-events/SKILL.md` constrains OpenClaw to the read-only wrapper and
   delegates only an explicit current-image request to `nest-camera`.
 - `ai.openclaw.ring-event-listener` remains the only Ring FCM connection and

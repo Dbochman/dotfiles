@@ -12,6 +12,8 @@ MARKER_DIR="$PRESENCE_DIR/vacancy-dispatched"
 CALLS_FILE="$TEST_HOME/device-calls"
 FAKE_BIN="$TEST_HOME/fake-bin"
 FAKE_PRESENCE_SCANNER="$TEST_HOME/fake-presence-scanner"
+FAKE_JOURNAL="$TEST_HOME/fake-vacancy-action-journal"
+JOURNAL_CALLS_FILE="$TEST_HOME/journal-calls"
 
 mkdir -p \
   "$PRESENCE_DIR" \
@@ -52,7 +54,23 @@ printf '%s\n' \
   > "$FAKE_PRESENCE_SCANNER"
 chmod +x "$FAKE_PRESENCE_SCANNER"
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'printf "%s\n" "$*" >> "$FAKE_JOURNAL_CALLS"' \
+  'case "${1:-}" in' \
+  '  recover) printf "%s\n" '\''{"ok":true,"recovered":0}'\'' ;;' \
+  '  begin-run) printf "%s\n" '\''{"ok":true,"run_id":"run_11111111111111111111111111111111","cycle_id":"cycle_22222222222222222222222222222222"}'\'' ;;' \
+  '  begin-action) printf "%s\n" '\''{"ok":true,"attempt_id":"attempt_33333333333333333333333333333333"}'\'' ;;' \
+  '  finish-action) printf "%s\n" '\''{"ok":true}'\'' ;;' \
+  '  complete-run) printf "%s\n" '\''{"ok":true}'\'' ;;' \
+  '  *) exit 2 ;;' \
+  'esac' \
+  > "$FAKE_JOURNAL"
+chmod +x "$FAKE_JOURNAL"
+
 export FAKE_CALLS="$CALLS_FILE"
+export FAKE_JOURNAL_CALLS="$JOURNAL_CALLS_FILE"
 
 write_state() {
   local crosstown_occupancy="$1" cabin_occupancy="$2"
@@ -75,6 +93,7 @@ run_vacancy_actions() {
     PATH="$FAKE_BIN:/usr/bin:/bin" \
     IMSG_BIN="$TEST_HOME/no-imsg" \
     PRESENCE_SCANNER="$FAKE_PRESENCE_SCANNER" \
+    VACANCY_ACTION_JOURNAL="${VACANCY_ACTION_JOURNAL_OVERRIDE:-$TEST_HOME/no-journal}" \
     bash "$SCRIPT"
 }
 
@@ -332,5 +351,35 @@ FAKE_8SLEEP_API_RESPONSE='{"success":true,"state":"home","side":"dylan","locatio
   "$CLI_TEST_DIR/8sleep" --location cabin home dylan \
   > "$CLI_OUTPUT" 2>&1
 grep -Fqx 'Dylan home at Cabin (updated)' "$CLI_OUTPUT"
+
+# Observation-only journaling wraps the exact legacy commands without changing
+# their count, arguments, order, or marker behavior.
+rm -f "$TEST_HOME/.openclaw/dog-walk/snooze.json" "$MARKER_DIR/cabin"
+write_state occupied confirmed_vacant crosstown crosstown
+printf '%s\n' crosstown > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+: > "$CALLS_FILE"
+: > "$JOURNAL_CALLS_FILE"
+export VACANCY_ACTION_JOURNAL_OVERRIDE="$FAKE_JOURNAL"
+run_vacancy_actions
+unset VACANCY_ACTION_JOURNAL_OVERRIDE
+
+assert_call hue --cabin all-off
+assert_call nest eco cabin on
+assert_call roomba start floomba
+assert_call roomba start philly
+assert_call_count 4
+test -f "$MARKER_DIR/cabin"
+test "$(wc -l < "$JOURNAL_CALLS_FILE" | tr -d ' ')" -eq 11
+grep -Fqx 'recover' "$JOURNAL_CALLS_FILE"
+grep -Fqx \
+  'begin-action --run-id run_11111111111111111111111111111111 --target all_lights --action turn_off' \
+  "$JOURNAL_CALLS_FILE"
+grep -Fqx \
+  'finish-action --run-id run_11111111111111111111111111111111 --attempt-id attempt_33333333333333333333333333333333 --outcome command_accepted --verification command_exit --reason-code completed' \
+  "$JOURNAL_CALLS_FILE"
+grep -Fqx \
+  'complete-run --run-id run_11111111111111111111111111111111' \
+  "$JOURNAL_CALLS_FILE"
 
 echo "test-vacancy-actions: PASS"

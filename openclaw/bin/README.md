@@ -115,6 +115,7 @@ boundaries.
 | `august-event-adapter.py` | Disabled-by-default read-only August transition poller. Uses the exact protected MBP observe binding, baselines silently, persists safe poll-count/gap continuity, publishes through `home-eventctl` without a mutation path, and propagates only bounded allowlisted observation-stage failures. |
 | `nest-home-event-bridge.py` | Disabled-by-default downstream reader of committed Nest listener rows. The first enabled run silently baselines prior rows; later person/motion records publish only normalized aliases, sites, times, and classifications, never media or model text. |
 | `presence-local-event-adapter.py` | Disabled-by-default shadow adapter for per-residence network arrivals, inferred departures, and household excursion intervals. It consumes only sanitized exact-binding booleans and cannot change canonical presence or physical state. |
+| `vacancy-action-journal.py` | Protected observation-only source journal for actions already owned by `vacancy-actions.sh`. It validates exact canonical-presence causality, records bounded allowlisted outcomes, recovers stale attempts as unknown without retry, and cannot publish, control a device, change presence, capture media, or send a message. |
 
 See [`../HOME-EVENTS.md`](../HOME-EVENTS.md) for the protected runtime,
 producer contracts, shadow rollout, and rollback procedure. The subsystem does

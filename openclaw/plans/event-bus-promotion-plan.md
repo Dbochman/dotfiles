@@ -466,6 +466,20 @@ discarding successful evidence from the other provider.
   before counting terminal failure. The callback remains nonblocking and
   backfill remains unable to trigger direct dings, dog-walk automation, camera
   evidence, incidents, or delivery.
+- A genuine live Cabin driveway person callback at `2026-08-15T18:25:01Z`
+  cleared the retained ingress-recovery condition. Ring returned to `ok` with
+  accepted and published counters advancing; every bus source was healthy and
+  no recovered-history row participated in correlation or delivery.
+- August completed 3,140 successful polls with 71 historical failed polls,
+  zero consecutive failures, no current error, and a maximum successful-poll
+  gap of 579 seconds. A fresh attended read-only observation succeeded; lock
+  state was known and DoorSense remained explicitly `unknown`. The soak and
+  conditional DoorSense evidence item are closed without inventing door data.
+- The one unreviewed historical `message_receipt_invalid` delivery was matched
+  to exactly one outgoing local Messages row in its bounded send window; local
+  metadata reported sent and delivered with no error. The explicit operator
+  review recorded `received`, retained the original unknown outcome, and
+  restored delivery health to `ok` with no pending attention.
 
 ## Progress ledger
 
@@ -502,19 +516,19 @@ discarding successful evidence from the other provider.
 - [x] Started the dated concurrent soak ledger. Ring has met its 48-hour
   duration and all-alias person-evidence gates; August is approximately day 3
   of 7.
-- [ ] Capture an attended Ring ding at both sites and explicitly verify direct
-  ding plus dog-walk parity.
-- [ ] Capture a live Ring restart/reconnect dedupe boundary.
+- [x] Closed the attended Ring-ding gate with Crosstown direct/dog-walk parity
+  plus the explicit Cabin-press waiver recorded on August 5.
+- [x] Captured and verified the live Ring restart/reconnect dedupe boundary.
 
 ### `2026-07-27`
 
 - [x] Completed a manual August lock/unlock cycle across distinct poll
   boundaries.
-- [ ] Attempt door open/close evidence only if DoorSense begins returning a
-  known state; never invent it from `unknown`.
-- [ ] Complete the remaining August soak and failure-mode evidence.
-- [ ] Attribute the two historical Nest-only correlator latency pauses before
-  any delivery implementation.
+- [x] Closed the conditional DoorSense item without a door transition because
+  the provider still returns `unknown`; no state was inferred.
+- [x] Completed the August soak and failure-mode evidence.
+- [x] Attributed the two historical Nest-only correlator latency pauses to the
+  July 23–24 rollout windows before active delivery.
 
 ### `2026-08-03`
 
