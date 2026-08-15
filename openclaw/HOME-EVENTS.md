@@ -111,8 +111,11 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   and gateway authentication into a sanitized one-shot process with a bounded
   owner-only log.
 - `bin/home-event-camera.py` claims only fresh, confirmed-vacant camera
-  evaluations already scheduled by the correlator. At +30/+60 seconds it
-  combines the exact triggering Ring camera (or the site's Ring front door)
+  evaluations already scheduled by the correlator. It rechecks the protected
+  canonical presence state before each +30/+60 slot and completes the
+  evaluation without capturing when the site is no longer confidently vacant.
+  Otherwise it combines the exact triggering Ring camera (or the site's Ring
+  front door)
   with the exact Nest interior camera, makes only an aggregate person-visible
   decision, deletes every frame immediately, and retains no model prose or
   media path.
@@ -187,7 +190,10 @@ An attached Ring trigger selects its exact safe alias; an access- or Nest-only
 trigger uses that site's Ring front door. The Nest interior camera is always
 the secondary view. Old/backfilled events, generic motion, occupied or
 uncertain presence, source health, and local-presence inference never schedule
-camera work. The resulting `person_visible`, `no_person_visible`, `uncertain`,
+camera work. A later resident arrival or uncertain/stale canonical state
+cancels any already-scheduled evaluation before its next snapshot; cancellation
+is counted as a healthy fail-closed outcome and retains no image. The resulting
+`person_visible`, `no_person_visible`, `uncertain`,
 or `unavailable` value may add one fixed sentence to a later eligible Dylan
 message; it cannot create, suppress, accelerate, or delay that message.
 Any medium-or-high-confidence person result wins across the exact targets;
@@ -358,16 +364,31 @@ The tee defaults off; `HOME_EVENTS_RING_ENABLED=1` enables bus publication
 without changing legacy Ring handling. Its callback then performs only a
 nonblocking enqueue to a 256-record memory queue.
 A daemon worker maps each exact known device to a safe site and alias, then
-calls `home-eventctl enqueue --source ring`. Exact bindings cover the
-Crosstown and Cabin `front_door` devices plus the Cabin `driveway` camera;
+calls `home-eventctl enqueue --source ring`, retrying one failed idempotent
+spool commit before recording terminal publication failure. Exact bindings
+cover the Crosstown and Cabin `front_door` devices plus the Cabin `driveway` camera;
 `driveway` is bus-only and does not become a legacy departure trigger. Unknown
 devices are quarantined rather than assigned a site. Queue overflow or
 publication failure increments safe counters without blocking Ring or dog-walk
-processing. Delivery and binding health remain separate in process; startup
-reconciles the full current Ring video inventory, including stickup cameras,
+processing. Delivery, binding, and live-FCM ingress health remain separate in
+process; startup reconciles the full current Ring video inventory, including
+stickup cameras,
 without persisting its identifiers. The protected status remains exact schema
 v1 for rollback compatibility, projecting aggregate health and cumulative
 counters. Resolved binding defects recover without erasing quarantine history.
+Recovering a recent provider-history record marks ingress degraded and restarts
+the receiver; only a subsequent true live FCM callback restores ingress health.
+History-origin records remain inert backfill even when recovered less than a
+minute after occurrence; the bus accepts that explicit provenance instead of
+misclassifying or rejecting the event as live.
+The watchdog checks the receiver tasks rather than trusting the SDK's outer
+`started` flag, and the receiver uses its bounded sequential-error abort so
+launchd recovery replaces a dead connection instead of allowing an error loop
+to grow indefinitely.
+The Ring runtime also selects and pads the first encoded Web Push key and salt
+header parameters before the strict `firebase-messaging` decoder runs. This
+keeps the upstream cryptographic path intact while preventing parameter tails
+or missing padding from killing live ingress.
 The callback still performs no disk I/O; the dedicated worker owns the bounded
 atomic status write.
 

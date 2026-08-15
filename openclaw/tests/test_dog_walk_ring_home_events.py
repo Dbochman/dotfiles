@@ -73,6 +73,7 @@ class CapturingPublisher:
     def __init__(self) -> None:
         self.payloads: list[dict] = []
         self.quarantined = 0
+        self.ingress_health: list[bool] = []
 
     def submit(self, payload: dict) -> bool:
         self.payloads.append(payload)
@@ -80,6 +81,9 @@ class CapturingPublisher:
 
     def quarantine_unknown_device(self) -> None:
         self.quarantined += 1
+
+    def record_ingress_health(self, *, healthy: bool) -> None:
+        self.ingress_health.append(healthy)
 
 
 class RingHomeEventTests(unittest.TestCase):
@@ -113,6 +117,46 @@ class RingHomeEventTests(unittest.TestCase):
         }
         values.update(overrides)
         self.module._process_ring_event_on_loop(**values)
+
+    def test_fcm_webpush_base64_compat_pads_only_public_headers(self) -> None:
+        captured: list[tuple[object, str, str, bytes]] = []
+
+        class FakeFcmPushClient:
+            @staticmethod
+            def _decrypt_raw_data(credentials, crypto_key, salt, raw_data):
+                captured.append((credentials, crypto_key, salt, raw_data))
+                return b"decrypted"
+
+        fake_firebase = types.ModuleType("firebase_messaging")
+        fake_firebase.FcmPushClient = FakeFcmPushClient
+        credentials = {"keys": {"private": "private", "secret": "secret"}}
+
+        with mock.patch.dict(sys.modules, {"firebase_messaging": fake_firebase}):
+            self.assertTrue(self.module._install_fcm_base64_compat())
+            self.assertFalse(self.module._install_fcm_base64_compat())
+            result = FakeFcmPushClient._decrypt_raw_data(
+                credentials,
+                "dGVzdA; p256ecdsa=aWdub3JlZA",
+                "c2FsdA; rs=4096",
+                b"ciphertext",
+            )
+
+        self.assertEqual(result, b"decrypted")
+        self.assertEqual(
+            captured,
+            [(credentials, "dGVzdA==", "c2FsdA==", b"ciphertext")],
+        )
+
+    def test_fcm_webpush_base64_compat_rejects_malformed_headers(self) -> None:
+        for value in ("", "a", "not base64!", "abc===", "☃"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.module._pad_fcm_webpush_base64(value)
+
+    def test_fcm_webpush_base64_compat_accepts_standard_alphabet(self) -> None:
+        self.assertEqual(
+            self.module._pad_fcm_webpush_base64("+vv8/A"),
+            "+vv8/A==",
+        )
 
     def test_normalizes_all_supported_ring_event_types(self) -> None:
         cases = [
@@ -166,6 +210,7 @@ class RingHomeEventTests(unittest.TestCase):
             )
 
         self.assertEqual(len(self.publisher.payloads), 1)
+        self.assertEqual(self.publisher.ingress_health, [True])
         payload = self.publisher.payloads[0]
         self.assertEqual(payload["event_type"], "entry.person_detected")
         self.assertEqual(payload["site"], "cabin")
@@ -603,6 +648,7 @@ class RingHomeEventTests(unittest.TestCase):
             {"classification": "person", "backfill": True},
         )
         self.assertEqual(self.publisher.payloads[0]["time_precision"], "backfill")
+        self.assertEqual(self.publisher.ingress_health, [False])
         self.assertEqual(self.signals, [])
 
     def test_provider_history_is_bounded_and_skips_stale_or_unbound_events(self) -> None:
@@ -730,7 +776,7 @@ class RingHomeEventTests(unittest.TestCase):
         ) and time.monotonic() < deadline:
             time.sleep(0.01)
 
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 3)
         self.assertEqual(
             calls[0][0],
             ["/fake/home-eventctl", "enqueue", "--source", "ring"],
@@ -765,6 +811,113 @@ class RingHomeEventTests(unittest.TestCase):
         self.assertEqual(status["counters"]["published"], 1)
         self.assertEqual(status["counters"]["failed"], 1)
         self.assertEqual(status_path.stat().st_mode & 0o777, 0o600)
+
+    def test_publisher_retries_once_before_recording_terminal_failure(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(command, **_kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                7 if len(calls) == 1 else 0,
+                stdout="",
+                stderr="",
+            )
+
+        status_path = (
+            Path(self.class_tempdir.name)
+            / "home-events-retry"
+            / "state"
+            / "ring-producer.json"
+        )
+        status_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        status_path.parent.chmod(0o700)
+        publisher = self.module._RingHomeEventPublisher(
+            "/fake/home-eventctl", runner=runner, status_path=status_path
+        )
+        payload = {
+            "schema_version": 1,
+            "source_event_id": "684794187:123456",
+            "event_type": "entry.person_detected",
+            "site": "crosstown",
+            "entity_kind": "doorbell",
+            "entity_alias": "front_door",
+            "occurred_at": "2026-08-29T21:20:00.000000Z",
+            "observed_at": "2026-08-29T21:20:01.000000Z",
+            "time_precision": "source",
+            "attributes": {"classification": "person"},
+        }
+
+        publisher.start()
+        self.assertTrue(publisher.submit(payload))
+        deadline = time.monotonic() + 1
+        while publisher.counters()["published"] != 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(publisher.counters()["published"], 1)
+        self.assertEqual(publisher.counters()["failed"], 0)
+
+    def test_live_fcm_event_recovers_ingress_health(self) -> None:
+        with mock.patch.object(
+            self.module.time,
+            "time",
+            return_value=1_788_000_001.0,
+        ):
+            self.process()
+
+        self.assertEqual(self.publisher.ingress_health, [True])
+
+    def test_listener_activity_checks_underlying_receiver_task(self) -> None:
+        active_task = mock.Mock()
+        active_task.done.return_value = False
+        stopped_task = mock.Mock()
+        stopped_task.done.return_value = True
+
+        self.assertTrue(
+            self.module._ring_listener_active(
+                types.SimpleNamespace(
+                    started=True,
+                    _receiver=types.SimpleNamespace(
+                        do_listen=True,
+                        tasks=[active_task],
+                    ),
+                )
+            )
+        )
+        self.assertFalse(
+            self.module._ring_listener_active(
+                types.SimpleNamespace(
+                    started=True,
+                    _receiver=types.SimpleNamespace(
+                        do_listen=False,
+                        tasks=[stopped_task],
+                    ),
+                )
+            )
+        )
+        self.assertFalse(
+            self.module._ring_listener_active(
+                types.SimpleNamespace(
+                    started=True,
+                    _receiver=types.SimpleNamespace(
+                        do_listen=True,
+                        tasks=[stopped_task, active_task],
+                    ),
+                )
+            )
+        )
+
+    def test_live_ingress_health_is_independent_of_spool_delivery(self) -> None:
+        publisher = self.module._RingHomeEventPublisher("/fake/home-eventctl")
+
+        publisher.reconcile_device_bindings(has_unbound_devices=False)
+        publisher._increment("published")
+        publisher.record_ingress_health(healthy=False)
+        self.assertEqual(publisher._health_locked(), "degraded")
+
+        publisher.record_ingress_health(healthy=True)
+        self.assertEqual(publisher._health_locked(), "ok")
 
     def test_status_persist_failures_back_off_without_clearing_dirty_state(
         self,

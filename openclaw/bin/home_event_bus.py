@@ -679,7 +679,7 @@ def _validate_event_contract(
             raise PayloadError("backfill_precision_mismatch")
         age = observed - occurred
         if backfill:
-            if age <= RING_LIVE_MAX_AGE or age > RING_BACKFILL_MAX_AGE:
+            if age < -dt.timedelta(seconds=5) or age > RING_BACKFILL_MAX_AGE:
                 raise PayloadError("invalid_ring_backfill_age")
         elif age > RING_LIVE_MAX_AGE:
             raise PayloadError("unmarked_ring_backfill")

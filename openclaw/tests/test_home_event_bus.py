@@ -819,6 +819,16 @@ class EnqueueValidationTests(HomeEventTestCase):
         event = self.enqueue(delayed)
         self.assertEqual(event.time_precision, "backfill")
 
+        recent_history = ring_payload(
+            source_event_id="recent-history-backfill",
+            occurred_at="2026-07-12T14:59:45Z",
+            observed_at="2026-07-12T14:59:55Z",
+        )
+        recent_history["time_precision"] = "backfill"
+        recent_history["attributes"]["backfill"] = True
+        event = self.enqueue(recent_history)
+        self.assertEqual(event.time_precision, "backfill")
+
     def test_ring_site_alias_bindings_are_exact(self) -> None:
         for index, (site, alias) in enumerate(
             (

@@ -69,6 +69,7 @@ class HomeEventCameraTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "home-events"
+        self.presence = Path(self.temporary.name) / "presence-state.json"
         self.clock = lambda: self.NOW
         self.store = bus.initialize_runtime(self.root, clock=self.clock)
         self.paths = bus.RuntimePaths(self.root)
@@ -104,6 +105,34 @@ class HomeEventCameraTests(unittest.TestCase):
             self.paths, json.dumps(policy).encode("utf-8")
         )
         self.store.set_runtime_mode("limited_delivery")
+        self.write_presence("confirmed_vacant", "confirmed_vacant")
+
+    def write_presence(
+        self,
+        cabin: str,
+        crosstown: str,
+        *,
+        fresh: bool = True,
+    ) -> None:
+        self.presence.write_text(
+            json.dumps(
+                {
+                    "timestamp": self.NOW,
+                    "cabin": {"occupancy": cabin, "fresh": fresh},
+                    "crosstown": {"occupancy": crosstown, "fresh": fresh},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.presence.chmod(0o600)
+
+    def worker(self, commands: FakeCommands) -> camera.CameraWorker:
+        return camera.CameraWorker(
+            self.root,
+            presence_state=self.presence,
+            clock=self.clock,
+            commands=commands,
+        )
 
     def insert_evaluation(
         self,
@@ -184,9 +213,7 @@ class HomeEventCameraTests(unittest.TestCase):
                 camera.VisionDecision(False, "high"),
             ]
         )
-        worker = camera.CameraWorker(
-            self.root, clock=self.clock, commands=commands
-        )
+        worker = self.worker(commands)
 
         first = worker.run_once()
         second = worker.run_once()
@@ -218,9 +245,7 @@ class HomeEventCameraTests(unittest.TestCase):
             ]
         )
 
-        result = camera.CameraWorker(
-            self.root, clock=self.clock, commands=commands
-        ).run_once()
+        result = self.worker(commands).run_once()
 
         self.assertEqual(result["outcome"], "clear")
         self.assertEqual(
@@ -238,9 +263,7 @@ class HomeEventCameraTests(unittest.TestCase):
             failures={("ring", "cabin", "front_door")},
         )
 
-        result = camera.CameraWorker(
-            self.root, clock=self.clock, commands=commands
-        ).run_once()
+        result = self.worker(commands).run_once()
 
         self.assertEqual(result["outcome"], "uncertain")
         row = self.row(row_id)
@@ -256,9 +279,7 @@ class HomeEventCameraTests(unittest.TestCase):
             failures={("nest", "cabin", "Kitchen")},
         )
 
-        result = camera.CameraWorker(
-            self.root, clock=self.clock, commands=commands
-        ).run_once()
+        result = self.worker(commands).run_once()
 
         self.assertEqual(result["outcome"], "uncertain")
         self.assertEqual(
@@ -286,9 +307,7 @@ class HomeEventCameraTests(unittest.TestCase):
     def test_uncertain_prior_capture_is_failed_without_retry(self) -> None:
         row_id = self.insert_evaluation(first="capturing", second="failed")
         commands = FakeCommands()
-        result = camera.CameraWorker(
-            self.root, clock=self.clock, commands=commands
-        ).run_once()
+        result = self.worker(commands).run_once()
 
         self.assertEqual(result["outcome"], "idle")
         row = self.row(row_id)
@@ -301,21 +320,65 @@ class HomeEventCameraTests(unittest.TestCase):
         self.insert_evaluation()
         self.store.set_runtime_mode("shadow")
         commands = FakeCommands()
-        result = camera.CameraWorker(
-            self.root, clock=self.clock, commands=commands
-        ).run_once()
+        result = self.worker(commands).run_once()
 
         self.assertEqual(result["outcome"], "idle")
         self.assertEqual(commands.captures, [])
         self.assertEqual(self.store.status_snapshot()["camera"]["health"], "disabled")
 
+    def test_resident_arrival_cancels_pending_evaluation_before_capture(self) -> None:
+        row_id = self.insert_evaluation()
+        self.write_presence("occupied", "confirmed_vacant")
+        commands = FakeCommands()
+
+        result = self.worker(commands).run_once()
+
+        self.assertEqual(result["outcome"], "cancelled")
+        row = self.row(row_id)
+        self.assertEqual(row["state"], "complete")
+        self.assertEqual(row["snapshot_30_result"], "failed")
+        self.assertEqual(row["snapshot_60_result"], "failed")
+        self.assertEqual(row["result"], "unavailable")
+        self.assertEqual(row["error_code"], "presence_not_vacant")
+        self.assertEqual(commands.captures, [])
+        status = self.store.status_snapshot()
+        self.assertEqual(status["camera"]["health"], "ok")
+        self.assertEqual(status["counters"]["camera_evaluations_cancelled"], 1)
+
+    def test_presence_is_rechecked_before_second_snapshot(self) -> None:
+        row_id = self.insert_evaluation()
+        commands = FakeCommands(
+            [
+                camera.VisionDecision(False, "high"),
+                camera.VisionDecision(False, "high"),
+            ]
+        )
+        worker = self.worker(commands)
+
+        first = worker.run_once()
+        self.write_presence("occupied", "confirmed_vacant")
+        second = worker.run_once()
+
+        self.assertEqual(first["outcome"], "clear")
+        self.assertEqual(second["outcome"], "cancelled")
+        self.assertEqual(
+            commands.captures,
+            [
+                ("ring", "cabin", "front_door"),
+                ("nest", "cabin", "Kitchen"),
+            ],
+        )
+        row = self.row(row_id)
+        self.assertEqual(row["snapshot_30_result"], "clear")
+        self.assertEqual(row["snapshot_60_result"], "failed")
+        self.assertEqual(row["result"], "unavailable")
+        self.assertEqual(row["error_code"], "presence_not_vacant")
+
     def test_invalid_active_policy_degrades_camera_health(self) -> None:
         self.paths.delivery_policy.write_text("{}\n", encoding="utf-8")
         self.paths.delivery_policy.chmod(0o600)
         with self.assertRaisesRegex(camera.CameraError, "camera_policy_unavailable"):
-            camera.CameraWorker(
-                self.root, clock=self.clock, commands=FakeCommands()
-            ).run_once()
+            self.worker(FakeCommands()).run_once()
         status = self.store.status_snapshot()["camera"]
         self.assertEqual(status["health"], "degraded")
         self.assertEqual(status["last_error_code"], "camera_policy_unavailable")

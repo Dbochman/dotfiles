@@ -20,7 +20,12 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
 - Ring ingress reconciles bounded read-only provider history every five minutes.
   Events missed by FCM are accepted only within 15 minutes, marked as backfill,
   and cannot ring the direct-notification or dog-walk automation paths. Finding
-  a missed event also restarts the push listener so recovery is automatic.
+  a missed event marks live ingress degraded and restarts the push listener;
+  only a later live callback restores ingress health. The publisher retries one
+  failed idempotent event-bus spool commit before counting terminal failure.
+- The runtime applies a bounded compatibility normalization for the first
+  encoded Web Push key and salt parameters before `firebase-messaging` decrypts
+  them; credentials and message content are not logged or rewritten.
 - The listener uses Potato's Fi GPS/geofence result to choose the home, and stores the last confirmed in-geofence home as `home_location`.
 - Walks now get immutable `walk_id` and `origin_location` fields at departure.
 - Route files are persisted atomically during return monitoring at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`; per-route locking keeps concurrent polling, finalization, car marking, and delayed Fi enrichment from dropping one another's fields.

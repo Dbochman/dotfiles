@@ -112,6 +112,13 @@ class HomeEventDeploymentTests(unittest.TestCase):
         for filename in ("home-event-camera.py", "home-event-camera-wrapper.sh"):
             path = OPENCLAW / "bin" / filename
             self.assertTrue(path.stat().st_mode & stat.S_IXUSR)
+        camera_wrapper = (
+            OPENCLAW / "bin" / "home-event-camera-wrapper.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            '"HOME_EVENTS_PRESENCE_STATE=$HOME/.openclaw/presence/state.json"',
+            camera_wrapper,
+        )
         august = plistlib.loads(
             (OPENCLAW / "launchagents" / "ai.openclaw.august-event-adapter.plist").read_bytes()
         )

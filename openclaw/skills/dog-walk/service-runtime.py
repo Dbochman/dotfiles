@@ -15,6 +15,7 @@ import faulthandler
 import json
 import os
 import queue
+import re
 import signal
 import socket
 import stat
@@ -193,6 +194,60 @@ import aiohttp
 from ring_doorbell import Auth, Ring, RingEvent, RingEventListener
 from ring_doorbell.listen.listenerconfig import RingEventListenerConfig
 
+
+_FCM_BASE64_COMPAT_MARKER = "_openclaw_webpush_base64_padding_compat"
+_FCM_BASE64_VALUE_RE = re.compile(r"^[A-Za-z0-9_+/-]+={0,2}$")
+
+
+def _pad_fcm_webpush_base64(value: str) -> str:
+    """Extract and normalize the first encoded Web Push header parameter."""
+
+    if not isinstance(value, str) or not value or len(value) > 4096:
+        raise ValueError("invalid FCM Web Push base64 value")
+    encoded_value = value.partition(";")[0].strip()
+    if _FCM_BASE64_VALUE_RE.fullmatch(encoded_value) is None:
+        raise ValueError("invalid FCM Web Push base64 value")
+    unpadded = encoded_value.rstrip("=")
+    if len(unpadded) % 4 == 1:
+        raise ValueError("invalid FCM Web Push base64 length")
+    return unpadded + ("=" * (-len(unpadded) % 4))
+
+
+def _install_fcm_base64_compat() -> bool:
+    """Teach firebase-messaging 0.4.x to accept unpadded Web Push keys.
+
+    Ring forwards the ``crypto-key`` and ``salt`` header values as received.
+    firebase-messaging 0.4.5 passes their full parameter tails directly to
+    Python's strict decoder and also omits required base64 padding. Keep the
+    upstream decryption path intact and normalize only the first encoded value
+    from those two public header inputs before it runs.
+    """
+
+    from firebase_messaging import FcmPushClient
+
+    if getattr(FcmPushClient, _FCM_BASE64_COMPAT_MARKER, False):
+        return False
+    original_decrypt = getattr(FcmPushClient, "_decrypt_raw_data", None)
+    if not callable(original_decrypt):
+        raise RuntimeError("FCM client does not expose its Web Push decoder")
+
+    def decrypt_with_padded_headers(
+        credentials: dict[str, dict[str, str]],
+        crypto_key_str: str,
+        salt_str: str,
+        raw_data: bytes,
+    ) -> bytes:
+        return original_decrypt(
+            credentials,
+            _pad_fcm_webpush_base64(crypto_key_str),
+            _pad_fcm_webpush_base64(salt_str),
+            raw_data,
+        )
+
+    FcmPushClient._decrypt_raw_data = staticmethod(decrypt_with_padded_headers)
+    setattr(FcmPushClient, _FCM_BASE64_COMPAT_MARKER, True)
+    return True
+
 # Config
 CONFIG_DIR = Path.home() / ".config" / "ring"
 TOKEN_FILE = CONFIG_DIR / "token-cache.json"
@@ -342,11 +397,12 @@ _DEDUP_WINDOW = 20 * 60
 # enqueue. A dedicated daemon thread owns all home-event subprocess I/O.
 _RING_HOME_EVENT_QUEUE_MAX = 256
 _RING_HOME_EVENT_PUBLISH_TIMEOUT = 10
+_RING_HOME_EVENT_PUBLISH_ATTEMPTS = 2
 _RING_BACKFILL_AFTER_SECONDS = 60
 _RING_BACKFILL_MAX_SECONDS = 15 * 60
 _RING_RECONCILE_INTERVAL_SECONDS = 5 * 60
 _RING_RECONCILE_HISTORY_LIMIT = 20
-_RING_STATUS_COMPONENTS = frozenset({"delivery", "bindings"})
+_RING_STATUS_COMPONENTS = frozenset({"delivery", "bindings", "ingress"})
 _RING_STATUS_HEALTHS = frozenset({"unknown", "ok", "degraded"})
 _RING_STATUS_RETRY_INITIAL_SECONDS = 5.0
 _RING_STATUS_RETRY_MAX_SECONDS = 5 * 60.0
@@ -376,6 +432,7 @@ class _RingHomeEventPublisher:
         self._component_health = {
             "delivery": "unknown",
             "bindings": "unknown",
+            "ingress": "unknown",
         }
         self._binding_reconciliation_pending = False
         self._status_loaded = False
@@ -436,6 +493,16 @@ class _RingHomeEventPublisher:
         self._record_health(
             component="bindings",
             health="degraded" if has_unbound_devices else "ok",
+        )
+
+    def record_ingress_health(self, *, healthy: bool) -> None:
+        """Track whether Ring events are arriving through live FCM."""
+
+        if not isinstance(healthy, bool):
+            raise TypeError("healthy must be a bool")
+        self._record_health(
+            component="ingress",
+            health="ok" if healthy else "degraded",
         )
 
     def counters(self) -> dict[str, int]:
@@ -524,6 +591,7 @@ class _RingHomeEventPublisher:
         components = {
             "delivery": "unknown",
             "bindings": "unknown",
+            "ingress": "unknown",
         }
         counters = value["counters"]
         if value["health"] == "degraded":
@@ -680,7 +748,12 @@ class _RingHomeEventPublisher:
                     self._persist_status_if_due()
                 continue
             try:
-                if self._publish(payload):
+                published = False
+                for _attempt in range(_RING_HOME_EVENT_PUBLISH_ATTEMPTS):
+                    if self._publish(payload):
+                        published = True
+                        break
+                if published:
                     self._increment("published")
                     self._log_result("success")
                 else:
@@ -3178,6 +3251,8 @@ def _process_ring_event_on_loop(
         > _RING_BACKFILL_AFTER_SECONDS
     )
     if home_event is not None and HOME_EVENTS_RING_ENABLED:
+        if not backfill:
+            _ring_home_event_publisher.record_ingress_health(healthy=True)
         _ring_home_event_publisher.submit(home_event)
         log(
             "Event: source=ring "
@@ -3368,7 +3443,28 @@ async def _reconcile_ring_history(doorbells) -> tuple[int, int]:
                 continue
             if _process_ring_event_on_loop(**event, force_backfill=True):
                 recovered += 1
+    if recovered:
+        _ring_home_event_publisher.record_ingress_health(healthy=False)
     return recovered, failures
+
+
+def _ring_listener_active(listener: object) -> bool:
+    """Return whether the underlying FCM receiver still owns a live task."""
+
+    try:
+        if getattr(listener, "started") is not True:
+            return False
+        receiver = getattr(listener, "_receiver")
+        if receiver is None or getattr(receiver, "do_listen") is not True:
+            return False
+        tasks = getattr(receiver, "tasks")
+        return (
+            isinstance(tasks, list)
+            and bool(tasks)
+            and all(not task.done() for task in tasks)
+        )
+    except (AttributeError, TypeError):
+        return False
 
 
 def _handle_motion(doorbot_id: int, state: str) -> None:
@@ -3449,9 +3545,10 @@ async def _run_ring_event_listener() -> None:
 
     # FCM credentials
     fcm_creds = load_fcm_credentials()
+    if _install_fcm_base64_compat():
+        log("Applied FCM Web Push base64 compatibility")
 
     listener_config = RingEventListenerConfig.default_config()
-    listener_config.abort_on_sequential_error_count = None
 
     listener = RingEventListener(ring, credentials=fcm_creds,
                                  credentials_updated_callback=save_fcm_credentials,
@@ -3483,7 +3580,8 @@ async def _run_ring_event_listener() -> None:
         next_reconciliation = time.monotonic() + _RING_RECONCILE_INTERVAL_SECONDS
         while True:
             await asyncio.sleep(60)
-            if not listener.started:
+            if not _ring_listener_active(listener):
+                _ring_home_event_publisher.record_ingress_health(healthy=False)
                 backoff = min(60 * (2 ** restart_failures), 900)
                 log(f"WARNING: Event listener died — attempting restart "
                     f"(backoff after {restart_failures} failures: {backoff}s)...")

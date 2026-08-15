@@ -431,6 +431,42 @@ discarding successful evidence from the other provider.
   deployed copies; the replacement listener started with all three bound
   devices.
 
+#### Cabin arrival cancellation and Ring ingress health — `2026-08-15`
+
+- Julia's organic Cabin arrival first produced a Kitchen Nest person event,
+  followed about 25 seconds later by a canonical `confirmed_vacant` to
+  `occupied` transition and exact Crosstown-to-Cabin relocation. The activity
+  incident was suppressed and resolved as `resident_arrival_silent` with no
+  reservation or delivery.
+- The initial vacant-state event had already scheduled camera evidence. The
+  worker continued its +30/+60 attempts after occupancy changed, produced no
+  retained image or message, and finished uncertain when the Ring snapshot
+  failed. Camera claims now re-read fresh canonical presence before each slot
+  and atomically complete pending work as `presence_not_vacant` without a
+  capture; a safe cancellation has its own aggregate counter and does not
+  degrade camera health.
+- Ring provider history later recovered two driveway and two front-door person
+  records as inert backfill and restarted FCM. Live ingress had therefore been
+  stale even though the SDK's outer `started` flag remained true. The watchdog
+  now validates the underlying receiver tasks, restores the library's bounded
+  sequential-error abort, and keeps ingress health degraded after a recovered
+  gap until a genuine live callback proves recovery.
+- That restart exposed `firebase-messaging` passing a Web Push parameter tail
+  plus an unpadded key/salt value into its strict decoder before Ring could
+  deliver callbacks. The runtime now selects and pads only the first bounded
+  public header parameters before invoking the unchanged upstream decryptor,
+  with regression coverage for valid and malformed input.
+- The decrypted startup stream exposed a separate contract mismatch: history
+  recovery correctly marked a seconds-old record as inert backfill, while the
+  bus required backfill to be more than 60 seconds old. The bus now accepts
+  explicit history provenance at any age within five-second clock tolerance
+  and the existing 15-minute bound; unmarked events older than 60 seconds
+  remain rejected.
+- Ring's dedicated publisher now retries one failed idempotent spool commit
+  before counting terminal failure. The callback remains nonblocking and
+  backfill remains unable to trigger direct dings, dog-walk automation, camera
+  evidence, incidents, or delivery.
+
 ## Progress ledger
 
 ### `2026-07-26`

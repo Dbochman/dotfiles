@@ -64,6 +64,7 @@ run_camera() (
     "HOME=$HOME"
     "PATH=/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/bin:/bin"
     "HOME_EVENTS_ROOT=$ROOT"
+    "HOME_EVENTS_PRESENCE_STATE=$HOME/.openclaw/presence/state.json"
     "PYTHONDONTWRITEBYTECODE=1"
   )
   if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
