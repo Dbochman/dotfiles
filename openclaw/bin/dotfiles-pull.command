@@ -113,6 +113,7 @@ MBP_SYNC_PAIRS=(
   "openclaw/skills/august-lock/august-cmd.js:.openclaw/august/august-cmd.js"
   "openclaw/rest980/start-10max.sh:.openclaw/rest980/start-10max.sh"
   "openclaw/rest980/start-j5.sh:.openclaw/rest980/start-j5.sh"
+  "openclaw/rest980/ensure-openclaw-routes.py:.openclaw/rest980/ensure-openclaw-routes.py"
   "openclaw/rest980/roomba-cmd.js:.openclaw/rest980/roomba-cmd.js"
 )
 

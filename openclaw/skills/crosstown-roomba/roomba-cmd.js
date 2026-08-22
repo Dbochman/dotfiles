@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// roomba-cmd.js — direct dorita980 wrapper for CLI use
+// roomba-cmd.js — authenticated localhost rest980 client for CLI use
 // Usage: node roomba-cmd.js <env-file> <command>
 // Commands: status, state, start, stop, pause, resume, dock, find, wifi, mission
 
 "use strict";
 
 const fs = require("fs");
+const http = require("http");
 const net = require("net");
-const path = require("path");
+const { TextDecoder } = require("util");
 
 const VALID_COMMANDS = new Set([
   "status",
@@ -22,6 +23,13 @@ const VALID_COMMANDS = new Set([
   "mission",
 ]);
 const COMMAND_TIMEOUT_MS = 20000;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const INFO_PATHS = new Map([
+  ["status", "/api/local/info/mission"],
+  ["mission", "/api/local/info/mission"],
+  ["state", "/api/local/info/state"],
+  ["wifi", "/api/local/info/state"],
+]);
 
 class RoombaCommandError extends Error {
   constructor(code, message, exitCode = 1) {
@@ -101,7 +109,15 @@ function parseEnvFile(envFile) {
     env[key] = value;
   }
 
-  for (const key of ["BLID", "PASSWORD", "ROBOT_IP"]) {
+  for (const key of [
+    "BLID",
+    "PASSWORD",
+    "ROBOT_IP",
+    "PORT",
+    "BASIC_AUTH_USER",
+    "BASIC_AUTH_PASS",
+    "FIRMWARE_VERSION",
+  ]) {
     if (typeof env[key] !== "string" || env[key].trim() === "") {
       throw new RoombaCommandError(
         "env_missing_value",
@@ -117,119 +133,170 @@ function parseEnvFile(envFile) {
       2,
     );
   }
+  if (!/^[1-9][0-9]{0,4}$/.test(env.PORT)) {
+    throw new RoombaCommandError(
+      "env_invalid_port",
+      "PORT must be a valid TCP port",
+      2,
+    );
+  }
+  const port = Number(env.PORT);
+  if (!Number.isSafeInteger(port) || port > 65535) {
+    throw new RoombaCommandError(
+      "env_invalid_port",
+      "PORT must be a valid TCP port",
+      2,
+    );
+  }
+  for (const key of ["BASIC_AUTH_USER", "BASIC_AUTH_PASS"]) {
+    if (env[key].length > 1024 || /[\r\n]/.test(env[key])) {
+      throw new RoombaCommandError(
+        "env_invalid_auth",
+        "REST authentication settings are invalid",
+        2,
+      );
+    }
+  }
+  if (env.FIRMWARE_VERSION !== "2") {
+    throw new RoombaCommandError(
+      "env_invalid_firmware",
+      "FIRMWARE_VERSION must be 2 for the rest980 MQTT transport",
+      2,
+    );
+  }
 
   return env;
 }
 
-function loadDorita() {
-  const doritaPath = path.join(
-    process.env.HOME || "",
-    ".openclaw/rest980/node_modules/dorita980",
-  );
-  try {
-    const dorita980 = require(doritaPath);
-    if (!dorita980 || typeof dorita980.Local !== "function") {
-      throw new Error("dorita980.Local is unavailable");
-    }
-    return dorita980;
-  } catch (_error) {
-    throw new RoombaCommandError(
-      "dependency_unavailable",
-      "Unable to load the dorita980 runtime",
-    );
-  }
-}
-
-function waitForState(robot) {
-  return new Promise((resolve) => {
-    const onState = (state) => {
-      if (state && typeof state === "object" && Object.keys(state).length > 10) {
-        robot.removeListener("state", onState);
-        resolve(state);
-      }
-    };
-    robot.on("state", onState);
-  });
-}
-
-async function executeCommand(robot, command) {
-  switch (command) {
-    case "status":
-    case "mission":
-      return robot.getMission();
-    case "state":
-      // getRobotState() without args returns {} in connect-disconnect mode.
-      // Wait for the robot to publish its full state over MQTT instead.
-      return waitForState(robot);
-    case "start":
-      return robot.start();
-    case "stop":
-      return robot.stop();
-    case "pause":
-      return robot.pause();
-    case "resume":
-      return robot.resume();
-    case "dock":
-      return robot.dock();
-    case "find":
-      return robot.find();
-    case "wifi":
-      return robot.getRobotState(["netinfo", "signal", "wifistat", "wlcfg"]);
-    default:
-      // The command is validated before the MQTT client is constructed.
-      throw new RoombaCommandError(
-        "unknown_command",
-        `Unknown command: ${command}`,
-        2,
-      );
-  }
-}
-
-function runConnectedCommand(robot, command) {
+function requestJson(env, requestPath) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
       callback(value);
     };
-
-    const timeout = setTimeout(() => {
+    const authorization = Buffer.from(
+      `${env.BASIC_AUTH_USER}:${env.BASIC_AUTH_PASS}`,
+      "utf8",
+    ).toString("base64");
+    const request = http.request({
+      hostname: "127.0.0.1",
+      port: Number(env.PORT),
+      path: requestPath,
+      method: "GET",
+      agent: false,
+      headers: {
+        Accept: "application/json",
+        Authorization: `Basic ${authorization}`,
+      },
+    }, (response) => {
+      const chunks = [];
+      let length = 0;
+      response.on("data", (chunk) => {
+        length += chunk.length;
+        if (length > MAX_RESPONSE_BYTES) {
+          request.destroy(new RoombaCommandError(
+            "rest_response_too_large",
+            "rest980 returned an oversized response",
+          ));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        if (settled) return;
+        if (response.statusCode === 401 || response.statusCode === 403) {
+          finish(reject, new RoombaCommandError(
+            "rest_auth_failed",
+            "rest980 rejected the protected local credentials",
+          ));
+          return;
+        }
+        if (
+          typeof response.statusCode !== "number"
+          || response.statusCode < 200
+          || response.statusCode >= 300
+        ) {
+          finish(reject, new RoombaCommandError(
+            "rest_request_failed",
+            "rest980 rejected the bounded request",
+          ));
+          return;
+        }
+        let parsed;
+        try {
+          const text = new TextDecoder("utf-8", { fatal: true }).decode(
+            Buffer.concat(chunks),
+          );
+          parsed = JSON.parse(text);
+        } catch (_error) {
+          finish(reject, new RoombaCommandError(
+            "invalid_response",
+            "rest980 returned invalid JSON",
+          ));
+          return;
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          finish(reject, new RoombaCommandError(
+            "invalid_response",
+            "rest980 returned invalid object JSON",
+          ));
+          return;
+        }
+        finish(resolve, parsed);
+      });
+    });
+    request.setTimeout(COMMAND_TIMEOUT_MS, () => {
+      request.destroy(new RoombaCommandError(
+        "rest_timeout",
+        "rest980 did not respond within 20s",
+      ));
+    });
+    request.on("error", (error) => {
       finish(
         reject,
-        new RoombaCommandError(
-          "timeout",
-          "Robot did not respond within 20s",
-        ),
-      );
-    }, COMMAND_TIMEOUT_MS);
-
-    robot.once("error", (error) => {
-      finish(
-        reject,
-        new RoombaCommandError(
-          "connection",
-          error && error.message ? error.message : "Robot connection failed",
-        ),
+        error instanceof RoombaCommandError
+          ? error
+          : new RoombaCommandError(
+            "rest_unavailable",
+            "The protected rest980 service is unavailable",
+          ),
       );
     });
-
-    robot.once("connect", () => {
-      Promise.resolve().then(() => executeCommand(robot, command)).then(
-        (result) => finish(resolve, result),
-        (error) => finish(
-          reject,
-          error instanceof RoombaCommandError
-            ? error
-            : new RoombaCommandError(
-              "command_failed",
-              error && error.message ? error.message : "Robot command failed",
-            ),
-        ),
-      );
-    });
+    request.end();
   });
+}
+
+async function validateRestBinding(env) {
+  const info = await requestJson(env, "/api/info/protocol");
+  if (
+    info.firmwareVersion !== 2
+    || info.protocol !== "v2"
+    || info.transport !== "mqtt-tls"
+    || info.keepAlive !== true
+    || info.robotIP !== env.ROBOT_IP
+  ) {
+    throw new RoombaCommandError(
+      "rest_binding_mismatch",
+      "rest980 is not bound to the expected robot",
+    );
+  }
+}
+
+async function executeCommand(env, command) {
+  const infoPath = INFO_PATHS.get(command);
+  if (infoPath) {
+    const result = await requestJson(env, infoPath);
+    if (command !== "wifi") return result;
+    return {
+      netinfo: result.netinfo || {},
+      signal: result.signal || {},
+      wifistat: result.wifistat || {},
+      wlcfg: result.wlcfg || {},
+    };
+  }
+  return requestJson(env, `/api/local/action/${command}`);
 }
 
 function resultFailure(result) {
@@ -273,41 +340,21 @@ async function main() {
   }
 
   const env = parseEnvFile(envFile);
-  const dorita980 = loadDorita();
-  let robot;
+  await validateRestBinding(env);
+  const result = await executeCommand(env, command);
+  const failure = resultFailure(result);
+  if (failure) throw failure;
+
+  let serialized;
   try {
-    robot = new dorita980.Local(env.BLID, env.PASSWORD, env.ROBOT_IP, 2);
+    serialized = JSON.stringify(printableResult(result, command));
   } catch (_error) {
     throw new RoombaCommandError(
-      "client_initialization_failed",
-      "Unable to initialize the robot client",
+      "invalid_response",
+      "Robot returned a response that could not be encoded as JSON",
     );
   }
-
-  try {
-    const result = await runConnectedCommand(robot, command);
-    const failure = resultFailure(result);
-    if (failure) throw failure;
-
-    let serialized;
-    try {
-      serialized = JSON.stringify(printableResult(result, command));
-    } catch (_error) {
-      throw new RoombaCommandError(
-        "invalid_response",
-        "Robot returned a response that could not be encoded as JSON",
-      );
-    }
-    process.stdout.write(`${serialized}\n`);
-  } finally {
-    if (robot && typeof robot.end === "function") {
-      try {
-        robot.end();
-      } catch (_error) {
-        // The command result is authoritative; cleanup cannot make it successful.
-      }
-    }
-  }
+  process.stdout.write(`${serialized}\n`);
 }
 
 main().catch((error) => {

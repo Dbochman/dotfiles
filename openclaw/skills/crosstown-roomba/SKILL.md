@@ -92,21 +92,29 @@ The CLI polls mission status a bounded number of times after stateful actions:
 - `dock` must report a return-to-dock phase or `charge`
 - `find` has no persistent mission state, so only its command response is checked
 
-A timeout or mismatched phase is a failure even when MQTT initially accepted
-the action. `dock` success confirms that return-to-dock began (or the robot is
-already charging); it does not wait indefinitely for physical docking.
+A timeout or mismatched phase is a failure even when the persistent MQTT
+service initially accepted the action. `dock` success confirms that
+return-to-dock began (or the robot is already charging); it does not wait
+indefinitely for physical docking.
 
 ## Architecture
 
 ```
-Roomba 10 Max ←─MQTT:8883─→ roomba-cmd.js (MacBook Pro) ←─SSH─→ crosstown-roomba CLI (Mac Mini)
-Roomba J5     ←─MQTT:8883─→ roomba-cmd.js (MacBook Pro) ←─SSH─→      (same CLI)
+Roomba 10 Max ←─MQTT:8883─→ rest980 :3000 ─┐
+                                           ├─ authenticated localhost REST ← roomba-cmd.js ← SSH ← crosstown-roomba
+Roomba J5     ←─MQTT:8883─→ rest980 :3001 ─┘        (MacBook Pro)                         (Mac Mini)
 ```
 
-- `roomba-cmd.js` on the MacBook Pro connects to the robot via dorita980 MQTT, runs the command, disconnects
-- The CLI SSHs into the MacBook Pro for each command (connect-per-request, no persistent MQTT)
-- Each command takes ~5-10s due to SSH + MQTT connect/disconnect
-- SSH, invalid JSON, robot-reported errors, and verification failures all produce a nonzero CLI exit
+- The two `com.openclaw.rest980-*` LaunchAgents own the robots' single local
+  MQTT connections. The CLI never opens a competing MQTT session.
+- `roomba-cmd.js` reads the protected per-robot environment, authenticates only
+  to its loopback REST port, and verifies that `/api/info/protocol` is still
+  bound to the expected robot before every read or action.
+- The tracked route installer adds the otherwise-missing local `find` endpoint
+  atomically before either rest980 daemon starts.
+- The CLI SSHs into the MacBook Pro for each bounded REST request. SSH, REST
+  authentication/binding failures, invalid JSON, robot-reported errors, and
+  verification failures all produce a nonzero exit.
 
 ## Dog Walk Mode
 
@@ -127,7 +135,8 @@ Use bare `crosstown-roomba start` ONLY for non-walk cleaning (cleaning day, rout
 
 ## Skill Boundaries
 
-This skill controls Roombas at **Crosstown only** (Combo 10 Max + J5 via MQTT through MacBook Pro).
+This skill controls Roombas at **Crosstown only** (Combo 10 Max + J5 through
+the persistent authenticated rest980 services on the MacBook Pro).
 
 For related tasks, switch to:
 - **roomba**: Roomba control at the Cabin (Floomba + Philly via Google Assistant)
@@ -138,16 +147,21 @@ For related tasks, switch to:
 
 ## Troubleshooting
 
-### "Connection refused" or SSH timeout
+### SSH or rest980 unavailable
 MacBook Pro at Crosstown must be reachable via Tailscale:
 ```bash
 ssh dylans-macbook-pro "echo ok"
 ```
 
-### "Robot did not respond within 20s"
-- Robot may be off WiFi or powered down
-- Check WiFi: `crosstown-roomba wifi <name>`
-- Ensure robot is on the 192.168.165.x network
+On the MacBook Pro, both `com.openclaw.rest980-10max` and
+`com.openclaw.rest980-j5` must be loaded and healthy. Do not start another
+direct dorita980 client: each robot permits only one local MQTT connection.
+
+### `rest_binding_mismatch`
+
+The selected loopback port does not report the configured robot identity.
+Inspect the protected `PORT` and `ROBOT_IP` binding; do not try the other
+robot's port or bypass the preflight.
 
 ### Action returns JSON with `"ok": false`
 
@@ -157,4 +171,5 @@ ssh dylans-macbook-pro "echo ok"
   `pre_dock_stop_verification_failed` is reported; check status first
 
 ### Command takes too long
-Each command needs ~5-10s for SSH + MQTT handshake. This is normal for the connect-per-request architecture.
+SSH plus bounded post-command phase verification can take several seconds.
+Status normally returns quickly because MQTT remains connected inside rest980.

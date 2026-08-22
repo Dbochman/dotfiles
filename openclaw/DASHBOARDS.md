@@ -162,7 +162,8 @@ Roomba status, snooze controls, and run history calendar heatmap for both locati
 
 ### What It Shows
 
-- **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status, tank level (via dorita980 MQTT)
+- **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status,
+  and tank level through the persistent rest980 services on the Crosstown MBP
 - **Cabin Roomba cards** — last mission outcome, duration, area cleaned (via iRobot Cloud API)
 - **Snooze controls** — temporarily disable Roomba automation per location (1h/3h/8h/Indef)
 - **Calendar heatmap** — monthly view of Roomba runs per location, gradient color scale, hover tooltips with run details
@@ -171,7 +172,7 @@ Roomba status, snooze controls, and run history calendar heatmap for both locati
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Crosstown Roomba (dorita980) | 5 min cache | Real-time battery, phase, bin, tank via SSH to MBP |
+| Crosstown Roomba (rest980) | 5 min cache | Real-time battery, phase, bin, and tank via SSH plus authenticated loopback REST on the MBP |
 | Cabin Roomba (iRobot Cloud) | 10 min cache | Last mission outcome via Gigya + AWS SigV4 REST API |
 | Dog Walk History JSONL | On demand | Roomba start/dock events per walk |
 | Snooze state | Real-time | Per-location snooze expiry |
@@ -181,7 +182,7 @@ Roomba status, snooze controls, and run history calendar heatmap for both locati
 | Location | Roombas |
 |----------|---------|
 | Cabin (Phillipston) | Floomba + Philly (Google Assistant) |
-| Crosstown (West Roxbury) | Roomba Combo 10 Max + J5 (dorita980 MQTT) |
+| Crosstown (West Roxbury) | Roomba Combo 10 Max + J5 (persistent rest980 MQTT) |
 
 ### Files
 
@@ -419,7 +420,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | `cielo status --json` | CLI | Minisplit status (JSON) |
 | `mysa` | CLI | Baseboard heater status (JSON) |
 | `august status` | CLI | Lock state (JSON, via SSH to MBP) |
-| `crosstown-roomba status` | CLI | Roomba status (via SSH+MQTT to MBP) |
+| `crosstown-roomba status` | CLI | Roomba status via SSH to the MBP's authenticated rest980 services |
 | `roomba status <name>` | CLI | Cabin roombas (per-robot, Google Assistant) |
 | `samsung-tv status` | CLI | TV power state |
 | `speaker status` | CLI | Speaker volume/reachability (page load only; excluded from bg refresh to prevent Cast chimes) |
@@ -442,7 +443,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Cielo AC | Basement, Living Room, Dylan's Office, Bedroom | — |
 | Mysa Heaters | Cat Room, Basement door, Movie room | — |
 | August Lock | Front Door | — |
-| Roombas | 10 Max + J5 (MQTT via MBP) | Floomba + Philly (Google) |
+| Roombas | 10 Max + J5 (rest980 via MBP) | Floomba + Philly (Google) |
 | Samsung TV | Frame 65 | — |
 | Google Speakers | Bedroom + Living Room | Kitchen + Bedroom |
 | Litter-Robot | LR4 | LR4 |
@@ -468,7 +469,9 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 - **Midea is LAN-local** — status and controls require the Mac mini to be on the same Cabin network as the enrolled units; no cloud fallback is retained
 - **Cabin Roombas use Google Assistant** — responses are natural language text, not structured JSON
 - **Petlibro/8sleep** require env vars from `~/.openclaw/.secrets-cache` — if secrets are stale, these collectors will error
-- **Crosstown Roombas and Speakers** route through SSH to MBP — if MBP is offline, these time out
+- **Crosstown Roombas and Speakers** route through SSH to MBP — if MBP is
+  offline, these time out. Roomba reads and actions then use exact authenticated
+  loopback rest980 bindings; they do not open competing MQTT connections.
 - **Nest Camera snapshot** takes ~10-15s (WebRTC negotiation + first frame); SDM API exposes no battery/online status for cameras
 - **Ring snapshot** may fail on battery doorbells if the doorbell is asleep; requires Ring Protect subscription
 - **Samsung TV status is REST-only** — `samsung-tv status` deliberately skips the WebSocket/art-mode probe because opening the WS wakes the Frame's panel and shows a connection notification every poll. Use `samsung-tv art frame` explicitly when art-mode info is needed.

@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 import stat
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -18,6 +20,7 @@ SKILL_DIR = REPO_ROOT / "openclaw" / "skills" / "crosstown-roomba"
 WRAPPER = SKILL_DIR / "crosstown-roomba"
 NODE_CLI = SKILL_DIR / "roomba-cmd.js"
 DEPLOYED_NODE_SOURCE = REPO_ROOT / "openclaw" / "rest980" / "roomba-cmd.js"
+ROUTE_PATCHER = REPO_ROOT / "openclaw" / "rest980" / "ensure-openclaw-routes.py"
 
 
 class CrosstownRoombaTests(unittest.TestCase):
@@ -28,8 +31,9 @@ class CrosstownRoombaTests(unittest.TestCase):
         self.home = self.root / "home"
         self.fake_bin = self.root / "bin"
         self.ssh_log = self.root / "ssh-log.jsonl"
-        self.node_log = self.root / "node-log.jsonl"
         self.env_file = self.root / "robot.env"
+        self.rest_calls: list[dict] = []
+        self.rest_mode = "success"
         self.home.mkdir()
         self.fake_bin.mkdir()
 
@@ -111,70 +115,114 @@ else:
 ''',
         )
 
-        module_dir = (
-            self.home
-            / ".openclaw"
-            / "rest980"
-            / "node_modules"
-            / "dorita980"
+        test_case = self
+
+        class FakeRestHandler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def respond(self, status: int, payload: object) -> None:
+                body = (
+                    payload
+                    if isinstance(payload, bytes)
+                    else json.dumps(payload).encode("utf-8")
+                )
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self) -> None:  # noqa: N802
+                test_case.rest_calls.append(
+                    {
+                        "path": self.path,
+                        "authorization": self.headers.get("Authorization"),
+                    }
+                )
+                if self.headers.get("Authorization") != "Basic dGVzdC11c2VyOnRlc3QtcGFzcw==":
+                    self.respond(401, {"error": "unauthorized"})
+                    return
+                if test_case.rest_mode == "http_error":
+                    self.respond(503, {"error": "unavailable"})
+                    return
+                if test_case.rest_mode == "invalid_json":
+                    self.respond(200, b"not-json")
+                    return
+                if self.path == "/api/info/protocol":
+                    robot_ip = (
+                        "127.0.0.2"
+                        if test_case.rest_mode == "protocol_mismatch"
+                        else "127.0.0.1"
+                    )
+                    self.respond(
+                        200,
+                        {
+                            "firmwareVersion": 2,
+                            "protocol": "v2",
+                            "transport": "mqtt-tls",
+                            "keepAlive": True,
+                            "robotIP": robot_ip,
+                        },
+                    )
+                    return
+                if self.path == "/api/local/info/mission":
+                    self.respond(
+                        200,
+                        {
+                            "cleanMissionStatus": {"phase": "run"},
+                            "batPct": 80,
+                            "bin": {"present": True, "full": False},
+                        },
+                    )
+                    return
+                if self.path == "/api/local/info/state":
+                    self.respond(
+                        200,
+                        {
+                            "cleanMissionStatus": {"phase": "run"},
+                            "batPct": 80,
+                            "netinfo": {"addr": "127.0.0.1"},
+                            "signal": {"rssi": -50, "snr": 35},
+                            "wifistat": {"cloud": 1},
+                            "wlcfg": {"ssid": "74657374"},
+                        },
+                    )
+                    return
+                if self.path.startswith("/api/local/action/"):
+                    if test_case.rest_mode == "error_result":
+                        self.respond(
+                            200,
+                            {"error": "rejected", "message": "fake action failure"},
+                        )
+                    elif test_case.rest_mode == "ok_false":
+                        self.respond(
+                            200,
+                            {"ok": False, "message": "fake action failure"},
+                        )
+                    else:
+                        self.respond(200, {"ok": True, "accepted": self.path.rsplit("/", 1)[-1]})
+                    return
+                self.respond(404, {"error": "not_found"})
+
+        self.rest_server = ThreadingHTTPServer(("127.0.0.1", 0), FakeRestHandler)
+        self.rest_thread = threading.Thread(
+            target=self.rest_server.serve_forever,
+            daemon=True,
         )
-        module_dir.mkdir(parents=True)
-        (module_dir / "index.js").write_text(
-            r'''const fs = require("fs");
-const { EventEmitter } = require("events");
-
-function record(event) {
-  fs.appendFileSync(process.env.FAKE_ROOMBA_NODE_LOG, JSON.stringify({ event }) + "\n");
-}
-
-class Local extends EventEmitter {
-  constructor() {
-    super();
-    record("constructor");
-    setImmediate(() => this.emit("connect"));
-  }
-
-  action(name) {
-    record(name);
-    const mode = process.env.FAKE_DORITA_MODE || "success";
-    if (mode === "throw") throw new Error("fake action exception");
-    if (mode === "reject") return Promise.reject(new Error("fake action rejection"));
-    if (mode === "error_result") {
-      return Promise.resolve({ error: "rejected", message: "fake action failure" });
-    }
-    if (mode === "ok_false") {
-      return Promise.resolve({ ok: false, message: "fake action failure" });
-    }
-    if (mode === "undefined") return Promise.resolve(undefined);
-    return Promise.resolve({ ok: true, accepted: name });
-  }
-
-  start() { return this.action("start"); }
-  stop() { return this.action("stop"); }
-  pause() { return this.action("pause"); }
-  resume() { return this.action("resume"); }
-  dock() { return this.action("dock"); }
-  find() { return this.action("find"); }
-  getMission() {
-    record("getMission");
-    return Promise.resolve({ cleanMissionStatus: { phase: "run" }, batPct: 80 });
-  }
-  getRobotState() {
-    record("getRobotState");
-    return Promise.resolve({ netinfo: {}, signal: {}, wlcfg: {} });
-  }
-  end() { record("end"); }
-}
-
-module.exports = { Local };
-''',
-            encoding="utf-8",
-        )
-        self.write_env(
+        self.rest_thread.start()
+        self.addCleanup(self.rest_server.server_close)
+        self.addCleanup(self.rest_server.shutdown)
+        self.valid_env = (
             "BLID=fake-blid\n"
             "PASSWORD=fake-password\n"
             "ROBOT_IP=127.0.0.1\n"
+            f"PORT={self.rest_server.server_port}\n"
+            "BASIC_AUTH_USER=test-user\n"
+            "BASIC_AUTH_PASS=test-pass\n"
+            "FIRMWARE_VERSION=2\n"
         )
+        self.write_env(self.valid_env)
 
     @staticmethod
     def _write_executable(path: Path, content: str) -> None:
@@ -191,7 +239,6 @@ module.exports = { Local };
             {
                 "HOME": str(self.home),
                 "FAKE_ROOMBA_SSH_LOG": str(self.ssh_log),
-                "FAKE_ROOMBA_NODE_LOG": str(self.node_log),
                 "CROSSTOWN_ROOMBA_SSH_BIN": str(self.fake_ssh),
                 "CROSSTOWN_ROOMBA_VERIFY_ATTEMPTS": "2",
                 "CROSSTOWN_ROOMBA_VERIFY_INTERVAL": "0",
@@ -215,12 +262,14 @@ module.exports = { Local };
     def run_node(
         self, *args: str, mode: str = "success"
     ) -> subprocess.CompletedProcess[str]:
+        self.rest_calls.clear()
+        self.rest_mode = mode
         return subprocess.run(
             ["node", str(NODE_CLI), *args],
             check=False,
             capture_output=True,
             text=True,
-            env=self.environment(FAKE_DORITA_MODE=mode),
+            env=self.environment(),
         )
 
     def ssh_calls(self) -> list[dict]:
@@ -229,9 +278,7 @@ module.exports = { Local };
         return [json.loads(line) for line in self.ssh_log.read_text().splitlines()]
 
     def node_calls(self) -> list[dict]:
-        if not self.node_log.exists():
-            return []
-        return [json.loads(line) for line in self.node_log.read_text().splitlines()]
+        return list(self.rest_calls)
 
     @staticmethod
     def action_summary(result: subprocess.CompletedProcess[str]) -> dict:
@@ -248,16 +295,69 @@ module.exports = { Local };
             hashlib.sha256(DEPLOYED_NODE_SOURCE.read_bytes()).hexdigest(),
         )
 
+    def test_route_patcher_adds_find_once_and_preserves_mode(self) -> None:
+        api_file = self.root / "api.js"
+        api_file.write_text(
+            "before\n"
+            "router.get('/local/action/resume', map2dorita('local', 'resume'));\n"
+            "after\n",
+            encoding="utf-8",
+        )
+        api_file.chmod(0o640)
+        patch_env = self.environment(
+            REST980_API_ROUTE_FILE=str(api_file),
+            REST980_ROUTE_PATCH_LOCK=str(self.root / "route-patch.lock"),
+        )
+
+        for _ in range(2):
+            result = subprocess.run(
+                ["/opt/homebrew/bin/python3", str(ROUTE_PATCHER)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=patch_env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        self.assertEqual(
+            api_file.read_text(encoding="utf-8").count("/local/action/find"),
+            1,
+        )
+        self.assertEqual(stat.S_IMODE(api_file.stat().st_mode), 0o640)
+
+    def test_route_patcher_fails_closed_on_unexpected_contract(self) -> None:
+        api_file = self.root / "api.js"
+        api_file.write_text("unexpected\n", encoding="utf-8")
+        original = api_file.read_bytes()
+        result = subprocess.run(
+            ["/opt/homebrew/bin/python3", str(ROUTE_PATCHER)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.environment(
+                REST980_API_ROUTE_FILE=str(api_file),
+                REST980_ROUTE_PATCH_LOCK=str(self.root / "route-patch.lock"),
+            ),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(api_file.read_bytes(), original)
+
+    def test_rest980_start_scripts_install_the_managed_route(self) -> None:
+        for name in ("start-10max.sh", "start-j5.sh"):
+            script = REPO_ROOT / "openclaw" / "rest980" / name
+            self.assertIn("ensure-openclaw-routes.py", script.read_text())
+
     def test_node_rejects_unknown_command_and_invalid_inputs_before_connect(self) -> None:
         invalid_env = self.root / "invalid.env"
         invalid_env.write_text(
-            "BLID=fake\nPASSWORD=fake\nROBOT_IP=not-an-ip\n",
+            self.valid_env.replace("ROBOT_IP=127.0.0.1", "ROBOT_IP=not-an-ip"),
             encoding="utf-8",
         )
         invalid_env.chmod(0o600)
         missing_value_env = self.root / "missing-value.env"
         missing_value_env.write_text(
-            "BLID=fake\nROBOT_IP=127.0.0.1\n",
+            self.valid_env.replace("PASSWORD=fake-password\n", ""),
             encoding="utf-8",
         )
         missing_value_env.chmod(0o600)
@@ -271,7 +371,6 @@ module.exports = { Local };
         ]
         for args, error_code in cases:
             with self.subTest(args=args):
-                self.node_log.unlink(missing_ok=True)
                 result = self.run_node(*args)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(self.error_payload(result)["error"], error_code)
@@ -285,10 +384,7 @@ module.exports = { Local };
         self.assertEqual(self.node_calls(), [])
 
         target = self.root / "robot-target.env"
-        target.write_text(
-            "BLID=fake\nPASSWORD=fake\nROBOT_IP=127.0.0.1\n",
-            encoding="utf-8",
-        )
+        target.write_text(self.valid_env, encoding="utf-8")
         target.chmod(0o600)
         self.env_file.unlink()
         self.env_file.symlink_to(target)
@@ -297,28 +393,68 @@ module.exports = { Local };
         self.assertEqual(self.error_payload(symlinked)["error"], "env_file_unsafe")
         self.assertEqual(self.node_calls(), [])
 
-    def test_node_action_exceptions_rejections_and_error_results_are_nonzero(self) -> None:
+    def test_node_rest_failures_and_error_results_are_nonzero(self) -> None:
         expected_codes = {
-            "throw": "command_failed",
-            "reject": "command_failed",
+            "http_error": "rest_request_failed",
+            "invalid_json": "invalid_response",
             "error_result": "rejected",
             "ok_false": "action_failed",
         }
         for mode, expected_code in expected_codes.items():
             with self.subTest(mode=mode):
-                self.node_log.unlink(missing_ok=True)
                 result = self.run_node(str(self.env_file), "start", mode=mode)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertEqual(self.error_payload(result)["error"], expected_code)
-                events = [call["event"] for call in self.node_calls()]
-                self.assertIn("constructor", events)
-                self.assertIn("end", events)
+                self.assertTrue(self.node_calls())
 
-    def test_node_normalizes_undefined_success_to_json(self) -> None:
-        result = self.run_node(str(self.env_file), "start", mode="undefined")
+    def test_node_uses_bound_rest_action_and_returns_json(self) -> None:
+        result = self.run_node(str(self.env_file), "start")
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"ok": True, "command": "start"})
+        self.assertEqual(
+            json.loads(result.stdout),
+            {"ok": True, "accepted": "start"},
+        )
+        self.assertEqual(
+            [call["path"] for call in self.node_calls()],
+            ["/api/info/protocol", "/api/local/action/start"],
+        )
+        self.assertTrue(
+            all(call["authorization"] == "Basic dGVzdC11c2VyOnRlc3QtcGFzcw==" for call in self.node_calls())
+        )
+
+    def test_node_rejects_rest_binding_mismatch_before_action(self) -> None:
+        result = self.run_node(
+            str(self.env_file),
+            "start",
+            mode="protocol_mismatch",
+        )
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(
+            self.error_payload(result)["error"],
+            "rest_binding_mismatch",
+        )
+        self.assertEqual(
+            [call["path"] for call in self.node_calls()],
+            ["/api/info/protocol"],
+        )
+
+    def test_node_reads_status_state_wifi_and_find_through_rest(self) -> None:
+        expected_paths = {
+            "status": "/api/local/info/mission",
+            "state": "/api/local/info/state",
+            "wifi": "/api/local/info/state",
+            "find": "/api/local/action/find",
+        }
+        for command, expected_path in expected_paths.items():
+            with self.subTest(command=command):
+                result = self.run_node(str(self.env_file), command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    [call["path"] for call in self.node_calls()],
+                    ["/api/info/protocol", expected_path],
+                )
 
     def test_wrapper_rejects_fuzzy_or_extra_targets_without_ssh(self) -> None:
         for args in [("start", "room"), ("start", "roomba", "extra")]:
