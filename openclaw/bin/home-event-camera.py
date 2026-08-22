@@ -593,6 +593,49 @@ class CameraWorker:
             connection.commit()
         return combined or result
 
+    def _cancel_claim_for_presence(self, claim: Mapping[str, Any]) -> str:
+        """Fail closed when presence changes after a snapshot slot is claimed."""
+
+        now = format_time(self.now())
+        offset = int(claim["offset"])
+        with closing(self.store.connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                f"""
+                UPDATE camera_evaluations
+                SET state = 'complete',
+                    snapshot_30_result = CASE
+                        WHEN snapshot_30_result IN ('pending', 'capturing')
+                        THEN 'failed' ELSE snapshot_30_result END,
+                    snapshot_60_result = CASE
+                        WHEN snapshot_60_result IN ('pending', 'capturing')
+                        THEN 'failed' ELSE snapshot_60_result END,
+                    result = 'unavailable',
+                    error_code = 'presence_not_vacant',
+                    completed_at = ?, updated_at = ?
+                WHERE id = ? AND state = 'pending'
+                  AND snapshot_{offset}_result = 'capturing'
+                """,
+                (now, now, claim["id"]),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                raise CameraError("camera_claim_lost")
+            connection.execute(
+                """
+                INSERT INTO service_counters(name, value)
+                VALUES ('camera_evaluations_cancelled', 1)
+                ON CONFLICT(name) DO UPDATE SET value = value + 1
+                """
+            )
+            self._runtime_update(connection, now=now, health="ok")
+            connection.commit()
+        return "cancelled"
+
+    def _claimed_site_is_vacant(self, claim: Mapping[str, Any]) -> bool:
+        presence = read_presence(self.presence_state, self.now())
+        return presence.get(str(claim["site"])) == "vacant"
+
     def _process_target(
         self,
         claim: Mapping[str, Any],
@@ -647,6 +690,8 @@ class CameraWorker:
         results: list[str] = []
         errors: list[str] = []
         for index, value in enumerate(claim["targets"], start=1):
+            if not self._claimed_site_is_vacant(claim):
+                return self._cancel_claim_for_presence(claim)
             provider, alias = value
             result, error_code = self._process_target(
                 claim,

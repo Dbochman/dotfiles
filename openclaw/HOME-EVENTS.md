@@ -120,8 +120,10 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   owner-only log.
 - `bin/home-event-camera.py` claims only fresh, confirmed-vacant camera
   evaluations already scheduled by the correlator. It rechecks the protected
-  canonical presence state before each +30/+60 slot and completes the
-  evaluation without capturing when the site is no longer confidently vacant.
+  canonical presence state before each +30/+60 slot, after claiming a due
+  slot, and immediately before every provider capture. It completes the
+  evaluation without further capture when the site is no longer confidently
+  vacant.
   Otherwise it combines the exact triggering Ring camera (or the site's Ring
   front door)
   with the exact Nest interior camera, makes only an aggregate person-visible
@@ -203,8 +205,11 @@ trigger uses that site's Ring front door. The Nest interior camera is always
 the secondary view. Old/backfilled events, generic motion, occupied or
 uncertain presence, source health, and local-presence inference never schedule
 camera work. A later resident arrival or uncertain/stale canonical state
-cancels any already-scheduled evaluation before its next snapshot; cancellation
-is counted as a healthy fail-closed outcome and retains no image. The resulting
+cancels any already-scheduled evaluation before its next snapshot. Canonical
+vacancy is checked again after the worker claims a due slot and immediately
+before every provider capture, closing the claim-to-capture arrival race;
+cancellation is counted as a healthy fail-closed outcome and retains no image.
+The resulting
 `person_visible`, `no_person_visible`, `uncertain`,
 or `unavailable` value may add one fixed sentence to a later eligible Dylan
 message; it cannot create, suppress, accelerate, or delay that message.

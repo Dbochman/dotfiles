@@ -374,6 +374,60 @@ class HomeEventCameraTests(unittest.TestCase):
         self.assertEqual(row["result"], "unavailable")
         self.assertEqual(row["error_code"], "presence_not_vacant")
 
+    def test_presence_change_after_claim_cancels_before_capture(self) -> None:
+        row_id = self.insert_evaluation()
+        commands = FakeCommands()
+        worker = self.worker(commands)
+
+        claim = worker._claim()
+        assert claim is not None and "cancelled" not in claim
+        self.write_presence("occupied", "confirmed_vacant")
+        result = worker._process(claim)
+
+        self.assertEqual(result, "cancelled")
+        self.assertEqual(commands.captures, [])
+        row = self.row(row_id)
+        self.assertEqual(row["state"], "complete")
+        self.assertEqual(row["snapshot_30_result"], "failed")
+        self.assertEqual(row["snapshot_60_result"], "failed")
+        self.assertEqual(row["result"], "unavailable")
+        self.assertEqual(row["error_code"], "presence_not_vacant")
+        status = self.store.status_snapshot()
+        self.assertEqual(status["camera"]["health"], "ok")
+        self.assertEqual(status["counters"]["camera_evaluations_cancelled"], 1)
+
+    def test_presence_is_rechecked_between_provider_captures(self) -> None:
+        row_id = self.insert_evaluation()
+        test_case = self
+
+        class PresenceFlippingCommands(FakeCommands):
+            def capture(
+                self,
+                provider: str,
+                site: str,
+                alias: str,
+                path: Path,
+            ) -> None:
+                super().capture(provider, site, alias, path)
+                test_case.write_presence("occupied", "confirmed_vacant")
+
+        commands = PresenceFlippingCommands(
+            [camera.VisionDecision(False, "high")]
+        )
+
+        result = self.worker(commands).run_once()
+
+        self.assertEqual(result["outcome"], "cancelled")
+        self.assertEqual(
+            commands.captures,
+            [("ring", "cabin", "front_door")],
+        )
+        row = self.row(row_id)
+        self.assertEqual(row["state"], "complete")
+        self.assertEqual(row["result"], "unavailable")
+        self.assertEqual(row["error_code"], "presence_not_vacant")
+        self.assertEqual(list(self.paths.camera_images.iterdir()), [])
+
     def test_invalid_active_policy_degrades_camera_health(self) -> None:
         self.paths.delivery_policy.write_text("{}\n", encoding="utf-8")
         self.paths.delivery_policy.chmod(0o600)
