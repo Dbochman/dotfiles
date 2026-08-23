@@ -23,6 +23,9 @@ ROOMBA_SNOOZE_FILE="${ROOMBA_SNOOZE_FILE:-$HOME/.openclaw/dog-walk/snooze.json}"
 PRESENCE_SCANNER="${PRESENCE_SCANNER:-$HOME/.openclaw/workspace/scripts/presence-detect.sh}"
 VACANCY_ACTION_JOURNAL="${VACANCY_ACTION_JOURNAL:-$HOME/.openclaw/bin/vacancy-action-journal.py}"
 VACANCY_JOURNAL_PYTHON="${VACANCY_JOURNAL_PYTHON:-/opt/homebrew/bin/python3}"
+CROSSTOWN_VACANT_ROOMBA="${CROSSTOWN_VACANT_ROOMBA:-$HOME/.openclaw/bin/crosstown-vacant-roomba.py}"
+HOME_EVENT_ACTION="${HOME_EVENT_ACTION:-$HOME/.openclaw/bin/home-event-action}"
+HOME_EVENT_ACTION_POLICY="${HOME_EVENT_ACTION_POLICY:-$HOME/.openclaw/home-events/config/action-policy.json}"
 JOURNAL_RUN_ID=""
 JOURNAL_ATTEMPT_ID=""
 JOURNAL_WARNING_EMITTED=0
@@ -122,6 +125,32 @@ journal_complete_run() {
   JOURNAL_RUN_ID=""
   JOURNAL_ATTEMPT_ID=""
   return 0
+}
+
+# Return the exact action owner. Once the protected policy exists, an invalid
+# policy or unavailable helper fails closed for that target rather than
+# risking overlap between the legacy runner and the bus worker.
+action_owner() {
+  local site="$1" target="$2" output owner
+  if [[ ! -e "$HOME_EVENT_ACTION_POLICY" && ! -L "$HOME_EVENT_ACTION_POLICY" ]]; then
+    printf '%s\n' legacy
+    return 0
+  fi
+  if [[ ! -f "$HOME_EVENT_ACTION_POLICY" || -L "$HOME_EVENT_ACTION_POLICY" || ! -x "$HOME_EVENT_ACTION" ]]; then
+    printf '%s\n' unsafe
+    return 0
+  fi
+  if ! output=$("$HOME_EVENT_ACTION" ownership --site "$site" --target "$target" 2>/dev/null); then
+    printf '%s\n' unsafe
+    return 0
+  fi
+  owner=$(printf '%s' "$output" | "$VACANCY_JOURNAL_PYTHON" -c \
+    'import json,sys; value=json.load(sys.stdin); print(value.get("owner", "unsafe") if value.get("ok") is True else "unsafe")' \
+    2>/dev/null || echo unsafe)
+  case "$owner" in
+    legacy|bus) printf '%s\n' "$owner" ;;
+    *) printf '%s\n' unsafe ;;
+  esac
 }
 
 # Load cached credentials used by the device helper CLIs — no live op reads.
@@ -247,13 +276,25 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
 
   # Lights off
   journal_begin_action all_lights turn_off
-  if hue --crosstown all-off >> "$LOG_FILE" 2>&1; then
-    journal_finish_action command_accepted command_exit completed
-    log "  Crosstown lights: OFF"
-  else
-    journal_finish_action failed command_exit command_failed
-    log "  ERROR: Failed to turn off Crosstown lights"
-  fi
+  case "$(action_owner crosstown all_lights)" in
+    bus)
+      journal_finish_action skipped policy_decision delegated_to_event_bus
+      log "  Crosstown lights: DELEGATED to home-event action worker"
+      ;;
+    legacy)
+      if hue --crosstown all-off >> "$LOG_FILE" 2>&1; then
+        journal_finish_action command_accepted command_exit completed
+        log "  Crosstown lights: OFF"
+      else
+        journal_finish_action failed command_exit command_failed
+        log "  ERROR: Failed to turn off Crosstown lights"
+      fi
+      ;;
+    *)
+      journal_finish_action skipped policy_decision policy_invalid_fail_closed
+      log "  WARN: Crosstown lights skipped; action ownership is unsafe"
+      ;;
+  esac
 
   # Thermostat eco
   journal_begin_action central_hvac enable_eco
@@ -309,17 +350,50 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
     fi
   fi
 
-  # Start Roombas unless the shared automation snooze is active.
+  # The shared daily controller owns cat-activity suppression, the dashboard
+  # snooze, current-phase checks, per-robot verification, and one run decision
+  # per local day. This vacancy transition counts as today's scheduled run.
   journal_begin_action crosstown_roombas start_cleaning
-  if roomba_start_blocked crosstown; then
-    journal_finish_action skipped policy_decision "$ROOMBA_BLOCK_REASON"
-  elif crosstown-roomba start all >> "$LOG_FILE" 2>&1; then
-    journal_finish_action command_accepted command_exit completed
-    log "  Crosstown Roombas: STARTED"
+  roomba_output=""
+  if roomba_output=$("$CROSSTOWN_VACANT_ROOMBA" --source vacancy_transition 2>> "$LOG_FILE"); then
+    roomba_status=0
   else
-    journal_finish_action failed command_exit command_failed
-    log "  ERROR: Failed to start Crosstown Roombas (may be offline)"
+    roomba_status=$?
   fi
+  [[ -z "$roomba_output" ]] || printf '%s\n' "$roomba_output" >> "$LOG_FILE"
+  roomba_outcome=$(printf '%s' "$roomba_output" | "$VACANCY_JOURNAL_PYTHON" -c \
+    'import json,sys; value=json.load(sys.stdin); print(value.get("outcome", "invalid") if value.get("ok") is True else "invalid")' \
+    2>/dev/null || echo invalid)
+  case "$roomba_outcome" in
+    started)
+      journal_finish_action state_confirmed state_confirmed completed
+      log "  Crosstown Roombas: STARTED and VERIFIED"
+      ;;
+    already_cleaning)
+      journal_finish_action state_confirmed state_confirmed already_satisfied
+      log "  Crosstown Roombas: ALREADY CLEANING"
+      ;;
+    snoozed)
+      journal_finish_action skipped policy_decision snoozed
+      log "  Crosstown Roombas: SKIPPED (snoozed)"
+      ;;
+    recent_cat_activity)
+      journal_finish_action skipped policy_decision recent_cat_activity
+      log "  Crosstown Roombas: SKIPPED (recent litter-box activity)"
+      ;;
+    already_handled)
+      journal_finish_action skipped policy_decision daily_already_handled
+      log "  Crosstown Roombas: SKIPPED (daily decision already recorded)"
+      ;;
+    robot_not_ready)
+      journal_finish_action skipped policy_decision robot_not_ready
+      log "  Crosstown Roombas: SKIPPED (robot not safely ready)"
+      ;;
+    *)
+      journal_finish_action failed command_exit command_failed
+      log "  ERROR: Crosstown daily Roomba controller failed (status $roomba_status)"
+      ;;
+  esac
 
   date > "$MARKER_DIR/crosstown"
   journal_complete_run
@@ -339,13 +413,25 @@ if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin"
 
   # Lights off
   journal_begin_action all_lights turn_off
-  if hue --cabin all-off >> "$LOG_FILE" 2>&1; then
-    journal_finish_action command_accepted command_exit completed
-    log "  Cabin lights: OFF"
-  else
-    journal_finish_action failed command_exit command_failed
-    log "  ERROR: Failed to turn off Cabin lights"
-  fi
+  case "$(action_owner cabin all_lights)" in
+    bus)
+      journal_finish_action skipped policy_decision delegated_to_event_bus
+      log "  Cabin lights: DELEGATED to home-event action worker"
+      ;;
+    legacy)
+      if hue --cabin all-off >> "$LOG_FILE" 2>&1; then
+        journal_finish_action command_accepted command_exit completed
+        log "  Cabin lights: OFF"
+      else
+        journal_finish_action failed command_exit command_failed
+        log "  ERROR: Failed to turn off Cabin lights"
+      fi
+      ;;
+    *)
+      journal_finish_action skipped policy_decision policy_invalid_fail_closed
+      log "  WARN: Cabin lights skipped; action ownership is unsafe"
+      ;;
+  esac
 
   # Thermostat eco
   journal_begin_action central_hvac enable_eco

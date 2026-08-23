@@ -24,9 +24,11 @@ LABELS = (
     "ai.openclaw.august-event-adapter",
     "ai.openclaw.nest-home-event-bridge",
     "ai.openclaw.presence-local-event-adapter",
+    "ai.openclaw.vacancy-event-adapter",
 )
 DELIVERY_LABEL = "ai.openclaw.home-event-delivery"
 CAMERA_LABEL = "ai.openclaw.home-event-camera"
+ACTION_LABEL = "ai.openclaw.home-event-action"
 
 
 class HomeEventDeploymentTests(unittest.TestCase):
@@ -162,6 +164,42 @@ class HomeEventDeploymentTests(unittest.TestCase):
             local_presence_adapter.stat().st_mode & stat.S_IXUSR,
             "local-presence adapter must be executable for the service wrapper",
         )
+        vacancy = plistlib.loads(
+            (
+                OPENCLAW
+                / "launchagents"
+                / "ai.openclaw.vacancy-event-adapter.plist"
+            ).read_bytes()
+        )
+        self.assertEqual(
+            vacancy["EnvironmentVariables"]["HOME_EVENTS_VACANCY_CABIN_ENABLED"],
+            "0",
+        )
+        self.assertEqual(
+            vacancy["EnvironmentVariables"][
+                "HOME_EVENTS_VACANCY_CROSSTOWN_ENABLED"
+            ],
+            "0",
+        )
+        self.assertEqual(vacancy["ProgramArguments"][2], "vacancy")
+        action = plistlib.loads(
+            (OPENCLAW / "launchagents" / f"{ACTION_LABEL}.plist").read_bytes()
+        )
+        self.assertEqual(action["Label"], ACTION_LABEL)
+        self.assertEqual(
+            action["ProgramArguments"][:2],
+            [
+                "/bin/bash",
+                "/Users/dbochman/.openclaw/bin/home-event-action-wrapper.sh",
+            ],
+        )
+        for filename in (
+            "vacancy-event-adapter.py",
+            "home_event_action.py",
+            "home-event-action",
+            "home-event-action-wrapper.sh",
+        ):
+            self.assertTrue((OPENCLAW / "bin" / filename).stat().st_mode & stat.S_IXUSR)
         producer_flags = (
             (
                 "ai.openclaw.ring-event-listener.plist",
@@ -185,7 +223,7 @@ class HomeEventDeploymentTests(unittest.TestCase):
 
     def test_daily_pull_refreshes_only_attended_installed_jobs(self) -> None:
         source = PULL.read_text(encoding="utf-8")
-        for label in (*LABELS, DELIVERY_LABEL, CAMERA_LABEL):
+        for label in (*LABELS, DELIVERY_LABEL, CAMERA_LABEL, ACTION_LABEL):
             self.assertIn(label, source)
         self.assertIn(
             'if [ -e "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]',
@@ -218,6 +256,14 @@ class HomeEventDeploymentTests(unittest.TestCase):
         )
         self.assertIn(
             "Set :EnvironmentVariables:HOME_EVENTS_LOCAL_PRESENCE_CROSSTOWN_ENABLED",
+            source,
+        )
+        self.assertIn(
+            "Print :EnvironmentVariables:HOME_EVENTS_VACANCY_CABIN_ENABLED",
+            source,
+        )
+        self.assertIn(
+            "Set :EnvironmentVariables:HOME_EVENTS_VACANCY_CROSSTOWN_ENABLED",
             source,
         )
         home_event_block = source[

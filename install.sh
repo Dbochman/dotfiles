@@ -804,6 +804,8 @@ install_openclaw_guarded_helpers() {
     "bin/cielo-auth.py|bin/cielo-auth.py|755|Cielo atomic auth helper"
     "bin/cielo-reauth|bin/cielo-reauth|755|Cielo attended recovery helper"
     "bin/cat-dashboard.py|bin/cat-dashboard.py|755|Cat Care dashboard server"
+    "bin/crosstown-vacant-roomba.py|bin/crosstown-vacant-roomba.py|755|Crosstown vacant Roomba controller"
+    "bin/roomba-dashboard.py|bin/roomba-dashboard.py|755|Roomba dashboard server"
     "bin/litter-robot|bin/litter-robot|755|Litter-Robot guarded control wrapper"
     "bin/litter-robot-enroll|bin/litter-robot-enroll|755|Litter-Robot attended enrollment helper"
     "bin/midea-ac|bin/midea-ac|755|Midea local AC wrapper"
@@ -1378,6 +1380,14 @@ install_dotfiles() {
         "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.cat-dashboard.plist" \
         "$HOME/Library/LaunchAgents/ai.openclaw.cat-dashboard.plist" \
         "ai.openclaw.cat-dashboard"
+      install_managed_launchagent \
+        "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.roomba-dashboard.plist" \
+        "$HOME/Library/LaunchAgents/ai.openclaw.roomba-dashboard.plist" \
+        "ai.openclaw.roomba-dashboard"
+      install_managed_launchagent \
+        "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.crosstown-vacant-roomba.plist" \
+        "$HOME/Library/LaunchAgents/ai.openclaw.crosstown-vacant-roomba.plist" \
+        "ai.openclaw.crosstown-vacant-roomba"
 
       # BlueBubbles and its watchdogs are intentionally retired. Current
       # OpenClaw owns Messages through the native imsg bridge; launching both

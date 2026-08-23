@@ -92,6 +92,16 @@ run_component() {
         PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
         "$BIN/presence-local-event-adapter.py"
       ;;
+    vacancy)
+      /usr/bin/env -i HOME="$HOME" PATH="/opt/homebrew/bin:/usr/bin:/bin" \
+        HOME_EVENTS_ROOT="$ROOT" \
+        HOME_EVENTS_VACANCY_CABIN_ENABLED="${HOME_EVENTS_VACANCY_CABIN_ENABLED:-0}" \
+        HOME_EVENTS_VACANCY_CROSSTOWN_ENABLED="${HOME_EVENTS_VACANCY_CROSSTOWN_ENABLED:-0}" \
+        VACANCY_JOURNAL_ROOT="$HOME/.openclaw/vacancy-actions/journal" \
+        HOME_EVENTCTL="$BIN/home-eventctl" \
+        PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
+        "$BIN/vacancy-event-adapter.py"
+      ;;
     *) fail "unsupported component" ;;
   esac
 }

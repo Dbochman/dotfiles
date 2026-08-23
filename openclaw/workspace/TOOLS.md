@@ -178,7 +178,12 @@ restaurant-book run --job-id <canonical-job-id>
 - August Wi-Fi Smart Lock (5th gen, front door — cloud API via august-api on MBP)
 
 ### Vacancy Automation
-When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), locks the Crosstown front door, and starts all Roombas. Independently, each person's sticky detected location is made current on Eight Sleep and their side on the other Pod becomes away. iMessage notification is sent for lock status.
+When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), locks the Crosstown front door, and starts all Roombas. For Crosstown, the event-bus action worker also disables the exact standing Hue routines selected in its protected policy, remembers only those that were previously enabled, keeps the set disabled during confident vacancy, and restores that prior set after a fresh sticky-resident return. Independently, each person's sticky detected location is made current on Eight Sleep and their side on the other Pod becomes away. iMessage notification is sent for lock status.
+
+Use `hue --<site> automations` for safe routine inventory and
+`hue --<site> automation status|enable|disable '<exact name>'` for guarded
+control. Do not fuzzy-match routine names. A manual enable of a managed
+Crosstown routine during confirmed vacancy will be corrected by the worker.
 
 ## Midea Air Conditioners
 

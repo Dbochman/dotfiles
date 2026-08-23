@@ -4,6 +4,7 @@
 # Credentials stored in 1Password + local cache files.
 
 set -euo pipefail
+umask 077
 
 export OP_BIOMETRIC_UNLOCK_ENABLED=true
 
@@ -42,6 +43,42 @@ REMOTE_API="https://api.meethue.com/route"
 # Connection mode: auto (try local, fall back to remote), local, remote
 HUE_MODE="${HUE_MODE:-auto}"
 
+_secure_cache_dir() {
+  local parent="${HOME}/.cache/hue" cache_entry
+  mkdir -p "$parent" "$CACHE_DIR"
+  [[ -d "$parent" && ! -L "$parent" && -d "$CACHE_DIR" && ! -L "$CACHE_DIR" ]] || {
+    echo "Error: Hue credential cache path is unsafe." >&2
+    return 1
+  }
+  [[ "$(stat -f %u "$parent")" == "$(id -u)" && "$(stat -f %u "$CACHE_DIR")" == "$(id -u)" ]] || {
+    echo "Error: Hue credential cache ownership is unsafe." >&2
+    return 1
+  }
+  chmod 700 "$parent" "$CACHE_DIR"
+  for cache_entry in "$CACHE_DIR"/*; do
+    [[ -e "$cache_entry" || -L "$cache_entry" ]] || continue
+    [[ -f "$cache_entry" && ! -L "$cache_entry" && "$(stat -f %u "$cache_entry")" == "$(id -u)" ]] || {
+      echo "Error: Hue credential cache entry is unsafe." >&2
+      return 1
+    }
+    chmod 600 "$cache_entry"
+  done
+}
+
+_atomic_cache_write() {
+  local path="$1" value="$2" temporary
+  _secure_cache_dir
+  [[ ! -L "$path" ]] || {
+    echo "Error: Hue credential cache file is unsafe." >&2
+    return 1
+  }
+  temporary=$(mktemp "$CACHE_DIR/.credential.XXXXXX")
+  chmod 600 "$temporary"
+  printf '%s\n' "$value" > "$temporary"
+  mv -f "$temporary" "$path"
+  chmod 600 "$path"
+}
+
 _op_read() {
   /opt/homebrew/bin/op item get "$OP_ITEM" --vault "$OP_VAULT" --fields label="$1" --reveal 2>/dev/null
 }
@@ -49,9 +86,14 @@ _op_read() {
 _cached_read() {
   local label="$1" ttl="${2:-$CACHE_TTL}"
   local cache_file="$CACHE_DIR/$(echo "$label" | tr ' ' '_' | tr '[:upper:]' '[:lower:]')"
-  mkdir -p "$CACHE_DIR"
+  _secure_cache_dir
 
   if [[ -f "$cache_file" ]]; then
+    [[ ! -L "$cache_file" && "$(stat -f %u "$cache_file")" == "$(id -u)" ]] || {
+      echo "Error: Hue credential cache file is unsafe." >&2
+      return 1
+    }
+    chmod 600 "$cache_file"
     local age=$(( $(date +%s) - $(stat -f %m "$cache_file") ))
     if (( age < ttl )); then
       cat "$cache_file"
@@ -62,7 +104,7 @@ _cached_read() {
   local val
   val=$(_op_read "$label")
   if [[ -n "$val" ]]; then
-    echo "$val" > "$cache_file"
+    _atomic_cache_write "$cache_file" "$val"
   fi
   echo "$val"
 }
@@ -125,12 +167,11 @@ _refresh_remote_token() {
     return 1
   fi
 
-  mkdir -p "$CACHE_DIR"
-  echo "$new_token" > "$CACHE_DIR/remote_access_token"
+  _atomic_cache_write "$CACHE_DIR/remote_access_token" "$new_token"
   _REMOTE_TOKEN="$new_token"
 
   if [[ -n "$new_refresh" ]]; then
-    echo "$new_refresh" > "$CACHE_DIR/remote_refresh_token"
+    _atomic_cache_write "$CACHE_DIR/remote_refresh_token" "$new_refresh"
   fi
 
   echo "Remote token refreshed" >&2
@@ -183,6 +224,42 @@ _api_put() {
   else
     _get_local_creds
     curl -s -X PUT "http://${_HUE_BRIDGE}/api/${_HUE_KEY}${1}" -d "$2"
+  fi
+}
+
+_api_v2_get() {
+  _resolve_mode
+  if [[ "$_USE_REMOTE" == "true" ]]; then
+    _get_remote_creds
+    curl -sS --fail-with-body --connect-timeout 5 --max-time 15 \
+      "${REMOTE_API}${1}" \
+      -H "Authorization: Bearer ${_REMOTE_TOKEN}" \
+      -H "hue-application-key: ${_REMOTE_USERNAME}"
+  else
+    _get_local_creds
+    curl -skS --fail-with-body --connect-timeout 5 --max-time 15 \
+      "https://${_HUE_BRIDGE}${1}" \
+      -H "hue-application-key: ${_HUE_KEY}"
+  fi
+}
+
+_api_v2_put() {
+  _resolve_mode
+  if [[ "$_USE_REMOTE" == "true" ]]; then
+    _get_remote_creds
+    curl -sS --fail-with-body --connect-timeout 5 --max-time 15 -X PUT \
+      "${REMOTE_API}${1}" \
+      -H "Authorization: Bearer ${_REMOTE_TOKEN}" \
+      -H "hue-application-key: ${_REMOTE_USERNAME}" \
+      -H "Content-Type: application/json" \
+      -d "$2"
+  else
+    _get_local_creds
+    curl -skS --fail-with-body --connect-timeout 5 --max-time 15 -X PUT \
+      "https://${_HUE_BRIDGE}${1}" \
+      -H "hue-application-key: ${_HUE_KEY}" \
+      -H "Content-Type: application/json" \
+      -d "$2"
   fi
 }
 
@@ -402,6 +479,143 @@ cmd_raw() {
   _api_get "$endpoint" | python3 -m json.tool
 }
 
+_automation_inventory() {
+  local data
+  data=$(_api_v2_get /clip/v2/resource/behavior_instance) || {
+    echo "Error: Hue automation inventory is unavailable." >&2
+    return 1
+  }
+  printf '%s' "$data" | python3 -c '
+import json,sys
+site=sys.argv[1].lower()
+try:
+ value=json.load(sys.stdin)
+except (UnicodeError,json.JSONDecodeError):
+ raise SystemExit("Error: Hue automation response is invalid.")
+if not isinstance(value,dict) or value.get("errors") != [] or not isinstance(value.get("data"),list):
+ raise SystemExit("Error: Hue automation response reported an error.")
+def schedule(configuration):
+ timing=configuration.get("when_extended",configuration.get("when"))
+ if not isinstance(timing,dict): return None
+ days=timing.get("recurrence_days")
+ point=timing.get("time_point")
+ if not isinstance(point,dict):
+  start=timing.get("start_at")
+  point=start.get("time_point") if isinstance(start,dict) else None
+ if not isinstance(point,dict): return None
+ kind=point.get("type")
+ if kind=="time" and isinstance(point.get("time"),dict):
+  hour=point["time"].get("hour"); minute=point["time"].get("minute")
+  when=f"{hour:02d}:{minute:02d}" if isinstance(hour,int) and isinstance(minute,int) else "time"
+ elif kind in {"sunrise","sunset"}:
+  when=kind; offset=point.get("offset")
+  if isinstance(offset,dict):
+   minutes=int(offset.get("hours",0))*60+int(offset.get("minutes",0))
+   if minutes: when+=f"{minutes:+d}m"
+ else: when=str(kind or "scheduled")
+ recurrence="daily" if isinstance(days,list) and len(days)==7 else ",".join(str(day) for day in days) if isinstance(days,list) else None
+ return {"when":when,"recurrence":recurrence}
+items=[]
+for item in value["data"]:
+ if not isinstance(item,dict): raise SystemExit("Error: Hue automation response is invalid.")
+ metadata=item.get("metadata"); name=metadata.get("name") if isinstance(metadata,dict) else None
+ enabled=item.get("enabled"); status=item.get("status")
+ if not isinstance(name,str) or not name or len(name)>128 or not isinstance(enabled,bool):
+  raise SystemExit("Error: Hue automation response is invalid.")
+ configuration=item.get("configuration") if isinstance(item.get("configuration"),dict) else {}
+ items.append({"name":name,"enabled":enabled,"status":status if isinstance(status,str) else "unknown","schedule":schedule(configuration)})
+items.sort(key=lambda item:item["name"].casefold())
+print(json.dumps({"ok":True,"site":site,"automations":items},sort_keys=True,separators=(",",":")))
+' "$_BRIDGE_NAME"
+}
+
+cmd_automations() {
+  local output
+  output=$(_automation_inventory) || return 1
+  if [[ "${1:-}" == "--json" ]]; then
+    printf '%s\n' "$output"
+    return
+  fi
+  printf '%s' "$output" | python3 -c '
+import json,sys
+value=json.load(sys.stdin)
+for item in value["automations"]:
+ state="ENABLED" if item["enabled"] else "disabled"
+ schedule=item.get("schedule") or {}
+ timing=" ".join(part for part in (schedule.get("recurrence"),schedule.get("when")) if part)
+ print("{:<32s}  {:8s}  {}".format(item["name"],state,timing))
+'
+}
+
+cmd_automation() {
+  local action="$1" name="$2" raw match resource_id current desired response verified
+  case "$action" in
+    status|enable|disable) ;;
+    *) echo "Error: automation action must be status, enable, or disable." >&2; return 1 ;;
+  esac
+  [[ -n "$name" && ${#name} -le 128 && "$name" != *$'\n'* && "$name" != *$'\r'* ]] || {
+    echo "Error: exact automation name is invalid." >&2
+    return 1
+  }
+  raw=$(_api_v2_get /clip/v2/resource/behavior_instance) || {
+    echo "Error: Hue automation inventory is unavailable." >&2
+    return 1
+  }
+  match=$(printf '%s' "$raw" | python3 -c '
+import json,sys
+name=sys.argv[1]; value=json.load(sys.stdin)
+if value.get("errors") != [] or not isinstance(value.get("data"),list): raise SystemExit(2)
+matches=[]
+for item in value["data"]:
+ metadata=item.get("metadata") if isinstance(item,dict) else None
+ if isinstance(metadata,dict) and metadata.get("name")==name: matches.append(item)
+if len(matches)!=1 or not isinstance(matches[0].get("enabled"),bool): raise SystemExit(3)
+print(matches[0].get("id","")); print("true" if matches[0]["enabled"] else "false")
+' "$name") || {
+    echo "Error: exact Hue automation name was not found uniquely." >&2
+    return 1
+  }
+  resource_id=$(printf '%s\n' "$match" | sed -n '1p')
+  current=$(printf '%s\n' "$match" | sed -n '2p')
+  [[ "$resource_id" =~ ^[0-9a-fA-F-]{36}$ && ( "$current" == true || "$current" == false ) ]] || {
+    echo "Error: Hue automation identity is invalid." >&2
+    return 1
+  }
+  if [[ "$action" == status ]]; then
+    desired="$current"
+  elif [[ "$action" == enable ]]; then
+    desired=true
+  else
+    desired=false
+  fi
+  if [[ "$action" == status || "$current" == "$desired" ]]; then
+    python3 -c 'import json,sys; print(json.dumps({"changed":False,"enabled":sys.argv[2]=="true","name":sys.argv[1],"ok":True,"site":sys.argv[3].lower()},sort_keys=True,separators=(",",":")))' "$name" "$desired" "$_BRIDGE_NAME"
+    return
+  fi
+  response=$(_api_v2_put "/clip/v2/resource/behavior_instance/${resource_id}" "{\"enabled\":${desired}}") || {
+    echo "Error: Hue automation update failed." >&2
+    return 1
+  }
+  printf '%s' "$response" | python3 -c 'import json,sys; value=json.load(sys.stdin); raise SystemExit(0 if isinstance(value,dict) and value.get("errors")==[] else 1)' || {
+    echo "Error: Hue automation update was rejected." >&2
+    return 1
+  }
+  verified=$(_api_v2_get "/clip/v2/resource/behavior_instance/${resource_id}" | python3 -c '
+import json,sys
+value=json.load(sys.stdin); data=value.get("data") if isinstance(value,dict) else None
+if value.get("errors") != [] or not isinstance(data,list) or len(data)!=1 or not isinstance(data[0].get("enabled"),bool): raise SystemExit(1)
+print("true" if data[0]["enabled"] else "false")
+') || {
+    echo "Error: Hue automation verification failed." >&2
+    return 1
+  }
+  [[ "$verified" == "$desired" ]] || {
+    echo "Error: Hue automation state did not verify." >&2
+    return 1
+  }
+  python3 -c 'import json,sys; print(json.dumps({"changed":True,"enabled":sys.argv[2]=="true","name":sys.argv[1],"ok":True,"site":sys.argv[3].lower()},sort_keys=True,separators=(",",":")))' "$name" "$verified" "$_BRIDGE_NAME"
+}
+
 cmd_help() {
   cat <<'HELP'
 Usage: hue <command> [args]
@@ -417,6 +631,10 @@ Commands:
   all-off                      Turn off all lights
   lights [filter]              List individual lights
   raw [endpoint]               Raw JSON dump (default: /lights)
+  automations [--json]         List Hue v2 automations without resource IDs
+  automation status <name>     Read one exact automation
+  automation enable <name>     Enable one exact automation and verify
+  automation disable <name>    Disable one exact automation and verify
   help                         Show this help
 
 Room names are fuzzy-matched (e.g. "bed" matches "Bedroom").
@@ -438,6 +656,8 @@ case "${1:-help}" in
   all-off)    cmd_all_off ;;
   lights)     cmd_lights "${2:-}" ;;
   raw)        cmd_raw "${2:-/lights}" ;;
+  automations) cmd_automations "${2:-}" ;;
+  automation) cmd_automation "${2:?status, enable, or disable required}" "${3:?exact automation name required}" ;;
   help|--help|-h) cmd_help ;;
   *)          echo "Unknown command: $1. Run 'hue help'." >&2; exit 1 ;;
 esac

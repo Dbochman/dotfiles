@@ -4,24 +4,37 @@
 **URL:** `http://dylans-mac-mini:8553`  
 **Service:** `ai.openclaw.roomba-dashboard`
 
-Roomba status and controls dashboard covering both Crosstown and Cabin, including automation snooze controls and run-history visualization. It is reachable on the home LAN and Tailscale tailnet.
+Two-home Roomba status and automation dashboard. It distinguishes Crosstown's
+live local readiness from Cabin's narrower Assistant-confirmed running state,
+explains the current vacancy-cleaning decision, and is reachable on the home
+LAN and Tailscale tailnet.
 
 ## What It Shows
 
-- **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status, tank level (via `dorita980` MQTT path)
-- **Cabin Roomba cards** — last mission outcome, duration, area cleaned (via iRobot Cloud API)
-- **Snooze controls** — temporarily disable dog-walk and vacancy-triggered
-  Roomba starts per location (1h/3h/8h/Indef); manual starts remain available
-- **Calendar heatmap** — monthly run history per location with hover details
+- **Both/Crosstown/Cabin selector** — compare the homes side by side or focus
+  the entire dashboard on one location
+- **Crosstown live-local cards** — current battery, phase, bin, tank, and the
+  guarded vacancy controller's readiness classification
+- **Cabin Assistant-status cards** — current cleaning/stopped state from exact
+  read-only Google Assistant queries; ambiguous replies remain unverified
+- **Home automation summary** — verified occupancy, schedule, next 6:00 AM
+  evaluation, latest protected decision, and safety-hold explanation
+- **Automation Pause** — temporarily suppress automatic Roomba starts per
+  location (1h/3h/8h/Indef); manual starts remain available through the
+  guarded CLIs
+- **Cleaning & Decision History** — monthly dog-walk activity plus protected
+  Crosstown vacancy-controller outcomes with hover details
 
 ## Data Sources
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Crosstown Roomba (`dorita980`) | 5 min cache | Real-time battery, phase, bin, tank via SSH to MBP |
-| Cabin Roomba (iRobot Cloud) | 10 min cache | Last mission outcome via Gigya + AWS SigV4 REST API |
+| Crosstown guarded Roomba CLI | 5 min cache | Live local battery, phase, bin, and tank through the MBP rest980 services |
+| Cabin guarded Roomba CLI | 5 min cache | Read-only Google Assistant running/stopped response; no physical command |
+| Protected canonical presence | On demand | Hash-verified, freshness-bounded per-home occupancy summary; people and raw evidence are not published |
+| Crosstown vacancy decisions | On demand | Latest evaluation plus owner-only per-day 6 AM/vacancy-transition decisions |
 | Dog Walk history JSONL | On demand | Roomba start/dock events per walk |
-| Snooze state | Real-time | Per-location snooze expiry |
+| Automation pause state | Real-time | Per-location pause expiry |
 
 ## Locations
 
@@ -35,16 +48,24 @@ Roomba status and controls dashboard covering both Crosstown and Cabin, includin
 | File | Path |
 |------|------|
 | Server | `openclaw/bin/roomba-dashboard.py` → `~/.openclaw/bin/roomba-dashboard.py` |
-| iRobot Cloud API | `openclaw/skills/cabin-roomba/irobot-cloud.py` → `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
+| Cabin Roomba skill | `openclaw/skills/roomba/` → `~/.openclaw/skills/roomba/` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.roomba-dashboard.plist` |
 | Snooze state | `~/.openclaw/dog-walk/snooze.json` |
 | Run history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
+| Daily decisions | `~/.openclaw/vacant-roomba/crosstown/runs/YYYY-MM-DD.json` |
+| Latest decision | `~/.openclaw/vacant-roomba/crosstown/latest-status.json` |
 | Logs | `~/.openclaw/logs/roomba-dashboard.{log,err.log}` |
 
 ## Known Limitations
 
-- Cabin roombas use Google Assistant responses (natural language, not strict JSON)
-- Crosstown collectors depend on SSH reachability to MBP; if MBP is offline, those status calls may time out
+- Cabin Assistant status cannot assert battery, bin, dock, error, or safe-start
+  readiness. An ambiguous or failed response is reported as unverified, not as
+  proof a robot is offline. Battery and maintenance detail remain app-only.
+- Crosstown live status depends on the MBP rest980 services and guarded CLI.
+  If that path is unavailable, the dashboard reports readiness unavailable and
+  the vacancy controller fails closed.
+- The daily 6:00 AM continuation currently applies only to Crosstown. Cabin
+  retains vacancy-transition cleaning.
 
 ## Troubleshooting
 

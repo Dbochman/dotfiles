@@ -42,6 +42,10 @@ REASON_CODES = frozenset(
         "verification_failed",
         "snoozed",
         "policy_invalid_fail_closed",
+        "delegated_to_event_bus",
+        "recent_cat_activity",
+        "daily_already_handled",
+        "robot_not_ready",
         "interrupted",
         "ack_unverified",
     }

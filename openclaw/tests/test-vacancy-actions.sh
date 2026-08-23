@@ -37,6 +37,9 @@ printf '%s\n' \
   'if [[ "$cmd" == "august" && "${1:-}" == "status" ]]; then' \
   '  printf "%s\\n" '\''{"state":{"locked":true}}'\''' \
   'fi' \
+  'if [[ "$cmd" == "crosstown-vacant-roomba" ]]; then' \
+  '  printf "{\"ok\":true,\"outcome\":\"%s\"}\\n" "${FAKE_VACANT_ROOMBA_OUTCOME:-started}"' \
+  'fi' \
   'if [[ "$cmd" == "8sleep" && -n "${FAKE_8SLEEP_FAIL_ARGS:-}" && "$*" == "$FAKE_8SLEEP_FAIL_ARGS" ]]; then' \
   '  exit 1' \
   'fi' \
@@ -44,7 +47,7 @@ printf '%s\n' \
 chmod +x "$FAKE_BIN/device-recorder"
 
 for command_name in \
-  hue nest cielo 8sleep august crosstown-roomba roomba; do
+  hue nest cielo 8sleep august crosstown-vacant-roomba roomba; do
   ln -s device-recorder "$FAKE_BIN/$command_name"
 done
 
@@ -94,6 +97,7 @@ run_vacancy_actions() {
     IMSG_BIN="$TEST_HOME/no-imsg" \
     PRESENCE_SCANNER="$FAKE_PRESENCE_SCANNER" \
     VACANCY_ACTION_JOURNAL="${VACANCY_ACTION_JOURNAL_OVERRIDE:-$TEST_HOME/no-journal}" \
+    CROSSTOWN_VACANT_ROOMBA="$FAKE_BIN/crosstown-vacant-roomba" \
     bash "$SCRIPT"
 }
 
@@ -258,7 +262,7 @@ printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
 : > "$CALLS_FILE"
 run_vacancy_actions
 
-assert_call crosstown-roomba start all
+assert_call crosstown-vacant-roomba --source vacancy_transition
 assert_call_count 7
 
 # An expired timestamp is also clear and preserves the same start behavior.
@@ -269,7 +273,7 @@ rm -f "$MARKER_DIR/crosstown"
 : > "$CALLS_FILE"
 run_vacancy_actions
 
-assert_call crosstown-roomba start all
+assert_call crosstown-vacant-roomba --source vacancy_transition
 assert_call_count 7
 
 # Reversing the policy snoozes only Crosstown.
@@ -278,7 +282,9 @@ cat > "$TEST_HOME/.openclaw/dog-walk/snooze.json" <<'JSON'
 JSON
 rm -f "$MARKER_DIR/crosstown"
 : > "$CALLS_FILE"
+export FAKE_VACANT_ROOMBA_OUTCOME=snoozed
 run_vacancy_actions
+unset FAKE_VACANT_ROOMBA_OUTCOME
 
 assert_call hue --crosstown all-off
 assert_call nest eco crosstown on
@@ -286,14 +292,15 @@ assert_call cielo off -d bedroom
 assert_call cielo off -d office
 assert_call cielo off -d "living room"
 assert_call august status
-assert_call_count 6
+assert_call crosstown-vacant-roomba --source vacancy_transition
+assert_call_count 7
 test -f "$MARKER_DIR/crosstown"
-if grep -Eq '^crosstown-roomba\tstart\t' "$CALLS_FILE"; then
-  echo "Crosstown snooze allowed a Roomba start" >&2
+if ! grep -Fq 'Crosstown Roombas: SKIPPED (snoozed)' \
+    "$TEST_HOME/.openclaw/logs/vacancy-actions.log"; then
+  echo "missing snoozed Crosstown Roomba outcome" >&2
+  tail -20 "$TEST_HOME/.openclaw/logs/vacancy-actions.log" >&2
   exit 1
 fi
-grep -Fq 'crosstown Roomba automation: SKIPPED (snoozed)' \
-  "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
 
 # A malformed falsey value fails closed rather than silently enabling a start.
 printf '%s\n' '{"cabin":false}' > "$TEST_HOME/.openclaw/dog-walk/snooze.json"
@@ -380,6 +387,46 @@ grep -Fqx \
   "$JOURNAL_CALLS_FILE"
 grep -Fqx \
   'complete-run --run-id run_11111111111111111111111111111111' \
+  "$JOURNAL_CALLS_FILE"
+
+# Exact bus ownership removes only Crosstown Hue from the legacy executor.
+mkdir -p \
+  "$TEST_HOME/.openclaw/home-events/config" \
+  "$TEST_HOME/.openclaw/bin"
+printf '%s\n' '{"active":true}' \
+  > "$TEST_HOME/.openclaw/home-events/config/action-policy.json"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'site=""' \
+  'while [[ $# -gt 0 ]]; do case "$1" in --site) site="$2"; shift 2 ;; *) shift ;; esac; done' \
+  'if [[ "$site" == crosstown ]]; then printf "%s\n" '\''{"ok":true,"owner":"bus"}'\''; else printf "%s\n" '\''{"ok":true,"owner":"legacy"}'\''; fi' \
+  > "$TEST_HOME/.openclaw/bin/home-event-action"
+chmod 600 "$TEST_HOME/.openclaw/home-events/config/action-policy.json"
+chmod +x "$TEST_HOME/.openclaw/bin/home-event-action"
+rm -f "$MARKER_DIR/crosstown"
+write_state confirmed_vacant occupied crosstown crosstown
+printf '%s\n' crosstown > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+: > "$CALLS_FILE"
+: > "$JOURNAL_CALLS_FILE"
+export VACANCY_ACTION_JOURNAL_OVERRIDE="$FAKE_JOURNAL"
+run_vacancy_actions
+unset VACANCY_ACTION_JOURNAL_OVERRIDE
+
+if grep -Eq '^hue\t--crosstown\tall-off$' "$CALLS_FILE"; then
+  echo "bus-owned Crosstown Hue still ran through the legacy executor" >&2
+  exit 1
+fi
+assert_call nest eco crosstown on
+assert_call cielo off -d bedroom
+assert_call cielo off -d office
+assert_call cielo off -d "living room"
+assert_call august status
+assert_call crosstown-vacant-roomba --source vacancy_transition
+assert_call_count 6
+grep -Fqx \
+  'finish-action --run-id run_11111111111111111111111111111111 --attempt-id attempt_33333333333333333333333333333333 --outcome skipped --verification policy_decision --reason-code delegated_to_event_bus' \
   "$JOURNAL_CALLS_FILE"
 
 echo "test-vacancy-actions: PASS"

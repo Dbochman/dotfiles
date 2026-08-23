@@ -27,13 +27,13 @@ import sys
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = 5
-STATUS_SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+STATUS_SCHEMA_VERSION = 6
 EVENT_SCHEMA_VERSION = 1
 DELIVERY_POLICY_SCHEMA_VERSION = 3
 SERVICE_NAME = "home-events"
 DEFAULT_ROOT = Path("~/.openclaw/home-events").expanduser()
-SOURCES = ("ring", "presence", "august", "nest")
+SOURCES = ("ring", "presence", "august", "nest", "vacancy")
 SITES = ("cabin", "crosstown")
 MAX_STDIN_BYTES = 64 * 1024
 MAX_SPOOL_BYTES = 32 * 1024
@@ -80,6 +80,7 @@ DEDUPE_KEY_RE = re.compile(r"^ded_[0-9a-f]{64}$")
 RECORD_MAC_RE = re.compile(r"^mac_[0-9a-f]{64}$")
 READY_NAME_RE = re.compile(r"^evt_[0-9a-f]{32}\.[0-9a-f]{32}\.ready$")
 EXCURSION_ID_RE = re.compile(r"^exc_[0-9a-f]{32}$")
+VACANCY_ID_RE = re.compile(r"^(?:cycle|run)_[0-9a-f]{32}$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 DURATION_RE = re.compile(r"^([1-9][0-9]{0,5})([mhd])$")
@@ -194,6 +195,89 @@ EVENT_RULES: Mapping[str, Mapping[str, Tuple[str, ...]]] = {
         "camera.person_detected": ("classification",),
         "camera.motion_detected": ("classification",),
     },
+    "vacancy": {
+        "automation.vacancy_run_started": (
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "triggered_at",
+        ),
+        "automation.action_state_confirmed": (
+            "workflow",
+            "action",
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "verification",
+            "reason_code",
+            "not_before",
+            "not_after",
+        ),
+        "automation.action_command_accepted": (
+            "workflow",
+            "action",
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "verification",
+            "reason_code",
+            "not_before",
+            "not_after",
+        ),
+        "automation.action_failed": (
+            "workflow",
+            "action",
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "verification",
+            "reason_code",
+            "not_before",
+            "not_after",
+        ),
+        "automation.action_skipped": (
+            "workflow",
+            "action",
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "verification",
+            "reason_code",
+            "not_before",
+            "not_after",
+        ),
+        "automation.action_outcome_unknown": (
+            "workflow",
+            "action",
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "verification",
+            "reason_code",
+            "not_before",
+            "not_after",
+        ),
+        "automation.vacancy_run_completed": (
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "confirmed_count",
+            "accepted_count",
+            "failed_count",
+            "skipped_count",
+            "unknown_count",
+        ),
+        "automation.vacancy_run_interrupted": (
+            "cycle_id",
+            "run_id",
+            "trigger_state_hash",
+            "confirmed_count",
+            "accepted_count",
+            "failed_count",
+            "skipped_count",
+            "unknown_count",
+        ),
+    },
 }
 
 EVENT_REQUIRED_ATTRIBUTES: Mapping[str, Mapping[str, frozenset[str]]] = {
@@ -213,6 +297,10 @@ EVENT_REQUIRED_ATTRIBUTES: Mapping[str, Mapping[str, frozenset[str]]] = {
     "nest": {
         event_type: frozenset(attributes)
         for event_type, attributes in EVENT_RULES["nest"].items()
+    },
+    "vacancy": {
+        event_type: frozenset(attributes)
+        for event_type, attributes in EVENT_RULES["vacancy"].items()
     },
 }
 
@@ -244,12 +332,36 @@ EVENT_ENTITY_KIND: Mapping[str, Mapping[str, str]] = {
         "camera.person_detected": "camera",
         "camera.motion_detected": "camera",
     },
+    "vacancy": {
+        "automation.vacancy_run_started": "workflow",
+        "automation.action_state_confirmed": "automation_target",
+        "automation.action_command_accepted": "automation_target",
+        "automation.action_failed": "automation_target",
+        "automation.action_skipped": "automation_target",
+        "automation.action_outcome_unknown": "automation_target",
+        "automation.vacancy_run_completed": "workflow",
+        "automation.vacancy_run_interrupted": "workflow",
+    },
 }
 
 SAFE_DEVICE_ALIASES: Mapping[str, frozenset[str]] = {
     "ring": frozenset({"front_door", "driveway"}),
     "august": frozenset({"front_door"}),
     "nest": frozenset({"kitchen", "living_room", "living_room_wired"}),
+    "vacancy": frozenset(
+        {
+            "vacancy",
+            "all_lights",
+            "central_hvac",
+            "cielo_bedroom",
+            "cielo_office",
+            "cielo_living_room",
+            "front_door_lock",
+            "crosstown_roombas",
+            "floomba",
+            "philly",
+        }
+    ),
 }
 SAFE_RING_BINDINGS = frozenset(
     {
@@ -265,6 +377,7 @@ ENTITY_KINDS: Mapping[str, Tuple[str, ...]] = {
     "presence": ("site", "person"),
     "august": ("lock", "door", "battery", "adapter"),
     "nest": ("camera",),
+    "vacancy": ("workflow", "automation_target"),
 }
 
 TIME_PRECISIONS: Mapping[str, Tuple[str, ...]] = {
@@ -272,6 +385,7 @@ TIME_PRECISIONS: Mapping[str, Tuple[str, ...]] = {
     "presence": ("evaluation", "observed_interval"),
     "august": ("observed_interval",),
     "nest": ("source",),
+    "vacancy": ("journal",),
 }
 
 INPUT_REQUIRED_FIELDS = frozenset(
@@ -370,6 +484,10 @@ class RuntimePaths:
     @property
     def delivery_lock(self) -> Path:
         return self.state / "delivery.lock"
+
+    @property
+    def action_lock(self) -> Path:
+        return self.state / "action.lock"
 
     @property
     def camera_images(self) -> Path:
@@ -609,10 +727,51 @@ def _validate_attributes(source: str, event_type: str, value: Any) -> Dict[str, 
         or result["observation_span_seconds"] < 0
     ):
         raise PayloadError("invalid_observation_span")
+    for key, prefix in (("cycle_id", "cycle_"), ("run_id", "run_")):
+        if key in result and (
+            not isinstance(result[key], str)
+            or not result[key].startswith(prefix)
+            or VACANCY_ID_RE.fullmatch(result[key]) is None
+        ):
+            raise PayloadError("invalid_vacancy_id")
+    if "trigger_state_hash" in result and (
+        not isinstance(result["trigger_state_hash"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", result["trigger_state_hash"]) is None
+    ):
+        raise PayloadError("invalid_state_hash")
+    if "workflow" in result and result["workflow"] != "vacancy":
+        raise PayloadError("invalid_workflow")
+    if "action" in result and result["action"] not in {
+        "turn_off",
+        "enable_eco",
+        "lock",
+        "start_cleaning",
+    }:
+        raise PayloadError("invalid_action")
+    if "verification" in result and result["verification"] not in {
+        "command_exit",
+        "state_confirmed",
+        "policy_decision",
+        "none",
+    }:
+        raise PayloadError("invalid_verification")
+    for key in (
+        "confirmed_count",
+        "accepted_count",
+        "failed_count",
+        "skipped_count",
+        "unknown_count",
+    ):
+        if key in result and (
+            not isinstance(result[key], int)
+            or isinstance(result[key], bool)
+            or not 0 <= result[key] <= 32
+        ):
+            raise PayloadError("invalid_action_count")
     for key in ("from_site", "to_site"):
         if key in result and result[key] is not None and result[key] not in SITES:
             raise PayloadError("invalid_attribute_site")
-    for key in ("evidence_at", "not_before", "not_after"):
+    for key in ("evidence_at", "not_before", "not_after", "triggered_at"):
         if key in result and result[key] is not None:
             normalized, _ = _parse_timestamp(result[key], "invalid_attribute_time")
             result[key] = normalized
@@ -832,6 +991,54 @@ def _validate_event_contract(
         }[entity_alias]
         if site != expected_site:
             raise PayloadError("unbound_entity_site")
+
+    if source == "vacancy":
+        if event_type.startswith("automation.action_") and occurred_at != attributes.get(
+            "not_after"
+        ):
+            raise PayloadError("invalid_vacancy_event_time")
+        if time_precision != "journal":
+            raise PayloadError("invalid_time_precision")
+        if event_type.startswith("automation.vacancy_run_"):
+            if entity_alias != "vacancy":
+                raise PayloadError("unbound_entity_alias")
+            if event_type == "automation.vacancy_run_started":
+                triggered_at = attributes.get("triggered_at")
+                if not isinstance(triggered_at, str):
+                    raise PayloadError("invalid_vacancy_event_time")
+                _, triggered = _parse_timestamp(
+                    triggered_at, "invalid_attribute_time"
+                )
+                if triggered > occurred + dt.timedelta(minutes=5):
+                    raise PayloadError("invalid_vacancy_event_time")
+        else:
+            target_actions = {
+                "crosstown": {
+                    "all_lights": "turn_off",
+                    "central_hvac": "enable_eco",
+                    "cielo_bedroom": "turn_off",
+                    "cielo_office": "turn_off",
+                    "cielo_living_room": "turn_off",
+                    "front_door_lock": "lock",
+                    "crosstown_roombas": "start_cleaning",
+                },
+                "cabin": {
+                    "all_lights": "turn_off",
+                    "central_hvac": "enable_eco",
+                    "floomba": "start_cleaning",
+                    "philly": "start_cleaning",
+                },
+            }
+            if target_actions[site].get(entity_alias) != attributes.get("action"):
+                raise PayloadError("unbound_entity_site")
+            not_before = attributes.get("not_before")
+            not_after = attributes.get("not_after")
+            if not isinstance(not_before, str) or not isinstance(not_after, str):
+                raise PayloadError("invalid_observed_interval")
+            _, before = _parse_timestamp(not_before, "invalid_attribute_time")
+            _, after = _parse_timestamp(not_after, "invalid_attribute_time")
+            if before > after:
+                raise PayloadError("invalid_observed_interval")
 
 
 def _opaque_hmac(secret: bytes, namespace: str, value: str) -> str:
@@ -1410,6 +1617,8 @@ def initialize_runtime(root: Path, *, clock: Callable[[], str] = utc_now) -> "Ev
         _create_private_file(paths.ingest_lock, b"home-events-ingest\n")
     if not paths.delivery_lock.exists():
         _create_private_file(paths.delivery_lock, b"home-events-delivery\n")
+    if not paths.action_lock.exists():
+        _create_private_file(paths.action_lock, b"home-events-action\n")
     store = EventStore(paths, clock=clock)
     store.initialize()
     store.write_status_best_effort()
@@ -1440,6 +1649,8 @@ def validate_runtime(root: Path, *, require_status: bool = False) -> RuntimePath
     descriptor = _open_private_regular(paths.ingest_lock, os.O_RDONLY)
     os.close(descriptor)
     descriptor = _open_private_regular(paths.delivery_lock, os.O_RDONLY)
+    os.close(descriptor)
+    descriptor = _open_private_regular(paths.action_lock, os.O_RDONLY)
     os.close(descriptor)
     if require_status:
         descriptor = _open_private_regular(paths.status, os.O_RDONLY)
@@ -1482,7 +1693,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 CREATE TABLE IF NOT EXISTS producer_inbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     receipt_uid TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest')),
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
     event_uid TEXT,
     received_at TEXT NOT NULL,
     outcome TEXT NOT NULL CHECK(outcome IN ('accepted', 'duplicate', 'dead_letter')),
@@ -1493,7 +1704,7 @@ CREATE TABLE IF NOT EXISTS events (
     producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox(id),
     event_uid TEXT NOT NULL UNIQUE,
     dedupe_key TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest')),
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
     event_type TEXT NOT NULL,
     site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
     entity_kind TEXT NOT NULL,
@@ -1505,7 +1716,7 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS producer_state (
-    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august', 'nest')),
+    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
     last_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
     last_observed_at TEXT,
     last_ingested_at TEXT,
@@ -1542,6 +1753,7 @@ CREATE TABLE IF NOT EXISTS incidents (
     site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
     state TEXT NOT NULL CHECK(state IN ('open', 'resolved', 'expired_unresolved')),
     category TEXT NOT NULL,
+    subject_key TEXT NOT NULL DEFAULT 'site_activity',
     summary_code TEXT NOT NULL,
     opened_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -1639,16 +1851,59 @@ CREATE TABLE IF NOT EXISTS camera_runtime (
     last_error_at TEXT,
     last_error_code TEXT
 );
+CREATE TABLE IF NOT EXISTS producer_component_health (
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
+    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+    component_alias TEXT NOT NULL,
+    health TEXT NOT NULL CHECK(health IN ('unknown', 'ok', 'degraded')),
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_observed_at TEXT,
+    last_error_code TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(source, site, component_alias)
+);
+CREATE TABLE IF NOT EXISTS action_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reservation_uid TEXT NOT NULL UNIQUE,
+    trigger_event_id INTEGER REFERENCES events(id),
+    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+    target_alias TEXT NOT NULL,
+    action TEXT NOT NULL,
+    vacancy_cycle_id TEXT NOT NULL,
+    trigger_state_hash TEXT NOT NULL,
+    reserved_state_hash TEXT NOT NULL,
+    policy_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'claimed', 'complete', 'cancelled', 'outcome_unknown')),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count IN (0, 1)),
+    reserved_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    claimed_at TEXT,
+    completed_at TEXT,
+    reason_code TEXT,
+    UNIQUE(site, target_alias, vacancy_cycle_id)
+);
+CREATE TABLE IF NOT EXISTS action_outcomes (
+    reservation_id INTEGER PRIMARY KEY REFERENCES action_reservations(id),
+    outcome TEXT NOT NULL CHECK(outcome IN ('state_confirmed', 'failed', 'cancelled', 'outcome_unknown')),
+    verification TEXT NOT NULL CHECK(verification IN ('state_confirmed', 'command_exit', 'none')),
+    reason_code TEXT NOT NULL,
+    command_attempted INTEGER NOT NULL CHECK(command_attempted IN (0, 1)),
+    observed_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS producer_inbox_received_idx ON producer_inbox(received_at);
 CREATE INDEX IF NOT EXISTS events_created_idx ON events(created_at);
 CREATE INDEX IF NOT EXISTS events_site_occurred_idx ON events(site, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS events_type_occurred_idx ON events(event_type, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS deliveries_status_idx ON consumer_deliveries(status, id);
 CREATE INDEX IF NOT EXISTS incidents_site_updated_idx ON incidents(site, updated_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS incidents_open_subject_idx
+    ON incidents(site, category, subject_key) WHERE state = 'open';
 CREATE INDEX IF NOT EXISTS incident_decisions_incident_idx ON incident_decisions(incident_id, id);
 CREATE INDEX IF NOT EXISTS notification_status_idx ON notification_outbox(status, id);
 CREATE INDEX IF NOT EXISTS camera_evaluations_state_idx ON camera_evaluations(state, due_30_at, due_60_at, id);
 CREATE INDEX IF NOT EXISTS camera_evaluation_events_event_idx ON camera_evaluation_events(event_id, evaluation_id);
+CREATE INDEX IF NOT EXISTS action_reservations_status_idx
+    ON action_reservations(status, expires_at, id);
 """
 
 EXPECTED_TABLES = frozenset(
@@ -1669,6 +1924,9 @@ EXPECTED_TABLES = frozenset(
         "camera_evaluations",
         "camera_evaluation_events",
         "camera_runtime",
+        "producer_component_health",
+        "action_reservations",
+        "action_outcomes",
     }
 )
 
@@ -1731,6 +1989,7 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
             "site",
             "state",
             "category",
+            "subject_key",
             "summary_code",
             "opened_at",
             "updated_at",
@@ -1821,6 +2080,49 @@ EXPECTED_COLUMNS: Mapping[str, frozenset] = {
             "last_success_at",
             "last_error_at",
             "last_error_code",
+        }
+    ),
+    "producer_component_health": frozenset(
+        {
+            "source",
+            "site",
+            "component_alias",
+            "health",
+            "consecutive_failures",
+            "last_observed_at",
+            "last_error_code",
+            "updated_at",
+        }
+    ),
+    "action_reservations": frozenset(
+        {
+            "id",
+            "reservation_uid",
+            "trigger_event_id",
+            "site",
+            "target_alias",
+            "action",
+            "vacancy_cycle_id",
+            "trigger_state_hash",
+            "reserved_state_hash",
+            "policy_hash",
+            "status",
+            "attempt_count",
+            "reserved_at",
+            "expires_at",
+            "claimed_at",
+            "completed_at",
+            "reason_code",
+        }
+    ),
+    "action_outcomes": frozenset(
+        {
+            "reservation_id",
+            "outcome",
+            "verification",
+            "reason_code",
+            "command_attempted",
+            "observed_at",
         }
     ),
 }
@@ -1987,29 +2289,40 @@ class EventStore:
     def initialize(self) -> None:
         now = self._now()
         with contextlib.closing(self.connect()) as connection:
-            connection.executescript(SCHEMA_SQL)
-            versions = connection.execute(
-                "SELECT version FROM schema_migrations ORDER BY version"
-            ).fetchall()
-            if not versions:
+            migration_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+            ).fetchone()
+            if migration_table is None:
+                connection.executescript(SCHEMA_SQL)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (SCHEMA_VERSION, now),
                 )
-            elif [row["version"] for row in versions] == [1]:
+                versions = [{"version": SCHEMA_VERSION}]
+            else:
+                versions = connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall()
+            if [row["version"] for row in versions] == [1]:
                 self._migrate_v1_to_v2(connection, now)
                 self._migrate_v2_to_v3(connection, now)
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
+                self._migrate_v5_to_v6(connection, now)
             elif [row["version"] for row in versions] == [2]:
                 self._migrate_v2_to_v3(connection, now)
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
+                self._migrate_v5_to_v6(connection, now)
             elif [row["version"] for row in versions] == [3]:
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
+                self._migrate_v5_to_v6(connection, now)
             elif [row["version"] for row in versions] == [4]:
                 self._migrate_v4_to_v5(connection, now)
+                self._migrate_v5_to_v6(connection, now)
+            elif [row["version"] for row in versions] == [5]:
+                self._migrate_v5_to_v6(connection, now)
             elif [row["version"] for row in versions] != [SCHEMA_VERSION]:
                 raise ConfigError("database_schema")
             for source in SOURCES:
@@ -2199,6 +2512,247 @@ class EventStore:
         except Exception:
             connection.rollback()
             raise
+
+    @staticmethod
+    def _migrate_v5_to_v6(connection: sqlite3.Connection, now: str) -> None:
+        """Add vacancy observation, subject isolation, and exact action state."""
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                CREATE TABLE producer_inbox_v6 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_uid TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy'
+                    )),
+                    event_uid TEXT,
+                    received_at TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN (
+                        'accepted', 'duplicate', 'dead_letter'
+                    )),
+                    error_code TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE events_v6 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox_v6(id),
+                    event_uid TEXT NOT NULL UNIQUE,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy'
+                    )),
+                    event_type TEXT NOT NULL,
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    entity_kind TEXT NOT NULL,
+                    entity_alias TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    time_precision TEXT NOT NULL,
+                    attributes_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE producer_state_v6 (
+                    source TEXT PRIMARY KEY CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy'
+                    )),
+                    last_event_id INTEGER REFERENCES events_v6(id) ON DELETE SET NULL,
+                    last_observed_at TEXT,
+                    last_ingested_at TEXT,
+                    accepted_count INTEGER NOT NULL DEFAULT 0,
+                    duplicate_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    health TEXT NOT NULL DEFAULT 'unknown'
+                        CHECK(health IN ('unknown', 'ok', 'degraded')),
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_error_code TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE incidents_v6 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    incident_uid TEXT NOT NULL UNIQUE,
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    state TEXT NOT NULL CHECK(state IN (
+                        'open', 'resolved', 'expired_unresolved'
+                    )),
+                    category TEXT NOT NULL,
+                    subject_key TEXT NOT NULL DEFAULT 'site_activity',
+                    summary_code TEXT NOT NULL,
+                    opened_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    resolved_at TEXT
+                )
+                """
+            )
+            connection.execute("INSERT INTO producer_inbox_v6 SELECT * FROM producer_inbox")
+            connection.execute("INSERT INTO events_v6 SELECT * FROM events")
+            connection.execute("INSERT INTO producer_state_v6 SELECT * FROM producer_state")
+
+            for incident in connection.execute(
+                "SELECT * FROM incidents ORDER BY id"
+            ).fetchall():
+                category = str(incident["category"])
+                subject_key = "site_activity"
+                if category in {"source_health", "battery"}:
+                    event_types = (
+                        ("source.unavailable", "source.recovered")
+                        if category == "source_health"
+                        else ("device.battery_low", "device.battery_recovered")
+                    )
+                    subjects = {
+                        f"{row['source']}:{row['entity_alias']}"
+                        for row in connection.execute(
+                            """
+                            SELECT e.source, e.entity_alias
+                            FROM incident_events ie
+                            JOIN events e ON e.id = ie.event_id
+                            WHERE ie.incident_id = ? AND e.event_type IN (?, ?)
+                            """,
+                            (incident["id"], *event_types),
+                        )
+                    }
+                    if len(subjects) != 1:
+                        raise ConfigError("database_migration_subject")
+                    subject_key = subjects.pop()
+                connection.execute(
+                    """
+                    INSERT INTO incidents_v6(
+                        id, incident_uid, site, state, category, subject_key,
+                        summary_code, opened_at, updated_at, resolved_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        incident["id"],
+                        incident["incident_uid"],
+                        incident["site"],
+                        incident["state"],
+                        category,
+                        subject_key,
+                        incident["summary_code"],
+                        incident["opened_at"],
+                        incident["updated_at"],
+                        incident["resolved_at"],
+                    ),
+                )
+
+            connection.execute("DROP TABLE producer_state")
+            connection.execute("DROP TABLE events")
+            connection.execute("DROP TABLE producer_inbox")
+            connection.execute("DROP TABLE incidents")
+            connection.execute("ALTER TABLE producer_inbox_v6 RENAME TO producer_inbox")
+            connection.execute("ALTER TABLE events_v6 RENAME TO events")
+            connection.execute("ALTER TABLE producer_state_v6 RENAME TO producer_state")
+            connection.execute("ALTER TABLE incidents_v6 RENAME TO incidents")
+            connection.execute(
+                "CREATE INDEX producer_inbox_received_idx ON producer_inbox(received_at)"
+            )
+            connection.execute("CREATE INDEX events_created_idx ON events(created_at)")
+            connection.execute(
+                "CREATE INDEX events_site_occurred_idx ON events(site, occurred_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX events_type_occurred_idx ON events(event_type, occurred_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX incidents_site_updated_idx ON incidents(site, updated_at DESC)"
+            )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX incidents_open_subject_idx
+                ON incidents(site, category, subject_key) WHERE state = 'open'
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS producer_component_health (
+                    source TEXT NOT NULL CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy'
+                    )),
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    component_alias TEXT NOT NULL,
+                    health TEXT NOT NULL CHECK(health IN ('unknown', 'ok', 'degraded')),
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_observed_at TEXT,
+                    last_error_code TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(source, site, component_alias)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS action_reservations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reservation_uid TEXT NOT NULL UNIQUE,
+                    trigger_event_id INTEGER REFERENCES events(id),
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    target_alias TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    vacancy_cycle_id TEXT NOT NULL,
+                    trigger_state_hash TEXT NOT NULL,
+                    reserved_state_hash TEXT NOT NULL,
+                    policy_hash TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN (
+                        'pending', 'claimed', 'complete', 'cancelled', 'outcome_unknown'
+                    )),
+                    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count IN (0, 1)),
+                    reserved_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    claimed_at TEXT,
+                    completed_at TEXT,
+                    reason_code TEXT,
+                    UNIQUE(site, target_alias, vacancy_cycle_id)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS action_outcomes (
+                    reservation_id INTEGER PRIMARY KEY REFERENCES action_reservations(id),
+                    outcome TEXT NOT NULL CHECK(outcome IN (
+                        'state_confirmed', 'failed', 'cancelled', 'outcome_unknown'
+                    )),
+                    verification TEXT NOT NULL CHECK(verification IN (
+                        'state_confirmed', 'command_exit', 'none'
+                    )),
+                    reason_code TEXT NOT NULL,
+                    command_attempted INTEGER NOT NULL CHECK(command_attempted IN (0, 1)),
+                    observed_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS action_reservations_status_idx
+                ON action_reservations(status, expires_at, id)
+                """
+            )
+            connection.execute(
+                "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 5",
+                (6, now),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ConfigError("database_foreign_keys")
 
     def check_schema(self) -> None:
         with contextlib.closing(self.connect(read_only=True)) as connection:
@@ -3154,6 +3708,25 @@ class EventStore:
                     "SELECT state, COUNT(*) FROM camera_evaluations GROUP BY state"
                 ).fetchall()
             }
+            action_counts = {
+                status: count
+                for status, count in connection.execute(
+                    "SELECT status, COUNT(*) FROM action_reservations GROUP BY status"
+                ).fetchall()
+            }
+            action_outcomes = {
+                outcome: count
+                for outcome, count in connection.execute(
+                    "SELECT outcome, COUNT(*) FROM action_outcomes GROUP BY outcome"
+                ).fetchall()
+            }
+            latest_action = connection.execute(
+                """
+                SELECT site, target_alias, action, status, completed_at, reason_code
+                FROM action_reservations
+                ORDER BY id DESC LIMIT 1
+                """
+            ).fetchone()
             consumer_rows = connection.execute(
                 """
                 SELECT c.name,
@@ -3285,6 +3858,28 @@ class EventStore:
                     "last_success_at": camera_runtime["last_success_at"],
                     "last_error_at": camera_runtime["last_error_at"],
                     "last_error_code": camera_runtime["last_error_code"],
+                },
+                "actions": {
+                    "counts": {
+                        state: action_counts.get(state, 0)
+                        for state in (
+                            "pending",
+                            "claimed",
+                            "complete",
+                            "cancelled",
+                            "outcome_unknown",
+                        )
+                    },
+                    "outcomes": {
+                        outcome: action_outcomes.get(outcome, 0)
+                        for outcome in (
+                            "state_confirmed",
+                            "failed",
+                            "cancelled",
+                            "outcome_unknown",
+                        )
+                    },
+                    "latest": dict(latest_action) if latest_action is not None else None,
                 },
                 "attention": {
                     "required": (

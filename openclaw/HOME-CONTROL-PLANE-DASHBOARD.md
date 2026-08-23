@@ -76,6 +76,12 @@ All controls use selectors with predefined room/device values.
   - `On` maps to Hue CLI `all-on`
   - `Off` maps to Hue CLI `all-off`
   - brightness and color inputs are disabled in this mode
+- Each Hue card also lists standing Hue automations with their enabled state and
+  schedule. Enable/disable controls use an exact, static name allowlist and the
+  CLI verifies the resulting state before reporting success.
+- The Crosstown card indicates when vacancy automation is managing its selected
+  daily routines. A manual enable remains available, but the action worker will
+  disable that routine again while Crosstown remains confidently vacant.
 
 ### Other Key Controls
 
@@ -99,6 +105,7 @@ All controls use selectors with predefined room/device values.
 ## Data Sources
 
 - Presence state: `~/.openclaw/presence/state.json`
+- Safe vacancy-action status: `~/.openclaw/bin/home-event-action status`
 - Nest latest snapshot: `~/.openclaw/nest-history/*.jsonl`
 - Dog walk state: `~/.openclaw/dog-walk/state.json`
 - Camera snapshots: `~/.openclaw/camera-snaps/*.jpg`

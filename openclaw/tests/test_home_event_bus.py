@@ -164,6 +164,47 @@ def local_presence_payload(
     }
 
 
+def vacancy_payload(
+    *,
+    event_type: str = "automation.vacancy_run_started",
+    site: str = "crosstown",
+    alias: str = "vacancy",
+) -> dict:
+    common = {
+        "cycle_id": "cycle_" + ("a" * 32),
+        "run_id": "run_" + ("b" * 32),
+        "trigger_state_hash": "c" * 64,
+    }
+    attributes = {**common, "triggered_at": "2026-07-12T14:59:00Z"}
+    entity_kind = "workflow"
+    occurred_at = "2026-07-12T14:59:00Z"
+    if event_type.startswith("automation.action_"):
+        alias = "all_lights"
+        entity_kind = "automation_target"
+        occurred_at = "2026-07-12T14:59:05Z"
+        attributes = {
+            **common,
+            "workflow": "vacancy",
+            "action": "turn_off",
+            "verification": "state_confirmed",
+            "reason_code": "completed",
+            "not_before": "2026-07-12T14:59:01Z",
+            "not_after": occurred_at,
+        }
+    return {
+        "schema_version": 1,
+        "source_event_id": "run-or-attempt-opaque",
+        "event_type": event_type,
+        "site": site,
+        "entity_kind": entity_kind,
+        "entity_alias": alias,
+        "occurred_at": occurred_at,
+        "observed_at": "2026-07-12T15:00:00Z",
+        "time_precision": "journal",
+        "attributes": attributes,
+    }
+
+
 def encode(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
@@ -234,6 +275,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
             self.paths.database,
             self.paths.ingest_lock,
             self.paths.delivery_lock,
+            self.paths.action_lock,
             self.paths.status,
         ):
             with self.subTest(path=path):
@@ -291,7 +333,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 5)
+        self.assertEqual(status["schema_version"], 6)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -620,7 +662,8 @@ class RuntimeSecurityTests(HomeEventTestCase):
                 INSERT INTO producer_inbox_v1 SELECT * FROM producer_inbox;
                 INSERT INTO events_v1 SELECT * FROM events;
                 INSERT INTO producer_state_v1
-                    SELECT * FROM producer_state WHERE source != 'nest';
+                    SELECT * FROM producer_state
+                    WHERE source NOT IN ('nest', 'vacancy');
                 DROP TABLE producer_state;
                 DROP TABLE events;
                 DROP TABLE producer_inbox;
@@ -649,7 +692,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         with self.connection() as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
-                5,
+                6,
             )
             self.assertEqual(
                 connection.execute(
@@ -673,6 +716,11 @@ class RuntimeSecurityTests(HomeEventTestCase):
             self.assertIsNotNone(
                 connection.execute(
                     "SELECT source FROM producer_state WHERE source='nest'"
+                ).fetchone()
+            )
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT source FROM producer_state WHERE source='vacancy'"
                 ).fetchone()
             )
             outbox_columns = {
@@ -1696,6 +1744,36 @@ class RetentionAndCliTests(HomeEventTestCase):
             )
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(stderr.getvalue())["error"], "root_not_absolute")
+
+
+class VacancySourceContractTests(HomeEventTestCase):
+    def test_vacancy_run_and_action_events_are_strict_and_journal_only(self) -> None:
+        started = self.enqueue(vacancy_payload(), source="vacancy")
+        confirmed = self.enqueue(
+            vacancy_payload(event_type="automation.action_state_confirmed"),
+            source="vacancy",
+        )
+
+        self.assertEqual(started.source, "vacancy")
+        self.assertEqual(started.entity_kind, "workflow")
+        self.assertEqual(confirmed.entity_alias, "all_lights")
+        result = self.ingest()
+        self.assertEqual(result.accepted, 2)
+        self.assertEqual(
+            self.store.status_snapshot()["sources"]["vacancy"]["accepted"], 2
+        )
+
+    def test_vacancy_target_site_and_action_cannot_be_rebound(self) -> None:
+        wrong = vacancy_payload(event_type="automation.action_state_confirmed")
+        wrong["site"] = "cabin"
+        wrong["entity_alias"] = "cielo_bedroom"
+        with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_site"):
+            self.enqueue(wrong, source="vacancy")
+
+        wrong = vacancy_payload(event_type="automation.action_state_confirmed")
+        wrong["attributes"]["action"] = "lock"
+        with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_site"):
+            self.enqueue(wrong, source="vacancy")
 
 
 if __name__ == "__main__":

@@ -544,6 +544,8 @@ HOME_EVENT_NEST_CHANGED=0
 HOME_EVENT_LOCAL_PRESENCE_CHANGED=0
 HOME_EVENT_DELIVERY_CHANGED=0
 HOME_EVENT_CAMERA_CHANGED=0
+HOME_EVENT_VACANCY_CHANGED=0
+HOME_EVENT_ACTION_CHANGED=0
 for wrapper in "$BIN_SRC"/*; do
   [ -f "$wrapper" ] || continue
   fname=$(basename "$wrapper")
@@ -552,7 +554,8 @@ for wrapper in "$BIN_SRC"/*; do
     *.py|*.sh|*.command|*.md|*.json|*.yaml) continue ;;
   esac
   [ -x "$wrapper" ] || continue
-  if [ "$fname" = "home-eventctl" ] && [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -ne 1 ]; then
+  if [[ "$fname" == "home-eventctl" || "$fname" == "home-event-action" ]] \
+      && [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -ne 1 ]; then
     continue
   fi
   case "$fname" in
@@ -562,6 +565,13 @@ for wrapper in "$BIN_SRC"/*; do
         HOME_EVENT_AUGUST_CHANGED=1
         HOME_EVENT_NEST_CHANGED=1
         HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
+        HOME_EVENT_VACANCY_CHANGED=1
+        HOME_EVENT_ACTION_CHANGED=1
+      fi
+      ;;
+    home-event-action)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$wrapper" "$BIN_DST/$fname"; then
+        HOME_EVENT_ACTION_CHANGED=1
       fi
       ;;
   esac
@@ -615,11 +625,12 @@ NEST_ACTIVITY_RUNTIME_CHANGED=0
 CABIN_ENTRY_RUNTIME_CHANGED=0
 OLA_BRIDGE_RUNTIME_CHANGED=0
 CAT_DASHBOARD_RUNTIME_CHANGED=0
+ROOMBA_DASHBOARD_RUNTIME_CHANGED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
   case "$fname" in
-    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|home-event-delivery.py|home-event-delivery-wrapper.sh|home-event-camera.py|home-event-camera-wrapper.sh|august-event-adapter.py|presence-local-event-adapter.py)
+    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|home-event-delivery.py|home-event-delivery-wrapper.sh|home-event-camera.py|home-event-camera-wrapper.sh|august-event-adapter.py|presence-local-event-adapter.py|vacancy-event-adapter.py|home_event_action.py|home-event-action-wrapper.sh)
       [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -eq 1 ] || continue
       ;;
     nest-home-event-bridge.py)
@@ -664,6 +675,11 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         CAT_DASHBOARD_RUNTIME_CHANGED=1
       fi
       ;;
+    roomba-dashboard.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        ROOMBA_DASHBOARD_RUNTIME_CHANGED=1
+      fi
+      ;;
     home_event_bus.py)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         HOME_EVENT_INGEST_CHANGED=1
@@ -672,6 +688,8 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
         HOME_EVENT_DELIVERY_CHANGED=1
         HOME_EVENT_CAMERA_CHANGED=1
+        HOME_EVENT_VACANCY_CHANGED=1
+        HOME_EVENT_ACTION_CHANGED=1
       fi
       ;;
     home-event-correlator.py)
@@ -699,6 +717,16 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
       fi
       ;;
+    vacancy-event-adapter.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_VACANCY_CHANGED=1
+      fi
+      ;;
+    home_event_action.py|home-event-action-wrapper.sh)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_ACTION_CHANGED=1
+      fi
+      ;;
     nest-home-event-bridge.py)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         HOME_EVENT_NEST_CHANGED=1
@@ -711,6 +739,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_AUGUST_CHANGED=1
         HOME_EVENT_NEST_CHANGED=1
         HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
+        HOME_EVENT_VACANCY_CHANGED=1
       fi
       ;;
   esac
@@ -746,6 +775,70 @@ if [ "$IS_GATEWAY_HOST" -eq 1 ]; then
   else
     launchctl bootstrap "$CAT_DASHBOARD_DOMAIN" "$CAT_DASHBOARD_DST"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) cat-dashboard: bootstrapped local service" >> "$LOG"
+  fi
+fi
+
+# The Roomba dashboard is a gateway-only, repo-managed local service. Keep
+# its plist and executable synchronized, and reload only when either changed.
+if [ "$IS_GATEWAY_HOST" -eq 1 ]; then
+  ROOMBA_DASHBOARD_LABEL="ai.openclaw.roomba-dashboard"
+  ROOMBA_DASHBOARD_SRC="$REPO/openclaw/launchagents/$ROOMBA_DASHBOARD_LABEL.plist"
+  ROOMBA_DASHBOARD_DST="$HOME/Library/LaunchAgents/$ROOMBA_DASHBOARD_LABEL.plist"
+  if [ ! -f "$ROOMBA_DASHBOARD_SRC" ] || [ -L "$ROOMBA_DASHBOARD_SRC" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) roomba-dashboard: FATAL tracked LaunchAgent is unavailable or unsafe" >> "$LOG"
+    exit 1
+  fi
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.openclaw/logs"
+  ROOMBA_DASHBOARD_AGENT_CHANGED=0
+  if [ ! -f "$ROOMBA_DASHBOARD_DST" ] || [ -L "$ROOMBA_DASHBOARD_DST" ] \
+    || ! cmp -s "$ROOMBA_DASHBOARD_SRC" "$ROOMBA_DASHBOARD_DST"; then
+    atomic_install_managed_file "$ROOMBA_DASHBOARD_SRC" "$ROOMBA_DASHBOARD_DST" 644
+    ROOMBA_DASHBOARD_AGENT_CHANGED=1
+  fi
+  ROOMBA_DASHBOARD_DOMAIN="gui/$(id -u)"
+  if launchctl print "$ROOMBA_DASHBOARD_DOMAIN/$ROOMBA_DASHBOARD_LABEL" >/dev/null 2>&1; then
+    if [ "$ROOMBA_DASHBOARD_AGENT_CHANGED" -eq 1 ] || [ "$ROOMBA_DASHBOARD_RUNTIME_CHANGED" -eq 1 ]; then
+      launchctl bootout "$ROOMBA_DASHBOARD_DOMAIN/$ROOMBA_DASHBOARD_LABEL" >/dev/null 2>&1 || true
+      launchctl bootstrap "$ROOMBA_DASHBOARD_DOMAIN" "$ROOMBA_DASHBOARD_DST"
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) roomba-dashboard: reloaded local service" >> "$LOG"
+    fi
+  else
+    launchctl bootstrap "$ROOMBA_DASHBOARD_DOMAIN" "$ROOMBA_DASHBOARD_DST"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) roomba-dashboard: bootstrapped local service" >> "$LOG"
+  fi
+fi
+
+# Crosstown vacancy cleaning is a gateway-only physical automation. The
+# controller commits a protected per-day decision before any command, so it is
+# safe to keep an installed 6 AM LaunchAgent synchronized after its attended
+# activation. A routine pull must not activate this physical automation on a
+# gateway where the plist has never been installed.
+if [ "$IS_GATEWAY_HOST" -eq 1 ]; then
+  VACANT_ROOMBA_LABEL="ai.openclaw.crosstown-vacant-roomba"
+  VACANT_ROOMBA_SRC="$REPO/openclaw/launchagents/$VACANT_ROOMBA_LABEL.plist"
+  VACANT_ROOMBA_DST="$HOME/Library/LaunchAgents/$VACANT_ROOMBA_LABEL.plist"
+  if [ -e "$VACANT_ROOMBA_DST" ] || [ -L "$VACANT_ROOMBA_DST" ]; then
+    if [ ! -f "$VACANT_ROOMBA_SRC" ] || [ -L "$VACANT_ROOMBA_SRC" ] \
+      || [ ! -f "$VACANT_ROOMBA_DST" ] || [ -L "$VACANT_ROOMBA_DST" ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) vacant-roomba: FATAL installed LaunchAgent is unavailable or unsafe" >> "$LOG"
+      exit 1
+    fi
+    mkdir -p "$HOME/.openclaw/logs"
+    VACANT_ROOMBA_AGENT_CHANGED=0
+    if ! cmp -s "$VACANT_ROOMBA_SRC" "$VACANT_ROOMBA_DST"; then
+      atomic_install_managed_file "$VACANT_ROOMBA_SRC" "$VACANT_ROOMBA_DST" 644
+      VACANT_ROOMBA_AGENT_CHANGED=1
+    fi
+    VACANT_ROOMBA_DOMAIN="gui/$(id -u)"
+    if launchctl print "$VACANT_ROOMBA_DOMAIN/$VACANT_ROOMBA_LABEL" >/dev/null 2>&1; then
+      if [ "$VACANT_ROOMBA_AGENT_CHANGED" -eq 1 ]; then
+        launchctl bootout "$VACANT_ROOMBA_DOMAIN/$VACANT_ROOMBA_LABEL" >/dev/null 2>&1 || true
+        launchctl bootstrap "$VACANT_ROOMBA_DOMAIN" "$VACANT_ROOMBA_DST"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) vacant-roomba: reloaded 6 AM automation" >> "$LOG"
+      fi
+    elif [ "$VACANT_ROOMBA_AGENT_CHANGED" -eq 1 ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) vacant-roomba: refreshed installed plist; LaunchAgent remains unloaded" >> "$LOG"
+    fi
   fi
 fi
 
@@ -1026,7 +1119,9 @@ for HOME_EVENT_AGENT_LABEL in \
   ai.openclaw.home-event-camera \
   ai.openclaw.august-event-adapter \
   ai.openclaw.nest-home-event-bridge \
-  ai.openclaw.presence-local-event-adapter; do
+  ai.openclaw.presence-local-event-adapter \
+  ai.openclaw.vacancy-event-adapter \
+  ai.openclaw.home-event-action; do
   HOME_EVENT_AGENT_SRC="$REPO/openclaw/launchagents/$HOME_EVENT_AGENT_LABEL.plist"
   HOME_EVENT_AGENT_DST="$HOME/Library/LaunchAgents/$HOME_EVENT_AGENT_LABEL.plist"
   if [ -e "$HOME_EVENT_AGENT_DST" ] || [ -L "$HOME_EVENT_AGENT_DST" ]; then
@@ -1118,6 +1213,38 @@ for HOME_EVENT_AGENT_LABEL in \
         exit 1
       fi
       HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
+    elif [ "$HOME_EVENT_AGENT_LABEL" = "ai.openclaw.vacancy-event-adapter" ]; then
+      HOME_EVENT_VACANCY_CABIN_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_VACANCY_CABIN_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      HOME_EVENT_VACANCY_CROSSTOWN_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_VACANCY_CROSSTOWN_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      case "$HOME_EVENT_VACANCY_CABIN_ENABLED:$HOME_EVENT_VACANCY_CROSSTOWN_ENABLED" in
+        0:0|0:1|1:0|1:1) ;;
+        *)
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL installed vacancy enable flags are invalid" >> "$LOG"
+          exit 1
+          ;;
+      esac
+      HOME_EVENT_AGENT_CANDIDATE_TMP=$(mktemp \
+        "$HOME/Library/LaunchAgents/.${HOME_EVENT_AGENT_LABEL}.candidate.XXXXXX")
+      if ! cp "$HOME_EVENT_AGENT_SRC" "$HOME_EVENT_AGENT_CANDIDATE_TMP" \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_VACANCY_CABIN_ENABLED $HOME_EVENT_VACANCY_CABIN_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_VACANCY_CROSSTOWN_ENABLED $HOME_EVENT_VACANCY_CROSSTOWN_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null; then
+        rm -f "$HOME_EVENT_AGENT_CANDIDATE_TMP"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL could not preserve installed vacancy enable flags" >> "$LOG"
+        exit 1
+      fi
+      HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
     fi
     if ! cmp -s "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST"; then
       atomic_install_managed_file "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST" 644
@@ -1147,6 +1274,12 @@ for HOME_EVENT_AGENT_LABEL in \
         ;;
       ai.openclaw.presence-local-event-adapter)
         HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_LOCAL_PRESENCE_CHANGED"
+        ;;
+      ai.openclaw.vacancy-event-adapter)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_VACANCY_CHANGED"
+        ;;
+      ai.openclaw.home-event-action)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_ACTION_CHANGED"
         ;;
     esac
     if launchctl print "$HOME_EVENT_AGENT_DOMAIN/$HOME_EVENT_AGENT_LABEL" >/dev/null 2>&1; then

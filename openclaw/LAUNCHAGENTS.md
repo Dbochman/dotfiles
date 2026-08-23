@@ -338,11 +338,13 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, August, and Nest spools into the shadow-only SQLite journal. |
+| `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, August, Nest, and vacancy spools into SQLite. |
 | `ai.openclaw.home-event-correlator` | 5s | `home-event-service-wrapper.sh correlate` | Records site-scoped incidents and rate-limited shadow decisions; no delivery or camera path. |
 | `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer with durable safe poll-count/gap continuity; tracked enable flag remains `0`. |
 | `ai.openclaw.nest-home-event-bridge` | 5s | `home-event-service-wrapper.sh nest` | Mirrors only newly committed Nest person/motion metadata after a silent first-run baseline; tracked enable flag remains `0`. |
 | `ai.openclaw.presence-local-event-adapter` | 60s | `home-event-service-wrapper.sh presence-local` | Derives shadow-only named local arrivals/departures and household excursion intervals from advancing sanitized scans; both tracked site flags remain `0`. |
+| `ai.openclaw.vacancy-event-adapter` | 60s | `home-event-service-wrapper.sh vacancy` | Silently baselines existing protected vacancy runs, then publishes future completed runs for independently enabled sites; both tracked site flags remain `0`. |
+| `ai.openclaw.home-event-action` | 30s | `home-event-action-wrapper.sh` | Processes exact policy-owned Hue actions with fresh-vacancy revalidation and device readback; enforces selected routine suspension while vacant and restores only the pre-vacancy enabled set after a confirmed sticky-resident return. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `ai.openclaw.airthings-snapshot` | 5min + login | `airthings-snapshot` | Reads the exact Cabin Living Room Wave Enhance over local BLE and appends one Airthings-only row through the shared locked climate-history writer; failures update protected safe health without appending stale data |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
@@ -368,11 +370,11 @@ LaunchAgent, cron, gateway route, or unattended entry point.
 downstream-disabled shadow sample per invocation; it has no scheduler or
 approval writer.
 
-The five home-event jobs are **attended-install only**. A routine dotfiles
+The home-event jobs are **attended-install only**. A routine dotfiles
 pull may refresh their files only after an installed plist exists; it must not
 create the runtime, run `home-eventctl init`, bootstrap a job, or enable Ring,
-presence, August, or Nest publication. All producers default off and the
-correlator can only create `shadowed` decisions. The shared wrapper uses a
+presence, August, Nest, or vacancy publication. All producer flags default
+off. The shared wrapper uses a
 sanitized environment and one bounded owner-only log, and neither it nor its
 children call `op`.
 
@@ -488,6 +490,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | Label | Schedule | Program | Description |
 |-------|----------|---------|-------------|
 | `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles, deploys skills/wrappers plus the protected restaurant scope registry, reconciles cron, and verifies required restaurant skills through the active gateway |
+| `ai.openclaw.crosstown-vacant-roomba` | Daily 6:00 AM | `crosstown-vacant-roomba.py` | Starts each safely idle Crosstown Roomba at most once per local day while canonical presence is freshly `confirmed_vacant`; recent Crosstown litter-box activity, a dashboard snooze, stale evidence, or uncertain robot state suppresses the run |
 | `ai.openclaw.8sleep-snapshot` | Daily 6:50 AM | `8sleep-snapshot.sh` | Pre-captures last-night summaries to `/tmp/8sleep-{dylan,julia}-latest.txt` before morning briefings |
 | `ai.openclaw.finance-refresh` | Daily 6:15 AM | `finance-refresh.py` | Sequential cache-only Plaid and crypto refresh with retries and combined health; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
@@ -499,7 +502,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | Label | Watches | Program | Description |
 |-------|---------|---------|-------------|
 | `com.openclaw.presence-receive` | `~/Downloads` | `presence-receive.sh` | Validates the newest named Crosstown Taildrop file, atomically promotes it to presence state, and evaluates occupancy |
-| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, thermostat eco, Cielos off where applicable, lock Crosstown, and start Roombas. Independently reconciles each person's detected location with Eight Sleep `home`, which leaves their other Pod side away. See [VACANCY-AUTOMATION.md](VACANCY-AUTOMATION.md) |
+| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, thermostat eco, Cielos off where applicable, lock Crosstown, and hand Crosstown cleaning to the shared daily controller. Independently reconciles each person's detected location with Eight Sleep `home`, which leaves their other Pod side away. See [VACANCY-AUTOMATION.md](VACANCY-AUTOMATION.md) |
 
 ## Mac Mini — Run-Once (RunAtLoad only)
 

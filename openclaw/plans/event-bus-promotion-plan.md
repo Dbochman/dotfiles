@@ -6,7 +6,9 @@ IN PROGRESS — Cabin and Crosstown local-presence enrichment are established,
 the Ring/August concurrent shadow evidence inventory is closed, and the
 Dylan-only limited-delivery canary is active. Its separately approved camera
 evidence layer uses short-lived exact +30/+60 stills and retains only a bounded
-structured result. Julia routing and physical mutation remain disabled.
+structured result. Julia routing remains disabled. The first physical-action
+promotion is restricted to Crosstown `all_lights`; all other vacancy actions
+retain their legacy owner.
 
 The starting production snapshot at `2026-07-26T19:45:02Z` was:
 
@@ -78,8 +80,9 @@ identity or intent. A representative message is:
 - A fresh resident arrival resolves recent activity silently.
 - Ring bursts and related August/Nest evidence collapse into one site incident.
 - No model participates in validation or hard security decisions.
-- No automatic lock, unlock, light, thermostat, camera-control, or other
-  physical action is authorized.
+- No automatic lock, unlock, thermostat, camera-control, or other new physical
+  action is authorized. The sole exception is the existing Crosstown
+  all-lights-off vacancy action, transferred without expanding its trigger.
 - No image is stored in the event journal. Any current-image request is a
   separately authorized, exact-camera, short-lived workflow.
 - Informational delivery is capped at one reserved attempt per site per hour.
@@ -480,6 +483,80 @@ discarding successful evidence from the other provider.
   metadata reported sent and delivered with no error. The explicit operator
   review recorded `received`, retained the original unknown outcome, and
   restored delivery health to `ok` with no pending attention.
+
+### Stage 7 — Exact Crosstown vacancy-light and routine actions
+
+The vacancy journal becomes a future-only, independently site-gated bus source
+on SQLite schema 6. Existing runs are silently baselined. The protected action
+policy delegates Crosstown `all_lights` and, in a separate exact target, the
+three selected standing Hue routines. Cabin `all_lights` and all HVAC, Cielo,
+Eight Sleep, August, and Roomba targets remain legacy-owned.
+
+The action worker reserves by exact site, target, and vacancy-cycle ID. It
+rechecks a fresh exact hash match between canonical and producer presence,
+confirms the same protected vacancy cycle, commits a single-attempt boundary,
+and then reads Hue group state. It issues at most one all-off command and
+requires all-off readback. Concurrent workers serialize on a private lock;
+crash recovery never retries a claimed attempt. A policy or presence change
+cancels pending work.
+
+For `daily_automations`, the worker records the enabled subset before issuing
+any disable, verifies the entire allowlisted set is disabled, and enforces that
+state while vacancy remains confident. It restores only the recorded subset
+after a fresh occupied state places a sticky resident at Crosstown. Uncertain,
+stale, or ambiguous presence cannot restore routines.
+
+Activation requires a protected schema-5 backup, schema-6 migration, silent
+adapter baseline, installed policy and worker, one attended Crosstown canary,
+and verification that only the exact approved Hue targets are delegated.
+Rollback changes both Crosstown Hue targets to `legacy`, stops the worker and
+adapter, and preserves the journal and database for diagnosis.
+
+#### Activation checkpoint — `2026-08-22T20:04:57Z`
+
+- The focused and full Python suites, vacancy shell integration test, syntax
+  checks, plist validation, and diff hygiene passed. A disposable copy of the
+  production database migrated to schema 6 with `quick_check=ok` and no open
+  subject collisions.
+- All database-writing consumers were stopped. The mode-`0600` protected
+  `events-schema5-20260822T2005Z.sqlite3` backup and live source both passed
+  `quick_check` before the attended schema-6 migration.
+- Both enabled vacancy sites silently baselined two existing complete runs and
+  emitted zero events. The protected policy reported exactly one bus target:
+  Crosstown `all_lights`; Cabin `all_lights` remained legacy-owned.
+- Fresh canonical state reported Cabin occupied and Crosstown
+  `confirmed_vacant`. Hue group readback reported an on-state. The manual
+  canary created one reservation, issued exactly one Crosstown all-off command,
+  and completed `state_confirmed` after all-off readback.
+- All prior consumers and both new LaunchAgents are loaded. The active status
+  reports schema 6, mode `limited_delivery`, bus health `ok`, zero backlog or
+  dead letters, one complete verified action, and zero pending, claimed,
+  cancelled, failed, or unknown action outcomes. The separate historical Ring
+  camera-capture degradation remains outside this promotion.
+
+#### Standing-routine extension checkpoint — `2026-08-22T20:46:02Z`
+
+- The full 1,104-test Python suite, focused Hue and action tests, fake-only Hue
+  integration, vacancy shell integration, compilation, Bash syntax, and diff
+  hygiene passed.
+- The guarded Hue v2 surface found seven Crosstown routines and no Cabin
+  routines. An attended exact-name canary disabled and restored `Master Bath
+  Off`, with readback confirming both transitions and no resource ID exposed.
+- The protected schema-2 action policy reports exactly two bus targets:
+  Crosstown `all_lights` and `daily_automations`. The current fresh state was
+  Cabin occupied and Crosstown `confirmed_vacant`.
+- The bus canary durably recorded the three routines enabled at vacancy start,
+  disabled the full allowlisted set, and completed `state_confirmed`. A second
+  live check manually enabled one managed routine; the vacant-state reconciler
+  changed it back to disabled with exact readback.
+- The dashboard exposes safe routine status and guarded controls and marks the
+  active Crosstown suspension. All services are loaded, bus health remains
+  `ok`, action queues and dead letters are empty, and the independent
+  `ring_capture_command_failed` camera degradation is unchanged.
+- Hue cache directories are owner-only `0700`; all fourteen credential cache
+  files are owner-only `0600`. The restore path remains covered by fake-only
+  lifecycle tests and will execute only on a future fresh sticky-resident
+  return rather than by spoofing live presence.
 
 ## Progress ledger
 

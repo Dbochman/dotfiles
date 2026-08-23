@@ -194,6 +194,40 @@ class VacancyActionJournalTests(unittest.TestCase):
         with self.assertRaisesRegex(journal_module.JournalError, "action_target_duplicate"):
             self.journal.begin_action(started["run_id"], "floomba", "start_cleaning")
 
+    def test_crosstown_daily_policy_outcomes_are_recordable(self) -> None:
+        self.write_presence()
+        state = json.loads(self.state_file.read_text(encoding="utf-8"))
+        state["cabin"]["occupancy"] = "occupied"
+        state["crosstown"].update(
+            {
+                "occupancy": "confirmed_vacant",
+                "fresh": True,
+                "stateChangedAt": "2026-08-15T17:55:00Z",
+            }
+        )
+        producer = json.loads(self.producer_file.read_text(encoding="utf-8"))
+        producer["state_hash"] = journal_module.state_hash(state)
+        self.write_private(self.state_file, state)
+        self.write_private(self.producer_file, producer)
+
+        for reason in (
+            "recent_cat_activity",
+            "daily_already_handled",
+            "robot_not_ready",
+        ):
+            started = self.journal.begin_run("crosstown")
+            action = self.journal.begin_action(
+                started["run_id"], "crosstown_roombas", "start_cleaning"
+            )
+            result = self.journal.finish_action(
+                started["run_id"],
+                action["attempt_id"],
+                "skipped",
+                "policy_decision",
+                reason,
+            )
+            self.assertEqual(result, {"ok": True, "outcome": "skipped"})
+
     def test_symlink_marker_cannot_complete_run(self) -> None:
         started = self.journal.begin_run("cabin")
         external_marker = self.home / "external-marker"

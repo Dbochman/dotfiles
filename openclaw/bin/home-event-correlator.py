@@ -27,6 +27,7 @@ from home_event_bus import (  # noqa: E402
     utc_now,
     validate_runtime,
 )
+from home_event_action import ActionError, reserve_from_vacancy_event  # noqa: E402
 
 
 CONSUMER = "correlator"
@@ -120,6 +121,12 @@ class ShadowCorrelator:
         self.paths = validate_runtime(root)
         self.store = EventStore(self.paths, clock=clock)
         self.presence_state = presence_state
+        self.presence_producer_state = (
+            presence_state.parent / "home-events-outbox" / "producer-state.json"
+        )
+        self.vacancy_journal_root = (
+            presence_state.parent.parent / "vacancy-actions" / "journal"
+        )
         self.clock = clock
 
     def now(self) -> datetime:
@@ -137,15 +144,18 @@ class ShadowCorrelator:
 
     @staticmethod
     def _open_incident(
-        connection: sqlite3.Connection, site: str, category: str
+        connection: sqlite3.Connection,
+        site: str,
+        category: str,
+        subject_key: str = "site_activity",
     ) -> sqlite3.Row | None:
         return connection.execute(
             """
             SELECT * FROM incidents
-            WHERE site = ? AND category = ? AND state = 'open'
+            WHERE site = ? AND category = ? AND subject_key = ? AND state = 'open'
             ORDER BY id DESC LIMIT 1
             """,
-            (site, category),
+            (site, category, subject_key),
         ).fetchone()
 
     def _ensure_incident(
@@ -154,24 +164,33 @@ class ShadowCorrelator:
         *,
         site: str,
         category: str,
+        subject_key: str = "site_activity",
         summary_code: str,
         event_time: str,
     ) -> sqlite3.Row:
-        incident = self._open_incident(connection, site, category)
+        incident = self._open_incident(connection, site, category, subject_key)
         now = format_time(self.now())
         if incident is None:
             incident_uid = "inc_" + secrets.token_hex(16)
             connection.execute(
                 """
                 INSERT INTO incidents(
-                    incident_uid, site, state, category, summary_code,
+                    incident_uid, site, state, category, subject_key, summary_code,
                     opened_at, updated_at
-                ) VALUES (?, ?, 'open', ?, ?, ?, ?)
+                ) VALUES (?, ?, 'open', ?, ?, ?, ?, ?)
                 """,
-                (incident_uid, site, category, summary_code, event_time, now),
+                (
+                    incident_uid,
+                    site,
+                    category,
+                    subject_key,
+                    summary_code,
+                    event_time,
+                    now,
+                ),
             )
             self._increment(connection, "incidents_opened")
-            incident = self._open_incident(connection, site, category)
+            incident = self._open_incident(connection, site, category, subject_key)
             assert incident is not None
         else:
             connection.execute(
@@ -441,6 +460,31 @@ class ShadowCorrelator:
                 self._increment(
                     connection, LOCAL_PRESENCE_SHADOW_COUNTERS[event_type]
                 )
+            elif event_type.startswith("automation."):
+                self._increment(connection, "vacancy_events_observed")
+                if event_type == "automation.vacancy_run_started":
+                    try:
+                        reservation = reserve_from_vacancy_event(
+                            connection,
+                            root=self.paths.root,
+                            state_path=self.presence_state,
+                            producer_path=self.presence_producer_state,
+                            journal_root=self.vacancy_journal_root,
+                            event_id=event_id,
+                            site=site,
+                            attributes=delivery["attributes"],
+                            clock=self.clock,
+                        )
+                    except ActionError as exc:
+                        self._increment(
+                            connection,
+                            "vacancy_action_reservation_" + exc.code,
+                        )
+                    else:
+                        for _ in range(int(reservation.get("reserved", 0))):
+                            self._increment(connection, "vacancy_actions_reserved")
+                        for _ in range(int(reservation.get("duplicates", 0))):
+                            self._increment(connection, "vacancy_action_duplicates")
             elif event_type in {
                 "entry.doorbell_rang",
                 "entry.person_detected",
@@ -518,30 +562,40 @@ class ShadowCorrelator:
                     if mode == "occupied":
                         self._resolve(connection, incident, "resident_arrival_silent")
             elif event_type == "source.unavailable":
+                subject_key = f"{delivery['source']}:{delivery['entity_alias']}"
                 incident = self._ensure_incident(
                     connection,
                     site=site,
                     category="source_health",
+                    subject_key=subject_key,
                     summary_code="source_unavailable_shadowed",
                     event_time=event_time,
                 )
                 self._attach(connection, incident["id"], event_id, "health_open")
             elif event_type == "source.recovered":
-                incident = self._open_incident(connection, site, "source_health")
+                subject_key = f"{delivery['source']}:{delivery['entity_alias']}"
+                incident = self._open_incident(
+                    connection, site, "source_health", subject_key
+                )
                 if incident is not None:
                     self._attach(connection, incident["id"], event_id, "health_recovery")
                     self._resolve(connection, incident, "source_recovered_silently")
             elif event_type == "device.battery_low":
+                subject_key = f"{delivery['source']}:{delivery['entity_alias']}"
                 incident = self._ensure_incident(
                     connection,
                     site=site,
                     category="battery",
+                    subject_key=subject_key,
                     summary_code="battery_low_shadowed",
                     event_time=event_time,
                 )
                 self._attach(connection, incident["id"], event_id, "battery_low")
             elif event_type == "device.battery_recovered":
-                incident = self._open_incident(connection, site, "battery")
+                subject_key = f"{delivery['source']}:{delivery['entity_alias']}"
+                incident = self._open_incident(
+                    connection, site, "battery", subject_key
+                )
                 if incident is not None:
                     self._attach(connection, incident["id"], event_id, "battery_recovery")
                     self._resolve(connection, incident, "battery_recovered_silently")

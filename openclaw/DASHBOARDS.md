@@ -158,24 +158,33 @@ Visualizes dog walk departures, return signal detection, route maps, and the Fi 
 
 **Port 8553** · [Full spec](ROOMBA-DASHBOARD.md)
 
-Roomba status, snooze controls, and run history calendar heatmap for both locations.
+Two-home Roomba status and automation view with explicit telemetry provenance.
 
 ### What It Shows
 
-- **Crosstown Roomba cards** — real-time battery, cleaning phase, bin status,
-  and tank level through the persistent rest980 services on the Crosstown MBP
-- **Cabin Roomba cards** — last mission outcome, duration, area cleaned (via iRobot Cloud API)
-- **Snooze controls** — temporarily disable Roomba automation per location (1h/3h/8h/Indef)
-- **Calendar heatmap** — monthly view of Roomba runs per location, gradient color scale, hover tooltips with run details
+- **Both/Crosstown/Cabin selector** — side-by-side comparison or a focused
+  single-home view
+- **Crosstown live-local cards** — battery, phase, bin, tank, and guarded
+  vacancy-start readiness through the persistent MBP rest980 services
+- **Cabin Assistant-status cards** — current cleaning/stopped state from exact
+  read-only Google Assistant queries; ambiguous replies remain unverified
+- **Home automation summaries** — verified occupancy, schedule, latest
+  protected decision, and any safety hold
+- **Automation Pause** — temporarily disable automatic Roomba starts per
+  location (1h/3h/8h/Indef)
+- **Cleaning & Decision History** — monthly dog-walk activity plus protected
+  Crosstown 6 AM and vacancy-transition outcomes
 
 ### Data Sources
 
 | Source | Frequency | Data |
 |--------|-----------|------|
-| Crosstown Roomba (rest980) | 5 min cache | Real-time battery, phase, bin, and tank via SSH plus authenticated loopback REST on the MBP |
-| Cabin Roomba (iRobot Cloud) | 10 min cache | Last mission outcome via Gigya + AWS SigV4 REST API |
+| Crosstown guarded Roomba CLI | 5 min cache | Live local battery, phase, bin, and tank through authenticated rest980 on the MBP |
+| Cabin guarded Roomba CLI | 5 min cache | Read-only Google Assistant running/stopped response; no physical command |
+| Protected canonical presence | On demand | Hash-verified, freshness-bounded occupancy summary without people or raw evidence |
+| Crosstown vacancy decisions | On demand | Latest evaluation and owner-only per-day controller outcomes |
 | Dog Walk History JSONL | On demand | Roomba start/dock events per walk |
-| Snooze state | Real-time | Per-location snooze expiry |
+| Automation pause state | Real-time | Per-location pause expiry |
 
 ### Locations
 
@@ -189,10 +198,12 @@ Roomba status, snooze controls, and run history calendar heatmap for both locati
 | File | Path |
 |------|------|
 | Server | `openclaw/bin/roomba-dashboard.py` → `~/.openclaw/bin/roomba-dashboard.py` |
-| iRobot Cloud API | `openclaw/skills/cabin-roomba/irobot-cloud.py` → `~/.openclaw/skills/cabin-roomba/irobot-cloud.py` |
+| Cabin Roomba skill | `openclaw/skills/roomba/` → `~/.openclaw/skills/roomba/` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.roomba-dashboard.plist` |
 | Snooze state | `~/.openclaw/dog-walk/snooze.json` |
 | Run history | `~/.openclaw/dog-walk/history/YYYY-MM-DD.jsonl` |
+| Daily decisions | `~/.openclaw/vacant-roomba/crosstown/runs/YYYY-MM-DD.json` |
+| Latest decision | `~/.openclaw/vacant-roomba/crosstown/latest-status.json` |
 | Logs | `~/.openclaw/logs/roomba-dashboard.{log,err.log}` |
 
 ---
@@ -345,7 +356,7 @@ Command feedback (Running/Success/Error) appears inline below the section header
 
 ### What It Shows
 
-- **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label e.g. "Warm White") with on/off, brightness, and color controls (Crosstown: 9 rooms, Cabin: 8 rooms)
+- **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label e.g. "Warm White") with on/off, brightness, and color controls, plus standing Hue automation status and exact enable/disable controls (Crosstown: 9 rooms, 7 routines; Cabin: 8 rooms, currently no routines)
 - **Nest Thermostat** — per-room temp, setpoint, HVAC mode with set temp / set mode / eco controls (Cabin: 3 rooms)
 - **Midea AC** — per-unit temperature, setpoint, power, mode, fan, eco, and live wattage with exact-device on/off, temp, mode, fan, and eco controls (Cabin: 2 units)
 - **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)
@@ -393,8 +404,8 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 
 | Device | Room/Device Selector | Extra Controls |
 |--------|---------------------|----------------|
-| Hue Crosstown | 9 rooms + **All Lights** dropdown | Brightness, Color (warm/cool/daylight/red/blue/green/purple/orange/pink). In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle |
-| Hue Cabin | 8 rooms + **All Lights** dropdown | Brightness, Color. In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle |
+| Hue Crosstown | 9 rooms + **All Lights** dropdown; 7 exact standing routines | Brightness, Color, routine Enable/Disable. In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle. The card marks vacancy-managed suspension. |
+| Hue Cabin | 8 rooms + **All Lights** dropdown; currently no standing routines | Brightness, Color, and exact routine controls when routines exist. In **All Lights** mode, brightness/color inputs are disabled; use On/Off for global toggle. |
 | Nest | 3 rooms dropdown | Temp °F, Mode (HEAT/OFF), Eco on/off |
 | Midea AC | 2 exact-device aliases | Temp °F (60–86), Mode (auto/cool/dry/heat/fan), Fan (auto/silent/low/medium/high/full), Eco on/off |
 | Cielo | 4 devices dropdown | Temp °F, Mode (cool/heat/auto/dry/fan) |

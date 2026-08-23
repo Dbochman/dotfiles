@@ -161,6 +161,18 @@ class HomeDashboardSecurityTests(unittest.TestCase):
     def test_nest_midea_and_petlibro_builders_are_exact_and_bounded(self) -> None:
         commands = self.dashboard.COMMANDS
         self.assertEqual(
+            commands["hue_crosstown"]["automation_disable"](
+                {"name": "Potato Nightlight"}
+            ),
+            [
+                "hue",
+                "--crosstown",
+                "automation",
+                "disable",
+                "Potato Nightlight",
+            ],
+        )
+        self.assertEqual(
             commands["nest"]["set"]({"room": "Bedroom", "temp": "72"}),
             ["nest", "set", "Bedroom", "72"],
         )
@@ -234,6 +246,8 @@ class HomeDashboardSecurityTests(unittest.TestCase):
             {"device": "midea", "action": "mode", "args": {"alias": "cabin-air-conditioner", "mode": "Cool"}},
             {"device": "midea", "action": "fan", "args": {"alias": "cabin-air-conditioner", "fan": "turbo"}},
             {"device": "midea", "action": "eco", "args": {"alias": "cabin-air-conditioner", "state": True}},
+            {"device": "hue_crosstown", "action": "automation_disable", "args": {"name": "Potato"}},
+            {"device": "hue_cabin", "action": "automation_enable", "args": {"name": "Potato Nightlight"}},
         )
         with patch.object(self.dashboard.subprocess, "run") as run:
             for payload in cases:
@@ -257,6 +271,47 @@ class HomeDashboardSecurityTests(unittest.TestCase):
             ["midea-ac", "status", "--json"],
             parse_json=True,
         )
+
+    def test_hue_collector_combines_rooms_and_safe_automation_inventory(self) -> None:
+        with patch.object(
+            self.dashboard,
+            "_run_cli",
+            side_effect=[
+                {"raw": "Bedroom  OFF  0%  1 lights  400 mired"},
+                {
+                    "ok": True,
+                    "site": "crosstown",
+                    "automations": [
+                        {
+                            "name": "Potato Nightlight",
+                            "enabled": True,
+                            "status": "running",
+                            "schedule": {"recurrence": "daily", "when": "22:00"},
+                        }
+                    ],
+                },
+                {
+                    "ok": True,
+                    "automation_suspensions": {
+                        "active_sites": ["crosstown"],
+                        "latest": {"outcome": "suspended"},
+                    },
+                },
+            ],
+        ):
+            result = self.dashboard.collect_hue_crosstown()
+
+        self.assertEqual(result["automations"][0]["name"], "Potato Nightlight")
+        self.assertNotIn("id", result["automations"][0])
+        self.assertTrue(result["vacancy_automation"]["active"])
+
+    def test_hue_ui_renders_guarded_automation_controls(self) -> None:
+        html = self.dashboard.DASHBOARD_HTML
+
+        self.assertIn("function renderHue(result, device)", html)
+        self.assertIn("automation_disable", html)
+        self.assertIn("automation_enable", html)
+        self.assertIn("Vacancy management is active", html)
 
     def test_midea_ui_is_source_specific_and_exact_alias_only(self) -> None:
         html = self.dashboard.DASHBOARD_HTML

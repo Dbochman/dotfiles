@@ -42,6 +42,12 @@ roomba status floomba
 roomba status philly
 ```
 
+Status is a read-only Google Assistant query. It can reliably distinguish an
+explicit running/not-running response, but does not provide trusted battery,
+bin, dock, or error readiness. The Roomba Dashboard uses only this `status`
+operation for Cabin cards and labels an ambiguous Assistant reply as
+unverified rather than inferring device state.
+
 ### List known Roombas
 ```bash
 roomba list
@@ -102,6 +108,9 @@ For related tasks, switch to:
 ## Troubleshooting
 
 - If commands fail, the Google Assistant OAuth token may need refreshing — run `roomba setup` on the Mac Mini
+- `~/.openclaw/roomba/credentials.json` and `client_secret.json` must be
+  owner-only regular files (mode `0600`); refreshed credentials are written
+  atomically
 - Ensure the Roombas are powered on, connected to wifi, and registered in Google Home
 - The Mac Mini must have internet access to reach Google Assistant APIs
 - The CLI interpreter lives at `~/.openclaw/roomba/venv/bin/python3`. If a Homebrew Python removal breaks that symlink, rebuild the virtualenv with the pinned dependencies in `~/.openclaw/skills/roomba/requirements.txt` before retrying an automated action.

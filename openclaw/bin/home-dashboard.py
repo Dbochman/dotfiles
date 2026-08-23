@@ -163,12 +163,39 @@ def collect_presence():
     return _read_json_file(PRESENCE_STATE_PATH)
 
 
+def _collect_hue(site):
+    rooms = _run_cli(["hue", f"--{site}", "status"])
+    if rooms.get("error"):
+        return rooms
+    automations = _run_cli(
+        ["hue", f"--{site}", "automations", "--json"], parse_json=True
+    )
+    result = {"raw": rooms.get("raw", "")}
+    if automations.get("ok") is True and isinstance(
+        automations.get("automations"), list
+    ):
+        result["automations"] = automations["automations"]
+    else:
+        result["automation_error"] = automations.get(
+            "error", "Hue automation status unavailable"
+        )
+    if site == "crosstown":
+        action_status = _run_cli(["home-event-action", "status"], parse_json=True)
+        suspension = action_status.get("automation_suspensions")
+        if isinstance(suspension, dict):
+            result["vacancy_automation"] = {
+                "active": site in suspension.get("active_sites", []),
+                "latest": suspension.get("latest"),
+            }
+    return result
+
+
 def collect_hue_crosstown():
-    return _run_cli(["hue", "--crosstown", "status"])
+    return _collect_hue("crosstown")
 
 
 def collect_hue_cabin():
-    return _run_cli(["hue", "--cabin", "status"])
+    return _collect_hue("cabin")
 
 
 def collect_nest():
@@ -402,6 +429,18 @@ _MIDEA_AC_ALIASES = {
 _MIDEA_AC_MODES = {"auto", "cool", "dry", "heat", "fan"}
 _MIDEA_AC_FANS = {"auto", "silent", "low", "medium", "high", "full"}
 _LITTER_ROBOT_ALIASES = {"crosstown-litter-robot", "cabin-litter-robot"}
+_HUE_AUTOMATIONS = {
+    "crosstown": {
+        "Bedroom lights After dark",
+        "Go To Sleep",
+        "Kitten Wake Up",
+        "Kitty Bedtime",
+        "Master Bath Off",
+        "Potato Nightlight",
+        "Wake up",
+    },
+    "cabin": set(),
+}
 
 
 def _require_args(args, *, required, optional=()):
@@ -433,6 +472,12 @@ def _build_nest_set_command(args):
     if not math.isfinite(temp) or not 45 <= temp <= 90:
         raise CommandValidationError("temperature must be between 45 and 90 degrees Fahrenheit")
     return ["nest", "set", room, format(temp, "g")]
+
+
+def _build_hue_automation_command(site, action, args):
+    _require_args(args, required=("name",))
+    name = _require_choice(args["name"], _HUE_AUTOMATIONS[site], "automation")
+    return ["hue", f"--{site}", "automation", action, name]
 
 
 def _build_nest_mode_command(args):
@@ -515,12 +560,24 @@ COMMANDS = {
         "off": lambda a: _build_hue_command("--crosstown", "off", a),
         "bri": lambda a: _build_hue_command("--crosstown", "bri", a),
         "color": lambda a: _build_hue_command("--crosstown", "color", a),
+        "automation_enable": lambda a: _build_hue_automation_command(
+            "crosstown", "enable", a
+        ),
+        "automation_disable": lambda a: _build_hue_automation_command(
+            "crosstown", "disable", a
+        ),
     },
     "hue_cabin": {
         "on": lambda a: _build_hue_command("--cabin", "on", a),
         "off": lambda a: _build_hue_command("--cabin", "off", a),
         "bri": lambda a: _build_hue_command("--cabin", "bri", a),
         "color": lambda a: _build_hue_command("--cabin", "color", a),
+        "automation_enable": lambda a: _build_hue_automation_command(
+            "cabin", "enable", a
+        ),
+        "automation_disable": lambda a: _build_hue_automation_command(
+            "cabin", "disable", a
+        ),
     },
     "nest": {
         "set": _build_nest_set_command,
@@ -890,6 +947,11 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .controls-grid select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M2 4l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; padding-right: 32px; cursor: pointer; }
 .controls-grid select:disabled { background-image: none; }
 .controls-grid select option { background: var(--surface); color: var(--text); padding: 8px; }
+.automation-list { display: grid; gap: 8px; margin-top: 12px; }
+.automation-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.automation-name { font-weight: 650; }
+.automation-meta { color: var(--text-muted); font-size: 0.82rem; margin-top: 2px; }
+.automation-row button { min-width: 76px; }
 .command-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .command-row button { background: transparent; }
 .command-row button:hover, .refresh-button:hover, .segmented button:hover { border-color: var(--text-muted); }
@@ -1993,7 +2055,7 @@ function renderDogWalk(result) {
   </div>`;
 }
 
-function renderHue(result) {
+function renderHue(result, device) {
   if (!result) return '<div class="muted">No Hue data</div>';
   if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
@@ -2020,7 +2082,31 @@ function renderHue(result) {
       ${meta}
     </div>`;
   }).filter(Boolean).join('');
-  return `<div class="room-grid">${rooms}</div>`;
+  let automationHtml = '';
+  const vacancyManaged = result.vacancy_automation && result.vacancy_automation.active;
+  const vacancyNote = vacancyManaged
+    ? '<div class="automation-meta" style="margin-top:12px">Vacancy management is active; selected standing routines are held disabled until a confirmed return.</div>'
+    : '';
+  if (result.automation_error) {
+    automationHtml = `<div class="error-text" style="margin-top:12px">${escapeHtml(result.automation_error)}</div>`;
+  } else if (Array.isArray(result.automations) && result.automations.length) {
+    const rows = result.automations.map(item => {
+      const schedule = item.schedule || {};
+      const timing = [schedule.recurrence, schedule.when].filter(Boolean).join(' · ') || 'Schedule unavailable';
+      const action = item.enabled ? 'automation_disable' : 'automation_enable';
+      const label = item.enabled ? 'Disable' : 'Enable';
+      const stateLabel = item.enabled ? 'Enabled' : 'Disabled';
+      const extra = escapeHtml(JSON.stringify({name: item.name}));
+      return `<div class="automation-row">
+        <div><div class="automation-name">${escapeHtml(item.name)}</div><div class="automation-meta">${stateLabel} · ${escapeHtml(timing)}</div></div>
+        <button type="button" data-command data-device="${escapeHtml(device)}" data-action="${action}" data-extra="${extra}">${label}</button>
+      </div>`;
+    }).join('');
+    automationHtml = `${vacancyNote}<div class="automation-list"><div class="subcard-title">Automations</div>${rows}</div>`;
+  } else if (Array.isArray(result.automations)) {
+    automationHtml = '<div class="muted" style="margin-top:12px">No Hue automations configured</div>';
+  }
+  return `<div class="room-grid">${rooms}</div>${automationHtml}`;
 }
 
 function renderRoombas(result) {
@@ -2113,8 +2199,8 @@ function applyLocationFilter() {
 
 function renderDashboard() {
   const data = state.data || {};
-  setContent('hueCrosstownContent', renderHue(data.hue_crosstown));
-  setContent('hueCabinContent', renderHue(data.hue_cabin));
+  setContent('hueCrosstownContent', renderHue(data.hue_crosstown, 'hue_crosstown'));
+  setContent('hueCabinContent', renderHue(data.hue_cabin, 'hue_cabin'));
   setContent('nestContent', renderNest(data.nest));
   setContent('mideaContent', renderMidea(data.midea));
   setContent('cieloContent', renderCielo(data.cielo));

@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "active": true,
+  "targets": {
+    "cabin": {
+      "all_lights": {
+        "owner": "legacy",
+        "action": "turn_off",
+        "desired_state": "all_off",
+        "expiry_seconds": 600,
+        "settle_seconds": 10
+      }
+    },
+    "crosstown": {
+      "all_lights": {
+        "owner": "bus",
+        "action": "turn_off",
+        "desired_state": "all_off",
+        "expiry_seconds": 600,
+        "settle_seconds": 10
+      },
+      "daily_automations": {
+        "owner": "bus",
+        "action": "suspend_restore",
+        "desired_state": "vacancy_suspended",
+        "expiry_seconds": 600,
+        "settle_seconds": 10,
+        "automations": [
+          "Bedroom lights After dark",
+          "Master Bath Off",
+          "Potato Nightlight"
+        ]
+      }
+    }
+  }
+}

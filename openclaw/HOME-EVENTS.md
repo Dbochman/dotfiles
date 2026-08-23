@@ -23,12 +23,16 @@ The Nest listener and Cabin reviewer retain their own acknowledgement,
 capture, and delivery path. The bridge only mirrors already-committed Nest
 person/motion metadata into this journal; it never copies an image, model
 observation, message body, camera resource, or provider payload. Ring dog-walk
-behavior, the direct doorbell message, vacancy actions, and the August
-approval/mutation workflow also remain independent.
+behavior, the direct doorbell message, non-lighting vacancy actions, Cabin
+lighting, and the August approval/mutation workflow remain independent.
+Crosstown `all_lights` is the sole physical-action exception: a separate
+protected policy delegates that exact target to the bus action worker.
 
 The current installed production flags enable canonical presence, the Nest
 bridge, the Ring tee, the read-only August observer, and Cabin plus Crosstown
-local-presence enrichment. Ring and August were promoted together into shadow
+local-presence enrichment. Both vacancy-journal site adapters are also enabled
+after their silent future-only baseline, and the exact-target action worker is
+loaded. Ring and August were promoted together into shadow
 observation on July 23 after an explicit operator decision to accelerate their
 otherwise independent gates. August's exact protected binding passed a
 read-only status check and its first poll created a silent baseline with no
@@ -39,15 +43,20 @@ zero events and treated each repeated scan as a no-op. The tracked plist
 defaults remain disabled so a fresh install cannot silently activate any
 producer.
 
-An observation-only vacancy-action journal was approved and installed on
-`2026-08-15`. It wraps only actions already owned by `vacancy-actions.sh`,
-records protected bounded intent and outcomes, and fails open without changing
-legacy household behavior. It is not yet a bus producer: no new source flag,
-schema migration, adapter, correlation rule, reservation, action worker,
-notification, or recipient route is active. Publication and every physical
-action handoff remain later attended gates.
+The vacancy-action journal installed on `2026-08-15` now feeds a separately
+gated `vacancy` source. Existing journal history was silently baselined; only
+future completed runs publish bounded intent and outcome events. SQLite schema
+6 adds exact action reservations and outcomes. The first action policy assigns
+only Crosstown `all_lights` to the bus while Cabin lighting and every HVAC,
+Cielo, Eight Sleep, August, and Roomba action remain under the legacy runner.
+The worker revalidates fresh exact canonical vacancy immediately before at
+most one Hue command, then requires Hue group readback. It never retries an
+interrupted or ambiguous attempt. Schema 6 and both silently baselined vacancy
+site adapters were activated on `2026-08-22`; the attended Crosstown canary
+turned a live on-state off with exactly one command and a confirmed readback.
+The recurring worker then started idle with no pending or unknown action.
 
-The Dylan-only canary is now on SQLite schema v5. Its separate camera policy
+The Dylan-only canary is now on SQLite schema v6. Its separate camera policy
 was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
 `Living Room Wired` probes, a protected schema backup, full tests, and a
 shadow-first migration. Schema v5 was activated at `2026-08-07T22:40:59Z`
@@ -77,6 +86,7 @@ Canonical presence evaluation -> source outbox +--> protected source spools
 August `observe` over the existing MBP wrapper /               |
 Nest listener SQLite -> metadata bridge -------/               |
 Sanitized site scans -> local presence adapter -/               |
+Protected vacancy runs -> future-only adapter --/               |
                                                                v
                                                     single SQLite ingester
                                                                |
@@ -155,8 +165,16 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   arrivals/departures and household excursion intervals.
 - `bin/vacancy-action-journal.py` is a local observation-only source journal
   for the legacy vacancy runner. It validates exact protected presence
-  causality, records only allowlisted site/target/action outcomes, and has no
-  bus publication or device-control interface.
+  causality and records only allowlisted site/target/action outcomes.
+- `bin/vacancy-event-adapter.py` publishes only future terminal runs from
+  explicitly enabled sites after a silent baseline. It exposes no command,
+  provider identifier, or device interface.
+- `bin/home_event_action.py` owns exact action reservations and Hue actions.
+  It handles Crosstown all-lights-off plus exact standing-automation
+  suspension, continuous vacant-state enforcement, and restore-on-confirmed-
+  return. The worker holds an exclusive lock across crash recovery,
+  revalidation, command, and readback, and restores only routines recorded as
+  enabled before the matching vacancy cycle.
 - `skills/home-events/SKILL.md` constrains OpenClaw to the read-only wrapper and
   delegates only an explicit current-image request to `nest-camera`.
 - `ai.openclaw.ring-event-listener` remains the only Ring FCM connection and
@@ -165,9 +183,10 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   and publication are not automation dependencies.
 - `workspace/scripts/presence-detect.sh` remains the canonical presence writer
   and publishes transitions through its protected source outbox.
-- Seven attended-install LaunchAgents schedule ingestion, correlation, bounded
+- Nine attended-install LaunchAgents schedule ingestion, correlation, bounded
   delivery, bounded camera evidence, the disabled-by-default August observer
-  and Nest bridge, and the independently site-gated local-presence adapter.
+  and Nest bridge, the independently site-gated local-presence and vacancy
+  adapters, and the exact-target action worker.
 - The verifier has its own attended-install KeepAlive LaunchAgent. Merely
   deploying its files does not activate it: initialization, future-only
   consumer registration, and bootstrap are separate operator steps.
@@ -235,15 +254,19 @@ outside this rollout.
 ~/.openclaw/home-events/                 0700
 ├── config/                              0700
 │   ├── dedupe.key                       0600
-│   └── delivery-policy.json             0600
+│   ├── delivery-policy.json             0600
+│   └── action-policy.json               0600 exact target ownership
 ├── spool/                               0700
 │   ├── ring/                            0700
 │   ├── presence/                        0700
 │   ├── august/                          0700
-│   └── nest/                            0700
+│   ├── nest/                            0700
+│   └── vacancy/                         0700
 └── state/                               0700
     ├── events.sqlite3                   0600
     ├── delivery.lock                    0600
+    ├── action.lock                      0600
+    ├── hue-automation-suspensions.json 0600 durable exact restore set
     ├── camera-images/                   0700 normally empty; frames are 0600
     ├── events.sqlite3-wal/-shm          0600 while SQLite is open
     ├── ingest.lock                      0600
@@ -257,7 +280,9 @@ outside this rollout.
     ├── presence-local-adapter.json      0600 safe per-site debounce state
     ├── presence-local-adapter.pending.json
     │                                      0600 only during retry/recovery
-    └── presence-local-adapter.lock      0600
+    ├── presence-local-adapter.lock      0600
+    ├── vacancy-adapter.json             0600 per-site journal cursor
+    └── vacancy-adapter.lock             0600
 
 ~/.openclaw/cabin-entry-verifier/        0700
 ├── state.sqlite3                        0600 structured schedule/results
@@ -606,7 +631,7 @@ retried, preventing a duplicate.
 ## Attended rollout
 
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
-installed at schema v5. The Dylan-only Stage 4 canary entered
+installed at schema v6. The Dylan-only Stage 4 canary entered
 `limited_delivery` at `2026-08-05T15:42:14Z`; the tracked delivery policy is
 active for both residences with exact Ring-plus-Nest camera evidence enabled.
 Cabin uses Ring `driveway`/`front_door` plus Nest `Kitchen`; Crosstown uses
@@ -625,7 +650,7 @@ fresh or rebuilt installation must first:
 2. Deploy the bus scripts, source adapters and bridge, skill, and any tracked
    LaunchAgents through the normal dotfiles flow.
 3. Back up the protected home-event database, run `home-eventctl init` to apply the
-   attended schema-v5 migration, then verify every runtime directory is `0700`
+   attended schema-v6 migration, then verify every runtime directory is `0700`
    and every runtime regular file is `0600`.
 4. Install the exact protected delivery policy while mode remains `shadow`.
    Its tracked rollout scope is Dylan only, both sites, three high-confidence

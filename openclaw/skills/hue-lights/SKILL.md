@@ -52,6 +52,21 @@ hue all-off
 hue lights
 ```
 
+### Inspect or change a standing automation
+```bash
+hue --crosstown automations
+hue --crosstown automation status 'Potato Nightlight'
+hue --crosstown automation disable 'Potato Nightlight'
+hue --crosstown automation enable 'Potato Nightlight'
+```
+
+Automation names are exact and case-sensitive; never substitute a partial or
+fuzzy match. Read the automation status first, make at most the requested
+change, and rely on the CLI's readback result. Crosstown's vacancy action worker
+manages `Bedroom lights After dark`, `Master Bath Off`, and `Potato Nightlight`:
+while Crosstown is confirmed vacant, it will disable those routines again and
+restore only the ones that were enabled at the start of the vacancy cycle.
+
 ## Rooms
 
 ### Crosstown residence (9 rooms)
