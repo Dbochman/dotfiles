@@ -8,6 +8,7 @@
     <array>
         <string>/bin/bash</string>
         <string>/Users/dbochman/.openclaw/bin/opentable-refresh-token.sh</string>
+        <string>--scheduled</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -17,14 +18,24 @@
         <string>/Users/dbochman</string>
     </dict>
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Weekday</key>
-        <integer>3</integer>
-        <key>Hour</key>
-        <integer>4</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>4</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key>
+            <integer>3</integer>
+            <key>Hour</key>
+            <integer>4</integer>
+            <key>Minute</key>
+            <integer>30</integer>
+        </dict>
+    </array>
     <key>RunAtLoad</key>
     <false/>
     <key>StandardOutPath</key>

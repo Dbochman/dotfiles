@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -184,6 +185,123 @@ printf 'ok\n'
             ["click=Use email instead", "click=Continue"],
         )
         self.assertNotIn(token, result.stderr)
+
+    def test_scheduled_failures_get_one_retry_then_exhaust_the_budget(self) -> None:
+        result = self.run_shell(
+            r'''
+prepare_runtime_dir
+ATTEMPT_KIND=scheduled
+ATTEMPT_NUMBER=1
+begin_attempt
+write_status failed email_verification_email verification_email_unavailable
+[[ "$(scheduled_decision)" == "attempt:2" ]]
+ATTEMPT_NUMBER=2
+write_status failed email_verification_email verification_email_unavailable
+[[ "$(scheduled_decision)" == "exhausted" ]]
+STATUS_FINALIZED=1
+printf 'ok\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ok\n")
+
+    def test_recent_success_suppresses_the_second_scheduled_slot(self) -> None:
+        result = self.run_shell(
+            r'''
+prepare_runtime_dir
+ATTEMPT_KIND=scheduled
+ATTEMPT_NUMBER=1
+begin_attempt
+write_status success persisted_session completed
+[[ "$(scheduled_decision)" == "skip" ]]
+STATUS_FINALIZED=1
+printf 'ok\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ok\n")
+        status_path = self.home / ".openclaw" / "run" / "opentable-refresh-status.json"
+        self.assertEqual(status_path.stat().st_mode & 0o777, 0o600)
+        status = json.loads(status_path.read_text())
+        self.assertEqual(
+            set(status),
+            {
+                "schema_version",
+                "attempt_kind",
+                "attempt_number",
+                "outcome",
+                "stage",
+                "reason_code",
+                "started_at",
+                "completed_at",
+                "last_success_at",
+            },
+        )
+        serialized = status_path.read_text()
+        self.assertNotIn("expected@example.invalid", serialized)
+        self.assertNotIn("token", serialized)
+
+    def test_malformed_prior_status_cannot_block_a_new_status_write(self) -> None:
+        status_path = self.home / ".openclaw" / "run" / "opentable-refresh-status.json"
+        status_path.parent.mkdir(parents=True)
+        status_path.write_text("[]\n", encoding="utf-8")
+        status_path.chmod(0o600)
+        result = self.run_shell(
+            r'''
+prepare_runtime_dir
+ATTEMPT_KIND=scheduled
+ATTEMPT_NUMBER=1
+begin_attempt
+write_status success persisted_session completed
+STATUS_FINALIZED=1
+printf 'ok\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ok\n")
+        status = json.loads(status_path.read_text())
+        self.assertEqual(status["outcome"], "success")
+
+    def test_email_failure_records_the_exact_stage_without_retrying_login(self) -> None:
+        result = self.run_shell(
+            r'''
+mkdir -p "$RUNTIME_DIR"
+calls_file="$RUNTIME_DIR/login-calls"
+open_tab() { TAB_ID=fake-tab; }
+login_with_email() { printf 'called\n' >> "$calls_file"; return 15; }
+if refresh_with_email_login; then exit 71; fi
+[[ "$CURRENT_STAGE" == "email_verification_email" ]]
+[[ "$FAILURE_CODE" == "verification_email_unavailable" ]]
+[[ "$(wc -l < "$calls_file" | tr -d ' ')" == "1" ]]
+printf 'ok\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ok\n")
+        self.assertIn("did not produce a working CLI token", result.stderr)
+
+    def test_launchagent_has_bounded_second_schedule_slot(self) -> None:
+        plist_path = (
+            REPO_ROOT
+            / "openclaw"
+            / "launchagents"
+            / "ai.openclaw.opentable-refresh.plist"
+        )
+        with plist_path.open("rb") as handle:
+            config = plistlib.load(handle)
+
+        self.assertEqual(config["ProgramArguments"][-1], "--scheduled")
+        self.assertEqual(
+            config["StartCalendarInterval"],
+            [
+                {"Weekday": 3, "Hour": 4, "Minute": 0},
+                {"Weekday": 3, "Hour": 4, "Minute": 30},
+            ],
+        )
 
 
 if __name__ == "__main__":

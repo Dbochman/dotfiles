@@ -13,6 +13,9 @@ EXPECTED_EMAIL_CACHE="$HOME/.cache/openclaw-gateway/opentable_email"
 SECRETS_CACHE="$HOME/.openclaw/.secrets-cache"
 RUNTIME_DIR="$HOME/.openclaw/run"
 LOCK_DIR="$RUNTIME_DIR/opentable-refresh.lock"
+STATUS_FILE="$RUNTIME_DIR/opentable-refresh-status.json"
+SCHEDULE_WINDOW_SECONDS=21600
+MAX_SCHEDULED_ATTEMPTS=2
 OT_EMAIL=""
 GWS_ACCOUNT=""
 OT_DASHBOARD_URL="https://www.opentable.com/user/dining-dashboard"
@@ -24,11 +27,220 @@ TAB_ID=""
 PREVIOUS_TOKEN=""
 PREVIOUS_BINDING_BACKUP=""
 LOCK_HELD=0
+ATTEMPT_KIND="manual"
+ATTEMPT_NUMBER=1
+ATTEMPT_STARTED=0
+STATUS_FINALIZED=0
+STARTED_AT=""
+CURRENT_STAGE="initialization"
+FAILURE_CODE="unexpected_failure"
 
 umask 077
 
 log() {
   printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >&2
+}
+
+set_failure_context() {
+  CURRENT_STAGE="$1"
+  FAILURE_CODE="$2"
+}
+
+scheduled_decision() {
+  python3 - "$STATUS_FILE" "$SCHEDULE_WINDOW_SECONDS" "$MAX_SCHEDULED_ATTEMPTS" <<'PY'
+import datetime
+import json
+import os
+import pathlib
+import re
+import stat
+import sys
+
+path = pathlib.Path(sys.argv[1])
+window_seconds = int(sys.argv[2])
+maximum_attempts = int(sys.argv[3])
+try:
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+        or metadata.st_size <= 0
+        or metadata.st_size > 4096
+    ):
+        raise ValueError
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if set(value) != {
+        "schema_version", "attempt_kind", "attempt_number", "outcome", "stage",
+        "reason_code", "started_at", "completed_at", "last_success_at",
+    } or value["schema_version"] != 1:
+        raise ValueError
+    attempt_kind = value["attempt_kind"]
+    attempt_number = value["attempt_number"]
+    outcome = value["outcome"]
+    if attempt_kind not in {"manual", "scheduled"}:
+        raise ValueError
+    if (
+        not isinstance(attempt_number, int)
+        or isinstance(attempt_number, bool)
+        or attempt_number not in range(1, maximum_attempts + 1)
+    ):
+        raise ValueError
+    if outcome not in {"success", "failed"}:
+        raise ValueError
+    code = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+    if code.fullmatch(value["stage"]) is None or code.fullmatch(value["reason_code"]) is None:
+        raise ValueError
+    timestamps = (value["started_at"], value["completed_at"])
+    if value["last_success_at"] is not None:
+        timestamps += (value["last_success_at"],)
+    parsed_timestamps = []
+    for timestamp in timestamps:
+        if not isinstance(timestamp, str):
+            raise ValueError
+        parsed = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError
+        parsed_timestamps.append(parsed.astimezone(datetime.timezone.utc))
+    completed = parsed_timestamps[1]
+except (OSError, UnicodeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+    print("attempt:1")
+    raise SystemExit
+
+age = (datetime.datetime.now(datetime.timezone.utc) - completed).total_seconds()
+if age < -300 or age > window_seconds:
+    print("attempt:1")
+elif outcome == "success":
+    print("skip")
+elif attempt_kind == "scheduled" and attempt_number >= maximum_attempts:
+    print("exhausted")
+elif attempt_kind == "scheduled":
+    print(f"attempt:{attempt_number + 1}")
+else:
+    print("attempt:1")
+PY
+}
+
+write_status() {
+  local outcome="$1" stage="$2" reason_code="$3" completed_at
+  completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  python3 - "$STATUS_FILE" "$outcome" "$stage" "$reason_code" \
+    "$STARTED_AT" "$completed_at" "$ATTEMPT_KIND" "$ATTEMPT_NUMBER" <<'PY'
+import datetime
+import json
+import os
+import pathlib
+import re
+import stat
+import sys
+import tempfile
+
+path = pathlib.Path(sys.argv[1])
+outcome, stage, reason, started_at, completed_at, attempt_kind = sys.argv[2:8]
+attempt_number = int(sys.argv[8])
+code = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+if (
+    outcome not in {"success", "failed"}
+    or attempt_kind not in {"manual", "scheduled"}
+    or attempt_number not in {1, 2}
+    or code.fullmatch(stage) is None
+    or code.fullmatch(reason) is None
+):
+    raise SystemExit(1)
+for timestamp in (started_at, completed_at):
+    parsed = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise SystemExit(1)
+
+last_success = None
+try:
+    metadata = path.lstat()
+    if (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == os.getuid()
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and metadata.st_nlink == 1
+        and 0 < metadata.st_size <= 4096
+    ):
+        previous = json.loads(path.read_text(encoding="utf-8"))
+        candidate = previous.get("last_success_at")
+        if candidate is not None:
+            parsed = datetime.datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                last_success = candidate
+except (
+    AttributeError,
+    OSError,
+    UnicodeError,
+    TypeError,
+    ValueError,
+    json.JSONDecodeError,
+):
+    pass
+if outcome == "success":
+    last_success = completed_at
+
+payload = {
+    "schema_version": 1,
+    "attempt_kind": attempt_kind,
+    "attempt_number": attempt_number,
+    "outcome": outcome,
+    "stage": stage,
+    "reason_code": reason,
+    "started_at": started_at,
+    "completed_at": completed_at,
+    "last_success_at": last_success,
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+temporary = pathlib.Path(temporary_name)
+try:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as handle:
+        json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    os.chmod(path, 0o600, follow_symlinks=False)
+finally:
+    try:
+        temporary.unlink()
+    except FileNotFoundError:
+        pass
+PY
+}
+
+begin_attempt() {
+  ATTEMPT_STARTED=1
+  STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  set_failure_context initialization unexpected_failure
+}
+
+finish_status() {
+  local outcome="$1" stage="$2" reason_code="$3"
+  if ! write_status "$outcome" "$stage" "$reason_code"; then
+    set_failure_context status_write status_write_failed
+    log "ERROR: Could not persist safe OpenTable refresh status"
+    return 1
+  fi
+  STATUS_FINALIZED=1
+}
+
+prepare_runtime_dir() {
+  mkdir -p "$RUNTIME_DIR"
+  if [[ ! -d "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]]; then
+    log "ERROR: OpenTable runtime directory must be a non-symlink directory"
+    return 1
+  fi
+  local runtime_owner
+  runtime_owner=$(stat -f '%u' "$RUNTIME_DIR") || return 1
+  if [[ "$runtime_owner" != "$(id -u)" ]]; then
+    log "ERROR: OpenTable runtime directory must be owned by the current user"
+    return 1
+  fi
+  chmod 700 "$RUNTIME_DIR"
 }
 
 close_tab() {
@@ -54,8 +266,18 @@ cleanup() {
   fi
 }
 
+on_exit() {
+  local exit_code="$1"
+  trap - EXIT
+  set +e
+  if [[ "$ATTEMPT_STARTED" == "1" && "$STATUS_FINALIZED" != "1" ]]; then
+    write_status failed "$CURRENT_STAGE" "$FAILURE_CODE" || true
+  fi
+  cleanup
+  exit "$exit_code"
+}
+
 acquire_lock() {
-  mkdir -p "$RUNTIME_DIR"
   if mkdir "$LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$LOCK_DIR/pid"
     LOCK_HELD=1
@@ -75,7 +297,7 @@ acquire_lock() {
   LOCK_HELD=1
 }
 
-trap cleanup EXIT
+trap 'on_exit $?' EXIT
 
 if [[ ! -f "$SECRETS_CACHE" || -L "$SECRETS_CACHE" ]]; then
   log "Protected cache must be a regular non-symlink file"
@@ -536,20 +758,20 @@ wait_for_email_code() {
 }
 
 login_with_email() {
-  click_button "Use email instead" || return 1
-  fill_textbox "Email" "$OT_EMAIL" || return 1
-  click_button "Continue" || return 1
+  click_button "Use email instead" || return 11
+  fill_textbox "Email" "$OT_EMAIL" || return 12
+  click_button "Continue" || return 13
   wait_for_ref textbox "Enter verification code" 20 >/dev/null || {
     log "ERROR: OpenTable did not reach the verification screen"
-    return 1
+    return 14
   }
 
   local code
   code=$(wait_for_email_code) || {
     log "ERROR: Could not retrieve the OpenTable verification email"
-    return 1
+    return 15
   }
-  fill_textbox "Enter verification code" "$code" || return 1
+  fill_textbox "Enter verification code" "$code" || return 16
   # OpenTable may auto-submit once the final code digit is filled. Treat the
   # resulting auth token as success instead of requiring a button that has
   # already disappeared during the authenticated redirect.
@@ -565,15 +787,30 @@ login_with_email() {
       printf '%s\n' "$token"
       return 0
     fi
-    return 1
+    return 17
   }
-  wait_for_atk
+  wait_for_atk || return 17
+}
+
+set_login_failure_context() {
+  case "$1" in
+    11) set_failure_context email_method email_method_unavailable ;;
+    12) set_failure_context email_address email_address_unavailable ;;
+    13) set_failure_context email_continue email_continue_unavailable ;;
+    14) set_failure_context email_verification_screen verification_screen_unavailable ;;
+    15) set_failure_context email_verification_email verification_email_unavailable ;;
+    16) set_failure_context email_verification_submit verification_submit_failed ;;
+    17) set_failure_context email_token token_unavailable ;;
+    *) set_failure_context email_login email_login_failed ;;
+  esac
 }
 
 refresh_from_persisted_session() {
   local token=""
   local proof="browser_email_hash"
+  set_failure_context persisted_open browser_open_failed
   open_tab "$OT_DASHBOARD_URL" || return 1
+  set_failure_context persisted_session persisted_session_unusable
   token=$(wait_for_atk || true)
   if is_atk "$token" && wait_for_expected_browser_identity; then
     if binding_matches "$token"; then
@@ -597,36 +834,93 @@ refresh_from_persisted_session() {
 }
 
 refresh_with_email_login() {
-  local token=""
+  local token="" login_status=0
+  set_failure_context email_open browser_open_failed
   open_tab "$OT_LOGIN_URL" || return 1
-  token=$(login_with_email || true)
-  if is_atk "$token" \
-    && "$PINCHTAB_INSTANCE_HELPER" navigate "$PINCHTAB_INSTANCE_ID" "$TAB_ID" "$OT_DASHBOARD_URL" >/dev/null 2>&1 \
-    && wait_for_expected_browser_identity \
-    && install_and_validate_token "$token" email_otp; then
-    log "OK: refreshed OpenTable token through email verification"
-    return 0
+  if token=$(login_with_email); then
+    login_status=0
+  else
+    login_status=$?
   fi
-  log "ERROR: OpenTable login did not produce a working CLI token"
-  return 1
+  if [[ "$login_status" -ne 0 ]]; then
+    set_login_failure_context "$login_status"
+    log "ERROR: OpenTable login did not produce a working CLI token"
+    return 1
+  fi
+  if ! is_atk "$token"; then
+    set_failure_context email_token token_invalid
+    return 1
+  fi
+  set_failure_context dashboard_navigation dashboard_navigation_failed
+  if ! "$PINCHTAB_INSTANCE_HELPER" navigate "$PINCHTAB_INSTANCE_ID" "$TAB_ID" "$OT_DASHBOARD_URL" >/dev/null 2>&1; then
+    return 1
+  fi
+  set_failure_context account_identity account_identity_unverified
+  if ! wait_for_expected_browser_identity; then
+    return 1
+  fi
+  set_failure_context token_install token_rejected
+  if ! install_and_validate_token "$token" email_otp; then
+    return 1
+  fi
+  log "OK: refreshed OpenTable token through email verification"
 }
 
 main() {
+  local scheduled=0 decision
+  if [[ "${1:-}" == "--scheduled" && $# -eq 1 ]]; then
+    scheduled=1
+    ATTEMPT_KIND="scheduled"
+  elif [[ $# -ne 0 ]]; then
+    log "Usage: opentable-refresh-token.sh [--scheduled]"
+    return 2
+  fi
+  prepare_runtime_dir || return 1
   acquire_lock
-  mkdir -p "$RUNTIME_DIR" "$(dirname "$BINDING_FILE")"
+  mkdir -p "$(dirname "$BINDING_FILE")"
+  if [[ "$scheduled" == "1" ]]; then
+    decision=$(scheduled_decision)
+    case "$decision" in
+      skip)
+        log "Recent successful OpenTable refresh; scheduled retry is not needed"
+        return 0
+        ;;
+      exhausted)
+        log "ERROR: OpenTable scheduled retry budget is exhausted"
+        return 1
+        ;;
+      attempt:1) ATTEMPT_NUMBER=1 ;;
+      attempt:2) ATTEMPT_NUMBER=2 ;;
+      *)
+        log "ERROR: OpenTable retry state is invalid"
+        return 1
+        ;;
+    esac
+  fi
+  begin_attempt
   if [[ -r "$TOKEN_CACHE" ]]; then
     PREVIOUS_TOKEN=$(cat "$TOKEN_CACHE" 2>/dev/null || true)
   fi
   snapshot_previous_binding
+  set_failure_context protected_identity protected_identity_failed
   if ! write_expected_identity; then
     log "ERROR: Could not establish protected OpenTable account identity"
-    exit 1
+    return 1
   fi
 
-  acquire_pinchtab_instance || exit 1
-  refresh_from_persisted_session && return
-  refresh_with_email_login && return
-  exit 1
+  set_failure_context browser_acquire browser_acquire_failed
+  acquire_pinchtab_instance || return 1
+  if refresh_from_persisted_session; then
+    finish_status success persisted_session completed || return 1
+    return 0
+  fi
+  if refresh_with_email_login; then
+    finish_status success email_verification completed || return 1
+    return 0
+  fi
+  log "ERROR: OpenTable refresh failed stage=$CURRENT_STAGE reason=$FAILURE_CODE attempt=$ATTEMPT_NUMBER/$MAX_SCHEDULED_ATTEMPTS"
+  finish_status failed "$CURRENT_STAGE" "$FAILURE_CODE" || return 1
+  return 1
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

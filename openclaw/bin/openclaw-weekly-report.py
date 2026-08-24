@@ -7,8 +7,10 @@ cron agent, which should return its stdout verbatim.
 """
 
 import json
+import os
 import re
 import sqlite3
+import stat
 import subprocess
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -267,6 +269,57 @@ def launchd_status(label):
     }
 
 
+def read_opentable_refresh_status():
+    path = HOME / ".openclaw" / "run" / "opentable-refresh-status.json"
+    expected_fields = {
+        "schema_version",
+        "attempt_kind",
+        "attempt_number",
+        "outcome",
+        "stage",
+        "reason_code",
+        "started_at",
+        "completed_at",
+        "last_success_at",
+    }
+    try:
+        metadata = path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+            or not 0 < metadata.st_size <= 4096
+        ):
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if set(value) != expected_fields or value["schema_version"] != 1:
+            return None
+        if value["attempt_kind"] not in {"manual", "scheduled"}:
+            return None
+        attempt_number = value["attempt_number"]
+        if (
+            not isinstance(attempt_number, int)
+            or isinstance(attempt_number, bool)
+            or attempt_number not in {1, 2}
+            or value["outcome"] not in {"success", "failed"}
+        ):
+            return None
+        code = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+        if not code.fullmatch(value["stage"]) or not code.fullmatch(value["reason_code"]):
+            return None
+        for field in ("started_at", "completed_at"):
+            parsed = parse_timestamp(value[field])
+            if parsed is None:
+                return None
+            value[f"_{field}"] = parsed
+        if value["last_success_at"] is not None and parse_timestamp(value["last_success_at"]) is None:
+            return None
+    except (OSError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        return None
+    return value
+
+
 def opentable_attention(now):
     status = launchd_status("ai.openclaw.opentable-refresh")
     log_path = HOME / ".openclaw" / "logs" / "opentable-refresh.log"
@@ -278,6 +331,19 @@ def opentable_attention(now):
         return "OpenTable token refresh last exited with an error"
     if now.astimezone(LOCAL_TZ) - failed_at > timedelta(days=8):
         return None
+    refresh = read_opentable_refresh_status()
+    if refresh and refresh["outcome"] == "failed":
+        completed = refresh["_completed_at"]
+        if abs((failed_at.astimezone(UTC) - completed).total_seconds()) <= 3600:
+            if refresh["attempt_kind"] == "scheduled":
+                attempt = f"scheduled attempt {refresh['attempt_number']}/2"
+            else:
+                attempt = "a manual attempt"
+            return (
+                f"OpenTable token refresh failed {failed_at.strftime('%a %m/%d')} after "
+                f"{attempt} at {refresh['stage']} ({refresh['reason_code']}); "
+                "it needs separate auth repair"
+            )
     return f"OpenTable token refresh failed {failed_at.strftime('%a %m/%d')}; it needs separate auth repair"
 
 

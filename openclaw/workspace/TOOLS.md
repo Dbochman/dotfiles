@@ -144,7 +144,8 @@ restaurant-book run --job-id <canonical-job-id>
   an attended shell. That command does not populate Resy's separate provider
   cache; recover a missing Resy cache with attended-TTY `resy auth`, never from
   the gateway or cron. OpenTable's weekly LaunchAgent refreshes its bound
-  token; attended recovery is
+  token and gets one bounded retry after 30 minutes; attended recovery after
+  both attempts fail is
   `~/.openclaw/bin/opentable-refresh-token.sh`.
 - Never print or inspect protected caches, browser contents, or raw responses.
   Handle provider tokens, booking URLs, approval IDs, and

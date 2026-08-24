@@ -32,7 +32,7 @@ Each service uses one of two patterns:
 | `ola-webhook-bridge.log` / `.err.log` | `ai.openclaw.ola-webhook-bridge` | Owner-only operational metadata and stderr for the HMAC-verifying Ola wake bridge; never callback bodies, signatures, or credentials |
 | `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Safe Cielo API-refresh outcomes and bounded PinchTab fallback state; never tokens or raw responses |
 | `cielo-passive-grab.log` / `cielo-reauth-capture.log` | Cielo bounded recovery helpers | Token-free CDP capture progress for automated and attended recovery; files remain owner-only |
-| `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh; stdout and stderr share this file |
+| `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh plus one conditional retry; stdout and stderr share this file. Credential-free outcome metadata is stored owner-only at `~/.openclaw/run/opentable-refresh-status.json` for retry control and weekly health reporting. |
 | `~/Library/Logs/openclaw/gateway.log` | `ai.openclaw.gateway` | Current generated-service gateway output; the tracked recovery plist instead uses `~/.openclaw/logs/gateway.{log,err.log}` |
 | `nest-cron.log` | `ai.openclaw.nest-snapshot` | Merged climate and Airthings air-quality snapshot cron; BLE failures use safe categories only |
 | `airthings-snapshot.err.log` | `ai.openclaw.airthings-snapshot` | Safe failures from the five-minute local BLE sampler; protected current health is stored at `~/.openclaw/airthings/snapshot-status.json` |

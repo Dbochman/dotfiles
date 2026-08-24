@@ -446,7 +446,10 @@ grocery automation, and weekly finance automation acquire isolated tabs
 through `~/.openclaw/bin/pinchtab-headless-instance`. OpenTable uses the
 `opentable` profile, grocery uses `grocery`, and finance uses `finance`. The
 helper refuses to navigate a visible PinchTab instance and stops only instances
-that it created. Cielo does not use this helper: its fallback owns a separate
+that it created. OpenTable's 4:00 AM refresh records a credential-free,
+owner-only status under `~/.openclaw/run/`; a failed first attempt receives one
+bounded retry at 4:30 AM, while a recent success makes that second slot a no-op.
+Cielo does not use this helper: its fallback owns a separate
 direct headless lifecycle on `cielo`. The tracked LaunchAgent explicitly sets
 `CIELO_ALLOW_HEADLESS_LOGIN=true`, allowing one bounded credential submission
 after passive token capture is armed. A failed submission enters a six-hour
@@ -495,7 +498,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | `ai.openclaw.finance-refresh` | Daily 6:15 AM | `finance-refresh.py` | Sequential cache-only Plaid and crypto refresh with retries and combined health; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
-| `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM | `opentable-refresh-token.sh` | Refreshes the OpenTable CLI token in a managed headless PinchTab instance, binds the exact browser token to the protected expected-account hash, and uses GWS email 2FA only when the persisted account identity cannot be proven. Uses the cache-only secret environment and does not touch visible browser tabs. |
+| `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM + conditional 4:30 AM retry | `opentable-refresh-token.sh --scheduled` | Refreshes the OpenTable CLI token in a managed headless PinchTab instance, binds the exact browser token to the protected expected-account hash, and uses GWS email 2FA only when the persisted account identity cannot be proven. A safe owner-only status limits recovery to two attempts in six hours and gives the weekly report an exact failure stage. Uses the cache-only secret environment and does not touch visible browser tabs. |
 
 ## Mac Mini — Event-Driven (WatchPaths)
 
