@@ -170,9 +170,10 @@ The direct voice `microphone` tool and owner-only `reachyctl mute|unmute`
 commands set Reachy's daemon-managed input volume to zero or restore its last
 nonzero value. Mute holds a bowed quiet pose with folded antennas and suspends
 face tracking. After the pose settles, only the antenna motors relax; moving
-both antennas by about 14 degrees for roughly 300 ms unmutes Reachy physically.
-Unmute returns to neutral and restores idle tracking. Reachy's UI and a trusted
-remote OpenClaw channel remain recovery paths.
+both antennas by about 14 degrees for roughly 300 ms after they establish a
+stable relaxed baseline unmutes Reachy physically. Natural relaxation drift is
+ignored. Unmute returns to neutral and restores idle tracking. Reachy's UI and
+a trusted remote OpenClaw channel remain recovery paths.
 
 The direct voice model has local movement, camera, emotion, dance, and preset
 tools. Requests needing OpenClaw skills, external/current data, messages, files,

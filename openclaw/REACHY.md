@@ -2,7 +2,7 @@
 
 This is the canonical description and runbook for the physically secured
 Wireless Reachy Mini at Crosstown. It documents the deployed architecture as
-verified on July 16, 2026. ClawBody application code lives in the
+verified on August 27, 2026. ClawBody application code lives in the
 [`Dbochman/clawbody`](https://github.com/Dbochman/clawbody) fork; this repository
 owns the OpenClaw plugin, skills, relay services, and operating policy.
 
@@ -11,7 +11,7 @@ owns the OpenClaw plugin, skills, relay services, and operating policy.
 | Component | Deployed state |
 | --- | --- |
 | Reachy Mini | `pollen@192.168.165.129`, Wireless daemon `1.9.0`, hardware motor control enabled |
-| ClawBody | `/home/pollen/clawbody`, `main` at `8bb58bc`, installed editable in `/venvs/apps_venv` |
+| ClawBody | `/home/pollen/clawbody`, `main` at `eb96b62`, installed editable in `/venvs/apps_venv` |
 | Crosstown MBP | `dbochman@100.107.209.85` (`192.168.165.111` on the Crosstown LAN), always-on relay and primary robot-control host |
 | Mac mini | `dbochman@100.104.114.1`, OpenClaw gateway and agent host |
 | Reachy Mini Control | Pollen Robotics `0.9.33`, installed on the Crosstown MBP, normally closed |
@@ -200,14 +200,17 @@ Mute also:
 5. waits one second for the pose to settle;
 6. relaxes only the left and right antenna motors.
 
-While muted, moving **both** antennas at least `0.25` radians (about 14 degrees)
-for three consecutive 100 ms samples unmutes Reachy. ClawBody queues the neutral
-pose, waits 120 ms, and then re-enables antenna torque to avoid a snap back. A
-single displaced antenna does not trigger the gesture. An authenticated
-`reachyctl unmute` remains the remote recovery path. Reachy's dashboard slider
-operates at the daemon volume layer and may not immediately reflect a
-ClawBody-initiated change; use `reachyctl status` as the authoritative combined
-microphone, pose-watcher, and control state.
+While muted, the relaxed antennas must first remain stable for five consecutive
+100 ms samples. Moving **both** antennas at least `0.25` radians (about 14
+degrees) from that stable baseline for three consecutive samples then unmutes
+Reachy. This prevents natural post-relaxation antenna drift from immediately
+undoing a mute. ClawBody queues the neutral pose, waits 120 ms, and then
+re-enables antenna torque to avoid a snap back. A single displaced antenna does
+not trigger the gesture. An authenticated `reachyctl unmute` remains the remote
+recovery path. Reachy's dashboard slider operates at the daemon volume layer
+and may not immediately reflect a ClawBody-initiated change; use `reachyctl
+status` as the authoritative combined microphone, pose-watcher, and control
+state.
 
 The wake-word implementation and bundled `hey_claude.onnx` model remain in
 ClawBody, but `Hey Claude` gating is intentionally disabled. If re-enabled, the

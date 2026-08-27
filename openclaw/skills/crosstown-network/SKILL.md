@@ -40,7 +40,7 @@ ssh dylans-macbook-pro "<command>"
 | .117 | movie-room.lan | Apple TV (Movie Room) |
 | .119 | ys-l16030313e8.lan | Yeelight / smart light |
 | .124 | dylans-iphone.lan | Dylan's iPhone (presence identity is protected separately) |
-| .129 | huesyncbox.lan | Philips Hue Sync Box |
+| .129 | reachy-mini.lan | Reachy Mini |
 | .142, .162, .164, .178, .236 | espressif.lan | ESP32 smart home devices |
 | .4 | irobot-81039f...lan | iRobot Roomba Combo 10 Max |
 | .3 | irobot-195efa...lan | iRobot Roomba J5 (scoomba) |
