@@ -85,7 +85,12 @@ def _pets(payload: dict) -> str:
 def _history(payload: dict) -> str:
     lines = [f"{payload.get('alias', 'Litter-Robot')} history:"]
     for item in payload.get("history", []):
-        lines.append(f"  {item.get('timestamp', '?')} — {item.get('action', '?')}")
+        action = item.get("action", "?")
+        if isinstance(item.get("weight_lbs"), (int, float)) and not isinstance(
+            item.get("weight_lbs"), bool
+        ):
+            action = f"{action}: {item['weight_lbs']} lbs"
+        lines.append(f"  {item.get('timestamp', '?')} — {action}")
     return "\n".join(lines)
 
 

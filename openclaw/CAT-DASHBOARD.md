@@ -19,6 +19,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   samples.
 - **Whisker stations** show connectivity, state, waste level, litter level,
   cycle count, and recent activity for the exact enrolled robot at each home.
+  Weight events use timestamp-aligned pet history rather than malformed raw
+  robot labels; an unmatched implausible value is shown only as `Weight
+  recorded`.
 - **Petlibro stations** show live feeder and fountain telemetry when the cloud
   account returns those devices. Each feeder gets a separate exact schedule
   readback: the card shows the provider's master switch, effective number of

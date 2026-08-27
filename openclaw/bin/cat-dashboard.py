@@ -657,7 +657,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       document.getElementById('activity').innerHTML = events.length ? `<div class="card timeline">${events.map(event => {
         const date = new Date(event.timestamp); const when = Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
         const day = Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString([], {month:'short',day:'numeric'});
-        return `<div class="event"><time>${esc(when)}<br><span>${esc(day)}</span></time><strong>${esc(siteName(event.site))}</strong><span class="event-action">${esc(event.action || 'Litter-box activity')}</span></div>`;
+        const weightKnown = event.weight_lbs !== null && event.weight_lbs !== undefined && Number.isFinite(Number(event.weight_lbs));
+        const action = weightKnown ? `Weight recorded · ${Number(event.weight_lbs)} lb` : event.action || 'Litter-box activity';
+        return `<div class="event"><time>${esc(when)}<br><span>${esc(day)}</span></time><strong>${esc(siteName(event.site))}</strong><span class="event-action">${esc(action)}</span></div>`;
       }).join('')}</div>` : '<div class="empty">No recent litter-box activity is available for this location.</div>';
     }
 

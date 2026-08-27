@@ -330,6 +330,7 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("Directions armed", text)
         self.assertIn("Schedules paused", text)
         self.assertIn("Recent litter-box activity", text)
+        self.assertIn("Weight recorded ·", text)
         self.assertIn("Scheduled meals", text)
         self.assertIn("Pause schedule", text)
         self.assertIn("Resume schedule", text)

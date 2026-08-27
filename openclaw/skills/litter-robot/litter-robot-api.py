@@ -8,6 +8,7 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tempfile
@@ -28,6 +29,12 @@ OBSERVE_ACTIONS = {
     "cat detected": "cat_detected",
     "cat sensor interrupted": "cat_sensor_interrupted",
 }
+WEIGHT_ACTION_PATTERN = re.compile(
+    r"^(?:pet weight recorded:\s*)?(?P<weight>\d+(?:\.\d+)?)\s*lbs?$",
+    re.IGNORECASE,
+)
+MIN_CAT_WEIGHT_LBS = 1.0
+MAX_CAT_WEIGHT_LBS = 40.0
 
 
 class LitterRobotError(Exception):
@@ -390,10 +397,11 @@ async def command_history(selector: str, limit: int) -> dict[str, Any]:
             "invalid_limit", "History limit must be between 1 and 100.", non_retryable=True
         )
     binding = _binding_for_selector(load_bindings(), selector)
-    account = await connect_account()
+    account = await connect_account(load_pets=True)
     try:
         robot = _resolve_robot(account, binding)
-        entries = await _activity_entries(robot, limit)
+        pets = await _pet_summaries(account, history=True)
+        entries = await _activity_entries(robot, limit, _weight_index(pets))
         return {
             "ok": True,
             "alias": binding["alias"],
@@ -404,22 +412,81 @@ async def command_history(selector: str, limit: int) -> dict[str, Any]:
         await account.disconnect()
 
 
-async def _activity_entries(robot: object, limit: int) -> list[dict[str, Any]]:
+def _timestamp_key(value: object) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return int(parsed.timestamp())
+
+
+def _weight_index(pets: list[dict[str, Any]]) -> dict[int, set[float]]:
+    index: dict[int, set[float]] = {}
+    for pet in pets:
+        for sample in pet.get("recent_weights", []):
+            if not isinstance(sample, dict):
+                continue
+            timestamp = _timestamp_key(sample.get("timestamp"))
+            weight = sample.get("weight_lbs")
+            if (
+                timestamp is None
+                or not isinstance(weight, (int, float))
+                or isinstance(weight, bool)
+                or not MIN_CAT_WEIGHT_LBS <= float(weight) <= MAX_CAT_WEIGHT_LBS
+            ):
+                continue
+            index.setdefault(timestamp, set()).add(float(weight))
+    return index
+
+
+def _normalized_activity(
+    timestamp: object,
+    action: object,
+    weight_index: dict[int, set[float]],
+) -> dict[str, Any]:
+    timestamp_text = (
+        timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
+    )
+    action_text = getattr(action, "text", None) or _enum_value(action)
+    entry: dict[str, Any] = {"timestamp": timestamp_text, "action": action_text}
+    match = WEIGHT_ACTION_PATTERN.fullmatch(action_text.strip()) if isinstance(action_text, str) else None
+    if match is None:
+        return entry
+
+    entry["action"] = "Weight recorded"
+    trusted_weights = weight_index.get(_timestamp_key(timestamp_text) or -1, set())
+    if len(trusted_weights) == 1:
+        entry["weight_lbs"] = next(iter(trusted_weights))
+        return entry
+
+    raw_weight = float(match.group("weight"))
+    entry["weight_lbs"] = (
+        raw_weight if MIN_CAT_WEIGHT_LBS <= raw_weight <= MAX_CAT_WEIGHT_LBS else None
+    )
+    return entry
+
+
+async def _activity_entries(
+    robot: object,
+    limit: int,
+    weight_index: dict[int, set[float]] | None = None,
+) -> list[dict[str, Any]]:
     try:
         history = await robot.get_activity_history(limit=limit)
     except Exception as exc:
         raise LitterRobotError("history_failed", "Could not retrieve Litter-Robot history.") from exc
-    entries = []
-    for item in history:
-        timestamp = getattr(item, "timestamp", None)
-        action = getattr(item, "action", None)
-        entries.append(
-            {
-                "timestamp": timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp),
-                "action": getattr(action, "text", None) or _enum_value(action),
-            }
+    return [
+        _normalized_activity(
+            getattr(item, "timestamp", None),
+            getattr(item, "action", None),
+            weight_index or {},
         )
-    return entries
+        for item in history
+    ]
 
 
 def _observed_timestamp(value: object) -> str:
@@ -528,6 +595,8 @@ async def command_overview(limit: int = 12) -> dict[str, Any]:
     bindings = load_bindings()
     account = await connect_account(load_pets=True)
     try:
+        pets = await _pet_summaries(account, history=True)
+        weight_index = _weight_index(pets)
         by_serial = {
             getattr(robot, "serial", None): robot for robot in litter_robots(account)
         }
@@ -537,7 +606,9 @@ async def command_overview(limit: int = 12) -> dict[str, Any]:
             summary = _robot_summary(binding, robot)
             if robot is not None:
                 try:
-                    summary["recent_activity"] = await _activity_entries(robot, limit)
+                    summary["recent_activity"] = await _activity_entries(
+                        robot, limit, weight_index
+                    )
                 except LitterRobotError:
                     summary["recent_activity"] = []
                     summary["history_error"] = "history_unavailable"
@@ -547,7 +618,7 @@ async def command_overview(limit: int = 12) -> dict[str, Any]:
         return {
             "ok": all(not item.get("error") for item in summaries),
             "robots": summaries,
-            "pets": await _pet_summaries(account, history=True),
+            "pets": pets,
         }
     finally:
         await account.disconnect()

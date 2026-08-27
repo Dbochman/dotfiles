@@ -31,6 +31,10 @@ litter-robot history cabin-litter-robot 25
 Use `--json` before the command when structured output is needed. `status`
 returns both enrolled robots by default and never emits protected identifiers.
 `overview` adds recent per-robot activity and recent cat weights for dashboards.
+For weight activity, trust only a plausible provider value or a unique pet
+weight at the same timestamp. Return a structured `weight_lbs` value when
+verified; otherwise return `Weight recorded` without repeating an implausible
+raw number. Never infer a missing decimal.
 `observe` is the automation-only, privacy-bounded read contract: it requires
 both exact bindings and returns only each site, selector, source time, and the
 exact `cat_detected` / `cat_sensor_interrupted` classifications. It omits

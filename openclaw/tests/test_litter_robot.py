@@ -95,13 +95,21 @@ class FakeActivity:
 
 
 class FakePet:
-    name = "Test Cat"
-    pet_type = None
-    weight = 10.5
-    gender = None
+    def __init__(self) -> None:
+        self.name = "Test Cat"
+        self.pet_type = None
+        self.weight = 10.5
+        self.gender = None
+        self.weight_history: list[object] = []
 
     async def fetch_weight_history(self, *, limit: int):
-        return []
+        return self.weight_history[:limit]
+
+
+class FakeWeight:
+    def __init__(self, timestamp: datetime, weight: float) -> None:
+        self.timestamp = timestamp
+        self.weight = weight
 
 
 class FakeAccount:
@@ -203,6 +211,33 @@ class LitterRobotTests(unittest.TestCase):
         self.assertEqual(payload["pets"][0]["name"], "Test Cat")
         self.assertIn("recent_weights", payload["pets"][0])
         self.assertNotIn("CROSS-SERIAL", json.dumps(payload))
+
+    def test_overview_reconciles_malformed_weight_activity_by_timestamp(self) -> None:
+        recorded_at = datetime(2026, 8, 27, 12, 49, tzinfo=timezone.utc)
+        self.account.pets[0].weight_history = [FakeWeight(recorded_at, 9.87)]
+        self.crosstown.history = [
+            FakeActivity(recorded_at, "87 lbs"),
+            FakeActivity(
+                datetime(2026, 8, 27, 12, 50, tzinfo=timezone.utc),
+                "91 lbs",
+            ),
+        ]
+
+        payload = asyncio.run(litter_robot_api.command_overview(14))
+        activity = payload["robots"][0]["recent_activity"]
+
+        self.assertEqual(
+            activity[0],
+            {
+                "timestamp": "2026-08-27T12:49:00+00:00",
+                "action": "Weight recorded",
+                "weight_lbs": 9.87,
+            },
+        )
+        self.assertEqual(activity[1]["action"], "Weight recorded")
+        self.assertIsNone(activity[1]["weight_lbs"])
+        self.assertNotIn("87 lbs", json.dumps(payload))
+        self.assertNotIn("91 lbs", json.dumps(payload))
 
     def test_observe_is_exact_two_site_and_privacy_bounded(self) -> None:
         self.crosstown.history = [

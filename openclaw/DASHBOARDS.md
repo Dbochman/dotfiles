@@ -229,7 +229,8 @@ with Petlibro feeders and fountains.
   feeding when an enrolled device is reporting; OpenClaw-owned vacancy pauses
   are marked for automatic resume and block conflicting manual toggles
 - **Recent activity** — newest Litter-Robot events across both homes or scoped
-  to Crosstown or Cabin
+  to Crosstown or Cabin, with weight events reconciled against timestamp-
+  aligned pet history instead of malformed raw robot labels
 - **Attention state** — integration errors, offline robots, and waste drawers
   that are full or approaching full, plus stale transfer evidence or unknown
   feeder outcomes
