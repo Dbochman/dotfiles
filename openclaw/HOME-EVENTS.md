@@ -189,7 +189,9 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
 - `bin/whisker-event-adapter.py` silently baselines the two exact Litter-Robot
   histories, requires continuous paired coverage, and publishes only future
   normalized cat-presence classifications. It exposes no serial, weight, pet
-  identity, raw activity, or mutation interface.
+  identity, raw activity, or mutation interface. The correlator acknowledges
+  these records as journal-only transfer evidence; they do not open household
+  activity incidents or create messages by themselves.
 - `bin/home_event_action.py` owns exact action reservations and Hue/Petlibro
   actions.
   It handles Crosstown all-lights-off plus exact standing-automation
@@ -238,7 +240,9 @@ receipt transition without blocking event ingestion. It never retries an
 ambiguous timeout or receipt. An unknown outcome keeps delivery health and the
 operator-attention projection degraded until an explicit operator review
 records `received`, `not_received`, or `uncertain`; review never retries or
-rewrites the outcome.
+rewrites the outcome. The supervised send gets a bounded 45-second outer
+timeout, providing margin beyond the observed 20–23-second native Messages
+commit latency while retaining the same fail-closed unknown-outcome rule.
 
 The schema-v3 protected policy binds Cabin Ring `driveway` and `front_door`
 plus Nest `Kitchen`, and Crosstown Ring `front_door` plus Nest
@@ -260,7 +264,10 @@ message; it cannot create, suppress, accelerate, or delay that message.
 Any medium-or-high-confidence person result wins across the exact targets;
 every target must be clear for `no_person_visible`. A partial Ring or Nest
 failure yields bounded uncertainty and degraded camera health while preserving
-the other provider's successful evidence. Every image is deleted immediately.
+the other provider's successful evidence. Ring stills use the exact safe-bound
+camera and a forced provider snapshot no more than five seconds old, with a
+15-second server wait; the legacy timestamp-poll endpoint is not used. Every
+image is deleted immediately.
 
 Rollback is always the first operator action:
 
@@ -766,3 +773,9 @@ or the existing August CLI. If `check-config` reports insecure permissions, an
 unknown schema, integrity failure, or unexpected presence recovery state,
 leave the affected producer disabled and repair it in an attended session
 rather than recreating or guessing state.
+
+After repairing a deterministic consumer fault, an operator may requeue only
+the reviewed exact delivery with `home-eventctl retry-consumer-dead-letter
+--consumer <name> --delivery-id <id>`. The original attempt count remains in
+the journal; successful processing clears a matching sticky correlation fault
+only when no durable dead letter remains. The command never bulk-replays work.

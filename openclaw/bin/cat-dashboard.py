@@ -231,10 +231,20 @@ def collect_transfer_coverage() -> dict[str, object]:
             "health": str(record.get("health", "unknown")),
             "poll_age_seconds": record.get("poll_age_seconds"),
         }
+    coverage_ready = observer.get("health") == "ok" and all(
+        record["enabled"] is True
+        and record["baselined"] is True
+        and record["health"] == "ok"
+        and isinstance(record["poll_age_seconds"], (int, float))
+        and not isinstance(record["poll_age_seconds"], bool)
+        and 0 <= record["poll_age_seconds"] <= 300
+        for record in site_status.values()
+    )
     return {
         "ok": True,
         "bus_health": str(payload.get("health", "unknown")),
         "observer_health": str(observer.get("health", "unknown")),
+        "coverage_ready": coverage_ready,
         "sites": site_status,
         "accepted_events": whisker.get("accepted", 0),
         "pending_actions": counts.get("pending", 0),
@@ -563,11 +573,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const owners = automation.feeding_schedule_owners || {};
       const sites = ['cabin', 'crosstown'];
       const activeSites = sites.filter(site => owners[site] === 'bus');
-      const pairedCoverage = transfer.ok === true && transfer.bus_health === 'ok' && transfer.observer_health === 'ok' && sites.every(site => {
-        const record = transfer.sites?.[site];
-        const age = Number(record?.poll_age_seconds);
-        return record?.enabled === true && record?.baselined === true && record?.health === 'ok' && record?.poll_age_seconds !== null && Number.isFinite(age) && age <= 300;
-      });
+      const pairedCoverage = transfer.ok === true && transfer.coverage_ready === true;
+      const busDegraded = transfer.ok === true && transfer.bus_health !== 'ok';
       const managedSites = Object.keys(automation.feeder_suspensions?.sites || {});
       const pending = number(transfer.pending_actions, 0);
       const unknown = number(transfer.unknown_actions, 0);
@@ -577,7 +584,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const label = attention ? 'Attention' : fullyArmed ? 'Armed' : 'Standby';
       const pillClass = attention ? 'bad' : fullyArmed ? '' : 'warn';
       const description = fullyArmed && pairedCoverage
-        ? 'Both directions are armed. Armed means the policy may act after vacancy-cycle and settled litter evidence qualify; it does not mean either feeder is currently paused.'
+        ? `Both directions are armed. Armed means the policy may act after vacancy-cycle and settled litter evidence qualify; it does not mean either feeder is currently paused.${busDegraded ? ' Other event-bus health needs review, but paired litter protection remains ready.' : ''}`
         : fullyArmed
           ? 'Both feeder directions are armed, but paired litter coverage is not currently ready. Transfer actions fail closed.'
           : 'One or more feeder directions are not owned by the event bus. Manual schedule controls remain available.';
@@ -669,6 +676,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       if (state?.petlibro?.error) messages.push(`Petlibro: ${state.petlibro.error}`);
       if (state?.automation?.ok === false) messages.push(`Feeder automation: ${state.automation.error || 'status unavailable'}`);
       if (state?.transfer?.ok === false) messages.push(`Cat transfer coverage: ${state.transfer.error || 'status unavailable'}`);
+      if (state?.transfer?.ok === true && state.transfer.bus_health !== 'ok') messages.push('Home event bus has degraded health outside feeder transfer coverage.');
       if (Number(state?.transfer?.unknown_actions) > 0) messages.push('Feeder automation has an unknown action outcome.');
       for (const site of ['cabin', 'crosstown']) {
         const owner = state?.automation?.feeding_schedule_owners?.[site];

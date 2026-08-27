@@ -1612,6 +1612,33 @@ class ConsumerAndQueryTests(HomeEventTestCase):
         self.assertEqual(tuple(row), ("dead_letter", "correlation_failed"))
         self.assertEqual(self.store.status_snapshot()["health"], "degraded")
 
+    def test_operator_can_requeue_one_exact_consumer_dead_letter(self) -> None:
+        claimed = self.store.claim_deliveries("correlator")
+        delivery_id = claimed["deliveries"][0]["delivery_id"]
+        self.store.dead_letter_delivery(
+            "correlator", delivery_id, claimed["lease_token"], "correlation_failed"
+        )
+
+        result = self.store.retry_consumer_dead_letter("correlator", delivery_id)
+
+        self.assertEqual(result["delivery_id"], delivery_id)
+        self.assertEqual(result["prior_attempts"], 1)
+        self.assertEqual(result["prior_error_code"], "correlation_failed")
+        self.assertEqual(result["status"], "pending")
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT status, attempts, error_code FROM consumer_deliveries"
+            ).fetchone()
+        self.assertEqual(tuple(row), ("pending", 1, None))
+        self.assertEqual(
+            self.store.status_snapshot()["counters"]["consumer_dead_letters_requeued"],
+            1,
+        )
+        with self.assertRaisesRegex(
+            home_events.StateError, "consumer_dead_letter_not_found"
+        ):
+            self.store.retry_consumer_dead_letter("correlator", delivery_id)
+
     def test_august_health_transition_is_explicit_and_recovers(self) -> None:
         unavailable = {
             "source_event_id": "august-health-unavailable",

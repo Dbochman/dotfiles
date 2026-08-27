@@ -256,6 +256,7 @@ class HomeEventDeliveryTests(unittest.TestCase):
         self.assertEqual(row["sent_at"], self.NOW)
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("--target") + 1], self.TARGET)
+        self.assertEqual(run.call_args.kwargs["timeout"], 45)
         message = command[command.index("--message") + 1]
         self.assertEqual(message, delivery.TEMPLATES["person_activity"].format(site="Cabin"))
         self.assertNotIn("inc_", message)
@@ -294,7 +295,9 @@ class HomeEventDeliveryTests(unittest.TestCase):
         with mock.patch.object(
             delivery.subprocess,
             "run",
-            side_effect=subprocess.TimeoutExpired([delivery.OPENCLAW_BIN], 20),
+            side_effect=subprocess.TimeoutExpired(
+                [delivery.OPENCLAW_BIN], delivery.SEND_TIMEOUT_SECONDS
+            ),
         ) as run:
             first = self.worker().run_once()
             second = self.worker().run_once()

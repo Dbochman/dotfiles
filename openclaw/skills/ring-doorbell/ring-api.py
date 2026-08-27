@@ -30,6 +30,10 @@ CONFIG_FILE = CONFIG_DIR / "config.yaml"
 TOKEN_FILE = CONFIG_DIR / "token-cache.json"
 
 USER_AGENT = "OpenClaw/1.0"
+RING_SNAPSHOT_BASE_URI = "https://app-snaps.ring.com"
+RING_SNAPSHOT_ENDPOINT = "/snapshots/next/{0}"
+RING_SNAPSHOT_MAX_AGE_SECONDS = 5
+RING_SNAPSHOT_MAX_WAIT_SECONDS = 15
 
 # Exact provider identifiers remain behind this safe site/alias boundary. The
 # event bus and camera worker pass only the keys and never persist these values.
@@ -261,6 +265,39 @@ def write_private_snapshot(filename, data):
         os.close(descriptor)
 
 
+async def take_fresh_snapshot(camera):
+    """Return a bounded fresh JPEG through Ring's reliable snapshot endpoint."""
+
+    take_snapshot = getattr(camera, "async_take_snapshot", None)
+    if callable(take_snapshot):
+        data = await take_snapshot(
+            max_age=RING_SNAPSHOT_MAX_AGE_SECONDS,
+            max_wait=RING_SNAPSHOT_MAX_WAIT_SECONDS,
+        )
+    else:
+        response = await camera._ring.async_query(
+            RING_SNAPSHOT_ENDPOINT.format(camera.id),
+            extra_params={
+                "after-ms": (
+                    int(time.time()) - RING_SNAPSHOT_MAX_AGE_SECONDS
+                )
+                * 1000,
+                "max-wait-ms": RING_SNAPSHOT_MAX_WAIT_SECONDS * 1000,
+                "extras": "force",
+            },
+            base_uri=RING_SNAPSHOT_BASE_URI,
+            timeout=RING_SNAPSHOT_MAX_WAIT_SECONDS + 1,
+        )
+        data = response.content
+    if (
+        not isinstance(data, bytes)
+        or not data.startswith(b"\xff\xd8")
+        or not data.endswith(b"\xff\xd9")
+    ):
+        raise ValueError("snapshot_invalid")
+    return data
+
+
 async def cmd_snapshot_bound(site, alias, filename):
     """Capture an exact safe-bound Ring camera without exposing its identity."""
 
@@ -273,7 +310,7 @@ async def cmd_snapshot_bound(site, alias, filename):
         if camera is None:
             print(json.dumps({"error": "camera_binding_unavailable"}))
             sys.exit(1)
-        data = await camera.async_get_snapshot(retries=3, delay=2)
+        data = await take_fresh_snapshot(camera)
         write_private_snapshot(filename, data)
     except SystemExit:
         raise

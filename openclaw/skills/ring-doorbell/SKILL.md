@@ -60,7 +60,9 @@ Shows timestamp, event type, duration, person detection, and download URL for ea
 ring snapshot                       # saves to /tmp/ring-snapshot-<id>.jpg
 ring snapshot /tmp/front-door.jpg   # custom path
 ```
-Takes a live snapshot from the doorbell camera. May fail if doorbell is asleep (battery models).
+Takes a fresh snapshot from the doorbell camera through Ring's bounded forced
+snapshot endpoint. Battery cameras may take up to 15 seconds to wake; an absent
+or malformed JPEG fails closed.
 
 ### Download a recording
 ```bash

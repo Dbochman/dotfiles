@@ -176,6 +176,7 @@ class CatDashboardTests(unittest.TestCase):
                 "ok": True,
                 "bus_health": "ok",
                 "observer_health": "ok",
+                "coverage_ready": True,
                 "sites": {
                     "cabin": {
                         "enabled": True,
@@ -234,6 +235,42 @@ class CatDashboardTests(unittest.TestCase):
             run.call_args_list[5].args[0],
             [self.dashboard.HOME_EVENTCTL_CLI, "status"],
         )
+
+    def test_transfer_coverage_stays_ready_when_unrelated_bus_health_is_degraded(self) -> None:
+        with patch.object(
+            self.dashboard,
+            "_run_json",
+            return_value={
+                "health": "degraded",
+                "sources": {
+                    "whisker": {
+                        "accepted": 2,
+                        "observer": {
+                            "health": "ok",
+                            "sites": {
+                                "cabin": {
+                                    "enabled": True,
+                                    "baselined": True,
+                                    "health": "ok",
+                                    "poll_age_seconds": 12,
+                                },
+                                "crosstown": {
+                                    "enabled": True,
+                                    "baselined": True,
+                                    "health": "ok",
+                                    "poll_age_seconds": 13,
+                                },
+                            },
+                        },
+                    }
+                },
+                "actions": {"counts": {"pending": 0, "outcome_unknown": 0}},
+            },
+        ):
+            transfer = self.dashboard.collect_transfer_coverage()
+
+        self.assertEqual(transfer["bus_health"], "degraded")
+        self.assertTrue(transfer["coverage_ready"])
 
     def test_petlibro_collector_uses_exact_schedule_readback(self) -> None:
         with patch.object(

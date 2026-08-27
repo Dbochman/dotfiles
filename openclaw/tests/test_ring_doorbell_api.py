@@ -12,8 +12,10 @@ import json
 import stat
 import sys
 import tempfile
+import time
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -95,9 +97,24 @@ class MechanicalChimeDoorbell(BaseDoorbell):
 
 
 class SnapshotDoorbell(BaseDoorbell):
-    async def async_get_snapshot(self, *, retries, delay):
-        self.snapshot_request = (retries, delay)
+    async def async_take_snapshot(self, *, max_age, max_wait):
+        self.snapshot_request = (max_age, max_wait)
         return b"\xff\xd8\xfffixture\xff\xd9"
+
+
+class FakeSnapshotResponse:
+    content = b"\xff\xd8\xfffallback\xff\xd9"
+
+
+class FakeSnapshotTransport:
+    async def async_query(self, url, **kwargs):
+        self.request = (url, kwargs)
+        return FakeSnapshotResponse()
+
+
+class LegacySnapshotDoorbell(BaseDoorbell):
+    def __init__(self):
+        self._ring = FakeSnapshotTransport()
 
 
 class RingDoorbellApiTests(unittest.TestCase):
@@ -180,11 +197,33 @@ class RingDoorbellApiTests(unittest.TestCase):
                     "size": len(b"\xff\xd8\xfffixture\xff\xd9"),
                 },
             )
-            self.assertEqual(doorbell.snapshot_request, (3, 2))
+            self.assertEqual(doorbell.snapshot_request, (5, 15))
             self.assertEqual(path.read_bytes(), b"\xff\xd8\xfffixture\xff\xd9")
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             self.assertNotIn(str(doorbell.id), output.getvalue())
             self.assertNotIn(doorbell.name, output.getvalue())
+
+    def test_fresh_snapshot_falls_back_to_reliable_ring_endpoint(self) -> None:
+        doorbell = LegacySnapshotDoorbell()
+
+        with mock.patch.object(time, "time", return_value=1_000):
+            data = asyncio.run(self.module.take_fresh_snapshot(doorbell))
+
+        self.assertEqual(data, FakeSnapshotResponse.content)
+        url, kwargs = doorbell._ring.request
+        self.assertEqual(url, "/snapshots/next/123")
+        self.assertEqual(
+            kwargs,
+            {
+                "extra_params": {
+                    "after-ms": 995_000,
+                    "max-wait-ms": 15_000,
+                    "extras": "force",
+                },
+                "base_uri": "https://app-snaps.ring.com",
+                "timeout": 16,
+            },
+        )
 
     def test_bound_snapshot_rejects_unknown_safe_alias_before_auth(self) -> None:
         async def unexpected_get_ring():

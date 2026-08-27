@@ -464,6 +464,11 @@ class ShadowCorrelator:
                 self._increment(
                     connection, LOCAL_PRESENCE_SHADOW_COUNTERS[event_type]
                 )
+            elif event_type == "pet.litter_box_activity":
+                # Litter activity is durable evidence for the separately
+                # gated paired-home transfer evaluator below. It must not
+                # create a household activity incident or alert by itself.
+                self._increment(connection, "whisker_litter_events_observed")
             elif event_type.startswith("automation."):
                 self._increment(connection, "vacancy_events_observed")
                 if event_type == "automation.vacancy_run_started":
@@ -623,6 +628,29 @@ class ShadowCorrelator:
             )
             if acknowledged.rowcount != 1:
                 raise CorrelatorError("delivery_lease_mismatch")
+            # An explicitly requeued correlation dead letter has now passed
+            # the repaired path. Clear the sticky top-level fault only when no
+            # durable dead letter remains anywhere in the bus.
+            connection.execute(
+                """
+                UPDATE runtime_status SET
+                    health = 'ok', updated_at = ?,
+                    last_error_at = NULL, last_error_code = NULL
+                WHERE singleton = 1
+                  AND health = 'degraded'
+                  AND last_error_code = 'correlation_failed'
+                  AND NOT EXISTS(
+                      SELECT 1 FROM producer_inbox WHERE outcome = 'dead_letter'
+                  )
+                  AND NOT EXISTS(
+                      SELECT 1 FROM consumer_deliveries WHERE status = 'dead_letter'
+                  )
+                  AND NOT EXISTS(
+                      SELECT 1 FROM notification_outbox WHERE status = 'dead_letter'
+                  )
+                """,
+                (format_time(self.now()),),
+            )
             connection.commit()
 
     def _expire_incidents(self) -> int:

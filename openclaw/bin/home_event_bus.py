@@ -3532,6 +3532,52 @@ class EventStore:
             error_code=error_code,
         )
 
+    def retry_consumer_dead_letter(
+        self, consumer: str, delivery_id: int
+    ) -> Mapping[str, Any]:
+        """Requeue one exact operator-reviewed consumer dead letter."""
+
+        if not SAFE_NAME_RE.fullmatch(consumer):
+            raise PayloadError("invalid_consumer")
+        if (
+            not isinstance(delivery_id, int)
+            or isinstance(delivery_id, bool)
+            or delivery_id < 1
+        ):
+            raise PayloadError("invalid_delivery_id")
+        now = self._now()
+        with contextlib.closing(self.connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT attempts, error_code FROM consumer_deliveries
+                WHERE id = ? AND consumer_name = ? AND status = 'dead_letter'
+                """,
+                (delivery_id, consumer),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise StateError("consumer_dead_letter_not_found")
+            connection.execute(
+                """
+                UPDATE consumer_deliveries SET
+                    status = 'pending', lease_token = NULL, lease_until = NULL,
+                    error_code = NULL, updated_at = ?
+                WHERE id = ? AND consumer_name = ? AND status = 'dead_letter'
+                """,
+                (now, delivery_id, consumer),
+            )
+            self._increment(connection, "consumer_dead_letters_requeued")
+            connection.commit()
+        self.write_status_best_effort()
+        return {
+            "consumer": consumer,
+            "delivery_id": delivery_id,
+            "prior_attempts": int(row["attempts"]),
+            "prior_error_code": row["error_code"],
+            "status": "pending",
+        }
+
     def _finish_delivery(
         self,
         consumer: str,
@@ -4453,6 +4499,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=("received", "not_received", "uncertain"),
     )
+    retry_dead_letter = operator_commands.add_parser("retry-consumer-dead-letter")
+    retry_dead_letter.add_argument("--consumer", required=True)
+    retry_dead_letter.add_argument("--delivery-id", required=True, type=int)
     operator_commands.add_parser("install-delivery-policy")
     set_mode = operator_commands.add_parser("set-mode")
     set_mode.add_argument("mode", choices=sorted(RUNTIME_MODES))
@@ -4525,6 +4574,11 @@ def run_operator(args: argparse.Namespace) -> Mapping[str, Any]:
         return {"ok": True, **store.review_access_attention()}
     if args.command == "review-delivery-attention":
         return {"ok": True, **store.review_delivery_attention(args.outcome)}
+    if args.command == "retry-consumer-dead-letter":
+        return {
+            "ok": True,
+            **store.retry_consumer_dead_letter(args.consumer, args.delivery_id),
+        }
     raise StateError("unknown_command")
 
 

@@ -97,12 +97,14 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             if event_type.startswith("source.")
             else "lock",
             "nest": "camera",
+            "whisker": "litter_box",
         }[source]
         time_precision = {
             "ring": "source",
             "presence": "evaluation",
             "august": "observed_interval",
             "nest": "source",
+            "whisker": "source",
         }
         payload = {
             "schema_version": 1,
@@ -112,6 +114,8 @@ class HomeEventCorrelatorTests(unittest.TestCase):
             "entity_kind": entity_kind,
             "entity_alias": "kitchen"
             if source == "nest"
+            else f"{site}_litter_robot"
+            if source == "whisker"
             else "front_door"
             if source != "presence"
             else "dylan"
@@ -127,6 +131,8 @@ class HomeEventCorrelatorTests(unittest.TestCase):
                 if event_type in {"entry.person_detected", "camera.person_detected"}
                 else {"classification": "motion"}
                 if event_type in {"entry.motion_detected", "camera.motion_detected"}
+                else {"classification": "cat_detected"}
+                if event_type == "pet.litter_box_activity"
                 else {}
             ),
         }
@@ -692,6 +698,51 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         self.assertEqual(result["acknowledged"], 1)
         self.assertEqual(self.rows("SELECT * FROM incidents"), [])
         self.assertEqual(self.rows("SELECT * FROM notification_outbox"), [])
+
+    def test_whisker_litter_activity_is_acknowledged_as_transfer_evidence(self) -> None:
+        self.enqueue(
+            "whisker",
+            "pet.litter_box_activity",
+            site="crosstown",
+        )
+        self.ingest()
+
+        result = self.run_correlator()
+
+        self.assertEqual(result["acknowledged"], 1)
+        self.assertEqual(result["dead_lettered"], 0)
+        self.assertEqual(self.rows("SELECT * FROM incidents"), [])
+        counter = self.rows(
+            "SELECT value FROM service_counters "
+            "WHERE name='whisker_litter_events_observed'"
+        )
+        self.assertEqual([row["value"] for row in counter], [1])
+
+    def test_repaired_whisker_dead_letter_replay_clears_sticky_bus_fault(self) -> None:
+        self.enqueue(
+            "whisker",
+            "pet.litter_box_activity",
+            site="crosstown",
+        )
+        self.ingest()
+        store = bus.EventStore(bus.validate_runtime(self.root), clock=self.clock)
+        claimed = store.claim_deliveries("correlator")
+        delivery_id = claimed["deliveries"][0]["delivery_id"]
+        store.dead_letter_delivery(
+            "correlator",
+            delivery_id,
+            claimed["lease_token"],
+            "correlation_failed",
+        )
+        store.retry_consumer_dead_letter("correlator", delivery_id)
+
+        result = self.run_correlator()
+
+        self.assertEqual(result["acknowledged"], 1)
+        status = store.status_snapshot()
+        self.assertEqual(status["health"], "ok")
+        self.assertIsNone(status["last_error_code"])
+        self.assertEqual(status["counts"]["dead_letters"], 0)
 
     def test_local_presence_events_are_journal_only_without_incident(self) -> None:
         for index, event_type in enumerate(LOCAL_PRESENCE_EVENT_TYPES, start=1):

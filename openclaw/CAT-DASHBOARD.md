@@ -35,7 +35,10 @@ food, and water—rather than around vendor accounts or a generic device grid.
   verified on/paused state while omitting the meal count.
 - **Attention state** calls out unavailable integrations, stale or incomplete
   transfer evidence, unknown feeder outcomes, offline robots, and full or
-  nearly-full waste drawers.
+  nearly-full waste drawers. Paired litter readiness is evaluated from the
+  Whisker observer and both fresh site polls, independently of unrelated
+  top-level event-bus degradation; broader bus health is shown as a separate
+  advisory and does not mislabel healthy feeder protection as unavailable.
 
 ## Controls and safety
 

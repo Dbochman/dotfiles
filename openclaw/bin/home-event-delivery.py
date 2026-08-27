@@ -34,7 +34,7 @@ TARGET_RE = re.compile(r"^chat_id:[1-9][0-9]{0,17}$")
 SAFE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 RESERVATION_RE = re.compile(r"^res_[0-9a-f]{32}$")
 PRESENCE_MAX_AGE = timedelta(minutes=30)
-SEND_TIMEOUT_SECONDS = 20
+SEND_TIMEOUT_SECONDS = 45
 MAX_RECEIPT_BYTES = 64 * 1024
 
 TEMPLATES = {
