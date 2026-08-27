@@ -128,14 +128,74 @@ class CatDashboardTests(unittest.TestCase):
                 {"ok": True, "robots": [], "pets": []},
                 [],
                 {"ok": True, "feeder_suspensions": {"sites": {}}},
+                {"ok": True, "owner": "bus"},
+                {"ok": True, "owner": "bus"},
+                {
+                    "health": "ok",
+                    "database_bytes": 12345,
+                    "sources": {
+                        "whisker": {
+                            "accepted": 2,
+                            "observer": {
+                                "health": "ok",
+                                "sites": {
+                                    "cabin": {
+                                        "enabled": True,
+                                        "baselined": True,
+                                        "health": "ok",
+                                        "poll_age_seconds": 12,
+                                    },
+                                    "crosstown": {
+                                        "enabled": True,
+                                        "baselined": True,
+                                        "health": "ok",
+                                        "poll_age_seconds": 13,
+                                    },
+                                },
+                            },
+                        }
+                    },
+                    "actions": {"counts": {"pending": 0, "outcome_unknown": 0}},
+                },
             ],
         ) as run:
             whisker = self.dashboard.collect_whisker()
             petlibro = self.dashboard.collect_petlibro()
             automation = self.dashboard.collect_feeder_automation()
+            transfer = self.dashboard.collect_transfer_coverage()
         self.assertTrue(whisker["ok"])
         self.assertEqual(petlibro, {"ok": True, "devices": []})
         self.assertTrue(automation["ok"])
+        self.assertEqual(
+            automation["feeding_schedule_owners"],
+            {"crosstown": "bus", "cabin": "bus"},
+        )
+        self.assertEqual(
+            transfer,
+            {
+                "ok": True,
+                "bus_health": "ok",
+                "observer_health": "ok",
+                "sites": {
+                    "cabin": {
+                        "enabled": True,
+                        "baselined": True,
+                        "health": "ok",
+                        "poll_age_seconds": 12,
+                    },
+                    "crosstown": {
+                        "enabled": True,
+                        "baselined": True,
+                        "health": "ok",
+                        "poll_age_seconds": 13,
+                    },
+                },
+                "accepted_events": 2,
+                "pending_actions": 0,
+                "unknown_actions": 0,
+            },
+        )
+        self.assertNotIn("database_bytes", transfer)
         self.assertEqual(
             run.call_args_list[0].args[0],
             [self.dashboard.LITTER_ROBOT_CLI, "--json", "overview", "14"],
@@ -148,6 +208,32 @@ class CatDashboardTests(unittest.TestCase):
             run.call_args_list[2].args[0],
             [self.dashboard.HOME_EVENT_ACTION_CLI, "status"],
         )
+        self.assertEqual(
+            run.call_args_list[3].args[0],
+            [
+                self.dashboard.HOME_EVENT_ACTION_CLI,
+                "ownership",
+                "--site",
+                "crosstown",
+                "--target",
+                "feeding_schedule",
+            ],
+        )
+        self.assertEqual(
+            run.call_args_list[4].args[0],
+            [
+                self.dashboard.HOME_EVENT_ACTION_CLI,
+                "ownership",
+                "--site",
+                "cabin",
+                "--target",
+                "feeding_schedule",
+            ],
+        )
+        self.assertEqual(
+            run.call_args_list[5].args[0],
+            [self.dashboard.HOME_EVENTCTL_CLI, "status"],
+        )
 
     def test_html_is_cat_first_and_embeds_ephemeral_token(self) -> None:
         harness = HandlerHarness(self.dashboard)
@@ -156,6 +242,10 @@ class CatDashboardTests(unittest.TestCase):
         self.assertEqual(harness.status, 200)
         self.assertIn("<title>Cat Care</title>", text)
         self.assertIn("The cats", text)
+        self.assertIn("Transfer automation", text)
+        self.assertIn("Feeder transfer protection", text)
+        self.assertIn("Dual-direction guard", text)
+        self.assertIn("Vacancy automation active", text)
         self.assertIn("Recent litter-box activity", text)
         self.assertIn("Scheduled meals", text)
         self.assertIn("Pause schedule", text)

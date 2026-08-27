@@ -29,6 +29,7 @@ SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
 LITTER_ROBOT_CLI = os.path.expanduser("~/.openclaw/bin/litter-robot")
 PETLIBRO_CLI = os.path.expanduser("~/.openclaw/bin/petlibro")
 HOME_EVENT_ACTION_CLI = os.path.expanduser("~/.openclaw/bin/home-event-action")
+HOME_EVENTCTL_CLI = os.path.expanduser("~/.openclaw/bin/home-eventctl")
 LITTER_ROBOT_SELECTORS = {
     "crosstown-litter-robot": "crosstown",
     "cabin-litter-robot": "cabin",
@@ -129,9 +130,61 @@ def collect_petlibro() -> dict[str, object]:
 
 def collect_feeder_automation() -> dict[str, object]:
     payload = _run_json([HOME_EVENT_ACTION_CLI, "status"])
-    if isinstance(payload, dict):
-        return payload
-    return {"ok": False, "error": "Feeder automation returned an unexpected response"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "Feeder automation returned an unexpected response"}
+    output = dict(payload)
+    owners: dict[str, str] = {}
+    for site in PETLIBRO_FEEDER_SELECTORS.values():
+        ownership = _run_json(
+            [
+                HOME_EVENT_ACTION_CLI,
+                "ownership",
+                "--site",
+                site,
+                "--target",
+                "feeding_schedule",
+            ]
+        )
+        owner = ownership.get("owner") if isinstance(ownership, dict) else None
+        owners[site] = owner if owner in {"bus", "legacy"} else "unknown"
+    output["feeding_schedule_owners"] = owners
+    return output
+
+
+def collect_transfer_coverage() -> dict[str, object]:
+    """Return only the bounded event-bus fields the dashboard needs."""
+    payload = _run_json([HOME_EVENTCTL_CLI, "status"])
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "Cat transfer coverage returned an unexpected response"}
+    sources = payload.get("sources")
+    actions = payload.get("actions")
+    whisker = sources.get("whisker") if isinstance(sources, dict) else None
+    observer = whisker.get("observer") if isinstance(whisker, dict) else None
+    sites = observer.get("sites") if isinstance(observer, dict) else None
+    counts = actions.get("counts") if isinstance(actions, dict) else None
+    if not isinstance(sites, dict) or not isinstance(counts, dict):
+        return {"ok": False, "error": "Cat transfer coverage is unavailable"}
+
+    site_status: dict[str, dict[str, object]] = {}
+    for site in sorted(set(PETLIBRO_FEEDER_SELECTORS.values())):
+        record = sites.get(site)
+        if not isinstance(record, dict):
+            return {"ok": False, "error": "Cat transfer coverage is incomplete"}
+        site_status[site] = {
+            "enabled": record.get("enabled") is True,
+            "baselined": record.get("baselined") is True,
+            "health": str(record.get("health", "unknown")),
+            "poll_age_seconds": record.get("poll_age_seconds"),
+        }
+    return {
+        "ok": True,
+        "bus_health": str(payload.get("health", "unknown")),
+        "observer_health": str(observer.get("health", "unknown")),
+        "sites": site_status,
+        "accepted_events": whisker.get("accepted", 0),
+        "pending_actions": counts.get("pending", 0),
+        "unknown_actions": counts.get("outcome_unknown", 0),
+    }
 
 
 def collect_status(*, refresh: bool = False) -> dict[str, object]:
@@ -142,10 +195,11 @@ def collect_status(*, refresh: bool = False) -> dict[str, object]:
         if not refresh and isinstance(cached_bundle, dict) and now - cached_at < CACHE_TTL_SECONDS:
             return cached_bundle
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         whisker_future = pool.submit(collect_whisker)
         petlibro_future = pool.submit(collect_petlibro)
         automation_future = pool.submit(collect_feeder_automation)
+        transfer_future = pool.submit(collect_transfer_coverage)
         bundle: dict[str, object] = {
             "meta": {
                 "timestamp": _iso_timestamp(),
@@ -154,6 +208,7 @@ def collect_status(*, refresh: bool = False) -> dict[str, object]:
             "whisker": whisker_future.result(),
             "petlibro": petlibro_future.result(),
             "automation": automation_future.result(),
+            "transfer": transfer_future.result(),
         }
 
     with STATUS_CACHE_LOCK:
@@ -376,6 +431,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .pill.bad { color: var(--red); background: rgba(238,129,114,.12); }
     .metric-row { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); margin-top: 17px; padding-top: 14px; gap: 10px; }
     .metric b { display: block; font-size: 17px; margin-top: 3px; }
+    .automation-card { grid-column: span 12; min-height: 0; }
+    .automation-card .metric-row { grid-template-columns: repeat(4, 1fr); }
+    .automation-copy { max-width: 850px; margin: 9px 0 0; color: var(--muted); }
+    .direction-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+    .direction { display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 11px; padding: 7px 9px 7px 12px; }
     .device-card { min-height: 245px; }
     .device-card h3 { margin: 4px 0 0; font-size: 19px; }
     .site { color: var(--peach); text-transform: capitalize; font-size: 13px; }
@@ -385,6 +445,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .actions { display: flex; gap: 8px; align-items: center; margin-top: 17px; }
     .schedule-actions { justify-content: space-between; border-top: 1px solid var(--line); padding-top: 14px; }
     .schedule-label { display: flex; flex-direction: column; gap: 2px; }
+    .schedule-owner { color: var(--muted); font-size: 11px; }
     .action { border: 1px solid rgba(149,213,178,.3); color: var(--mint); background: rgba(149,213,178,.06); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
     .action:disabled { opacity: .38; cursor: not-allowed; }
     select { color: var(--ink); border: 1px solid var(--line); background: #1c211f; border-radius: 10px; padding: 8px; }
@@ -397,7 +458,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .toast { position: fixed; right: 22px; bottom: 22px; max-width: 360px; border: 1px solid var(--line); background: #29312e; color: var(--ink); padding: 13px 16px; border-radius: 12px; box-shadow: 0 12px 40px #0008; opacity: 0; transform: translateY(12px); pointer-events: none; transition: .2s ease; }
     .toast.show { opacity: 1; transform: none; }
     @media (max-width: 900px) { .card { grid-column: span 6; } header { align-items: start; flex-direction: column; } .toolbar { justify-content: start; } }
-    @media (max-width: 600px) { .shell { width: min(100% - 24px, 1500px); padding-top: 22px; } .card { grid-column: span 12; } .event { grid-template-columns: 75px 1fr; } .event .event-action { grid-column: 2; } }
+    @media (max-width: 600px) { .shell { width: min(100% - 24px, 1500px); padding-top: 22px; } .card { grid-column: span 12; } .automation-card .metric-row { grid-template-columns: repeat(2, 1fr); } .event { grid-template-columns: 75px 1fr; } .event .event-action { grid-column: 2; } }
   </style>
 </head>
 <body>
@@ -413,6 +474,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </header>
     <div class="notice" id="notice"></div>
 
+    <section><div class="section-head"><h2>Transfer automation</h2><span class="muted" id="automation-summary"></span></div><div class="grid" id="automation"></div></section>
     <section><div class="section-head"><h2>The cats</h2><span class="muted" id="cat-summary"></span></div><div class="grid" id="cats"></div></section>
     <section><div class="section-head"><h2>Care stations</h2><span class="muted">Whisker · Petlibro</span></div><div class="grid" id="devices"></div></section>
     <section><div class="section-head"><h2>Recent litter-box activity</h2><span class="muted">Latest 14 events per home</span></div><div class="grid" id="activity"></div></section>
@@ -437,6 +499,41 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const delta = Number(samples.at(-1).weight_lbs) - Number(samples[0].weight_lbs);
       if (Math.abs(delta) < .05) return 'Steady';
       return `${delta > 0 ? '+' : ''}${delta.toFixed(1)} lb recent`;
+    }
+
+    function renderAutomation() {
+      const root = document.getElementById('automation');
+      const automation = state?.automation || {};
+      const transfer = state?.transfer || {};
+      const owners = automation.feeding_schedule_owners || {};
+      const sites = ['cabin', 'crosstown'];
+      const activeSites = sites.filter(site => owners[site] === 'bus');
+      const pairedCoverage = transfer.ok === true && transfer.bus_health === 'ok' && transfer.observer_health === 'ok' && sites.every(site => {
+        const record = transfer.sites?.[site];
+        const age = Number(record?.poll_age_seconds);
+        return record?.enabled === true && record?.baselined === true && record?.health === 'ok' && record?.poll_age_seconds !== null && Number.isFinite(age) && age <= 300;
+      });
+      const managedSites = Object.keys(automation.feeder_suspensions?.sites || {});
+      const pending = number(transfer.pending_actions, 0);
+      const unknown = number(transfer.unknown_actions, 0);
+      const coverageRequired = activeSites.length > 0;
+      const attention = automation.ok === false || transfer.ok === false || Number(unknown) > 0 || (coverageRequired && !pairedCoverage);
+      const fullyActive = activeSites.length === sites.length;
+      const label = attention ? 'Attention' : fullyActive ? 'Active' : 'Standby';
+      const pillClass = attention ? 'bad' : fullyActive ? '' : 'warn';
+      const description = fullyActive && pairedCoverage
+        ? 'Both directions are armed. A qualifying litter-box visit can suspend scheduled meals at a confirmed-vacant home; only an OpenClaw-owned pause will auto-resume.'
+        : fullyActive
+          ? 'Both feeder directions are armed, but paired litter coverage is not currently ready. Transfer actions fail closed.'
+          : 'One or more feeder directions are not owned by the event bus. Manual schedule controls remain available.';
+      document.getElementById('automation-summary').textContent = fullyActive ? 'Dual-direction guard' : `${activeSites.length} of ${sites.length} directions active`;
+      const directions = sites.map(site => `<span class="direction"><b>Vacant ${esc(siteName(site))}</b><span class="pill ${owners[site] === 'bus' ? '' : 'warn'}">${owners[site] === 'bus' ? 'Active' : 'Disabled'}</span></span>`).join('');
+      root.innerHTML = `<article class="card automation-card">
+        <div class="card-top"><div><div class="label">Home event bus</div><h3>Feeder transfer protection</h3></div><span class="pill ${pillClass}">${esc(label)}</span></div>
+        <p class="automation-copy">${esc(description)}</p>
+        <div class="metric-row">${metric('Directions', `${activeSites.length}/${sites.length}`)}${metric('Litter coverage', pairedCoverage ? 'Paired' : 'Unavailable')}${metric('Managed pauses', managedSites.length)}${metric('Pending actions', pending)}</div>
+        <div class="direction-row">${directions}</div>
+      </article>`;
     }
 
     function renderCats() {
@@ -477,8 +574,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const managed = state?.automation?.feeder_suspensions?.sites?.[site];
       const managedHere = managed?.selector === selector;
       const managedAttention = managedHere && managed.attention === true;
+      const automationOwned = state?.automation?.feeding_schedule_owners?.[site] === 'bus';
       const scheduleLabel = managedAttention ? 'Automation attention' : managedHere && managed.phase === 'restoring' ? 'Auto-resume verifying' : managedHere ? 'Paused · Auto-resume armed' : scheduleKnown ? (scheduleEnabled ? 'Enabled' : 'Paused') : 'Unavailable';
-      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleKnown && scheduleEnabled && !managedAttention ? '' : 'warn'}">${esc(scheduleLabel)}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Vacancy-managed' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
+      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleKnown && scheduleEnabled && !managedAttention ? '' : 'warn'}">${esc(scheduleLabel)}</span><span class="schedule-owner">${automationOwned ? 'Vacancy automation active' : 'Manual schedule only'}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Vacancy-managed' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
       return `<article class="card device-card" data-location="${esc(site)}"><div class="card-top"><div><div class="site">${esc(siteName(site))}</div><h3>${feeder ? 'Feeder' : 'Fountain'}</h3><div class="muted">${esc(device.name || device.model || 'Petlibro')}</div></div>${statusPill(device.online)}</div><div class="metric-row">${metrics}</div>${schedule}${action}</article>`;
     }
 
@@ -506,12 +604,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       if (state?.whisker?.error) messages.push(`Whisker: ${state.whisker.error}`);
       if (state?.petlibro?.error) messages.push(`Petlibro: ${state.petlibro.error}`);
       if (state?.automation?.ok === false) messages.push(`Feeder automation: ${state.automation.error || 'status unavailable'}`);
+      if (state?.transfer?.ok === false) messages.push(`Cat transfer coverage: ${state.transfer.error || 'status unavailable'}`);
+      if (Number(state?.transfer?.unknown_actions) > 0) messages.push('Feeder automation has an unknown action outcome.');
+      for (const site of ['cabin', 'crosstown']) {
+        const owner = state?.automation?.feeding_schedule_owners?.[site];
+        const coverage = state?.transfer?.sites?.[site];
+        const age = Number(coverage?.poll_age_seconds);
+        if (owner && owner !== 'bus') messages.push(`${siteName(site)} feeder transfer automation is not active.`);
+        if (coverage && (coverage.enabled !== true || coverage.baselined !== true || coverage.health !== 'ok' || coverage.poll_age_seconds === null || !Number.isFinite(age) || age > 300)) messages.push(`${siteName(site)} litter evidence is not ready.`);
+      }
       for (const [site, managed] of Object.entries(state?.automation?.feeder_suspensions?.sites || {})) { if (managed.attention) messages.push(`${siteName(site)} feeder automation needs review (${managed.last_error || 'unknown state'}).`); }
       for (const robot of state?.whisker?.robots || []) { if (!robot.is_online) messages.push(`${siteName(robot.site)} Litter-Robot is offline.`); if (robot.waste_full || Number(robot.waste_level_pct) >= 80) messages.push(`${siteName(robot.site)} waste drawer needs attention.`); }
       const notice = document.getElementById('notice'); notice.textContent = messages.join(' '); notice.classList.toggle('show', Boolean(messages.length));
     }
 
-    function render() { renderNotice(); renderCats(); renderDevices(); renderActivity(); document.getElementById('updated').textContent = state?.meta?.timestamp ? `Updated ${new Date(state.meta.timestamp).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}` : 'Update unavailable'; }
+    function render() { renderNotice(); renderAutomation(); renderCats(); renderDevices(); renderActivity(); document.getElementById('updated').textContent = state?.meta?.timestamp ? `Updated ${new Date(state.meta.timestamp).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}` : 'Update unavailable'; }
     function toast(message) { const node = document.getElementById('toast'); node.textContent = message; node.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.remove('show'), 3500); }
 
     async function load(refresh=false) {

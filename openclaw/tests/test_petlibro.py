@@ -356,13 +356,11 @@ class PetlibroTests(unittest.TestCase):
             FakeResponse(
                 {
                     "code": 0,
-                    "data": {
-                        "feedingPlanList": [
-                            {"id": "private-1", "enable": True, "grainNum": 2},
-                            {"id": "private-2", "enable": False, "grainNum": 3},
-                            {"id": "private-3", "enable": True, "grainNum": 1},
-                        ]
-                    },
+                    "data": [
+                        {"id": "private-1", "enable": True, "grainNum": 2},
+                        {"id": "private-2", "enable": False, "grainNum": 3},
+                        {"id": "private-3", "enable": True, "grainNum": 1},
+                    ],
                 }
             ),
         ]
@@ -370,7 +368,7 @@ class PetlibroTests(unittest.TestCase):
             petlibro_api.urllib.request,
             "urlopen",
             side_effect=responses,
-        ):
+        ) as urlopen:
             code, payload = self.run_main(["schedule-state", "crosstown-feeder"])
 
         self.assertEqual(code, 0)
@@ -393,6 +391,33 @@ class PetlibroTests(unittest.TestCase):
         serialized = json.dumps(payload)
         self.assertNotIn("private-1", serialized)
         self.assertNotIn("grainNum", serialized)
+        plan_request = urlopen.call_args_list[2].args[0]
+        self.assertTrue(plan_request.full_url.endswith("/device/feedingPlan/list"))
+        self.assertEqual(
+            json.loads(plan_request.data.decode("utf-8")),
+            {"deviceSn": "CROSS-FEEDER-SN", "id": "CROSS-FEEDER-SN"},
+        )
+
+    def test_schedule_uses_complete_petlibro_device_identity(self) -> None:
+        responses = [
+            self.device_list_response(),
+            FakeResponse({"code": 0, "data": {"plans": []}}),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            code, payload = self.run_main(["schedule", "crosstown-feeder"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload, {"plans": []})
+        plan_request = urlopen.call_args_list[1].args[0]
+        self.assertTrue(plan_request.full_url.endswith("/device/feedingPlan/todayNew"))
+        self.assertEqual(
+            json.loads(plan_request.data.decode("utf-8")),
+            {"deviceSn": "CROSS-FEEDER-SN", "id": "CROSS-FEEDER-SN"},
+        )
 
     def test_schedule_state_rejects_ambiguous_plan_shape(self) -> None:
         responses = [

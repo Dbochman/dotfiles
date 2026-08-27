@@ -2,12 +2,15 @@
 
 ## Status
 
-Implemented on `2026-08-26` through rollout stage 1. Schema 7, the Whisker
-observer, paired-home transfer correlation, exact Petlibro actions, and guarded
-automatic resume are tracked and tested. Both installed Whisker site flags and
-both exact `feeding_schedule` policy modes remain disabled, so this deployment
-cannot poll Litter-Robot or mutate a feeder. Later activation must move through
-the rollout gates below.
+Implemented on `2026-08-26` and activated on `2026-08-27`. Both installed
+Whisker site flags completed a silent future-only baseline and a zero-publish
+duplicate scan. Exact readback then confirmed that both feeder schedules were
+enabled with two enabled saved meals each. The operator explicitly selected
+dual-direction activation instead of the Cabin-first canary, so both exact
+`feeding_schedule` policy modes are active. Activation itself changed no feeder
+state; the first organic transfer is the live suspend/maintain/resume canary.
+The tracked Whisker plist still defaults both flags off, while routine deploys
+preserve the attended runtime values.
 
 This plan extends the existing home event bus and vacancy-action control plane.
 It does not create a second source of occupancy truth.

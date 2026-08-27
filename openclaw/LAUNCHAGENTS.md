@@ -391,10 +391,13 @@ and hash approval complete. Restart only these jobs when their code changes;
 home events does not require an OpenClaw gateway restart. See
 [`HOME-EVENTS.md`](HOME-EVENTS.md).
 
-The Whisker adapter requires a separate attended two-site baseline. Enabling
-either feeder target is a later policy decision: both exact
-`feeding_schedule` targets ship in `disabled` mode, so source installation and
-schema migration cannot call Petlibro or change a saved meal schedule.
+The Whisker adapter requires a separate attended two-site baseline. Both sites
+completed that silent future-only baseline and a zero-publish duplicate scan on
+`2026-08-27`; the installed Mini flags are enabled while the tracked plist
+continues to default off. After exact schedule readback, the operator explicitly
+activated both `feeding_schedule` targets instead of the planned Cabin-first
+canary. Source installation and schema migration still cannot poll Whisker on a
+new machine because both producer flags default off.
 
 The attended Mini runtime currently has Cabin and Crosstown local enrichment
 enabled. Both sites completed zero-event baselines, duplicate-scan no-ops, and

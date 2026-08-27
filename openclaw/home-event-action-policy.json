@@ -14,7 +14,7 @@
       },
       "feeding_schedule": {
         "owner": "bus",
-        "mode": "disabled",
+        "mode": "active",
         "trigger": "cat_transfer",
         "action": "suspend_restore",
         "selector": "cabin-feeder",
@@ -52,7 +52,7 @@
       },
       "feeding_schedule": {
         "owner": "bus",
-        "mode": "disabled",
+        "mode": "active",
         "trigger": "cat_transfer",
         "action": "suspend_restore",
         "selector": "crosstown-feeder",

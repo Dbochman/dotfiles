@@ -58,14 +58,19 @@ turned a live on-state off with exactly one command and a confirmed readback.
 The recurring worker then started idle with no pending or unknown action.
 
 Schema 7 was deployed on `2026-08-26` to add one privacy-bounded Whisker event
-source and exact paired-home feeder transfer actions. Both Whisker site flags
-and both `feeding_schedule` policy modes remain disabled, so the installed
-stage cannot poll Litter-Robot or call Petlibro. A later active transfer must
-have uninterrupted fresh coverage at both homes, canonical origin vacancy, a
-sticky resident at the occupied destination, no origin litter activity, and a
-settled destination litter event. The worker verifies the destination schedule
-first, automatically restores it only when OpenClaw owns the prior pause, and
-then suspends the origin. It never adopts or resumes a manual pause.
+source and exact paired-home feeder transfer actions. On `2026-08-27`, both
+installed Whisker site flags completed a silent future-only baseline and a
+zero-publish duplicate scan. Exact Petlibro readback confirmed both schedules
+enabled with two enabled saved meals each, after which the operator explicitly
+activated both `feeding_schedule` directions instead of the documented
+Cabin-first canary. An active transfer still requires uninterrupted fresh
+coverage at both homes, canonical origin vacancy, a sticky resident at the
+occupied destination, no origin litter activity, and a settled destination
+litter event. The worker verifies the destination schedule first,
+automatically restores it only when OpenClaw owns the prior pause, and then
+suspends the origin. It never adopts or resumes a manual pause. Activation
+itself changed no feeder state; the first organic transfer is the live
+suspend/maintain/resume canary.
 
 The Dylan-only canary is now on SQLite schema v7. Its separate camera policy
 was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
@@ -724,10 +729,12 @@ Rollout status and remaining work:
     are verified; local shadow enrichment is established at both sites.
 13. Throughout every gate, verify `home-eventctl status`, source spool depth,
     SQLite health, shadow decisions, and zero outbound delivery attempts.
-14. Schema 7 and policy schema 3 were installed on `2026-08-26` with both
-    Whisker observer flags and both exact feeder targets disabled. Continue
-    only through the staged baseline, shadow review, single-site suspension,
-    and owned automatic-resume gates in
+14. Schema 7 and policy schema 3 were installed on `2026-08-26`. On
+    `2026-08-27`, both Whisker observers completed their future-only baseline
+    and both exact feeder targets were activated by explicit operator choice.
+    This bypassed the planned single-site canary; treat the first organic
+    transfer as the live suspend/maintain/resume proof and follow the stop
+    conditions in
     [the cat feeder plan](plans/cat-feeder-vacancy-automation.md).
 
 Routine pulls preserve the installed `HOME_EVENTS_NEST_ENABLED` and

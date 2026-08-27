@@ -606,8 +606,8 @@ def cmd_schedule_state(selector: str) -> dict:
     device, location = resolve_device(config, devices, selector, "feeder")
     enabled = read_feeding_schedule_state(token, device)
     result = api_post(
-        "/device/feedingPlan/todayNew",
-        {"deviceSn": device["deviceSn"]},
+        "/device/feedingPlan/list",
+        {"deviceSn": device["deviceSn"], "id": device["deviceSn"]},
         token,
     )
     schedule = require_api_success(result, "feeding schedule")
@@ -751,7 +751,7 @@ def cmd_schedule(selector: str) -> object:
     device, _ = resolve_device(config, devices, selector, "feeder")
     result = api_post(
         "/device/feedingPlan/todayNew",
-        {"deviceSn": device["deviceSn"]},
+        {"deviceSn": device["deviceSn"], "id": device["deviceSn"]},
         token,
     )
     return require_api_success(result, "feeding schedule")

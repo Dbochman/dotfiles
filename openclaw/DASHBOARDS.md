@@ -10,7 +10,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 | 8551 | [OpenClaw Usage](#openclaw-usage-dashboard) | http://dylans-mac-mini:8551 | 5 min (UI) · 15 min (snapshots) |
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
-| 8554 | [Cat Care](#cat-care-dashboard) | http://dylans-mac-mini:8554 | 60s cache · Whisker/Petlibro on demand |
+| 8554 | [Cat Care](#cat-care-dashboard) | http://dylans-mac-mini:8554 | 60s cache · Whisker/Petlibro/event bus on demand |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily unified finance refresh at 06:15 + weekly scrapes · API on demand |
 | 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · crypto in 06:15 finance refresh · aggregate ledger capture at 07:35 |
@@ -218,6 +218,9 @@ with Petlibro feeders and fountains.
 ### What It Shows
 
 - **Cat profiles** — current Whisker weight and recent direction
+- **Transfer automation** — exact two-way feeder ownership, fresh paired
+  Whisker coverage, pending/unknown action state, and current OpenClaw-owned
+  feeder pauses
 - **Whisker cards** — one exact enrolled robot per home, including online
   state, waste, litter, cycle count, and a guarded clean action
 - **Petlibro cards** — live feeder and fountain telemetry, full-schedule
@@ -227,7 +230,8 @@ with Petlibro feeders and fountains.
 - **Recent activity** — newest Litter-Robot events across both homes or scoped
   to Crosstown or Cabin
 - **Attention state** — integration errors, offline robots, and waste drawers
-  that are full or approaching full
+  that are full or approaching full, plus stale transfer evidence or unknown
+  feeder outcomes
 
 ### Files
 

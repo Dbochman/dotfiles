@@ -9,6 +9,10 @@ food, and water—rather than around vendor accounts or a generic device grid.
 ## Experience
 
 - **Both / Crosstown / Cabin filter** scopes stations and litter-box activity.
+- **Transfer automation** shows whether both exact feeder directions are owned
+  by the event bus, whether Cabin and Crosstown litter evidence is paired and
+  fresh, how many actions are pending, and which feeders have an
+  OpenClaw-owned pause.
 - **Cat profiles** show current Whisker weight and the direction of recent
   samples.
 - **Whisker stations** show connectivity, state, waste level, litter level,
@@ -19,8 +23,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   `Auto-resume armed`; an ambiguous transition is surfaced as automation
   attention. An explicit empty state replaces stale or invented values when no
   devices are reporting.
-- **Attention state** calls out unavailable integrations, offline robots, and
-  full or nearly-full waste drawers.
+- **Attention state** calls out unavailable integrations, stale or incomplete
+  transfer evidence, unknown feeder outcomes, offline robots, and full or
+  nearly-full waste drawers.
 
 ## Controls and safety
 
@@ -39,8 +44,10 @@ and is never retried automatically.
 When the event bus owns a feeder pause, the manual schedule button is disabled
 and labeled `Vacancy-managed`. The action worker—not the dashboard—restores
 that exact schedule after a later qualifying paired-home return. A manually
-paused schedule is never adopted or automatically resumed. Both feeder action
-targets remain disabled until their separate rollout gates are approved.
+paused schedule is never adopted or automatically resumed. Both exact feeder
+directions were activated on `2026-08-27`; every feeder card identifies that
+ownership, while the overview marks unavailable paired evidence as attention
+and the action worker fails closed.
 
 Browser mutations require a per-process bearer token embedded into the served
 page, a same-origin request, a bounded JSON body, and an exact allowlisted
@@ -66,6 +73,7 @@ bypass the cache. Confirmed actions invalidate the snapshot immediately.
 | Whisker integration | `openclaw/skills/litter-robot/` | `~/.openclaw/skills/litter-robot/` |
 | Petlibro integration | `openclaw/skills/petlibro/` | `~/.openclaw/skills/petlibro/` |
 | Feeder automation status | `openclaw/bin/home_event_action.py` | `~/.openclaw/home-events/state/feeder-schedule-suspensions.json` |
+| Transfer coverage | `openclaw/bin/home_event_bus.py` | Sanitized `home-eventctl status` fields only |
 | Logs | — | `~/.openclaw/logs/cat-dashboard.{log,err.log}` |
 
 ## Checks
