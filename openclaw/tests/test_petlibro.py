@@ -435,6 +435,23 @@ class PetlibroTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(payload["error"], "invalid_response")
 
+    def test_schedule_state_short_circuits_meal_list_when_master_is_paused(self) -> None:
+        responses = [
+            self.device_list_response(),
+            self.schedule_state_response(False),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            code, payload = self.run_main(["schedule-state", "crosstown-feeder"])
+
+        self.assertEqual(code, 0)
+        self.assertFalse(payload["scheduleEnabled"])
+        self.assertEqual(payload["enabledMealCount"], 0)
+        self.assertEqual(urlopen.call_count, 2)
+
     def test_schedule_set_is_exact_durable_and_verified(self) -> None:
         responses = [
             self.device_list_response(),

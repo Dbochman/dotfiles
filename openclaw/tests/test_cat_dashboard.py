@@ -235,6 +235,85 @@ class CatDashboardTests(unittest.TestCase):
             [self.dashboard.HOME_EVENTCTL_CLI, "status"],
         )
 
+    def test_petlibro_collector_uses_exact_schedule_readback(self) -> None:
+        with patch.object(
+            self.dashboard,
+            "_run_json",
+            side_effect=[
+                [
+                    {
+                        "selector": "cabin-feeder",
+                        "type": "feeder",
+                        "scheduleEnabled": True,
+                    },
+                    {"selector": "cabin-fountain", "type": "fountain"},
+                ],
+                {
+                    "success": True,
+                    "selector": "cabin-feeder",
+                    "scheduleEnabled": False,
+                    "enabledMealCount": 2,
+                    "observedAt": "2026-08-27T12:00:00Z",
+                },
+            ],
+        ) as run:
+            payload = self.dashboard.collect_petlibro()
+
+        feeder = payload["devices"][0]
+        self.assertFalse(feeder["scheduleEnabled"])
+        self.assertEqual(feeder["enabledMealCount"], 2)
+        self.assertEqual(feeder["scheduleReadback"], "verified")
+        self.assertEqual(feeder["scheduleObservedAt"], "2026-08-27T12:00:00Z")
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            [
+                self.dashboard.PETLIBRO_CLI,
+                "--json",
+                "schedule-state",
+                "cabin-feeder",
+            ],
+        )
+
+    def test_petlibro_collector_fails_closed_on_invalid_schedule_readback(self) -> None:
+        with patch.object(
+            self.dashboard,
+            "_run_json",
+            side_effect=[
+                [{"selector": "cabin-feeder", "type": "feeder", "scheduleEnabled": True}],
+                {"ok": False, "error": "provider unavailable"},
+            ],
+        ):
+            payload = self.dashboard.collect_petlibro()
+
+        feeder = payload["devices"][0]
+        self.assertIsNone(feeder["scheduleEnabled"])
+        self.assertIsNone(feeder["enabledMealCount"])
+        self.assertEqual(feeder["scheduleReadback"], "unavailable")
+
+    def test_petlibro_collector_preserves_verified_master_state(self) -> None:
+        with patch.object(
+            self.dashboard,
+            "_run_json",
+            side_effect=[
+                [
+                    {
+                        "selector": "cabin-feeder",
+                        "type": "feeder",
+                        "scheduleEnabled": False,
+                        "scheduleState": "disabled",
+                    }
+                ],
+                {"ok": False, "error": "meal list unavailable"},
+            ],
+        ):
+            payload = self.dashboard.collect_petlibro()
+
+        feeder = payload["devices"][0]
+        self.assertFalse(feeder["scheduleEnabled"])
+        self.assertIsNone(feeder["enabledMealCount"])
+        self.assertEqual(feeder["scheduleReadback"], "master_verified")
+        self.assertIsInstance(feeder["scheduleObservedAt"], str)
+
     def test_html_is_cat_first_and_embeds_ephemeral_token(self) -> None:
         harness = HandlerHarness(self.dashboard)
         harness.handler._serve_html()
@@ -245,7 +324,11 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("Transfer automation", text)
         self.assertIn("Feeder transfer protection", text)
         self.assertIn("Dual-direction guard", text)
-        self.assertIn("Vacancy automation active", text)
+        self.assertIn("Vacancy automation armed", text)
+        self.assertIn("Provider verified", text)
+        self.assertIn("Master verified", text)
+        self.assertIn("Directions armed", text)
+        self.assertIn("Schedules paused", text)
         self.assertIn("Recent litter-box activity", text)
         self.assertIn("Scheduled meals", text)
         self.assertIn("Pause schedule", text)

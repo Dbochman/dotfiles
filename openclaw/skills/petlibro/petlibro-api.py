@@ -605,19 +605,22 @@ def cmd_schedule_state(selector: str) -> dict:
     config, token, devices = get_token_and_devices()
     device, location = resolve_device(config, devices, selector, "feeder")
     enabled = read_feeding_schedule_state(token, device)
-    result = api_post(
-        "/device/feedingPlan/list",
-        {"deviceSn": device["deviceSn"], "id": device["deviceSn"]},
-        token,
-    )
-    schedule = require_api_success(result, "feeding schedule")
+    enabled_meal_count = 0
+    if enabled:
+        result = api_post(
+            "/device/feedingPlan/list",
+            {"deviceSn": device["deviceSn"], "id": device["deviceSn"]},
+            token,
+        )
+        schedule = require_api_success(result, "feeding schedule")
+        enabled_meal_count = _enabled_meal_count(schedule)
     return {
         "success": True,
         "selector": selector,
         "site": location,
         "online": True,
         "scheduleEnabled": enabled,
-        "enabledMealCount": _enabled_meal_count(schedule),
+        "enabledMealCount": enabled_meal_count,
         "observedAt": datetime.now(timezone.utc)
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z"),

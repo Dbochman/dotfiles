@@ -10,19 +10,26 @@ food, and water—rather than around vendor accounts or a generic device grid.
 
 - **Both / Crosstown / Cabin filter** scopes stations and litter-box activity.
 - **Transfer automation** shows whether both exact feeder directions are owned
-  by the event bus, whether Cabin and Crosstown litter evidence is paired and
-  fresh, how many actions are pending, and which feeders have an
-  OpenClaw-owned pause.
+  and armed by the event bus, whether Cabin and Crosstown litter evidence is
+  paired and fresh, how many actions are pending, and which feeders are
+  actually paused by OpenClaw. `Armed` describes policy readiness; it does not
+  claim that a feeder schedule is currently paused or that the current vacancy
+  cycle has qualified.
 - **Cat profiles** show current Whisker weight and the direction of recent
   samples.
 - **Whisker stations** show connectivity, state, waste level, litter level,
   cycle count, and recent activity for the exact enrolled robot at each home.
 - **Petlibro stations** show live feeder and fountain telemetry when the cloud
-  account returns those devices. Feeder cards also show whether the full saved
-  meal schedule is enabled or paused. An OpenClaw-owned vacancy pause is marked
-  `Auto-resume armed`; an ambiguous transition is surfaced as automation
-  attention. An explicit empty state replaces stale or invented values when no
-  devices are reporting.
+  account returns those devices. Each feeder gets a separate exact schedule
+  readback: the card shows the provider's master switch, effective number of
+  active saved meals, and observation time. A paused master reports zero active
+  meals even though its definitions remain saved. An OpenClaw-owned vacancy
+  pause is marked for automatic resume; an ambiguous transition is surfaced as
+  automation attention. An explicit unavailable state replaces an unverified
+  schedule value, and an explicit empty state replaces stale or invented values
+  when no devices are reporting. If Petlibro verifies the master switch but
+  temporarily rejects the separate meal-list query, the card preserves that
+  verified on/paused state while omitting the meal count.
 - **Attention state** calls out unavailable integrations, stale or incomplete
   transfer evidence, unknown feeder outcomes, offline robots, and full or
   nearly-full waste drawers.
@@ -61,10 +68,12 @@ intended for public-internet exposure or router port forwarding.
 
 ## Runtime
 
-The dashboard caches a combined Whisker/Petlibro snapshot for 60 seconds. One
+The dashboard caches a combined Whisker/Petlibro snapshot for 60 seconds. A
+new page load and the Refresh button bypass that cache so feeder schedule cards
+start from a fresh provider readback. One
 Whisker account session supplies both robot state and recent cat weights and
-activity, avoiding separate cloud logins for every card. Manual refreshes
-bypass the cache. Confirmed actions invalidate the snapshot immediately.
+activity, avoiding separate cloud logins for every card. Confirmed actions
+invalidate the snapshot immediately.
 
 | Component | Tracked source | Runtime path |
 |-----------|----------------|--------------|

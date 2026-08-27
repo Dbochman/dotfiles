@@ -119,13 +119,68 @@ def collect_whisker() -> dict[str, object]:
 def collect_petlibro() -> dict[str, object]:
     payload = _run_json([PETLIBRO_CLI, "--json", "status"])
     if isinstance(payload, list):
-        return {"ok": True, "devices": payload}
-    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
-        return {"ok": True, "devices": payload["data"]}
-    if isinstance(payload, dict):
-        payload.setdefault("ok", False)
-        return payload
-    return {"ok": False, "error": "Petlibro returned an unexpected response"}
+        devices = payload
+    elif isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        devices = payload["data"]
+    else:
+        if isinstance(payload, dict):
+            payload.setdefault("ok", False)
+            return payload
+        return {"ok": False, "error": "Petlibro returned an unexpected response"}
+
+    verified_devices: list[object] = []
+    for item in devices:
+        if not isinstance(item, dict):
+            verified_devices.append(item)
+            continue
+        device = dict(item)
+        selector = device.get("selector")
+        if selector not in PETLIBRO_FEEDER_SELECTORS:
+            verified_devices.append(device)
+            continue
+        schedule = _run_json([PETLIBRO_CLI, "--json", "schedule-state", selector])
+        valid_schedule = (
+            isinstance(schedule, dict)
+            and schedule.get("success") is True
+            and schedule.get("selector") == selector
+            and isinstance(schedule.get("scheduleEnabled"), bool)
+            and isinstance(schedule.get("enabledMealCount"), int)
+            and not isinstance(schedule.get("enabledMealCount"), bool)
+            and 0 <= schedule["enabledMealCount"] <= 64
+            and isinstance(schedule.get("observedAt"), str)
+        )
+        if valid_schedule:
+            device.update(
+                {
+                    "scheduleEnabled": schedule["scheduleEnabled"],
+                    "enabledMealCount": schedule["enabledMealCount"],
+                    "scheduleObservedAt": schedule["observedAt"],
+                    "scheduleReadback": "verified",
+                }
+            )
+        elif (
+            isinstance(device.get("scheduleEnabled"), bool)
+            and device.get("scheduleState")
+            == ("enabled" if device["scheduleEnabled"] else "disabled")
+        ):
+            device.update(
+                {
+                    "enabledMealCount": None,
+                    "scheduleObservedAt": _iso_timestamp(),
+                    "scheduleReadback": "master_verified",
+                }
+            )
+        else:
+            device.update(
+                {
+                    "scheduleEnabled": None,
+                    "enabledMealCount": None,
+                    "scheduleObservedAt": None,
+                    "scheduleReadback": "unavailable",
+                }
+            )
+        verified_devices.append(device)
+    return {"ok": True, "devices": verified_devices}
 
 
 def collect_feeder_automation() -> dict[str, object]:
@@ -518,20 +573,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const unknown = number(transfer.unknown_actions, 0);
       const coverageRequired = activeSites.length > 0;
       const attention = automation.ok === false || transfer.ok === false || Number(unknown) > 0 || (coverageRequired && !pairedCoverage);
-      const fullyActive = activeSites.length === sites.length;
-      const label = attention ? 'Attention' : fullyActive ? 'Active' : 'Standby';
-      const pillClass = attention ? 'bad' : fullyActive ? '' : 'warn';
-      const description = fullyActive && pairedCoverage
-        ? 'Both directions are armed. A qualifying litter-box visit can suspend scheduled meals at a confirmed-vacant home; only an OpenClaw-owned pause will auto-resume.'
-        : fullyActive
+      const fullyArmed = activeSites.length === sites.length;
+      const label = attention ? 'Attention' : fullyArmed ? 'Armed' : 'Standby';
+      const pillClass = attention ? 'bad' : fullyArmed ? '' : 'warn';
+      const description = fullyArmed && pairedCoverage
+        ? 'Both directions are armed. Armed means the policy may act after vacancy-cycle and settled litter evidence qualify; it does not mean either feeder is currently paused.'
+        : fullyArmed
           ? 'Both feeder directions are armed, but paired litter coverage is not currently ready. Transfer actions fail closed.'
           : 'One or more feeder directions are not owned by the event bus. Manual schedule controls remain available.';
-      document.getElementById('automation-summary').textContent = fullyActive ? 'Dual-direction guard' : `${activeSites.length} of ${sites.length} directions active`;
-      const directions = sites.map(site => `<span class="direction"><b>Vacant ${esc(siteName(site))}</b><span class="pill ${owners[site] === 'bus' ? '' : 'warn'}">${owners[site] === 'bus' ? 'Active' : 'Disabled'}</span></span>`).join('');
+      document.getElementById('automation-summary').textContent = fullyArmed ? 'Dual-direction guard armed' : `${activeSites.length} of ${sites.length} directions armed`;
+      const directions = sites.map(site => `<span class="direction"><b>Vacant ${esc(siteName(site))}</b><span class="pill ${owners[site] === 'bus' ? '' : 'warn'}">${owners[site] === 'bus' ? 'Armed' : 'Disabled'}</span></span>`).join('');
       root.innerHTML = `<article class="card automation-card">
         <div class="card-top"><div><div class="label">Home event bus</div><h3>Feeder transfer protection</h3></div><span class="pill ${pillClass}">${esc(label)}</span></div>
         <p class="automation-copy">${esc(description)}</p>
-        <div class="metric-row">${metric('Directions', `${activeSites.length}/${sites.length}`)}${metric('Litter coverage', pairedCoverage ? 'Paired' : 'Unavailable')}${metric('Managed pauses', managedSites.length)}${metric('Pending actions', pending)}</div>
+        <div class="metric-row">${metric('Directions armed', `${activeSites.length}/${sites.length}`)}${metric('Litter coverage', pairedCoverage ? 'Paired' : 'Unavailable')}${metric('Schedules paused', managedSites.length)}${metric('Pending actions', pending)}</div>
         <div class="direction-row">${directions}</div>
       </article>`;
     }
@@ -563,20 +618,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const feeder = device.type === 'feeder';
       const selector = device.selector || '';
       const site = selector.startsWith('cabin-') ? 'cabin' : selector.startsWith('crosstown-') ? 'crosstown' : 'unknown';
+      const scheduleKnown = typeof device.scheduleEnabled === 'boolean';
+      const scheduleEnabled = device.scheduleEnabled === true;
       const metrics = feeder
-        ? metric('Food', device.foodLevel || '—') + metric('Next meal', device.nextFeedTime || '—') + metric('Portions', number(device.nextFeedPortions))
+        ? metric('Food', device.foodLevel || '—') + metric('Next meal', scheduleKnown ? (scheduleEnabled ? device.nextFeedTime || '—' : 'Paused') : '—') + metric('Portions', scheduleKnown && scheduleEnabled ? number(device.nextFeedPortions) : '—')
         : metric('Water', device.waterPercent === '?' ? '—' : `${number(device.waterPercent)}%`) + metric('Today', device.todayDrinkMl === '?' ? '—' : `${number(device.todayDrinkMl)} ml`) + metric('Filter', device.filterDaysRemaining === '?' ? '—' : `${number(device.filterDaysRemaining)} d`);
       const enrolledFeeder = feeder && ['crosstown-feeder','cabin-feeder'].includes(selector);
       const action = enrolledFeeder
         ? `<div class="actions"><select aria-label="Portions" data-portions-for="${esc(selector)}"><option value="1">1 portion</option><option value="2">2 portions</option><option value="3">3 portions</option></select><button class="action" ${device.online ? '' : 'disabled'} data-command="feed" data-selector="${esc(selector)}">Feed now</button></div>` : '';
-      const scheduleKnown = typeof device.scheduleEnabled === 'boolean';
-      const scheduleEnabled = device.scheduleEnabled === true;
       const managed = state?.automation?.feeder_suspensions?.sites?.[site];
       const managedHere = managed?.selector === selector;
       const managedAttention = managedHere && managed.attention === true;
       const automationOwned = state?.automation?.feeding_schedule_owners?.[site] === 'bus';
-      const scheduleLabel = managedAttention ? 'Automation attention' : managedHere && managed.phase === 'restoring' ? 'Auto-resume verifying' : managedHere ? 'Paused · Auto-resume armed' : scheduleKnown ? (scheduleEnabled ? 'Enabled' : 'Paused') : 'Unavailable';
-      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleKnown && scheduleEnabled && !managedAttention ? '' : 'warn'}">${esc(scheduleLabel)}</span><span class="schedule-owner">${automationOwned ? 'Vacancy automation active' : 'Manual schedule only'}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Vacancy-managed' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
+      const enabledMeals = Number.isInteger(device.enabledMealCount) ? device.enabledMealCount : null;
+      const mealText = enabledMeals === null ? '' : `${enabledMeals} active meal${enabledMeals === 1 ? '' : 's'}`;
+      const verifiedAt = ['verified','master_verified'].includes(device.scheduleReadback) && device.scheduleObservedAt ? new Date(device.scheduleObservedAt) : null;
+      const verificationLabel = device.scheduleReadback === 'master_verified' ? 'Master verified' : 'Provider verified';
+      const verifiedText = verifiedAt && !Number.isNaN(verifiedAt.getTime()) ? `${verificationLabel} ${verifiedAt.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}` : 'Provider readback unavailable';
+      const scheduleLabel = scheduleKnown ? (scheduleEnabled ? `Master on${mealText ? ` · ${mealText}` : ''}` : `Master paused${mealText ? ` · ${mealText}` : ''}`) : 'Unavailable';
+      const ownershipText = managedAttention ? 'Automation attention' : managedHere && managed.phase === 'restoring' ? 'Auto-resume verifying' : managedHere ? 'OpenClaw-owned · Auto-resume armed' : automationOwned ? 'Vacancy automation armed' : 'Manual schedule only';
+      const scheduleClass = managedAttention ? 'bad' : scheduleKnown && scheduleEnabled ? '' : 'warn';
+      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleClass}">${esc(scheduleLabel)}</span><span class="schedule-owner">${esc(verifiedText)} · ${esc(ownershipText)}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Vacancy-managed' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
       return `<article class="card device-card" data-location="${esc(site)}"><div class="card-top"><div><div class="site">${esc(siteName(site))}</div><h3>${feeder ? 'Feeder' : 'Fountain'}</h3><div class="muted">${esc(device.name || device.model || 'Petlibro')}</div></div>${statusPill(device.online)}</div><div class="metric-row">${metrics}</div>${schedule}${action}</article>`;
     }
 
@@ -610,7 +672,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         const owner = state?.automation?.feeding_schedule_owners?.[site];
         const coverage = state?.transfer?.sites?.[site];
         const age = Number(coverage?.poll_age_seconds);
-        if (owner && owner !== 'bus') messages.push(`${siteName(site)} feeder transfer automation is not active.`);
+        if (owner && owner !== 'bus') messages.push(`${siteName(site)} feeder transfer automation is not armed.`);
         if (coverage && (coverage.enabled !== true || coverage.baselined !== true || coverage.health !== 'ok' || coverage.poll_age_seconds === null || !Number.isFinite(age) || age > 300)) messages.push(`${siteName(site)} litter evidence is not ready.`);
       }
       for (const [site, managed] of Object.entries(state?.automation?.feeder_suspensions?.sites || {})) { if (managed.attention) messages.push(`${siteName(site)} feeder automation needs review (${managed.last_error || 'unknown state'}).`); }
@@ -641,7 +703,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     document.querySelector('.segmented').addEventListener('click', event => { const button = event.target.closest('button[data-site]'); if (!button) return; selectedSite = button.dataset.site; document.querySelectorAll('.segmented button').forEach(x => x.classList.toggle('active', x === button)); renderDevices(); renderActivity(); });
     document.getElementById('refresh').addEventListener('click', () => load(true));
     document.getElementById('devices').addEventListener('click', event => { const button = event.target.closest('button[data-command]'); if (!button) return; const payload = {device: button.dataset.command === 'clean' ? 'whisker' : 'petlibro', action:button.dataset.command, selector:button.dataset.selector}; if (payload.action === 'feed') { const select = document.querySelector(`[data-portions-for="${CSS.escape(payload.selector)}"]`); payload.portions = Number(select.value); } if (payload.action === 'schedule') { payload.state = button.dataset.state; const location = siteName(String(payload.selector).split('-')[0]); const verb = payload.state === 'on' ? 'Resume' : 'Pause'; if (!window.confirm(`${verb} all scheduled meals at ${location}? Manual feeding remains available.`)) return; } mutate(payload, button); });
-    load(); setInterval(() => load(), 60000);
+    load(true); setInterval(() => load(), 60000);
   </script>
 </body>
 </html>"""

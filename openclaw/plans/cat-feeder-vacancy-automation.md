@@ -340,8 +340,10 @@ It returns only:
 ```
 
 `site` is derived from the exact local selector. `enabledMealCount` is the
-count of enabled saved meals; no meal time, portion, name, ID, or raw schedule
-is returned. A null or unverified field makes the observation unavailable.
+effective active-meal count; it is zero while the master schedule is paused
+because Petlibro rejects meal-list reads in that state. No meal time, portion,
+name, ID, or raw schedule is returned. A null or unverified field makes the
+observation unavailable.
 
 The only mutation commands reachable from the action worker are:
 

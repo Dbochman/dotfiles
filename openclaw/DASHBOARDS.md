@@ -218,15 +218,16 @@ with Petlibro feeders and fountains.
 ### What It Shows
 
 - **Cat profiles** — current Whisker weight and recent direction
-- **Transfer automation** — exact two-way feeder ownership, fresh paired
-  Whisker coverage, pending/unknown action state, and current OpenClaw-owned
-  feeder pauses
+- **Transfer automation** — exact two-way feeder ownership shown as `armed`,
+  fresh paired Whisker coverage, pending/unknown action state, and a separate
+  count of feeder schedules actually paused by OpenClaw
 - **Whisker cards** — one exact enrolled robot per home, including online
   state, waste, litter, cycle count, and a guarded clean action
-- **Petlibro cards** — live feeder and fountain telemetry, full-schedule
-  enabled/paused state, guarded pause/resume, and guarded 1–3 portion manual
+- **Petlibro cards** — live feeder and fountain telemetry, exact provider-
+  verified master schedule state plus effective active-meal count and
+  observation time, guarded pause/resume, and guarded 1–3 portion manual
   feeding when an enrolled device is reporting; OpenClaw-owned vacancy pauses
-  are marked with automatic resume armed and block conflicting manual toggles
+  are marked for automatic resume and block conflicting manual toggles
 - **Recent activity** — newest Litter-Robot events across both homes or scoped
   to Crosstown or Cabin
 - **Attention state** — integration errors, offline robots, and waste drawers

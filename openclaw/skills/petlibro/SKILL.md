@@ -40,9 +40,11 @@ petlibro --json schedule-state crosstown-feeder
 show unconfigured devices as `unmapped`. For each online mapped feeder,
 `status` also reads and reports whether its full feeding schedule is enabled.
 `schedule-state` is the sanitized automation readback for one exact feeder. It
-returns only online state, full-schedule enablement, the count of enabled saved
-meals, site, selector, and observation time; it omits meal times, portions,
-names, IDs, and raw plans.
+returns only online state, full-schedule enablement, the effective active-meal
+count, site, selector, and observation time; it omits meal times, portions,
+names, IDs, and raw plans. A paused master schedule reports zero active meals
+without requesting the provider meal list, which Petlibro rejects while the
+master switch is off.
 
 ## Scheduled feeding
 
