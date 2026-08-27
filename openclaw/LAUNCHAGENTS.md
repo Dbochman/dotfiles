@@ -338,13 +338,14 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, August, Nest, and vacancy spools into SQLite. |
-| `ai.openclaw.home-event-correlator` | 5s | `home-event-service-wrapper.sh correlate` | Records site-scoped incidents and rate-limited shadow decisions; no delivery or camera path. |
+| `ai.openclaw.home-event-ingest` | 5s + spool WatchPath | `home-event-service-wrapper.sh ingest` | Serially drains protected Ring, presence, August, Nest, vacancy, and Whisker spools into SQLite. |
+| `ai.openclaw.home-event-correlator` | 5s | `home-event-service-wrapper.sh correlate` | Records site-scoped incidents and rate-limited shadow decisions, and evaluates separately gated paired-home cat-transfer candidates; no direct delivery, camera, or device-control path. |
 | `ai.openclaw.august-event-adapter` | 60s scheduler; 5min poll | `home-event-service-wrapper.sh august` | Read-only August observer with durable safe poll-count/gap continuity; tracked enable flag remains `0`. |
 | `ai.openclaw.nest-home-event-bridge` | 5s | `home-event-service-wrapper.sh nest` | Mirrors only newly committed Nest person/motion metadata after a silent first-run baseline; tracked enable flag remains `0`. |
 | `ai.openclaw.presence-local-event-adapter` | 60s | `home-event-service-wrapper.sh presence-local` | Derives shadow-only named local arrivals/departures and household excursion intervals from advancing sanitized scans; both tracked site flags remain `0`. |
 | `ai.openclaw.vacancy-event-adapter` | 60s | `home-event-service-wrapper.sh vacancy` | Silently baselines existing protected vacancy runs, then publishes future completed runs for independently enabled sites; both tracked site flags remain `0`. |
-| `ai.openclaw.home-event-action` | 30s | `home-event-action-wrapper.sh` | Processes exact policy-owned Hue actions with fresh-vacancy revalidation and device readback; enforces selected routine suspension while vacant and restores only the pre-vacancy enabled set after a confirmed sticky-resident return. |
+| `ai.openclaw.whisker-event-adapter` | 60s | `home-event-service-wrapper.sh whisker` | Silently baselines the two exact Litter-Robot histories, then publishes only future normalized cat-presence observations while paired history remains continuous; both tracked site flags remain `0`. |
+| `ai.openclaw.home-event-action` | 30s | `home-event-action-wrapper.sh` | Processes exact policy-owned Hue and separately gated Petlibro schedule actions with fresh evidence and device readback; restores only automation-owned state and never adopts a manual pause. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `ai.openclaw.airthings-snapshot` | 5min + login | `airthings-snapshot` | Reads the exact Cabin Living Room Wave Enhance over local BLE and appends one Airthings-only row through the shared locked climate-history writer; failures update protected safe health without appending stale data |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
@@ -373,7 +374,7 @@ approval writer.
 The home-event jobs are **attended-install only**. A routine dotfiles
 pull may refresh their files only after an installed plist exists; it must not
 create the runtime, run `home-eventctl init`, bootstrap a job, or enable Ring,
-presence, August, Nest, or vacancy publication. All producer flags default
+presence, August, Nest, vacancy, or Whisker publication. All producer flags default
 off. The shared wrapper uses a
 sanitized environment and one bounded owner-only log, and neither it nor its
 children call `op`.
@@ -389,6 +390,11 @@ scanner, while Crosstown must remain disabled until its strict scanner canary
 and hash approval complete. Restart only these jobs when their code changes;
 home events does not require an OpenClaw gateway restart. See
 [`HOME-EVENTS.md`](HOME-EVENTS.md).
+
+The Whisker adapter requires a separate attended two-site baseline. Enabling
+either feeder target is a later policy decision: both exact
+`feeding_schedule` targets ship in `disabled` mode, so source installation and
+schema migration cannot call Petlibro or change a saved meal schedule.
 
 The attended Mini runtime currently has Cabin and Crosstown local enrichment
 enabled. Both sites completed zero-event baselines, duplicate-scan no-ops, and

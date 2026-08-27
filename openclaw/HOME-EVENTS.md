@@ -2,7 +2,8 @@
 
 Home events is the Mac Mini's private, durable journal for normalized household
 activity. Ring, canonical presence, a read-only August observer, a metadata-only
-Nest bridge, and a local network-presence adapter publish small site-scoped
+Nest bridge, a local network-presence adapter, the vacancy-action journal, and
+a disabled-by-default future-only Whisker observer publish small site-scoped
 records; one ingester serially commits them to SQLite. Producers remain
 journal-only. During the Dylan-only canary, the correlator may reserve one
 policy-scoped fixed-template message after confirmed vacancy and the arrival
@@ -56,7 +57,17 @@ site adapters were activated on `2026-08-22`; the attended Crosstown canary
 turned a live on-state off with exactly one command and a confirmed readback.
 The recurring worker then started idle with no pending or unknown action.
 
-The Dylan-only canary is now on SQLite schema v6. Its separate camera policy
+Schema 7 was deployed on `2026-08-26` to add one privacy-bounded Whisker event
+source and exact paired-home feeder transfer actions. Both Whisker site flags
+and both `feeding_schedule` policy modes remain disabled, so the installed
+stage cannot poll Litter-Robot or call Petlibro. A later active transfer must
+have uninterrupted fresh coverage at both homes, canonical origin vacancy, a
+sticky resident at the occupied destination, no origin litter activity, and a
+settled destination litter event. The worker verifies the destination schedule
+first, automatically restores it only when OpenClaw owns the prior pause, and
+then suspends the origin. It never adopts or resumes a manual pause.
+
+The Dylan-only canary is now on SQLite schema v7. Its separate camera policy
 was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
 `Living Room Wired` probes, a protected schema backup, full tests, and a
 shadow-first migration. Schema v5 was activated at `2026-08-07T22:40:59Z`
@@ -87,6 +98,7 @@ August `observe` over the existing MBP wrapper /               |
 Nest listener SQLite -> metadata bridge -------/               |
 Sanitized site scans -> local presence adapter -/               |
 Protected vacancy runs -> future-only adapter --/               |
+Paired Litter-Robot history -> Whisker adapter --/               |
                                                                v
                                                     single SQLite ingester
                                                                |
@@ -152,8 +164,8 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   LaunchAgent boundary and one bounded owner-only log. It loads only Dylan's
   validated chat target from the protected cache and never invokes `op`.
 - `bin/home-event-service-wrapper.sh` is the sanitized LaunchAgent boundary for
-  ingestion, correlation, August polling, Nest bridging, and local network
-  enrichment, with one bounded safe log.
+  ingestion, correlation, August and Whisker polling, Nest bridging, and local
+  network enrichment, with one bounded safe log.
 - `bin/august-event-adapter.py` polls one protected August binding and publishes
   transitions without exposing the mutation commands.
 - `bin/nest-home-event-bridge.py` tails committed Nest listener outbox rows and
@@ -169,12 +181,19 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
 - `bin/vacancy-event-adapter.py` publishes only future terminal runs from
   explicitly enabled sites after a silent baseline. It exposes no command,
   provider identifier, or device interface.
-- `bin/home_event_action.py` owns exact action reservations and Hue actions.
+- `bin/whisker-event-adapter.py` silently baselines the two exact Litter-Robot
+  histories, requires continuous paired coverage, and publishes only future
+  normalized cat-presence classifications. It exposes no serial, weight, pet
+  identity, raw activity, or mutation interface.
+- `bin/home_event_action.py` owns exact action reservations and Hue/Petlibro
+  actions.
   It handles Crosstown all-lights-off plus exact standing-automation
   suspension, continuous vacant-state enforcement, and restore-on-confirmed-
-  return. The worker holds an exclusive lock across crash recovery,
-  revalidation, command, and readback, and restores only routines recorded as
-  enabled before the matching vacancy cycle.
+  return. Separately disabled feeder targets require paired cat-transfer
+  evidence, restore an OpenClaw-owned destination pause before origin
+  suspension, and never resume a manual pause. The worker holds an exclusive
+  lock across crash recovery, revalidation, command, and readback, and restores
+  only state recorded as enabled before the matching vacancy cycle.
 - `skills/home-events/SKILL.md` constrains OpenClaw to the read-only wrapper and
   delegates only an explicit current-image request to `nest-camera`.
 - `ai.openclaw.ring-event-listener` remains the only Ring FCM connection and
@@ -183,10 +202,11 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   and publication are not automation dependencies.
 - `workspace/scripts/presence-detect.sh` remains the canonical presence writer
   and publishes transitions through its protected source outbox.
-- Nine attended-install LaunchAgents schedule ingestion, correlation, bounded
+- Ten attended-install LaunchAgents schedule ingestion, correlation, bounded
   delivery, bounded camera evidence, the disabled-by-default August observer
   and Nest bridge, the independently site-gated local-presence and vacancy
-  adapters, and the exact-target action worker.
+  adapters, the independently site-gated Whisker observer, and the exact-target
+  action worker.
 - The verifier has its own attended-install KeepAlive LaunchAgent. Merely
   deploying its files does not activate it: initialization, future-only
   consumer registration, and bootstrap are separate operator steps.
@@ -261,12 +281,14 @@ outside this rollout.
 │   ├── presence/                        0700
 │   ├── august/                          0700
 │   ├── nest/                            0700
-│   └── vacancy/                         0700
+│   ├── vacancy/                         0700
+│   └── whisker/                         0700
 └── state/                               0700
     ├── events.sqlite3                   0600
     ├── delivery.lock                    0600
     ├── action.lock                      0600
     ├── hue-automation-suspensions.json 0600 durable exact restore set
+    ├── feeder-schedule-suspensions.json 0600 exact OpenClaw-owned restore set
     ├── camera-images/                   0700 normally empty; frames are 0600
     ├── events.sqlite3-wal/-shm          0600 while SQLite is open
     ├── ingest.lock                      0600
@@ -282,7 +304,9 @@ outside this rollout.
     │                                      0600 only during retry/recovery
     ├── presence-local-adapter.lock      0600
     ├── vacancy-adapter.json             0600 per-site journal cursor
-    └── vacancy-adapter.lock             0600
+    ├── vacancy-adapter.lock             0600
+    ├── whisker-adapter.json             0600 paired history continuity
+    └── whisker-adapter.lock             0600
 
 ~/.openclaw/cabin-entry-verifier/        0700
 ├── state.sqlite3                        0600 structured schedule/results
@@ -631,7 +655,7 @@ retried, preventing a duplicate.
 ## Attended rollout
 
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
-installed at schema v6. The Dylan-only Stage 4 canary entered
+installed at schema v7. The Dylan-only Stage 4 canary entered
 `limited_delivery` at `2026-08-05T15:42:14Z`; the tracked delivery policy is
 active for both residences with exact Ring-plus-Nest camera evidence enabled.
 Cabin uses Ring `driveway`/`front_door` plus Nest `Kitchen`; Crosstown uses
@@ -650,7 +674,7 @@ fresh or rebuilt installation must first:
 2. Deploy the bus scripts, source adapters and bridge, skill, and any tracked
    LaunchAgents through the normal dotfiles flow.
 3. Back up the protected home-event database, run `home-eventctl init` to apply the
-   attended schema-v6 migration, then verify every runtime directory is `0700`
+   attended schema-v7 migration, then verify every runtime directory is `0700`
    and every runtime regular file is `0600`.
 4. Install the exact protected delivery policy while mode remains `shadow`.
    Its tracked rollout scope is Dylan only, both sites, three high-confidence
@@ -700,10 +724,16 @@ Rollout status and remaining work:
     are verified; local shadow enrichment is established at both sites.
 13. Throughout every gate, verify `home-eventctl status`, source spool depth,
     SQLite health, shadow decisions, and zero outbound delivery attempts.
+14. Schema 7 and policy schema 3 were installed on `2026-08-26` with both
+    Whisker observer flags and both exact feeder targets disabled. Continue
+    only through the staged baseline, shadow review, single-site suspension,
+    and owned automatic-resume gates in
+    [the cat feeder plan](plans/cat-feeder-vacancy-automation.md).
 
 Routine pulls preserve the installed `HOME_EVENTS_NEST_ENABLED` and
 `HOME_EVENTS_AUGUST_ENABLED` values and both installed local-presence site
-flags rather than reverting them to source defaults.
+flags, vacancy site flags, and Whisker site flags rather than reverting them to
+source defaults.
 
 Routine dotfiles pulls may update a service only after its plist is already
 installed. They must not create runtime secrets, initialize the database,

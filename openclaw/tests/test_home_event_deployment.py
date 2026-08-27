@@ -25,6 +25,7 @@ LABELS = (
     "ai.openclaw.nest-home-event-bridge",
     "ai.openclaw.presence-local-event-adapter",
     "ai.openclaw.vacancy-event-adapter",
+    "ai.openclaw.whisker-event-adapter",
 )
 DELIVERY_LABEL = "ai.openclaw.home-event-delivery"
 CAMERA_LABEL = "ai.openclaw.home-event-camera"
@@ -182,6 +183,24 @@ class HomeEventDeploymentTests(unittest.TestCase):
             "0",
         )
         self.assertEqual(vacancy["ProgramArguments"][2], "vacancy")
+        whisker = plistlib.loads(
+            (
+                OPENCLAW
+                / "launchagents"
+                / "ai.openclaw.whisker-event-adapter.plist"
+            ).read_bytes()
+        )
+        self.assertEqual(
+            whisker["EnvironmentVariables"]["HOME_EVENTS_WHISKER_CABIN_ENABLED"],
+            "0",
+        )
+        self.assertEqual(
+            whisker["EnvironmentVariables"][
+                "HOME_EVENTS_WHISKER_CROSSTOWN_ENABLED"
+            ],
+            "0",
+        )
+        self.assertEqual(whisker["ProgramArguments"][2], "whisker")
         action = plistlib.loads(
             (OPENCLAW / "launchagents" / f"{ACTION_LABEL}.plist").read_bytes()
         )
@@ -195,6 +214,7 @@ class HomeEventDeploymentTests(unittest.TestCase):
         )
         for filename in (
             "vacancy-event-adapter.py",
+            "whisker-event-adapter.py",
             "home_event_action.py",
             "home-event-action",
             "home-event-action-wrapper.sh",

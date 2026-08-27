@@ -26,6 +26,7 @@ def usage() -> str:
 Commands:
   status [alias]                 Status for all robots or one exact alias
   overview [N]                   Cat profiles plus both robots and recent visits
+  observe [N]                    Sanitized two-site activity for automation
   pets                           Cat profiles and recent weights
   history <alias> [N]            Activity history (default: 10)
   clean <alias>                  Start one cleaning cycle
@@ -93,6 +94,16 @@ def _action(payload: dict) -> str:
     return f"{payload.get('alias', 'Litter-Robot')}: {action}"
 
 
+def _observe(payload: dict) -> str:
+    lines = [f"Observed: {payload.get('observedAt', '?')}"]
+    for robot in payload.get("robots", []):
+        lines.append(
+            f"{robot.get('selector', '?')}: {len(robot.get('activities', []))} "
+            "qualifying activities"
+        )
+    return "\n".join(lines)
+
+
 def main(argv: list[str]) -> int:
     json_output = False
     if argv and argv[0] == "--json":
@@ -142,6 +153,8 @@ def main(argv: list[str]) -> int:
         print(_pets(payload))
     elif argv[0] == "history":
         print(_history(payload))
+    elif argv[0] == "observe":
+        print(_observe(payload))
     else:
         print(_action(payload))
     return result.returncode

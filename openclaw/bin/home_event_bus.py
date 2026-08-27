@@ -27,13 +27,13 @@ import sys
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = 6
-STATUS_SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+STATUS_SCHEMA_VERSION = 7
 EVENT_SCHEMA_VERSION = 1
 DELIVERY_POLICY_SCHEMA_VERSION = 3
 SERVICE_NAME = "home-events"
 DEFAULT_ROOT = Path("~/.openclaw/home-events").expanduser()
-SOURCES = ("ring", "presence", "august", "nest", "vacancy")
+SOURCES = ("ring", "presence", "august", "nest", "vacancy", "whisker")
 SITES = ("cabin", "crosstown")
 MAX_STDIN_BYTES = 64 * 1024
 MAX_SPOOL_BYTES = 32 * 1024
@@ -49,6 +49,7 @@ ACCESS_ATTENTION_REVIEWED = "access_attention_reviewed"
 ACCESS_ATTENTION_LAST_REVIEWED_EPOCH = "access_attention_last_reviewed_epoch"
 RING_LIVE_MAX_AGE = dt.timedelta(seconds=60)
 RING_BACKFILL_MAX_AGE = dt.timedelta(minutes=15)
+WHISKER_MAX_AGE = dt.timedelta(days=30)
 AUGUST_OBSERVE_STAGE_CODES = frozenset(
     {
         "observe_transport_unavailable",
@@ -278,6 +279,9 @@ EVENT_RULES: Mapping[str, Mapping[str, Tuple[str, ...]]] = {
             "unknown_count",
         ),
     },
+    "whisker": {
+        "pet.litter_box_activity": ("classification",),
+    },
 }
 
 EVENT_REQUIRED_ATTRIBUTES: Mapping[str, Mapping[str, frozenset[str]]] = {
@@ -301,6 +305,10 @@ EVENT_REQUIRED_ATTRIBUTES: Mapping[str, Mapping[str, frozenset[str]]] = {
     "vacancy": {
         event_type: frozenset(attributes)
         for event_type, attributes in EVENT_RULES["vacancy"].items()
+    },
+    "whisker": {
+        event_type: frozenset(attributes)
+        for event_type, attributes in EVENT_RULES["whisker"].items()
     },
 }
 
@@ -342,6 +350,9 @@ EVENT_ENTITY_KIND: Mapping[str, Mapping[str, str]] = {
         "automation.vacancy_run_completed": "workflow",
         "automation.vacancy_run_interrupted": "workflow",
     },
+    "whisker": {
+        "pet.litter_box_activity": "litter_box",
+    },
 }
 
 SAFE_DEVICE_ALIASES: Mapping[str, frozenset[str]] = {
@@ -362,6 +373,9 @@ SAFE_DEVICE_ALIASES: Mapping[str, frozenset[str]] = {
             "philly",
         }
     ),
+    "whisker": frozenset(
+        {"cabin_litter_robot", "crosstown_litter_robot"}
+    ),
 }
 SAFE_RING_BINDINGS = frozenset(
     {
@@ -371,6 +385,12 @@ SAFE_RING_BINDINGS = frozenset(
     }
 )
 SAFE_PERSON_ALIASES = frozenset({"dylan", "julia"})
+SAFE_WHISKER_BINDINGS = frozenset(
+    {
+        ("cabin", "cabin_litter_robot"),
+        ("crosstown", "crosstown_litter_robot"),
+    }
+)
 
 ENTITY_KINDS: Mapping[str, Tuple[str, ...]] = {
     "ring": ("doorbell",),
@@ -378,6 +398,7 @@ ENTITY_KINDS: Mapping[str, Tuple[str, ...]] = {
     "august": ("lock", "door", "battery", "adapter"),
     "nest": ("camera",),
     "vacancy": ("workflow", "automation_target"),
+    "whisker": ("litter_box",),
 }
 
 TIME_PRECISIONS: Mapping[str, Tuple[str, ...]] = {
@@ -386,6 +407,7 @@ TIME_PRECISIONS: Mapping[str, Tuple[str, ...]] = {
     "august": ("observed_interval",),
     "nest": ("source",),
     "vacancy": ("journal",),
+    "whisker": ("source",),
 }
 
 INPUT_REQUIRED_FIELDS = frozenset(
@@ -496,6 +518,10 @@ class RuntimePaths:
     @property
     def ring_producer_status(self) -> Path:
         return self.state / "ring-producer.json"
+
+    @property
+    def whisker_adapter_status(self) -> Path:
+        return self.state / "whisker-adapter.json"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -651,8 +677,14 @@ def _validate_attributes(source: str, event_type: str, value: Any) -> Dict[str, 
         else:
             raise PayloadError("invalid_attribute_value")
 
-    if "classification" in result and result["classification"] not in ("person", "motion"):
-        raise PayloadError("invalid_classification")
+    if "classification" in result:
+        classifications = (
+            {"cat_detected", "cat_sensor_interrupted"}
+            if source == "whisker"
+            else {"person", "motion"}
+        )
+        if result["classification"] not in classifications:
+            raise PayloadError("invalid_classification")
     if "backfill" in result and not isinstance(result["backfill"], bool):
         raise PayloadError("invalid_backfill")
     if "battery_percent" in result and (
@@ -842,6 +874,14 @@ def _validate_event_contract(
                 raise PayloadError("invalid_ring_backfill_age")
         elif age > RING_LIVE_MAX_AGE:
             raise PayloadError("unmarked_ring_backfill")
+
+    if source == "whisker":
+        if (site, entity_alias) not in SAFE_WHISKER_BINDINGS:
+            raise PayloadError("unbound_entity_site")
+        if time_precision != "source":
+            raise PayloadError("invalid_time_precision")
+        if not -dt.timedelta(minutes=5) <= observed - occurred <= WHISKER_MAX_AGE:
+            raise PayloadError("invalid_whisker_event_age")
 
     if source == "presence":
         evidence_at = attributes.get("evidence_at")
@@ -1540,6 +1580,103 @@ def _ring_producer_status(paths: RuntimePaths) -> Mapping[str, Any]:
         }
 
 
+def _whisker_adapter_status(paths: RuntimePaths, now: str) -> Mapping[str, Any]:
+    empty_sites = {
+        site: {
+            "enabled": False,
+            "baselined": False,
+            "health": "disabled",
+            "poll_age_seconds": None,
+            "coverage_age_seconds": None,
+            "error_code": None,
+        }
+        for site in SITES
+    }
+    path = paths.whisker_adapter_status
+    if not path.exists() and not path.is_symlink():
+        return {"health": "disabled", "sites": empty_sites}
+    try:
+        payload = _decode_json(
+            _read_private_bytes(path, 512 * 1024),
+            max_bytes=512 * 1024,
+            code="whisker_status_too_large",
+        )
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"schema_version", "sites"}
+            or payload["schema_version"] != 1
+            or not isinstance(payload["sites"], dict)
+            or set(payload["sites"]) != set(SITES)
+        ):
+            raise PayloadError("invalid_whisker_status")
+        now_value = _parse_now(now)
+        sites: Dict[str, Any] = {}
+        degraded = False
+        enabled_count = 0
+        for site in SITES:
+            record = payload["sites"][site]
+            required = {
+                "enabled",
+                "baselined",
+                "health",
+                "coverage_start",
+                "last_successful_poll",
+                "anchor",
+                "fingerprints",
+                "last_error",
+            }
+            if (
+                not isinstance(record, dict)
+                or set(record) != required
+                or not isinstance(record["enabled"], bool)
+                or not isinstance(record["baselined"], bool)
+                or record["health"]
+                not in {
+                    "disabled",
+                    "baseline_required",
+                    "ok",
+                    "provider_unavailable",
+                    "history_gap",
+                }
+            ):
+                raise PayloadError("invalid_whisker_status")
+            enabled_count += int(record["enabled"])
+            poll_age = None
+            coverage_age = None
+            if record["last_successful_poll"] is not None:
+                _, poll = _parse_timestamp(
+                    record["last_successful_poll"], "invalid_whisker_status"
+                )
+                poll_age = max(0, int((now_value - poll).total_seconds()))
+            if record["coverage_start"] is not None:
+                _, coverage = _parse_timestamp(
+                    record["coverage_start"], "invalid_whisker_status"
+                )
+                coverage_age = max(0, int((now_value - coverage).total_seconds()))
+            error = record["last_error"]
+            if error is not None and (
+                not isinstance(error, str) or REASON_CODE_RE.fullmatch(error) is None
+            ):
+                raise PayloadError("invalid_whisker_status")
+            sites[site] = {
+                "enabled": record["enabled"],
+                "baselined": record["baselined"],
+                "health": record["health"],
+                "poll_age_seconds": poll_age,
+                "coverage_age_seconds": coverage_age,
+                "error_code": error,
+            }
+            degraded = degraded or (
+                record["enabled"] and record["health"] != "ok"
+            )
+        return {
+            "health": "degraded" if degraded else "ok" if enabled_count else "disabled",
+            "sites": sites,
+        }
+    except (HomeEventError, OSError, UnicodeError, ValueError, TypeError):
+        return {"health": "degraded", "sites": empty_sites}
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
@@ -1693,7 +1830,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 CREATE TABLE IF NOT EXISTS producer_inbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     receipt_uid TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy', 'whisker')),
     event_uid TEXT,
     received_at TEXT NOT NULL,
     outcome TEXT NOT NULL CHECK(outcome IN ('accepted', 'duplicate', 'dead_letter')),
@@ -1704,7 +1841,7 @@ CREATE TABLE IF NOT EXISTS events (
     producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox(id),
     event_uid TEXT NOT NULL UNIQUE,
     dedupe_key TEXT NOT NULL UNIQUE,
-    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy', 'whisker')),
     event_type TEXT NOT NULL,
     site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
     entity_kind TEXT NOT NULL,
@@ -1716,7 +1853,7 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS producer_state (
-    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
+    source TEXT PRIMARY KEY CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy', 'whisker')),
     last_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
     last_observed_at TEXT,
     last_ingested_at TEXT,
@@ -1852,7 +1989,7 @@ CREATE TABLE IF NOT EXISTS camera_runtime (
     last_error_code TEXT
 );
 CREATE TABLE IF NOT EXISTS producer_component_health (
-    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy')),
+    source TEXT NOT NULL CHECK(source IN ('ring', 'presence', 'august', 'nest', 'vacancy', 'whisker')),
     site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
     component_alias TEXT NOT NULL,
     health TEXT NOT NULL CHECK(health IN ('unknown', 'ok', 'degraded')),
@@ -2309,20 +2446,27 @@ class EventStore:
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
+                self._migrate_v6_to_v7(connection, now)
             elif [row["version"] for row in versions] == [2]:
                 self._migrate_v2_to_v3(connection, now)
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
+                self._migrate_v6_to_v7(connection, now)
             elif [row["version"] for row in versions] == [3]:
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
+                self._migrate_v6_to_v7(connection, now)
             elif [row["version"] for row in versions] == [4]:
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
+                self._migrate_v6_to_v7(connection, now)
             elif [row["version"] for row in versions] == [5]:
                 self._migrate_v5_to_v6(connection, now)
+                self._migrate_v6_to_v7(connection, now)
+            elif [row["version"] for row in versions] == [6]:
+                self._migrate_v6_to_v7(connection, now)
             elif [row["version"] for row in versions] != [SCHEMA_VERSION]:
                 raise ConfigError("database_schema")
             for source in SOURCES:
@@ -2742,6 +2886,129 @@ class EventStore:
             connection.execute(
                 "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 5",
                 (6, now),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ConfigError("database_foreign_keys")
+
+    @staticmethod
+    def _migrate_v6_to_v7(connection: sqlite3.Connection, now: str) -> None:
+        """Add the privacy-bounded Whisker source without changing row identity."""
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                CREATE TABLE producer_inbox_v7 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    receipt_uid TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy', 'whisker'
+                    )),
+                    event_uid TEXT,
+                    received_at TEXT NOT NULL,
+                    outcome TEXT NOT NULL CHECK(outcome IN (
+                        'accepted', 'duplicate', 'dead_letter'
+                    )),
+                    error_code TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE events_v7 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    producer_inbox_id INTEGER NOT NULL REFERENCES producer_inbox_v7(id),
+                    event_uid TEXT NOT NULL UNIQUE,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    source TEXT NOT NULL CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy', 'whisker'
+                    )),
+                    event_type TEXT NOT NULL,
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    entity_kind TEXT NOT NULL,
+                    entity_alias TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    observed_at TEXT NOT NULL,
+                    time_precision TEXT NOT NULL,
+                    attributes_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE producer_state_v7 (
+                    source TEXT PRIMARY KEY CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy', 'whisker'
+                    )),
+                    last_event_id INTEGER REFERENCES events_v7(id) ON DELETE SET NULL,
+                    last_observed_at TEXT,
+                    last_ingested_at TEXT,
+                    accepted_count INTEGER NOT NULL DEFAULT 0,
+                    duplicate_count INTEGER NOT NULL DEFAULT 0,
+                    error_count INTEGER NOT NULL DEFAULT 0,
+                    health TEXT NOT NULL DEFAULT 'unknown'
+                        CHECK(health IN ('unknown', 'ok', 'degraded')),
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_error_code TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE producer_component_health_v7 (
+                    source TEXT NOT NULL CHECK(source IN (
+                        'ring', 'presence', 'august', 'nest', 'vacancy', 'whisker'
+                    )),
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    component_alias TEXT NOT NULL,
+                    health TEXT NOT NULL CHECK(health IN ('unknown', 'ok', 'degraded')),
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    last_observed_at TEXT,
+                    last_error_code TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(source, site, component_alias)
+                )
+                """
+            )
+            connection.execute("INSERT INTO producer_inbox_v7 SELECT * FROM producer_inbox")
+            connection.execute("INSERT INTO events_v7 SELECT * FROM events")
+            connection.execute("INSERT INTO producer_state_v7 SELECT * FROM producer_state")
+            connection.execute(
+                "INSERT INTO producer_component_health_v7 SELECT * FROM producer_component_health"
+            )
+            connection.execute("DROP TABLE producer_component_health")
+            connection.execute("DROP TABLE producer_state")
+            connection.execute("DROP TABLE events")
+            connection.execute("DROP TABLE producer_inbox")
+            connection.execute("ALTER TABLE producer_inbox_v7 RENAME TO producer_inbox")
+            connection.execute("ALTER TABLE events_v7 RENAME TO events")
+            connection.execute("ALTER TABLE producer_state_v7 RENAME TO producer_state")
+            connection.execute(
+                "ALTER TABLE producer_component_health_v7 RENAME TO producer_component_health"
+            )
+            connection.execute(
+                "CREATE INDEX producer_inbox_received_idx ON producer_inbox(received_at)"
+            )
+            connection.execute("CREATE INDEX events_created_idx ON events(created_at)")
+            connection.execute(
+                "CREATE INDEX events_site_occurred_idx ON events(site, occurred_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX events_type_occurred_idx ON events(event_type, occurred_at DESC)"
+            )
+            connection.execute(
+                "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 6",
+                (7, now),
             )
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise ConfigError("database_migration_integrity")
@@ -3801,6 +4068,10 @@ class EventStore:
             sources["ring"]["publisher"] = ring_publisher
             if ring_publisher["health"] == "degraded":
                 sources["ring"]["health"] = "degraded"
+            whisker_observer = _whisker_adapter_status(self.paths, self._now())
+            sources["whisker"]["observer"] = whisker_observer
+            if whisker_observer["health"] == "degraded":
+                sources["whisker"]["health"] = "degraded"
             return {
                 "schema_version": STATUS_SCHEMA_VERSION,
                 "mode": runtime["mode"],

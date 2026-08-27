@@ -11,6 +11,7 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -23,6 +24,10 @@ BINDINGS_FILE = CONFIG_DIR / "bindings.json"
 SCHEMA_VERSION = 1
 SITES = ("crosstown", "cabin")
 ALIASES = {site: f"{site}-litter-robot" for site in SITES}
+OBSERVE_ACTIONS = {
+    "cat detected": "cat_detected",
+    "cat sensor interrupted": "cat_sensor_interrupted",
+}
 
 
 class LitterRobotError(Exception):
@@ -417,6 +422,103 @@ async def _activity_entries(robot: object, limit: int) -> list[dict[str, Any]]:
     return entries
 
 
+def _observed_timestamp(value: object) -> str:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise LitterRobotError(
+            "observe_contract_invalid",
+            "Whisker returned an invalid activity timestamp.",
+        )
+    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )
+
+
+async def _observation_entries(robot: object, limit: int) -> tuple[list[dict[str, str]], bool]:
+    try:
+        history = await robot.get_activity_history(limit=limit)
+    except Exception as exc:
+        raise LitterRobotError(
+            "observe_history_unavailable",
+            "Could not retrieve the bounded Whisker observation history.",
+        ) from exc
+    if not isinstance(history, list) or len(history) > limit:
+        raise LitterRobotError(
+            "observe_contract_invalid",
+            "Whisker returned an invalid observation history.",
+        )
+    activities: list[dict[str, str]] = []
+    for item in history:
+        action = getattr(item, "action", None)
+        raw_action = getattr(action, "text", None) or _enum_value(action)
+        if not isinstance(raw_action, str):
+            continue
+        classification = OBSERVE_ACTIONS.get(raw_action.strip().casefold())
+        if classification is None:
+            continue
+        activities.append(
+            {
+                "occurredAt": _observed_timestamp(getattr(item, "timestamp", None)),
+                "classification": classification,
+            }
+        )
+    activities.sort(key=lambda item: item["occurredAt"], reverse=True)
+    return activities, len(history) < limit
+
+
+async def command_observe(limit: int = 100) -> dict[str, Any]:
+    """Return only exact, privacy-bounded activity needed by home-events."""
+    if limit < 1 or limit > 100:
+        raise LitterRobotError(
+            "invalid_limit",
+            "Observation history limit must be between 1 and 100.",
+            non_retryable=True,
+        )
+    bindings = load_bindings()
+    if (
+        len(bindings) != len(SITES)
+        or {binding["site"] for binding in bindings} != set(SITES)
+        or {binding["alias"] for binding in bindings} != set(ALIASES.values())
+    ):
+        raise LitterRobotError(
+            "observe_bindings_incomplete",
+            "Both exact Litter-Robot bindings are required for observation.",
+            non_retryable=True,
+        )
+    account = await connect_account()
+    try:
+        robots = litter_robots(account)
+        output: list[dict[str, Any]] = []
+        for binding in bindings:
+            matches = [
+                robot
+                for robot in robots
+                if getattr(robot, "serial", None) == binding["serial"]
+            ]
+            if len(matches) != 1:
+                raise LitterRobotError(
+                    "observe_binding_mismatch",
+                    "An exact enrolled Litter-Robot binding was not uniquely available.",
+                )
+            activities, exhausted = await _observation_entries(matches[0], limit)
+            output.append(
+                {
+                    "selector": binding["alias"],
+                    "site": binding["site"],
+                    "historyExhausted": exhausted,
+                    "activities": activities,
+                }
+            )
+        return {
+            "ok": True,
+            "observedAt": datetime.now(timezone.utc)
+            .isoformat(timespec="seconds")
+            .replace("+00:00", "Z"),
+            "robots": output,
+        }
+    finally:
+        await account.disconnect()
+
+
 async def command_overview(limit: int = 12) -> dict[str, Any]:
     """Return cat profiles, both robot states, and recent visits in one session."""
     if limit < 1 or limit > 50:
@@ -608,6 +710,8 @@ async def dispatch(argv: list[str]) -> dict[str, Any]:
         return await command_pets()
     if command == "overview" and len(args) <= 1:
         return await command_overview(_parse_limit(args[0]) if args else 12)
+    if command == "observe" and len(args) <= 1:
+        return await command_observe(_parse_limit(args[0]) if args else 100)
     if command == "history" and 1 <= len(args) <= 2:
         return await command_history(args[0], _parse_limit(args[1]) if len(args) == 2 else 10)
     if command in {"clean", "reset"} and len(args) == 1:

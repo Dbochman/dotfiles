@@ -27,7 +27,11 @@ from home_event_bus import (  # noqa: E402
     utc_now,
     validate_runtime,
 )
-from home_event_action import ActionError, reserve_from_vacancy_event  # noqa: E402
+from home_event_action import (  # noqa: E402
+    ActionError,
+    reserve_cat_transfers,
+    reserve_from_vacancy_event,
+)
 
 
 CONSUMER = "correlator"
@@ -979,6 +983,29 @@ class ShadowCorrelator:
                     dead += 1
                 else:
                     break
+        cat_transfers: Mapping[str, Any] = {
+            "status": "disabled",
+            "reserved": 0,
+            "shadowed": 0,
+        }
+        try:
+            with closing(self.store.connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                cat_transfers = reserve_cat_transfers(
+                    connection,
+                    root=self.paths.root,
+                    state_path=self.presence_state,
+                    producer_path=self.presence_producer_state,
+                    journal_root=self.vacancy_journal_root,
+                    clock=self.clock,
+                )
+                connection.commit()
+        except (ActionError, sqlite3.Error):
+            cat_transfers = {
+                "status": "unavailable",
+                "reserved": 0,
+                "shadowed": 0,
+            }
         expired = self._expire_incidents()
         shadow_decisions, reservations = self._finalize_decisions(presence)
         self.store.write_status_best_effort()
@@ -991,6 +1018,7 @@ class ShadowCorrelator:
             "expired": expired,
             "shadow_decisions": shadow_decisions,
             "reservations": reservations,
+            "cat_transfers": cat_transfers,
         }
 
 

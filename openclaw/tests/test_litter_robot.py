@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import redirect_stdout
+from datetime import datetime, timezone
 from enum import Enum
 import importlib.util
 from io import StringIO
@@ -63,6 +64,7 @@ class FakeRobot:
         self.litter_level = 85
         self.actions: list[tuple[str, object | None]] = []
         self.action_error: Exception | None = None
+        self.history: list[object] = []
 
     async def start_cleaning(self) -> bool:
         self.actions.append(("clean", None))
@@ -83,7 +85,13 @@ class FakeRobot:
         return True
 
     async def get_activity_history(self, *, limit: int):
-        return []
+        return self.history[:limit]
+
+
+class FakeActivity:
+    def __init__(self, timestamp: datetime, action: str) -> None:
+        self.timestamp = timestamp
+        self.action = type("FakeAction", (), {"text": action})()
 
 
 class FakePet:
@@ -195,6 +203,59 @@ class LitterRobotTests(unittest.TestCase):
         self.assertEqual(payload["pets"][0]["name"], "Test Cat")
         self.assertIn("recent_weights", payload["pets"][0])
         self.assertNotIn("CROSS-SERIAL", json.dumps(payload))
+
+    def test_observe_is_exact_two_site_and_privacy_bounded(self) -> None:
+        self.crosstown.history = [
+            FakeActivity(
+                datetime(2026, 8, 26, 21, 8, 24, tzinfo=timezone.utc),
+                "Cat Detected",
+            ),
+            FakeActivity(
+                datetime(2026, 8, 26, 21, 19, 0, tzinfo=timezone.utc),
+                "Clean Cycle Complete",
+            ),
+        ]
+        self.cabin.history = [
+            FakeActivity(
+                datetime(2026, 8, 26, 9, 15, 39, tzinfo=timezone.utc),
+                " cat sensor interrupted ",
+            )
+        ]
+
+        payload = asyncio.run(litter_robot_api.command_observe(100))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(
+            [item["selector"] for item in payload["robots"]],
+            ["crosstown-litter-robot", "cabin-litter-robot"],
+        )
+        self.assertEqual(
+            payload["robots"][0]["activities"],
+            [
+                {
+                    "occurredAt": "2026-08-26T21:08:24Z",
+                    "classification": "cat_detected",
+                }
+            ],
+        )
+        self.assertEqual(
+            payload["robots"][1]["activities"][0]["classification"],
+            "cat_sensor_interrupted",
+        )
+        serialized = json.dumps(payload)
+        for forbidden in ("CROSS-SERIAL", "CABIN-SERIAL", "Test Cat", "10.5"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_observe_requires_both_exact_bindings(self) -> None:
+        bindings = json.loads(self.bindings_file.read_text(encoding="utf-8"))
+        bindings["robots"] = bindings["robots"][:1]
+        self.bindings_file.write_text(json.dumps(bindings), encoding="utf-8")
+        self.bindings_file.chmod(0o600)
+
+        with self.assertRaises(litter_robot_api.LitterRobotError) as missing:
+            asyncio.run(litter_robot_api.command_observe())
+
+        self.assertEqual(missing.exception.code, "observe_bindings_incomplete")
 
     def test_mutations_require_exact_alias_and_do_not_choose_first_robot(self) -> None:
         payload = asyncio.run(

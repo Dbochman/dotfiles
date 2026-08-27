@@ -22,6 +22,7 @@ account order, fuzzy name, or a serial supplied in chat.
 litter-robot status
 litter-robot status cabin-litter-robot
 litter-robot --json overview
+litter-robot --json observe 100
 litter-robot pets
 litter-robot history crosstown-litter-robot
 litter-robot history cabin-litter-robot 25
@@ -30,6 +31,10 @@ litter-robot history cabin-litter-robot 25
 Use `--json` before the command when structured output is needed. `status`
 returns both enrolled robots by default and never emits protected identifiers.
 `overview` adds recent per-robot activity and recent cat weights for dashboards.
+`observe` is the automation-only, privacy-bounded read contract: it requires
+both exact bindings and returns only each site, selector, source time, and the
+exact `cat_detected` / `cat_sensor_interrupted` classifications. It omits
+serials, pet profiles, weights, and raw provider actions.
 
 ## Control commands
 

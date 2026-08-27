@@ -600,6 +600,14 @@ health is not interchangeable with `connectivity.internet_unavailable`.
 
 ## Workstream C: Pet-equipment readiness and bounded care
 
+The separate
+[`cat-feeder-vacancy-automation`](cat-feeder-vacancy-automation.md) plan
+specifies how litter-box activity may complement canonical vacancy to suspend
+and restore an exact feeder's saved schedule. That action changes schedule
+enablement only: it is not a dispense or missed-feed recovery path, and its
+Whisker adapter remains read-only. The exception and manual-dispense boundaries
+in this workstream continue to apply.
+
 ### Scope and aliases
 
 Petlibro may reuse its existing exact protected selectors. Litter-Robot must

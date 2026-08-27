@@ -33,11 +33,16 @@ petlibro --json status
 petlibro devices
 petlibro water crosstown-fountain
 petlibro schedule crosstown-feeder
+petlibro --json schedule-state crosstown-feeder
 ```
 
 `status` and `devices` label configured devices with their exact selectors and
 show unconfigured devices as `unmapped`. For each online mapped feeder,
 `status` also reads and reports whether its full feeding schedule is enabled.
+`schedule-state` is the sanitized automation readback for one exact feeder. It
+returns only online state, full-schedule enablement, the count of enabled saved
+meals, site, selector, and observation time; it omits meal times, portions,
+names, IDs, and raw plans.
 
 ## Scheduled feeding
 
@@ -56,6 +61,11 @@ then verifies the state through a fresh read. A request for an already-matching
 state succeeds without a mutation. If the result contains
 `schedule_outcome_unknown`, never retry automatically; inspect `petlibro
 status` before a new, explicit change.
+
+The home-event worker may suspend and later restore an exact full schedule only
+under the disabled-by-default cat-transfer policy. It restores only a schedule
+recorded as previously suspended by that worker. A manual pause remains paused,
+and no automation path imports or invokes `petlibro feed`.
 
 ## Manual feeding
 

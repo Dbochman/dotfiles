@@ -545,6 +545,7 @@ HOME_EVENT_LOCAL_PRESENCE_CHANGED=0
 HOME_EVENT_DELIVERY_CHANGED=0
 HOME_EVENT_CAMERA_CHANGED=0
 HOME_EVENT_VACANCY_CHANGED=0
+HOME_EVENT_WHISKER_CHANGED=0
 HOME_EVENT_ACTION_CHANGED=0
 for wrapper in "$BIN_SRC"/*; do
   [ -f "$wrapper" ] || continue
@@ -566,6 +567,7 @@ for wrapper in "$BIN_SRC"/*; do
         HOME_EVENT_NEST_CHANGED=1
         HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
         HOME_EVENT_VACANCY_CHANGED=1
+        HOME_EVENT_WHISKER_CHANGED=1
         HOME_EVENT_ACTION_CHANGED=1
       fi
       ;;
@@ -630,7 +632,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
   [ -f "$script" ] || continue
   fname=$(basename "$script")
   case "$fname" in
-    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|home-event-delivery.py|home-event-delivery-wrapper.sh|home-event-camera.py|home-event-camera-wrapper.sh|august-event-adapter.py|presence-local-event-adapter.py|vacancy-event-adapter.py|home_event_action.py|home-event-action-wrapper.sh)
+    home_event_bus.py|home-event-correlator.py|home-event-service-wrapper.sh|home-event-delivery.py|home-event-delivery-wrapper.sh|home-event-camera.py|home-event-camera-wrapper.sh|august-event-adapter.py|presence-local-event-adapter.py|vacancy-event-adapter.py|whisker-event-adapter.py|home_event_action.py|home-event-action-wrapper.sh)
       [ "$HOME_EVENT_SCHEMA_DEPLOY_READY" -eq 1 ] || continue
       ;;
     nest-home-event-bridge.py)
@@ -689,6 +691,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_DELIVERY_CHANGED=1
         HOME_EVENT_CAMERA_CHANGED=1
         HOME_EVENT_VACANCY_CHANGED=1
+        HOME_EVENT_WHISKER_CHANGED=1
         HOME_EVENT_ACTION_CHANGED=1
       fi
       ;;
@@ -722,6 +725,11 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_VACANCY_CHANGED=1
       fi
       ;;
+    whisker-event-adapter.py)
+      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
+        HOME_EVENT_WHISKER_CHANGED=1
+      fi
+      ;;
     home_event_action.py|home-event-action-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         HOME_EVENT_ACTION_CHANGED=1
@@ -740,6 +748,7 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
         HOME_EVENT_NEST_CHANGED=1
         HOME_EVENT_LOCAL_PRESENCE_CHANGED=1
         HOME_EVENT_VACANCY_CHANGED=1
+        HOME_EVENT_WHISKER_CHANGED=1
       fi
       ;;
   esac
@@ -1121,6 +1130,7 @@ for HOME_EVENT_AGENT_LABEL in \
   ai.openclaw.nest-home-event-bridge \
   ai.openclaw.presence-local-event-adapter \
   ai.openclaw.vacancy-event-adapter \
+  ai.openclaw.whisker-event-adapter \
   ai.openclaw.home-event-action; do
   HOME_EVENT_AGENT_SRC="$REPO/openclaw/launchagents/$HOME_EVENT_AGENT_LABEL.plist"
   HOME_EVENT_AGENT_DST="$HOME/Library/LaunchAgents/$HOME_EVENT_AGENT_LABEL.plist"
@@ -1245,6 +1255,38 @@ for HOME_EVENT_AGENT_LABEL in \
         exit 1
       fi
       HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
+    elif [ "$HOME_EVENT_AGENT_LABEL" = "ai.openclaw.whisker-event-adapter" ]; then
+      HOME_EVENT_WHISKER_CABIN_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_WHISKER_CABIN_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      HOME_EVENT_WHISKER_CROSSTOWN_ENABLED=$(
+        /usr/libexec/PlistBuddy \
+          -c 'Print :EnvironmentVariables:HOME_EVENTS_WHISKER_CROSSTOWN_ENABLED' \
+          "$HOME_EVENT_AGENT_DST" 2>/dev/null || printf '0'
+      )
+      case "$HOME_EVENT_WHISKER_CABIN_ENABLED:$HOME_EVENT_WHISKER_CROSSTOWN_ENABLED" in
+        0:0|0:1|1:0|1:1) ;;
+        *)
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL installed Whisker enable flags are invalid" >> "$LOG"
+          exit 1
+          ;;
+      esac
+      HOME_EVENT_AGENT_CANDIDATE_TMP=$(mktemp \
+        "$HOME/Library/LaunchAgents/.${HOME_EVENT_AGENT_LABEL}.candidate.XXXXXX")
+      if ! cp "$HOME_EVENT_AGENT_SRC" "$HOME_EVENT_AGENT_CANDIDATE_TMP" \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_WHISKER_CABIN_ENABLED $HOME_EVENT_WHISKER_CABIN_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null \
+        || ! /usr/libexec/PlistBuddy \
+          -c "Set :EnvironmentVariables:HOME_EVENTS_WHISKER_CROSSTOWN_ENABLED $HOME_EVENT_WHISKER_CROSSTOWN_ENABLED" \
+          "$HOME_EVENT_AGENT_CANDIDATE_TMP" >/dev/null; then
+        rm -f "$HOME_EVENT_AGENT_CANDIDATE_TMP"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) home-events: FATAL could not preserve installed Whisker enable flags" >> "$LOG"
+        exit 1
+      fi
+      HOME_EVENT_AGENT_CANDIDATE="$HOME_EVENT_AGENT_CANDIDATE_TMP"
     fi
     if ! cmp -s "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST"; then
       atomic_install_managed_file "$HOME_EVENT_AGENT_CANDIDATE" "$HOME_EVENT_AGENT_DST" 644
@@ -1277,6 +1319,9 @@ for HOME_EVENT_AGENT_LABEL in \
         ;;
       ai.openclaw.vacancy-event-adapter)
         HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_VACANCY_CHANGED"
+        ;;
+      ai.openclaw.whisker-event-adapter)
+        HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_WHISKER_CHANGED"
         ;;
       ai.openclaw.home-event-action)
         HOME_EVENT_RUNTIME_CHANGED="$HOME_EVENT_ACTION_CHANGED"

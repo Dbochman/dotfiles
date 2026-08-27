@@ -102,6 +102,16 @@ run_component() {
         PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
         "$BIN/vacancy-event-adapter.py"
       ;;
+    whisker)
+      /usr/bin/env -i HOME="$HOME" PATH="/opt/homebrew/bin:/usr/bin:/bin" \
+        HOME_EVENTS_ROOT="$ROOT" \
+        HOME_EVENTS_WHISKER_CABIN_ENABLED="${HOME_EVENTS_WHISKER_CABIN_ENABLED:-0}" \
+        HOME_EVENTS_WHISKER_CROSSTOWN_ENABLED="${HOME_EVENTS_WHISKER_CROSSTOWN_ENABLED:-0}" \
+        LITTER_ROBOT_BIN="$BIN/litter-robot" \
+        HOME_EVENTCTL="$BIN/home-eventctl" \
+        PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -I \
+        "$BIN/whisker-event-adapter.py"
+      ;;
     *) fail "unsupported component" ;;
   esac
 }

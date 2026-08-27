@@ -33,6 +33,13 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     printf '%s\n' '{"success":false,"error":"invalid_arguments","message":"Usage: petlibro schedule-set <crosstown-feeder|cabin-feeder> <on|off>"}'
     exit 2
   fi
+  if [[ "${1:-}" == "schedule-state" ]] && {
+    [[ $# -ne 2 ]] ||
+    [[ ! "${2:-}" =~ ^(crosstown-feeder|cabin-feeder)$ ]]
+  }; then
+    printf '%s\n' '{"success":false,"error":"invalid_arguments","message":"Usage: petlibro schedule-state <crosstown-feeder|cabin-feeder>"}'
+    exit 2
+  fi
   exec "$PYTHON" "$API_SCRIPT" "$@"
 fi
 
@@ -183,6 +190,14 @@ case "${1:-}" in
     fi
     run_api schedule-set "$2" "$3" | parse_schedule_set
     ;;
+  schedule-state)
+    if [[ $# -ne 2 ]] ||
+      [[ ! "${2:-}" =~ ^(crosstown-feeder|cabin-feeder)$ ]]; then
+      echo "Usage: petlibro schedule-state <crosstown-feeder|cabin-feeder>" >&2
+      exit 2
+    fi
+    run_api schedule-state "$2" | python3 -m json.tool
+    ;;
   devices)
     if [[ $# -ne 1 ]]; then
       echo "Usage: petlibro devices" >&2
@@ -198,6 +213,7 @@ case "${1:-}" in
     echo "  feed <location-feeder> <1|2|3>     Manual feed (explicit portions required)"
     echo "  water <location-fountain>          Today's water intake"
     echo "  schedule <location-feeder>         Today's feeding schedule"
+    echo "  schedule-state <location-feeder>   Sanitized schedule readiness"
     echo "  schedule-set <location-feeder> <on|off>  Pause or resume all scheduled feeding"
     echo "  devices                 List all devices"
     echo ""

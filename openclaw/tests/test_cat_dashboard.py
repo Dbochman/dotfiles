@@ -124,12 +124,18 @@ class CatDashboardTests(unittest.TestCase):
         with patch.object(
             self.dashboard,
             "_run_json",
-            side_effect=[{"ok": True, "robots": [], "pets": []}, []],
+            side_effect=[
+                {"ok": True, "robots": [], "pets": []},
+                [],
+                {"ok": True, "feeder_suspensions": {"sites": {}}},
+            ],
         ) as run:
             whisker = self.dashboard.collect_whisker()
             petlibro = self.dashboard.collect_petlibro()
+            automation = self.dashboard.collect_feeder_automation()
         self.assertTrue(whisker["ok"])
         self.assertEqual(petlibro, {"ok": True, "devices": []})
+        self.assertTrue(automation["ok"])
         self.assertEqual(
             run.call_args_list[0].args[0],
             [self.dashboard.LITTER_ROBOT_CLI, "--json", "overview", "14"],
@@ -137,6 +143,10 @@ class CatDashboardTests(unittest.TestCase):
         self.assertEqual(
             run.call_args_list[1].args[0],
             [self.dashboard.PETLIBRO_CLI, "--json", "status"],
+        )
+        self.assertEqual(
+            run.call_args_list[2].args[0],
+            [self.dashboard.HOME_EVENT_ACTION_CLI, "status"],
         )
 
     def test_html_is_cat_first_and_embeds_ephemeral_token(self) -> None:
@@ -150,6 +160,8 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("Scheduled meals", text)
         self.assertIn("Pause schedule", text)
         self.assertIn("Resume schedule", text)
+        self.assertIn("Auto-resume armed", text)
+        self.assertIn("Vacancy-managed", text)
         self.assertIn("Manual feeding remains available", text)
         self.assertIn("data-site=\"crosstown\"", text)
         self.assertIn(f"const MUTATION_TOKEN = {json.dumps(self.dashboard.MUTATION_TOKEN)};", text)

@@ -13,6 +13,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [home-events-bus](home-events-bus.md) | Deployed shadow bus: presence, Nest, Ring, and August active for shadow evidence |
 | [event-bus-promotion-plan](event-bus-promotion-plan.md) | Promote shadow correlation through Crosstown enrichment, attended source evidence, and narrowly scoped household delivery |
 | [home-events-future-sources](home-events-future-sources.md) | Vacant-house action confidence, lighting/HVAC promotion, bounded pet care, and deferred connectivity |
+| [cat-feeder-vacancy-automation](cat-feeder-vacancy-automation.md) | Exact Whisker evidence and owned Petlibro schedule transfer for vacant-house cat care |
 | [cabin-starlink-presence-enrollment](cabin-starlink-presence-enrollment.md) | Cabin exact controller/mesh schema v2 activated; natural transition verification remains |
 | [crosstown-strict-presence-canary](crosstown-strict-presence-canary.md) | Strict Crosstown scanner activated with exact approval and a protected legacy rollback |
 

@@ -15,8 +15,10 @@ food, and water—rather than around vendor accounts or a generic device grid.
   cycle count, and recent activity for the exact enrolled robot at each home.
 - **Petlibro stations** show live feeder and fountain telemetry when the cloud
   account returns those devices. Feeder cards also show whether the full saved
-  meal schedule is enabled or paused. An explicit empty state replaces stale
-  or invented values when no devices are reporting.
+  meal schedule is enabled or paused. An OpenClaw-owned vacancy pause is marked
+  `Auto-resume armed`; an ambiguous transition is surfaced as automation
+  attention. An explicit empty state replaces stale or invented values when no
+  devices are reporting.
 - **Attention state** calls out unavailable integrations, offline robots, and
   full or nearly-full waste drawers.
 
@@ -33,6 +35,12 @@ the selected home in a confirmation step, changes the whole schedule once, and
 then requires a verified readback. Pausing the schedule does not delete meal
 definitions or block manual feeding. An uncertain result is shown as a failure
 and is never retried automatically.
+
+When the event bus owns a feeder pause, the manual schedule button is disabled
+and labeled `Vacancy-managed`. The action worker—not the dashboard—restores
+that exact schedule after a later qualifying paired-home return. A manually
+paused schedule is never adopted or automatically resumed. Both feeder action
+targets remain disabled until their separate rollout gates are approved.
 
 Browser mutations require a per-process bearer token embedded into the served
 page, a same-origin request, a bounded JSON body, and an exact allowlisted
@@ -57,6 +65,7 @@ bypass the cache. Confirmed actions invalidate the snapshot immediately.
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.cat-dashboard.plist` | `~/Library/LaunchAgents/ai.openclaw.cat-dashboard.plist` |
 | Whisker integration | `openclaw/skills/litter-robot/` | `~/.openclaw/skills/litter-robot/` |
 | Petlibro integration | `openclaw/skills/petlibro/` | `~/.openclaw/skills/petlibro/` |
+| Feeder automation status | `openclaw/bin/home_event_action.py` | `~/.openclaw/home-events/state/feeder-schedule-suspensions.json` |
 | Logs | — | `~/.openclaw/logs/cat-dashboard.{log,err.log}` |
 
 ## Checks

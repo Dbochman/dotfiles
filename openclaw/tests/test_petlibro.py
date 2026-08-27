@@ -349,6 +349,67 @@ class PetlibroTests(unittest.TestCase):
             {"deviceSn": "CROSS-FEEDER-SN", "id": "CROSS-FEEDER-SN"},
         )
 
+    def test_schedule_state_is_sanitized_and_counts_explicit_meals(self) -> None:
+        responses = [
+            self.device_list_response(),
+            self.schedule_state_response(True),
+            FakeResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        "feedingPlanList": [
+                            {"id": "private-1", "enable": True, "grainNum": 2},
+                            {"id": "private-2", "enable": False, "grainNum": 3},
+                            {"id": "private-3", "enable": True, "grainNum": 1},
+                        ]
+                    },
+                }
+            ),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ):
+            code, payload = self.run_main(["schedule-state", "crosstown-feeder"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            set(payload),
+            {
+                "success",
+                "selector",
+                "site",
+                "online",
+                "scheduleEnabled",
+                "enabledMealCount",
+                "observedAt",
+            },
+        )
+        self.assertEqual(payload["selector"], "crosstown-feeder")
+        self.assertEqual(payload["site"], "crosstown")
+        self.assertTrue(payload["scheduleEnabled"])
+        self.assertEqual(payload["enabledMealCount"], 2)
+        serialized = json.dumps(payload)
+        self.assertNotIn("private-1", serialized)
+        self.assertNotIn("grainNum", serialized)
+
+    def test_schedule_state_rejects_ambiguous_plan_shape(self) -> None:
+        responses = [
+            self.device_list_response(),
+            self.schedule_state_response(True),
+            FakeResponse({"code": 0, "data": {"unexpected": []}}),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ):
+            code, payload = self.run_main(["schedule-state", "crosstown-feeder"])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "invalid_response")
+
     def test_schedule_set_is_exact_durable_and_verified(self) -> None:
         responses = [
             self.device_list_response(),

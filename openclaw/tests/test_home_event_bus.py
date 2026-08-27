@@ -102,6 +102,26 @@ def nest_payload(
     }
 
 
+def whisker_payload(
+    *,
+    source_event_id: str = "private-whisker-activity",
+    site: str = "crosstown",
+    alias: str = "crosstown_litter_robot",
+    classification: str = "cat_detected",
+) -> dict:
+    return {
+        "source_event_id": source_event_id,
+        "event_type": "pet.litter_box_activity",
+        "site": site,
+        "entity_kind": "litter_box",
+        "entity_alias": alias,
+        "occurred_at": "2026-07-12T14:59:00Z",
+        "observed_at": "2026-07-12T15:00:00Z",
+        "time_precision": "source",
+        "attributes": {"classification": classification},
+    }
+
+
 def local_presence_payload(
     event_type: str,
     *,
@@ -333,7 +353,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 6)
+        self.assertEqual(status["schema_version"], 7)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -663,7 +683,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
                 INSERT INTO events_v1 SELECT * FROM events;
                 INSERT INTO producer_state_v1
                     SELECT * FROM producer_state
-                    WHERE source NOT IN ('nest', 'vacancy');
+                    WHERE source NOT IN ('nest', 'vacancy', 'whisker');
                 DROP TABLE producer_state;
                 DROP TABLE events;
                 DROP TABLE producer_inbox;
@@ -692,7 +712,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         with self.connection() as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
-                6,
+                7,
             )
             self.assertEqual(
                 connection.execute(
@@ -723,6 +743,11 @@ class RuntimeSecurityTests(HomeEventTestCase):
                     "SELECT source FROM producer_state WHERE source='vacancy'"
                 ).fetchone()
             )
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT source FROM producer_state WHERE source='whisker'"
+                ).fetchone()
+            )
             outbox_columns = {
                 row["name"]
                 for row in connection.execute(
@@ -730,6 +755,136 @@ class RuntimeSecurityTests(HomeEventTestCase):
                 )
             }
             self.assertTrue({"reviewed_at", "review_outcome"}.issubset(outbox_columns))
+
+    def test_v6_to_v7_preserves_incident_action_and_component_references(self) -> None:
+        self.enqueue(ring_payload())
+        self.ingest()
+        with self.connection() as connection:
+            event_id = int(connection.execute("SELECT id FROM events").fetchone()[0])
+            incident_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO incidents(
+                        incident_uid, site, state, category, summary_code,
+                        opened_at, updated_at
+                    ) VALUES (?, 'cabin', 'resolved', 'activity', 'migration', ?, ?)
+                    """,
+                    ("inc_" + ("d" * 32), NOW, NOW),
+                ).lastrowid
+            )
+            connection.execute(
+                """
+                INSERT INTO incident_events(incident_id, event_id, relation, created_at)
+                VALUES (?, ?, 'trigger', ?)
+                """,
+                (incident_id, event_id, NOW),
+            )
+            reservation_id = int(
+                connection.execute(
+                    """
+                    INSERT INTO action_reservations(
+                        reservation_uid, trigger_event_id, site, target_alias,
+                        action, vacancy_cycle_id, trigger_state_hash,
+                        reserved_state_hash, policy_hash, status, attempt_count,
+                        reserved_at, expires_at, claimed_at, completed_at,
+                        reason_code
+                    ) VALUES (?, ?, 'cabin', 'feeding_schedule',
+                              'suspend_restore', ?, ?, ?, ?, 'complete', 1,
+                              ?, ?, ?, ?, 'completed')
+                    """,
+                    (
+                        "act_" + ("e" * 32),
+                        event_id,
+                        "cycle_" + ("f" * 32),
+                        "1" * 64,
+                        "2" * 64,
+                        "3" * 64,
+                        NOW,
+                        "2026-07-12T15:10:00Z",
+                        NOW,
+                        NOW,
+                    ),
+                ).lastrowid
+            )
+            connection.execute(
+                """
+                INSERT INTO action_outcomes(
+                    reservation_id, outcome, verification, reason_code,
+                    command_attempted, observed_at
+                ) VALUES (?, 'state_confirmed', 'state_confirmed',
+                          'completed', 1, ?)
+                """,
+                (reservation_id, NOW),
+            )
+            connection.execute(
+                """
+                INSERT INTO producer_component_health(
+                    source, site, component_alias, health,
+                    consecutive_failures, last_observed_at, updated_at
+                ) VALUES ('ring', 'cabin', 'front_door', 'ok', 0, ?, ?)
+                """,
+                (NOW, NOW),
+            )
+            connection.execute("UPDATE schema_migrations SET version=6")
+            expected = {
+                "incident_event": tuple(
+                    connection.execute(
+                        "SELECT incident_id, event_id, relation FROM incident_events"
+                    ).fetchone()
+                ),
+                "reservation": tuple(
+                    connection.execute(
+                        "SELECT id, trigger_event_id, status FROM action_reservations"
+                    ).fetchone()
+                ),
+                "outcome": tuple(
+                    connection.execute(
+                        "SELECT reservation_id, outcome, command_attempted FROM action_outcomes"
+                    ).fetchone()
+                ),
+                "component": tuple(
+                    connection.execute(
+                        "SELECT source, site, component_alias, health FROM producer_component_health"
+                    ).fetchone()
+                ),
+            }
+
+        self.store.initialize()
+
+        with self.connection() as connection:
+            self.assertEqual(
+                tuple(
+                    connection.execute(
+                        "SELECT incident_id, event_id, relation FROM incident_events"
+                    ).fetchone()
+                ),
+                expected["incident_event"],
+            )
+            self.assertEqual(
+                tuple(
+                    connection.execute(
+                        "SELECT id, trigger_event_id, status FROM action_reservations"
+                    ).fetchone()
+                ),
+                expected["reservation"],
+            )
+            self.assertEqual(
+                tuple(
+                    connection.execute(
+                        "SELECT reservation_id, outcome, command_attempted FROM action_outcomes"
+                    ).fetchone()
+                ),
+                expected["outcome"],
+            )
+            self.assertEqual(
+                tuple(
+                    connection.execute(
+                        "SELECT source, site, component_alias, health FROM producer_component_health"
+                    ).fetchone()
+                ),
+                expected["component"],
+            )
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_ring_worker_health_projection_is_bounded_and_explicit(self) -> None:
         self.paths.ring_producer_status.write_text(
@@ -1774,6 +1929,76 @@ class VacancySourceContractTests(HomeEventTestCase):
         wrong["attributes"]["action"] = "lock"
         with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_site"):
             self.enqueue(wrong, source="vacancy")
+
+
+class WhiskerSourceContractTests(HomeEventTestCase):
+    def test_status_projects_only_safe_whisker_health(self) -> None:
+        state = {
+            "schema_version": 1,
+            "sites": {
+                site: {
+                    "enabled": True,
+                    "baselined": True,
+                    "health": "ok",
+                    "coverage_start": "2026-07-12T14:00:00Z",
+                    "last_successful_poll": "2026-07-12T14:59:00Z",
+                    "anchor": f"private-{site}-anchor",
+                    "fingerprints": [f"private-{site}-fingerprint"],
+                    "last_error": None,
+                }
+                for site in home_events.SITES
+            },
+        }
+        self.paths.whisker_adapter_status.write_text(
+            json.dumps(state), encoding="utf-8"
+        )
+        self.paths.whisker_adapter_status.chmod(0o600)
+
+        status = self.store.status_snapshot()["sources"]["whisker"]["observer"]
+        encoded = json.dumps(status)
+
+        self.assertEqual(status["health"], "ok")
+        self.assertEqual(status["sites"]["cabin"]["poll_age_seconds"], 60)
+        self.assertEqual(status["sites"]["crosstown"]["coverage_age_seconds"], 3600)
+        self.assertNotIn("private-", encoded)
+        self.assertNotIn("anchor", encoded)
+        self.assertNotIn("fingerprint", encoded)
+
+    def test_exact_privacy_bounded_litter_activity_is_accepted(self) -> None:
+        event = self.enqueue(whisker_payload(), source="whisker")
+
+        self.assertEqual(event.source, "whisker")
+        self.assertEqual(event.entity_alias, "crosstown_litter_robot")
+        self.assertEqual(event.attributes, {"classification": "cat_detected"})
+        encoded = json.dumps(event.as_spool_record())
+        self.assertNotIn("private-whisker-activity", encoded)
+
+    def test_whisker_requires_exact_site_alias_and_classification(self) -> None:
+        wrong_site = whisker_payload(site="cabin")
+        with self.assertRaisesRegex(home_events.PayloadError, "unbound_entity_site"):
+            self.enqueue(wrong_site, source="whisker")
+
+        wrong_classification = whisker_payload(classification="cycle_complete")
+        with self.assertRaisesRegex(home_events.PayloadError, "invalid_classification"):
+            self.enqueue(wrong_classification, source="whisker")
+
+        wrong_kind = whisker_payload()
+        wrong_kind["entity_kind"] = "pet"
+        with self.assertRaisesRegex(home_events.PayloadError, "invalid_entity_kind"):
+            self.enqueue(wrong_kind, source="whisker")
+
+    def test_whisker_rejects_stale_or_non_source_time(self) -> None:
+        stale = whisker_payload()
+        stale["occurred_at"] = "2026-05-01T00:00:00Z"
+        with self.assertRaisesRegex(
+            home_events.PayloadError, "occurred_too_old"
+        ):
+            self.enqueue(stale, source="whisker")
+
+        wrong_precision = whisker_payload()
+        wrong_precision["time_precision"] = "observed_interval"
+        with self.assertRaisesRegex(home_events.PayloadError, "invalid_time_precision"):
+            self.enqueue(wrong_precision, source="whisker")
 
 
 if __name__ == "__main__":

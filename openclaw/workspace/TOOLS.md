@@ -181,6 +181,13 @@ restaurant-book run --job-id <canonical-job-id>
 ### Vacancy Automation
 When a house becomes `confirmed_vacant` (both people detected at the other location), the `vacancy-actions` LaunchAgent turns off lights, sets thermostat to eco, turns off Cielos (Crosstown only), locks the Crosstown front door, and starts all Roombas. For Crosstown, the event-bus action worker also disables the exact standing Hue routines selected in its protected policy, remembers only those that were previously enabled, keeps the set disabled during confident vacancy, and restores that prior set after a fresh sticky-resident return. Independently, each person's sticky detected location is made current on Eight Sleep and their side on the other Pod becomes away. iMessage notification is sent for lock status.
 
+The event bus also has disabled-by-default `feeding_schedule` targets for
+`cabin-feeder` and `crosstown-feeder`. They require continuous future-only
+activity coverage from both exact Litter-Robots plus canonical vacancy. A
+qualifying transfer restores and verifies an OpenClaw-owned destination pause
+before suspending the vacant home's schedule. It never resumes a manual pause,
+dispenses food, edits meals, or uses litter activity as occupancy truth.
+
 Use `hue --<site> automations` for safe routine inventory and
 `hue --<site> automation status|enable|disable '<exact name>'` for guarded
 control. Do not fuzzy-match routine names. A manual enable of a managed

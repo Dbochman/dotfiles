@@ -222,7 +222,8 @@ with Petlibro feeders and fountains.
   state, waste, litter, cycle count, and a guarded clean action
 - **Petlibro cards** — live feeder and fountain telemetry, full-schedule
   enabled/paused state, guarded pause/resume, and guarded 1–3 portion manual
-  feeding when an enrolled device is reporting
+  feeding when an enrolled device is reporting; OpenClaw-owned vacancy pauses
+  are marked with automatic resume armed and block conflicting manual toggles
 - **Recent activity** — newest Litter-Robot events across both homes or scoped
   to Crosstown or Cabin
 - **Attention state** — integration errors, offline robots, and waste drawers

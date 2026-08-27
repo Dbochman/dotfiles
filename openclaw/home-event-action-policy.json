@@ -1,19 +1,36 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "active": true,
   "targets": {
     "cabin": {
       "all_lights": {
         "owner": "legacy",
+        "mode": "active",
+        "trigger": "vacancy",
         "action": "turn_off",
         "desired_state": "all_off",
         "expiry_seconds": 600,
         "settle_seconds": 10
+      },
+      "feeding_schedule": {
+        "owner": "bus",
+        "mode": "disabled",
+        "trigger": "cat_transfer",
+        "action": "suspend_restore",
+        "selector": "cabin-feeder",
+        "destination_site": "crosstown",
+        "destination_selector": "crosstown-feeder",
+        "desired_state": "vacant_disabled",
+        "evidence_settle_seconds": 1800,
+        "expiry_seconds": 600,
+        "settle_seconds": 3
       }
     },
     "crosstown": {
       "all_lights": {
         "owner": "bus",
+        "mode": "active",
+        "trigger": "vacancy",
         "action": "turn_off",
         "desired_state": "all_off",
         "expiry_seconds": 600,
@@ -21,6 +38,8 @@
       },
       "daily_automations": {
         "owner": "bus",
+        "mode": "active",
+        "trigger": "vacancy",
         "action": "suspend_restore",
         "desired_state": "vacancy_suspended",
         "expiry_seconds": 600,
@@ -30,6 +49,19 @@
           "Master Bath Off",
           "Potato Nightlight"
         ]
+      },
+      "feeding_schedule": {
+        "owner": "bus",
+        "mode": "disabled",
+        "trigger": "cat_transfer",
+        "action": "suspend_restore",
+        "selector": "crosstown-feeder",
+        "destination_site": "cabin",
+        "destination_selector": "cabin-feeder",
+        "desired_state": "vacant_disabled",
+        "evidence_settle_seconds": 1800,
+        "expiry_seconds": 600,
+        "settle_seconds": 3
       }
     }
   }

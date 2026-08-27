@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
@@ -559,6 +560,70 @@ def read_feeding_schedule_state(token: str, device: dict) -> bool:
     return data["enableFeedingPlan"]
 
 
+def _enabled_meal_count(value: object) -> int:
+    """Count only explicit provider meal records; reject ambiguous shapes."""
+    if isinstance(value, list):
+        records = value
+    elif isinstance(value, dict):
+        candidates = [
+            value.get(key)
+            for key in ("feedingPlanList", "planList", "plans", "list")
+            if key in value
+        ]
+        if len(candidates) != 1 or not isinstance(candidates[0], list):
+            raise PetlibroError(
+                "invalid_response",
+                "Petlibro returned an unrecognized feeding-schedule shape",
+            )
+        records = candidates[0]
+    else:
+        raise PetlibroError(
+            "invalid_response",
+            "Petlibro returned an invalid feeding schedule",
+        )
+    count = 0
+    for record in records:
+        if not isinstance(record, dict):
+            raise PetlibroError(
+                "invalid_response",
+                "Petlibro returned an invalid feeding-schedule entry",
+            )
+        enabled_values = [
+            record[key] for key in ("enable", "enabled", "isEnabled") if key in record
+        ]
+        if len(enabled_values) > 1 or any(not isinstance(item, bool) for item in enabled_values):
+            raise PetlibroError(
+                "invalid_response",
+                "Petlibro returned an ambiguous feeding-schedule entry",
+            )
+        if not enabled_values or enabled_values[0]:
+            count += 1
+    return count
+
+
+def cmd_schedule_state(selector: str) -> dict:
+    config, token, devices = get_token_and_devices()
+    device, location = resolve_device(config, devices, selector, "feeder")
+    enabled = read_feeding_schedule_state(token, device)
+    result = api_post(
+        "/device/feedingPlan/todayNew",
+        {"deviceSn": device["deviceSn"]},
+        token,
+    )
+    schedule = require_api_success(result, "feeding schedule")
+    return {
+        "success": True,
+        "selector": selector,
+        "site": location,
+        "online": True,
+        "scheduleEnabled": enabled,
+        "enabledMealCount": _enabled_meal_count(schedule),
+        "observedAt": datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+    }
+
+
 def cmd_status() -> list[dict]:
     config, token, devices = get_token_and_devices()
     output = []
@@ -809,7 +874,7 @@ def dispatch(argv: list[str]) -> object:
     if not argv:
         raise PetlibroError(
             "missing_command",
-            "Usage: petlibro-api.py <status|feed|water|schedule|schedule-set|devices>",
+            "Usage: petlibro-api.py <status|feed|water|schedule|schedule-state|schedule-set|devices>",
         )
     command, args = argv[0], argv[1:]
     if command == "status":
@@ -832,6 +897,14 @@ def dispatch(argv: list[str]) -> object:
     if command == "schedule":
         require_arg_count(args, 1, 1, "Usage: petlibro-api.py schedule <location-feeder>")
         return cmd_schedule(args[0])
+    if command == "schedule-state":
+        require_arg_count(
+            args,
+            1,
+            1,
+            "Usage: petlibro-api.py schedule-state <location-feeder>",
+        )
+        return cmd_schedule_state(args[0])
     if command == "schedule-set":
         require_arg_count(
             args,

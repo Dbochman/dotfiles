@@ -28,6 +28,7 @@ MUTATION_TOKEN_PLACEHOLDER = "__CAT_DASHBOARD_MUTATION_TOKEN__"
 SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
 LITTER_ROBOT_CLI = os.path.expanduser("~/.openclaw/bin/litter-robot")
 PETLIBRO_CLI = os.path.expanduser("~/.openclaw/bin/petlibro")
+HOME_EVENT_ACTION_CLI = os.path.expanduser("~/.openclaw/bin/home-event-action")
 LITTER_ROBOT_SELECTORS = {
     "crosstown-litter-robot": "crosstown",
     "cabin-litter-robot": "cabin",
@@ -126,6 +127,13 @@ def collect_petlibro() -> dict[str, object]:
     return {"ok": False, "error": "Petlibro returned an unexpected response"}
 
 
+def collect_feeder_automation() -> dict[str, object]:
+    payload = _run_json([HOME_EVENT_ACTION_CLI, "status"])
+    if isinstance(payload, dict):
+        return payload
+    return {"ok": False, "error": "Feeder automation returned an unexpected response"}
+
+
 def collect_status(*, refresh: bool = False) -> dict[str, object]:
     now = time.time()
     with STATUS_CACHE_LOCK:
@@ -134,9 +142,10 @@ def collect_status(*, refresh: bool = False) -> dict[str, object]:
         if not refresh and isinstance(cached_bundle, dict) and now - cached_at < CACHE_TTL_SECONDS:
             return cached_bundle
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         whisker_future = pool.submit(collect_whisker)
         petlibro_future = pool.submit(collect_petlibro)
+        automation_future = pool.submit(collect_feeder_automation)
         bundle: dict[str, object] = {
             "meta": {
                 "timestamp": _iso_timestamp(),
@@ -144,6 +153,7 @@ def collect_status(*, refresh: bool = False) -> dict[str, object]:
             },
             "whisker": whisker_future.result(),
             "petlibro": petlibro_future.result(),
+            "automation": automation_future.result(),
         }
 
     with STATUS_CACHE_LOCK:
@@ -464,7 +474,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         ? `<div class="actions"><select aria-label="Portions" data-portions-for="${esc(selector)}"><option value="1">1 portion</option><option value="2">2 portions</option><option value="3">3 portions</option></select><button class="action" ${device.online ? '' : 'disabled'} data-command="feed" data-selector="${esc(selector)}">Feed now</button></div>` : '';
       const scheduleKnown = typeof device.scheduleEnabled === 'boolean';
       const scheduleEnabled = device.scheduleEnabled === true;
-      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleKnown && scheduleEnabled ? '' : 'warn'}">${scheduleKnown ? (scheduleEnabled ? 'Enabled' : 'Paused') : 'Unavailable'}</span></div><button class="action" ${device.online && scheduleKnown ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
+      const managed = state?.automation?.feeder_suspensions?.sites?.[site];
+      const managedHere = managed?.selector === selector;
+      const managedAttention = managedHere && managed.attention === true;
+      const scheduleLabel = managedAttention ? 'Automation attention' : managedHere && managed.phase === 'restoring' ? 'Auto-resume verifying' : managedHere ? 'Paused · Auto-resume armed' : scheduleKnown ? (scheduleEnabled ? 'Enabled' : 'Paused') : 'Unavailable';
+      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleKnown && scheduleEnabled && !managedAttention ? '' : 'warn'}">${esc(scheduleLabel)}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Vacancy-managed' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
       return `<article class="card device-card" data-location="${esc(site)}"><div class="card-top"><div><div class="site">${esc(siteName(site))}</div><h3>${feeder ? 'Feeder' : 'Fountain'}</h3><div class="muted">${esc(device.name || device.model || 'Petlibro')}</div></div>${statusPill(device.online)}</div><div class="metric-row">${metrics}</div>${schedule}${action}</article>`;
     }
 
@@ -491,6 +505,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const messages = [];
       if (state?.whisker?.error) messages.push(`Whisker: ${state.whisker.error}`);
       if (state?.petlibro?.error) messages.push(`Petlibro: ${state.petlibro.error}`);
+      if (state?.automation?.ok === false) messages.push(`Feeder automation: ${state.automation.error || 'status unavailable'}`);
+      for (const [site, managed] of Object.entries(state?.automation?.feeder_suspensions?.sites || {})) { if (managed.attention) messages.push(`${siteName(site)} feeder automation needs review (${managed.last_error || 'unknown state'}).`); }
       for (const robot of state?.whisker?.robots || []) { if (!robot.is_online) messages.push(`${siteName(robot.site)} Litter-Robot is offline.`); if (robot.waste_full || Number(robot.waste_level_pct) >= 80) messages.push(`${siteName(robot.site)} waste drawer needs attention.`); }
       const notice = document.getElementById('notice'); notice.textContent = messages.join(' '); notice.classList.toggle('show', Boolean(messages.length));
     }

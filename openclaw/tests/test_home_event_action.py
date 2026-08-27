@@ -55,6 +55,26 @@ def policy(*, crosstown_owner: str = "bus") -> dict:
     }
 
 
+def cat_policy(*, cabin_mode: str = "active", crosstown_mode: str = "active") -> dict:
+    value = actions.validate_policy(policy())
+    for site, mode in (("cabin", cabin_mode), ("crosstown", crosstown_mode)):
+        destination = actions.OTHER_SITE[site]
+        value["targets"][site]["feeding_schedule"] = {
+            "owner": "bus",
+            "mode": mode,
+            "trigger": "cat_transfer",
+            "action": "suspend_restore",
+            "selector": actions.FEEDER_SELECTORS[site],
+            "destination_site": destination,
+            "destination_selector": actions.FEEDER_SELECTORS[destination],
+            "desired_state": "vacant_disabled",
+            "evidence_settle_seconds": 1800,
+            "expiry_seconds": 600,
+            "settle_seconds": 3,
+        }
+    return value
+
+
 class HomeEventActionTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -119,10 +139,47 @@ class HomeEventActionTests(unittest.TestCase):
             encoding="utf-8",
         )
         self.hue.chmod(0o700)
+        self.petlibro_state = self.home / "petlibro-state.json"
+        self.petlibro_state.write_text(
+            json.dumps(
+                {
+                    "cabin-feeder": {"enabled": True, "meals": 3},
+                    "crosstown-feeder": {"enabled": True, "meals": 3},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.petlibro_log = self.home / "petlibro-log"
+        self.petlibro = self.home / "petlibro"
+        self.petlibro.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json,os,sys\n"
+            "path=os.environ['FAKE_PETLIBRO_STATE']; state=json.load(open(path))\n"
+            "args=sys.argv[1:]; args=args[1:] if args and args[0]=='--json' else args\n"
+            "if args[0]=='schedule-state':\n"
+            " selector=args[1]; item=state[selector]; site=selector.split('-',1)[0]\n"
+            " if os.environ.get('FAKE_PETLIBRO_FAIL_READ_AFTER_SET')==selector and os.path.exists(os.environ['FAKE_PETLIBRO_LOG']) and selector+' on' in open(os.environ['FAKE_PETLIBRO_LOG']).read().splitlines():\n"
+            "  print(json.dumps({'success':False,'error':'schedule_state_unavailable'})); raise SystemExit(1)\n"
+            " print(json.dumps({'success':True,'selector':selector,'site':site,'online':True,'scheduleEnabled':item['enabled'],'enabledMealCount':item['meals'],'observedAt':os.environ['FAKE_PETLIBRO_NOW']}))\n"
+            "elif args[0]=='schedule-set':\n"
+            " selector=args[1]; desired=args[2]=='on'\n"
+            " with open(os.environ['FAKE_PETLIBRO_LOG'],'a') as h: h.write(selector+' '+args[2]+'\\n')\n"
+            " if os.environ.get('FAKE_PETLIBRO_FAIL_SELECTOR')==selector:\n"
+            "  print(json.dumps({'success':False,'error':'schedule_outcome_unknown'})); raise SystemExit(1)\n"
+            " changed=state[selector]['enabled']!=desired; state[selector]['enabled']=desired\n"
+            " open(path,'w').write(json.dumps(state))\n"
+            " print(json.dumps({'success':True,'device':selector,'location':selector.split('-',1)[0],'scheduleEnabled':desired,'action':'feeding_schedule_enabled' if desired else 'feeding_schedule_disabled','accepted':True,'verified':True,'mutation_attempted':changed}))\n"
+            "else: raise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        self.petlibro.chmod(0o700)
         self.old_env = dict(os.environ)
         os.environ["FAKE_HUE_STATE"] = str(self.hue_state)
         os.environ["FAKE_HUE_LOG"] = str(self.hue_log)
         os.environ["FAKE_AUTOMATION_STATE"] = str(self.automation_state)
+        os.environ["FAKE_PETLIBRO_STATE"] = str(self.petlibro_state)
+        os.environ["FAKE_PETLIBRO_LOG"] = str(self.petlibro_log)
+        os.environ["FAKE_PETLIBRO_NOW"] = NOW
         self.addCleanup(self.restore_env)
 
     def restore_env(self) -> None:
@@ -175,6 +232,111 @@ class HomeEventActionTests(unittest.TestCase):
             },
         )
 
+    def configure_cat_transfer(self, *, mode: str = "active") -> None:
+        actions.install_policy(
+            self.root,
+            json.dumps(
+                cat_policy(cabin_mode=mode, crosstown_mode=mode),
+                separators=(",", ":"),
+            ).encode(),
+        )
+        state = {
+            "timestamp": NOW,
+            "cabin": {
+                "occupancy": "confirmed_vacant",
+                "fresh": True,
+                "stateChangedAt": "2026-08-22T14:00:00Z",
+            },
+            "crosstown": {
+                "occupancy": "occupied",
+                "fresh": True,
+                "stateChangedAt": "2026-08-22T13:00:00Z",
+            },
+            "people": {"Dylan": {"location": "crosstown"}},
+        }
+        self.private_json(self.state_path, state)
+        self.private_json(
+            self.producer_path,
+            {
+                "schema_version": 1,
+                "sequence": 3,
+                "observation_id": "d" * 64,
+                "state_hash": actions.state_hash(state),
+                "evaluated_at": NOW,
+            },
+        )
+        self.private_json(
+            self.journal / "cycles/cabin.json",
+            {
+                "schema_version": 1,
+                "site": "cabin",
+                "state_changed_at": "2026-08-22T14:00:00Z",
+                "cycle_id": self.cycle_id,
+            },
+        )
+        self.private_json(
+            self.root / "state/whisker-adapter.json",
+            {
+                "schema_version": 1,
+                "sites": {
+                    site: {
+                        "enabled": True,
+                        "baselined": True,
+                        "health": "ok",
+                        "coverage_start": "2026-08-22T13:30:00Z",
+                        "last_successful_poll": NOW,
+                        "anchor": "e" * 64,
+                        "fingerprints": ["e" * 64],
+                        "last_error": None,
+                    }
+                    for site in ("cabin", "crosstown")
+                },
+            },
+        )
+
+    def enqueue_litter_activity(
+        self, site: str, *, occurred_at: str = "2026-08-22T14:20:00Z"
+    ) -> None:
+        from home_event_bus import enqueue_event, ingest_once
+
+        alias = actions.WHISKER_ALIASES[site]
+        enqueue_event(
+            self.root,
+            "whisker",
+            json.dumps(
+                {
+                    "source_event_id": f"test:{site}:{occurred_at}",
+                    "event_type": "pet.litter_box_activity",
+                    "site": site,
+                    "entity_kind": "litter_box",
+                    "entity_alias": alias,
+                    "occurred_at": occurred_at,
+                    "observed_at": NOW,
+                    "time_precision": "source",
+                    "attributes": {"classification": "cat_detected"},
+                }
+            ).encode(),
+            clock=lambda: NOW,
+        )
+        ingest_once(self.root, clock=lambda: NOW)
+
+    def reserve_cat_transfer(self) -> dict:
+        from home_event_bus import EventStore, RuntimePaths
+
+        store = EventStore(RuntimePaths(self.root), clock=lambda: NOW)
+        with store.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            result = actions.reserve_cat_transfers(
+                connection,
+                root=self.root,
+                state_path=self.state_path,
+                producer_path=self.producer_path,
+                journal_root=self.journal,
+                clock=lambda: NOW,
+            )
+            connection.commit()
+        return result
+
     def reserve(self) -> dict:
         return actions.reserve_current_canary(
             self.root,
@@ -193,6 +355,7 @@ class HomeEventActionTests(unittest.TestCase):
             producer_path=self.producer_path,
             journal_root=self.journal,
             hue_bin=str(self.hue),
+            petlibro_bin=str(self.petlibro),
             clock=lambda: NOW,
             sleeper=lambda _seconds: None,
         )
@@ -320,6 +483,175 @@ class HomeEventActionTests(unittest.TestCase):
             actions.safe_status(self.root)["automation_suspensions"]["active_count"],
             0,
         )
+
+    def test_cat_transfer_resumes_owned_destination_before_disabling_origin(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        state = actions._empty_feeder_suspensions()
+        state["sites"]["crosstown"] = {
+            "selector": "crosstown-feeder",
+            "cycle_id": "cycle_" + ("f" * 32),
+            "phase": "suspended",
+            "restore_owned": True,
+            "updated_at": NOW,
+            "last_error": None,
+        }
+        actions._write_feeder_suspensions(self.root, state)
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+
+        reserved = self.reserve_cat_transfer()
+        result = self.run_worker()
+
+        self.assertEqual(reserved["reserved"], 1)
+        self.assertEqual(result["outcome"], "state_confirmed")
+        self.assertEqual(
+            self.petlibro_log.read_text().splitlines(),
+            ["crosstown-feeder on", "cabin-feeder off"],
+        )
+        final_devices = json.loads(self.petlibro_state.read_text())
+        self.assertTrue(final_devices["crosstown-feeder"]["enabled"])
+        self.assertFalse(final_devices["cabin-feeder"]["enabled"])
+        suspension = actions._load_feeder_suspensions(self.root)
+        self.assertEqual(set(suspension["sites"]), {"cabin"})
+        self.assertEqual(suspension["sites"]["cabin"]["phase"], "suspended")
+
+    def test_manually_disabled_destination_blocks_origin_without_mutation(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+        self.reserve_cat_transfer()
+
+        result = self.run_worker()
+
+        self.assertEqual(result["outcome"], "failed")
+        self.assertEqual(result["reason_code"], "destination_schedule_manually_disabled")
+        self.assertFalse(result["command_attempted"])
+        self.assertFalse(self.petlibro_log.exists())
+        final_devices = json.loads(self.petlibro_state.read_text())
+        self.assertTrue(final_devices["cabin-feeder"]["enabled"])
+
+    def test_manually_disabled_origin_is_not_claimed_for_resume(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["cabin-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+        self.reserve_cat_transfer()
+
+        result = self.run_worker()
+
+        self.assertEqual(result["reason_code"], "already_satisfied_manual")
+        self.assertFalse(result["command_attempted"])
+        self.assertEqual(
+            actions.safe_status(self.root)["feeder_suspensions"]["active_count"],
+            0,
+        )
+
+    def test_origin_litter_activity_or_incomplete_coverage_blocks_reservation(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        self.enqueue_litter_activity("cabin", occurred_at="2026-08-22T14:25:00Z")
+
+        blocked = self.reserve_cat_transfer()
+
+        self.assertEqual(blocked["reserved"], 0)
+        state = json.loads(
+            (self.root / "state/whisker-adapter.json").read_text(encoding="utf-8")
+        )
+        state["sites"]["cabin"]["coverage_start"] = "2026-08-22T14:05:00Z"
+        self.private_json(self.root / "state/whisker-adapter.json", state)
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+
+    def test_recent_destination_activity_restarts_the_quiet_settle_window(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        self.enqueue_litter_activity(
+            "crosstown", occurred_at="2026-08-22T14:45:00Z"
+        )
+
+        result = self.reserve_cat_transfer()
+
+        self.assertEqual(result["reserved"], 0)
+
+    def test_shadow_transfer_records_no_action_reservation(self) -> None:
+        self.configure_cat_transfer(mode="shadow")
+        self.enqueue_litter_activity("crosstown")
+
+        result = self.reserve_cat_transfer()
+
+        self.assertEqual(result["shadowed"], 1)
+        self.assertEqual(result["reserved"], 0)
+        with sqlite3.connect(self.root / "state/events.sqlite3") as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM action_reservations").fetchone()[0],
+                0,
+            )
+
+    def test_unknown_feeder_mutation_is_not_retried(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        self.reserve_cat_transfer()
+        os.environ["FAKE_PETLIBRO_FAIL_SELECTOR"] = "cabin-feeder"
+
+        result = self.run_worker()
+        second = self.run_worker()
+
+        self.assertEqual(result["outcome"], "outcome_unknown")
+        self.assertTrue(result["command_attempted"])
+        self.assertEqual(second["mode"], "idle")
+        self.assertEqual(
+            self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"]
+        )
+        suspension = actions._load_feeder_suspensions(self.root)
+        self.assertEqual(suspension["sites"]["cabin"]["phase"], "suspending")
+        self.assertEqual(
+            suspension["sites"]["cabin"]["last_error"],
+            "feeder_outcome_unknown",
+        )
+
+    def test_destination_restore_readback_failure_records_attempt_and_stops(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        state = actions._empty_feeder_suspensions()
+        state["sites"]["crosstown"] = {
+            "selector": "crosstown-feeder",
+            "cycle_id": "cycle_" + ("f" * 32),
+            "phase": "suspended",
+            "restore_owned": True,
+            "updated_at": NOW,
+            "last_error": None,
+        }
+        actions._write_feeder_suspensions(self.root, state)
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+        self.reserve_cat_transfer()
+        os.environ["FAKE_PETLIBRO_FAIL_READ_AFTER_SET"] = "crosstown-feeder"
+
+        result = self.run_worker()
+        second = self.run_worker()
+
+        self.assertEqual(result["mode"], "deferred")
+        self.assertEqual(result["feeder_reconcile"]["outcome_unknown"], 1)
+        self.assertEqual(second["mode"], "deferred")
+        self.assertEqual(self.database_row()["status"], "pending")
+        self.assertEqual(
+            self.petlibro_log.read_text().splitlines(), ["crosstown-feeder on"]
+        )
+        self.assertTrue(json.loads(self.petlibro_state.read_text())["cabin-feeder"]["enabled"])
+
+    def test_feeder_policy_rejects_rebound_selector(self) -> None:
+        invalid = cat_policy()
+        invalid["targets"]["cabin"]["feeding_schedule"]["selector"] = (
+            "crosstown-feeder"
+        )
+
+        with self.assertRaisesRegex(actions.ActionError, "action_policy_invalid"):
+            actions.validate_policy(invalid)
 
 
 if __name__ == "__main__":
