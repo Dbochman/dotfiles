@@ -29,40 +29,51 @@ ssh dylans-macbook-pro "<command>"
 
 - **Subnet**: `192.168.165.0/24`
 - **Router**: AmpliFi (Ubiquiti) at `192.168.165.1` (`amplifi.lan`)
-- **MacBook Pro IP**: `192.168.165.110` (`mac.lan`)
+- **MacBook Pro IP**: DHCP; observed at `192.168.165.109` on 2026-08-27
+  (`mac.lan` is advertised by multiple Apple clients and is not a unique
+  identity). Always connect through the `dylans-macbook-pro` Tailscale alias.
 
-## Known Devices at Crosstown
+## Operational Device Inventory
 
-| IP | Hostname | Device |
-|---|---|---|
-| .1 | amplifi.lan | AmpliFi router |
-| .110 | mac.lan | MacBook Pro (this machine) |
-| .117 | movie-room.lan | Apple TV (Movie Room) |
-| .119 | ys-l16030313e8.lan | Yeelight / smart light |
-| .124 | dylans-iphone.lan | Dylan's iPhone (presence identity is protected separately) |
-| .129 | reachy-mini.lan | Reachy Mini |
-| .142, .162, .164, .178, .236 | espressif.lan | ESP32 smart home devices |
-| .4 | irobot-81039f...lan | iRobot Roomba Combo 10 Max |
-| .3 | irobot-195efa...lan | iRobot Roomba J5 (scoomba) |
-| .132 | ? | Petlibro Granary Smart Feeder (MAC: ${PETLIBRO_FEEDER_MAC}) |
-| .225 | ? | Petlibro Dockstream 2 Fountain (MAC: ${PETLIBRO_FOUNTAIN_MAC}) |
-| .155 | litter-robot4.lan | Litter Robot 4 |
-| .171 | mac.lan | Dylan's Mac (desktop) |
-| .195 | 001788284a36.lan | Philips Hue Bridge |
-| .241 | ringdoorbell-5b.lan | Ring Doorbell |
+Last refreshed from the Crosstown MacBook Pro on 2026-08-27 with a sanitized
+neighbor sweep and targeted service probes. Except for the router's gateway
+address, these are observed or application-pinned addresses; they are not
+confirmed DHCP reservations. Verify reservations in the AmpliFi control plane
+before relying on an address as permanent.
+
+| IP | Hostname | Device | Address basis / latest check |
+|---|---|---|---|
+| .1 | amplifi.lan | AmpliFi router | Gateway; HTTP live 2026-08-27 |
+| .109 | mac.lan | MacBook Pro jump host | Current DHCP observation; use Tailscale alias |
+| .117 | movie-room.lan | Apple TV (Movie Room) | Live neighbor and AirPlay service 2026-08-27 |
+| .119 | ys-l16030313e8.lan | Yeelight / smart light | Live neighbor 2026-08-27 |
+| .129 | reachy-mini.lan | Reachy Mini | Application-pinned; SSH live 2026-08-27; DHCP reservation unverified |
+| .142, .162, .164, .178, .236 | espressif.lan | ESP32 smart home devices | Live neighbors 2026-08-27 |
+| .4 | irobot-81039f...lan | iRobot Roomba Combo 10 Max | Live neighbor 2026-08-27 |
+| .3 | irobot-195efa...lan | iRobot Roomba J5 (scoomba) | Last known; no live neighbor on 2026-08-27 |
+| .132 | — | Petlibro Granary Smart Feeder | Live neighbor 2026-08-27 |
+| .225 | — | Petlibro Dockstream 2 Fountain | Last known; no fresh receive-side reachability on 2026-08-27 |
+| .155 | litter-robot4.lan | Litter Robot 4 | Live neighbor 2026-08-27 |
+| .195 | 001788284a36.lan | Philips Hue Bridge (not a Hue Sync Box) | HTTP and HTTPS live 2026-08-27 |
+| .241 | ringdoorbell-5b.lan | Ring Doorbell | Live neighbor 2026-08-27 |
+
+Transient phones and ambiguous `mac.lan` clients are intentionally omitted.
+Resident presence must use the protected bindings below, never this inventory.
 
 ## Scanning for Devices
 
-ARP scan from the MacBook Pro (ping sweep first to populate ARP table):
+Run a sanitized operational-endpoint scan from the MacBook Pro. The ping sweep
+populates the neighbor table, but the output deliberately excludes MAC
+addresses, phones, and unknown clients:
 
 ```bash
-ssh dylans-macbook-pro "for i in \$(seq 1 254); do ping -c1 -W1 192.168.165.\$i >/dev/null 2>&1 & done; wait; arp -a | grep -v incomplete | grep '192.168.165'"
+ssh dylans-macbook-pro 'for i in $(seq 1 254); do ping -c1 -W200 192.168.165.$i >/dev/null 2>&1 & done; wait; arp -a | awk '\''BEGIN{IGNORECASE=1} /amplifi|movie-room|ys-l|irobot|reachy-mini|litter-robot|001788|ringdoorbell|espressif/{name=$1; ip=$2; gsub(/[()]/, "", ip); print name, ip}'\'' | sort -u'
 ```
 
-Check a specific device:
+Check a specific known device without printing its link-layer identity:
 
 ```bash
-ssh dylans-macbook-pro "ping -c3 -W2 192.168.165.124; arp -anl | grep '^192.168.165.124 '; arp -a | grep 192.168.165.124"
+ssh dylans-macbook-pro 'target=192.168.165.129; ping -c1 -W500 "$target" >/dev/null 2>&1 || true; arp -anl | awk -v target="$target" '\''$1 == target {if ($2 == "(incomplete)") state="not-live"; else if ($4 == "expired") state="stale"; else state="live"; print target, "neighbor=" state; found=1} END {if (!found) print target, "neighbor=absent"}'\'''
 ```
 
 ## Presence Detection
