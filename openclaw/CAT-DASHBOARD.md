@@ -54,6 +54,13 @@ then requires a verified readback. Pausing the schedule does not delete meal
 definitions or block manual feeding. An uncertain result is shown as a failure
 and is never retried automatically.
 
+If a transfer stops before any command because the occupied destination's
+schedule is disabled or unavailable, the failed outcome remains visible in the
+event journal. A newer litter event at that destination must complete the same
+30-minute settle period before the current vacancy cycle may reserve one new
+attempt. Reusing the same event is blocked, and any prior command attempt,
+confirmed action, pending claim, or uncertain outcome prevents a retry.
+
 When the event bus owns a feeder pause, the manual schedule button is disabled
 and labeled `Vacancy-managed`. The action worker—not the dashboard—restores
 that exact schedule after a later qualifying paired-home return. A manually

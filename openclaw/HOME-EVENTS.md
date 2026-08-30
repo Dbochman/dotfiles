@@ -72,7 +72,18 @@ suspends the origin. It never adopts or resumes a manual pause. Activation
 itself changed no feeder state; the first organic transfer is the live
 suspend/maintain/resume canary.
 
-The Dylan-only canary is now on SQLite schema v7. Its separate camera policy
+Schema 8 was deployed on `2026-08-29` after that first organic transfer exposed
+a safe but terminal precondition gap. Event-triggered reservations now retain
+every prior outcome while permitting a newer settled destination litter event
+to create another reservation in the same vacancy cycle only when every prior
+attempt stopped before a command with
+`destination_schedule_manually_disabled` or
+`destination_schedule_unavailable`. The same litter event, a pending claim, a
+confirmed action, any command attempt, and every uncertain outcome remain
+terminal for the cycle. This lets a corrected destination schedule requalify
+the vacant home's feeder without weakening duplicate-command protection.
+
+The Dylan-only canary is now on SQLite schema v8. Its separate camera policy
 was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
 `Living Room Wired` probes, a protected schema backup, full tests, and a
 shadow-first migration. Schema v5 was activated at `2026-08-07T22:40:59Z`
@@ -667,7 +678,7 @@ retried, preventing a duplicate.
 ## Attended rollout
 
 The bus core, correlator, skill, adapters, bridge, and LaunchAgents are
-installed at schema v7. The Dylan-only Stage 4 canary entered
+installed at schema v8. The Dylan-only Stage 4 canary entered
 `limited_delivery` at `2026-08-05T15:42:14Z`; the tracked delivery policy is
 active for both residences with exact Ring-plus-Nest camera evidence enabled.
 Cabin uses Ring `driveway`/`front_door` plus Nest `Kitchen`; Crosstown uses
@@ -686,7 +697,7 @@ fresh or rebuilt installation must first:
 2. Deploy the bus scripts, source adapters and bridge, skill, and any tracked
    LaunchAgents through the normal dotfiles flow.
 3. Back up the protected home-event database, run `home-eventctl init` to apply the
-   attended schema-v7 migration, then verify every runtime directory is `0700`
+   attended current-schema migration, then verify every runtime directory is `0700`
    and every runtime regular file is `0600`.
 4. Install the exact protected delivery policy while mode remains `shadow`.
    Its tracked rollout scope is Dylan only, both sites, three high-confidence
@@ -743,6 +754,11 @@ Rollout status and remaining work:
     transfer as the live suspend/maintain/resume proof and follow the stop
     conditions in
     [the cat feeder plan](plans/cat-feeder-vacancy-automation.md).
+15. Schema 8 was installed on `2026-08-29` after the first Crosstown-vacant
+    transfer stopped before mutation because the Cabin destination schedule
+    was manually disabled. The migration preserved that outcome and permits
+    only a newer settled Cabin litter event to retry after the destination is
+    corrected; command-attempted and uncertain outcomes remain non-retryable.
 
 Routine pulls preserve the installed `HOME_EVENTS_NEST_ENABLED` and
 `HOME_EVENTS_AUGUST_ENABLED` values and both installed local-presence site

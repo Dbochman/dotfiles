@@ -533,6 +533,59 @@ class HomeEventActionTests(unittest.TestCase):
         self.assertFalse(self.petlibro_log.exists())
         final_devices = json.loads(self.petlibro_state.read_text())
         self.assertTrue(final_devices["cabin-feeder"]["enabled"])
+        repeated = self.reserve_cat_transfer()
+        self.assertEqual(repeated["reserved"], 0)
+        self.assertEqual(repeated["retries"], 0)
+
+    def test_new_settled_litter_event_retries_commandless_destination_block(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+        self.reserve_cat_transfer()
+        first = self.run_worker()
+
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["crosstown-feeder"]["enabled"] = True
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+        self.enqueue_litter_activity(
+            "crosstown", occurred_at="2026-08-22T14:25:00Z"
+        )
+        reserved = self.reserve_cat_transfer()
+        second = self.run_worker()
+
+        self.assertEqual(first["reason_code"], "destination_schedule_manually_disabled")
+        self.assertFalse(first["command_attempted"])
+        self.assertEqual(reserved["reserved"], 1)
+        self.assertEqual(reserved["retries"], 1)
+        self.assertEqual(second["outcome"], "state_confirmed")
+        self.assertTrue(second["command_attempted"])
+        self.assertEqual(
+            self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"]
+        )
+        with sqlite3.connect(self.root / "state/events.sqlite3") as connection:
+            rows = connection.execute(
+                """
+                SELECT r.status, o.outcome, o.reason_code, o.command_attempted
+                FROM action_reservations r
+                JOIN action_outcomes o ON o.reservation_id = r.id
+                WHERE r.target_alias='feeding_schedule'
+                ORDER BY r.id
+                """
+            ).fetchall()
+        self.assertEqual(
+            rows,
+            [
+                (
+                    "complete",
+                    "failed",
+                    "destination_schedule_manually_disabled",
+                    0,
+                ),
+                ("complete", "state_confirmed", "completed", 1),
+            ],
+        )
 
     def test_manually_disabled_origin_is_not_claimed_for_resume(self) -> None:
         self.configure_cat_transfer()
@@ -599,10 +652,16 @@ class HomeEventActionTests(unittest.TestCase):
 
         result = self.run_worker()
         second = self.run_worker()
+        self.enqueue_litter_activity(
+            "crosstown", occurred_at="2026-08-22T14:25:00Z"
+        )
+        retry = self.reserve_cat_transfer()
 
         self.assertEqual(result["outcome"], "outcome_unknown")
         self.assertTrue(result["command_attempted"])
         self.assertEqual(second["mode"], "idle")
+        self.assertEqual(retry["reserved"], 0)
+        self.assertEqual(retry["retries"], 0)
         self.assertEqual(
             self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"]
         )

@@ -353,7 +353,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 7)
+        self.assertEqual(status["schema_version"], 8)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -712,7 +712,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         with self.connection() as connection:
             self.assertEqual(
                 connection.execute("SELECT version FROM schema_migrations").fetchone()[0],
-                7,
+                8,
             )
             self.assertEqual(
                 connection.execute(

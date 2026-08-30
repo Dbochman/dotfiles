@@ -1014,6 +1014,7 @@ class ShadowCorrelator:
         cat_transfers: Mapping[str, Any] = {
             "status": "disabled",
             "reserved": 0,
+            "retries": 0,
             "shadowed": 0,
         }
         try:
@@ -1032,6 +1033,7 @@ class ShadowCorrelator:
             cat_transfers = {
                 "status": "unavailable",
                 "reserved": 0,
+                "retries": 0,
                 "shadowed": 0,
             }
         expired = self._expire_incidents()

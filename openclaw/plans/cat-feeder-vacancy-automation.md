@@ -222,6 +222,16 @@ preserve row IDs and foreign keys, add safe Whisker component health, and
 refuse downgrade. The source remains inactive until its LaunchAgent and both
 site flags are explicitly enabled.
 
+Schema 8 changes only event-triggered action reservation identity. It preserves
+all schema-7 reservations and outcomes, keeps non-event vacancy reservations
+unique per site/target/cycle, and makes event-backed reservations unique per
+site/target/cycle/event. A newer settled destination event may create another
+same-cycle reservation only when every prior attempt issued no command and the
+latest failure was `destination_schedule_manually_disabled` or
+`destination_schedule_unavailable`. A repeated event, confirmed action,
+pending/claimed reservation, any command attempt, or uncertain outcome blocks
+the retry.
+
 ## Transfer evidence
 
 For a candidate destination site `D`, the origin `O` is the other exact site.
@@ -599,7 +609,10 @@ the cat dashboard, or existing litter-box/Roomba behavior.
 - Any origin event after vacancy start blocks the cycle.
 - Stale, unknown, or `possibly_vacant` presence blocks the candidate.
 - Original vacancy publication cannot reserve `feeding_schedule`.
-- Repeated destination events create one reservation for the vacancy cycle.
+- Repeated copies of one destination event create one reservation. A newer
+  settled event may retry only a commandless destination-schedule precondition
+  failure; confirmed, command-attempted, and uncertain outcomes remain
+  terminal for the vacancy cycle.
 - Policy, state, source-health, or vacancy-cycle changes cancel pending work.
 
 Include the current scenario as a regression fixture: Cabin litter activity

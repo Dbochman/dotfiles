@@ -27,8 +27,8 @@ import sys
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = 7
-STATUS_SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
+STATUS_SCHEMA_VERSION = 8
 EVENT_SCHEMA_VERSION = 1
 DELIVERY_POLICY_SCHEMA_VERSION = 3
 SERVICE_NAME = "home-events"
@@ -2016,8 +2016,7 @@ CREATE TABLE IF NOT EXISTS action_reservations (
     expires_at TEXT NOT NULL,
     claimed_at TEXT,
     completed_at TEXT,
-    reason_code TEXT,
-    UNIQUE(site, target_alias, vacancy_cycle_id)
+    reason_code TEXT
 );
 CREATE TABLE IF NOT EXISTS action_outcomes (
     reservation_id INTEGER PRIMARY KEY REFERENCES action_reservations(id),
@@ -2041,6 +2040,12 @@ CREATE INDEX IF NOT EXISTS camera_evaluations_state_idx ON camera_evaluations(st
 CREATE INDEX IF NOT EXISTS camera_evaluation_events_event_idx ON camera_evaluation_events(event_id, evaluation_id);
 CREATE INDEX IF NOT EXISTS action_reservations_status_idx
     ON action_reservations(status, expires_at, id);
+CREATE UNIQUE INDEX IF NOT EXISTS action_reservations_cycle_no_event_idx
+    ON action_reservations(site, target_alias, vacancy_cycle_id)
+    WHERE trigger_event_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS action_reservations_cycle_event_idx
+    ON action_reservations(site, target_alias, vacancy_cycle_id, trigger_event_id)
+    WHERE trigger_event_id IS NOT NULL;
 """
 
 EXPECTED_TABLES = frozenset(
@@ -2447,26 +2452,34 @@ class EventStore:
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
                 self._migrate_v6_to_v7(connection, now)
+                self._migrate_v7_to_v8(connection, now)
             elif [row["version"] for row in versions] == [2]:
                 self._migrate_v2_to_v3(connection, now)
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
                 self._migrate_v6_to_v7(connection, now)
+                self._migrate_v7_to_v8(connection, now)
             elif [row["version"] for row in versions] == [3]:
                 self._migrate_v3_to_v4(connection, now)
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
                 self._migrate_v6_to_v7(connection, now)
+                self._migrate_v7_to_v8(connection, now)
             elif [row["version"] for row in versions] == [4]:
                 self._migrate_v4_to_v5(connection, now)
                 self._migrate_v5_to_v6(connection, now)
                 self._migrate_v6_to_v7(connection, now)
+                self._migrate_v7_to_v8(connection, now)
             elif [row["version"] for row in versions] == [5]:
                 self._migrate_v5_to_v6(connection, now)
                 self._migrate_v6_to_v7(connection, now)
+                self._migrate_v7_to_v8(connection, now)
             elif [row["version"] for row in versions] == [6]:
                 self._migrate_v6_to_v7(connection, now)
+                self._migrate_v7_to_v8(connection, now)
+            elif [row["version"] for row in versions] == [7]:
+                self._migrate_v7_to_v8(connection, now)
             elif [row["version"] for row in versions] != [SCHEMA_VERSION]:
                 raise ConfigError("database_schema")
             for source in SOURCES:
@@ -3009,6 +3022,104 @@ class EventStore:
             connection.execute(
                 "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 6",
                 (7, now),
+            )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise ConfigError("database_migration_integrity")
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
+        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise ConfigError("database_foreign_keys")
+
+    @staticmethod
+    def _migrate_v7_to_v8(connection: sqlite3.Connection, now: str) -> None:
+        """Permit event-bounded retries while preserving every action outcome."""
+
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                CREATE TABLE action_reservations_v8 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    reservation_uid TEXT NOT NULL UNIQUE,
+                    trigger_event_id INTEGER REFERENCES events(id),
+                    site TEXT NOT NULL CHECK(site IN ('cabin', 'crosstown')),
+                    target_alias TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    vacancy_cycle_id TEXT NOT NULL,
+                    trigger_state_hash TEXT NOT NULL,
+                    reserved_state_hash TEXT NOT NULL,
+                    policy_hash TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN (
+                        'pending', 'claimed', 'complete', 'cancelled', 'outcome_unknown'
+                    )),
+                    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count IN (0, 1)),
+                    reserved_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    claimed_at TEXT,
+                    completed_at TEXT,
+                    reason_code TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE action_outcomes_v8 (
+                    reservation_id INTEGER PRIMARY KEY REFERENCES action_reservations_v8(id),
+                    outcome TEXT NOT NULL CHECK(outcome IN (
+                        'state_confirmed', 'failed', 'cancelled', 'outcome_unknown'
+                    )),
+                    verification TEXT NOT NULL CHECK(verification IN (
+                        'state_confirmed', 'command_exit', 'none'
+                    )),
+                    reason_code TEXT NOT NULL,
+                    command_attempted INTEGER NOT NULL CHECK(command_attempted IN (0, 1)),
+                    observed_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO action_reservations_v8 SELECT * FROM action_reservations"
+            )
+            connection.execute(
+                "INSERT INTO action_outcomes_v8 SELECT * FROM action_outcomes"
+            )
+            connection.execute("DROP TABLE action_outcomes")
+            connection.execute("DROP TABLE action_reservations")
+            connection.execute(
+                "ALTER TABLE action_reservations_v8 RENAME TO action_reservations"
+            )
+            connection.execute(
+                "ALTER TABLE action_outcomes_v8 RENAME TO action_outcomes"
+            )
+            connection.execute(
+                """
+                CREATE INDEX action_reservations_status_idx
+                ON action_reservations(status, expires_at, id)
+                """
+            )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX action_reservations_cycle_no_event_idx
+                ON action_reservations(site, target_alias, vacancy_cycle_id)
+                WHERE trigger_event_id IS NULL
+                """
+            )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX action_reservations_cycle_event_idx
+                ON action_reservations(
+                    site, target_alias, vacancy_cycle_id, trigger_event_id
+                ) WHERE trigger_event_id IS NOT NULL
+                """
+            )
+            connection.execute(
+                "UPDATE schema_migrations SET version = ?, applied_at = ? WHERE version = 7",
+                (8, now),
             )
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise ConfigError("database_migration_integrity")

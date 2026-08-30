@@ -399,6 +399,10 @@ continues to default off. After exact schedule readback, the operator explicitly
 activated both `feeding_schedule` targets instead of the planned Cabin-first
 canary. Source installation and schema migration still cannot poll Whisker on a
 new machine because both producer flags default off.
+Schema 8 retains immutable prior action outcomes while allowing a newer settled
+destination litter event to retry a same-cycle transfer only after a
+destination-schedule precondition stopped the earlier action before any
+command. Command-attempted and uncertain outcomes remain terminal.
 
 The attended Mini runtime currently has Cabin and Crosstown local enrichment
 enabled. Both sites completed zero-event baselines, duplicate-scan no-ops, and

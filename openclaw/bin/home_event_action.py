@@ -62,6 +62,12 @@ WHISKER_ALIASES = {
     "crosstown": "crosstown_litter_robot",
 }
 WHISKER_MAX_POLL_AGE = timedelta(minutes=5)
+CAT_TRANSFER_RETRYABLE_NO_COMMAND_REASONS = frozenset(
+    {
+        "destination_schedule_manually_disabled",
+        "destination_schedule_unavailable",
+    }
+)
 
 
 class ActionError(Exception):
@@ -656,9 +662,10 @@ def reserve_cat_transfers(
 ) -> dict[str, int | str]:
     loaded = load_policy(root, allow_missing=True)
     if loaded is None or not loaded[0]["active"]:
-        return {"status": "disabled", "reserved": 0, "shadowed": 0}
+        return {"status": "disabled", "reserved": 0, "retries": 0, "shadowed": 0}
     policy = loaded[0]
     reserved = 0
+    retries = 0
     duplicates = 0
     shadowed = 0
     for origin_site in sorted(SITES):
@@ -693,6 +700,40 @@ def reserve_cat_transfers(
             )
             shadowed += 1
             continue
+        prior = connection.execute(
+            """
+            SELECT r.trigger_event_id, r.status, r.reason_code,
+                   o.outcome, o.command_attempted
+            FROM action_reservations r
+            LEFT JOIN action_outcomes o ON o.reservation_id = r.id
+            WHERE r.site=? AND r.target_alias='feeding_schedule'
+              AND r.vacancy_cycle_id=?
+            ORDER BY r.id
+            """,
+            (origin_site, evidence["cycle_id"]),
+        ).fetchall()
+        retry = False
+        if prior:
+            if any(
+                row["trigger_event_id"] == evidence["event_id"]
+                or row["status"] in {"pending", "claimed", "outcome_unknown"}
+                or row["outcome"] in {"state_confirmed", "outcome_unknown"}
+                or row["command_attempted"] == 1
+                for row in prior
+            ):
+                duplicates += 1
+                continue
+            latest = prior[-1]
+            retry = bool(
+                latest["status"] == "complete"
+                and latest["outcome"] == "failed"
+                and latest["command_attempted"] == 0
+                and latest["reason_code"]
+                in CAT_TRANSFER_RETRYABLE_NO_COMMAND_REASONS
+            )
+            if not retry:
+                duplicates += 1
+                continue
         result = reserve_action(
             connection,
             root=root,
@@ -707,10 +748,12 @@ def reserve_cat_transfers(
             clock=clock,
         )
         reserved += result["status"] == "reserved"
+        retries += retry and result["status"] == "reserved"
         duplicates += result["status"] == "duplicate"
     return {
         "status": "ok",
         "reserved": reserved,
+        "retries": retries,
         "duplicates": duplicates,
         "shadowed": shadowed,
     }
