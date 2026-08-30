@@ -23,6 +23,8 @@ BIND_HOST = "0.0.0.0"
 CACHE_TTL_SECONDS = 60
 COMMAND_TIMEOUT_SECONDS = 35
 MAX_COMMAND_BODY_BYTES = 16 * 1024
+CAT_ACTIVITY_LIMIT = 40
+MAX_CAT_WEIGHT_LBS = 30
 MUTATION_TOKEN = secrets.token_urlsafe(32)
 MUTATION_TOKEN_PLACEHOLDER = "__CAT_DASHBOARD_MUTATION_TOKEN__"
 SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
@@ -141,6 +143,9 @@ def collect_petlibro() -> dict[str, object]:
             verified_devices.append(device)
             continue
         schedule = _run_json([PETLIBRO_CLI, "--json", "schedule-state", selector])
+        feeding_history = _run_json(
+            [PETLIBRO_CLI, "--json", "feeding-history", selector, "14"]
+        )
         valid_schedule = (
             isinstance(schedule, dict)
             and schedule.get("success") is True
@@ -181,6 +186,29 @@ def collect_petlibro() -> dict[str, object]:
                     "scheduleReadback": "unavailable",
                 }
             )
+        valid_feedings = (
+            isinstance(feeding_history, dict)
+            and feeding_history.get("success") is True
+            and feeding_history.get("selector") == selector
+            and feeding_history.get("site") == PETLIBRO_FEEDER_SELECTORS[selector]
+            and isinstance(feeding_history.get("feedings"), list)
+            and len(feeding_history["feedings"]) <= 14
+            and all(
+                isinstance(feeding, dict)
+                and set(feeding) == {"occurredAt", "portions"}
+                and isinstance(feeding.get("occurredAt"), str)
+                and isinstance(feeding.get("portions"), int)
+                and not isinstance(feeding.get("portions"), bool)
+                and 1 <= feeding["portions"] <= 48
+                for feeding in feeding_history["feedings"]
+            )
+        )
+        device["recentScheduledFeedings"] = (
+            feeding_history["feedings"] if valid_feedings else []
+        )
+        device["feedingHistoryReadback"] = (
+            "verified" if valid_feedings else "unavailable"
+        )
         verified_devices.append(device)
     return {"ok": True, "devices": verified_devices}
 
@@ -466,6 +494,190 @@ def summarize_transfer_state(
     }
 
 
+def _parsed_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _cat_weight_index(whisker: object) -> dict[tuple[int, float], set[str]]:
+    data = whisker if isinstance(whisker, dict) else {}
+    pets = data.get("pets")
+    index: dict[tuple[int, float], set[str]] = {}
+    if not isinstance(pets, list):
+        return index
+    for pet in pets:
+        if not isinstance(pet, dict) or not isinstance(pet.get("name"), str):
+            continue
+        name = pet["name"].strip()
+        samples = pet.get("recent_weights")
+        if not name or not isinstance(samples, list):
+            continue
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            timestamp = _parsed_timestamp(sample.get("timestamp"))
+            weight = sample.get("weight_lbs")
+            if (
+                timestamp is None
+                or not isinstance(weight, (int, float))
+                or isinstance(weight, bool)
+                or not 0 < float(weight) <= MAX_CAT_WEIGHT_LBS
+            ):
+                continue
+            key = (int(timestamp.timestamp()), round(float(weight), 2))
+            index.setdefault(key, set()).add(name)
+    return index
+
+
+def build_cat_activity(
+    whisker: object,
+    petlibro: object,
+    automation: object,
+) -> list[dict[str, object]]:
+    """Build one privacy-bounded, household-readable activity timeline."""
+    events: list[dict[str, object]] = []
+    weight_index = _cat_weight_index(whisker)
+    whisker_data = whisker if isinstance(whisker, dict) else {}
+    robots = whisker_data.get("robots")
+    if isinstance(robots, list):
+        for robot in robots:
+            if not isinstance(robot, dict) or robot.get("site") not in SITE_NAMES:
+                continue
+            site = str(robot["site"])
+            recent = robot.get("recent_activity")
+            if not isinstance(recent, list):
+                continue
+            for record in recent:
+                if not isinstance(record, dict):
+                    continue
+                occurred_at = _parsed_timestamp(record.get("timestamp"))
+                weight = record.get("weight_lbs")
+                if (
+                    occurred_at is None
+                    or not isinstance(weight, (int, float))
+                    or isinstance(weight, bool)
+                    or not 0 < float(weight) <= MAX_CAT_WEIGHT_LBS
+                ):
+                    continue
+                key = (int(occurred_at.timestamp()), round(float(weight), 2))
+                names = weight_index.get(key, set())
+                name = next(iter(names)) if len(names) == 1 else None
+                events.append(
+                    {
+                        "kind": "litter_visit",
+                        "occurredAt": occurred_at.isoformat(timespec="seconds").replace(
+                            "+00:00", "Z"
+                        ),
+                        "site": site,
+                        "sites": [site],
+                        "location": SITE_NAMES[site],
+                        "title": (
+                            f"{name} used the Litter-Robot"
+                            if name
+                            else "A cat used the Litter-Robot"
+                        ),
+                        "detail": f"{float(weight):g} lb",
+                    }
+                )
+
+    petlibro_data = petlibro if isinstance(petlibro, dict) else {}
+    devices = petlibro_data.get("devices")
+    if isinstance(devices, list):
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            site = PETLIBRO_FEEDER_SELECTORS.get(str(device.get("selector")))
+            feedings = device.get("recentScheduledFeedings")
+            if site is None or not isinstance(feedings, list):
+                continue
+            for feeding in feedings:
+                if not isinstance(feeding, dict):
+                    continue
+                occurred_at = _parsed_timestamp(feeding.get("occurredAt"))
+                portions = feeding.get("portions")
+                if (
+                    occurred_at is None
+                    or not isinstance(portions, int)
+                    or isinstance(portions, bool)
+                    or not 1 <= portions <= 48
+                ):
+                    continue
+                events.append(
+                    {
+                        "kind": "scheduled_feeding",
+                        "occurredAt": occurred_at.isoformat(timespec="seconds").replace(
+                            "+00:00", "Z"
+                        ),
+                        "site": site,
+                        "sites": [site],
+                        "location": SITE_NAMES[site],
+                        "title": "Scheduled feeding",
+                        "detail": f"{portions} portion{'s' if portions != 1 else ''} dispensed",
+                    }
+                )
+
+    automation_data = automation if isinstance(automation, dict) else {}
+    transfers = automation_data.get("cat_transfers")
+    recent_transfers = transfers.get("recent") if isinstance(transfers, dict) else None
+    if isinstance(recent_transfers, list):
+        for transfer in recent_transfers:
+            if not isinstance(transfer, dict):
+                continue
+            origin = transfer.get("origin_site")
+            destination = transfer.get("destination_site")
+            occurred_at = _parsed_timestamp(transfer.get("occurred_at"))
+            if (
+                origin not in SITE_NAMES
+                or destination not in SITE_NAMES
+                or origin == destination
+                or occurred_at is None
+            ):
+                continue
+            events.append(
+                {
+                    "kind": "cat_move",
+                    "occurredAt": occurred_at.isoformat(timespec="seconds").replace(
+                        "+00:00", "Z"
+                    ),
+                    "site": destination,
+                    "sites": [origin, destination],
+                    "location": f"{SITE_NAMES[origin]} → {SITE_NAMES[destination]}",
+                    "title": f"Cats moved to {SITE_NAMES[destination]}",
+                    "detail": f"{SITE_NAMES[origin]} scheduled meals paused",
+                }
+            )
+
+    events.sort(
+        key=lambda event: _parsed_timestamp(event.get("occurredAt"))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    output: list[dict[str, object]] = []
+    seen: set[tuple[object, ...]] = set()
+    for event in events:
+        key = (
+            event["kind"],
+            event["occurredAt"],
+            event["site"],
+            event["title"],
+            event["detail"],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(event)
+        if len(output) >= CAT_ACTIVITY_LIMIT:
+            break
+    return output
+
+
 def collect_status(*, refresh: bool = False) -> dict[str, object]:
     now = time.time()
     with STATUS_CACHE_LOCK:
@@ -491,6 +703,9 @@ def collect_status(*, refresh: bool = False) -> dict[str, object]:
         }
         bundle["transfer_summary"] = summarize_transfer_state(
             bundle["automation"], bundle["transfer"], bundle["petlibro"]
+        )
+        bundle["activity"] = build_cat_activity(
+            bundle["whisker"], bundle["petlibro"], bundle["automation"]
         )
 
     with STATUS_CACHE_LOCK:
@@ -676,6 +891,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cat Care</title>
+  <link rel="icon" sizes="any" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%B1%3C/text%3E%3C/svg%3E">
   <style>
     :root {
       color-scheme: dark;
@@ -702,8 +918,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     h2 { font: 500 23px/1.2 Georgia, serif; margin: 0; }
     .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
     .card { grid-column: span 4; min-width: 0; border: 1px solid var(--line); background: linear-gradient(145deg, rgba(39,44,42,.96), var(--panel)); border-radius: 19px; padding: 19px; box-shadow: 0 18px 45px rgba(0,0,0,.16); }
-    .cat-card { min-height: 166px; position: relative; overflow: hidden; }
-    .cat-card::after { content: ""; position: absolute; width: 115px; height: 115px; right: -35px; bottom: -45px; border: 26px solid rgba(149,213,178,.08); border-radius: 50%; }
+    .cat-card { min-height: 218px; position: relative; overflow: hidden; }
+    .cat-card::after { content: ""; position: absolute; z-index: 0; width: 115px; height: 115px; right: -35px; bottom: -45px; border: 26px solid rgba(149,213,178,.08); border-radius: 50%; }
+    .cat-card > * { position: relative; z-index: 1; }
+    .weight-chart { margin-top: 13px; }
+    .weight-chart svg { display: block; width: 100%; height: 48px; overflow: visible; }
+    .weight-grid { stroke: rgba(255,255,255,.08); stroke-width: 1; }
+    .weight-line { fill: none; stroke: var(--mint); stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .weight-dot { fill: var(--mint); stroke: var(--panel-2); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+    .weight-chart-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .weight-chart-empty { height: 67px; display: flex; align-items: center; color: var(--muted); font-size: 12px; }
     .card-top { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
     .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .09em; }
     .value { font-size: 31px; letter-spacing: -.04em; margin-top: 14px; }
@@ -731,9 +955,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .action:disabled { opacity: .38; cursor: not-allowed; }
     select { color: var(--ink); border: 1px solid var(--line); background: #1c211f; border-radius: 10px; padding: 8px; }
     .timeline { grid-column: span 12; padding: 5px 19px; }
-    .event { display: grid; grid-template-columns: 90px minmax(120px, .7fr) 1fr; gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--line); align-items: center; }
+    .event { display: grid; grid-template-columns: 90px minmax(140px, .7fr) 1fr; gap: 18px; padding: 13px 0; border-bottom: 1px solid var(--line); align-items: center; }
     .event:last-child { border-bottom: 0; }
     .event time { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .event-action { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+    .event-action span { color: var(--muted); }
     .empty { grid-column: span 12; border: 1px dashed rgba(255,255,255,.14); border-radius: 18px; padding: 27px; color: var(--muted); text-align: center; }
     .footer { margin-top: 28px; color: #777d79; font-size: 12px; display: flex; justify-content: space-between; }
     .toast { position: fixed; right: 22px; bottom: 22px; max-width: 360px; border: 1px solid var(--line); background: #29312e; color: var(--ink); padding: 13px 16px; border-radius: 12px; box-shadow: 0 12px 40px #0008; opacity: 0; transform: translateY(12px); pointer-events: none; transition: .2s ease; }
@@ -758,7 +984,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <section><div class="section-head"><h2>Feeding between homes</h2><span class="muted" id="automation-summary"></span></div><div class="grid" id="automation"></div></section>
     <section><div class="section-head"><h2>The cats</h2><span class="muted" id="cat-summary"></span></div><div class="grid" id="cats"></div></section>
     <section><div class="section-head"><h2>Care stations</h2><span class="muted">Whisker · Petlibro</span></div><div class="grid" id="devices"></div></section>
-    <section><div class="section-head"><h2>Recent litter-box activity</h2><span class="muted">Latest 14 events per home</span></div><div class="grid" id="activity"></div></section>
+    <section><div class="section-head"><h2>Cat activity</h2><span class="muted">Litter visits · scheduled feedings · home moves</span></div><div class="grid" id="activity"></div></section>
     <div class="footer"><span>Local to the home network and tailnet</span><span id="updated">Loading…</span></div>
   </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -775,11 +1001,45 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     const metric = (label, value) => `<div class="metric"><span class="label">${esc(label)}</span><b>${esc(value)}</b></div>`;
 
     function weightTrend(pet) {
-      const samples = [...(pet.recent_weights || [])].filter(x => Number.isFinite(Number(x.weight_lbs)) && x.timestamp).sort((a,b) => new Date(a.timestamp)-new Date(b.timestamp));
+      const samples = weightSamples(pet);
       if (samples.length < 2) return 'No trend yet';
       const delta = Number(samples.at(-1).weight_lbs) - Number(samples[0].weight_lbs);
       if (Math.abs(delta) < .05) return 'Steady';
       return `${delta > 0 ? '+' : ''}${delta.toFixed(1)} lb recent`;
+    }
+
+    function weightSamples(pet) {
+      return [...(pet.recent_weights || [])]
+        .filter(sample => Number.isFinite(Number(sample.weight_lbs)) && Number(sample.weight_lbs) > 0 && Number(sample.weight_lbs) <= 40 && Number.isFinite(new Date(sample.timestamp).getTime()))
+        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+
+    function weightSparkline(pet) {
+      const samples = weightSamples(pet);
+      if (samples.length < 2) return '<div class="weight-chart-empty">More readings needed for a weight trend.</div>';
+      const width = 240;
+      const height = 48;
+      const inset = 4;
+      const weights = samples.map(sample => Number(sample.weight_lbs));
+      const times = samples.map(sample => new Date(sample.timestamp).getTime());
+      const observedMin = Math.min(...weights);
+      const observedMax = Math.max(...weights);
+      const midpoint = (observedMin + observedMax) / 2;
+      const span = Math.max(observedMax - observedMin, .5);
+      const low = midpoint - span / 2;
+      const high = midpoint + span / 2;
+      const firstTime = times[0];
+      const elapsed = Math.max(times.at(-1) - firstTime, 1);
+      const points = samples.map((sample, index) => {
+        const x = inset + ((times[index] - firstTime) / elapsed) * (width - inset * 2);
+        const y = inset + ((high - weights[index]) / (high - low)) * (height - inset * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const lastPoint = points.split(' ').at(-1).split(',');
+      const dateLabel = timestamp => new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric'}).format(new Date(timestamp));
+      const range = `${observedMin.toFixed(1)}–${observedMax.toFixed(1)} lb`;
+      const description = `${pet.name || 'Cat'} weight from ${weights[0].toFixed(2)} to ${weights.at(-1).toFixed(2)} pounds across ${samples.length} readings`;
+      return `<div class="weight-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(description)}" preserveAspectRatio="none"><line class="weight-grid" x1="${inset}" y1="${height / 2}" x2="${width - inset}" y2="${height / 2}"></line><polyline class="weight-line" points="${points}"></polyline><circle class="weight-dot" cx="${lastPoint[0]}" cy="${lastPoint[1]}" r="3"></circle></svg><div class="weight-chart-meta"><span>${esc(dateLabel(samples[0].timestamp))}</span><span>${esc(`${samples.length} readings · ${range}`)}</span><span>${esc(dateLabel(samples.at(-1).timestamp))}</span></div></div>`;
     }
 
     function renderAutomation() {
@@ -803,6 +1063,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="card-top"><div><div class="label">Cat profile</div><h3>${esc(pet.name || 'Cat')}</h3></div><span class="pill">Whisker</span></div>
         <div class="value">${esc(number(pet.weight_lbs))}<span class="unit">lb</span></div>
         <div class="muted">${esc(weightTrend(pet))}</div>
+        ${weightSparkline(pet)}
       </article>`).join('') : '<div class="empty">Cat profiles will appear when Whisker reports them.</div>';
     }
 
@@ -858,14 +1119,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     }
 
     function renderActivity() {
-      const events = (state?.whisker?.robots || []).filter(r => visible(r.site)).flatMap(r => (r.recent_activity || []).map(e => ({...e, site:r.site}))).sort((a,b) => new Date(b.timestamp)-new Date(a.timestamp)).slice(0, 28);
+      const events = (state?.activity || []).filter(event => selectedSite === 'all' || (event.sites || [event.site]).includes(selectedSite));
       document.getElementById('activity').innerHTML = events.length ? `<div class="card timeline">${events.map(event => {
-        const date = new Date(event.timestamp); const when = Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+        const date = new Date(event.occurredAt); const when = Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
         const day = Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString([], {month:'short',day:'numeric'});
-        const weightKnown = event.weight_lbs !== null && event.weight_lbs !== undefined && Number.isFinite(Number(event.weight_lbs));
-        const action = weightKnown ? `Weight recorded · ${Number(event.weight_lbs)} lb` : event.action || 'Litter-box activity';
-        return `<div class="event"><time>${esc(when)}<br><span>${esc(day)}</span></time><strong>${esc(siteName(event.site))}</strong><span class="event-action">${esc(action)}</span></div>`;
-      }).join('')}</div>` : '<div class="empty">No recent litter-box activity is available for this location.</div>';
+        return `<div class="event"><time>${esc(when)}<br><span>${esc(day)}</span></time><strong>${esc(event.location || siteName(event.site))}</strong><span class="event-action"><b>${esc(event.title || 'Cat activity')}</b>${event.detail ? `<span>${esc(event.detail)}</span>` : ''}</span></div>`;
+      }).join('')}</div>` : '<div class="empty">No recent cat activity is available for this location.</div>';
     }
 
     function renderNotice() {

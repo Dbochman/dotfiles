@@ -222,7 +222,10 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   evidence, restore an OpenClaw-owned destination pause before origin
   suspension, and never resume a manual pause. The worker holds an exclusive
   lock across crash recovery, revalidation, command, and readback, and restores
-  only state recorded as enabled before the matching vacancy cycle.
+  only state recorded as enabled before the matching vacancy cycle. Its safe
+  status includes at most eight confirmed recent feeder transfers as origin,
+  destination, completion time, and whether a schedule command was needed; the
+  Cat Care dashboard uses that bounded view for plain-English move activity.
 - `skills/home-events/SKILL.md` constrains OpenClaw to the read-only wrapper and
   delegates only an explicit current-image request to `nest-camera`.
 - `ai.openclaw.ring-event-listener` remains the only Ring FCM connection and

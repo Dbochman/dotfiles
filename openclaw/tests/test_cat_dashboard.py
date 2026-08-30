@@ -362,6 +362,15 @@ class CatDashboardTests(unittest.TestCase):
                     "enabledMealCount": 2,
                     "observedAt": "2026-08-27T12:00:00Z",
                 },
+                {
+                    "success": True,
+                    "selector": "cabin-feeder",
+                    "site": "cabin",
+                    "feedings": [
+                        {"occurredAt": "2026-08-27T09:00:00Z", "portions": 4}
+                    ],
+                    "observedAt": "2026-08-27T12:00:00Z",
+                },
             ],
         ) as run:
             payload = self.dashboard.collect_petlibro()
@@ -371,6 +380,11 @@ class CatDashboardTests(unittest.TestCase):
         self.assertEqual(feeder["enabledMealCount"], 2)
         self.assertEqual(feeder["scheduleReadback"], "verified")
         self.assertEqual(feeder["scheduleObservedAt"], "2026-08-27T12:00:00Z")
+        self.assertEqual(feeder["feedingHistoryReadback"], "verified")
+        self.assertEqual(
+            feeder["recentScheduledFeedings"],
+            [{"occurredAt": "2026-08-27T09:00:00Z", "portions": 4}],
+        )
         self.assertEqual(
             run.call_args_list[1].args[0],
             [
@@ -378,6 +392,16 @@ class CatDashboardTests(unittest.TestCase):
                 "--json",
                 "schedule-state",
                 "cabin-feeder",
+            ],
+        )
+        self.assertEqual(
+            run.call_args_list[2].args[0],
+            [
+                self.dashboard.PETLIBRO_CLI,
+                "--json",
+                "feeding-history",
+                "cabin-feeder",
+                "14",
             ],
         )
 
@@ -388,6 +412,7 @@ class CatDashboardTests(unittest.TestCase):
             side_effect=[
                 [{"selector": "cabin-feeder", "type": "feeder", "scheduleEnabled": True}],
                 {"ok": False, "error": "provider unavailable"},
+                {"ok": False, "error": "provider unavailable"},
             ],
         ):
             payload = self.dashboard.collect_petlibro()
@@ -396,6 +421,8 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIsNone(feeder["scheduleEnabled"])
         self.assertIsNone(feeder["enabledMealCount"])
         self.assertEqual(feeder["scheduleReadback"], "unavailable")
+        self.assertEqual(feeder["recentScheduledFeedings"], [])
+        self.assertEqual(feeder["feedingHistoryReadback"], "unavailable")
 
     def test_petlibro_collector_preserves_verified_master_state(self) -> None:
         with patch.object(
@@ -411,6 +438,7 @@ class CatDashboardTests(unittest.TestCase):
                     }
                 ],
                 {"ok": False, "error": "meal list unavailable"},
+                {"ok": False, "error": "history unavailable"},
             ],
         ):
             payload = self.dashboard.collect_petlibro()
@@ -421,12 +449,92 @@ class CatDashboardTests(unittest.TestCase):
         self.assertEqual(feeder["scheduleReadback"], "master_verified")
         self.assertIsInstance(feeder["scheduleObservedAt"], str)
 
+    def test_cat_activity_collapses_visits_and_combines_feedings_and_moves(self) -> None:
+        activity = self.dashboard.build_cat_activity(
+            {
+                "pets": [
+                    {
+                        "name": "Burrito",
+                        "recent_weights": [
+                            {
+                                "timestamp": "2026-08-30T13:23:28Z",
+                                "weight_lbs": 10.49,
+                            }
+                        ],
+                    }
+                ],
+                "robots": [
+                    {
+                        "site": "crosstown",
+                        "recent_activity": [
+                            {
+                                "timestamp": "2026-08-30T13:23:28Z",
+                                "action": "Weight recorded",
+                                "weight_lbs": 10.49,
+                            },
+                            {
+                                "timestamp": "2026-08-30T13:22:06Z",
+                                "action": "Cat Detected",
+                            },
+                            {
+                                "timestamp": "2026-08-30T13:32:31Z",
+                                "action": "DFILevelPercent",
+                            },
+                            {
+                                "timestamp": "2026-08-30T13:33:36Z",
+                                "action": "Clean Cycle Complete",
+                            },
+                        ],
+                    }
+                ],
+            },
+            {
+                "devices": [
+                    {
+                        "selector": "cabin-feeder",
+                        "recentScheduledFeedings": [
+                            {"occurredAt": "2026-08-30T09:01:16Z", "portions": 4}
+                        ],
+                    }
+                ]
+            },
+            {
+                "cat_transfers": {
+                    "recent": [
+                        {
+                            "origin_site": "crosstown",
+                            "destination_site": "cabin",
+                            "occurred_at": "2026-08-29T23:23:23Z",
+                            "schedule_changed": True,
+                        }
+                    ]
+                }
+            },
+        )
+
+        self.assertEqual(
+            [event["kind"] for event in activity],
+            ["litter_visit", "scheduled_feeding", "cat_move"],
+        )
+        self.assertEqual(activity[0]["title"], "Burrito used the Litter-Robot")
+        self.assertEqual(activity[0]["detail"], "10.49 lb")
+        self.assertEqual(activity[1]["title"], "Scheduled feeding")
+        self.assertEqual(activity[1]["detail"], "4 portions dispensed")
+        self.assertEqual(activity[2]["title"], "Cats moved to Cabin")
+        self.assertEqual(activity[2]["sites"], ["crosstown", "cabin"])
+        serialized = json.dumps(activity)
+        self.assertNotIn("DFILevelPercent", serialized)
+        self.assertNotIn("Clean Cycle Complete", serialized)
+        self.assertNotIn("Cat Detected", serialized)
+
     def test_html_is_cat_first_and_embeds_ephemeral_token(self) -> None:
         harness = HandlerHarness(self.dashboard)
         harness.handler._serve_html()
         text = harness.body.decode()
         self.assertEqual(harness.status, 200)
         self.assertIn("<title>Cat Care</title>", text)
+        self.assertIn('rel="icon"', text)
+        self.assertIn("%F0%9F%90%B1", text)
         self.assertIn("The cats", text)
         self.assertIn("Feeding between homes", text)
         self.assertIn("Automatic feeder switching", text)
@@ -435,8 +543,15 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("On/off switch checked", text)
         self.assertIn("Cabin meals", text)
         self.assertIn("Crosstown meals", text)
-        self.assertIn("Recent litter-box activity", text)
-        self.assertIn("Weight recorded ·", text)
+        self.assertIn("Cat activity", text)
+        self.assertIn("Litter visits · scheduled feedings · home moves", text)
+        self.assertIn("weightSparkline", text)
+        self.assertIn("weight-chart", text)
+        self.assertIn("readings ·", text)
+        self.assertIn("role=\"img\"", text)
+        self.assertIn("event.title", text)
+        self.assertNotIn("Recent litter-box activity", text)
+        self.assertNotIn("Weight recorded ·", text)
         self.assertIn("Scheduled meals", text)
         self.assertIn("Pause schedule", text)
         self.assertIn("Resume schedule", text)

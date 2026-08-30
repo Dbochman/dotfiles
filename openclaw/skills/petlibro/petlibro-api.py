@@ -43,6 +43,10 @@ HARD_MAX_PORTIONS = 3
 DEFAULT_FEED_COOLDOWN_SECONDS = 300
 SCHEDULE_VERIFY_ATTEMPTS = 3
 SCHEDULE_VERIFY_INTERVAL_SECONDS = 1
+FEEDING_HISTORY_DAYS = 30
+DEFAULT_FEEDING_HISTORY_LIMIT = 14
+MAX_FEEDING_HISTORY_LIMIT = 25
+MAX_SCHEDULED_PORTIONS = 48
 
 DEVICE_SELECTORS = {
     "crosstown-feeder": ("device_crosstown_feeder", "feeder", "crosstown"),
@@ -760,6 +764,111 @@ def cmd_schedule(selector: str) -> object:
     return require_api_success(result, "feeding schedule")
 
 
+def validate_history_limit(value: str) -> int:
+    try:
+        limit = int(value)
+    except ValueError:
+        raise PetlibroError(
+            "invalid_limit",
+            f"Feeding history limit must be between 1 and {MAX_FEEDING_HISTORY_LIMIT}",
+        )
+    if not 1 <= limit <= MAX_FEEDING_HISTORY_LIMIT:
+        raise PetlibroError(
+            "invalid_limit",
+            f"Feeding history limit must be between 1 and {MAX_FEEDING_HISTORY_LIMIT}",
+        )
+    return limit
+
+
+def _scheduled_feeding_records(value: object, *, limit: int) -> list[dict[str, object]]:
+    """Reduce provider work records to successful scheduled dispenses only."""
+    if not isinstance(value, list):
+        raise PetlibroError(
+            "invalid_response", "Petlibro returned an invalid feeding history"
+        )
+
+    feedings: list[dict[str, object]] = []
+    for day in value:
+        if not isinstance(day, dict) or not isinstance(day.get("workRecords"), list):
+            raise PetlibroError(
+                "invalid_response", "Petlibro returned an invalid feeding-history day"
+            )
+        for record in day["workRecords"]:
+            if not isinstance(record, dict):
+                raise PetlibroError(
+                    "invalid_response",
+                    "Petlibro returned an invalid feeding-history entry",
+                )
+            if (
+                record.get("type") != "GRAIN_OUTPUT_SUCCESS"
+                or record.get("eventType") != "FEEDING_PLAN_SUCCESS"
+            ):
+                continue
+            occurred_at_ms = record.get("recordTime")
+            portions = record.get("actualGrainNum")
+            if (
+                not isinstance(occurred_at_ms, int)
+                or isinstance(occurred_at_ms, bool)
+                or not isinstance(portions, int)
+                or isinstance(portions, bool)
+                or not 1 <= portions <= MAX_SCHEDULED_PORTIONS
+            ):
+                raise PetlibroError(
+                    "invalid_response",
+                    "Petlibro returned an invalid scheduled-feeding record",
+                )
+            try:
+                occurred_at = datetime.fromtimestamp(
+                    occurred_at_ms / 1000, timezone.utc
+                ).isoformat(timespec="seconds").replace("+00:00", "Z")
+            except (OSError, OverflowError, ValueError):
+                raise PetlibroError(
+                    "invalid_response",
+                    "Petlibro returned an invalid scheduled-feeding timestamp",
+                )
+            feedings.append({"occurredAt": occurred_at, "portions": portions})
+
+    feedings.sort(key=lambda item: str(item["occurredAt"]), reverse=True)
+    deduplicated: list[dict[str, object]] = []
+    seen: set[tuple[object, object]] = set()
+    for feeding in feedings:
+        key = (feeding["occurredAt"], feeding["portions"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(feeding)
+        if len(deduplicated) >= limit:
+            break
+    return deduplicated
+
+
+def cmd_feeding_history(selector: str, limit: int) -> dict[str, object]:
+    config, token, devices = get_token_and_devices()
+    device, location = resolve_device(config, devices, selector, "feeder")
+    now_ms = int(time.time() * 1000)
+    result = api_post(
+        "/device/workRecord/list",
+        {
+            "deviceSn": device["deviceSn"],
+            "startTime": now_ms - FEEDING_HISTORY_DAYS * 24 * 60 * 60 * 1000,
+            "endTime": now_ms,
+            "size": MAX_FEEDING_HISTORY_LIMIT,
+            "type": ["GRAIN_OUTPUT_SUCCESS"],
+        },
+        token,
+    )
+    history = require_api_success(result, "feeding history")
+    return {
+        "success": True,
+        "selector": selector,
+        "site": location,
+        "feedings": _scheduled_feeding_records(history, limit=limit),
+        "observedAt": datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+    }
+
+
 def validate_schedule_state(value: str) -> bool:
     if value == "on":
         return True
@@ -877,7 +986,7 @@ def dispatch(argv: list[str]) -> object:
     if not argv:
         raise PetlibroError(
             "missing_command",
-            "Usage: petlibro-api.py <status|feed|water|schedule|schedule-state|schedule-set|devices>",
+            "Usage: petlibro-api.py <status|feed|water|schedule|schedule-state|feeding-history|schedule-set|devices>",
         )
     command, args = argv[0], argv[1:]
     if command == "status":
@@ -908,6 +1017,19 @@ def dispatch(argv: list[str]) -> object:
             "Usage: petlibro-api.py schedule-state <location-feeder>",
         )
         return cmd_schedule_state(args[0])
+    if command == "feeding-history":
+        require_arg_count(
+            args,
+            1,
+            2,
+            "Usage: petlibro-api.py feeding-history <location-feeder> [limit]",
+        )
+        return cmd_feeding_history(
+            args[0],
+            validate_history_limit(
+                args[1] if len(args) == 2 else str(DEFAULT_FEEDING_HISTORY_LIMIT)
+            ),
+        )
     if command == "schedule-set":
         require_arg_count(
             args,

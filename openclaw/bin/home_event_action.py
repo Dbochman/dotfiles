@@ -2014,6 +2014,20 @@ def safe_status(root: Path) -> dict[str, Any]:
             FROM action_reservations ORDER BY id DESC LIMIT 1
             """
         ).fetchone()
+        recent_cat_transfers = connection.execute(
+            """
+            SELECT r.site AS origin_site, r.completed_at AS occurred_at,
+                   o.command_attempted
+            FROM action_reservations r
+            JOIN action_outcomes o ON o.reservation_id = r.id
+            WHERE r.target_alias = 'feeding_schedule'
+              AND r.status = 'complete'
+              AND o.outcome = 'state_confirmed'
+              AND r.completed_at IS NOT NULL
+            ORDER BY r.id DESC
+            LIMIT 8
+            """
+        ).fetchall()
     return {
         "ok": True,
         "policy": {
@@ -2048,6 +2062,17 @@ def safe_status(root: Path) -> dict[str, Any]:
                 for site, record in sorted(feeder_suspensions["sites"].items())
             },
             "latest": feeder_suspensions["latest"],
+        },
+        "cat_transfers": {
+            "recent": [
+                {
+                    "origin_site": row["origin_site"],
+                    "destination_site": OTHER_SITE[row["origin_site"]],
+                    "occurred_at": row["occurred_at"],
+                    "schedule_changed": bool(row["command_attempted"]),
+                }
+                for row in recent_cat_transfers
+            ]
         },
         "counts": {
             status: counts.get(status, 0)

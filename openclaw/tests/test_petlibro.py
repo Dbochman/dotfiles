@@ -419,6 +419,77 @@ class PetlibroTests(unittest.TestCase):
             {"deviceSn": "CROSS-FEEDER-SN", "id": "CROSS-FEEDER-SN"},
         )
 
+    def test_feeding_history_returns_only_sanitized_scheduled_successes(self) -> None:
+        scheduled_at_ms = 1_788_080_476_000
+        responses = [
+            self.device_list_response(),
+            FakeResponse(
+                {
+                    "code": 0,
+                    "data": [
+                        {
+                            "recordTime": scheduled_at_ms,
+                            "workRecords": [
+                                {
+                                    "id": "private-scheduled-id",
+                                    "deviceSn": "CROSS-FEEDER-SN",
+                                    "type": "GRAIN_OUTPUT_SUCCESS",
+                                    "eventType": "FEEDING_PLAN_SUCCESS",
+                                    "recordTime": scheduled_at_ms,
+                                    "actualGrainNum": 4,
+                                },
+                                {
+                                    "id": "private-manual-id",
+                                    "deviceSn": "CROSS-FEEDER-SN",
+                                    "type": "GRAIN_OUTPUT_SUCCESS",
+                                    "eventType": "MANUAL_FEEDING_SUCCESS",
+                                    "recordTime": scheduled_at_ms - 60_000,
+                                    "actualGrainNum": 2,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            code, payload = self.run_main(
+                ["feeding-history", "crosstown-feeder", "10"]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["selector"], "crosstown-feeder")
+        self.assertEqual(payload["site"], "crosstown")
+        self.assertEqual(
+            payload["feedings"],
+            [{"occurredAt": "2026-08-30T09:01:16Z", "portions": 4}],
+        )
+        serialized = json.dumps(payload)
+        self.assertNotIn("private-scheduled-id", serialized)
+        self.assertNotIn("private-manual-id", serialized)
+        self.assertNotIn("CROSS-FEEDER-SN", serialized)
+        request = urlopen.call_args_list[1].args[0]
+        self.assertTrue(request.full_url.endswith("/device/workRecord/list"))
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(body["type"], ["GRAIN_OUTPUT_SUCCESS"])
+        self.assertEqual(body["size"], 25)
+
+    def test_feeding_history_rejects_invalid_limits_before_network(self) -> None:
+        for value in ("0", "26", "many"):
+            with self.subTest(value=value), patch.object(
+                petlibro_api.urllib.request, "urlopen"
+            ) as urlopen:
+                code, payload = self.run_main(
+                    ["feeding-history", "crosstown-feeder", value]
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual(payload["error"], "invalid_limit")
+            urlopen.assert_not_called()
+
     def test_schedule_state_rejects_ambiguous_plan_shape(self) -> None:
         responses = [
             self.device_list_response(),
@@ -702,6 +773,11 @@ class PetlibroTests(unittest.TestCase):
             (["water", "crosstown-fountain", "extra"], 2),
             (["schedule"], 2),
             (["schedule", "crosstown-feeder", "extra"], 2),
+            (["feeding-history"], 2),
+            (["feeding-history", "crosstown-fountain"], 2),
+            (["feeding-history", "crosstown-feeder", "0"], 2),
+            (["feeding-history", "crosstown-feeder", "26"], 2),
+            (["feeding-history", "crosstown-feeder", "14", "extra"], 2),
             (["schedule-set"], 2),
             (["schedule-set", "crosstown-feeder"], 2),
             (["schedule-set", "crosstown-feeder", "pause"], 2),

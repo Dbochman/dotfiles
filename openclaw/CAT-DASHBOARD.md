@@ -8,19 +8,26 @@ food, and water—rather than around vendor accounts or a generic device grid.
 
 ## Experience
 
-- **Both / Crosstown / Cabin filter** scopes stations and litter-box activity.
+- **Both / Crosstown / Cabin filter** scopes stations and the combined cat
+  activity timeline. A move between homes appears in both location views.
 - **Feeding between homes** leads with one plain-English household state, such
   as `Cats are at Cabin`, then says which home's meals are on, which are paused,
   and whether the paused schedule will turn back on automatically. Separate
   Cabin/Crosstown meal readbacks, litter-box freshness, and waiting changes
   remain visible without exposing policy-direction or event-bus terminology.
-- **Cat profiles** show current Whisker weight and the direction of recent
-  samples.
+- **Cat profiles** show current Whisker weight, the direction of recent
+  samples, and a compact time-scaled chart with the observation dates, reading
+  count, and recent weight range.
 - **Whisker stations** show connectivity, state, waste level, litter level,
-  cycle count, and recent activity for the exact enrolled robot at each home.
-  Weight events use timestamp-aligned pet history rather than malformed raw
-  robot labels; an unmatched implausible value is shown only as `Weight
-  recorded`.
+  and cycle count for the exact enrolled robot at each home.
+- **Cat activity** combines named, weighted litter visits, provider-confirmed
+  scheduled feedings, and confirmed moves between homes. Each litter visit is
+  one row built from the timestamp-aligned Whisker pet-weight record; raw
+  `Cat Detected`, `DFILevelPercent`, clean-cycle progress, and `Clean Cycle
+  Complete` records are not rendered as separate activity. Petlibro feed rows
+  come only from successful scheduled-plan dispense records and show the actual
+  portion count. A successful event-bus feeder transfer becomes one
+  plain-English `Cats moved to …` row rather than exposing action-journal codes.
 - **Petlibro stations** show live feeder and fountain telemetry when the cloud
   account returns those devices. Each feeder gets a separate exact schedule
   readback: the card shows the provider's master switch, effective number of
@@ -31,7 +38,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   schedule value, and an explicit empty state replaces stale or invented values
   when no devices are reporting. If Petlibro verifies the master switch but
   temporarily rejects the separate meal-list query, the card preserves that
-  verified on/paused state while omitting the meal count.
+  verified on/paused state while omitting the meal count. Scheduled-feeding
+  history is collected independently, bounded to confirmed successes, and
+  never includes plan IDs, device IDs, raw provider text, or manual feeds.
 - **Attention state** calls out unavailable integrations, stale or incomplete
   transfer evidence, unknown feeder outcomes, offline robots, and full or
   nearly-full waste drawers. Paired litter readiness is evaluated from the
@@ -83,12 +92,15 @@ intended for public-internet exposure or router port forwarding.
 
 ## Runtime
 
-The dashboard caches a combined Whisker/Petlibro snapshot for 60 seconds. A
+The dashboard caches a combined Whisker/Petlibro/event-bus snapshot for 60
+seconds. A
 new page load and the Refresh button bypass that cache so feeder schedule cards
 start from a fresh provider readback. One
 Whisker account session supplies both robot state and recent cat weights and
-activity, avoiding separate cloud logins for every card. Confirmed actions
-invalidate the snapshot immediately.
+activity, avoiding separate cloud logins for every card. Petlibro supplies a
+sanitized 30-day window of successful scheduled dispenses, and the action
+worker status supplies at most eight confirmed recent cat transfers. Confirmed
+actions invalidate the snapshot immediately.
 
 | Component | Tracked source | Runtime path |
 |-----------|----------------|--------------|

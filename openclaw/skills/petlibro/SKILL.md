@@ -34,6 +34,7 @@ petlibro devices
 petlibro water crosstown-fountain
 petlibro schedule crosstown-feeder
 petlibro --json schedule-state crosstown-feeder
+petlibro --json feeding-history crosstown-feeder 14
 ```
 
 `status` and `devices` label configured devices with their exact selectors and
@@ -45,6 +46,11 @@ count, site, selector, and observation time; it omits meal times, portions,
 names, IDs, and raw plans. A paused master schedule reports zero active meals
 without requesting the provider meal list, which Petlibro rejects while the
 master switch is off.
+
+`feeding-history` returns a bounded, sanitized list of provider-confirmed
+scheduled-plan successes for one exact feeder. Each entry contains only its
+UTC occurrence time and actual portion count; device identifiers, plan IDs,
+raw event text, and manual-feed events are omitted.
 
 ## Scheduled feeding
 

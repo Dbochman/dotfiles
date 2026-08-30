@@ -217,7 +217,8 @@ with Petlibro feeders and fountains.
 
 ### What It Shows
 
-- **Cat profiles** — current Whisker weight and recent direction
+- **Cat profiles** — current Whisker weight, recent direction, and a compact
+  weight-over-time chart
 - **Feeding between homes** — a plain-English current state (`Cats are at
   Cabin`, `Both homes are ready`, or an explicit checking/review state), exact
   schedule readback for each home, litter-box freshness, and waiting changes
@@ -228,9 +229,10 @@ with Petlibro feeders and fountains.
   observation time, guarded pause/resume, and guarded 1–3 portion manual
   feeding when an enrolled device is reporting; OpenClaw-owned vacancy pauses
   are marked for automatic resume and block conflicting manual toggles
-- **Recent activity** — newest Litter-Robot events across both homes or scoped
-  to Crosstown or Cabin, with weight events reconciled against timestamp-
-  aligned pet history instead of malformed raw robot labels
+- **Cat activity** — one combined, location-filterable timeline of named and
+  weighted litter visits, provider-confirmed scheduled feedings with actual
+  portions, and confirmed vacancy-driven moves between homes; low-level
+  Litter-Robot sensor and cleaning records are collapsed out
 - **Attention state** — integration errors, offline robots, and waste drawers
   that are full or approaching full, plus stale transfer evidence or unknown
   feeder outcomes

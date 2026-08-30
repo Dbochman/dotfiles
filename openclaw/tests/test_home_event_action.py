@@ -516,6 +516,16 @@ class HomeEventActionTests(unittest.TestCase):
         suspension = actions._load_feeder_suspensions(self.root)
         self.assertEqual(set(suspension["sites"]), {"cabin"})
         self.assertEqual(suspension["sites"]["cabin"]["phase"], "suspended")
+        transfer = actions.safe_status(self.root)["cat_transfers"]["recent"][0]
+        self.assertEqual(
+            transfer,
+            {
+                "origin_site": "cabin",
+                "destination_site": "crosstown",
+                "occurred_at": NOW,
+                "schedule_changed": True,
+            },
+        )
 
     def test_suspended_feeder_clears_recovered_readback_error(self) -> None:
         self.configure_cat_transfer()
