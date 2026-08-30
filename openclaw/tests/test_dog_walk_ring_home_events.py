@@ -113,7 +113,7 @@ class RingHomeEventTests(unittest.TestCase):
             "device": "Provider Front Door Name",
             "doorbot_id": 684794187,
             "state": "human",
-            "occurred_at_epoch": 1_788_000_000.0,
+            "occurred_at_epoch": self.module.time.time() - 1.0,
         }
         values.update(overrides)
         self.module._process_ring_event_on_loop(**values)

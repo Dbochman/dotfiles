@@ -30,12 +30,24 @@ from home_event_bus import (  # noqa: E402
 
 
 OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
+DEFAULT_MESSAGES_DB = Path.home() / "Library" / "Messages" / "chat.db"
 TARGET_RE = re.compile(r"^chat_id:[1-9][0-9]{0,17}$")
 SAFE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 RESERVATION_RE = re.compile(r"^res_[0-9a-f]{32}$")
 PRESENCE_MAX_AGE = timedelta(minutes=30)
 SEND_TIMEOUT_SECONDS = 45
 MAX_RECEIPT_BYTES = 64 * 1024
+APPLE_EPOCH_OFFSET_SECONDS = 978_307_200
+RECONCILIATION_CLOCK_SKEW = timedelta(seconds=5)
+RECONCILIATION_SEND_WINDOW = timedelta(minutes=5)
+RECONCILIATION_LOOKBACK = timedelta(minutes=15)
+RECONCILIATION_HISTORY_HORIZON = timedelta(days=7)
+MAX_RECONCILIATION_CANDIDATES = 2
+MANUAL_RECONCILIATION_CODES = {
+    "ambiguous": "message_local_delivery_ambiguous",
+    "pending": "message_local_delivery_pending",
+    "unavailable": "message_history_unavailable",
+}
 
 TEMPLATES = {
     "person_activity": (
@@ -90,6 +102,108 @@ def format_time(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace(
         "+00:00", "Z"
     )
+
+
+def render_message(row: Mapping[str, Any]) -> str:
+    template_code = row.get("template_code")
+    site = row.get("site")
+    if template_code not in TEMPLATES or site not in {"cabin", "crosstown"}:
+        raise DeliveryError("reservation_invalid")
+    message = TEMPLATES[template_code].format(
+        site="Cabin" if site == "cabin" else "Crosstown"
+    )
+    camera_result = row.get("camera_result")
+    if camera_result is not None:
+        if camera_result not in CAMERA_CLAUSES:
+            raise DeliveryError("reservation_invalid")
+        message += " " + CAMERA_CLAUSES[camera_result]
+    return message
+
+
+def reconcile_local_imessage(
+    messages_db: Path,
+    target: str,
+    message: str,
+    attempted_at: datetime,
+) -> str:
+    """Classify one exact local Messages record without returning private data."""
+
+    if not messages_db.is_absolute() or TARGET_RE.fullmatch(target) is None:
+        return "unavailable"
+    try:
+        metadata = messages_db.lstat()
+    except OSError:
+        return "unavailable"
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or metadata.st_size <= 0
+    ):
+        return "unavailable"
+
+    start = attempted_at - RECONCILIATION_CLOCK_SKEW
+    end = attempted_at + RECONCILIATION_SEND_WINDOW
+    start_apple = int(start.timestamp()) - APPLE_EPOCH_OFFSET_SECONDS
+    end_apple = int(end.timestamp()) - APPLE_EPOCH_OFFSET_SECONDS
+    chat_id = int(target.removeprefix("chat_id:"))
+    try:
+        connection = sqlite3.connect(
+            "file:" + str(messages_db) + "?mode=ro", uri=True, timeout=1
+        )
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA query_only = ON")
+            rows = connection.execute(
+                """
+                SELECT m.is_sent, m.is_delivered, m.is_finished, m.error
+                FROM message AS m
+                JOIN chat_message_join AS cmj ON cmj.message_id = m.ROWID
+                WHERE cmj.chat_id = ?
+                  AND m.is_from_me = 1
+                  AND m.service = 'iMessage'
+                  AND COALESCE(m.item_type, 0) = 0
+                  AND COALESCE(m.is_empty, 0) = 0
+                  AND m.text = ? COLLATE BINARY
+                  AND (
+                    m.date BETWEEN ? AND ?
+                    OR m.date BETWEEN ? AND ?
+                  )
+                ORDER BY m.date, m.ROWID
+                LIMIT ?
+                """,
+                (
+                    chat_id,
+                    message,
+                    start_apple,
+                    end_apple,
+                    start_apple * 1_000_000_000,
+                    end_apple * 1_000_000_000,
+                    MAX_RECONCILIATION_CANDIDATES,
+                ),
+            ).fetchall()
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error, ValueError):
+        return "unavailable"
+
+    if not rows:
+        return "not_found"
+    if len(rows) != 1:
+        return "ambiguous"
+    row = rows[0]
+    if int(row["error"] or 0) != 0 or (
+        int(row["is_finished"] or 0) == 1 and int(row["is_sent"] or 0) != 1
+    ):
+        return "failed"
+    if (
+        int(row["is_sent"] or 0) == 1
+        and int(row["is_delivered"] or 0) == 1
+        and int(row["error"] or 0) == 0
+    ):
+        return "delivered"
+    return "pending"
 
 
 def read_presence(path: Path, now: datetime) -> Mapping[str, str]:
@@ -208,9 +322,7 @@ def send_message(target: str, message: str) -> None:
     except OSError as exc:
         raise DeliveryError("message_command_unavailable") from exc
     if result.returncode != 0:
-        raise DeliveryError("message_send_failed")
-    if result.stderr:
-        raise DeliveryError("message_receipt_invalid", uncertain=True)
+        raise DeliveryError("message_send_failed", uncertain=True)
     validate_receipt(result.stdout, target)
 
 
@@ -221,12 +333,14 @@ class DeliveryWorker:
         presence_state: Path,
         target: str,
         *,
+        messages_db: Path = DEFAULT_MESSAGES_DB,
         clock: Callable[[], str] = utc_now,
     ) -> None:
         self.paths = validate_runtime(root)
         self.store = EventStore(self.paths, clock=clock)
         self.presence_state = presence_state
         self.target = target
+        self.messages_db = messages_db
         self.clock = clock
 
     def now(self) -> datetime:
@@ -391,6 +505,159 @@ class DeliveryWorker:
             connection.commit()
         self.store.write_status_best_effort()
 
+    @staticmethod
+    def _increment(connection: sqlite3.Connection, name: str) -> None:
+        connection.execute(
+            """
+            INSERT INTO service_counters(name, value) VALUES (?, 1)
+            ON CONFLICT(name) DO UPDATE SET value = value + 1
+            """,
+            (name,),
+        )
+
+    def _record_local_resolution(
+        self,
+        row_id: int,
+        *,
+        expected_status: str,
+        evidence: str,
+        attempted_at: datetime,
+    ) -> str | None:
+        if evidence not in {"delivered", "failed", "absent"}:
+            return None
+        now = format_time(self.now())
+        if evidence == "delivered":
+            status_value = "sent"
+            error_code = None
+            counter = "delivery_reconciled_sent"
+        else:
+            status_value = "dead_letter"
+            error_code = (
+                "message_local_record_absent"
+                if evidence == "absent"
+                else "message_local_delivery_failed"
+            )
+            counter = "delivery_reconciled_failed"
+        with closing(self.store.connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE notification_outbox
+                SET status = ?, sent_at = CASE WHEN ? = 'sent' THEN ? ELSE NULL END,
+                    error_code = ?, reviewed_at = NULL, review_outcome = NULL,
+                    updated_at = ?
+                WHERE id = ? AND status = ? AND attempt_count = 1
+                  AND reviewed_at IS NULL
+                """,
+                (
+                    status_value,
+                    status_value,
+                    format_time(attempted_at),
+                    error_code,
+                    now,
+                    row_id,
+                    expected_status,
+                ),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return None
+            self._increment(connection, counter)
+            if evidence == "delivered":
+                self._runtime_update(
+                    connection, now=now, health="ok", success=True
+                )
+            else:
+                self._runtime_update(
+                    connection,
+                    now=now,
+                    health="degraded",
+                    error_code=error_code,
+                )
+            connection.commit()
+        return status_value
+
+    def _mark_manual_reconciliation(self, row_id: int, evidence: str) -> bool:
+        error_code = MANUAL_RECONCILIATION_CODES.get(evidence)
+        if error_code is None:
+            return False
+        now = format_time(self.now())
+        with closing(self.store.connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """
+                UPDATE notification_outbox
+                SET error_code = ?, updated_at = ?
+                WHERE id = ? AND status = 'unknown' AND attempt_count = 1
+                  AND reviewed_at IS NULL
+                """,
+                (error_code, now, row_id),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return False
+            self._increment(connection, "delivery_reconciliation_manual")
+            self._runtime_update(
+                connection,
+                now=now,
+                health="degraded",
+                error_code=error_code,
+            )
+            connection.commit()
+        return True
+
+    def _reconcile_recent_unknowns(self) -> Mapping[str, int]:
+        now = self.now()
+        horizon = format_time(now - RECONCILIATION_HISTORY_HORIZON)
+        terminal_codes = tuple(sorted(MANUAL_RECONCILIATION_CODES.values()))
+        with closing(self.store.connect(read_only=True)) as connection:
+            rows = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT * FROM notification_outbox
+                    WHERE status = 'unknown' AND reviewed_at IS NULL
+                      AND attempt_count = 1 AND last_attempt_at >= ?
+                      AND recipient_route = 'dylan'
+                      AND (
+                        error_code IS NULL
+                        OR error_code NOT IN (?, ?, ?)
+                      )
+                    ORDER BY id
+                    """,
+                    (horizon, *terminal_codes),
+                ).fetchall()
+            ]
+        resolved = {"sent": 0, "failed": 0}
+        for row in rows:
+            try:
+                attempted_at = parse_time(row["last_attempt_at"])
+                message = render_message(row)
+            except DeliveryError:
+                continue
+            evidence = reconcile_local_imessage(
+                self.messages_db,
+                self.target,
+                message,
+                attempted_at,
+            )
+            expired = now - attempted_at >= RECONCILIATION_LOOKBACK
+            if evidence == "not_found" and expired:
+                evidence = "absent"
+            outcome = self._record_local_resolution(
+                int(row["id"]),
+                expected_status="unknown",
+                evidence=evidence,
+                attempted_at=attempted_at,
+            )
+            if outcome == "sent":
+                resolved["sent"] += 1
+            elif outcome == "dead_letter":
+                resolved["failed"] += 1
+            elif expired:
+                self._mark_manual_reconciliation(int(row["id"]), evidence)
+        return resolved
+
     def _finish_without_send(self, row_id: int, code: str) -> None:
         now = format_time(self.now())
         with closing(self.store.connect()) as connection:
@@ -414,12 +681,7 @@ class DeliveryWorker:
             return "burned"
         if not TARGET_RE.fullmatch(self.target):
             raise DeliveryError("delivery_target_unavailable")
-        message = TEMPLATES[row["template_code"]].format(
-            site="Cabin" if row["site"] == "cabin" else "Crosstown"
-        )
-        camera_result = row.get("camera_result")
-        if camera_result is not None:
-            message += " " + CAMERA_CLAUSES[camera_result]
+        message = render_message(row)
         now = format_time(now_dt)
         with closing(self.store.connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -452,6 +714,21 @@ class DeliveryWorker:
         try:
             send_message(self.target, message)
         except DeliveryError as exc:
+            if exc.uncertain:
+                evidence = reconcile_local_imessage(
+                    self.messages_db,
+                    self.target,
+                    message,
+                    now_dt,
+                )
+                resolved = self._record_local_resolution(
+                    int(row["id"]),
+                    expected_status="reserved",
+                    evidence=evidence,
+                    attempted_at=now_dt,
+                )
+                if resolved is not None:
+                    return resolved
             status_value = "unknown" if exc.uncertain else "dead_letter"
             with closing(self.store.connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -511,6 +788,7 @@ class DeliveryWorker:
                 if TARGET_RE.fullmatch(self.target) is None:
                     self._configuration_error("delivery_target_unavailable")
                     raise DeliveryError("delivery_target_unavailable")
+                reconciled = self._reconcile_recent_unknowns()
                 if not any(
                     os.environ.get(key)
                     for key in (
@@ -520,10 +798,15 @@ class DeliveryWorker:
                 ):
                     self._configuration_error("delivery_auth_unavailable")
                     raise DeliveryError("delivery_auth_unavailable")
+            else:
+                reconciled = {"sent": 0, "failed": 0}
             row = self._claim()
             outcome = "idle" if row is None else self._send_claimed(row)
             self.store.write_status_best_effort()
-            return {"ok": True, "outcome": outcome}
+            result: dict[str, Any] = {"ok": True, "outcome": outcome}
+            if any(reconciled.values()):
+                result["reconciled"] = reconciled
+            return result
         finally:
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -552,6 +835,11 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument(
         "--target", default=os.environ.get("OPENCLAW_DYLAN_IMESSAGE_TARGET", "")
     )
+    value.add_argument(
+        "--messages-db",
+        type=Path,
+        default=DEFAULT_MESSAGES_DB,
+    )
     return value
 
 
@@ -560,7 +848,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         result = DeliveryWorker(
-            args.root, args.presence_state, args.target
+            args.root,
+            args.presence_state,
+            args.target,
+            messages_db=args.messages_db,
         ).run_once()
     except (DeliveryError, HomeEventError, OSError, sqlite3.Error) as exc:
         candidate = getattr(exc, "code", "delivery_failed")

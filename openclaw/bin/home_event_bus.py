@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, T
 
 
 SCHEMA_VERSION = 8
-STATUS_SCHEMA_VERSION = 8
+STATUS_SCHEMA_VERSION = 9
 EVENT_SCHEMA_VERSION = 1
 DELIVERY_POLICY_SCHEMA_VERSION = 3
 SERVICE_NAME = "home-events"
@@ -4229,6 +4229,15 @@ class EventStore:
             sources["whisker"]["observer"] = whisker_observer
             if whisker_observer["health"] == "degraded":
                 sources["whisker"]["health"] = "degraded"
+            camera_degradation_active = camera_runtime["health"] == "degraded"
+            camera_recovered_at = None
+            if (
+                isinstance(camera_runtime["last_error_at"], str)
+                and isinstance(camera_runtime["last_success_at"], str)
+                and camera_runtime["last_success_at"]
+                > camera_runtime["last_error_at"]
+            ):
+                camera_recovered_at = camera_runtime["last_success_at"]
             return {
                 "schema_version": STATUS_SCHEMA_VERSION,
                 "mode": runtime["mode"],
@@ -4278,6 +4287,20 @@ class EventStore:
                 },
                 "camera": {
                     "health": camera_runtime["health"],
+                    "degradation": {
+                        "active": camera_degradation_active,
+                        "error_at": (
+                            camera_runtime["last_error_at"]
+                            if camera_degradation_active
+                            else None
+                        ),
+                        "error_code": (
+                            camera_runtime["last_error_code"]
+                            if camera_degradation_active
+                            else None
+                        ),
+                        "recovered_at": camera_recovered_at,
+                    },
                     "counts": {
                         state: camera_counts.get(state, 0)
                         for state in ("pending", "complete", "failed")

@@ -83,6 +83,14 @@ confirmed action, any command attempt, and every uncertain outcome remain
 terminal for the cycle. This lets a corrected destination schedule requalify
 the vacant home's feeder without weakening duplicate-command protection.
 
+Safe status projection schema 9 separates current camera degradation from
+historical error evidence. `camera.degradation.active` and its bounded active
+error fields reflect only a presently degraded camera worker;
+`camera.degradation.recovered_at` identifies a later successful evaluation.
+The flat `last_error_at` and `last_error_code` fields remain immutable
+historical diagnostics and must not be presented as an active warning when the
+camera health is `ok`.
+
 The Dylan-only canary is now on SQLite schema v8. Its separate camera policy
 was activated at `2026-08-05T16:34:03Z` after exact `Kitchen` and
 `Living Room Wired` probes, a protected schema backup, full tests, and a
@@ -151,8 +159,11 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   reservations. It never performs an external send or camera action.
 - `bin/home-event-delivery.py` is the separate fixed-template Dylan-only
   sender. It rechecks fresh canonical vacancy immediately before a single
-  attempt and records sent, burned, unknown, or dead-letter outcomes without
-  retaining message text or a receipt identifier.
+  attempt, accepts a structurally valid OpenClaw receipt even when the child
+  emits a non-fatal warning, and reconciles an ambiguous result against one
+  exact outbound record in the protected local Messages history. It records
+  sent, burned, unknown, or dead-letter outcomes without retaining message
+  text, the protected chat ID, or a receipt identifier.
 - `bin/home-event-delivery-wrapper.sh` resolves only the protected owner route
   and gateway authentication into a sanitized one-shot process with a bounded
   owner-only log.
@@ -247,13 +258,34 @@ The correlator reserves an eligible slot only after fresh canonical vacancy
 survives the fixed fifteen-minute arrival grace. The separate sender records its
 single attempt before calling OpenClaw's supervised iMessage channel, rechecks
 fresh vacancy, and holds the dedicated rollback lock across the send and
-receipt transition without blocking event ingestion. It never retries an
-ambiguous timeout or receipt. An unknown outcome keeps delivery health and the
-operator-attention projection degraded until an explicit operator review
-records `received`, `not_received`, or `uncertain`; review never retries or
-rewrites the outcome. The supervised send gets a bounded 45-second outer
-timeout, providing margin beyond the observed 20–23-second native Messages
-commit latency while retaining the same fail-closed unknown-outcome rule.
+receipt transition without blocking event ingestion. A structurally valid JSON
+receipt is authoritative even if OpenClaw also writes a non-fatal diagnostic to
+stderr. After a timeout, nonzero child exit, or malformed receipt, the worker
+does not resend. Instead it performs a read-only, exact comparison against
+`~/Library/Messages/chat.db`, scoped to the protected destination chat, the
+fully rendered fixed template, and a five-minute attempt window. Exactly one
+outbound `iMessage` row with sent, delivered, and zero-error flags resolves the
+reservation as sent; one exact finished failure becomes a dead letter. A
+missing match remains provisional while fresh unknowns are rechecked for
+fifteen minutes, allowing a delayed local Messages commit to self-heal without
+replaying the send. If the exact record is still absent after that recovery
+window, the attempt becomes a known dead letter. A pending, duplicate,
+inaccessible, or otherwise ambiguous history result remains unknown for manual
+review. Historical auto-reconciliation is bounded to seven days; older unknown
+records are never reclassified from absent history. Only a still-unknown
+outcome keeps the operator-attention projection active until an explicit
+operator review records `received`, `not_received`, or `uncertain`; review
+never retries or rewrites the outcome. The supervised send gets a bounded
+45-second outer timeout, providing margin beyond the observed 20–23-second
+native Messages commit latency.
+
+The reconciliation query returns only a bounded classification to the worker.
+The event database, status projection, and logs retain no Messages text, local
+chat row, participant, message GUID, or read receipt. The fixed template
+components and attempt timestamp already present in the outbox are the only
+durable correlation inputs. If the local Messages database is unavailable or
+fails its owner, regular-file, non-writable-by-others checks, reconciliation
+fails closed to the existing unknown/manual-review path.
 
 The schema-v3 protected policy binds Cabin Ring `driveway` and `front_door`
 plus Nest `Kitchen`, and Crosstown Ring `front_door` plus Nest
@@ -354,7 +386,8 @@ repair prune. Process restarts do not reset the gate. An explicit
 the WAL. The internal maintenance marker is not exposed through safe status.
 Status includes bus-observed per-source health and safe failure state, consumer
 depth and oldest unfinished time, retention, database size, camera-evaluation
-health/counts, unresolved delivery-outcome attention, and a separate
+health/counts with explicit active-versus-recovered degradation, unresolved
+delivery-outcome attention, and a separate
 access-attention projection. An access incident that expires without a
 matching lock/close remains durable historical evidence and increments
 attention without redefining current bus health. The operator-only

@@ -353,7 +353,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 8)
+        self.assertEqual(status["schema_version"], 9)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -364,7 +364,66 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertEqual(
             status["retention_days"], {"accepted": 30, "dead_letter": 90}
         )
+        self.assertEqual(
+            status["camera"]["degradation"],
+            {
+                "active": False,
+                "error_at": None,
+                "error_code": None,
+                "recovered_at": None,
+            },
+        )
         self.assertGreater(status["database_bytes"], 0)
+
+    def test_camera_status_separates_active_and_recovered_errors(self) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                """
+                UPDATE camera_runtime
+                SET health = 'degraded',
+                    last_error_at = '2026-07-12T14:00:00Z',
+                    last_error_code = 'ring_capture_command_failed',
+                    updated_at = '2026-07-12T14:00:00Z'
+                WHERE singleton = 1
+                """
+            )
+
+        active = self.store.status_snapshot()["camera"]
+        self.assertEqual(
+            active["degradation"],
+            {
+                "active": True,
+                "error_at": "2026-07-12T14:00:00Z",
+                "error_code": "ring_capture_command_failed",
+                "recovered_at": None,
+            },
+        )
+        self.assertEqual(active["last_error_code"], "ring_capture_command_failed")
+
+        with self.connection() as connection:
+            connection.execute(
+                """
+                UPDATE camera_runtime
+                SET health = 'ok',
+                    last_success_at = '2026-07-12T14:05:00Z',
+                    updated_at = '2026-07-12T14:05:00Z'
+                WHERE singleton = 1
+                """
+            )
+
+        recovered = self.store.status_snapshot()["camera"]
+        self.assertEqual(
+            recovered["degradation"],
+            {
+                "active": False,
+                "error_at": None,
+                "error_code": None,
+                "recovered_at": "2026-07-12T14:05:00Z",
+            },
+        )
+        self.assertEqual(
+            recovered["last_error_code"], "ring_capture_command_failed"
+        )
 
     def test_limited_delivery_requires_active_protected_policy(self) -> None:
         with self.assertRaisesRegex(

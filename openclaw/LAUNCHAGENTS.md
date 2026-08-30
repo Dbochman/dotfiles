@@ -392,6 +392,13 @@ and hash approval complete. Restart only these jobs when their code changes;
 home events does not require an OpenClaw gateway restart. See
 [`HOME-EVENTS.md`](HOME-EVENTS.md).
 
+The delivery worker reads the local Messages database only after an ambiguous
+send result and during the bounded fifteen-minute recovery window that follows.
+The comparison is restricted to the protected chat row, exact fixed text, and
+attempt time; no message, participant, chat row, or GUID enters event-bus state
+or logs. If `/opt/homebrew/bin/python3` cannot read Messages history, the worker
+keeps the attempt unknown for manual review and never retries the send.
+
 The Whisker adapter requires a separate attended two-site baseline. Both sites
 completed that silent future-only baseline and a zero-publish duplicate scan on
 `2026-08-27`; the installed Mini flags are enabled while the tracked plist

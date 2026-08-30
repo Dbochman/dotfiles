@@ -42,9 +42,34 @@ class HomeEventDeliveryTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "home-events"
         self.presence = Path(self.temporary.name) / "presence.json"
+        self.messages_db = Path(self.temporary.name) / "chat.db"
         self.clock = lambda: self.NOW
         self.store = bus.initialize_runtime(self.root, clock=self.clock)
         self.paths = bus.RuntimePaths(self.root)
+        with sqlite3.connect(self.messages_db) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE message (
+                    ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
+                    text TEXT,
+                    service TEXT,
+                    error INTEGER DEFAULT 0,
+                    date INTEGER,
+                    is_delivered INTEGER DEFAULT 0,
+                    is_finished INTEGER DEFAULT 0,
+                    is_from_me INTEGER DEFAULT 0,
+                    is_empty INTEGER DEFAULT 0,
+                    is_sent INTEGER DEFAULT 0,
+                    item_type INTEGER DEFAULT 0
+                );
+                CREATE TABLE chat_message_join (
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    PRIMARY KEY(chat_id, message_id)
+                );
+                """
+            )
+        self.messages_db.chmod(0o600)
         self.write_presence("confirmed_vacant", "confirmed_vacant")
         environment = mock.patch.dict(
             delivery.os.environ,
@@ -175,8 +200,49 @@ class HomeEventDeliveryTests(unittest.TestCase):
             self.root,
             self.presence,
             self.TARGET if target is None else target,
+            messages_db=self.messages_db,
             clock=self.clock,
         )
+
+    def insert_local_message(
+        self,
+        *,
+        message: str | None = None,
+        chat_id: int = 171,
+        delivered: bool = True,
+        sent: bool = True,
+        finished: bool = True,
+        error: int = 0,
+        observed_at: str | None = None,
+    ) -> None:
+        rendered = message or delivery.TEMPLATES["person_activity"].format(
+            site="Cabin"
+        )
+        timestamp = delivery.parse_time(observed_at or self.NOW).timestamp()
+        apple_nanoseconds = int(
+            (timestamp - delivery.APPLE_EPOCH_OFFSET_SECONDS) * 1_000_000_000
+        )
+        with sqlite3.connect(self.messages_db) as connection:
+            message_id = connection.execute(
+                """
+                INSERT INTO message(
+                    text, service, error, date, is_delivered, is_finished,
+                    is_from_me, is_empty, is_sent, item_type
+                ) VALUES (?, 'iMessage', ?, ?, ?, ?, 1, 0, ?, 0)
+                """,
+                (
+                    rendered,
+                    error,
+                    apple_nanoseconds,
+                    int(delivered),
+                    int(finished),
+                    int(sent),
+                ),
+            ).lastrowid
+            connection.execute(
+                "INSERT INTO chat_message_join(chat_id, message_id) VALUES (?, ?)",
+                (chat_id, message_id),
+            )
 
     def row(self) -> sqlite3.Row:
         with self.store.connect(read_only=True) as connection:
@@ -233,6 +299,13 @@ class HomeEventDeliveryTests(unittest.TestCase):
         payload["payload"]["result"]["messageId"] = "unknown"
         with self.assertRaisesRegex(delivery.DeliveryError, "message_receipt_invalid"):
             delivery.validate_receipt(json.dumps(payload), self.TARGET)
+
+    def test_valid_receipt_is_authoritative_when_stderr_has_a_warning(self) -> None:
+        result = self.receipt()
+        result.stderr = "non-fatal runtime warning\n"
+
+        with mock.patch.object(delivery.subprocess, "run", return_value=result):
+            delivery.send_message(self.TARGET, "fixed message")
 
     def test_shadow_worker_is_inert_without_target(self) -> None:
         with mock.patch.object(delivery.subprocess, "run") as run:
@@ -336,6 +409,160 @@ class HomeEventDeliveryTests(unittest.TestCase):
         self.assertEqual(
             after["delivery"]["attention"]["last_review_outcome"],
             "not_received",
+        )
+
+    def test_timeout_is_reconciled_from_exact_delivered_local_message(self) -> None:
+        self.activate()
+        self.reserve()
+        self.insert_local_message()
+
+        with mock.patch.object(
+            delivery.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(
+                [delivery.OPENCLAW_BIN], delivery.SEND_TIMEOUT_SECONDS
+            ),
+        ):
+            result = self.worker().run_once()
+
+        self.assertEqual(result["outcome"], "sent")
+        row = self.row()
+        self.assertEqual(row["status"], "sent")
+        self.assertIsNone(row["error_code"])
+        status = self.store.status_snapshot()
+        self.assertEqual(status["delivery"]["health"], "ok")
+        self.assertEqual(status["delivery"]["attention"]["unknown_unreviewed"], 0)
+        self.assertEqual(status["counters"]["delivery_reconciled_sent"], 1)
+
+    def test_invalid_receipt_is_reconciled_from_local_delivery(self) -> None:
+        self.activate()
+        self.reserve()
+        self.insert_local_message()
+        malformed = self.receipt()
+        payload = json.loads(malformed.stdout)
+        payload["unexpected"] = True
+        malformed.stdout = json.dumps(payload) + "\n"
+
+        with mock.patch.object(delivery.subprocess, "run", return_value=malformed):
+            result = self.worker().run_once()
+
+        self.assertEqual(result["outcome"], "sent")
+        self.assertEqual(self.row()["status"], "sent")
+
+    def test_late_local_commit_reconciles_without_resending(self) -> None:
+        self.activate()
+        self.reserve()
+        with mock.patch.object(
+            delivery.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(
+                [delivery.OPENCLAW_BIN], delivery.SEND_TIMEOUT_SECONDS
+            ),
+        ) as run:
+            first = self.worker().run_once()
+            self.insert_local_message()
+            second = self.worker().run_once()
+
+        self.assertEqual(first["outcome"], "unknown")
+        self.assertEqual(second["outcome"], "idle")
+        self.assertEqual(second["reconciled"], {"sent": 1, "failed": 0})
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(self.row()["status"], "sent")
+
+    def test_absent_local_record_becomes_failed_after_recovery_window(self) -> None:
+        self.activate()
+        self.reserve()
+        with mock.patch.object(
+            delivery.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(
+                [delivery.OPENCLAW_BIN], delivery.SEND_TIMEOUT_SECONDS
+            ),
+        ) as run:
+            first = self.worker().run_once()
+            self.clock = lambda: "2026-07-12T15:16:00Z"
+            second = self.worker().run_once()
+
+        self.assertEqual(first["outcome"], "unknown")
+        self.assertEqual(second["outcome"], "idle")
+        self.assertEqual(second["reconciled"], {"sent": 0, "failed": 1})
+        self.assertEqual(run.call_count, 1)
+        row = self.row()
+        self.assertEqual(row["status"], "dead_letter")
+        self.assertEqual(row["error_code"], "message_local_record_absent")
+
+    def test_ambiguous_local_matches_remain_unknown(self) -> None:
+        self.activate()
+        self.reserve()
+        self.insert_local_message()
+        self.insert_local_message()
+
+        with mock.patch.object(
+            delivery.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(
+                [delivery.OPENCLAW_BIN], delivery.SEND_TIMEOUT_SECONDS
+            ),
+        ):
+            result = self.worker().run_once()
+
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertEqual(self.row()["status"], "unknown")
+        self.assertTrue(
+            self.store.status_snapshot()["delivery"]["attention"]["required"]
+        )
+
+    def test_expired_pending_match_stays_manual_without_repeated_queries(self) -> None:
+        self.activate()
+        self.reserve()
+        self.insert_local_message(delivered=False, sent=True, finished=False)
+        with mock.patch.object(
+            delivery.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(
+                [delivery.OPENCLAW_BIN], delivery.SEND_TIMEOUT_SECONDS
+            ),
+        ) as run:
+            self.worker().run_once()
+            self.clock = lambda: "2026-07-12T15:16:00Z"
+            second = self.worker().run_once()
+            third = self.worker().run_once()
+
+        self.assertEqual(second["outcome"], "idle")
+        self.assertNotIn("reconciled", second)
+        self.assertEqual(third["outcome"], "idle")
+        self.assertNotIn("reconciled", third)
+        self.assertEqual(run.call_count, 1)
+        row = self.row()
+        self.assertEqual(row["status"], "unknown")
+        self.assertEqual(row["error_code"], "message_local_delivery_pending")
+        self.assertEqual(
+            self.store.status_snapshot()["counters"][
+                "delivery_reconciliation_manual"
+            ],
+            1,
+        )
+
+    def test_exact_local_failure_becomes_dead_letter_without_review(self) -> None:
+        self.activate()
+        self.reserve()
+        self.insert_local_message(delivered=False, sent=False, error=1)
+
+        with mock.patch.object(
+            delivery.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(
+                [delivery.OPENCLAW_BIN], delivery.SEND_TIMEOUT_SECONDS
+            ),
+        ):
+            result = self.worker().run_once()
+
+        self.assertEqual(result["outcome"], "dead_letter")
+        row = self.row()
+        self.assertEqual(row["status"], "dead_letter")
+        self.assertEqual(row["error_code"], "message_local_delivery_failed")
+        self.assertFalse(
+            self.store.status_snapshot()["delivery"]["attention"]["required"]
         )
 
 
