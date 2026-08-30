@@ -7,12 +7,12 @@ import concurrent.futures
 import contextlib
 import fcntl
 import importlib.util
-import io
 import json
 import os
 from pathlib import Path
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -1969,22 +1969,40 @@ class RetentionAndCliTests(HomeEventTestCase):
             )
 
     def test_parser_keeps_root_override_operator_only_and_json_errors_safe(self) -> None:
+        def run_cli(*arguments: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(MODULE_PATH), *arguments],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=10,
+            )
+
         parser = home_events.build_parser()
         operator = parser.parse_args(
             ["operator", "--root", str(self.root), "status"]
         )
         self.assertEqual(operator.root, self.root)
-        with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                parser.parse_args(["agent", "--root", str(self.root), "status"])
+        invalid_agent = run_cli(
+            "agent",
+            "--root",
+            str(self.root),
+            "status",
+        )
+        self.assertEqual(invalid_agent.returncode, 2)
 
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            code = home_events.main(
-                ["operator", "--root", "relative", "check-config"]
-            )
-        self.assertEqual(code, 2)
-        self.assertEqual(json.loads(stderr.getvalue())["error"], "root_not_absolute")
+        invalid_root = run_cli(
+            "operator",
+            "--root",
+            "relative",
+            "check-config",
+        )
+        self.assertEqual(invalid_root.returncode, 2)
+        self.assertEqual(invalid_root.stdout, "")
+        self.assertEqual(
+            json.loads(invalid_root.stderr)["error"],
+            "root_not_absolute",
+        )
 
 
 class VacancySourceContractTests(HomeEventTestCase):
