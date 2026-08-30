@@ -234,6 +234,16 @@ data access:
 python3 ~/.openclaw/bin/weekly-financial-scrape.py --preflight
 ```
 
+After an attended BoA login repair, rerun only BoA and replace its stale entry
+in the protected weekly status with:
+
+```bash
+python3 ~/.openclaw/bin/weekly-financial-scrape.py --recover-source boa
+```
+
+This uses the normal guarded scrape/import path and the weekly singleton lock;
+it preserves the other six source results and does not create a second alert.
+
 Success reports contract `2` and only the five profile names. Failure reports
 only a safe contract/cache reason and, for an incomplete cache, missing profile
 names; neither path prints keys or values. The finance cache is read
@@ -288,6 +298,9 @@ a not-ready form, rejection, timeout, or CDP failure. `auth_unknown`,
 credential submission; neither does `signed_out_landing`. Tab bootstrap only creates or reuses the
 allowlisted tab and must still produce an exact subsequent
 `not_authenticated` probe before the credential pair is selected;
+when the new tab initially reports only `auth_unknown`, the wrapper retries the
+read-only probe after 1, 2, and 4 seconds so a still-rendering login page does
+not require a manual second run.
 `host_not_allowed` aborts any in-progress raw-CDP
 recovery if the live tab leaves the exact HTTPS BoA allowlist. Do not
 substitute Playwright login or a LaunchAgent credential fetch.

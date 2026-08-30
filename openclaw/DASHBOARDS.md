@@ -281,7 +281,7 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 | Runtime | `~/repos/financial-dashboard/venv/bin/python3` |
 | Database | `~/repos/financial-dashboard/finance.db` (gitignored) |
 | Config | `~/repos/financial-dashboard/config.yaml` |
-| Weekly scrape status | `~/.openclaw/financial-dashboard/weekly-scrape-status.json` (owner-only mode `0600`) |
+| Weekly scrape status | `~/.openclaw/financial-dashboard/weekly-scrape-status.json` (owner-only mode `0600`); attended `weekly-financial-scrape.py --recover-source boa` replaces a resolved stale BoA result |
 | Weekly alert outbox | `~/.openclaw/financial-dashboard/weekly-scrape-alerts/` (directory `0700`, atomic records `0600`) |
 | Weekly alert quarantine | `~/.openclaw/financial-dashboard/weekly-scrape-alerts-quarantine/` (owner-only directory `0700`) |
 | Weekly alert notifier health | `~/.openclaw/financial-dashboard/weekly-scrape-alert-notifier-status.json` (owner-only mode `0600`) |

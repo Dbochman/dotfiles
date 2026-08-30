@@ -55,6 +55,7 @@ COMMAND_TIMEOUT_SECONDS = 420
 CONTRACT_PREFLIGHT_TIMEOUT_SECONDS = 30
 PROFILE_PREFLIGHT_TIMEOUT_SECONDS = 45
 BOA_TAB_OPERATION_TIMEOUT_SECONDS = 30
+BOA_POST_BOOTSTRAP_VERIFY_DELAYS_SECONDS = (1, 2, 4)
 PROCESS_GROUP_GRACE_SECONDS = 5
 PROCESS_GROUP_POLL_SECONDS = 0.05
 CHILD_OUTPUT_MAX_BYTES = 64 * 1024
@@ -160,7 +161,7 @@ class CredentialCacheError(Exception):
 
 
 class FinalStatusError(Exception):
-    """The protected final-status artifact could not be written safely."""
+    """The protected final-status artifact could not be read or written safely."""
 
 
 class AlertOutboxError(Exception):
@@ -1599,6 +1600,16 @@ def run_boa(
                     if verified.output_rejected
                     else parse_boa_verify_status(verified.output)
                 )
+                for delay in BOA_POST_BOOTSTRAP_VERIFY_DELAYS_SECONDS:
+                    if verify_status != "auth_unknown":
+                        break
+                    time.sleep(delay)
+                    verified = run_command(verify_args, runtime_env)
+                    verify_status = (
+                        "verify_failed"
+                        if verified.output_rejected
+                        else parse_boa_verify_status(verified.output)
+                    )
         if verify_status == "not_authenticated":
             credential_env = credentials_for(
                 "boa",
@@ -1849,6 +1860,67 @@ def _strict_json_loads(encoded):
             ValueError("nonfinite")
         ),
     )
+
+
+def load_final_status(path=None):
+    """Load the wrapper-owned whole-run result used by source recovery."""
+    status_path = Path(path or FINAL_STATUS_PATH)
+    descriptor = None
+    try:
+        descriptor = os.open(
+            status_path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        metadata = os.fstat(descriptor)
+        encoded = os.read(descriptor, 64 * 1024 + 1)
+    except OSError as error:
+        raise FinalStatusError from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if not (
+        stat.S_ISREG(metadata.st_mode)
+        and metadata.st_uid == os.getuid()
+        and stat.S_IMODE(metadata.st_mode) == 0o600
+        and metadata.st_nlink == 1
+        and metadata.st_size == len(encoded)
+        and len(encoded) <= 64 * 1024
+    ):
+        raise FinalStatusError
+    try:
+        payload = _strict_json_loads(encoded.decode("utf-8"))
+    except (UnicodeError, ValueError, TypeError, RecursionError) as error:
+        raise FinalStatusError from error
+
+    expected_sources = [source.name for source in SOURCES] + ["boa"]
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {
+            "alert_handoff", "completed_at", "contract", "results", "run_id", "status",
+        }
+        or payload.get("contract") != SCRAPER_CONTRACT_VERSION
+        or not _canonical_run_id(payload.get("run_id"))
+        or not isinstance(results, list)
+        or [result.get("source") for result in results if isinstance(result, dict)]
+        != expected_sources
+    ):
+        raise FinalStatusError
+    for result in results:
+        if (
+            not isinstance(result, dict)
+            or not {"source", "scrape", "import", "path"}.issubset(result)
+            or not set(result).issubset({"source", *ALERT_STATES})
+            or any(
+                field != "source"
+                and (not isinstance(value, str) or value not in ALERT_STATE_VALUES[field])
+                for field, value in result.items()
+            )
+        ):
+            raise FinalStatusError
+    return payload
 
 
 def _safe_alert_affected(results):
@@ -2233,6 +2305,69 @@ def finish_run(
     return True
 
 
+def results_status(results):
+    if not all(result_ok(result) for result in results):
+        return "failed"
+    if any(
+        path_is_degraded(result["source"], result.get("path"))
+        for result in results
+    ):
+        return "degraded"
+    return "ok"
+
+
+def report_recovery_failure(reason):
+    print(json.dumps({
+        "contract": SCRAPER_CONTRACT_VERSION,
+        "reason": reason,
+        "source": "boa",
+        "status": "recovery_failed",
+    }, sort_keys=True))
+    return 1
+
+
+def _execute_boa_recovery(run_id):
+    """Rerun only BoA and reconcile its result into the weekly status."""
+    try:
+        prior = load_final_status()
+    except FinalStatusError:
+        return report_recovery_failure("weekly_status_unavailable")
+    if not REPO.is_dir() or not PYTHON.is_file():
+        return report_recovery_failure("repository_unavailable")
+
+    env = scrub_child_environment(os.environ)
+    contract_preflight = scraper_contract_preflight(env)
+    if contract_preflight["status"] != "contract_ok":
+        return report_recovery_failure(contract_preflight["reason"])
+    try:
+        provider_modes = load_provider_modes()
+    except ProviderModeError:
+        return report_recovery_failure("provider_mode_config_invalid")
+    env, credential_store, preflight = credential_preflight(env)
+    if preflight["status"] != "preflight_ok":
+        return report_recovery_failure(preflight["reason"])
+
+    if provider_modes["boa"] == "direct_only":
+        profile = BoaProfileResult("not_needed")
+    else:
+        profile = ensure_boa_profile(env)
+    boa_result = run_boa(
+        run_id,
+        env,
+        credential_store,
+        profile.instance_id,
+        provider_modes,
+    )
+    boa_result["profile_preflight"] = profile.status
+    results = [
+        boa_result if result["source"] == "boa" else result
+        for result in prior["results"]
+    ]
+    status = results_status(results)
+    persisted = finish_run(status, prior["run_id"], results=results)
+    return 0 if status == "ok" and persisted else 1
+
+
 def _execute_run(run_id):
     if not REPO.is_dir() or not PYTHON.is_file():
         finish_run(
@@ -2307,12 +2442,7 @@ def _execute_run(run_id):
     boa_result["profile_preflight"] = boa_profile_preflight.status
     results.append(boa_result)
     print(json.dumps({"event": "source_complete", **boa_result}, sort_keys=True), flush=True)
-    if not all(result_ok(result) for result in results):
-        status = "failed"
-    elif any(path_is_degraded(result["source"], result.get("path")) for result in results):
-        status = "degraded"
-    else:
-        status = "ok"
+    status = results_status(results)
     persisted = finish_run(status, run_id, results=results)
     return 0 if status == "ok" and persisted else 1
 
@@ -2339,6 +2469,16 @@ def _run_locked():
     except Exception:
         finish_run("internal_error", run_id)
         return 1
+
+
+def _run_boa_recovery_locked():
+    """Run attended BoA recovery without replacing status on setup errors."""
+    try:
+        return _execute_boa_recovery(str(uuid.uuid4()))
+    except WrapperInterrupted:
+        return report_recovery_failure("interrupted")
+    except Exception:
+        return report_recovery_failure("internal_error")
 
 
 def report_lock_contention():
@@ -2402,7 +2542,8 @@ def main():
             preflight["contract"] = SCRAPER_CONTRACT_VERSION
         print(json.dumps(preflight, sort_keys=True))
         return 0 if preflight["status"] == "preflight_ok" else 1
-    if sys.argv[1:]:
+    recovery_requested = sys.argv[1:] == ["--recover-source", "boa"]
+    if sys.argv[1:] and not recovery_requested:
         print(json.dumps({"status": "invalid_arguments"}))
         return 2
 
@@ -2410,9 +2551,15 @@ def main():
         with termination_signal_handlers():
             with singleton_lock() as acquired:
                 if not acquired:
+                    if recovery_requested:
+                        return report_recovery_failure("already_running")
                     return report_lock_contention()
+                if recovery_requested:
+                    return _run_boa_recovery_locked()
                 return _run_locked()
     except WrapperInterrupted as error:
+        if recovery_requested:
+            return report_recovery_failure("interrupted")
         finish_run(
             "interrupted",
             str(uuid.uuid4()),
@@ -2420,9 +2567,13 @@ def main():
         )
         return 128 + int(error.signum)
     except RunLockError:
+        if recovery_requested:
+            return report_recovery_failure("lock_unavailable")
         finish_run("lock_unavailable", str(uuid.uuid4()))
         return 1
     except Exception:
+        if recovery_requested:
+            return report_recovery_failure("internal_error")
         finish_run("internal_error", str(uuid.uuid4()))
         return 1
 

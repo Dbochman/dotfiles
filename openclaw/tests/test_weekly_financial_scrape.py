@@ -182,6 +182,36 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         credentials.assert_not_called()
         popen.assert_not_called()
 
+    def test_boa_recovery_cli_uses_the_weekly_lock(self):
+        @weekly_financial_scrape.contextmanager
+        def acquired_lock():
+            yield True
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [str(MODULE_PATH), "--recover-source", "boa"],
+            ),
+            patch.object(
+                weekly_financial_scrape,
+                "singleton_lock",
+                acquired_lock,
+            ),
+            patch.object(
+                weekly_financial_scrape,
+                "_run_boa_recovery_locked",
+                return_value=0,
+            ) as recover,
+            patch.object(weekly_financial_scrape, "_run_locked") as full_run,
+        ):
+            returncode, output = self.capture_stdout(weekly_financial_scrape.main)
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(output, "")
+        recover.assert_called_once_with()
+        full_run.assert_not_called()
+
     def test_all_scheduled_source_commands_pin_wrapper_contract_v2(self):
         expected = weekly_financial_scrape.SCRAPER_WRAPPER_CONTRACT_ARGS
         self.assertEqual(expected, ("--wrapper-contract", "2"))
@@ -2722,6 +2752,14 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         )
         for verify_output in post_bootstrap_outputs:
             with self.subTest(verify_output=verify_output):
+                repeated_outputs = [verify_output]
+                if "auth_unknown" in verify_output:
+                    repeated_outputs *= (
+                        1
+                        + len(
+                            weekly_financial_scrape.BOA_POST_BOOTSTRAP_VERIFY_DELAYS_SECONDS
+                        )
+                    )
                 responses = iter(
                     [
                         weekly_financial_scrape.CommandResult(
@@ -2732,10 +2770,13 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                             1,
                             stdout="boa-tab-verify: boa_tab_unavailable",
                         ),
-                        weekly_financial_scrape.CommandResult(
-                            1,
-                            stdout=verify_output,
-                        ),
+                        *[
+                            weekly_financial_scrape.CommandResult(
+                                1,
+                                stdout=output,
+                            )
+                            for output in repeated_outputs
+                        ],
                     ]
                 )
                 with (
@@ -2753,6 +2794,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                         weekly_financial_scrape,
                         "credentials_for",
                     ) as credentials,
+                    patch.object(weekly_financial_scrape.time, "sleep") as sleep,
                 ):
                     result = weekly_financial_scrape.run_boa(
                         self.RUN_ID,
@@ -2761,10 +2803,77 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                         instance_id="inst_123abc",
                     )
 
-                self.assertEqual(run_command.call_count, 3)
+                self.assertEqual(run_command.call_count, 2 + len(repeated_outputs))
                 credentials.assert_not_called()
+                if "auth_unknown" in verify_output:
+                    self.assertEqual(
+                        sleep.call_args_list,
+                        [
+                            call(delay)
+                            for delay in weekly_financial_scrape.BOA_POST_BOOTSTRAP_VERIFY_DELAYS_SECONDS
+                        ],
+                    )
+                else:
+                    sleep.assert_not_called()
                 self.assertEqual(result["tab_bootstrap"], "opened")
                 self.assertEqual(result["import"], "skipped")
+
+    def test_boa_waits_for_bootstrapped_login_form_before_guarded_reauth(self):
+        responses = iter(
+            [
+                weekly_financial_scrape.CommandResult(1),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: boa_tab_unavailable",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: auth_unknown reason=no_auth_signal",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    1,
+                    stdout="boa-tab-verify: not_authenticated",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout="boa-raw-cdp-reauth: authenticated",
+                ),
+                weekly_financial_scrape.CommandResult(
+                    0,
+                    stdout=self.status_line("boa"),
+                ),
+                weekly_financial_scrape.CommandResult(0),
+            ]
+        )
+        with (
+            patch.object(
+                weekly_financial_scrape,
+                "run_command",
+                side_effect=lambda *args, **kwargs: next(responses),
+            ) as run_command,
+            patch.object(
+                weekly_financial_scrape,
+                "ensure_boa_tab",
+                return_value="opened",
+            ),
+            patch.object(
+                weekly_financial_scrape.time,
+                "sleep",
+            ) as sleep,
+        ):
+            result = weekly_financial_scrape.run_boa(
+                self.RUN_ID,
+                self.BASE_ENV,
+                self.CREDENTIAL_STORE,
+                instance_id="inst_123abc",
+            )
+
+        self.assertEqual(run_command.call_count, 7)
+        sleep.assert_called_once_with(1)
+        self.assertEqual(result["verify_auth"], "not_authenticated")
+        self.assertEqual(result["reauth"], "authenticated")
+        self.assertEqual(result["scrape"], "ok")
+        self.assertEqual(result["import"], "ok")
 
     def test_boa_preserves_safe_raw_cdp_reauth_failure_status(self):
         responses = iter(
@@ -3530,6 +3639,117 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             self.assertEqual(Path(temporary_path).parent, status_path.parent)
             self.assertEqual(Path(destination), status_path)
             self.assertFalse(Path(temporary_path).exists())
+
+    def test_boa_recovery_replaces_only_boa_and_clears_resolved_failure(self):
+        prior_results = [
+            {
+                "source": source,
+                "scrape": "ok",
+                "reauth": "not_needed",
+                "import": "ok",
+                "path": "direct_api" if source == "tesla_solar" else "direct_http",
+            }
+            for source in [item.name for item in weekly_financial_scrape.SOURCES]
+        ]
+        prior_results.append({
+            "source": "boa",
+            "profile_preflight": "ok",
+            "scrape": "failed",
+            "verify_auth": "auth_unknown",
+            "tab_bootstrap": "opened",
+            "reauth": "not_needed",
+            "import": "skipped",
+            "path": "not_observed",
+        })
+        prior = {
+            "contract": 2,
+            "status": "failed",
+            "run_id": self.RUN_ID,
+            "completed_at": "2026-08-30T08:06:09+00:00",
+            "alert_handoff": "persisted",
+            "results": prior_results,
+        }
+        recovered_boa = {
+            "source": "boa",
+            "scrape": "ok",
+            "verify_auth": "not_needed",
+            "tab_bootstrap": "not_needed",
+            "reauth": "not_needed",
+            "import": "ok",
+            "path": "direct_http",
+        }
+        recovery_run_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            repo = root / "repo"
+            python = repo / "venv" / "bin" / "python3"
+            status_path = root / "state" / "weekly.json"
+            python.parent.mkdir(parents=True)
+            python.touch()
+            weekly_financial_scrape.write_final_status(prior, status_path)
+            with (
+                patch.object(weekly_financial_scrape, "REPO", repo),
+                patch.object(weekly_financial_scrape, "PYTHON", python),
+                patch.object(weekly_financial_scrape, "FINAL_STATUS_PATH", status_path),
+                patch.object(
+                    weekly_financial_scrape,
+                    "scraper_contract_preflight",
+                    return_value={"status": "contract_ok", "contract": 2},
+                ),
+                patch.object(
+                    weekly_financial_scrape,
+                    "load_provider_modes",
+                    return_value={
+                        source: "auto"
+                        for source in weekly_financial_scrape.PROVIDER_MODE_OPTIONS
+                    },
+                ),
+                patch.object(
+                    weekly_financial_scrape,
+                    "credential_preflight",
+                    return_value=(
+                        self.BASE_ENV,
+                        self.CREDENTIAL_STORE,
+                        {"status": "preflight_ok"},
+                    ),
+                ),
+                patch.object(
+                    weekly_financial_scrape,
+                    "ensure_boa_profile",
+                    return_value=weekly_financial_scrape.BoaProfileResult(
+                        "ok", "inst_123abc"
+                    ),
+                ),
+                patch.object(
+                    weekly_financial_scrape,
+                    "run_boa",
+                    return_value=dict(recovered_boa),
+                ) as run_boa,
+            ):
+                returncode, output = self.capture_stdout(
+                    weekly_financial_scrape._execute_boa_recovery,
+                    recovery_run_id,
+                )
+
+            final = json.loads(status_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(returncode, 0)
+        self.assertEqual(final, json.loads(output))
+        self.assertEqual(final["status"], "ok")
+        self.assertEqual(final["alert_handoff"], "not_required")
+        self.assertEqual(final["run_id"], self.RUN_ID)
+        self.assertEqual(final["results"][:-1], prior_results[:-1])
+        self.assertEqual(final["results"][-1], {**recovered_boa, "profile_preflight": "ok"})
+        run_boa.assert_called_once_with(
+            recovery_run_id,
+            self.BASE_ENV,
+            self.CREDENTIAL_STORE,
+            "inst_123abc",
+            {
+                source: "auto"
+                for source in weekly_financial_scrape.PROVIDER_MODE_OPTIONS
+            },
+        )
 
     def test_final_status_rejects_symlink_and_insecure_parent(self):
         payload = {"contract": 2, "status": "ok", "run_id": self.RUN_ID}
