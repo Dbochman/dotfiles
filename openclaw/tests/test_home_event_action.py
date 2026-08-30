@@ -517,6 +517,35 @@ class HomeEventActionTests(unittest.TestCase):
         self.assertEqual(set(suspension["sites"]), {"cabin"})
         self.assertEqual(suspension["sites"]["cabin"]["phase"], "suspended")
 
+    def test_suspended_feeder_clears_recovered_readback_error(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        state = actions._empty_feeder_suspensions()
+        state["sites"]["cabin"] = {
+            "selector": "cabin-feeder",
+            "cycle_id": self.cycle_id,
+            "phase": "suspended",
+            "restore_owned": True,
+            "updated_at": "2026-08-22T14:55:00Z",
+            "last_error": "feeder_readback_unavailable",
+        }
+        actions._write_feeder_suspensions(self.root, state)
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["cabin-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+
+        result = self.run_worker()
+
+        self.assertEqual(result["feeder_reconcile"]["mode"], "verified")
+        suspension = actions._load_feeder_suspensions(self.root)
+        self.assertEqual(suspension["sites"]["cabin"]["phase"], "suspended")
+        self.assertIsNone(suspension["sites"]["cabin"]["last_error"])
+        self.assertFalse(
+            actions.safe_status(self.root)["feeder_suspensions"]["sites"][
+                "cabin"
+            ]["attention"]
+        )
+
     def test_manually_disabled_destination_blocks_origin_without_mutation(self) -> None:
         self.configure_cat_transfer()
         self.enqueue_litter_activity("crosstown")

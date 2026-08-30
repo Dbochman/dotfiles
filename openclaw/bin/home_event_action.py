@@ -1571,6 +1571,10 @@ def _reconcile_feeder_suspensions(
                             raise ActionError(
                                 "feeder_outcome_unknown", command_attempted=True
                             )
+                    if record["last_error"] is not None:
+                        record["last_error"] = None
+                        record["updated_at"] = clock()
+                        _write_feeder_suspensions(root, state)
                     continue
                 if (
                     site_state.get("occupancy") != "occupied"

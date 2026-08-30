@@ -38,6 +38,8 @@ PETLIBRO_FEEDER_SELECTORS = {
     "crosstown-feeder": "crosstown",
     "cabin-feeder": "cabin",
 }
+SITE_ORDER = ("cabin", "crosstown")
+SITE_NAMES = {"cabin": "Cabin", "crosstown": "Crosstown"}
 
 STATUS_CACHE: dict[str, object] = {}
 STATUS_CACHE_LOCK = threading.Lock()
@@ -252,6 +254,218 @@ def collect_transfer_coverage() -> dict[str, object]:
     }
 
 
+def summarize_transfer_state(
+    automation: object,
+    transfer: object,
+    petlibro: object,
+) -> dict[str, object]:
+    """Translate provider and policy state into one household-facing outcome."""
+    automation_data = automation if isinstance(automation, dict) else {}
+    transfer_data = transfer if isinstance(transfer, dict) else {}
+    petlibro_data = petlibro if isinstance(petlibro, dict) else {}
+    owners = automation_data.get("feeding_schedule_owners")
+    owner_map = owners if isinstance(owners, dict) else {}
+    feeder_suspensions = automation_data.get("feeder_suspensions")
+    suspension_data = (
+        feeder_suspensions if isinstance(feeder_suspensions, dict) else {}
+    )
+    suspension_sites = suspension_data.get("sites")
+    managed = suspension_sites if isinstance(suspension_sites, dict) else {}
+
+    schedule_states = {site: "unavailable" for site in SITE_ORDER}
+    devices = petlibro_data.get("devices")
+    if isinstance(devices, list):
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            selector = device.get("selector")
+            site = PETLIBRO_FEEDER_SELECTORS.get(str(selector))
+            if site is None or device.get("scheduleReadback") not in {
+                "verified",
+                "master_verified",
+            }:
+                continue
+            enabled = device.get("scheduleEnabled")
+            if isinstance(enabled, bool):
+                schedule_states[site] = "on" if enabled else "paused"
+
+    site_output = {
+        site: {
+            "schedule": schedule_states[site],
+            "label": {
+                "on": "Meals on",
+                "paused": "Meals paused",
+                "unavailable": "Checking",
+            }[schedule_states[site]],
+        }
+        for site in SITE_ORDER
+    }
+    pending = transfer_data.get("pending_actions", 0)
+    pending_count = (
+        int(pending)
+        if isinstance(pending, (int, float)) and not isinstance(pending, bool)
+        else 0
+    )
+    unknown = transfer_data.get("unknown_actions", 0)
+    unknown_count = (
+        int(unknown)
+        if isinstance(unknown, (int, float)) and not isinstance(unknown, bool)
+        else 0
+    )
+    coverage_ready = (
+        transfer_data.get("ok") is True
+        and transfer_data.get("coverage_ready") is True
+    )
+    fully_automatic = all(owner_map.get(site) == "bus" for site in SITE_ORDER)
+
+    current_errors: list[str] = []
+    transitional = False
+    for site, value in managed.items():
+        if site not in SITE_ORDER or not isinstance(value, dict):
+            current_errors.append("invalid_suspension")
+            continue
+        phase = value.get("phase")
+        transitional = transitional or phase in {"suspending", "restoring"}
+        if value.get("attention") is not True:
+            continue
+        recovered_readback = value.get("last_error") == "feeder_readback_unavailable" and (
+            (phase == "suspended" and schedule_states[site] == "paused")
+            or (phase == "restoring" and schedule_states[site] == "on")
+        )
+        if not recovered_readback:
+            current_errors.append(str(value.get("last_error") or "unknown"))
+
+    base = {
+        "sites": site_output,
+        "litter_boxes": "Both reporting" if coverage_ready else "Waiting for data",
+        "pending_changes": pending_count,
+        "attention": False,
+        "notice": None,
+    }
+    if (
+        automation_data.get("ok") is not True
+        or transfer_data.get("ok") is not True
+        or petlibro_data.get("ok") is not True
+    ):
+        return {
+            **base,
+            "tone": "bad",
+            "label": "Unavailable",
+            "title": "Cat feeding status is unavailable",
+            "description": "OpenClaw could not confirm the feeders and litter boxes. No automatic feeder change will be made.",
+            "summary": "No automatic changes",
+            "attention": True,
+            "notice": "Cat feeding status could not be confirmed. No automatic feeder change will be made.",
+        }
+    if unknown_count > 0:
+        return {
+            **base,
+            "tone": "bad",
+            "label": "Needs review",
+            "title": "A feeder change could not be confirmed",
+            "description": "OpenClaw stopped without retrying. Check the two feeder schedules before making another automatic change.",
+            "summary": "One feeder change needs review",
+            "attention": True,
+            "notice": "A feeder change could not be confirmed. OpenClaw will not retry it automatically.",
+        }
+    if current_errors or len(managed) > 1:
+        return {
+            **base,
+            "tone": "bad",
+            "label": "Needs review",
+            "title": "Automatic feeding needs attention",
+            "description": "The current feeder schedules could not be matched safely to one occupied home. OpenClaw will not make another change until this clears.",
+            "summary": "Feeder schedules need review",
+            "attention": True,
+            "notice": "Automatic feeder switching needs review before it can make another change.",
+        }
+    if not fully_automatic:
+        return {
+            **base,
+            "tone": "warn",
+            "label": "Manual",
+            "title": "Automatic feeder switching is off",
+            "description": "At least one home is using manual feeder control, so OpenClaw will not move scheduled feeding between homes.",
+            "summary": "Manual feeder control",
+        }
+    if pending_count > 0 or transitional:
+        return {
+            **base,
+            "tone": "warn",
+            "label": "Updating",
+            "title": "Feeder schedules are being updated",
+            "description": "OpenClaw is checking both homes and will show the final schedule state when the change is confirmed.",
+            "summary": "A feeder change is in progress",
+        }
+    if len(managed) == 1:
+        vacant_site = next(iter(managed))
+        occupied_site = "crosstown" if vacant_site == "cabin" else "cabin"
+        if (
+            schedule_states[vacant_site] == "paused"
+            and schedule_states[occupied_site] == "on"
+        ):
+            coverage_note = (
+                " Both litter boxes are reporting."
+                if coverage_ready
+                else " The next automatic change will wait for fresh data from both litter boxes."
+            )
+            return {
+                **base,
+                "tone": "ok" if coverage_ready else "warn",
+                "label": "Working" if coverage_ready else "Protected",
+                "title": f"Cats are at {SITE_NAMES[occupied_site]}",
+                "description": (
+                    f"{SITE_NAMES[occupied_site]} scheduled meals are on. "
+                    f"{SITE_NAMES[vacant_site]} scheduled meals are paused while that home is vacant and will turn back on automatically when the cats return."
+                    f"{coverage_note}"
+                ),
+                "summary": f"{SITE_NAMES[vacant_site]} meals paused automatically",
+            }
+        if "unavailable" in {
+            schedule_states[vacant_site],
+            schedule_states[occupied_site],
+        }:
+            return {
+                **base,
+                "tone": "warn",
+                "label": "Checking",
+                "title": "Checking both feeder schedules",
+                "description": "OpenClaw knows which home should be paused, but one feeder has not returned a fresh schedule state yet. No new change will be made meanwhile.",
+                "summary": "Waiting for feeder confirmation",
+            }
+        return {
+            **base,
+            "tone": "bad",
+            "label": "Needs review",
+            "title": "Feeder schedules do not match the cats’ home",
+            "description": "The feeder at the empty home should be paused and the feeder with the cats should be on. OpenClaw will not make another change until the mismatch clears.",
+            "summary": "Feeder schedules need review",
+            "attention": True,
+            "notice": "The feeder schedules do not match the expected home state.",
+        }
+    if all(schedule_states[site] == "on" for site in SITE_ORDER):
+        return {
+            **base,
+            "tone": "ok" if coverage_ready else "warn",
+            "label": "Ready" if coverage_ready else "Waiting",
+            "title": "Both homes are ready",
+            "description": (
+                "Scheduled meals are on at both homes. OpenClaw will pause the empty home after the cats settle at the other home."
+                if coverage_ready
+                else "Scheduled meals are on at both homes. Automatic switching will wait for fresh data from both litter boxes."
+            ),
+            "summary": "Watching for the cats’ next move",
+        }
+    return {
+        **base,
+        "tone": "warn",
+        "label": "Manual pause",
+        "title": "A feeder is paused manually",
+        "description": "OpenClaw did not create this pause and will not turn that feeder back on automatically.",
+        "summary": "One feeder needs manual control",
+    }
+
+
 def collect_status(*, refresh: bool = False) -> dict[str, object]:
     now = time.time()
     with STATUS_CACHE_LOCK:
@@ -275,6 +489,9 @@ def collect_status(*, refresh: bool = False) -> dict[str, object]:
             "automation": automation_future.result(),
             "transfer": transfer_future.result(),
         }
+        bundle["transfer_summary"] = summarize_transfer_state(
+            bundle["automation"], bundle["transfer"], bundle["petlibro"]
+        )
 
     with STATUS_CACHE_LOCK:
         STATUS_CACHE["cached_at"] = now
@@ -497,10 +714,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .metric-row { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); margin-top: 17px; padding-top: 14px; gap: 10px; }
     .metric b { display: block; font-size: 17px; margin-top: 3px; }
     .automation-card { grid-column: span 12; min-height: 0; }
+    .automation-card h3 { margin: 4px 0 0; font-size: clamp(22px, 3vw, 31px); letter-spacing: -.02em; }
     .automation-card .metric-row { grid-template-columns: repeat(4, 1fr); }
     .automation-copy { max-width: 850px; margin: 9px 0 0; color: var(--muted); }
-    .direction-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
-    .direction { display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 11px; padding: 7px 9px 7px 12px; }
     .device-card { min-height: 245px; }
     .device-card h3 { margin: 4px 0 0; font-size: 19px; }
     .site { color: var(--peach); text-transform: capitalize; font-size: 13px; }
@@ -539,7 +755,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </header>
     <div class="notice" id="notice"></div>
 
-    <section><div class="section-head"><h2>Transfer automation</h2><span class="muted" id="automation-summary"></span></div><div class="grid" id="automation"></div></section>
+    <section><div class="section-head"><h2>Feeding between homes</h2><span class="muted" id="automation-summary"></span></div><div class="grid" id="automation"></div></section>
     <section><div class="section-head"><h2>The cats</h2><span class="muted" id="cat-summary"></span></div><div class="grid" id="cats"></div></section>
     <section><div class="section-head"><h2>Care stations</h2><span class="muted">Whisker · Petlibro</span></div><div class="grid" id="devices"></div></section>
     <section><div class="section-head"><h2>Recent litter-box activity</h2><span class="muted">Latest 14 events per home</span></div><div class="grid" id="activity"></div></section>
@@ -568,33 +784,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
     function renderAutomation() {
       const root = document.getElementById('automation');
-      const automation = state?.automation || {};
-      const transfer = state?.transfer || {};
-      const owners = automation.feeding_schedule_owners || {};
-      const sites = ['cabin', 'crosstown'];
-      const activeSites = sites.filter(site => owners[site] === 'bus');
-      const pairedCoverage = transfer.ok === true && transfer.coverage_ready === true;
-      const busDegraded = transfer.ok === true && transfer.bus_health !== 'ok';
-      const managedSites = Object.keys(automation.feeder_suspensions?.sites || {});
-      const pending = number(transfer.pending_actions, 0);
-      const unknown = number(transfer.unknown_actions, 0);
-      const coverageRequired = activeSites.length > 0;
-      const attention = automation.ok === false || transfer.ok === false || Number(unknown) > 0 || (coverageRequired && !pairedCoverage);
-      const fullyArmed = activeSites.length === sites.length;
-      const label = attention ? 'Attention' : fullyArmed ? 'Armed' : 'Standby';
-      const pillClass = attention ? 'bad' : fullyArmed ? '' : 'warn';
-      const description = fullyArmed && pairedCoverage
-        ? `Both directions are armed. Armed means the policy may act after vacancy-cycle and settled litter evidence qualify; it does not mean either feeder is currently paused.${busDegraded ? ' Other event-bus health needs review, but paired litter protection remains ready.' : ''}`
-        : fullyArmed
-          ? 'Both feeder directions are armed, but paired litter coverage is not currently ready. Transfer actions fail closed.'
-          : 'One or more feeder directions are not owned by the event bus. Manual schedule controls remain available.';
-      document.getElementById('automation-summary').textContent = fullyArmed ? 'Dual-direction guard armed' : `${activeSites.length} of ${sites.length} directions armed`;
-      const directions = sites.map(site => `<span class="direction"><b>Vacant ${esc(siteName(site))}</b><span class="pill ${owners[site] === 'bus' ? '' : 'warn'}">${owners[site] === 'bus' ? 'Armed' : 'Disabled'}</span></span>`).join('');
+      const summary = state?.transfer_summary || {};
+      const sites = summary.sites || {};
+      const pillClass = summary.tone === 'bad' ? 'bad' : summary.tone === 'warn' ? 'warn' : '';
+      document.getElementById('automation-summary').textContent = summary.summary || 'Status unavailable';
       root.innerHTML = `<article class="card automation-card">
-        <div class="card-top"><div><div class="label">Home event bus</div><h3>Feeder transfer protection</h3></div><span class="pill ${pillClass}">${esc(label)}</span></div>
-        <p class="automation-copy">${esc(description)}</p>
-        <div class="metric-row">${metric('Directions armed', `${activeSites.length}/${sites.length}`)}${metric('Litter coverage', pairedCoverage ? 'Paired' : 'Unavailable')}${metric('Schedules paused', managedSites.length)}${metric('Pending actions', pending)}</div>
-        <div class="direction-row">${directions}</div>
+        <div class="card-top"><div><div class="label">Automatic feeder switching</div><h3>${esc(summary.title || 'Cat feeding status is unavailable')}</h3></div><span class="pill ${pillClass}">${esc(summary.label || 'Unavailable')}</span></div>
+        <p class="automation-copy">${esc(summary.description || 'OpenClaw could not confirm the current feeder state. No automatic change will be made.')}</p>
+        <div class="metric-row">${metric('Cabin meals', sites.cabin?.label || 'Checking')}${metric('Crosstown meals', sites.crosstown?.label || 'Checking')}${metric('Litter boxes', summary.litter_boxes || 'Waiting for data')}${metric('Changes waiting', Number(summary.pending_changes) > 0 ? number(summary.pending_changes) : 'None')}</div>
       </article>`;
     }
 
@@ -635,17 +832,18 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         ? `<div class="actions"><select aria-label="Portions" data-portions-for="${esc(selector)}"><option value="1">1 portion</option><option value="2">2 portions</option><option value="3">3 portions</option></select><button class="action" ${device.online ? '' : 'disabled'} data-command="feed" data-selector="${esc(selector)}">Feed now</button></div>` : '';
       const managed = state?.automation?.feeder_suspensions?.sites?.[site];
       const managedHere = managed?.selector === selector;
-      const managedAttention = managedHere && managed.attention === true;
+      const recoveredManagedReadback = managedHere && managed.last_error === 'feeder_readback_unavailable' && ((managed.phase === 'suspended' && scheduleKnown && !scheduleEnabled) || (managed.phase === 'restoring' && scheduleKnown && scheduleEnabled));
+      const managedAttention = managedHere && managed.attention === true && !recoveredManagedReadback;
       const automationOwned = state?.automation?.feeding_schedule_owners?.[site] === 'bus';
       const enabledMeals = Number.isInteger(device.enabledMealCount) ? device.enabledMealCount : null;
       const mealText = enabledMeals === null ? '' : `${enabledMeals} active meal${enabledMeals === 1 ? '' : 's'}`;
       const verifiedAt = ['verified','master_verified'].includes(device.scheduleReadback) && device.scheduleObservedAt ? new Date(device.scheduleObservedAt) : null;
-      const verificationLabel = device.scheduleReadback === 'master_verified' ? 'Master verified' : 'Provider verified';
-      const verifiedText = verifiedAt && !Number.isNaN(verifiedAt.getTime()) ? `${verificationLabel} ${verifiedAt.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}` : 'Provider readback unavailable';
-      const scheduleLabel = scheduleKnown ? (scheduleEnabled ? `Master on${mealText ? ` · ${mealText}` : ''}` : `Master paused${mealText ? ` · ${mealText}` : ''}`) : 'Unavailable';
-      const ownershipText = managedAttention ? 'Automation attention' : managedHere && managed.phase === 'restoring' ? 'Auto-resume verifying' : managedHere ? 'OpenClaw-owned · Auto-resume armed' : automationOwned ? 'Vacancy automation armed' : 'Manual schedule only';
+      const verificationLabel = device.scheduleReadback === 'master_verified' ? 'On/off switch checked' : 'Schedule checked';
+      const verifiedText = verifiedAt && !Number.isNaN(verifiedAt.getTime()) ? `${verificationLabel} ${verifiedAt.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}` : 'Schedule check unavailable';
+      const scheduleLabel = scheduleKnown ? (scheduleEnabled ? `On${mealText ? ` · ${mealText}` : ''}` : `Paused${mealText ? ` · ${mealText}` : ''}`) : 'Unavailable';
+      const ownershipText = managedAttention ? 'Automatic pause needs review' : managedHere && managed.phase === 'restoring' ? 'Turning scheduled meals back on' : managedHere ? 'Paused while home is vacant · Turns back on automatically' : automationOwned ? 'Will pause automatically when the cats move homes' : 'Controlled manually';
       const scheduleClass = managedAttention ? 'bad' : scheduleKnown && scheduleEnabled ? '' : 'warn';
-      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleClass}">${esc(scheduleLabel)}</span><span class="schedule-owner">${esc(verifiedText)} · ${esc(ownershipText)}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Vacancy-managed' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
+      const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleClass}">${esc(scheduleLabel)}</span><span class="schedule-owner">${esc(verifiedText)} · ${esc(ownershipText)}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Managed automatically' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
       return `<article class="card device-card" data-location="${esc(site)}"><div class="card-top"><div><div class="site">${esc(siteName(site))}</div><h3>${feeder ? 'Feeder' : 'Fountain'}</h3><div class="muted">${esc(device.name || device.model || 'Petlibro')}</div></div>${statusPill(device.online)}</div><div class="metric-row">${metrics}</div>${schedule}${action}</article>`;
     }
 
@@ -677,15 +875,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       if (state?.automation?.ok === false) messages.push(`Feeder automation: ${state.automation.error || 'status unavailable'}`);
       if (state?.transfer?.ok === false) messages.push(`Cat transfer coverage: ${state.transfer.error || 'status unavailable'}`);
       if (state?.transfer?.ok === true && state.transfer.bus_health !== 'ok') messages.push('Home event bus has degraded health outside feeder transfer coverage.');
-      if (Number(state?.transfer?.unknown_actions) > 0) messages.push('Feeder automation has an unknown action outcome.');
       for (const site of ['cabin', 'crosstown']) {
         const owner = state?.automation?.feeding_schedule_owners?.[site];
         const coverage = state?.transfer?.sites?.[site];
         const age = Number(coverage?.poll_age_seconds);
-        if (owner && owner !== 'bus') messages.push(`${siteName(site)} feeder transfer automation is not armed.`);
-        if (coverage && (coverage.enabled !== true || coverage.baselined !== true || coverage.health !== 'ok' || coverage.poll_age_seconds === null || !Number.isFinite(age) || age > 300)) messages.push(`${siteName(site)} litter evidence is not ready.`);
+        if (owner && owner !== 'bus') messages.push(`${siteName(site)} automatic feeder switching is off.`);
+        if (coverage && (coverage.enabled !== true || coverage.baselined !== true || coverage.health !== 'ok' || coverage.poll_age_seconds === null || !Number.isFinite(age) || age > 300)) messages.push(`${siteName(site)} Litter-Robot has not reported fresh data.`);
       }
-      for (const [site, managed] of Object.entries(state?.automation?.feeder_suspensions?.sites || {})) { if (managed.attention) messages.push(`${siteName(site)} feeder automation needs review (${managed.last_error || 'unknown state'}).`); }
+      if (state?.transfer_summary?.attention && state.transfer_summary.notice) messages.push(state.transfer_summary.notice);
       for (const robot of state?.whisker?.robots || []) { if (!robot.is_online) messages.push(`${siteName(robot.site)} Litter-Robot is offline.`); if (robot.waste_full || Number(robot.waste_level_pct) >= 80) messages.push(`${siteName(robot.site)} waste drawer needs attention.`); }
       const notice = document.getElementById('notice'); notice.textContent = messages.join(' '); notice.classList.toggle('show', Boolean(messages.length));
     }

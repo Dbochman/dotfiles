@@ -9,12 +9,11 @@ food, and water—rather than around vendor accounts or a generic device grid.
 ## Experience
 
 - **Both / Crosstown / Cabin filter** scopes stations and litter-box activity.
-- **Transfer automation** shows whether both exact feeder directions are owned
-  and armed by the event bus, whether Cabin and Crosstown litter evidence is
-  paired and fresh, how many actions are pending, and which feeders are
-  actually paused by OpenClaw. `Armed` describes policy readiness; it does not
-  claim that a feeder schedule is currently paused or that the current vacancy
-  cycle has qualified.
+- **Feeding between homes** leads with one plain-English household state, such
+  as `Cats are at Cabin`, then says which home's meals are on, which are paused,
+  and whether the paused schedule will turn back on automatically. Separate
+  Cabin/Crosstown meal readbacks, litter-box freshness, and waiting changes
+  remain visible without exposing policy-direction or event-bus terminology.
 - **Cat profiles** show current Whisker weight and the direction of recent
   samples.
 - **Whisker stations** show connectivity, state, waste level, litter level,
@@ -38,7 +37,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   nearly-full waste drawers. Paired litter readiness is evaluated from the
   Whisker observer and both fresh site polls, independently of unrelated
   top-level event-bus degradation; broader bus health is shown as a separate
-  advisory and does not mislabel healthy feeder protection as unavailable.
+  advisory and does not mislabel healthy feeder protection as unavailable. A
+  prior feeder-readback error stops appearing as current attention after the
+  action worker or a fresh dashboard readback confirms the expected schedule.
 
 ## Controls and safety
 
@@ -62,12 +63,13 @@ attempt. Reusing the same event is blocked, and any prior command attempt,
 confirmed action, pending claim, or uncertain outcome prevents a retry.
 
 When the event bus owns a feeder pause, the manual schedule button is disabled
-and labeled `Vacancy-managed`. The action worker—not the dashboard—restores
-that exact schedule after a later qualifying paired-home return. A manually
-paused schedule is never adopted or automatically resumed. Both exact feeder
-directions were activated on `2026-08-27`; every feeder card identifies that
-ownership, while the overview marks unavailable paired evidence as attention
-and the action worker fails closed.
+and labeled `Managed automatically`. The card explains that meals are paused
+while the home is vacant and will turn back on automatically. The action
+worker—not the dashboard—restores that exact schedule after a later qualifying
+paired-home return. A manually paused schedule is never adopted or
+automatically resumed. Both exact feeder directions were activated on
+`2026-08-27`; the action worker still fails closed whenever the underlying
+state cannot be verified.
 
 Browser mutations require a per-process bearer token embedded into the served
 page, a same-origin request, a bounded JSON body, and an exact allowlisted

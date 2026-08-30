@@ -218,9 +218,9 @@ with Petlibro feeders and fountains.
 ### What It Shows
 
 - **Cat profiles** — current Whisker weight and recent direction
-- **Transfer automation** — exact two-way feeder ownership shown as `armed`,
-  fresh paired Whisker coverage, pending/unknown action state, and a separate
-  count of feeder schedules actually paused by OpenClaw
+- **Feeding between homes** — a plain-English current state (`Cats are at
+  Cabin`, `Both homes are ready`, or an explicit checking/review state), exact
+  schedule readback for each home, litter-box freshness, and waiting changes
 - **Whisker cards** — one exact enrolled robot per home, including online
   state, waste, litter, cycle count, and a guarded clean action
 - **Petlibro cards** — live feeder and fountain telemetry, exact provider-

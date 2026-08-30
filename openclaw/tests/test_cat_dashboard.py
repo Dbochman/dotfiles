@@ -272,6 +272,76 @@ class CatDashboardTests(unittest.TestCase):
         self.assertEqual(transfer["bus_health"], "degraded")
         self.assertTrue(transfer["coverage_ready"])
 
+    def test_transfer_summary_describes_confirmed_cabin_state_in_plain_english(
+        self,
+    ) -> None:
+        summary = self.dashboard.summarize_transfer_state(
+            {
+                "ok": True,
+                "feeding_schedule_owners": {"cabin": "bus", "crosstown": "bus"},
+                "feeder_suspensions": {
+                    "sites": {
+                        "crosstown": {
+                            "selector": "crosstown-feeder",
+                            "phase": "suspended",
+                            "attention": True,
+                            "last_error": "feeder_readback_unavailable",
+                        }
+                    }
+                },
+            },
+            {
+                "ok": True,
+                "coverage_ready": True,
+                "pending_actions": 0,
+                "unknown_actions": 0,
+            },
+            {
+                "ok": True,
+                "devices": [
+                    {
+                        "selector": "cabin-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": True,
+                    },
+                    {
+                        "selector": "crosstown-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": False,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(summary["label"], "Working")
+        self.assertEqual(summary["title"], "Cats are at Cabin")
+        self.assertEqual(summary["sites"]["cabin"]["label"], "Meals on")
+        self.assertEqual(summary["sites"]["crosstown"]["label"], "Meals paused")
+        self.assertFalse(summary["attention"])
+        self.assertIn("turn back on automatically", summary["description"])
+        self.assertNotIn("feeder_readback_unavailable", json.dumps(summary))
+
+    def test_transfer_summary_keeps_an_unconfirmed_change_as_attention(self) -> None:
+        summary = self.dashboard.summarize_transfer_state(
+            {
+                "ok": True,
+                "feeding_schedule_owners": {"cabin": "bus", "crosstown": "bus"},
+                "feeder_suspensions": {"sites": {}},
+            },
+            {
+                "ok": True,
+                "coverage_ready": True,
+                "pending_actions": 0,
+                "unknown_actions": 1,
+            },
+            {"ok": True, "devices": []},
+        )
+
+        self.assertTrue(summary["attention"])
+        self.assertEqual(summary["label"], "Needs review")
+        self.assertEqual(summary["title"], "A feeder change could not be confirmed")
+        self.assertNotIn("outcome_unknown", json.dumps(summary))
+
     def test_petlibro_collector_uses_exact_schedule_readback(self) -> None:
         with patch.object(
             self.dashboard,
@@ -358,21 +428,20 @@ class CatDashboardTests(unittest.TestCase):
         self.assertEqual(harness.status, 200)
         self.assertIn("<title>Cat Care</title>", text)
         self.assertIn("The cats", text)
-        self.assertIn("Transfer automation", text)
-        self.assertIn("Feeder transfer protection", text)
-        self.assertIn("Dual-direction guard", text)
-        self.assertIn("Vacancy automation armed", text)
-        self.assertIn("Provider verified", text)
-        self.assertIn("Master verified", text)
-        self.assertIn("Directions armed", text)
-        self.assertIn("Schedules paused", text)
+        self.assertIn("Feeding between homes", text)
+        self.assertIn("Automatic feeder switching", text)
+        self.assertIn("Will pause automatically when the cats move homes", text)
+        self.assertIn("Schedule checked", text)
+        self.assertIn("On/off switch checked", text)
+        self.assertIn("Cabin meals", text)
+        self.assertIn("Crosstown meals", text)
         self.assertIn("Recent litter-box activity", text)
         self.assertIn("Weight recorded ·", text)
         self.assertIn("Scheduled meals", text)
         self.assertIn("Pause schedule", text)
         self.assertIn("Resume schedule", text)
-        self.assertIn("Auto-resume armed", text)
-        self.assertIn("Vacancy-managed", text)
+        self.assertIn("Turns back on automatically", text)
+        self.assertIn("Managed automatically", text)
         self.assertIn("Manual feeding remains available", text)
         self.assertIn("data-site=\"crosstown\"", text)
         self.assertIn(f"const MUTATION_TOKEN = {json.dumps(self.dashboard.MUTATION_TOKEN)};", text)
