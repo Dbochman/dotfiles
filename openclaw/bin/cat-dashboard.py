@@ -426,32 +426,44 @@ def summarize_transfer_state(
             "summary": "A feeder change is in progress",
         }
     if len(managed) == 1:
-        vacant_site = next(iter(managed))
-        occupied_site = "crosstown" if vacant_site == "cabin" else "cabin"
+        paused_site = next(iter(managed))
+        cat_site = "crosstown" if paused_site == "cabin" else "cabin"
+        suspension_context = managed[paused_site].get("occupancy_context")
         if (
-            schedule_states[vacant_site] == "paused"
-            and schedule_states[occupied_site] == "on"
+            schedule_states[paused_site] == "paused"
+            and schedule_states[cat_site] == "on"
         ):
             coverage_note = (
                 " Both litter boxes are reporting."
                 if coverage_ready
                 else " The next automatic change will wait for fresh data from both litter boxes."
             )
+            if suspension_context == "split_household":
+                description = (
+                    f"{SITE_NAMES[cat_site]} scheduled meals are on. "
+                    f"{SITE_NAMES[paused_site]} scheduled meals remain paused because the cats are still at {SITE_NAMES[cat_site]}, even though someone is home at each house. "
+                    "They will turn back on automatically after the cats return and the matching litter-box evidence settles."
+                    f"{coverage_note}"
+                )
+                summary = f"Cats remain at {SITE_NAMES[cat_site]}"
+            else:
+                description = (
+                    f"{SITE_NAMES[cat_site]} scheduled meals are on. "
+                    f"{SITE_NAMES[paused_site]} scheduled meals are paused while that home is vacant and will turn back on automatically when the cats return."
+                    f"{coverage_note}"
+                )
+                summary = f"{SITE_NAMES[paused_site]} meals paused automatically"
             return {
                 **base,
                 "tone": "ok" if coverage_ready else "warn",
                 "label": "Working" if coverage_ready else "Protected",
-                "title": f"Cats are at {SITE_NAMES[occupied_site]}",
-                "description": (
-                    f"{SITE_NAMES[occupied_site]} scheduled meals are on. "
-                    f"{SITE_NAMES[vacant_site]} scheduled meals are paused while that home is vacant and will turn back on automatically when the cats return."
-                    f"{coverage_note}"
-                ),
-                "summary": f"{SITE_NAMES[vacant_site]} meals paused automatically",
+                "title": f"Cats are at {SITE_NAMES[cat_site]}",
+                "description": description,
+                "summary": summary,
             }
         if "unavailable" in {
-            schedule_states[vacant_site],
-            schedule_states[occupied_site],
+            schedule_states[paused_site],
+            schedule_states[cat_site],
         }:
             return {
                 **base,

@@ -321,6 +321,125 @@ class DogWalkDurabilityTests(unittest.TestCase):
         ):
             self.assertEqual(self.module._detect_who_left("cabin"), [])
 
+    def test_walker_detection_does_not_guess_when_residents_remain_home(self) -> None:
+        with (
+            mock.patch.object(
+                self.module, "_people_at_location", return_value={"dylan", "julia"}
+            ),
+            mock.patch.object(
+                self.module,
+                "_recently_present_on_network",
+                return_value={"dylan", "julia"},
+            ),
+            mock.patch.object(
+                self.module,
+                "_run_network_observation",
+                return_value={
+                    "ok": True,
+                    "people": {
+                        "Dylan": {"present": False},
+                        "Julia": {"present": True},
+                    },
+                },
+            ),
+        ):
+            self.assertEqual(self.module._detect_who_left("cabin"), ["dylan"])
+
+        with (
+            mock.patch.object(
+                self.module, "_people_at_location", return_value={"dylan", "julia"}
+            ),
+            mock.patch.object(
+                self.module,
+                "_recently_present_on_network",
+                return_value={"dylan", "julia"},
+            ),
+            mock.patch.object(
+                self.module,
+                "_run_network_observation",
+                return_value={
+                    "ok": True,
+                    "people": {
+                        "Dylan": {"present": True},
+                        "Julia": {"present": True},
+                    },
+                },
+            ),
+        ):
+            self.assertEqual(self.module._detect_who_left("cabin"), [])
+
+    def test_automatic_departure_roomba_start_requires_empty_resident_network(self) -> None:
+        with (
+            mock.patch.object(
+                self.module,
+                "_run_network_observation",
+                return_value={
+                    "ok": True,
+                    "people": {
+                        "Dylan": {"present": False},
+                        "Julia": {"present": True},
+                    },
+                },
+            ),
+            mock.patch.object(self.module, "run_roomba_command") as command,
+        ):
+            result = self.module._start_roombas_for_automatic_departure("cabin")
+        self.assertEqual(result["skipped"], "resident_still_home")
+        self.assertEqual(result["present_count"], 1)
+        command.assert_not_called()
+
+        with (
+            mock.patch.object(
+                self.module,
+                "_run_network_observation",
+                return_value={
+                    "ok": True,
+                    "people": {
+                        "Dylan": {"present": False},
+                        "Julia": {"present": False},
+                    },
+                },
+            ),
+            mock.patch.object(
+                self.module,
+                "run_roomba_command",
+                return_value={"success": True, "results": []},
+            ) as command,
+        ):
+            result = self.module._start_roombas_for_automatic_departure("cabin")
+        self.assertTrue(result["success"])
+        command.assert_called_once_with("cabin", "start")
+
+    def test_automatic_departure_roomba_start_fails_closed_on_incomplete_presence(self) -> None:
+        cases = [
+            {"ok": False, "people": {}, "error": "fake"},
+            {"ok": True, "people": {"Dylan": {"present": False}}},
+        ]
+        for observation in cases:
+            with (
+                self.subTest(observation=observation),
+                mock.patch.object(
+                    self.module, "_run_network_observation", return_value=observation
+                ),
+                mock.patch.object(self.module, "run_roomba_command") as command,
+            ):
+                result = self.module._start_roombas_for_automatic_departure(
+                    "cabin"
+                )
+                self.assertEqual(result["skipped"], "presence_unavailable")
+                command.assert_not_called()
+
+    def test_all_fi_departure_paths_use_the_resident_guard(self) -> None:
+        source = inspect.getsource(self.module._fi_departure_poll_loop)
+
+        self.assertEqual(source.count("await guarded_departure_start("), 3)
+        self.assertNotIn(
+            '_run_roomba_command_async(combo_location, "start")', source
+        )
+        self.assertNotIn(
+            '_run_roomba_command_async(candidate_location, "start")', source
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

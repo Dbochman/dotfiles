@@ -27,6 +27,12 @@ Detects dog walks via **Fi GPS collar** (departure) and manages Roomba automatio
   encoded Web Push key and salt parameters before `firebase-messaging` decrypts
   them; credentials and message content are not logged or rewritten.
 - The listener uses Potato's Fi GPS/geofence result to choose the home, and stores the last confirmed in-geofence home as `home_location`.
+- Before any automatic Fi-triggered Roomba start, a complete fresh read-only
+  network observation must show both residents absent. If either resident is
+  still home—or the observation is unavailable or omits a resident—the collar
+  departure is recorded as suppressed, no Roomba command is sent, LOST_DOG
+  mode is not enabled, and the same outside trip remains suppressed until the
+  collar reaches a home geofence. Manual starts remain explicit.
 - Walks now get immutable `walk_id` and `origin_location` fields at departure.
 - Route files are persisted atomically during return monitoring at `~/.openclaw/dog-walk/routes/<location>/<YYYY-MM-DD>/<walk_id>.json`; per-route locking keeps concurrent polling, finalization, car marking, and delayed Fi enrichment from dropping one another's fields.
 - Route files include `distance_m`, `point_count`, inferred `end_location`, and `is_interhome_transit`.
@@ -77,6 +83,10 @@ If no combo trigger fires, the GPS-only path still works:
 **Pre-checks:**
 - **Time-of-day filter**: only active during walk hours
 - **Base-station echo filter**: when Fi API is slow to transition from Rest to Walk, it returns base station coords as pet position. If pet coords match a home location within 5m and connection is not "Base", the reading is discarded as stale.
+- **Resident-presence guard**: all automatic Fi paths require a complete fresh
+  observation showing Dylan and Julia both absent before any Roomba command.
+  This prevents a collar-only car trip from starting cleaners around someone
+  who remained home.
 
 **Per-location Roomba commands:**
 
@@ -104,7 +114,11 @@ After departure, the return monitor uses three signals — any one triggers Room
 | **Fi GPS (inter-home)** | Every 30s | If Potato enters the *other* home's geofence during monitoring, the walk is auto-finalized as an inter-home transit. Roombas dock at origin, home anchor updates to the new location. |
 
 - Departure GPS point is seeded as the first route point for dashboard maps
-- 2 minutes after departure, the same read-only network observation identifies **who left**. Missing, stale, malformed, or incomplete observations fail closed: they neither dock Roombas nor infer walkers.
+- 2 minutes after departure, the same read-only network observation identifies
+  **who left**. It reports only residents proven absent after being recently
+  present; an empty result stays empty instead of falling back to everyone who
+  had been at the house. Missing, stale, malformed, or incomplete observations
+  fail closed: they neither dock Roombas nor infer walkers.
 - WiFi return signals are suppressed for the first 10 minutes (phones stay connected at front door)
 - On return, the full Fi `OngoingWalk` path is fetched (dense polyline) and merged into the route file
 - **Fi walk enrichment** queries `activityFeed` for authoritative timestamps and distance, then **merges all Walk segments that overlap our outing window** (`[our_started_at - 5min, our_ended_at + 5min]`). Fi splits a single outing into multiple Walks when the dog pauses for Play/Rest (sniffing, yard time); the merge takes the earliest start, latest end, sum of distances, and records `fi_walk_count` for transparency. A background thread retries at 5 / 10 / 20 min after return to catch Walks Fi finalizes late — retries are idempotent and always scheduled so late segments can be merged in.

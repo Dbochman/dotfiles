@@ -321,6 +321,53 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("turn back on automatically", summary["description"])
         self.assertNotIn("feeder_readback_unavailable", json.dumps(summary))
 
+    def test_transfer_summary_treats_split_household_as_stable(self) -> None:
+        summary = self.dashboard.summarize_transfer_state(
+            {
+                "ok": True,
+                "feeding_schedule_owners": {"cabin": "bus", "crosstown": "bus"},
+                "feeder_suspensions": {
+                    "sites": {
+                        "crosstown": {
+                            "selector": "crosstown-feeder",
+                            "phase": "suspended",
+                            "occupancy_context": "split_household",
+                            "attention": False,
+                            "last_error": None,
+                        }
+                    }
+                },
+            },
+            {
+                "ok": True,
+                "coverage_ready": True,
+                "pending_actions": 0,
+                "unknown_actions": 0,
+            },
+            {
+                "ok": True,
+                "devices": [
+                    {
+                        "selector": "cabin-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": True,
+                    },
+                    {
+                        "selector": "crosstown-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": False,
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(summary["label"], "Working")
+        self.assertEqual(summary["title"], "Cats are at Cabin")
+        self.assertEqual(summary["summary"], "Cats remain at Cabin")
+        self.assertFalse(summary["attention"])
+        self.assertIn("someone is home at each house", summary["description"])
+        self.assertNotIn("while that home is vacant", summary["description"])
+
     def test_transfer_summary_keeps_an_unconfirmed_change_as_attention(self) -> None:
         summary = self.dashboard.summarize_transfer_state(
             {

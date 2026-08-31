@@ -2025,6 +2025,10 @@ def _verify_dock_and_retry(location: str) -> None:
 # ---------------------------------------------------------------------------
 
 _NETWORK_OBSERVATION_MAX_AGE_SECONDS = 300
+_TRACKED_RESIDENTS = frozenset({"dylan", "julia"})
+_AUTO_DEPARTURE_SAFETY_SKIPS = frozenset(
+    {"presence_unavailable", "resident_still_home"}
+)
 
 
 def _parse_network_observation(raw: str, location: str) -> dict[str, dict]:
@@ -2112,6 +2116,51 @@ def _check_network_presence(location: str) -> dict:
     return {"ok": True, "any_present": any_present, "people": people}
 
 
+def _start_roombas_for_automatic_departure(location: str) -> dict:
+    """Start only when a complete fresh observation shows no resident home."""
+    observation = _run_network_observation(location)
+    if not observation["ok"]:
+        log(
+            f"ROOMBA SAFETY: skipping {location} automatic start; "
+            "resident presence is unavailable"
+        )
+        return {
+            "success": False,
+            "results": [],
+            "skipped": "presence_unavailable",
+            "present_count": 0,
+        }
+    people = {
+        person.casefold(): info for person, info in observation["people"].items()
+    }
+    if not _TRACKED_RESIDENTS.issubset(people):
+        log(
+            f"ROOMBA SAFETY: skipping {location} automatic start; "
+            "resident presence is incomplete"
+        )
+        return {
+            "success": False,
+            "results": [],
+            "skipped": "presence_unavailable",
+            "present_count": 0,
+        }
+    present = sorted(
+        resident for resident in _TRACKED_RESIDENTS if people[resident]["present"]
+    )
+    if present:
+        log(
+            f"ROOMBA SAFETY: skipping {location} automatic start; "
+            f"resident still home: {present}"
+        )
+        return {
+            "success": False,
+            "results": [],
+            "skipped": "resident_still_home",
+            "present_count": len(present),
+        }
+    return run_roomba_command(location, "start")
+
+
 def _people_at_location(location: str) -> set[str]:
     """Read presence state to determine who was recently at this location.
 
@@ -2126,7 +2175,10 @@ def _people_at_location(location: str) -> set[str]:
         people = state.get("people", {})
         at_location = set()
         for name, info in people.items():
-            if info.get("location", "").lower() == location.lower():
+            if (
+                name.casefold() in _TRACKED_RESIDENTS
+                and info.get("location", "").lower() == location.lower()
+            ):
                 at_location.add(name.lower())
         return at_location if at_location else {"dylan", "julia"}
     except Exception as e:
@@ -2215,8 +2267,7 @@ def _detect_who_left(location: str) -> list[str]:
         log(f"WHO LEFT: absent but not recently on network (excluded): "
             f"{sorted(absent_but_not_recent)}")
 
-    # Preserve the existing fallback only for a complete, valid observation.
-    return sorted(walkers) if walkers else sorted(candidates)
+    return sorted(walkers)
 
 
 # ---------------------------------------------------------------------------
@@ -2268,6 +2319,10 @@ async def _send_imessage_async(text: str) -> bool:
 
 async def _run_roomba_command_async(location: str, action: str) -> dict:
     return await asyncio.to_thread(run_roomba_command, location, action)
+
+
+async def _run_automatic_departure_roomba_start_async(location: str) -> dict:
+    return await asyncio.to_thread(_start_roombas_for_automatic_departure, location)
 
 
 async def _set_fi_collar_mode_async(mode: str) -> bool:
@@ -2702,6 +2757,7 @@ async def _fi_departure_poll_loop() -> None:
     last_connection = "Base"  # track base station connection transitions
     last_activity = "Rest"  # track Fi activity transitions (Rest→Walk)
     home_anchor = _get_home_anchor()
+    suppressed_departure_location: str | None = None
 
     log("FI DEPARTURE: Polling loop started (every 3 min during walk hours)")
     if home_anchor:
@@ -2726,6 +2782,25 @@ async def _fi_departure_poll_loop() -> None:
         )
         log(f"FI DEPARTURE: Candidate reset for {last_outside_reading['location']} ({reason})")
         last_outside_reading = None
+
+    async def guarded_departure_start(location: str) -> dict | None:
+        nonlocal suppressed_departure_location
+        result = await _run_automatic_departure_roomba_start_async(location)
+        skip_reason = result.get("skipped")
+        if skip_reason not in _AUTO_DEPARTURE_SAFETY_SKIPS:
+            return result
+        suppressed_departure_location = location
+        await _update_state_dog_walk_async(
+            location,
+            "departure_skip",
+            skip_reason=skip_reason,
+            skip_details={"resident_count": result.get("present_count", 0)},
+        )
+        log(
+            f"FI DEPARTURE: suppressed collar-only departure at {location} "
+            f"({skip_reason})"
+        )
+        return None
 
     _poll_count = 0
     while True:
@@ -2804,8 +2879,10 @@ async def _fi_departure_poll_loop() -> None:
                             dist = _distance_to_location(fi_result, combo_location) or 0
                             now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+                            roomba_result = await guarded_departure_start(combo_location)
+                            if roomba_result is None:
+                                continue
                             await _set_fi_collar_mode_async("LOST_DOG")
-                            roomba_result = await _run_roomba_command_async(combo_location, "start")
                             await _update_state_dog_walk_async(
                                 combo_location,
                                 "departure",
@@ -2836,8 +2913,10 @@ async def _fi_departure_poll_loop() -> None:
                 dist = combo_dist or 0
                 now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+                roomba_result = await guarded_departure_start(combo_location)
+                if roomba_result is None:
+                    continue
                 await _set_fi_collar_mode_async("LOST_DOG")
-                roomba_result = await _run_roomba_command_async(combo_location, "start")
                 await _update_state_dog_walk_async(
                     combo_location,
                     "departure",
@@ -2854,6 +2933,12 @@ async def _fi_departure_poll_loop() -> None:
             fi_at_location = bool(fi_result.get("at_location")) and fi_location in _FI_LOCATIONS
 
             if fi_at_location:
+                if suppressed_departure_location is not None:
+                    log(
+                        "FI DEPARTURE: clearing collar-only suppression after "
+                        f"arrival at {fi_location}"
+                    )
+                    suppressed_departure_location = None
                 if fi_location != home_anchor:
                     home_anchor = fi_location
                     _update_state_home_anchor(fi_location, distance_m=fi_result.get("distance_m"))
@@ -2873,6 +2958,9 @@ async def _fi_departure_poll_loop() -> None:
             candidate_location = home_anchor or fi_location
             if not candidate_location:
                 reset_candidate("no_occupied_location")
+                continue
+            if candidate_location == suppressed_departure_location:
+                reset_candidate("collar_only_departure")
                 continue
 
             dist = _distance_to_location(fi_result, candidate_location)
@@ -2936,10 +3024,12 @@ async def _fi_departure_poll_loop() -> None:
                 f"(first reading {int(time_since_first)}s ago at {last_outside_reading['first_distance_m']}m)")
             last_outside_reading = None
 
-            # Enable high-frequency GPS for route tracking
-            await _set_fi_collar_mode_async("LOST_DOG")
+            roomba_result = await guarded_departure_start(candidate_location)
+            if roomba_result is None:
+                continue
 
-            roomba_result = await _run_roomba_command_async(candidate_location, "start")
+            # Enable high-frequency GPS for route tracking after safety checks.
+            await _set_fi_collar_mode_async("LOST_DOG")
             await _update_state_dog_walk_async(
                 candidate_location,
                 "departure",

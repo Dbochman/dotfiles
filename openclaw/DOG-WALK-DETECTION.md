@@ -196,6 +196,13 @@ Before confirming departure, the system validates:
 6. **Post-return tracker reseed** (2026-04-21): When return monitor exits, `_reset_departure_trackers` is set; the next Fi poll reseeds `last_connection` / `last_activity` from current Fi state and skips transition detection for that iteration. Prevents a phantom `Rest→Walk + base-disconnect` combo when the just-ended walk's values haven't cleared yet.
 7. **Snooze**: Roomba start is skipped if snoozed (but walk tracking still happens)
 8. **Cooldown**: Roomba start has a 2-hour cooldown per location
+9. **Resident-presence guard**: every automatic Fi-triggered start requires a
+   complete fresh network observation showing both residents absent. A resident
+   still home, an unavailable observation, or a response missing either
+   resident suppresses the collar departure without a Roomba command or
+   LOST_DOG mode. The outside trip stays suppressed until the collar reaches a
+   home geofence, preventing repeated collar-only triggers during an inter-home
+   car trip.
 
 ---
 
@@ -218,6 +225,7 @@ Starts immediately after departure is confirmed. Uses three independent signals 
 ```
 DEPARTURE CONFIRMED
         │
+        ├─ Pre-start resident guard already proved nobody remained home
         ├─ Wait 2 min → detect walkers (network scan for who's absent)
         │
         ▼
@@ -251,6 +259,10 @@ DEPARTURE CONFIRMED
 │  exits.                                        │
 └───────────────────────────────────────────────┘
 ```
+
+Walker attribution never guesses. Only a candidate who was recently present
+and is absent from a complete fresh observation is named; if everyone remains
+present, the walker list is empty.
 
 ### Car Speed Detection
 

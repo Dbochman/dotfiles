@@ -15,6 +15,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   and whether the paused schedule will turn back on automatically. Separate
   Cabin/Crosstown meal readbacks, litter-box freshness, and waiting changes
   remain visible without exposing policy-direction or event-bus terminology.
+  Split human occupancy is a normal state: when the cats remain at one home
+  while a person occupies each, the other feeder stays paused and the card
+  explains that directly instead of presenting a false automation warning.
 - **Cat profiles** show current Whisker weight, the direction of recent
   samples, and a compact time-scaled chart with the observation dates, reading
   count, and recent weight range.

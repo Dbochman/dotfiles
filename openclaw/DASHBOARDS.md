@@ -172,6 +172,8 @@ Two-home Roomba status and automation view with explicit telemetry provenance.
   protected decision, and any safety hold
 - **Automation Pause** — temporarily disable automatic Roomba starts per
   location (1h/3h/8h/Indef)
+- **Occupied-home protection** — automatic Fi departure starts fail closed
+  unless a complete fresh network observation shows both residents absent
 - **Cleaning & Decision History** — monthly dog-walk activity plus protected
   Crosstown 6 AM and vacancy-transition outcomes
 

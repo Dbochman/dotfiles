@@ -22,6 +22,10 @@ LAN and Tailscale tailnet.
 - **Automation Pause** — temporarily suppress automatic Roomba starts per
   location (1h/3h/8h/Indef); manual starts remain available through the
   guarded CLIs
+- **Occupied-home protection** — automatic Fi departure starts require a
+  complete fresh network observation showing both residents absent. A collar
+  traveling without the dog cannot start the robots around someone who stayed
+  home; missing presence evidence also suppresses the command.
 - **Cleaning & Decision History** — monthly dog-walk activity plus protected
   Crosstown vacancy-controller outcomes with hover details
 

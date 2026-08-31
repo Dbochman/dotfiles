@@ -493,6 +493,7 @@ class HomeEventActionTests(unittest.TestCase):
             "cycle_id": "cycle_" + ("f" * 32),
             "phase": "suspended",
             "restore_owned": True,
+            "occupancy_context": "origin_vacant",
             "updated_at": NOW,
             "last_error": None,
         }
@@ -536,6 +537,7 @@ class HomeEventActionTests(unittest.TestCase):
             "cycle_id": self.cycle_id,
             "phase": "suspended",
             "restore_owned": True,
+            "occupancy_context": "origin_vacant",
             "updated_at": "2026-08-22T14:55:00Z",
             "last_error": "feeder_readback_unavailable",
         }
@@ -554,6 +556,92 @@ class HomeEventActionTests(unittest.TestCase):
             actions.safe_status(self.root)["feeder_suspensions"]["sites"][
                 "cabin"
             ]["attention"]
+        )
+
+    def test_split_household_keeps_cat_feeder_paused_without_attention(self) -> None:
+        self.configure_cat_transfer()
+        split_presence = {
+            "timestamp": NOW,
+            "cabin": {
+                "occupancy": "occupied",
+                "fresh": True,
+                "stateChangedAt": "2026-08-22T13:00:00Z",
+            },
+            "crosstown": {
+                "occupancy": "occupied",
+                "fresh": True,
+                "stateChangedAt": "2026-08-22T14:00:00Z",
+            },
+            "people": {
+                "Dylan": {"location": "crosstown"},
+                "Julia": {"location": "cabin"},
+            },
+        }
+        self.private_json(self.state_path, split_presence)
+        self.private_json(
+            self.producer_path,
+            {
+                "schema_version": 1,
+                "sequence": 4,
+                "observation_id": "f" * 64,
+                "state_hash": actions.state_hash(split_presence),
+                "evaluated_at": NOW,
+            },
+        )
+        suspension = actions._empty_feeder_suspensions()
+        suspension["sites"]["crosstown"] = {
+            "selector": "crosstown-feeder",
+            "cycle_id": "cycle_" + ("a" * 32),
+            "phase": "suspended",
+            "restore_owned": True,
+            "occupancy_context": "origin_vacant",
+            "updated_at": "2026-08-22T14:55:00Z",
+            "last_error": "site_not_confirmed_vacant",
+        }
+        actions._write_feeder_suspensions(self.root, suspension)
+        pet_state = json.loads(self.petlibro_state.read_text())
+        pet_state["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(pet_state), encoding="utf-8")
+
+        result = self.run_worker()
+
+        self.assertEqual(result["feeder_reconcile"]["mode"], "verified")
+        current = actions._load_feeder_suspensions(self.root)
+        self.assertEqual(current["schema_version"], 2)
+        self.assertEqual(
+            current["sites"]["crosstown"]["occupancy_context"],
+            "split_household",
+        )
+        self.assertIsNone(current["sites"]["crosstown"]["last_error"])
+        safe = actions.safe_status(self.root)["feeder_suspensions"]["sites"][
+            "crosstown"
+        ]
+        self.assertEqual(safe["occupancy_context"], "split_household")
+        self.assertFalse(safe["attention"])
+        self.assertFalse(self.petlibro_log.exists())
+
+    def test_legacy_feeder_suspension_migrates_to_origin_vacant_context(self) -> None:
+        normalized = actions._validate_feeder_suspensions(
+            {
+                "schema_version": 1,
+                "sites": {
+                    "crosstown": {
+                        "selector": "crosstown-feeder",
+                        "cycle_id": "cycle_" + ("a" * 32),
+                        "phase": "suspended",
+                        "restore_owned": True,
+                        "updated_at": NOW,
+                        "last_error": None,
+                    }
+                },
+                "latest": None,
+            }
+        )
+
+        self.assertEqual(normalized["schema_version"], 2)
+        self.assertEqual(
+            normalized["sites"]["crosstown"]["occupancy_context"],
+            "origin_vacant",
         )
 
     def test_manually_disabled_destination_blocks_origin_without_mutation(self) -> None:
@@ -720,6 +808,7 @@ class HomeEventActionTests(unittest.TestCase):
             "cycle_id": "cycle_" + ("f" * 32),
             "phase": "suspended",
             "restore_owned": True,
+            "occupancy_context": "origin_vacant",
             "updated_at": NOW,
             "last_error": None,
         }

@@ -83,6 +83,14 @@ confirmed action, any command attempt, and every uncertain outcome remain
 terminal for the cycle. This lets a corrected destination schedule requalify
 the vacant home's feeder without weakening duplicate-command protection.
 
+Feeder suspension state schema 2 treats a split household as a valid steady
+state. When the previously vacant feeder home becomes occupied while a sticky
+resident and the cats remain at the other home, the worker keeps its owned
+pause, clears the obsolete `site_not_confirmed_vacant` warning, and exposes
+`split_household` through safe status. It does not infer a cat return from a
+person's arrival or issue a feeder command. Normal paired litter evidence and
+the other home's later vacancy are still required before automatic restore.
+
 Safe status projection schema 9 separates current camera degradation from
 historical error evidence. `camera.degradation.active` and its bounded active
 error fields reflect only a presently degraded camera worker;

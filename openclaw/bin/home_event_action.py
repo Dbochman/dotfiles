@@ -1032,26 +1032,33 @@ def _feeder_suspension_path(root: Path) -> Path:
 
 
 def _empty_feeder_suspensions() -> dict[str, Any]:
-    return {"schema_version": 1, "sites": {}, "latest": None}
+    return {"schema_version": 2, "sites": {}, "latest": None}
 
 
 def _validate_feeder_suspensions(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {"schema_version", "sites", "latest"}:
         raise ActionError("feeder_suspension_invalid")
-    if value["schema_version"] != 1 or not isinstance(value["sites"], dict):
+    schema_version = value["schema_version"]
+    if schema_version not in {1, 2} or not isinstance(value["sites"], dict):
         raise ActionError("feeder_suspension_invalid")
     if not set(value["sites"]).issubset(SITES):
         raise ActionError("feeder_suspension_invalid")
     normalized = _empty_feeder_suspensions()
     for site, record in value["sites"].items():
-        if not isinstance(record, dict) or set(record) != {
+        legacy_keys = {
             "selector",
             "cycle_id",
             "phase",
             "restore_owned",
             "updated_at",
             "last_error",
-        }:
+        }
+        expected_keys = (
+            legacy_keys
+            if schema_version == 1
+            else legacy_keys | {"occupancy_context"}
+        )
+        if not isinstance(record, dict) or set(record) != expected_keys:
             raise ActionError("feeder_suspension_invalid")
         if (
             record["selector"] != FEEDER_SELECTORS[site]
@@ -1065,10 +1072,20 @@ def _validate_feeder_suspensions(value: object) -> dict[str, Any]:
                 not isinstance(record["last_error"], str)
                 or SAFE_CODE_RE.fullmatch(record["last_error"]) is None
             )
+            or schema_version == 2
+            and record["occupancy_context"]
+            not in {"origin_vacant", "split_household"}
         ):
             raise ActionError("feeder_suspension_invalid")
         parse_time(record["updated_at"], "feeder_suspension_invalid")
-        normalized["sites"][site] = dict(record)
+        normalized["sites"][site] = {
+            **record,
+            "occupancy_context": (
+                record["occupancy_context"]
+                if schema_version == 2
+                else "origin_vacant"
+            ),
+        }
     latest = value["latest"]
     if latest is not None:
         if (
@@ -1354,6 +1371,7 @@ def _transfer_feeding_schedule(
             "cycle_id": cycle_id,
             "phase": "suspending",
             "restore_owned": True,
+            "occupancy_context": "origin_vacant",
             "updated_at": clock(),
             "last_error": None,
         }
@@ -1571,8 +1589,12 @@ def _reconcile_feeder_suspensions(
                             raise ActionError(
                                 "feeder_outcome_unknown", command_attempted=True
                             )
-                    if record["last_error"] is not None:
+                    if (
+                        record["last_error"] is not None
+                        or record["occupancy_context"] != "origin_vacant"
+                    ):
                         record["last_error"] = None
+                        record["occupancy_context"] = "origin_vacant"
                         record["updated_at"] = clock()
                         _write_feeder_suspensions(root, state)
                     continue
@@ -1583,6 +1605,31 @@ def _reconcile_feeder_suspensions(
                     deferred += 1
                     continue
                 return_origin = OTHER_SITE[site]
+                return_site_state = canonical.get(return_origin)
+                if (
+                    isinstance(return_site_state, dict)
+                    and return_site_state.get("occupancy") == "occupied"
+                    and _occupied_by_sticky_resident(canonical, return_origin)
+                ):
+                    if observed["scheduleEnabled"]:
+                        record["last_error"] = "split_feeder_unexpectedly_enabled"
+                        record["updated_at"] = clock()
+                        _write_feeder_suspensions(root, state)
+                        deferred += 1
+                        continue
+                    changed_context = (
+                        record["occupancy_context"] != "split_household"
+                    )
+                    recovered_context = (
+                        record["last_error"] == "site_not_confirmed_vacant"
+                    )
+                    if changed_context or recovered_context:
+                        record["occupancy_context"] = "split_household"
+                        if recovered_context:
+                            record["last_error"] = None
+                        record["updated_at"] = clock()
+                        _write_feeder_suspensions(root, state)
+                    continue
                 return_entry = policy["targets"].get(return_origin, {}).get(
                     "feeding_schedule"
                 )
@@ -2056,6 +2103,7 @@ def safe_status(root: Path) -> dict[str, Any]:
                 site: {
                     "selector": record["selector"],
                     "phase": record["phase"],
+                    "occupancy_context": record["occupancy_context"],
                     "attention": record["last_error"] is not None,
                     "last_error": record["last_error"],
                 }
