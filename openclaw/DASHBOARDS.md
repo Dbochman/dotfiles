@@ -367,7 +367,7 @@ Command feedback (Running/Success/Error) appears inline below the section header
 
 ### What It Shows
 
-- **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label e.g. "Warm White") with on/off, brightness, and color controls, plus standing Hue automation status and exact enable/disable controls (Crosstown: 9 rooms, 7 routines; Cabin: 8 rooms, currently no routines)
+- **Hue Lights** — room chip cards (ON/OFF indicator, brightness%, color temp label e.g. "Warm White") with on/off, brightness, and color controls, plus a collapsed-by-default automation summary with routine/enabled counts, vacancy-management status, and exact enable/disable controls (Crosstown: 9 rooms, 7 routines; Cabin: 8 rooms, currently no routines)
 - **Nest Thermostat** — per-room temp, setpoint, HVAC mode with set temp / set mode / eco controls (Cabin: 3 rooms)
 - **Midea AC** — per-unit temperature, setpoint, power, mode, fan, eco, and live wattage with exact-device on/off, temp, mode, fan, and eco controls (Cabin: 2 units)
 - **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)

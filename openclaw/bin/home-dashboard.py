@@ -1025,8 +1025,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Home Control Plane</title>
 <style>
-:root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a; --text: #e4e4e7; --text-muted: #9ca3af; }
-@media (prefers-color-scheme: light) { :root { --bg: #f8fafc; --surface: #ffffff; --border: #e2e8f0; --text: #1e293b; --text-muted: #64748b; } }
+:root { --bg: #0f1117; --surface: #1a1d27; --surface-soft: #151821; --border: #2a2d3a; --text: #e4e4e7; --text-muted: #9ca3af; --focus: #60a5fa; --positive: #4ade80; }
+@media (prefers-color-scheme: light) { :root { --bg: #f8fafc; --surface: #ffffff; --surface-soft: #f8fafc; --border: #e2e8f0; --text: #1e293b; --text-muted: #64748b; --focus: #2563eb; --positive: #15803d; } }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; padding: 24px 16px 48px; }
 .page { max-width: 1200px; margin: 0 auto; }
@@ -1043,7 +1043,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .feedback.success { border-color: #22c55e; color: #86efac; }
 .card-feedback { margin: 0 0 8px; font-size: 0.85rem; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; min-height: 220px; display: flex; flex-direction: column; gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; min-height: 220px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08); }
 .card-wide { grid-column: span 2; }
 .card-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .eyebrow { color: var(--text-muted); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
@@ -1073,6 +1073,16 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .controls-grid select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M2 4l4 4 4-4'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; padding-right: 32px; cursor: pointer; }
 .controls-grid select:disabled { background-image: none; }
 .controls-grid select option { background: var(--surface); color: var(--text); padding: 8px; }
+.automation-disclosure { margin-top: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-soft); overflow: hidden; }
+.automation-disclosure > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; user-select: none; }
+.automation-disclosure > summary::-webkit-details-marker { display: none; }
+.automation-disclosure > summary::after { content: '▾'; color: var(--text-muted); font-size: 0.78rem; transition: transform 0.2s; }
+.automation-disclosure:not([open]) > summary::after { transform: rotate(-90deg); }
+.automation-summary-copy { min-width: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.automation-title { font-weight: 650; }
+.automation-summary-meta { color: var(--text-muted); font-size: 0.82rem; }
+.automation-managed { display: inline-flex; align-items: center; padding: 3px 8px; border: 1px solid var(--positive); border-radius: 999px; color: var(--positive); font-size: 0.74rem; white-space: nowrap; }
+.automation-panel { padding: 0 12px 12px; border-top: 1px solid var(--border); }
 .automation-list { display: grid; gap: 8px; margin-top: 12px; }
 .automation-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .automation-name { font-weight: 650; }
@@ -1091,9 +1101,37 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
 .dashboard-section:not([open]) > summary::before { transform: rotate(-90deg); }
 .dashboard-section > summary h2 { font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 0; }
 .dashboard-section > .cards { padding-top: 4px; }
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 @media (max-width: 900px) {
   .header { flex-direction: column; }
   .card-wide { grid-column: span 1; }
+}
+@media (max-width: 600px) {
+  body { padding: 16px 10px 32px; }
+  .header { gap: 12px; margin-bottom: 14px; }
+  .title { font-size: 1.55rem; }
+  .updated { font-size: 0.86rem; }
+  .toolbar { width: 100%; display: grid; gap: 8px; }
+  .segmented { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; }
+  .segmented button { min-height: 44px; padding: 8px 6px; }
+  .refresh-button { width: 100%; min-height: 44px; }
+  .cards { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .card { min-height: 0; padding: 14px; border-radius: 14px; gap: 12px; }
+  .controls-grid { grid-template-columns: minmax(0, 1fr); }
+  .controls-grid input, .controls-grid select { min-height: 44px; }
+  .command-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .command-row button { width: 100%; min-height: 44px; padding: 9px 8px; }
+  .automation-disclosure > summary { align-items: flex-start; }
+  .automation-panel { padding: 0 10px 10px; }
+  .automation-row { grid-template-columns: minmax(0, 1fr); }
+  .automation-row button { width: 100%; min-height: 44px; }
+  .room-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 360px) {
+  .room-grid, .command-row { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .automation-disclosure > summary::after, .dashboard-section > summary::before { transition: none; }
 }
 </style>
 </head>
@@ -1704,6 +1742,7 @@ const state = {
   location: 'both',
   data: null,
   loading: false,
+  automationOpen: Object.create(null),
 };
 
 function escapeHtml(value) {
@@ -2238,14 +2277,19 @@ function renderHue(result, device) {
       ${meta}
     </div>`;
   }).filter(Boolean).join('');
-  let automationHtml = '';
+  let automationBody = '';
+  let automationSummary = 'No routines';
   const vacancyManaged = result.vacancy_automation && result.vacancy_automation.active;
   const vacancyNote = vacancyManaged
     ? '<div class="automation-meta" style="margin-top:12px">Vacancy management is active; selected standing routines are held disabled until a confirmed return.</div>'
     : '';
   if (result.automation_error) {
-    automationHtml = `<div class="error-text" style="margin-top:12px">${escapeHtml(result.automation_error)}</div>`;
+    automationSummary = 'Status unavailable';
+    automationBody = `<div class="error-text" style="margin-top:12px">${escapeHtml(result.automation_error)}</div>`;
   } else if (Array.isArray(result.automations) && result.automations.length) {
+    const enabledCount = result.automations.filter(item => item.enabled).length;
+    const routineLabel = result.automations.length === 1 ? 'routine' : 'routines';
+    automationSummary = `${result.automations.length} ${routineLabel} · ${enabledCount} enabled`;
     const rows = result.automations.map(item => {
       const schedule = item.schedule || {};
       const timing = [schedule.recurrence, schedule.when].filter(Boolean).join(' · ') || 'Schedule unavailable';
@@ -2258,11 +2302,31 @@ function renderHue(result, device) {
         <button type="button" data-command data-device="${escapeHtml(device)}" data-action="${action}" data-extra="${extra}">${label}</button>
       </div>`;
     }).join('');
-    automationHtml = `${vacancyNote}<div class="automation-list"><div class="subcard-title">Automations</div>${rows}</div>`;
+    automationBody = `<div class="automation-list">${rows}</div>`;
   } else if (Array.isArray(result.automations)) {
-    automationHtml = '<div class="muted" style="margin-top:12px">No Hue automations configured</div>';
+    automationBody = '<div class="muted" style="margin-top:12px">No Hue automations configured</div>';
   }
+  automationBody = `${vacancyNote}${automationBody}`;
+  const disclosureOpen = state.automationOpen[device] === true ? ' open' : '';
+  const managedBadge = vacancyManaged
+    ? '<span class="automation-managed">Vacancy managed</span>'
+    : '';
+  const automationHtml = `<details class="automation-disclosure" data-automation-device="${escapeHtml(device)}"${disclosureOpen}>
+    <summary>
+      <span class="automation-summary-copy"><span class="automation-title">Automations</span><span class="automation-summary-meta">${escapeHtml(automationSummary)}</span></span>
+      ${managedBadge}
+    </summary>
+    <div class="automation-panel">${automationBody}</div>
+  </details>`;
   return `<div class="room-grid">${rooms}</div>${automationHtml}`;
+}
+
+function syncAutomationDisclosures() {
+  document.querySelectorAll('.automation-disclosure[data-automation-device]').forEach((disclosure) => {
+    disclosure.addEventListener('toggle', () => {
+      state.automationOpen[disclosure.dataset.automationDevice] = disclosure.open;
+    });
+  });
 }
 
 function renderRoombas(result) {
@@ -2365,6 +2429,7 @@ function renderDashboard() {
   const data = state.data || {};
   setContent('hueCrosstownContent', renderHue(data.hue_crosstown, 'hue_crosstown'));
   setContent('hueCabinContent', renderHue(data.hue_cabin, 'hue_cabin'));
+  syncAutomationDisclosures();
   setContent('nestContent', renderNest(data.nest));
   setContent('mideaContent', renderMidea(data.midea));
   setContent('cieloContent', renderCielo(data.cielo));

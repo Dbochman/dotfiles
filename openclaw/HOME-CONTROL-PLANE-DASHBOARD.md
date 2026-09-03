@@ -16,6 +16,17 @@ Cards are grouped into collapsible sections:
 4. **Pets** — Litter-Robot, Petlibro, Dog Walk
 5. **Misc** — TV, Speakers, Cabin Speakers, Roombas (Crosstown + Cabin)
 
+Hue automation inventories are nested disclosures that start collapsed. Their
+summary keeps routine counts, enabled counts, and active vacancy management
+visible without consuming the height of the Lighting cards. A disclosure that
+the user opens remains open across background status refreshes for that page
+session.
+
+At phone widths, cards become a single column, selectors and command controls
+receive full-width 44px touch targets, room chips use a bounded two-column grid,
+and automation actions stack beneath their labels. Very narrow screens reduce
+rooms and commands to one column rather than overflowing horizontally.
+
 Command feedback appears inline under the section header for the card that triggered the action.
 
 ## API and Runtime
@@ -80,8 +91,10 @@ All controls use selectors with predefined room/device values.
   - `Off` maps to Hue CLI `all-off`
   - brightness and color inputs are disabled in this mode
 - Each Hue card also lists standing Hue automations with their enabled state and
-  schedule. Enable/disable controls use an exact, static name allowlist and the
-  CLI verifies the resulting state before reporting success.
+  schedule inside a collapsed-by-default disclosure. The compact summary shows
+  routine/enabled counts and whether vacancy management is active. Enable/disable
+  controls use an exact, static name allowlist and the CLI verifies the
+  resulting state before reporting success.
 - The Crosstown card indicates when vacancy automation is managing its selected
   daily routines. A manual enable remains available, but the action worker will
   disable that routine again while Crosstown remains confidently vacant.

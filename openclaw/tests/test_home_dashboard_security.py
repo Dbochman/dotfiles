@@ -350,6 +350,19 @@ class HomeDashboardSecurityTests(unittest.TestCase):
         self.assertIn("automation_disable", html)
         self.assertIn("automation_enable", html)
         self.assertIn("Vacancy management is active", html)
+        self.assertIn('class="automation-disclosure"', html)
+        self.assertIn("automationOpen: Object.create(null)", html)
+        self.assertIn("state.automationOpen[device] === true ? ' open' : ''", html)
+        self.assertIn("function syncAutomationDisclosures()", html)
+        self.assertIn("Vacancy managed", html)
+
+    def test_mobile_layout_uses_single_column_touch_friendly_controls(self) -> None:
+        html = self.dashboard.DASHBOARD_HTML
+
+        self.assertIn("@media (max-width: 600px)", html)
+        self.assertIn("grid-template-columns: minmax(0, 1fr)", html)
+        self.assertIn("min-height: 44px", html)
+        self.assertIn("@media (max-width: 360px)", html)
 
     def test_midea_ui_is_source_specific_and_exact_alias_only(self) -> None:
         html = self.dashboard.DASHBOARD_HTML
