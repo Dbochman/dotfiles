@@ -216,6 +216,99 @@ class MultiPodHomeTests(unittest.TestCase):
         self.assertIn("test operation failed", str(raised.exception))
         self.assertIn("explicit rejection", str(raised.exception))
 
+    def test_overview_reports_both_pods_and_authoritative_split_routing(self):
+        self.current_devices["julia-user"] = {
+            "id": "pod-cabin",
+            "side": "right",
+        }
+
+        def overview_get(path, token_data=None):
+            if path == "devices/pod-crosstown":
+                return {
+                    "result": {
+                        "sensorInfo": {
+                            "skuName": "king",
+                            "model": "Pod3",
+                            "connected": True,
+                        },
+                        "hasWater": True,
+                        "leftHeatingLevel": -26,
+                        "leftTargetHeatingLevel": 0,
+                        "leftNowHeating": False,
+                        "rightHeatingLevel": -23,
+                        "rightTargetHeatingLevel": 0,
+                        "rightNowHeating": False,
+                    }
+                }
+            if path == "devices/pod-cabin":
+                return {
+                    "result": {
+                        "sensorInfo": {
+                            "skuName": "king",
+                            "model": "Pod5",
+                            "connected": True,
+                        },
+                        "hasWater": True,
+                        "leftHeatingLevel": -33,
+                        "leftTargetHeatingLevel": 0,
+                        "leftNowHeating": False,
+                        "rightHeatingLevel": -31,
+                        "rightTargetHeatingLevel": 0,
+                        "rightNowHeating": False,
+                    }
+                }
+            return self.fake_get(path, token_data)
+
+        with self.mocked_api(get=overview_get):
+            output = self.run_cli("overview")
+
+        result = json.loads(output)
+        self.assertTrue(result["ok"])
+        self.assertEqual(set(result["locations"]), {"crosstown", "cabin"})
+        self.assertEqual(
+            result["locations"]["crosstown"]["sides"]["dylan"]["routingState"],
+            "home",
+        )
+        self.assertEqual(
+            result["locations"]["crosstown"]["sides"]["julia"]["routingState"],
+            "away",
+        )
+        self.assertEqual(
+            result["locations"]["cabin"]["sides"]["dylan"]["routingState"],
+            "away",
+        )
+        self.assertEqual(
+            result["locations"]["cabin"]["sides"]["julia"]["routingState"],
+            "home",
+        )
+        self.assertEqual(
+            result["locations"]["cabin"]["sides"]["julia"]["temperatureF"],
+            74,
+        )
+        self.assertFalse(any(event[0] == "put" for event in self.events))
+        self.assertNotIn("pod-crosstown", output)
+        self.assertNotIn("pod-cabin", output)
+
+    def test_overview_marks_both_pods_away_for_manually_away_user(self):
+        self.away_states["dylan-user"] = True
+
+        def overview_get(path, token_data=None):
+            if path.startswith("devices/") and "?" not in path:
+                return {"result": {"sensorInfo": {}, "hasWater": None}}
+            return self.fake_get(path, token_data)
+
+        with self.mocked_api(get=overview_get):
+            result = json.loads(self.run_cli("overview"))
+
+        self.assertEqual(
+            result["locations"]["crosstown"]["sides"]["dylan"]["routingState"],
+            "away",
+        )
+        self.assertEqual(
+            result["locations"]["cabin"]["sides"]["dylan"]["routingState"],
+            "away",
+        )
+
     def test_same_location_home_is_idempotent_and_does_not_put(self):
         with self.mocked_api():
             output = self.run_cli(
@@ -236,7 +329,10 @@ class MultiPodHomeTests(unittest.TestCase):
         ]
         self.assertEqual(
             assignment_reads,
-            ["devices/pod-crosstown?filter=leftUserId"],
+            [
+                "devices/pod-crosstown?filter=leftUserId",
+                "devices/pod-crosstown?filter=leftUserId",
+            ],
         )
         current_device_reads = [
             event[1]
@@ -257,6 +353,7 @@ class MultiPodHomeTests(unittest.TestCase):
         self.assertEqual(result["location"], "crosstown")
         self.assertEqual(result["side"], "dylan")
         self.assertEqual(result["state"], "home")
+        self.assertEqual(result["coverage"], "own")
         self.assertFalse(result["changed"])
 
     def test_relocation_uses_exact_device_route_and_ends_away(self):
@@ -308,7 +405,10 @@ class MultiPodHomeTests(unittest.TestCase):
         ]
         self.assertEqual(
             assignment_paths,
-            ["devices/pod-cabin?filter=leftUserId"],
+            [
+                "devices/pod-cabin?filter=leftUserId",
+                "devices/pod-cabin?filter=leftUserId",
+            ],
         )
         self.assertEqual(self.current_sets["dylan-user"], "set-cabin")
         self.assertEqual(
@@ -329,6 +429,7 @@ class MultiPodHomeTests(unittest.TestCase):
         result = json.loads(output)
         self.assertTrue(result["success"])
         self.assertEqual(result["state"], "home")
+        self.assertEqual(result["coverage"], "own")
         self.assertTrue(result["changed"])
 
     def test_same_set_stale_assignment_is_repaired_via_current_device(self):
@@ -361,6 +462,29 @@ class MultiPodHomeTests(unittest.TestCase):
             "dylan-user",
         )
         self.assertTrue(json.loads(output)["changed"])
+
+    def test_omitted_unassigned_side_is_treated_as_available(self):
+        assignment_reads = 0
+
+        def omitted_assignment_get(path, token_data=None):
+            nonlocal assignment_reads
+            if path == "devices/pod-cabin?filter=leftUserId":
+                assignment_reads += 1
+                if assignment_reads == 1:
+                    self.events.append(("get", path, None, None))
+                    return {"result": {}}
+            return self.fake_get(path, token_data)
+
+        with self.mocked_api(get=omitted_assignment_get):
+            output = self.run_cli(
+                "--location", "cabin", "home", "dylan"
+            )
+
+        self.assertEqual(
+            self.device_assignments["pod-cabin"]["leftUserId"],
+            "dylan-user",
+        )
+        self.assertTrue(json.loads(output)["success"])
 
     def test_julia_relocation_uses_right_side_without_mutating_dylan(self):
         self.away_states["julia-user"] = True
@@ -442,6 +566,108 @@ class MultiPodHomeTests(unittest.TestCase):
         )
         self.assertIn(
             "cabin left side is assigned to another user",
+            result["message"],
+        )
+
+    def test_reunion_reclaims_static_side_from_verified_solo_resident(self):
+        self.current_sets["julia-user"] = "set-cabin"
+        self.current_devices["julia-user"] = {
+            "id": "pod-cabin",
+            "side": "right",
+        }
+        self.device_assignments["pod-cabin"]["leftUserId"] = "julia-user"
+        self.device_assignments["pod-cabin"]["rightUserId"] = "julia-user"
+
+        with self.mocked_api():
+            output = self.run_cli(
+                "--location", "cabin", "home", "dylan", "own"
+            )
+
+        self.assertEqual(
+            self.device_assignments["pod-cabin"]["leftUserId"],
+            "dylan-user",
+        )
+        self.assertEqual(
+            self.device_assignments["pod-cabin"]["rightUserId"],
+            "julia-user",
+        )
+        self.assertEqual(
+            self.current_devices["julia-user"],
+            {"id": "pod-cabin", "side": "right"},
+        )
+        result = json.loads(output)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["coverage"], "own")
+        self.assertTrue(result["changed"])
+
+    def test_reunion_rejects_unverified_duplicate_owner(self):
+        self.device_assignments["pod-cabin"]["leftUserId"] = "julia-user"
+        self.device_assignments["pod-cabin"]["rightUserId"] = "julia-user"
+
+        with self.mocked_api():
+            result = self.run_cli_error(
+                "--location", "cabin", "home", "dylan", "own"
+            )
+
+        self.assertFalse(any(event[0] == "put" for event in self.events))
+        self.assertIn(
+            "cabin left side is assigned to another user",
+            result["message"],
+        )
+
+    def test_split_resident_claims_both_sides_and_returns_to_static_side(self):
+        self.current_sets["julia-user"] = "set-cabin"
+        self.current_devices["julia-user"] = {
+            "id": "pod-cabin",
+            "side": "right",
+        }
+        self.device_assignments["pod-cabin"]["rightUserId"] = "julia-user"
+        self.device_assignments["pod-crosstown"]["rightUserId"] = "julia-user"
+
+        with self.mocked_api():
+            output = self.run_cli(
+                "--location", "crosstown", "home", "dylan", "both"
+            )
+
+        device_puts = [
+            event
+            for event in self.events
+            if event[0] == "put"
+            and event[1] == "users/dylan-user/current-device"
+        ]
+        self.assertEqual(
+            [event[2]["side"] for event in device_puts],
+            ["right", "left"],
+        )
+        self.assertEqual(
+            self.device_assignments["pod-crosstown"]["leftUserId"],
+            "dylan-user",
+        )
+        self.assertEqual(
+            self.device_assignments["pod-crosstown"]["rightUserId"],
+            "dylan-user",
+        )
+        self.assertEqual(
+            self.current_devices["dylan-user"],
+            {"id": "pod-crosstown", "side": "left"},
+        )
+        self.assertEqual(
+            self.current_devices["julia-user"],
+            {"id": "pod-cabin", "side": "right"},
+        )
+        result = json.loads(output)
+        self.assertEqual(result["coverage"], "both")
+        self.assertTrue(result["changed"])
+
+    def test_both_side_claim_requires_other_resident_at_other_home(self):
+        with self.mocked_api():
+            result = self.run_cli_error(
+                "--location", "crosstown", "home", "dylan", "both"
+            )
+
+        self.assertFalse(any(event[0] == "put" for event in self.events))
+        self.assertIn(
+            "both-side coverage requires the other resident home at the other location",
             result["message"],
         )
 

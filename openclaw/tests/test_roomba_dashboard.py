@@ -156,6 +156,34 @@ class RoombaDashboardTests(unittest.TestCase):
         self.assertNotIn("stderr", encoded)
         self.assertNotIn("offline", encoded.casefold())
 
+    def test_cabin_assistant_quota_failure_is_bounded_and_classified(self) -> None:
+        diagnostic = (
+            "private preamble\nStatusCode.RESOURCE_EXHAUSTED\n"
+            "quota metric embedded-assistant-prod/converse_requests\n"
+            "private trailing detail"
+        )
+        responses = [
+            subprocess.CompletedProcess([], 1, "", diagnostic),
+            subprocess.CompletedProcess([], 1, "", diagnostic),
+        ]
+        with patch.object(self.dashboard.subprocess, "run", side_effect=responses):
+            result = self.dashboard.fetch_cabin_roomba_status()
+
+        encoded = json.dumps(result)
+        self.assertFalse(result["integration"]["ok"])
+        self.assertEqual(
+            result["integration"]["error"], "assistant_quota_exhausted"
+        )
+        self.assertEqual(
+            result["robots"]["floomba"]["error"],
+            "assistant_quota_exhausted",
+        )
+        self.assertEqual(
+            result["robots"]["philly"]["status"], "Status unavailable"
+        )
+        self.assertNotIn("private preamble", encoded)
+        self.assertNotIn("private trailing detail", encoded)
+
     def test_automation_state_requires_verified_presence_and_is_redacted(self) -> None:
         evaluated_at = "2026-08-22T13:55:00Z"
         state = {

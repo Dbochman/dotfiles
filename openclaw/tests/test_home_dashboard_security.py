@@ -158,7 +158,7 @@ class HomeDashboardSecurityTests(unittest.TestCase):
         response.handler._respond(200, {"ok": True})
         self.assertNotIn("access-control-allow-origin", response.header_names)
 
-    def test_nest_midea_and_petlibro_builders_are_exact_and_bounded(self) -> None:
+    def test_device_builders_are_exact_and_bounded(self) -> None:
         commands = self.dashboard.COMMANDS
         self.assertEqual(
             commands["hue_crosstown"]["automation_disable"](
@@ -228,6 +228,18 @@ class HomeDashboardSecurityTests(unittest.TestCase):
                     commands["petlibro"]["feed"]({"portions": portions})[-1],
                     str(portions),
                 )
+        self.assertEqual(
+            commands["eightsleep"]["on"](
+                {"location": "cabin", "side": "julia"}
+            ),
+            ["8sleep", "--location", "cabin", "on", "julia"],
+        )
+        self.assertEqual(
+            commands["eightsleep"]["temp"](
+                {"location": "crosstown", "side": "dylan", "level": "-30"}
+            ),
+            ["8sleep", "--location", "crosstown", "temp", "dylan", "-30"],
+        )
 
     def test_malicious_or_near_match_arguments_never_spawn(self) -> None:
         cases = (
@@ -248,6 +260,10 @@ class HomeDashboardSecurityTests(unittest.TestCase):
             {"device": "midea", "action": "eco", "args": {"alias": "cabin-air-conditioner", "state": True}},
             {"device": "hue_crosstown", "action": "automation_disable", "args": {"name": "Potato"}},
             {"device": "hue_cabin", "action": "automation_enable", "args": {"name": "Potato Nightlight"}},
+            {"device": "eightsleep", "action": "on", "args": {"location": "elsewhere", "side": "dylan"}},
+            {"device": "eightsleep", "action": "off", "args": {"location": "cabin", "side": "left"}},
+            {"device": "eightsleep", "action": "temp", "args": {"location": "cabin", "side": "julia", "level": 101}},
+            {"device": "eightsleep", "action": "temp", "args": {"location": "cabin", "side": "julia", "level": "0; id"}},
         )
         with patch.object(self.dashboard.subprocess, "run") as run:
             for payload in cases:
@@ -271,6 +287,28 @@ class HomeDashboardSecurityTests(unittest.TestCase):
             ["midea-ac", "status", "--json"],
             parse_json=True,
         )
+
+    def test_eightsleep_collector_and_ui_use_two_pod_contract(self) -> None:
+        expected = {"ok": True, "locations": {"crosstown": {}, "cabin": {}}}
+        with patch.object(
+            self.dashboard,
+            "_run_cli",
+            return_value=expected,
+        ) as run:
+            result = self.dashboard.collect_8sleep()
+
+        self.assertEqual(result, expected)
+        run.assert_called_once_with(["8sleep", "overview"], parse_json=True)
+
+        html = self.dashboard.DASHBOARD_HTML
+        self.assertIn('id="eightSleepCrosstownContent"', html)
+        self.assertIn('id="eightSleepCabinContent"', html)
+        self.assertIn('value="crosstown"', html)
+        self.assertIn('value="cabin"', html)
+        self.assertIn("routingState", html)
+        self.assertIn("renderEightSleep(data['8sleep'], 'cabin')", html)
+        self.assertIn("syncEightSleepControls(data['8sleep'], 'cabin')", html)
+        self.assertIn("option.disabled = routing !== 'home'", html)
 
     def test_hue_collector_combines_rooms_and_safe_automation_inventory(self) -> None:
         with patch.object(

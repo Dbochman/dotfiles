@@ -11,7 +11,7 @@ Unified control plane for smart home devices across Crosstown and Cabin. The das
 Cards are grouped into collapsible sections:
 
 1. **Lighting** — Hue Crosstown, Hue Cabin
-2. **Temperature** — Nest, Midea AC, Cielo, Mysa, Eight Sleep
+2. **Temperature** — Nest, Midea AC, Cielo, Mysa, Eight Sleep at both homes
 3. **Security** — August Lock, Ring Doorbell, Nest Cameras (Kitchen @ Cabin; Laundry + Living Room @ Crosstown)
 4. **Pets** — Litter-Robot, Petlibro, Dog Walk
 5. **Misc** — TV, Speakers, Cabin Speakers, Roombas (Crosstown + Cabin)
@@ -38,6 +38,9 @@ Runtime behavior:
 - startup precache of all collectors in parallel
 - 5-minute background refresh for most collectors
 - `speakers` and `cabin_speakers` are excluded from background refresh to avoid Cast chimes on idle devices
+- Cabin Roomba status is projected from the dedicated Roomba dashboard's
+  bounded local API. That service caches Assistant checks for 15 minutes so
+  this dashboard does not duplicate calls or exhaust the daily request quota.
 - command timeout is 30 seconds
 - startup loads env vars from `~/.openclaw/.secrets-cache`
 
@@ -94,13 +97,20 @@ All controls use selectors with predefined room/device values.
   device readback before the dashboard reports success. The dashboard consumes
   that verified result directly instead of opening an immediate second LAN
   session to refresh the card.
+- **Eight Sleep:** separate Crosstown and Cabin Pod cards show connection,
+  water, temperature, thermal state, and authoritative Home/Away routing for
+  Dylan and Julia. Each location's on/off/temperature controls include that
+  exact Pod in the command, select only a person currently Home there, and
+  remain guarded by the CLI's current-user route.
 - **August:** lock/unlock
 - **Ring/Nest Cameras:** take snapshots — Ring (Crosstown + Cabin doorbells), Nest (Kitchen @ Cabin, Laundry + Living Room @ Crosstown). Nest device discovery uses customName as a fallback to room name for cameras whose Google Home room doesn't match the dashboard label (e.g. "laundry camera" lives in the "Garage" room). Adding new Nest devices requires `nest reauth` to re-run Google Device Access OAuth consent.
 - **Litter-Robot:** separate Crosstown and Cabin cards; clean/reset commands carry an exact protected robot alias
 - **Petlibro:** manual feed
 - **TV:** power on/off
 - **Speakers/Cabin Speakers:** volume and mute/stop actions
-- **Roombas (both locations):** start/stop/dock
+- **Roombas (both locations):** start/stop/dock. Cabin status cards use the
+  bounded local Roomba API and show a concise degraded-state explanation
+  rather than provider tracebacks when Assistant is unavailable.
 
 ## Data Sources
 
@@ -110,6 +120,12 @@ All controls use selectors with predefined room/device values.
 - Dog walk state: `~/.openclaw/dog-walk/state.json`
 - Camera snapshots: `~/.openclaw/camera-snaps/*.jpg`
 - Device CLIs: `hue`, `nest`, `midea-ac`, `cielo`, `mysa`, `august`, `crosstown-roomba`, `roomba`, `samsung-tv`, `speaker`, `litter-robot`, `petlibro`, `8sleep`, `ring`
+- Cabin Roomba status: bounded local API at
+  `http://127.0.0.1:8553/api/cabin-roombas`; controls still use the guarded
+  `roomba` CLI.
+- Eight Sleep overview: `8sleep overview` returns a bounded two-Pod view and
+  derives each Home/Away label from exact current-device and away-mode
+  readbacks without changing either person's selected Pod.
 
 ## Files and Logs
 

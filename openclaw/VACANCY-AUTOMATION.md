@@ -113,8 +113,8 @@ Marker files at `~/.openclaw/presence/vacancy-dispatched/` prevent duplicate tri
 
 - `vacancy-dispatched/crosstown` — created after Crosstown vacancy actions run
 - `vacancy-dispatched/cabin` — created after Cabin vacancy actions run
-- `vacancy-dispatched/8sleep-dylan-home` — last verified current location for Dylan
-- `vacancy-dispatched/8sleep-julia-home` — last verified current location for Julia
+- `vacancy-dispatched/8sleep-dylan-home` — last verified location and side coverage for Dylan
+- `vacancy-dispatched/8sleep-julia-home` — last verified location and side coverage for Julia
 
 Actions only fire when `confirmed_vacant` AND no corresponding marker exists.
 General vacancy markers are cleared only after at least one tracked person's
@@ -139,15 +139,19 @@ not change the durable daily decision or turn a completed physical action into
 a retryable failure.
 
 Eight Sleep is reconciled from each person's sticky `people.<name>.location`
-when that location changes. This handles split households without polling the
-cloud on every 15-minute state write. The per-person marker records the last
-verified location only after Eight Sleep confirms the target household set,
-the person's exact device/side assignment, and `away-mode = false`. A failed or
-partial cloud update leaves the old marker in place so the ordinary
-reconciliation path can retry. While the location is unchanged, manual Eight
-Sleep app overrides are preserved; the next positive relocation re-applies
-automation. Invalid or unknown locations preserve the marker and perform no
-device action.
+when either location or required side coverage changes. When Dylan and Julia
+are positively assigned to different houses, each sole occupant receives both
+sides of their local Pod. When they reunite, the system restores Dylan-left and
+Julia-right even for the resident whose location did not change. The per-person
+marker records `<location>:<own|both>` only after Eight Sleep confirms the
+target household set, exact side ownership, `away-mode = false`, and the other
+resident's preserved route. A returning resident may reclaim their normal side
+from a same-Pod duplicate only when the other known resident is still verified
+Home on their own side; unknown or ambiguous assignments fail closed. A failed
+or partial cloud update leaves the old marker in place so the ordinary
+reconciliation path can retry. While both location and coverage are unchanged,
+manual Eight Sleep app overrides are preserved. Invalid or unknown locations
+perform no device action for that person.
 
 The deployed Cabin scanner now validates the protected exact schema-v2
 binding, so Julia's temporary Crosstown pin is released and her Eight Sleep

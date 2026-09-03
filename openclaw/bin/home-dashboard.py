@@ -15,7 +15,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
 
 
 PORT = 8558
@@ -31,8 +33,24 @@ DOG_WALK_STATE_PATH = os.path.expanduser("~/.openclaw/dog-walk/state.json")
 SECRETS_CACHE_PATH = os.path.expanduser("~/.openclaw/.secrets-cache")
 CATT_BIN = os.path.expanduser("~/.local/bin/catt")
 CAMERA_SNAP_DIR = os.path.expanduser("~/.openclaw/camera-snaps")
+ROOMBA_DASHBOARD_CABIN_STATUS_URL = "http://127.0.0.1:8553/api/cabin-roombas"
+LOCAL_DASHBOARD_TIMEOUT_SECONDS = 5
+MAX_LOCAL_STATUS_BYTES = 64 * 1024
 _SPEAKER_IPS = {"bedroom": "192.168.165.146", "living room": "192.168.165.113"}
 _CABIN_SPEAKER_IPS = {"kitchen": "192.168.1.66", "bedroom": "192.168.1.163"}
+_CABIN_ROBOT_LABELS = {"floomba": "Floomba", "philly": "Philly"}
+_CABIN_ROOMBA_PHASE_LABELS = {
+    "charge": "Charging",
+    "hmUsrDock": "Returning",
+    "run": "Cleaning",
+    "stop": "Stopped",
+    "unknown": "Status unavailable",
+}
+_CABIN_ROOMBA_ERRORS = {
+    "assistant_quota_exhausted",
+    "assistant_status_unavailable",
+    "assistant_status_unverified",
+}
 
 
 def _load_secrets():
@@ -237,12 +255,94 @@ def collect_roombas_crosstown():
     return _run_cli(["crosstown-roomba", "status"])
 
 
+def _unavailable_cabin_roomba_status(error="assistant_status_unavailable"):
+    return {
+        "location": "cabin",
+        "telemetry": "assistant_status",
+        "integration": {
+            "ok": False,
+            "label": "Assistant status",
+            "error": error,
+        },
+        "robots": {
+            alias: {
+                "name": label,
+                "phase": "unknown",
+                "status": "Status unavailable",
+                "error": error,
+            }
+            for alias, label in _CABIN_ROBOT_LABELS.items()
+        },
+    }
+
+
+def _project_cabin_roomba_status(payload):
+    """Bound the local Roomba dashboard response before exposing it here."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("robots"), dict):
+        return _unavailable_cabin_roomba_status()
+
+    source_integration = payload.get("integration")
+    if not isinstance(source_integration, dict):
+        source_integration = {}
+    integration_error = source_integration.get("error")
+    if integration_error not in _CABIN_ROOMBA_ERRORS | {"assistant_status_degraded"}:
+        integration_error = "assistant_status_degraded"
+
+    robots = {}
+    for alias, label in _CABIN_ROBOT_LABELS.items():
+        source = payload["robots"].get(alias)
+        if not isinstance(source, dict):
+            robots[alias] = _unavailable_cabin_roomba_status()["robots"][alias]
+            continue
+        phase = source.get("phase")
+        if phase not in _CABIN_ROOMBA_PHASE_LABELS:
+            phase = "unknown"
+        error = source.get("error")
+        if error not in _CABIN_ROOMBA_ERRORS:
+            error = None if phase != "unknown" else "assistant_status_unverified"
+        status = _CABIN_ROOMBA_PHASE_LABELS[phase]
+        if error == "assistant_status_unverified":
+            status = "Status unverified"
+        robots[alias] = {
+            "name": label,
+            "phase": phase,
+            "status": status,
+            "error": error,
+        }
+
+    integration_ok = source_integration.get("ok") is True and all(
+        robot["error"] is None for robot in robots.values()
+    )
+    result = {
+        "location": "cabin",
+        "telemetry": "assistant_status",
+        "integration": {
+            "ok": integration_ok,
+            "label": "Assistant status",
+        },
+        "robots": robots,
+    }
+    if not integration_ok:
+        result["integration"]["error"] = integration_error
+    fetched_at = payload.get("fetchedAt")
+    if isinstance(fetched_at, str) and len(fetched_at) <= 64:
+        result["fetchedAt"] = fetched_at
+    return result
+
+
 def collect_roombas_cabin():
-    results = {}
-    for name in ("floomba", "philly"):
-        r = _run_cli(["roomba", "status", name])
-        results[name] = r.get("raw", r.get("error", "unknown")) if isinstance(r, dict) else str(r)
-    return {"robots": results}
+    try:
+        with urlopen(
+            ROOMBA_DASHBOARD_CABIN_STATUS_URL,
+            timeout=LOCAL_DASHBOARD_TIMEOUT_SECONDS,
+        ) as response:
+            body = response.read(MAX_LOCAL_STATUS_BYTES + 1)
+        if len(body) > MAX_LOCAL_STATUS_BYTES:
+            return _unavailable_cabin_roomba_status()
+        payload = json.loads(body)
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return _unavailable_cabin_roomba_status()
+    return _project_cabin_roomba_status(payload)
 
 
 def collect_tv():
@@ -277,7 +377,7 @@ def collect_petlibro():
 
 
 def collect_8sleep():
-    return _run_cli(["8sleep", "status"])
+    return _run_cli(["8sleep", "overview"], parse_json=True)
 
 
 def collect_ring():
@@ -429,6 +529,8 @@ _MIDEA_AC_ALIASES = {
 _MIDEA_AC_MODES = {"auto", "cool", "dry", "heat", "fan"}
 _MIDEA_AC_FANS = {"auto", "silent", "low", "medium", "high", "full"}
 _LITTER_ROBOT_ALIASES = {"crosstown-litter-robot", "cabin-litter-robot"}
+_EIGHTSLEEP_LOCATIONS = {"crosstown", "cabin"}
+_EIGHTSLEEP_SIDES = {"dylan", "julia"}
 _HUE_AUTOMATIONS = {
     "crosstown": {
         "Bedroom lights After dark",
@@ -554,6 +656,30 @@ def _build_litter_robot_command(command, args):
     return ["litter-robot", command, robot]
 
 
+def _build_eightsleep_command(command, args):
+    required = ("location", "side", "level") if command == "temp" else ("location", "side")
+    _require_args(args, required=required)
+    location = _require_choice(
+        args["location"], _EIGHTSLEEP_LOCATIONS, "Eight Sleep location"
+    )
+    side = _require_choice(args["side"], _EIGHTSLEEP_SIDES, "Eight Sleep side")
+    result = ["8sleep", "--location", location, command, side]
+    if command == "temp":
+        level = args["level"]
+        if isinstance(level, bool):
+            raise CommandValidationError("Eight Sleep level must be an integer")
+        try:
+            normalized = int(level)
+        except (TypeError, ValueError):
+            raise CommandValidationError("Eight Sleep level must be an integer") from None
+        if str(level).strip() != str(normalized) or not -100 <= normalized <= 100:
+            raise CommandValidationError(
+                "Eight Sleep level must be between -100 and 100"
+            )
+        result.append(str(normalized))
+    return result
+
+
 COMMANDS = {
     "hue_crosstown": {
         "on": lambda a: _build_hue_command("--crosstown", "on", a),
@@ -639,9 +765,9 @@ COMMANDS = {
         "feed": _build_petlibro_feed_command,
     },
     "eightsleep": {
-        "temp": lambda a: ["8sleep", "temp", a["side"], str(a["level"])],
-        "off": lambda a: ["8sleep", "off", a["side"]],
-        "on": lambda a: ["8sleep", "on", a["side"]],
+        "temp": lambda a: _build_eightsleep_command("temp", a),
+        "off": lambda a: _build_eightsleep_command("off", a),
+        "on": lambda a: _build_eightsleep_command("on", a),
     },
     "nest_camera": {
         "snap": _build_nest_camera_command,
@@ -1224,9 +1350,11 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
           </div>
           <span class="location-pill">Crosstown</span>
         </div>
-        <div id="eightSleepContent" class="content"></div>
+        <div id="eightSleepCrosstownContent" class="content"></div>
         <div class="controls">
-          <form id="eightsleep-form" class="controls-grid">
+          <div class="muted">Controls are available only for a person marked Home on this pod.</div>
+          <form id="eightsleep-crosstown-form" class="controls-grid">
+            <input name="location" type="hidden" value="crosstown">
             <select name="side">
               <option value="dylan">Dylan</option>
               <option value="julia">Julia</option>
@@ -1234,9 +1362,36 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple
             <input name="level" type="number" min="-100" max="100" step="10" placeholder="Level (-100 to +100)">
           </form>
           <div class="command-row">
-            <button type="button" data-command data-device="eightsleep" data-action="on" data-form="eightsleep-form" data-fields="side">On</button>
-            <button type="button" data-command data-device="eightsleep" data-action="off" data-form="eightsleep-form" data-fields="side">Off</button>
-            <button type="button" data-command data-device="eightsleep" data-action="temp" data-form="eightsleep-form" data-fields="side,level">Set Temp</button>
+            <button type="button" data-command data-device="eightsleep" data-action="on" data-form="eightsleep-crosstown-form" data-fields="location,side">On</button>
+            <button type="button" data-command data-device="eightsleep" data-action="off" data-form="eightsleep-crosstown-form" data-fields="location,side">Off</button>
+            <button type="button" data-command data-device="eightsleep" data-action="temp" data-form="eightsleep-crosstown-form" data-fields="location,side,level">Set Temp</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" data-location="cabin">
+        <div class="card-header">
+          <div>
+            <div class="eyebrow">Sleep</div>
+            <h2>Eight Sleep</h2>
+          </div>
+          <span class="location-pill">Cabin</span>
+        </div>
+        <div id="eightSleepCabinContent" class="content"></div>
+        <div class="controls">
+          <div class="muted">Controls are available only for a person marked Home on this pod.</div>
+          <form id="eightsleep-cabin-form" class="controls-grid">
+            <input name="location" type="hidden" value="cabin">
+            <select name="side">
+              <option value="dylan">Dylan</option>
+              <option value="julia">Julia</option>
+            </select>
+            <input name="level" type="number" min="-100" max="100" step="10" placeholder="Level (-100 to +100)">
+          </form>
+          <div class="command-row">
+            <button type="button" data-command data-device="eightsleep" data-action="on" data-form="eightsleep-cabin-form" data-fields="location,side">On</button>
+            <button type="button" data-command data-device="eightsleep" data-action="off" data-form="eightsleep-cabin-form" data-fields="location,side">Off</button>
+            <button type="button" data-command data-device="eightsleep" data-action="temp" data-form="eightsleep-cabin-form" data-fields="location,side,level">Set Temp</button>
           </div>
         </div>
       </article>
@@ -1932,53 +2087,54 @@ function renderLitterRobot(result, site) {
   </div></div>`;
 }
 
-function renderEightSleep(result) {
+function renderEightSleep(result, location) {
   if (!result) return '<div class="muted">No Eight Sleep data</div>';
   if (isPending(result)) return renderPending();
   if (result.error) return renderError(result);
-  const raw = result.raw || '';
-  if (!raw) return '<div class="muted">No data</div>';
-  // Parse person blocks: "Name (side):\n  Key: Value"
-  const blocks = raw.split(/\n(?=\S)/).filter(b => b.trim());
-  const cards = [];
-  let podStatus = '';
-  blocks.forEach(block => {
-    const lines = block.split('\n');
-    // Pod header: "Eight Sleep Pod (king Pod3)"
-    if (lines[0].match(/^Eight Sleep Pod/)) {
-      const props = {};
-      lines.slice(1).forEach(l => {
-        const kv = l.match(/^\s+(.+?):\s+(.+)$/);
-        if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
-      });
-      podStatus = props['water'] || '';
-      return;
-    }
-    // Smart schedule line — skip
-    if (lines[0].match(/Smart Schedule/i)) return;
-    // Person block: "Dylan (left):"
-    const personMatch = lines[0].match(/^(.+?)\s*\((\w+)\):/);
-    if (!personMatch) return;
-    const [, name, side] = personMatch;
-    const props = {};
-    lines.slice(1).forEach(l => {
-      const kv = l.match(/^\s+(.+?):\s+(.+)$/);
-      if (kv) props[kv[1].trim().toLowerCase()] = kv[2].trim();
-    });
-    const level = props['level'] || '?';
-    const status = props['status'] || 'Unknown';
-    const isActive = status.toLowerCase() !== 'idle' && status.toLowerCase() !== 'off';
-    const dot = isActive ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
-    // Extract temp from level like "-39 (~72F)"
-    const tempMatch = level.match(/\(~?(\d+)F\)/);
-    const temp = tempMatch ? tempMatch[1] + '°F' : level;
-    cards.push(`<div class="room-chip">
-      <div class="room-name">${escapeHtml(name)} (${escapeHtml(side)})</div>
-      <div class="room-temp">${dot} ${escapeHtml(temp)}</div>
-      <div class="room-meta">${escapeHtml(status)}</div>
-    </div>`);
+  const pod = result.locations && result.locations[location];
+  if (!pod || !pod.sides) return '<div class="muted">No data for this pod</div>';
+  const connection = pod.connected ? 'Online' : 'Offline';
+  const water = pod.water === 'ok' ? 'Water OK' : pod.water === 'low' ? 'Water low' : 'Water unknown';
+  const summary = `<div class="muted">${escapeHtml(pod.model || 'Eight Sleep Pod')} · ${connection} · ${water}</div>`;
+  const cards = ['dylan', 'julia'].map(name => {
+    const side = pod.sides[name];
+    if (!side) return '';
+    const routing = side.routingState || 'unknown';
+    const routingLabel = routing === 'home' ? 'Home' : routing === 'away' ? 'Away' : 'Unknown';
+    const dotColor = routing === 'home' ? '#4ade80' : 'var(--text-muted)';
+    const dot = `<span style="color:${dotColor}">${routing === 'home' ? '●' : '○'}</span>`;
+    const temperature = Number.isFinite(side.temperatureF) ? `${side.temperatureF}°F` : 'Temperature unavailable';
+    const thermal = side.thermalState ? side.thermalState.charAt(0).toUpperCase() + side.thermalState.slice(1) : 'Unknown';
+    return `<div class="room-chip">
+      <div class="room-name">${escapeHtml(name.charAt(0).toUpperCase() + name.slice(1))} (${escapeHtml(side.position || '?')})</div>
+      <div class="room-temp">${dot} ${routingLabel}</div>
+      <div class="room-meta">${escapeHtml(temperature)} · ${escapeHtml(thermal)}</div>
+    </div>`;
+  }).join('');
+  return `${summary}<div class="room-grid">${cards}</div>`;
+}
+
+function syncEightSleepControls(result, location) {
+  const form = document.getElementById(`eightsleep-${location}-form`);
+  if (!form) return;
+  const pod = result && result.locations && result.locations[location];
+  const select = form.querySelector('select[name="side"]');
+  const homeOptions = [];
+  for (const option of select.options) {
+    const side = pod && pod.sides && pod.sides[option.value];
+    const routing = side && side.routingState;
+    const name = option.value.charAt(0).toUpperCase() + option.value.slice(1);
+    option.textContent = routing === 'away' ? `${name} · Away` : routing === 'home' ? `${name} · Home` : name;
+    option.disabled = routing !== 'home';
+    if (!option.disabled) homeOptions.push(option);
+  }
+  if (select.selectedOptions.length === 0 || select.selectedOptions[0].disabled) {
+    select.value = homeOptions.length ? homeOptions[0].value : '';
+  }
+  const disabled = homeOptions.length === 0;
+  form.closest('.card').querySelectorAll('button[data-device="eightsleep"]').forEach(button => {
+    button.disabled = disabled;
   });
-  return `<div class="room-grid">${cards.join('')}</div>`;
 }
 
 function renderRing(result) {
@@ -2149,19 +2305,27 @@ function renderRoombasCabin(result) {
   if (result.error) return renderError(result);
   const robots = result.robots;
   if (!robots || typeof robots !== 'object') return renderRawResult(result);
-  const cards = Object.entries(robots).map(([name, raw]) => {
-    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
-    // Extract status from "Response: Floomba isn't running." style
+  const cards = Object.entries(robots).map(([name, robot]) => {
+    const structured = robot && typeof robot === 'object';
+    const text = structured ? '' : String(robot || '');
     const respMatch = text.match(/Response:\s*(.+)/i);
-    const status = respMatch ? respMatch[1].trim() : text.trim();
-    const isActive = status.toLowerCase().includes('running') && !status.toLowerCase().includes("isn't");
+    const status = structured ? (robot.status || 'Status unavailable') : (respMatch ? respMatch[1].trim() : 'Status unavailable');
+    const phase = structured ? robot.phase : '';
+    const isActive = phase === 'run' || (!structured && status.toLowerCase().includes('running') && !status.toLowerCase().includes("isn't"));
     const dot = isActive ? '<span style="color:#4ade80">●</span>' : '<span style="color:var(--text-muted)">○</span>';
     return `<div class="room-chip">
       <div class="room-name">${escapeHtml(name.charAt(0).toUpperCase() + name.slice(1))}</div>
       <div class="room-temp">${dot} ${escapeHtml(status)}</div>
     </div>`;
   }).join('');
-  return `<div class="room-grid">${cards}</div>`;
+  const integrationError = result.integration && result.integration.error;
+  let note = '';
+  if (integrationError === 'assistant_quota_exhausted') {
+    note = '<div class="muted">Google Assistant reached its daily request limit. Cabin status and controls may be unavailable until it resets.</div>';
+  } else if (result.integration && result.integration.ok === false) {
+    note = '<div class="muted">Cabin status could not be verified through Google Assistant. No physical Roomba state is being inferred.</div>';
+  }
+  return `<div class="room-grid">${cards}</div>${note}`;
 }
 
 function renderNest(result) {
@@ -2214,7 +2378,10 @@ function renderDashboard() {
   setContent('litterRobotCrosstownContent', renderLitterRobot(data.litter_robot, 'crosstown'));
   setContent('litterRobotCabinContent', renderLitterRobot(data.litter_robot, 'cabin'));
   setContent('petlibroContent', renderPetlibro(data.petlibro));
-  setContent('eightSleepContent', renderEightSleep(data['8sleep']));
+  setContent('eightSleepCrosstownContent', renderEightSleep(data['8sleep'], 'crosstown'));
+  setContent('eightSleepCabinContent', renderEightSleep(data['8sleep'], 'cabin'));
+  syncEightSleepControls(data['8sleep'], 'crosstown');
+  syncEightSleepControls(data['8sleep'], 'cabin');
   setContent('ringContent', renderRing(data.ring));
   setContent('dogWalkContent', renderDogWalk(data.dog_walk));
   document.getElementById('lastUpdated').textContent = formatTimestamp(data.meta && data.meta.timestamp);

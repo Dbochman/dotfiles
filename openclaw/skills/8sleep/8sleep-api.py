@@ -3,11 +3,12 @@
 
 Usage:
     8sleep-api.py [--location <name>] status                  Current temperature, power for both sides
+    8sleep-api.py overview                                    Safe two-Pod dashboard status and routing
     8sleep-api.py [--location <name>] temp <side> <level>     Set temperature (-100 to +100) for dylan|julia
     8sleep-api.py [--location <name>] off <side>              Turn off side (stop thermal unit)
     8sleep-api.py [--location <name>] on <side>               Turn on side (resume smart schedule)
     8sleep-api.py [--location <name>] away <side> start|end   Start/end away mode for a side
-    8sleep-api.py [--location <name>] home <side>             Make this Pod current and end away mode
+    8sleep-api.py [--location <name>] home <side> [own|both]  Make this Pod current and end away mode
     8sleep-api.py [--location <name>] device                  Device info (model, firmware, water, connectivity)
     8sleep-api.py [--location <name>] sleep <side> [date]     Sleep data for dylan|julia (default: last night)
     8sleep-api.py raw <path>                                  Raw API GET (e.g., "users/me")
@@ -406,8 +407,8 @@ def current_device_matches(current, device_id, side):
     return current["id"] == device_id and current["side"] == side
 
 
-def target_side_available(user, location, token_data):
-    """Fail before mutation if another user owns the requested target side."""
+def location_device_pair(location):
+    """Return distinct target/opposite Pod IDs for a configured location."""
     target_device = LOCATIONS.get(location)
     other_location = "cabin" if location == "crosstown" else "crosstown"
     other_device = LOCATIONS.get(other_location)
@@ -415,52 +416,143 @@ def target_side_available(user, location, token_data):
         raise APICommandError(
             "both distinct Eight Sleep location device IDs are required for home"
         )
-    field = f"{user['side']}UserId"
+    return target_device, other_device
+
+
+def other_known_user(user):
+    """Return the one configured resident other than ``user``."""
+    matches = [
+        candidate
+        for candidate in USERS.values()
+        if candidate["id"] != user["id"]
+    ]
+    if len(matches) != 1 or matches[0]["side"] == user["side"]:
+        raise APICommandError(
+            "two distinct Eight Sleep users and sides are required for home"
+        )
+    return matches[0]
+
+
+def read_side_assignment(device_id, side, token_data):
+    """Read one device-side owner with an explicit filtered request."""
+    field = f"{side}UserId"
     payload = require_api_success(
-        api_get(f"devices/{target_device}?filter={field}", token_data),
-        f"checking {location} target side",
+        api_get(f"devices/{device_id}?filter={field}", token_data),
+        f"checking {side} side assignment",
     )
     target = payload.get("result")
     if not isinstance(target, dict):
         raise APICommandError("target side assignment response was malformed")
-    assigned = target.get(field)
+    return target.get(field)
+
+
+def require_resident_home(user, device_id, token_data, context):
+    """Require one resident's exact current side and non-away state."""
+    current = get_current_device(user["id"], token_data)
+    away = require_api_success(
+        api_get_app(f"users/{user['id']}/away-mode", token_data),
+        context,
+    )
+    if (
+        not current_device_matches(current, device_id, user["side"])
+        or away.get("isAway") is not False
+    ):
+        raise APICommandError(context)
+
+
+def target_side_available(user, location, token_data):
+    """Validate one normal-side claim and identify a safe reunion reclaim."""
+    target_device, _ = location_device_pair(location)
+    assigned = read_side_assignment(target_device, user["side"], token_data)
+    preserve_user = None
     if assigned and assigned != user["id"]:
-        raise APICommandError(
-            f"{location} {user['side']} side is assigned to another user"
+        other_user = other_known_user(user)
+        other_assignment = read_side_assignment(
+            target_device, other_user["side"], token_data
         )
-    return assigned == user["id"]
+        conflict = f"{location} {user['side']} side is assigned to another user"
+        if assigned != other_user["id"] or other_assignment != other_user["id"]:
+            raise APICommandError(conflict)
+        try:
+            require_resident_home(
+                other_user,
+                target_device,
+                token_data,
+                "the other resident is not verified home on their own target side",
+            )
+        except APICommandError:
+            raise APICommandError(conflict) from None
+        preserve_user = other_user
+    return {
+        "current": assigned == user["id"],
+        "preserve_user": preserve_user,
+    }
 
 
-def select_current_device(user, location, token_data):
+def both_sides_available(user, location, token_data):
+    """Validate that a sole resident may safely claim both target Pod sides."""
+    target_device, other_device = location_device_pair(location)
+    other_user = other_known_user(user)
+    try:
+        require_resident_home(
+            other_user,
+            other_device,
+            token_data,
+            "both-side coverage requires the other resident home at the other location",
+        )
+    except APICommandError:
+        raise APICommandError(
+            "both-side coverage requires the other resident home at the other location"
+        ) from None
+
+    assignments = {
+        side: read_side_assignment(target_device, side, token_data)
+        for side in ("left", "right")
+    }
+    known_ids = {user["id"], other_user["id"], None}
+    if any(assigned not in known_ids for assigned in assignments.values()):
+        raise APICommandError(
+            f"{location} Pod has a side assigned to an unknown user"
+        )
+    return {
+        "current": all(
+            assigned == user["id"] for assigned in assignments.values()
+        ),
+        "preserve_user": other_user,
+    }
+
+
+def select_current_device(user, location, token_data, side=None):
     """Explicitly assign one user to one device side and verify readback."""
     target_device = LOCATIONS.get(location)
     if not target_device:
         raise APICommandError(
             f"EIGHTSLEEP_{location.upper()}_DEVICE_ID is required for home"
         )
+    target_side = side or user["side"]
     require_api_success(
         api_put(
             f"users/{user['id']}/current-device",
-            {"id": target_device, "side": user["side"]},
+            {"id": target_device, "side": target_side},
             token_data,
         ),
-        f"assigning {location} {user['side']} side",
+        f"assigning {location} {target_side} side",
     )
     current = get_current_device(user["id"], token_data)
-    if not current_device_matches(current, target_device, user["side"]):
+    if not current_device_matches(current, target_device, target_side):
         raise APICommandError(
             "Eight Sleep did not assign the requested Pod side"
         )
 
 
 def select_current_device_with_retry(
-    user, location, token_data, attempts=3
+    user, location, token_data, side=None, attempts=3
 ):
     """Assign a user/device side with a short retry window."""
     last_error = None
     for attempt in range(1, attempts + 1):
         try:
-            select_current_device(user, location, token_data)
+            select_current_device(user, location, token_data, side=side)
             return
         except APICommandError as exc:
             last_error = exc
@@ -585,6 +677,112 @@ def cmd_status(location=DEFAULT_LOCATION):
         },
     }
     print(json.dumps(output, indent=2))
+
+
+def _dashboard_side_status(device, prefix):
+    level = device.get(f"{prefix}HeatingLevel")
+    target = device.get(f"{prefix}TargetHeatingLevel")
+    active = device.get(f"{prefix}NowHeating") is True
+    if active:
+        thermal_state = "heating" if isinstance(level, int) and level > 0 else "cooling"
+    else:
+        thermal_state = "idle"
+    temperature = None
+    if isinstance(level, int) and not isinstance(level, bool):
+        temperature = round(55 + (level + 100) * (111 - 55) / 200)
+    return {
+        "currentLevel": level if isinstance(level, int) and not isinstance(level, bool) else None,
+        "targetLevel": target if isinstance(target, int) and not isinstance(target, bool) else None,
+        "temperatureF": temperature,
+        "thermalState": thermal_state,
+    }
+
+
+def cmd_overview():
+    """Return a bounded two-Pod view with authoritative per-user routing."""
+    token_data = get_token()
+    configured_devices = {
+        location: device_id
+        for location, device_id in LOCATIONS.items()
+        if isinstance(device_id, str) and device_id
+    }
+    if set(configured_devices) != set(LOCATIONS):
+        command_error(
+            APICommandError(
+                "both Eight Sleep location device IDs are required for overview"
+            )
+        )
+
+    try:
+        devices = {}
+        for location, device_id in configured_devices.items():
+            response = require_api_success(
+                api_get(f"devices/{device_id}", token_data),
+                f"loading {location} Pod status",
+            )
+            device = response.get("result", response)
+            if not isinstance(device, dict):
+                raise APICommandError(f"{location} Pod status was malformed")
+            devices[location] = device
+
+        routing = {}
+        device_locations = {
+            device_id: location
+            for location, device_id in configured_devices.items()
+        }
+        for name, user in USERS.items():
+            current = get_current_device(user["id"], token_data)
+            away = require_api_success(
+                api_get_app(f"users/{user['id']}/away-mode", token_data),
+                f"reading {name} away mode",
+            )
+            is_away = away.get("isAway")
+            if not isinstance(is_away, bool):
+                raise APICommandError(f"{name} away-mode response was malformed")
+            routing[name] = {
+                "currentLocation": device_locations.get(current["id"]),
+                "isAway": is_away,
+            }
+    except APICommandError as exc:
+        command_error(exc)
+
+    locations = {}
+    for location, device in devices.items():
+        sensor = device.get("sensorInfo")
+        if not isinstance(sensor, dict):
+            sensor = {}
+        model_parts = [sensor.get("skuName"), sensor.get("model")]
+        model = " ".join(
+            part.strip() for part in model_parts if isinstance(part, str) and part.strip()
+        ) or "Eight Sleep Pod"
+        sides = {}
+        for name, user in USERS.items():
+            current_location = routing[name]["currentLocation"]
+            if current_location == location:
+                state = "away" if routing[name]["isAway"] else "home"
+            elif current_location in configured_devices:
+                state = "away"
+            else:
+                state = "unknown"
+            sides[name] = {
+                "position": user["side"],
+                "routingState": state,
+                **_dashboard_side_status(device, user["side"]),
+            }
+        locations[location] = {
+            "model": model,
+            "connected": sensor.get("connected") is True,
+            "water": (
+                "ok"
+                if device.get("hasWater") is True
+                else "low"
+                if device.get("hasWater") is False
+                else "unknown"
+            ),
+            "sides": sides,
+        }
+
+    print(json.dumps({"ok": True, "locations": locations}))
 
 
 def cmd_temp(side_name, level, location=DEFAULT_LOCATION):
@@ -773,12 +971,61 @@ def verify_home_routing(user, location, target_set, token_data, attempts=5):
     )
 
 
-def cmd_home(side_name, location=DEFAULT_LOCATION):
+def verify_target_coverage(
+    user, location, coverage, token_data, preserve_user=None, attempts=5
+):
+    """Verify target-side ownership and any resident route we must preserve."""
+    target_device, other_device = location_device_pair(location)
+    required_sides = (
+        ("left", "right") if coverage == "both" else (user["side"],)
+    )
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            if any(
+                read_side_assignment(target_device, side, token_data) != user["id"]
+                for side in required_sides
+            ):
+                raise APICommandError(
+                    f"Eight Sleep did not retain {coverage}-side coverage at {location}"
+                )
+            if preserve_user is not None:
+                preserve_device = (
+                    other_device if coverage == "both" else target_device
+                )
+                if coverage == "own" and read_side_assignment(
+                    target_device, preserve_user["side"], token_data
+                ) != preserve_user["id"]:
+                    raise APICommandError(
+                        "the other resident's own Pod side was not preserved"
+                    )
+                require_resident_home(
+                    preserve_user,
+                    preserve_device,
+                    token_data,
+                    "the other resident's home routing was not preserved",
+                )
+            return
+        except APICommandError as exc:
+            last_error = exc
+        if attempt < attempts:
+            time.sleep(0.5 * attempt)
+    raise last_error
+
+
+def cmd_home(side_name, location=DEFAULT_LOCATION, coverage="own"):
     """Make one Pod current for a user and ensure that side is not away."""
     user = resolve_side(side_name)
     if not user:
         print(json.dumps({"error": "invalid_side",
                           "message": f"Unknown side: {side_name}. Use 'dylan' or 'julia'"}))
+        sys.exit(1)
+    coverage = coverage.lower().strip()
+    if coverage not in {"own", "both"}:
+        print(json.dumps({
+            "error": "invalid_coverage",
+            "message": "Home coverage must be 'own' or 'both'",
+        }))
         sys.exit(1)
 
     from datetime import datetime, timezone
@@ -789,9 +1036,12 @@ def cmd_home(side_name, location=DEFAULT_LOCATION):
         with acquire_routing_lock():
             target_set = resolve_location_set(user["id"], location, token_data)
             target_device = LOCATIONS.get(location)
-            target_assignment_current = target_side_available(
-                user, location, token_data
+            assignment = (
+                both_sides_available(user, location, token_data)
+                if coverage == "both"
+                else target_side_available(user, location, token_data)
             )
+            target_assignment_current = assignment["current"]
             current_set = get_current_set(
                 user["id"], token_data, allow_missing=True
             )
@@ -802,16 +1052,20 @@ def cmd_home(side_name, location=DEFAULT_LOCATION):
                 select_current_set_with_retry(user["id"], target_set, token_data)
                 changed = True
 
-            if (
-                set_changed
-                or not current_device_matches(
-                    current_device, target_device, user["side"]
-                )
-                or not target_assignment_current
-            ):
+            current_route_matches = current_device_matches(
+                current_device, target_device, user["side"]
+            )
+            if coverage == "both" and not target_assignment_current:
+                other_side = "right" if user["side"] == "left" else "left"
                 select_current_device_with_retry(
-                    user, location, token_data
+                    user, location, token_data, side=other_side
                 )
+                select_current_device_with_retry(
+                    user, location, token_data, side=user["side"]
+                )
+                changed = True
+            elif set_changed or not current_route_matches or not target_assignment_current:
+                select_current_device_with_retry(user, location, token_data)
                 changed = True
 
             status = require_api_success(
@@ -842,6 +1096,13 @@ def cmd_home(side_name, location=DEFAULT_LOCATION):
             verify_home_routing(
                 user, location, target_set, token_data
             )
+            verify_target_coverage(
+                user,
+                location,
+                coverage,
+                token_data,
+                preserve_user=assignment["preserve_user"],
+            )
     except APICommandError as exc:
         command_error(exc)
 
@@ -850,6 +1111,7 @@ def cmd_home(side_name, location=DEFAULT_LOCATION):
         "location": location,
         "side": side_name,
         "state": "home",
+        "coverage": coverage,
         "changed": changed,
         "response": result,
     }))
@@ -937,6 +1199,14 @@ def main():
     cmd = rest[0]
     if cmd == "status":
         cmd_status(location)
+    elif cmd == "overview":
+        if location_explicit:
+            print(json.dumps({
+                "error": "unexpected_location",
+                "message": "overview always reports both locations",
+            }))
+            sys.exit(1)
+        cmd_overview()
     elif cmd == "temp":
         if len(rest) < 3:
             print(json.dumps({"error": "missing_arg",
@@ -964,13 +1234,13 @@ def main():
     elif cmd == "home":
         if len(rest) < 2:
             print(json.dumps({"error": "missing_arg",
-                              "message": "Usage: 8sleep-api.py home <dylan|julia>"}))
+                              "message": "Usage: 8sleep-api.py home <dylan|julia> [own|both]"}))
             sys.exit(1)
         if not location_explicit:
             print(json.dumps({"error": "missing_location",
                               "message": "home requires --location crosstown|cabin"}))
             sys.exit(1)
-        cmd_home(rest[1], location)
+        cmd_home(rest[1], location, rest[2] if len(rest) > 2 else "own")
     elif cmd == "device":
         cmd_device(location)
     elif cmd == "sleep":

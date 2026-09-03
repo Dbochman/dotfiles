@@ -482,14 +482,17 @@ elif [[ "$cabin_occupancy" == "occupied" ]] && \
 fi
 
 # Eight Sleep's user-scoped API models exactly one current Pod per person; the
-# other Pod becomes away. Reconcile each sticky presence location independently
-# when sticky location changes so split households work while manual app
-# overrides remain untouched until the next positive relocation.
+# other Pod becomes away. Reconcile each sticky presence location independently.
+# When the residents are split between houses, each sole occupant owns both Pod
+# sides at their location. Reuniting restores Dylan-left and Julia-right.
 reconcile_eightsleep_home() {
-  local person="$1" side="$2" location="$3"
+  local person="$1" side="$2" location="$3" coverage="$4"
   local marker="$MARKER_DIR/8sleep-$side-home"
   local stage_file="$marker.$$"
   local previous="unknown"
+  local desired="$location:$coverage"
+  local previous_location
+  local -a home_args
 
   case "$location" in
     crosstown|cabin) ;;
@@ -500,18 +503,24 @@ reconcile_eightsleep_home() {
   esac
 
   [[ -f "$marker" ]] && previous=$(cat "$marker" 2>/dev/null || echo "unknown")
-  [[ "$previous" == "$location" ]] && return 0
+  [[ "$previous" == "$desired" ]] && return 0
+  previous_location="${previous%%:*}"
 
-  if 8sleep --location "$location" home "$side" >> "$LOG_FILE" 2>&1; then
-    printf '%s\n' "$location" > "$stage_file"
+  home_args=(--location "$location" home "$side")
+  if [[ "$coverage" == "both" ]]; then
+    home_args+=(both)
+  fi
+
+  if 8sleep "${home_args[@]}" >> "$LOG_FILE" 2>&1; then
+    printf '%s\n' "$desired" > "$stage_file"
     mv -f "$stage_file" "$marker"
     rm -f \
       "$MARKER_DIR/crosstown-8sleep-$side" \
       "$MARKER_DIR/cabin-8sleep-$side"
-    if [[ "$previous" == "$location" ]]; then
-      log "  Eight Sleep $side: $location home state verified"
+    if [[ "$previous_location" == "$location" ]]; then
+      log "  Eight Sleep $side: $location $coverage-side coverage verified"
     else
-      log "  Eight Sleep $side: home moved ${previous}->${location}; other Pod away"
+      log "  Eight Sleep $side: home moved ${previous_location}->${location}; $coverage-side coverage verified"
     fi
   else
     rm -f "$stage_file"
@@ -519,11 +528,35 @@ reconcile_eightsleep_home() {
   fi
 }
 
-reconcile_eightsleep_home "Dylan" dylan "$dylan_location"
-
 julia_eightsleep_location="$julia_location"
+julia_eightsleep_pinned=0
 if [[ "$julia_location" == "cabin" ]] && ! cabin_presence_enrollment_active; then
   julia_eightsleep_location="crosstown"
+  julia_eightsleep_pinned=1
   log "  WARN: Pinning Eight Sleep julia to crosstown until strict Cabin presence enrollment validates"
 fi
-reconcile_eightsleep_home "Julia" julia "$julia_eightsleep_location"
+
+dylan_eightsleep_coverage="own"
+julia_eightsleep_coverage="own"
+if [[ "$julia_eightsleep_pinned" -eq 0 ]] && \
+    [[ "$dylan_location" =~ ^(crosstown|cabin)$ ]] && \
+    [[ "$julia_eightsleep_location" =~ ^(crosstown|cabin)$ ]] && \
+    [[ "$dylan_location" != "$julia_eightsleep_location" ]]; then
+  dylan_eightsleep_coverage="both"
+  julia_eightsleep_coverage="both"
+fi
+
+reconcile_eightsleep_home \
+  "Dylan" dylan "$dylan_location" "$dylan_eightsleep_coverage"
+reconcile_eightsleep_home \
+  "Julia" julia "$julia_eightsleep_location" "$julia_eightsleep_coverage"
+
+# A split transition can be observed before the resident who moved has been
+# routed to the other Pod. One bounded second pass lets the stationary
+# resident's both-side claim succeed after the mover establishes that proof.
+if [[ "$dylan_eightsleep_coverage" == "both" ]]; then
+  reconcile_eightsleep_home \
+    "Dylan" dylan "$dylan_location" "$dylan_eightsleep_coverage"
+  reconcile_eightsleep_home \
+    "Julia" julia "$julia_eightsleep_location" "$julia_eightsleep_coverage"
+fi

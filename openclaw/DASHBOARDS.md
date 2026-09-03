@@ -9,7 +9,7 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 | 8550 | [Nest Climate](#nest-climate-dashboard) | http://dylans-mac-mini:8550 | 5 min (UI/Airthings) · 30 min (HVAC) |
 | 8551 | [OpenClaw Usage](#openclaw-usage-dashboard) | http://dylans-mac-mini:8551 | 5 min (UI) · 15 min (snapshots) |
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
-| 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · event-driven (JSONL) |
+| 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · 15 min (Cabin Assistant) · event-driven (JSONL) |
 | 8554 | [Cat Care](#cat-care-dashboard) | http://dylans-mac-mini:8554 | 60s cache · Whisker/Petlibro/event bus on demand |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily unified finance refresh at 06:15 + weekly scrapes · API on demand |
@@ -182,7 +182,7 @@ Two-home Roomba status and automation view with explicit telemetry provenance.
 | Source | Frequency | Data |
 |--------|-----------|------|
 | Crosstown guarded Roomba CLI | 5 min cache | Live local battery, phase, bin, and tank through authenticated rest980 on the MBP |
-| Cabin guarded Roomba CLI | 5 min cache | Read-only Google Assistant running/stopped response; no physical command |
+| Cabin guarded Roomba CLI | 15 min cache | Read-only Google Assistant running/stopped response; no physical command. The longer cache keeps routine status traffic below the daily request quota. |
 | Protected canonical presence | On demand | Hash-verified, freshness-bounded occupancy summary without people or raw evidence |
 | Crosstown vacancy decisions | On demand | Latest evaluation and owner-only per-day controller outcomes |
 | Dog Walk History JSONL | On demand | Roomba start/dock events per walk |
@@ -358,7 +358,7 @@ Unified control plane for smart home devices across both locations. Eighteen sta
 Cards are grouped into collapsible sections (all open by default, click header to collapse):
 
 1. **Lighting** — Hue Crosstown, Hue Cabin
-2. **Temperature** — Nest, Midea AC, Cielo, Mysa, Eight Sleep
+2. **Temperature** — Nest, Midea AC, Cielo, Mysa, Eight Sleep at both homes
 3. **Security** — August Lock, Ring Doorbell, Nest Camera
 4. **Pets** — Litter-Robot, Petlibro, Dog Walk
 5. **Misc** — TV, Speakers, Cabin Speakers, Roombas (Crosstown + Cabin)
@@ -372,7 +372,11 @@ Command feedback (Running/Success/Error) appears inline below the section header
 - **Midea AC** — per-unit temperature, setpoint, power, mode, fan, eco, and live wattage with exact-device on/off, temp, mode, fan, and eco controls (Cabin: 2 units)
 - **Cielo AC** — per-unit temp, mode, fan speed with on/off, temp, and mode controls (Crosstown: 4 units)
 - **Mysa Heaters** — per-heater temp, setpoint, humidity, duty cycle (read-only; Crosstown: 3 units)
-- **Eight Sleep** — chip cards per side (bed temp °F, active/idle status) with on/off/set temp
+- **Eight Sleep** — separate Crosstown and Cabin Pod cards with connection,
+  water, per-side temperature and thermal state, and authoritative Home/Away
+  routing for Dylan and Julia. On/off/set-temperature controls carry an exact
+  location, disable Away users in the selector, and fail closed when that Pod
+  is not current for the selected person.
 - **August Lock** — lock state, door state, battery with lock/unlock controls
 - **Ring Doorbell** — chip cards per doorbell (battery, last event with relative time) + snapshot capture with Crosstown/Cabin selector
 - **Nest Cameras** — live snapshot capture via WebRTC, one card per camera with inline image + relative timestamp. Three cameras across two locations: Kitchen (Cabin/Philly), Laundry (Crosstown — physically in the Garage room in Nest), Living Room (Crosstown). Camera discovery in the `nest` CLI matches against `customName` as a fallback to `parentRelations.displayName` so dashboard labels can diverge from Google Home room names. New devices require `nest reauth` (one-time OAuth re-consent) to become visible to SDM
@@ -382,7 +386,7 @@ Command feedback (Running/Success/Error) appears inline below the section header
 - **Samsung TV** — power state with on/off controls; shows friendly "TV is likely off" when unreachable
 - **Google Speakers** — volume with set volume / mute / unmute; shows friendly "Speakers are likely asleep" when unreachable
 - **Cabin Speakers** — chip cards per speaker (online/asleep status) with set volume / stop (via catt by IP)
-- **Roombas** — chip cards per robot (status, battery, bin state) with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google)
+- **Roombas** — chip cards per robot (status, battery, bin state) with start/stop/dock (Crosstown: 2 MQTT, Cabin: 2 Google). Cabin status is projected from the dedicated Roomba dashboard's bounded local API, so Assistant failures appear as concise degraded-state cards rather than raw provider output.
 
 ### Architecture
 
@@ -420,7 +424,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Nest | 3 rooms dropdown | Temp °F, Mode (HEAT/OFF), Eco on/off |
 | Midea AC | 2 exact-device aliases | Temp °F (60–86), Mode (auto/cool/dry/heat/fan), Fan (auto/silent/low/medium/high/full), Eco on/off |
 | Cielo | 4 devices dropdown | Temp °F, Mode (cool/heat/auto/dry/fan) |
-| Eight Sleep | Side (Dylan/Julia) | Level (-100 to +100), On / Off |
+| Eight Sleep | Location-specific card + side (Dylan/Julia) | Level (-100 to +100), On / Off; writes require the selected person to be Home on that exact Pod |
 | August | — | Lock / Unlock |
 | Ring Doorbell | Crosstown/Cabin dropdown | Take Snapshot |
 | Nest Cameras | One card per camera (Kitchen @ Cabin; Laundry + Living Room @ Crosstown) | Take Snapshot per card |
@@ -443,12 +447,12 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | `mysa` | CLI | Baseboard heater status (JSON) |
 | `august status` | CLI | Lock state (JSON, via SSH to MBP) |
 | `crosstown-roomba status` | CLI | Roomba status via SSH to the MBP's authenticated rest980 services |
-| `roomba status <name>` | CLI | Cabin roombas (per-robot, Google Assistant) |
+| `http://127.0.0.1:8553/api/cabin-roombas` | Local API | Bounded, 15-minute-cached Cabin Roomba Assistant status; Home Control Plane controls still use the guarded `roomba` CLI |
 | `samsung-tv status` | CLI | TV power state |
 | `speaker status` | CLI | Speaker volume/reachability (page load only; excluded from bg refresh to prevent Cast chimes) |
 | `litter-robot --json status` | CLI | Both enrolled LR4 units through protected site bindings |
 | `petlibro status` | CLI | Feeder + fountain |
-| `8sleep status` | CLI | Pod temp, both sides |
+| `8sleep overview` | CLI | Bounded status for both Pods plus exact per-person Home/Away routing |
 | `ring status` | CLI | Doorbell battery, motion |
 | `ring snapshot <path> [id]` | CLI | Doorbell camera snapshot (JPEG) |
 | `nest camera snap-config <alias> <path>` | CLI | Exact-resource Nest camera snapshot via WebRTC (JPEG); generic display-name lookup is attended-only |
@@ -470,7 +474,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 | Google Speakers | Bedroom + Living Room | Kitchen + Bedroom |
 | Litter-Robot | LR4 | LR4 |
 | Petlibro | Feeder + Fountain | (seasonal, unplugged) |
-| Eight Sleep | Pod 3 (dashboard default) | Pod 5 (CLI/vacancy-managed) |
+| Eight Sleep | Pod 3 status + controls | Pod 5 status + controls |
 | Ring Doorbell | Front Door (snap + status) | Front Door (snap + status) |
 | Nest Camera | Laundry + Living Room (snap) | Kitchen (snap) |
 | Dog Walk | Yes | Yes |
@@ -489,7 +493,7 @@ All controls use dropdown selectors (not text inputs) with pre-populated room/de
 
 - **Mysa is read-only** — the Mysa API doesn't expose setpoint changes or on/off; use the Mysa app or physical thermostat
 - **Midea is LAN-local** — status and controls require the Mac mini to be on the same Cabin network as the enrolled units; no cloud fallback is retained
-- **Cabin Roombas use Google Assistant** — responses are natural language text, not structured JSON
+- **Cabin Roombas use Google Assistant** — the dedicated Roomba service parses natural-language responses into a bounded local status contract. Failed or quota-limited checks remain unknown rather than exposing provider diagnostics or inferring physical state.
 - **Petlibro/8sleep** require env vars from `~/.openclaw/.secrets-cache` — if secrets are stale, these collectors will error
 - **Crosstown Roombas and Speakers** route through SSH to MBP — if MBP is
   offline, these time out. Roomba reads and actions then use exact authenticated

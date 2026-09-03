@@ -135,8 +135,8 @@ run_vacancy_actions
 assert_call 8sleep --location crosstown home dylan
 assert_call 8sleep --location crosstown home julia
 assert_call_count 2
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown"
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown:own"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown:own"
 
 # Same-location state writes are permanently deduplicated. An old marker still
 # suppresses reconciliation so a manual away/app override remains untouched.
@@ -158,8 +158,8 @@ if grep -Fq $'8sleep\t--location\tcabin\thome\tjulia' "$CALLS_FILE"; then
   exit 1
 fi
 assert_call_count 1
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown"
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin:own"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown:own"
 grep -Fq 'Pinning Eight Sleep julia to crosstown' \
   "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
 
@@ -172,16 +172,16 @@ run_vacancy_actions
 assert_call 8sleep --location crosstown home dylan
 assert_call 8sleep --location crosstown home julia
 assert_call_count 2
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown"
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown:own"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown:own"
 
 # Unknown locations are a no-op and preserve the last proven home assignment.
 write_state possibly_vacant possibly_vacant unknown cabin
 : > "$CALLS_FILE"
 run_vacancy_actions
 test ! -s "$CALLS_FILE"
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown"
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown:own"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown:own"
 
 # Once the deployed strict scanner validates the production enrollment, Julia
 # can move to the Cabin again. A partial failure still writes only the
@@ -197,25 +197,50 @@ unset FAKE_8SLEEP_FAIL_ARGS
 assert_call 8sleep --location cabin home dylan
 assert_call 8sleep --location cabin home julia
 assert_call_count 2
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin"
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin:own"
 test ! -e "$MARKER_DIR/8sleep-julia-home"
 
 : > "$CALLS_FILE"
 run_vacancy_actions
 assert_call 8sleep --location cabin home julia
 assert_call_count 1
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin:own"
 unset FAKE_CABIN_ENROLLMENT_ACTIVE
 if find "$MARKER_DIR" -name '8sleep-*-home.*' -print -quit | grep -q .; then
   echo "Eight Sleep home marker staging file was not cleaned up" >&2
   exit 1
 fi
 
+# A verified split household gives each sole occupant both sides of their Pod.
+write_state possibly_vacant possibly_vacant crosstown cabin
+export FAKE_CABIN_ENROLLMENT_ACTIVE=1
+: > "$CALLS_FILE"
+run_vacancy_actions
+
+assert_call 8sleep --location crosstown home dylan both
+assert_call 8sleep --location cabin home julia both
+assert_call_count 2
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown:both"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin:both"
+
+# Reuniting restores each resident's normal side even though the location of
+# the resident who stayed behind did not change.
+write_state possibly_vacant possibly_vacant cabin cabin
+: > "$CALLS_FILE"
+run_vacancy_actions
+
+assert_call 8sleep --location cabin home dylan
+assert_call 8sleep --location cabin home julia
+assert_call_count 2
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin:own"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin:own"
+unset FAKE_CABIN_ENROLLMENT_ACTIVE
+
 # Exercise a fresh general vacancy with the Eight Sleep action already marked
 # as dispatched. Both successful Roomba starts must be counted; postfix
 # arithmetic under `set -e` would abort after the first success and fail here.
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-dylan-home"
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-julia-home"
 write_state occupied confirmed_vacant crosstown crosstown
 : > "$CALLS_FILE"
 run_vacancy_actions
@@ -257,8 +282,8 @@ grep -Fq 'cabin Roomba automation: SKIPPED (snoozed)' \
 # enabled and preserves its legacy start behavior.
 rm -f "$MARKER_DIR/crosstown"
 write_state confirmed_vacant occupied cabin cabin
-printf '%s\n' cabin > "$MARKER_DIR/8sleep-dylan-home"
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+printf '%s\n' cabin:own > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-julia-home"
 : > "$CALLS_FILE"
 run_vacancy_actions
 
@@ -306,8 +331,8 @@ fi
 printf '%s\n' '{"cabin":false}' > "$TEST_HOME/.openclaw/dog-walk/snooze.json"
 rm -f "$MARKER_DIR/cabin"
 write_state occupied confirmed_vacant crosstown crosstown
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-dylan-home"
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-julia-home"
 : > "$CALLS_FILE"
 run_vacancy_actions
 
@@ -348,23 +373,28 @@ assert_home_parser_rejects() {
 
 assert_home_parser_rejects '{}' 'an empty response'
 assert_home_parser_rejects \
-  '{"success":true,"state":"home","side":"julia","location":"cabin","changed":true,"response":{}}' \
+  '{"success":true,"state":"home","side":"julia","location":"cabin","coverage":"own","changed":true,"response":{}}' \
   'a mismatched side'
 assert_home_parser_rejects \
-  '{"success":true,"state":"home","side":"dylan","location":"crosstown","changed":true,"response":{}}' \
+  '{"success":true,"state":"home","side":"dylan","location":"crosstown","coverage":"own","changed":true,"response":{}}' \
   'a mismatched location'
 
-FAKE_8SLEEP_API_RESPONSE='{"success":true,"state":"home","side":"dylan","location":"cabin","changed":true,"response":{}}' \
+FAKE_8SLEEP_API_RESPONSE='{"success":true,"state":"home","side":"dylan","location":"cabin","coverage":"own","changed":true,"response":{}}' \
   "$CLI_TEST_DIR/8sleep" --location cabin home dylan \
   > "$CLI_OUTPUT" 2>&1
-grep -Fqx 'Dylan home at Cabin (updated)' "$CLI_OUTPUT"
+grep -Fqx 'Dylan home at Cabin, own side (updated)' "$CLI_OUTPUT"
+
+FAKE_8SLEEP_API_RESPONSE='{"success":true,"state":"home","side":"dylan","location":"cabin","coverage":"both","changed":true,"response":{}}' \
+  "$CLI_TEST_DIR/8sleep" --location cabin home dylan both \
+  > "$CLI_OUTPUT" 2>&1
+grep -Fqx 'Dylan home at Cabin, both sides (updated)' "$CLI_OUTPUT"
 
 # Observation-only journaling wraps the exact legacy commands without changing
 # their count, arguments, order, or marker behavior.
 rm -f "$TEST_HOME/.openclaw/dog-walk/snooze.json" "$MARKER_DIR/cabin"
 write_state occupied confirmed_vacant crosstown crosstown
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-dylan-home"
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-julia-home"
 : > "$CALLS_FILE"
 : > "$JOURNAL_CALLS_FILE"
 export VACANCY_ACTION_JOURNAL_OVERRIDE="$FAKE_JOURNAL"
@@ -406,8 +436,8 @@ chmod 600 "$TEST_HOME/.openclaw/home-events/config/action-policy.json"
 chmod +x "$TEST_HOME/.openclaw/bin/home-event-action"
 rm -f "$MARKER_DIR/crosstown"
 write_state confirmed_vacant occupied crosstown crosstown
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-dylan-home"
-printf '%s\n' crosstown > "$MARKER_DIR/8sleep-julia-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-dylan-home"
+printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-julia-home"
 : > "$CALLS_FILE"
 : > "$JOURNAL_CALLS_FILE"
 export VACANCY_ACTION_JOURNAL_OVERRIDE="$FAKE_JOURNAL"

@@ -45,7 +45,7 @@ PORT = 8553
 ROOMBA_CACHE_TTL = 300  # 5 minutes
 CROSSTOWN_ROOMBA_TIMEOUT = 30
 CABIN_ROOMBA_TIMEOUT = 30
-CABIN_ROOMBA_CACHE_TTL = 300  # 5 minutes
+CABIN_ROOMBA_CACHE_TTL = 900  # 15 minutes; preserves daily Assistant quota
 CROSSTOWN_ROBOTS = {
     "10max": {"selector": "roomba", "label": "Roomba Combo 10 Max"},
     "j5": {"selector": "scoomba", "label": "Roomba J5 (Scoomba)"},
@@ -249,6 +249,20 @@ def parse_cabin_assistant_status(output):
     }
 
 
+def project_cabin_assistant_failure(stdout, stderr):
+    """Classify an Assistant failure without returning provider diagnostics."""
+    message = "\n".join(part for part in (stdout, stderr) if isinstance(part, str))
+    if "RESOURCE_EXHAUSTED" in message and "converse_requests" in message:
+        error = "assistant_quota_exhausted"
+    else:
+        error = "assistant_status_unavailable"
+    return {
+        "phase": "unknown",
+        "status": "Status unavailable",
+        "error": error,
+    }
+
+
 def fetch_cabin_roomba_status():
     """Fetch Cabin running/stopped state via read-only Assistant queries."""
     with _cabin_roomba_cache["lock"]:
@@ -266,11 +280,9 @@ def fetch_cabin_roomba_status():
                 timeout=CABIN_ROOMBA_TIMEOUT,
             )
             if result.returncode != 0:
-                projected = {
-                    "phase": "unknown",
-                    "status": "Status unavailable",
-                    "error": "assistant_status_unavailable",
-                }
+                projected = project_cabin_assistant_failure(
+                    result.stdout, result.stderr
+                )
             else:
                 projected = parse_cabin_assistant_status(result.stdout)
         except (subprocess.TimeoutExpired, OSError):
@@ -282,6 +294,12 @@ def fetch_cabin_roomba_status():
         robots[selector] = {"name": label, **projected}
 
     integration_ok = all(not robot["error"] for robot in robots.values())
+    errors = {robot["error"] for robot in robots.values() if robot["error"]}
+    integration_error = (
+        "assistant_quota_exhausted"
+        if "assistant_quota_exhausted" in errors
+        else "assistant_status_degraded"
+    )
     data = {
         "location": "cabin",
         "telemetry": "assistant_status",
@@ -289,7 +307,7 @@ def fetch_cabin_roomba_status():
         "integration": {
             "ok": integration_ok,
             "label": "Assistant status",
-            **({} if integration_ok else {"error": "assistant_status_degraded"}),
+            **({} if integration_ok else {"error": integration_error}),
         },
         "robots": robots,
     }
@@ -1183,12 +1201,16 @@ function renderCabinCards(data) {
   }
 
   let html = '';
+  const quotaExhausted = data.integration && data.integration.error === 'assistant_quota_exhausted';
   for (const [id, r] of Object.entries(data.robots)) {
     const phase = r.phase || 'unknown';
     if (r.error) {
       html += '<div class="stat"><div class="stat-label">' + esc(r.name || id) + '</div>';
       html += '<div class="stat-value" style="color:' + C.amber + '">' + esc(r.status || 'Status unavailable') + '</div>';
-      html += '<div class="readiness" style="color:' + C.muted + '">Assistant response was not sufficient to verify state</div></div>';
+      const detail = quotaExhausted
+        ? 'Daily Assistant request limit reached · controls may also be unavailable'
+        : 'Assistant response was not sufficient to verify state';
+      html += '<div class="readiness" style="color:' + C.muted + '">' + detail + '</div></div>';
       continue;
     }
 

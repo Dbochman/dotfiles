@@ -34,7 +34,7 @@ LAN and Tailscale tailnet.
 | Source | Frequency | Data |
 |--------|-----------|------|
 | Crosstown guarded Roomba CLI | 5 min cache | Live local battery, phase, bin, and tank through the MBP rest980 services |
-| Cabin guarded Roomba CLI | 5 min cache | Read-only Google Assistant running/stopped response; no physical command |
+| Cabin guarded Roomba CLI | 15 min cache | Read-only Google Assistant running/stopped response; no physical command. The longer cache keeps routine status traffic below the daily request quota. |
 | Protected canonical presence | On demand | Hash-verified, freshness-bounded per-home occupancy summary; people and raw evidence are not published |
 | Crosstown vacancy decisions | On demand | Latest evaluation plus owner-only per-day 6 AM/vacancy-transition decisions |
 | Dog Walk history JSONL | On demand | Roomba start/dock events per walk |
@@ -65,6 +65,8 @@ LAN and Tailscale tailnet.
 - Cabin Assistant status cannot assert battery, bin, dock, error, or safe-start
   readiness. An ambiguous or failed response is reported as unverified, not as
   proof a robot is offline. Battery and maintenance detail remain app-only.
+- Assistant quota failures are reduced to a bounded error code and a concise UI
+  explanation; provider tracebacks are never returned by the dashboard API.
 - Crosstown live status depends on the MBP rest980 services and guarded CLI.
   If that path is unavailable, the dashboard reports readiness unavailable and
   the vacancy controller fails closed.

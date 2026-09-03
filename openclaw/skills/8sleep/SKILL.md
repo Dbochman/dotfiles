@@ -24,8 +24,9 @@ Eight Sleep's per-side write endpoints are user-scoped, and household-set
 selection is a semantic relocation rather than a neutral routing mechanism.
 Use `home` with an explicit location to make that Pod current for one user. The
 command selects the household set and explicitly assigns that user to the
-location's exact device and static side. The other Pod becomes away for that
-side. Temperature, power, and manual away commands fail closed unless both the
+location's exact device and static side. An explicit `both` coverage mode gives
+a verified sole occupant both sides while leaving their current route on their
+normal side. The other Pod becomes away for that user. Temperature, power, and manual away commands fail closed unless both the
 requested household set and exact device/side are already current.
 
 ## Pod Sides
@@ -44,6 +45,18 @@ All temperature and sleep commands require specifying the side: `dylan` or `juli
 8sleep status
 ```
 Shows current temperature level, heating/cooling state, and water status for both sides.
+
+### Check both Pods and home/away routing
+
+```bash
+8sleep overview
+```
+
+Returns the bounded JSON status used by dashboards: both configured Pods,
+connection and water state, thermal state for each side, and authoritative
+per-person `home`/`away` routing. It derives routing from each user's exact
+current device plus current away-mode readback; it does not trust the lagging
+device-level `awaySides` field and never changes the selected household set.
 
 ### Set temperature for a side
 ```bash
@@ -78,16 +91,20 @@ or extended travel. For short absences, prefer `off`/`on` instead.
 ```bash
 8sleep --location crosstown home dylan
 8sleep --location cabin home julia
+8sleep --location cabin home julia both
 ```
 
 `home` requires an explicit location. Before changing anything, it refuses to
-overwrite a target side assigned to another user. It then selects that household
-set, explicitly assigns the intended user to the location's exact device and
-static side, clears away mode there, and verifies all three authoritative
-readbacks. The other Pod becomes away for that user. Eight Sleep's device-level
+overwrite an unknown assignment. Normal `own` coverage may reclaim a returning
+resident's static side only when the other known resident is verified Home on
+their own side of the same Pod. `both` coverage requires the other resident to
+be verified Home at the other Pod before assigning both target sides. The
+command then selects the household set, clears away mode, and verifies routing,
+side ownership, and the other resident's preserved route. Eight Sleep's device-level
 `awaySides` telemetry can lag and is diagnostic-only; it is not required as
 proof of a successful move. Vacancy automation uses this command independently
-for Dylan and Julia, including when they are at different houses.
+for Dylan and Julia. A split household gives each sole occupant both sides;
+reuniting restores Dylan-left and Julia-right.
 
 ### Temperature scale
 | Level | Temp | Feeling |
