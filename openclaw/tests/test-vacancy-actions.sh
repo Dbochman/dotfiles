@@ -35,6 +35,9 @@ printf '%s\n' \
   '  printf "\\n"' \
   '} >> "$FAKE_CALLS"' \
   'if [[ "$cmd" == "august" && "${1:-}" == "status" ]]; then' \
+  '  printf '\''{"state":{"locked":%s}}\n'\'' "${FAKE_AUGUST_LOCKED:-true}"' \
+  'fi' \
+  'if [[ "$cmd" == "august" && "${1:-}" == "lock" ]]; then' \
   '  printf "%s\\n" '\''{"state":{"locked":true}}'\''' \
   'fi' \
   'if [[ "$cmd" == "crosstown-vacant-roomba" ]]; then' \
@@ -47,7 +50,7 @@ printf '%s\n' \
 chmod +x "$FAKE_BIN/device-recorder"
 
 for command_name in \
-  hue nest cielo 8sleep august crosstown-vacant-roomba roomba; do
+  hue nest cielo 8sleep august crosstown-vacant-roomba roomba imsg; do
   ln -s device-recorder "$FAKE_BIN/$command_name"
 done
 
@@ -94,7 +97,7 @@ JSON
 run_vacancy_actions() {
   HOME="$TEST_HOME" \
     PATH="$FAKE_BIN:/usr/bin:/bin" \
-    IMSG_BIN="$TEST_HOME/no-imsg" \
+    IMSG_BIN="${FAKE_IMSG_BIN:-$TEST_HOME/no-imsg}" \
     PRESENCE_SCANNER="$FAKE_PRESENCE_SCANNER" \
     VACANCY_ACTION_JOURNAL="${VACANCY_ACTION_JOURNAL_OVERRIDE:-$TEST_HOME/no-journal}" \
     CROSSTOWN_VACANT_ROOMBA="$FAKE_BIN/crosstown-vacant-roomba" \
@@ -458,5 +461,25 @@ assert_call_count 6
 grep -Fqx \
   'finish-action --run-id run_11111111111111111111111111111111 --attempt-id attempt_33333333333333333333333333333333 --outcome skipped --verification policy_decision --reason-code delegated_to_event_bus' \
   "$JOURNAL_CALLS_FILE"
+
+# An already-secure front door is intentionally silent. A successful lock
+# attempt still sends its existing notification.
+rm -f "$MARKER_DIR/crosstown"
+: > "$CALLS_FILE"
+export FAKE_IMSG_BIN="$FAKE_BIN/imsg"
+run_vacancy_actions
+if grep -Eq '^imsg\t' "$CALLS_FILE"; then
+  echo "already-locked Crosstown vacancy sent an iMessage" >&2
+  exit 1
+fi
+
+rm -f "$MARKER_DIR/crosstown"
+: > "$CALLS_FILE"
+export FAKE_AUGUST_LOCKED=false
+run_vacancy_actions
+unset FAKE_AUGUST_LOCKED FAKE_IMSG_BIN
+assert_call august lock
+assert_call imsg send --chat-id 171 --service imessage \
+  --text "🔒 Crosstown vacant — front door locked automatically" --json
 
 echo "test-vacancy-actions: PASS"

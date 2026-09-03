@@ -330,7 +330,6 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
   if [[ "$lock_state" == "True" ]]; then
     journal_finish_action state_confirmed state_confirmed already_satisfied
     log "  Front door: ALREADY LOCKED"
-    _send_imessage "🔒 Crosstown vacant — front door was already locked"
   else
     if lock_result=$(august lock 2>&1); then
       locked=$(echo "$lock_result" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('state',{}).get('locked',False))" 2>/dev/null || echo "False")

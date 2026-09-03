@@ -80,13 +80,23 @@ elif url.endswith(":executeCommand"):
         print("not-json")
     elif mode == "post_error":
         print('{"error":{"message":"private API detail"}}')
-    elif mode == "post_fail":
+    elif mode in ("post_fail", "post_fail_then_match"):
         print('{"error":{"message":"private transport detail"}}')
         sys.exit(22)
     else:
         print("{}")
 elif url.endswith("/devices/dev1"):
-    sys.stdout.write(Path(os.environ["FAKE_DEVICE_RESPONSE_FILE"]).read_text())
+    if mode == "post_fail_then_match":
+        records = [json.loads(line) for line in Path(os.environ["FAKE_CURL_LOG"]).read_text().splitlines()]
+        post_seen = any(record["url"].endswith(":executeCommand") for record in records)
+        if not post_seen:
+            print(json.dumps({
+                "traits": {"sdm.devices.traits.ThermostatEco": {"mode": "OFF"}}
+            }))
+        else:
+            sys.stdout.write(Path(os.environ["FAKE_DEVICE_RESPONSE_FILE"]).read_text())
+    else:
+        sys.stdout.write(Path(os.environ["FAKE_DEVICE_RESPONSE_FILE"]).read_text())
 else:
     sys.exit(93)
 '''
@@ -219,7 +229,7 @@ class NestMutationSafetyTests(unittest.TestCase):
             (
                 ("eco", "Bedroom", "off"),
                 {"sdm.devices.traits.ThermostatEco": {"mode": "OFF"}},
-                "Set Bedroom eco to OFF",
+                "Bedroom eco is already OFF",
             ),
         )
         for arguments, traits, success_text in cases:
@@ -239,6 +249,56 @@ class NestMutationSafetyTests(unittest.TestCase):
                     ),
                     1,
                 )
+
+    def test_eco_skips_post_when_requested_state_is_already_satisfied(self) -> None:
+        self.write_device_response(
+            {
+                "traits": {
+                    "sdm.devices.traits.ThermostatEco": {"mode": "MANUAL_ECO"}
+                }
+            }
+        )
+
+        result = self.run_nest("eco", "Bedroom", "on")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("eco is already MANUAL_ECO", result.stdout)
+        self.assertFalse(
+            any(record["method"] == "POST" for record in self.records())
+        )
+
+    def test_eco_recovers_failed_post_only_after_matching_readback(self) -> None:
+        self.write_device_response(
+            {
+                "traits": {
+                    "sdm.devices.traits.ThermostatEco": {"mode": "MANUAL_ECO"}
+                }
+            }
+        )
+
+        result = self.run_nest(
+            "eco",
+            "Bedroom",
+            "on",
+            FAKE_CURL_MODE="post_fail_then_match",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("confirmed after API error", result.stdout)
+        self.assertEqual(
+            len([record for record in self.records() if record["method"] == "POST"]),
+            1,
+        )
+        self.assertEqual(
+            len(
+                [
+                    record
+                    for record in self.records()
+                    if record["url"].endswith("/devices/dev1")
+                ]
+            ),
+            2,
+        )
 
     def test_mismatched_readback_is_bounded_and_never_prints_success(self) -> None:
         self.write_device_response(

@@ -677,25 +677,11 @@ print(json.dumps({"command": command, "params": {parameter: value}}, separators=
 ' "$command" "$parameter" "$value" "$value_type"
 }
 
-_verify_mutation() {
-  local device_path="$1" kind="$2" expected="$3"
-  local attempts="${NEST_VERIFY_ATTEMPTS:-3}"
-  local delay_seconds="${NEST_VERIFY_DELAY_SECONDS:-2}"
-  local response attempt
+_mutation_matches() {
+  local device_path="$1" kind="$2" expected="$3" response
 
-  if ! [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || (( attempts > 10 )); then
-    echo "Invalid Nest verification attempt count" >&2
-    return 2
-  fi
-  if ! [[ "$delay_seconds" =~ ^([0-9]([.][0-9]+)?|10([.]0+)?)$ ]]; then
-    echo "Invalid Nest verification delay" >&2
-    return 2
-  fi
-
-  attempt=1
-  while (( attempt <= attempts )); do
-    if response=$(_api GET "$device_path"); then
-      if printf '%s' "$response" | python3 -c '
+  response=$(_api GET "$device_path") || return 1
+  printf '%s' "$response" | python3 -c '
 import json
 import math
 import sys
@@ -721,9 +707,28 @@ try:
 except (KeyError, TypeError, ValueError, json.JSONDecodeError):
     sys.exit(2)
 sys.exit(0 if matched else 1)
-' "$kind" "$expected" 2>/dev/null; then
-        return 0
-      fi
+' "$kind" "$expected" 2>/dev/null
+}
+
+_verify_mutation() {
+  local device_path="$1" kind="$2" expected="$3"
+  local attempts="${NEST_VERIFY_ATTEMPTS:-3}"
+  local delay_seconds="${NEST_VERIFY_DELAY_SECONDS:-2}"
+  local attempt
+
+  if ! [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || (( attempts > 10 )); then
+    echo "Invalid Nest verification attempt count" >&2
+    return 2
+  fi
+  if ! [[ "$delay_seconds" =~ ^([0-9]([.][0-9]+)?|10([.]0+)?)$ ]]; then
+    echo "Invalid Nest verification delay" >&2
+    return 2
+  fi
+
+  attempt=1
+  while (( attempt <= attempts )); do
+    if _mutation_matches "$device_path" "$kind" "$expected"; then
+      return 0
     fi
     if (( attempt < attempts )) && [[ "$delay_seconds" != "0" ]]; then
       sleep "$delay_seconds"
@@ -731,7 +736,7 @@ sys.exit(0 if matched else 1)
     attempt=$((attempt + 1))
   done
 
-  echo "Nest command completed, but the requested state could not be verified" >&2
+  echo "The requested Nest state could not be verified" >&2
   return 1
 }
 
@@ -781,7 +786,7 @@ cmd_mode() {
 cmd_eco() {
   local room="$1" mode
   mode="$(echo "${2:-MANUAL_ECO}" | tr '[:lower:]' '[:upper:]')"
-  local device_path payload
+  local device_path payload post_error
   if [[ "$mode" != "MANUAL_ECO" && "$mode" != "OFF" ]]; then
     echo "Eco mode must be MANUAL_ECO or OFF" >&2
     return 2
@@ -791,7 +796,19 @@ cmd_eco() {
     "sdm.devices.commands.ThermostatEco.SetMode" \
     "mode" "$mode" "string")
 
-  if ! _api POST "${device_path}:executeCommand" -d "$payload" > /dev/null; then
+  if _mutation_matches "$device_path" eco "$mode" 2>/dev/null; then
+    echo "$room eco is already ${mode}"
+    return 0
+  fi
+
+  if ! post_error=$(
+    _api POST "${device_path}:executeCommand" -d "$payload" 2>&1 > /dev/null
+  ); then
+    if _verify_mutation "$device_path" eco "$mode"; then
+      echo "Set $room eco to ${mode} (confirmed after API error)"
+      return 0
+    fi
+    [[ -z "$post_error" ]] || printf '%s\n' "$post_error" >&2
     echo "Nest eco command failed" >&2
     return 1
   fi

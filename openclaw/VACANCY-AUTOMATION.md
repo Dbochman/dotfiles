@@ -55,10 +55,10 @@ present. It vetoes `confirmed_vacant` for safety, but does not prove a return.
 | System | CLI | Action |
 |--------|-----|--------|
 | Hue lights | Event-bus reservation and guarded Hue worker | All lights off after fresh vacancy revalidation and exact readback |
-| Nest thermostat | `nest eco crosstown on` | Eco mode |
+| Nest thermostat | `nest eco crosstown on` | Require confirmed Eco mode; an already-satisfied state or post-error readback succeeds without a duplicate command |
 | Cielo minisplits | `cielo off -d <unit>` | Bedroom, Office, Living Room off |
 | Eight Sleep Pods | `8sleep --location cabin home <side>` | For each person confirmed at Cabin, make Cabin current; their Crosstown side becomes away |
-| August lock | `august status` / `august lock` | Check status first, lock if unlocked, iMessage notification |
+| August lock | `august status` / `august lock` | Check status first and stay silent when already locked; notify only after a lock attempt or failure |
 | Roombas | `crosstown-vacant-roomba.py --source vacancy_transition` | Route the departure run through the shared daily safety and deduplication controller |
 
 **On return to occupied:**
@@ -94,7 +94,7 @@ history cannot be validated.
 | System | CLI | Action |
 |--------|-----|--------|
 | Hue lights | `hue --cabin all-off` | All lights off |
-| Nest thermostat | `nest eco cabin on` | Eco mode |
+| Nest thermostat | `nest eco cabin on` | Require confirmed Eco mode; an already-satisfied state or post-error readback succeeds without a duplicate command |
 | Eight Sleep Pods | `8sleep --location crosstown home <side>` | For each person confirmed at Crosstown, make Crosstown current; their Cabin side becomes away |
 | Roombas | `roomba start floomba` / `roomba start philly` | Both Roombas start cleaning |
 
