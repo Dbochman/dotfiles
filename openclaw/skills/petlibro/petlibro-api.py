@@ -374,6 +374,41 @@ def validate_portions(value: str) -> int:
     return portions
 
 
+def validate_scheduled_portions(value: str) -> int:
+    try:
+        portions = int(value)
+    except ValueError:
+        raise PetlibroError(
+            "invalid_scheduled_portions",
+            f"Scheduled portions must be between 1 and {MAX_SCHEDULED_PORTIONS}",
+        )
+    if not 1 <= portions <= MAX_SCHEDULED_PORTIONS:
+        raise PetlibroError(
+            "invalid_scheduled_portions",
+            f"Scheduled portions must be between 1 and {MAX_SCHEDULED_PORTIONS}",
+            minimum=1,
+            maximum=MAX_SCHEDULED_PORTIONS,
+        )
+    return portions
+
+
+def validate_scheduled_time(value: str) -> str:
+    parts = value.split(":")
+    if (
+        len(parts) != 2
+        or len(parts[0]) != 2
+        or len(parts[1]) != 2
+        or not all(part.isdigit() for part in parts)
+        or not 0 <= int(parts[0]) <= 23
+        or not 0 <= int(parts[1]) <= 59
+    ):
+        raise PetlibroError(
+            "invalid_scheduled_time",
+            "Scheduled time must use 24-hour HH:MM format",
+        )
+    return value
+
+
 def load_feed_state() -> dict:
     try:
         info = FEED_STATE_FILE.lstat()
@@ -522,13 +557,40 @@ class ScheduleAttempt:
         }
         atomic_write_json(SCHEDULE_STATE_FILE, self.record)
 
-    def finish(self, status_value: str, *, observed_enabled: bool | None = None) -> None:
+    def mark_portion_attempting(
+        self,
+        selector: str,
+        requested_portions: int,
+        device_serial: str,
+    ) -> None:
+        self.request_id = secrets.token_urlsafe(12)
+        self.record = {
+            "schema_version": 1,
+            "action": "feeding_plan_portions_update",
+            "selector": selector,
+            "device_key": hashlib.sha256(device_serial.encode("utf-8")).hexdigest(),
+            "request_id": self.request_id,
+            "requested_portions": requested_portions,
+            "attempted_at": int(time.time()),
+            "status": "attempting",
+        }
+        atomic_write_json(SCHEDULE_STATE_FILE, self.record)
+
+    def finish(
+        self,
+        status_value: str,
+        *,
+        observed_enabled: bool | None = None,
+        observed_portions: int | None = None,
+    ) -> None:
         if self.record is None:
             return
         self.record["status"] = status_value
         self.record["completed_at"] = int(time.time())
         if observed_enabled is not None:
             self.record["observed_enabled"] = observed_enabled
+        if observed_portions is not None:
+            self.record["observed_portions"] = observed_portions
         atomic_write_json(SCHEDULE_STATE_FILE, self.record)
 
     def close(self) -> None:
@@ -564,8 +626,8 @@ def read_feeding_schedule_state(token: str, device: dict) -> bool:
     return data["enableFeedingPlan"]
 
 
-def _enabled_meal_count(value: object) -> int:
-    """Count only explicit provider meal records; reject ambiguous shapes."""
+def _feeding_plan_records(value: object) -> list[dict]:
+    """Return explicit provider meal records; reject ambiguous shapes."""
     if isinstance(value, list):
         records = value
     elif isinstance(value, dict):
@@ -585,13 +647,20 @@ def _enabled_meal_count(value: object) -> int:
             "invalid_response",
             "Petlibro returned an invalid feeding schedule",
         )
-    count = 0
     for record in records:
         if not isinstance(record, dict):
             raise PetlibroError(
                 "invalid_response",
                 "Petlibro returned an invalid feeding-schedule entry",
             )
+    return records
+
+
+def _enabled_meal_count(value: object) -> int:
+    """Count only explicit provider meal records; reject ambiguous shapes."""
+    records = _feeding_plan_records(value)
+    count = 0
+    for record in records:
         enabled_values = [
             record[key] for key in ("enable", "enabled", "isEnabled") if key in record
         ]
@@ -603,6 +672,102 @@ def _enabled_meal_count(value: object) -> int:
         if not enabled_values or enabled_values[0]:
             count += 1
     return count
+
+
+def read_single_feeding_plan(
+    token: str,
+    device: dict,
+    *,
+    scheduled_time: str | None = None,
+) -> dict[str, object]:
+    result = api_post(
+        "/device/feedingPlan/list",
+        {"deviceSn": device["deviceSn"], "id": device["deviceSn"]},
+        token,
+    )
+    records = _feeding_plan_records(require_api_success(result, "feeding schedule"))
+    if scheduled_time is not None:
+        records = [
+            record
+            for record in records
+            if record.get("executionTime") == scheduled_time
+        ]
+    if len(records) != 1:
+        message = (
+            f"The feeder must have exactly one saved meal at {scheduled_time}"
+            if scheduled_time is not None
+            else "The feeder must have exactly one saved meal before its portions can be changed"
+        )
+        raise PetlibroError(
+            "schedule_plan_ambiguous",
+            message,
+            plan_count=len(records),
+        )
+    plan = records[0]
+    identifiers = [plan[key] for key in ("id", "planId") if key in plan]
+    if (
+        len(identifiers) != 1
+        or isinstance(identifiers[0], bool)
+        or not isinstance(identifiers[0], (int, str))
+        or not str(identifiers[0]).strip()
+    ):
+        raise PetlibroError(
+            "invalid_response",
+            "Petlibro returned an invalid feeding-plan identity",
+        )
+    execution_time = plan.get("executionTime")
+    if not isinstance(execution_time, str) or not execution_time.strip():
+        raise PetlibroError(
+            "invalid_response",
+            "Petlibro returned an invalid feeding-plan time",
+        )
+    current_portions = plan.get("grainNum")
+    if (
+        not isinstance(current_portions, int)
+        or isinstance(current_portions, bool)
+        or not 1 <= current_portions <= MAX_SCHEDULED_PORTIONS
+    ):
+        raise PetlibroError(
+            "invalid_response",
+            "Petlibro returned invalid scheduled portions",
+        )
+
+    repeat_day = plan.get("repeatDay", "[]")
+    if isinstance(repeat_day, list) and all(
+        isinstance(day, int) and not isinstance(day, bool) for day in repeat_day
+    ):
+        repeat_day = "[" + ",".join(str(day) for day in repeat_day) + "]"
+    if not isinstance(repeat_day, str):
+        raise PetlibroError(
+            "invalid_response",
+            "Petlibro returned invalid feeding-plan repeat days",
+        )
+
+    label = plan.get("label", "")
+    enabled = plan.get("enable", True)
+    enable_audio = plan.get("enableAudio", False)
+    audio_times = plan.get("audioTimes", 2)
+    if (
+        not isinstance(label, str)
+        or not isinstance(enabled, bool)
+        or not isinstance(enable_audio, bool)
+        or not isinstance(audio_times, int)
+        or isinstance(audio_times, bool)
+    ):
+        raise PetlibroError(
+            "invalid_response",
+            "Petlibro returned invalid feeding-plan settings",
+        )
+    return {
+        "id": identifiers[0],
+        "executionTime": execution_time,
+        "repeatDay": repeat_day,
+        "label": label,
+        "enable": enabled,
+        "enableAudio": enable_audio,
+        "audioTimes": audio_times,
+        "grainNum": current_portions,
+    }
 
 
 def cmd_schedule_state(selector: str) -> dict:
@@ -977,6 +1142,139 @@ def cmd_schedule_set(selector: str, requested_enabled: bool) -> dict:
         attempt.close()
 
 
+def cmd_schedule_portions_set(
+    selector: str,
+    requested_portions: int,
+    *,
+    scheduled_time: str | None = None,
+) -> dict:
+    config, token, devices = get_token_and_devices()
+    device, location = resolve_device(config, devices, selector, "feeder")
+    attempt = ScheduleAttempt.begin()
+    try:
+        before = read_single_feeding_plan(
+            token,
+            device,
+            scheduled_time=scheduled_time,
+        )
+        if before["grainNum"] == requested_portions:
+            return {
+                "success": True,
+                "device": selector,
+                "location": location,
+                "scheduledPortions": requested_portions,
+                "scheduledTime": before["executionTime"],
+                "accepted": True,
+                "verified": True,
+                "mutation_attempted": False,
+            }
+
+        attempt.mark_portion_attempting(
+            selector,
+            requested_portions,
+            str(device["deviceSn"]),
+        )
+        payload = {
+            **before,
+            "deviceSn": device["deviceSn"],
+            "grainNum": requested_portions,
+            "petIds": [],
+        }
+        try:
+            result = api_post("/device/feedingPlan/update", payload, token)
+            require_api_success(result, "feeding-plan portion update", require_data=False)
+        except PetlibroError as error:
+            try:
+                attempt.finish("unknown")
+            except Exception:
+                pass
+            raise PetlibroError(
+                "schedule_portions_outcome_unknown",
+                "The scheduled-portion outcome is uncertain; inspect the schedule before another change",
+                cause=error.code,
+                non_retryable=True,
+                schedule_may_have_changed=True,
+                request_id=attempt.request_id,
+            )
+
+        observed: dict[str, object] | None = None
+        verification_error: PetlibroError | None = None
+        for verification_attempt in range(SCHEDULE_VERIFY_ATTEMPTS):
+            try:
+                observed = read_single_feeding_plan(
+                    token,
+                    device,
+                    scheduled_time=scheduled_time,
+                )
+                verification_error = None
+            except PetlibroError as error:
+                verification_error = error
+            if (
+                observed is not None
+                and observed["id"] == before["id"]
+                and observed["grainNum"] == requested_portions
+            ):
+                break
+            if verification_attempt + 1 < SCHEDULE_VERIFY_ATTEMPTS:
+                time.sleep(SCHEDULE_VERIFY_INTERVAL_SECONDS)
+
+        if (
+            observed is None
+            or observed["id"] != before["id"]
+            or observed["grainNum"] != requested_portions
+        ):
+            observed_portions = (
+                observed.get("grainNum") if isinstance(observed, dict) else None
+            )
+            try:
+                attempt.finish(
+                    "unknown",
+                    observed_portions=(
+                        observed_portions
+                        if isinstance(observed_portions, int)
+                        else None
+                    ),
+                )
+            except Exception:
+                pass
+            fields: dict[str, object] = {
+                "non_retryable": True,
+                "schedule_may_have_changed": True,
+                "request_id": attempt.request_id,
+            }
+            if verification_error is not None:
+                fields["cause"] = verification_error.code
+            raise PetlibroError(
+                "schedule_portions_outcome_unknown",
+                "The scheduled-portion update could not be verified; inspect the schedule before another change",
+                **fields,
+            )
+
+        try:
+            attempt.finish("verified", observed_portions=requested_portions)
+        except Exception:
+            raise PetlibroError(
+                "schedule_portions_outcome_unknown",
+                "The portion update was verified but its local audit record could not be saved",
+                non_retryable=True,
+                schedule_may_have_changed=True,
+                request_id=attempt.request_id,
+            )
+        return {
+            "success": True,
+            "device": selector,
+            "location": location,
+            "scheduledPortions": requested_portions,
+            "scheduledTime": observed["executionTime"],
+            "accepted": True,
+            "verified": True,
+            "mutation_attempted": True,
+            "request_id": attempt.request_id,
+        }
+    finally:
+        attempt.close()
+
+
 def require_arg_count(args: list[str], minimum: int, maximum: int, usage: str) -> None:
     if len(args) < minimum or len(args) > maximum:
         raise PetlibroError("invalid_arguments", usage)
@@ -1038,6 +1336,18 @@ def dispatch(argv: list[str]) -> object:
             "Usage: petlibro-api.py schedule-set <location-feeder> <on|off>",
         )
         return cmd_schedule_set(args[0], validate_schedule_state(args[1]))
+    if command == "schedule-portions-set":
+        require_arg_count(
+            args,
+            2,
+            3,
+            "Usage: petlibro-api.py schedule-portions-set <location-feeder> [HH:MM] <1-48>",
+        )
+        return cmd_schedule_portions_set(
+            args[0],
+            validate_scheduled_portions(args[-1]),
+            scheduled_time=(validate_scheduled_time(args[1]) if len(args) == 3 else None),
+        )
     raise PetlibroError("unknown_command", f"Unknown Petlibro command: {command}")
 
 

@@ -179,6 +179,31 @@ class PetlibroTests(unittest.TestCase):
     def schedule_state_response(enabled: bool) -> FakeResponse:
         return FakeResponse({"code": 0, "data": {"enableFeedingPlan": enabled}})
 
+    @staticmethod
+    def feeding_plan_response(portions: int = 2, *, count: int = 1) -> FakeResponse:
+        return FakeResponse(
+            {
+                "code": 0,
+                "data": [
+                    {
+                        "id": 4000 + index,
+                        "executionTime": (
+                            ("05:00", "23:30")[index]
+                            if count == 2
+                            else "23:30"
+                        ),
+                        "repeatDay": "[1,2,3,4,5,6,7]",
+                        "label": "Dinner",
+                        "enable": True,
+                        "enableAudio": False,
+                        "audioTimes": 2,
+                        "grainNum": portions,
+                    }
+                    for index in range(count)
+                ],
+            }
+        )
+
     def test_missing_environment_and_config_are_structured_without_traceback(self) -> None:
         self.token_file.unlink()
         with patch.dict(os.environ, {}, clear=True):
@@ -585,6 +610,93 @@ class PetlibroTests(unittest.TestCase):
             self.assertEqual(payload["error"], "invalid_schedule_state")
             urlopen.assert_not_called()
 
+    def test_schedule_portions_set_preserves_the_sole_plan_and_verifies(self) -> None:
+        responses = [
+            self.device_list_response(),
+            self.feeding_plan_response(2, count=2),
+            FakeResponse({"code": 0}),
+            self.feeding_plan_response(4, count=2),
+        ]
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            code, payload = self.run_main(
+                ["schedule-portions-set", "crosstown-feeder", "23:30", "4"]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["device"], "crosstown-feeder")
+        self.assertEqual(payload["scheduledPortions"], 4)
+        self.assertEqual(payload["scheduledTime"], "23:30")
+        self.assertTrue(payload["verified"])
+        self.assertTrue(payload["mutation_attempted"])
+        mutation_request = urlopen.call_args_list[2].args[0]
+        self.assertTrue(
+            mutation_request.full_url.endswith("/device/feedingPlan/update")
+        )
+        self.assertEqual(
+            json.loads(mutation_request.data.decode("utf-8")),
+            {
+                "id": 4001,
+                "deviceSn": "CROSS-FEEDER-SN",
+                "executionTime": "23:30",
+                "repeatDay": "[1,2,3,4,5,6,7]",
+                "label": "Dinner",
+                "enable": True,
+                "enableAudio": False,
+                "audioTimes": 2,
+                "grainNum": 4,
+                "petIds": [],
+            },
+        )
+        audit = json.loads(self.schedule_state_file.read_text(encoding="utf-8"))
+        self.assertEqual(audit["action"], "feeding_plan_portions_update")
+        self.assertEqual(audit["requested_portions"], 4)
+        self.assertEqual(audit["observed_portions"], 4)
+        self.assertEqual(audit["status"], "verified")
+        self.assertNotIn(
+            "CROSS-FEEDER-SN",
+            self.schedule_state_file.read_text(encoding="utf-8"),
+        )
+
+    def test_schedule_portions_set_rejects_ambiguous_or_invalid_plans(self) -> None:
+        with patch.object(
+            petlibro_api.urllib.request,
+            "urlopen",
+            side_effect=[self.device_list_response(), self.feeding_plan_response(2, count=2)],
+        ) as urlopen:
+            code, payload = self.run_main(
+                ["schedule-portions-set", "crosstown-feeder", "4"]
+            )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "schedule_plan_ambiguous")
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertFalse(self.schedule_state_file.exists())
+
+        for portions in ("0", "49", "many"):
+            with self.subTest(portions=portions), patch.object(
+                petlibro_api.urllib.request, "urlopen"
+            ) as urlopen:
+                code, payload = self.run_main(
+                    ["schedule-portions-set", "crosstown-feeder", portions]
+                )
+            self.assertEqual(code, 1)
+            self.assertEqual(payload["error"], "invalid_scheduled_portions")
+            urlopen.assert_not_called()
+
+        with patch.object(
+            petlibro_api.urllib.request, "urlopen"
+        ) as urlopen:
+            code, payload = self.run_main(
+                ["schedule-portions-set", "crosstown-feeder", "24:00", "4"]
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(payload["error"], "invalid_scheduled_time")
+        urlopen.assert_not_called()
+
     def test_ambiguous_schedule_mutation_is_recorded_and_not_retried(self) -> None:
         responses = [
             self.device_list_response(),
@@ -783,6 +895,13 @@ class PetlibroTests(unittest.TestCase):
             (["schedule-set", "crosstown-feeder", "pause"], 2),
             (["schedule-set", "crosstown-fountain", "off"], 2),
             (["schedule-set", "crosstown-feeder", "off", "extra"], 2),
+            (["schedule-portions-set"], 2),
+            (["schedule-portions-set", "crosstown-feeder"], 2),
+            (["schedule-portions-set", "crosstown-fountain", "4"], 2),
+            (["schedule-portions-set", "crosstown-feeder", "0"], 2),
+            (["schedule-portions-set", "crosstown-feeder", "49"], 2),
+            (["schedule-portions-set", "crosstown-feeder", "24:00", "4"], 2),
+            (["schedule-portions-set", "crosstown-feeder", "4", "extra"], 2),
         )
         for args, expected_code in cases:
             with self.subTest(args=args):
@@ -803,6 +922,9 @@ class PetlibroTests(unittest.TestCase):
             ["feed", "crosstown-feeder", "4", "--json"],
             ["--json", "schedule-set", "crosstown-feeder", "pause"],
             ["schedule-set", "crosstown-fountain", "off", "--json"],
+            ["--json", "schedule-portions-set", "crosstown-feeder", "0"],
+            ["--json", "schedule-portions-set", "crosstown-feeder", "24:00", "4"],
+            ["schedule-portions-set", "crosstown-fountain", "4", "--json"],
         ):
             with self.subTest(args=args):
                 result = subprocess.run(
@@ -814,6 +936,26 @@ class PetlibroTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(json.loads(result.stdout)["error"], "invalid_arguments")
+
+    def test_real_bash_wrapper_forwards_an_exact_schedule_time(self) -> None:
+        result = subprocess.run(
+            [
+                "bash",
+                str(CLI_PATH),
+                "schedule-portions-set",
+                "crosstown-feeder",
+                "23:30",
+                "4",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={"HOME": str(self.root / "wrapper-home"), "PATH": os.environ["PATH"]},
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Petlibro configuration is unavailable", result.stdout)
+        self.assertNotIn("Usage:", result.stdout + result.stderr)
 
     def test_home_dashboard_builds_exact_crosstown_feed_command(self) -> None:
         dashboard = load_home_dashboard(self.root / "dashboard-home")
