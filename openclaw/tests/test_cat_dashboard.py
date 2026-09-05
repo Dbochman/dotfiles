@@ -389,6 +389,53 @@ class CatDashboardTests(unittest.TestCase):
         self.assertEqual(summary["title"], "A feeder change could not be confirmed")
         self.assertNotIn("outcome_unknown", json.dumps(summary))
 
+    def test_transfer_summary_describes_a_safe_return_waiting_for_litter(self) -> None:
+        summary = self.dashboard.summarize_transfer_state(
+            {
+                "ok": True,
+                "feeding_schedule_owners": {"cabin": "bus", "crosstown": "bus"},
+                "feeder_suspensions": {
+                    "sites": {
+                        "crosstown": {
+                            "selector": "crosstown-feeder",
+                            "phase": "suspended",
+                            "attention": False,
+                            "waiting_reason": "cat_transfer_not_settled",
+                            "last_error": "cat_transfer_not_settled",
+                        }
+                    }
+                },
+            },
+            {
+                "ok": True,
+                "coverage_ready": True,
+                "pending_actions": 0,
+                "unknown_actions": 0,
+            },
+            {
+                "ok": True,
+                "devices": [
+                    {
+                        "selector": "cabin-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": False,
+                    },
+                    {
+                        "selector": "crosstown-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": True,
+                    },
+                ],
+            },
+        )
+
+        self.assertFalse(summary["attention"])
+        self.assertEqual(summary["label"], "Waiting")
+        self.assertEqual(summary["title"], "Crosstown meals are on")
+        self.assertEqual(summary["summary"], "Waiting for litter-box confirmation")
+        self.assertIn("Cabin meals are paused", summary["description"])
+        self.assertNotIn("cat_transfer_not_settled", json.dumps(summary))
+
     def test_petlibro_collector_uses_exact_schedule_readback(self) -> None:
         with patch.object(
             self.dashboard,

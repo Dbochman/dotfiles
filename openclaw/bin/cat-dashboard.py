@@ -396,6 +396,29 @@ def summarize_transfer_state(
             "attention": True,
             "notice": "A feeder change could not be confirmed. OpenClaw will not retry it automatically.",
         }
+    if len(managed) == 1:
+        waiting_site = next(iter(managed))
+        waiting_state = managed[waiting_site]
+        other_site = "crosstown" if waiting_site == "cabin" else "cabin"
+        if (
+            isinstance(waiting_state, dict)
+            and waiting_state.get("waiting_reason") == "cat_transfer_not_settled"
+            and schedule_states[waiting_site] == "on"
+            and schedule_states[other_site] == "paused"
+        ):
+            return {
+                **base,
+                "tone": "warn",
+                "label": "Waiting",
+                "title": f"{SITE_NAMES[waiting_site]} meals are on",
+                "description": (
+                    f"{SITE_NAMES[waiting_site]} scheduled meals are on and "
+                    f"{SITE_NAMES[other_site]} meals are paused. OpenClaw is waiting "
+                    f"for a {SITE_NAMES[waiting_site]} litter-box visit before it "
+                    "treats the cats’ return as confirmed."
+                ),
+                "summary": "Waiting for litter-box confirmation",
+            }
     if current_errors or len(managed) > 1:
         return {
             **base,
@@ -1107,6 +1130,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const managedHere = managed?.selector === selector;
       const recoveredManagedReadback = managedHere && managed.last_error === 'feeder_readback_unavailable' && ((managed.phase === 'suspended' && scheduleKnown && !scheduleEnabled) || (managed.phase === 'restoring' && scheduleKnown && scheduleEnabled));
       const managedAttention = managedHere && managed.attention === true && !recoveredManagedReadback;
+      const managedWaiting = managedHere && managed.waiting_reason === 'cat_transfer_not_settled';
       const automationOwned = state?.automation?.feeding_schedule_owners?.[site] === 'bus';
       const enabledMeals = Number.isInteger(device.enabledMealCount) ? device.enabledMealCount : null;
       const mealText = enabledMeals === null ? '' : `${enabledMeals} active meal${enabledMeals === 1 ? '' : 's'}`;
@@ -1114,7 +1138,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const verificationLabel = device.scheduleReadback === 'master_verified' ? 'On/off switch checked' : 'Schedule checked';
       const verifiedText = verifiedAt && !Number.isNaN(verifiedAt.getTime()) ? `${verificationLabel} ${verifiedAt.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}` : 'Schedule check unavailable';
       const scheduleLabel = scheduleKnown ? (scheduleEnabled ? `On${mealText ? ` · ${mealText}` : ''}` : `Paused${mealText ? ` · ${mealText}` : ''}`) : 'Unavailable';
-      const ownershipText = managedAttention ? 'Automatic pause needs review' : managedHere && managed.phase === 'restoring' ? 'Turning scheduled meals back on' : managedHere ? 'Paused while home is vacant · Turns back on automatically' : automationOwned ? 'Will pause automatically when the cats move homes' : 'Controlled manually';
+      const ownershipText = managedAttention ? 'Automatic pause needs review' : managedWaiting && scheduleEnabled ? 'Meals restored · Waiting for litter-box confirmation' : managedHere && managed.phase === 'restoring' ? 'Turning scheduled meals back on' : managedHere ? 'Paused while home is vacant · Turns back on automatically' : automationOwned ? 'Will pause automatically when the cats move homes' : 'Controlled manually';
       const scheduleClass = managedAttention ? 'bad' : scheduleKnown && scheduleEnabled ? '' : 'warn';
       const schedule = enrolledFeeder ? `<div class="actions schedule-actions"><div class="schedule-label"><span class="label">Scheduled meals</span><span class="pill ${scheduleClass}">${esc(scheduleLabel)}</span><span class="schedule-owner">${esc(verifiedText)} · ${esc(ownershipText)}</span></div><button class="action" ${device.online && scheduleKnown && !managedHere ? '' : 'disabled'} data-command="schedule" data-state="${scheduleEnabled ? 'off' : 'on'}" data-selector="${esc(selector)}">${managedHere ? 'Managed automatically' : scheduleEnabled ? 'Pause schedule' : 'Resume schedule'}</button></div>` : '';
       return `<article class="card device-card" data-location="${esc(site)}"><div class="card-top"><div><div class="site">${esc(siteName(site))}</div><h3>${feeder ? 'Feeder' : 'Fountain'}</h3><div class="muted">${esc(device.name || device.model || 'Petlibro')}</div></div>${statusPill(device.online)}</div><div class="metric-row">${metrics}</div>${schedule}${action}</article>`;

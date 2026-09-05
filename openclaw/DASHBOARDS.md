@@ -223,7 +223,9 @@ with Petlibro feeders and fountains.
   weight-over-time chart
 - **Feeding between homes** — a plain-English current state (`Cats are at
   Cabin`, `Both homes are ready`, or an explicit checking/review state), exact
-  schedule readback for each home, litter-box freshness, and waiting changes
+  schedule readback for each home, litter-box freshness, and waiting changes,
+  including a non-error waiting state when the correct schedules are already
+  set but the returning cats have not yet used that home's litter box
 - **Whisker cards** — one exact enrolled robot per home, including online
   state, waste, litter, cycle count, and a guarded clean action
 - **Petlibro cards** — live feeder and fountain telemetry, exact provider-

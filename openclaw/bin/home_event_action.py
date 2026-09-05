@@ -68,6 +68,7 @@ CAT_TRANSFER_RETRYABLE_NO_COMMAND_REASONS = frozenset(
         "destination_schedule_unavailable",
     }
 )
+FEEDER_WAITING_REASONS = frozenset({"cat_transfer_not_settled"})
 
 
 class ActionError(Exception):
@@ -2104,7 +2105,15 @@ def safe_status(root: Path) -> dict[str, Any]:
                     "selector": record["selector"],
                     "phase": record["phase"],
                     "occupancy_context": record["occupancy_context"],
-                    "attention": record["last_error"] is not None,
+                    "attention": (
+                        record["last_error"] is not None
+                        and record["last_error"] not in FEEDER_WAITING_REASONS
+                    ),
+                    "waiting_reason": (
+                        record["last_error"]
+                        if record["last_error"] in FEEDER_WAITING_REASONS
+                        else None
+                    ),
                     "last_error": record["last_error"],
                 }
                 for site, record in sorted(feeder_suspensions["sites"].items())

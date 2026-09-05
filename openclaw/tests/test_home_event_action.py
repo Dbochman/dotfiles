@@ -558,6 +558,27 @@ class HomeEventActionTests(unittest.TestCase):
             ]["attention"]
         )
 
+    def test_unsettled_cat_return_is_waiting_not_attention(self) -> None:
+        state = actions._empty_feeder_suspensions()
+        state["sites"]["crosstown"] = {
+            "selector": "crosstown-feeder",
+            "cycle_id": "cycle_" + ("f" * 32),
+            "phase": "suspended",
+            "restore_owned": True,
+            "occupancy_context": "origin_vacant",
+            "updated_at": NOW,
+            "last_error": "cat_transfer_not_settled",
+        }
+        actions._write_feeder_suspensions(self.root, state)
+
+        safe = actions.safe_status(self.root)["feeder_suspensions"]["sites"][
+            "crosstown"
+        ]
+
+        self.assertFalse(safe["attention"])
+        self.assertEqual(safe["waiting_reason"], "cat_transfer_not_settled")
+        self.assertEqual(safe["last_error"], "cat_transfer_not_settled")
+
     def test_split_household_keeps_cat_feeder_paused_without_attention(self) -> None:
         self.configure_cat_transfer()
         split_presence = {

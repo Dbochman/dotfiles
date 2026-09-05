@@ -52,6 +52,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   advisory and does not mislabel healthy feeder protection as unavailable. A
   prior feeder-readback error stops appearing as current attention after the
   action worker or a fresh dashboard readback confirms the expected schedule.
+  When a human has already restored the returning home's schedule and the
+  empty home's schedule is paused, the normal wait for a new litter-box visit
+  is shown as `Waiting for litter-box confirmation`, not as a failed change.
 
 ## Controls and safety
 
