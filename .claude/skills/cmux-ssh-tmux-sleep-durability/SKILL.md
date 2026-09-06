@@ -108,7 +108,7 @@ while :; do
     -o ServerAliveCountMax=3 \
     -o ControlMaster=no \
     -o ControlPath=none \
-    -- <host> tmux new-session -A -s <session>
+    -- <host> tmux new-session -A -D -s <session>
   status=$?
 
   [[ $status -eq 255 ]] || exit "$status"
@@ -125,6 +125,9 @@ Apply these invariants:
 - Disable ControlMaster/ControlPath for this client so a stale multiplex socket cannot be reused.
 - Reset backoff after a connection was stable.
 - Quote or validate the host, tmux binary, and session name before forming a remote command.
+- For a single-client session, add tmux `-D` so the newest successful attach
+  detaches abandoned clients. Omit `-D` only when concurrent clients are
+  intentional.
 
 Create the workspace with the wrapper as its command. This sacrifices managed-remote features such as cmux's remote browser proxy and drag-and-drop relay, so keep the workaround scoped to the affected alias.
 

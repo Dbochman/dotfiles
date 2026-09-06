@@ -65,4 +65,4 @@ exec "$mosh_bin" \
   --server="$mosh_server" \
   --ssh="$ssh_bin -o ControlMaster=no -o ControlPath=none -o ConnectTimeout=8 -o ConnectionAttempts=1" \
   "$host" -- \
-  "$tmux_bin" new-session -A -s "$session"
+  "$tmux_bin" new-session -A -D -s "$session"

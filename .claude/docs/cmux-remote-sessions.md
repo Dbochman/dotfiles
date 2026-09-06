@@ -132,6 +132,14 @@ $HOME/.local/bin/cmux-mosh-tmux \
 Use `home-ssh` when the current network blocks Mosh's UDP transport. Both forms
 attach to the same remote `home` tmux session.
 
+The Mosh helper attaches with `tmux new-session -A -D`: an existing session is
+reused, and older clients attached to that same session are detached as the new
+client takes over. This prevents abandoned Mosh transports from accumulating
+after laptop sleep, roaming, or abrupt terminal closure. A deliberate second
+view of the same session, including `home-mobile`, will be detached the next
+time `home` connects; use a separate tmux session when concurrent clients need
+to remain attached.
+
 On the first durable workspace, cmux shows **Auto-Restore / Ask Each Time / Keep Manual** for the exact helper command. Choose **Auto-Restore** only after checking the executable, host, session, and tmux path. cmux 0.64.17's **Settings > Terminal > Resume Commands** row only opens `cmux.json`; do not change a stored policy by hand because approval records are HMAC-signed.
 
 ### Relay-Enabled Codex Orchestration
