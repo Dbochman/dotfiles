@@ -1,8 +1,9 @@
 # Host-to-host SSH access
 
 This document records the private SSH topology used by Dylan's workstation,
-the OpenClaw Mac mini, the always-on Crosstown MacBook Pro, and Reachy Mini. It
-describes the deployed state as verified on July 23, 2026. Private keys,
+the OpenClaw Mac mini, the RTX 5090 desktop, the always-on Crosstown MacBook
+Pro, and Reachy Mini. It describes the deployed state as verified on September
+6, 2026. Private keys,
 `authorized_keys`, `known_hosts`, and machine-specific overrides remain local to
 their hosts and must never be committed.
 
@@ -12,6 +13,7 @@ their hosts and must never be committed.
 | --- | --- | --- | --- |
 | Dylan's workstation | `dylans-mac` | `dylanbochman` | Tailscale |
 | OpenClaw Mac mini | `dylans-mac-mini` / `100.104.114.1` | `dbochman` | Tailscale and Cabin LAN |
+| RTX 5090 desktop (Windows + Ubuntu WSL) | Mini-local `desktop-compute` / `127.0.0.1:22022` | `openclaw` | Reverse SSH over Tailscale |
 | Crosstown MBP | `dylans-macbook-pro` / `100.107.209.85` | `dbochman` | Tailscale and `192.168.165.0/24` |
 | Reachy Mini | `192.168.165.129` | `pollen` | Crosstown LAN |
 
@@ -27,6 +29,8 @@ tracked aliases, exact Tailscale IPs, or Reachy's exact LAN IP shown above.
 | Dylan's workstation | Mac mini | Existing `dylans-mac-mini` policy; dedicated local key when configured, otherwise the 1Password agent | OpenClaw administration |
 | Mac mini | Dylan's workstation | `~/.ssh/id_mini_to_mac`, selected for `dylans-mac` with `IdentitiesOnly yes` and `IdentityAgent none` | Unattended deployment verification and workstation administration |
 | Mac mini | Crosstown MBP | `~/.ssh/id_mini_to_mbp`, selected for `dylans-macbook-pro` with `IdentityAgent none` | Reachy relay control, Crosstown presence, August, Roomba, and LAN operations |
+| Mac mini | RTX 5090 desktop WSL | `~/.ssh/id_openclaw_desktop`, selected by the Mini-local `desktop-compute` alias | General unattended compute, file transfer, and durable tmux jobs |
+| RTX 5090 desktop WSL | Mac mini | `~/.ssh/id_desktop_compute_tunnel`, restricted on the Mini to reverse forwarding on `127.0.0.1:22022` with no shell | Persistent private transport back to the Mini |
 | Crosstown MBP | Mac mini | MBP `~/.ssh/id_rsa` (an ED25519 key despite its legacy filename) to `dbochman@100.104.114.1` | Persistent loopback gateway upstream |
 | Crosstown MBP | Reachy | `~/.ssh/openclaw-reachy` to `pollen@192.168.165.129` | Primary `reachyctl` and reverse gateway relay |
 | Mac mini | Reachy | The same dedicated `~/.ssh/openclaw-reachy` identity over the existing Crosstown subnet route | Legacy gateway and direct-control rollback |
@@ -86,6 +90,50 @@ After the dedicated path was verified, the Crosstown-only
 `id_mini_to_mbp` identity was removed from the workstation's authorization so
 the two Mini-originated paths remain independently scoped.
 
+## Desktop compute reverse bridge
+
+The RTX 5090 desktop is a general compute host. Splat reconstruction and
+training are its first workload, but neither the account nor the transport is
+named or restricted to that application. The desktop's Tailscale address is
+`100.121.232.95`; it is the transport source, not a directly exposed SSH
+endpoint.
+
+```text
+Windows Startup
+  -> Ubuntu WSL root helper starts sshd and autossh
+  -> openclaw@desktop opens an outbound Tailscale SSH connection to the Mini
+  -> Mini 127.0.0.1:22022 forwards back to WSL 127.0.0.1:2222
+  -> ssh desktop-compute reaches the dedicated openclaw account
+```
+
+The WSL SSH service listens only on loopback. The reverse listener also binds
+only to the Mac mini's loopback interface. No Windows firewall opening,
+Tailscale Serve rule, public listener, password authentication, root login, or
+Linux sudo membership is involved. The `openclaw` account is password-locked
+and is the only account allowed by the dedicated SSH configuration.
+
+This is an operational boundary, not a hostile-user sandbox. Windows interop
+is required for the native CUDA tools, and a WSL process can use `wsl.exe` to
+re-enter the distro as root under the signed-in Windows user's authority.
+Possession of `id_openclaw_desktop` must therefore be treated as
+administrator-equivalent access to this desktop even though ordinary Linux
+`sudo` is unavailable. Keep that key only on the Mini and use the guarded
+workload wrapper for OpenClaw jobs.
+
+The tracked `desktop-compute` alias is intentionally Mini-local because the
+reverse listener and its private client key live on the Mac mini. From another
+machine, connect to the Mini first and then use the alias. The bridge carries
+TCP only, so SSH, `rsync`, and remote `tmux` work; Mosh requires a future direct
+UDP-capable path and is not part of this setup.
+
+Desktop-local persistence consists of the Windows Startup command
+`OpenClaw WSL SSH Bridge.cmd` and root-owned WSL helper
+`/usr/local/sbin/openclaw-wsl-reverse-ssh`. The helper validates and starts
+`sshd`, refuses to duplicate an existing `autossh` process, and keeps the
+reverse tunnel alive with SSH keepalives. Its target key is restricted in the
+Mini's `authorized_keys` to `permitlisten="127.0.0.1:22022"` and cannot open a
+shell.
+
 ## Identity fingerprints
 
 Fingerprints identify keys without publishing private material. The deployed
@@ -96,6 +144,8 @@ state is:
 | Workstation agent key authorized on Crosstown MBP | `SHA256:BYtX+JUe/NAY1YDGImvODV/X0uJwemNmbV4K0un5IkU` |
 | Mac mini `id_mini_to_mac` | `SHA256:hyh/jORlARVCko5eAzL9dzqD2WJJeRA7LS8jmJGOD4c` |
 | Mac mini `id_mini_to_mbp` | `SHA256:BRLlK2OWzu+UpcPqg2JURcAcnchd0IcaFOG/22dpdNw` |
+| Mac mini `id_openclaw_desktop` | `SHA256:RSUz+cQSET5eF+afrtAJnTkhfxZU/fcwbt9dwP681Iw` |
+| Desktop WSL `id_desktop_compute_tunnel` | `SHA256:X2oYiyuscOe4EOaCJupo5W7r526LtlmhEG86yQ0yOzI` |
 | Crosstown MBP `id_rsa` | `SHA256:AZ9qqvjaUwLBT6gi0DEkvueE03m7LTV6gLCttHhCt/o` |
 | Shared dedicated `openclaw-reachy` identity | `SHA256:DQ3KpSgkP6Uev4zum1L4ObbOwNOyc/1cc8fb1oqHwK4` |
 
@@ -105,6 +155,7 @@ The verified ED25519 host-key fingerprints are:
 | --- | --- |
 | Crosstown MBP | `SHA256:p/+EyYg9X2mmHWvnpQiS6+Rhj0Uq5XbNhzEB9jrrru8` |
 | Mac mini | `SHA256:tQUKmFRHQWVOShAsFJ15pn/6+X6uhhWiCZvgkGT7plk` |
+| RTX 5090 desktop WSL | `SHA256:acQukxk9IelrdZAj5Ypjwjkh3JpV/mweXJSVEvn7TI8` |
 | Reachy Mini | `SHA256:E6YjxmKDL1gKCrFvi0CVV7n4Jx8ACF8zdx8KD7Oo4/I` |
 
 Verify a key from its public half with `ssh-keygen -lf`; never print a private
@@ -123,6 +174,9 @@ first-match-wins behavior:
 - `~/.ssh/config.local` is included first for untracked machine-specific
   overrides.
 - `dylans-mac-mini` identifies the OpenClaw host.
+- `desktop-compute` identifies the dedicated Ubuntu/WSL account through the
+  Mini-local reverse listener, pins a logical host-key name, selects
+  `~/.ssh/id_openclaw_desktop`, and disables other identities and agents.
 - `dylans-macbook-pro` identifies the Crosstown MBP.
 - On the Mac mini, a `Match originalhost dylans-mac` block selects
   `~/.ssh/id_mini_to_mac`, restricts authentication to that identity, and
@@ -155,7 +209,15 @@ control path, health checks, and gateway rollback procedure.
 | Mac mini | `~/.ssh/id_mini_to_mac` | Mode `0600`; authenticates unattended access to Dylan's workstation |
 | Mac mini | `~/.ssh/id_mini_to_mbp` | Mode `0600`; authenticates automation to the MBP |
 | Mac mini | `~/.ssh/openclaw-reachy` | Mode `0600`; retained for rollback |
-| Mac mini | `~/.ssh/authorized_keys` | Owner-only; includes the MBP `id_rsa.pub` identity |
+| Mac mini | `~/.ssh/id_openclaw_desktop` | Mode `0600`; authenticates the Mini to the desktop's dedicated WSL account |
+| Mac mini | `~/.ssh/authorized_keys` | Owner-only; includes the MBP identity and the restricted desktop reverse-tunnel identity |
+| Mac mini | `~/.ssh/known_hosts` | Contains the desktop WSL host key under the logical `desktop-compute-wsl` name |
+| Desktop Windows profile | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw WSL SSH Bridge.cmd` | Starts the WSL bridge helper in a hidden process at sign-in |
+| Desktop Windows profile | `C:\Users\Owner\.wslconfig` | Uses NAT networking with DNS tunneling; the pre-repair backup is `C:\Users\Owner\.wslconfig.openclaw-backup-20260906-153014` |
+| Desktop WSL | `/home/openclaw/.ssh/authorized_keys` | Owner-only; includes only the Mini's `id_openclaw_desktop.pub` identity |
+| Desktop WSL | `/home/openclaw/.ssh/id_desktop_compute_tunnel` | Mode `0600`; opens only the restricted reverse tunnel to the Mini |
+| Desktop WSL | `/etc/ssh/sshd_config.d/99-openclaw-bridge.conf` | Loopback-only port 2222, public-key-only, root login disabled, `AllowUsers openclaw` |
+| Desktop WSL | `/usr/local/sbin/openclaw-wsl-reverse-ssh` | Root-owned bridge startup helper |
 | Reachy | `~/.ssh/authorized_keys` | Owner-only; includes the `openclaw-reachy` public identity |
 
 Private keys are deliberately on disk for these unattended paths because the
@@ -175,6 +237,14 @@ Verify the Mini-to-workstation path without a GUI agent:
 
 ```bash
 ssh -o BatchMode=yes -o ConnectTimeout=8 dylans-mac 'hostname -s; id -un'
+```
+
+Verify the desktop compute path from the Mac mini without changing remote
+state:
+
+```bash
+ssh desktop-compute 'hostname; id -un; command -v tmux; command -v rsync'
+ssh desktop-compute '/usr/lib/wsl/lib/nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader'
 ```
 
 Verify both host-to-host directions:
@@ -218,6 +288,23 @@ For `Permission denied (publickey,...)`:
 5. Keep `IdentityAgent=none` for dedicated unattended paths. Add
    `IdentitiesOnly=yes` when an alias or host configuration could otherwise add
    unrelated on-disk identities.
+
+For `desktop-compute: Connection refused`, check for the Mini-local listener
+first:
+
+```bash
+lsof -nP -iTCP:22022 -sTCP:LISTEN
+```
+
+If it is absent, use the desktop's attended Windows session to run the
+`OpenClaw WSL SSH Bridge.cmd` Startup command again. Then confirm Ubuntu's
+`ssh` service and `autossh` process are active before retrying from the Mini.
+Do not expose WSL port 2222 through Windows Firewall or replace the loopback
+listener with a public bind as a shortcut.
+
+If Ubuntu loses DNS and HTTPS together, confirm `.wslconfig` still uses NAT
+networking and `dnsTunneling=true`. The earlier `networkingMode=none` setting
+disabled all WSL networking; changing only the resolver could not repair it.
 
 When rotating a dedicated key, add and verify the new public key before removing
 the old one. Update every consuming host and LaunchAgent, confirm the fingerprint

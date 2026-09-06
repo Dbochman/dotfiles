@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# remote-splat — Guarded remote Gaussian-splat workflow on the RTX 5090 desktop
+SKILL_DIR="$HOME/.openclaw/skills/remote-splat"
+exec "$SKILL_DIR/remote-splat" "$@"

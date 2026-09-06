@@ -28,6 +28,24 @@ Host mac-mini
   ConnectTimeout 8
   ConnectionAttempts 1
 
+# RTX 5090 desktop's dedicated Ubuntu/WSL account. The desktop maintains a
+# reverse SSH tunnel to the Mac Mini's loopback interface, so this alias is
+# intentionally usable only from the Mac Mini.
+Host desktop-compute
+  HostName 127.0.0.1
+  HostKeyAlias desktop-compute-wsl
+  Port 22022
+  User openclaw
+  IdentityFile ~/.ssh/id_openclaw_desktop
+  IdentitiesOnly yes
+  IdentityAgent none
+  BatchMode yes
+  StrictHostKeyChecking yes
+  ServerAliveInterval 10
+  ServerAliveCountMax 3
+  ConnectTimeout 8
+  ConnectionAttempts 1
+
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro
   HostName 100.107.209.85

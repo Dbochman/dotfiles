@@ -495,6 +495,28 @@ These tools are part of the `file-transfer` plugin (added v2026.5.3) and operate
 
 Mac Mini → MacBook Pro SSH via Tailscale (`ssh dylans-macbook-pro`), dedicated key `~/.ssh/id_mini_to_mbp` (bypasses 1Password agent — hangs under launchd). Configured via `Match originalhost` in `~/.ssh/config`.
 
+## RTX 5090 Desktop Compute
+
+Use the `remote-splat` skill and helper for private COLMAP, Brush, Gaussian-splat
+training, artifact retrieval, and guarded SuperSplat preparation. The reusable
+host transport is the Mini-local `desktop-compute` SSH alias, backed by a
+loopback-only reverse tunnel from the desktop's dedicated non-sudo Ubuntu/WSL
+account. Do not use the raw desktop Tailscale IP as an SSH endpoint and do not
+bypass the workload helper with raw SSH or `rsync`.
+
+The account has no Linux `sudo` membership, but WSL Windows interop makes the
+SSH key administrator-equivalent. This is why the key stays only on the Mini
+and OpenClaw is limited to the guarded helper.
+
+```bash
+remote-splat status
+remote-splat progress --job <job>
+```
+
+Long jobs run in per-job `tmux` sessions. The current bridge is TCP-only, so
+Mosh is not available. `publish-plan` only hashes and describes a local
+artifact; a SuperSplat upload always requires fresh explicit confirmation.
+
 ## Financial Dashboard
 
 Repo `~/repos/financial-dashboard/` on Mini; canonical finance API and SPA on port 8585. The weekly cron `financial-scrape-0001` (Sundays 4:05 ET) invokes only the deterministic `~/.openclaw/bin/weekly-financial-scrape.py` helper, which runs seven sources:

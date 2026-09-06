@@ -44,6 +44,7 @@ active post-deploy checks.
 | `sag-wrapper` | `~/.openclaw/bin/` | Wraps `sag` (speech audio generator) with 1Password env injection for ElevenLabs API key. |
 | `send-audio-briefing` | `~/.openclaw/bin/` | Generates TTS audio via ElevenLabs (`sag-wrapper`) and sends as an iMessage attachment via `imsg`, plus optional summary text. Used by Julia's morning briefing cron job. |
 | `reachyctl` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Sends constrained status, movement, proactive speech, microphone mute/unmute, and camera commands to ClawBody through the always-on Crosstown MBP relay. On that MBP it uses the dedicated Reachy SSH identity and owner-only Unix control socket directly. Face tracking is automatic while the user speaks. |
+| `remote-splat` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Stages private photo datasets to the RTX 5090 desktop, hash-binds approved COLMAP/Brush scripts, monitors per-job tmux sessions, verifies returned `.sog`/`.ply` artifacts, and prepares but never performs a SuperSplat upload. |
 
 ### Dashboards
 

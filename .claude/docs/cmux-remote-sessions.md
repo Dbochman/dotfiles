@@ -61,6 +61,7 @@ These are the local SSH aliases that matter for cmux remote sessions:
 | `devc` | `127.0.0.1:22390` | `root` | Devcontainer reached through `work-mac` as a proxy. |
 | `dylans-mac-mini` | Tailscale/MagicDNS | `dbochman` | Mac Mini remote shell target. |
 | `mac-mini` | `dylans-mac-mini.tail3e55f9.ts.net` | `dbochman` | Same Mac Mini with the dedicated `~/.ssh/id_mac_mini` key. |
+| `desktop-compute` | Mini loopback `127.0.0.1:22022` | `openclaw` | RTX 5090 desktop Ubuntu/WSL account over a persistent reverse SSH bridge; usable from the Mini only. |
 
 Prefer `work-mac` or `work-mbp` over `dbochman@100.73.15.5`. The aliases select the right key and bypass the 1Password agent.
 
@@ -211,6 +212,21 @@ Use the following operating contract:
 - Do not answer permission prompts or destructive confirmations without explicit authorization.
 
 Use a new surface tab in the orchestrator's existing pane for an independent worker. It inherits the managed SSH host and keeps the main layout uncluttered. Use a split only when the worker must remain visible beside the orchestrator, and use a separate cmux workspace or macOS window only for a genuinely separate host, project, or long-lived context.
+
+### RTX 5090 Desktop Compute Session
+
+The desktop's SSH alias terminates at a loopback-only reverse listener on the
+Mac Mini. Enter the Mini first, then attach to a durable desktop tmux session:
+
+```bash
+ssh dylans-mac-mini
+ssh -tt desktop-compute 'exec tmux new-session -A -s compute'
+```
+
+Inside the existing `home` tmux session, only the second command is needed.
+Use a workload-specific session name for long jobs so monitoring one job does
+not displace an unrelated shell. The bridge is TCP-only, so use SSH plus tmux;
+the `cmux-mosh-tmux` helper cannot carry Mosh's UDP session through it.
 
 #### Agent Job Protocol
 
