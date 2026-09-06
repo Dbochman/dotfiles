@@ -600,6 +600,7 @@ STANDALONE_SKILL_WRAPPERS=(
   pinchtab-headless-instance
   plant-tracker
   reolink-camera
+  desktop-compute
   remote-splat
   restaurant-book
   restaurant-snipe

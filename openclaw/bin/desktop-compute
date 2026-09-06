@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# desktop-compute — Restricted managed-job interface for the RTX desktop
+SKILL_DIR="$HOME/.openclaw/skills/desktop-compute"
+exec "$SKILL_DIR/desktop-compute" "$@"

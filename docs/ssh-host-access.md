@@ -13,7 +13,7 @@ their hosts and must never be committed.
 | --- | --- | --- | --- |
 | Dylan's workstation | `dylans-mac` | `dylanbochman` | Tailscale |
 | OpenClaw Mac mini | `dylans-mac-mini` / `100.104.114.1` | `dbochman` | Tailscale and Cabin LAN |
-| RTX 5090 desktop (Windows + Ubuntu WSL) | Mini-local `desktop-compute` / `127.0.0.1:22022` | `openclaw` | Reverse SSH over Tailscale |
+| RTX 5090 desktop (Windows + Ubuntu WSL) | Mini-local `desktop-compute` (trusted) and `desktop-jobs` (restricted) / `127.0.0.1:22022` | `openclaw` | Reverse SSH over Tailscale |
 | Crosstown MBP | `dylans-macbook-pro` / `100.107.209.85` | `dbochman` | Tailscale and `192.168.165.0/24` |
 | Reachy Mini | `192.168.165.129` | `pollen` | Crosstown LAN |
 
@@ -29,7 +29,8 @@ tracked aliases, exact Tailscale IPs, or Reachy's exact LAN IP shown above.
 | Dylan's workstation | Mac mini | Existing `dylans-mac-mini` policy; dedicated local key when configured, otherwise the 1Password agent | OpenClaw administration |
 | Mac mini | Dylan's workstation | `~/.ssh/id_mini_to_mac`, selected for `dylans-mac` with `IdentitiesOnly yes` and `IdentityAgent none` | Unattended deployment verification and workstation administration |
 | Mac mini | Crosstown MBP | `~/.ssh/id_mini_to_mbp`, selected for `dylans-macbook-pro` with `IdentityAgent none` | Reachy relay control, Crosstown presence, August, Roomba, and LAN operations |
-| Mac mini | RTX 5090 desktop WSL | `~/.ssh/id_openclaw_desktop`, selected by the Mini-local `desktop-compute` alias | General unattended compute, file transfer, and durable tmux jobs |
+| Mac mini operator | RTX 5090 desktop WSL | `~/.ssh/id_openclaw_desktop`, selected by the Mini-local `desktop-compute` alias | Trusted interactive maintenance |
+| OpenClaw jobs | RTX 5090 desktop WSL | `~/.ssh/id_desktop_compute_jobs`, selected by `desktop-jobs` and forced through the root-owned dispatcher | Fixed-root transfer, hash-approved execution, bounded tmux monitoring, and verified artifact retrieval |
 | RTX 5090 desktop WSL | Mac mini | `~/.ssh/id_desktop_compute_tunnel`, restricted on the Mini to reverse forwarding on `127.0.0.1:22022` with no shell | Persistent private transport back to the Mini |
 | Crosstown MBP | Mac mini | MBP `~/.ssh/id_rsa` (an ED25519 key despite its legacy filename) to `dbochman@100.104.114.1` | Persistent loopback gateway upstream |
 | Crosstown MBP | Reachy | `~/.ssh/openclaw-reachy` to `pollen@192.168.165.129` | Primary `reachyctl` and reverse gateway relay |
@@ -99,11 +100,11 @@ named or restricted to that application. The desktop's Tailscale address is
 endpoint.
 
 ```text
-Windows Startup
+Windows boot task (with the user Startup launcher retained as a fallback)
   -> Ubuntu WSL root helper starts sshd and autossh
   -> openclaw@desktop opens an outbound Tailscale SSH connection to the Mini
   -> Mini 127.0.0.1:22022 forwards back to WSL 127.0.0.1:2222
-  -> ssh desktop-compute reaches the dedicated openclaw account
+  -> desktop-compute reaches trusted maintenance; desktop-jobs reaches only the dispatcher
 ```
 
 The WSL SSH service listens only on loopback. The reverse listener also binds
@@ -113,26 +114,40 @@ Linux sudo membership is involved. The `openclaw` account is password-locked
 and is the only account allowed by the dedicated SSH configuration.
 
 This is an operational boundary, not a hostile-user sandbox. Windows interop
-is required for the native CUDA tools, and a WSL process can use `wsl.exe` to
-re-enter the distro as root under the signed-in Windows user's authority.
-Possession of `id_openclaw_desktop` must therefore be treated as
-administrator-equivalent access to this desktop even though ordinary Linux
-`sudo` is unavailable. Keep that key only on the Mini and use the guarded
-workload wrapper for OpenClaw jobs.
+is required for the native CUDA tools, and an approved WSL job can use
+`wsl.exe` to re-enter the distro as root under the Windows user's authority.
+Possession of the trusted `id_openclaw_desktop` identity must therefore be
+treated as administrator-equivalent access even though ordinary Linux `sudo`
+is unavailable. OpenClaw instead uses `id_desktop_compute_jobs`; its
+`authorized_keys` entry applies `restrict` and a forced root-owned dispatcher,
+so that key cannot open a raw shell or forwarding session. The dispatcher
+accepts only fixed Linux/Windows job roots, exact SHA-256-approved scripts,
+bounded logs, and hash-verified output retrieval.
 
-The tracked `desktop-compute` alias is intentionally Mini-local because the
-reverse listener and its private client key live on the Mac mini. From another
-machine, connect to the Mini first and then use the alias. The bridge carries
-TCP only, so SSH, `rsync`, and remote `tmux` work; Mosh requires a future direct
+The tracked `desktop-compute` and `desktop-jobs` aliases are intentionally
+Mini-local because the reverse listener and their private client keys live on
+the Mac mini. From another machine, connect to the Mini first. The bridge
+carries TCP only, so SSH and remote `tmux` work; Mosh requires a future direct
 UDP-capable path and is not part of this setup.
 
-Desktop-local persistence consists of the Windows Startup command
-`OpenClaw WSL SSH Bridge.cmd` and root-owned WSL helper
-`/usr/local/sbin/openclaw-wsl-reverse-ssh`. The helper validates and starts
-`sshd`, refuses to duplicate an existing `autossh` process, and keeps the
-reverse tunnel alive with SSH keepalives. Its target key is restricted in the
-Mini's `authorized_keys` to `permitlisten="127.0.0.1:22022"` and cannot open a
-shell.
+Desktop-local persistence uses the root-owned WSL helper
+`/usr/local/sbin/openclaw-wsl-reverse-ssh`. The tracked Windows installer at
+`openclaw/desktop-compute/install-prelogin-bridge.ps1` registers an `AtStartup`
+S4U task with a 30-second boot delay and twelve one-minute retries, allowing
+the Owner-registered Ubuntu distribution to start before interactive login.
+As of September 6, the installer is staged on the Windows Owner Desktop but
+the task still needs one attended elevated registration; the
+non-elevated remote token was correctly denied by Task Scheduler. The task
+itself uses a limited Owner S4U token, not an elevated runtime token.
+Until a cold-boot canary succeeds, retain the existing
+`OpenClaw WSL SSH Bridge.cmd` user Startup launcher as a rollback path. Both
+call the same idempotent helper, which validates/starts `sshd`, refuses to
+duplicate `autossh`, and maintains SSH keepalives. Its target key is restricted
+on the Mini to `permitlisten="127.0.0.1:22022"` and cannot open a shell.
+
+Tailscale key expiry is disabled for this stationary trusted desktop. The WSL
+utility baseline includes `rg`, `jq`, `unzip`, `zip`, `sqlite3`, `ffmpeg`,
+`shellcheck`, Git, `rsync`, `tmux`, Python, and user-local `uv`.
 
 ## Identity fingerprints
 
@@ -145,6 +160,7 @@ state is:
 | Mac mini `id_mini_to_mac` | `SHA256:hyh/jORlARVCko5eAzL9dzqD2WJJeRA7LS8jmJGOD4c` |
 | Mac mini `id_mini_to_mbp` | `SHA256:BRLlK2OWzu+UpcPqg2JURcAcnchd0IcaFOG/22dpdNw` |
 | Mac mini `id_openclaw_desktop` | `SHA256:RSUz+cQSET5eF+afrtAJnTkhfxZU/fcwbt9dwP681Iw` |
+| Mac mini `id_desktop_compute_jobs` | `SHA256:+Laxvz5gnmLk8ERvUIDE5bwkbGkvDCWrEb93LrCKzy4` |
 | Desktop WSL `id_desktop_compute_tunnel` | `SHA256:X2oYiyuscOe4EOaCJupo5W7r526LtlmhEG86yQ0yOzI` |
 | Crosstown MBP `id_rsa` | `SHA256:AZ9qqvjaUwLBT6gi0DEkvueE03m7LTV6gLCttHhCt/o` |
 | Shared dedicated `openclaw-reachy` identity | `SHA256:DQ3KpSgkP6Uev4zum1L4ObbOwNOyc/1cc8fb1oqHwK4` |
@@ -177,6 +193,9 @@ first-match-wins behavior:
 - `desktop-compute` identifies the dedicated Ubuntu/WSL account through the
   Mini-local reverse listener, pins a logical host-key name, selects
   `~/.ssh/id_openclaw_desktop`, and disables other identities and agents.
+- `desktop-jobs` reaches the same listener and host key with the separate
+  `~/.ssh/id_desktop_compute_jobs` identity. The server binds that identity to
+  the fixed `openclaw-job-v1` dispatcher protocol.
 - `dylans-macbook-pro` identifies the Crosstown MBP.
 - On the Mac mini, a `Match originalhost dylans-mac` block selects
   `~/.ssh/id_mini_to_mac`, restricts authentication to that identity, and
@@ -210,14 +229,17 @@ control path, health checks, and gateway rollback procedure.
 | Mac mini | `~/.ssh/id_mini_to_mbp` | Mode `0600`; authenticates automation to the MBP |
 | Mac mini | `~/.ssh/openclaw-reachy` | Mode `0600`; retained for rollback |
 | Mac mini | `~/.ssh/id_openclaw_desktop` | Mode `0600`; authenticates the Mini to the desktop's dedicated WSL account |
+| Mac mini | `~/.ssh/id_desktop_compute_jobs` | Mode `0600`; restricted OpenClaw job identity, separate from trusted maintenance |
 | Mac mini | `~/.ssh/authorized_keys` | Owner-only; includes the MBP identity and the restricted desktop reverse-tunnel identity |
 | Mac mini | `~/.ssh/known_hosts` | Contains the desktop WSL host key under the logical `desktop-compute-wsl` name |
-| Desktop Windows profile | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw WSL SSH Bridge.cmd` | Starts the WSL bridge helper in a hidden process at sign-in |
+| Desktop Windows profile | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\OpenClaw WSL SSH Bridge.cmd` | Sign-in fallback retained until the pre-login boot canary succeeds |
+| Desktop Windows Task Scheduler | `OpenClaw WSL SSH Bridge` | Target persistence: Owner S4U `AtStartup` task invokes the WSL helper before login and retries failures |
 | Desktop Windows profile | `C:\Users\Owner\.wslconfig` | Uses NAT networking with DNS tunneling; the pre-repair backup is `C:\Users\Owner\.wslconfig.openclaw-backup-20260906-153014` |
-| Desktop WSL | `/home/openclaw/.ssh/authorized_keys` | Owner-only; includes only the Mini's `id_openclaw_desktop.pub` identity |
+| Desktop WSL | `/home/openclaw/.ssh/authorized_keys` | Owner-only; includes the trusted Mini identity plus the restricted forced-command jobs identity |
 | Desktop WSL | `/home/openclaw/.ssh/id_desktop_compute_tunnel` | Mode `0600`; opens only the restricted reverse tunnel to the Mini |
 | Desktop WSL | `/etc/ssh/sshd_config.d/99-openclaw-bridge.conf` | Loopback-only port 2222, public-key-only, root login disabled, `AllowUsers openclaw` |
 | Desktop WSL | `/usr/local/sbin/openclaw-wsl-reverse-ssh` | Root-owned bridge startup helper |
+| Desktop WSL | `/usr/local/libexec/openclaw-desktop-dispatch` | Root-owned fixed-protocol dispatcher for autonomous jobs |
 | Reachy | `~/.ssh/authorized_keys` | Owner-only; includes the `openclaw-reachy` public identity |
 
 Private keys are deliberately on disk for these unattended paths because the
@@ -245,6 +267,10 @@ state:
 ```bash
 ssh desktop-compute 'hostname; id -un; command -v tmux; command -v rsync'
 ssh desktop-compute '/usr/lib/wsl/lib/nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader'
+desktop-compute status
+desktop-compute status --scope windows
+# This must fail closed with "outside the desktop-compute protocol":
+ssh desktop-jobs 'uname -a'
 ```
 
 Verify both host-to-host directions:
@@ -296,11 +322,18 @@ first:
 lsof -nP -iTCP:22022 -sTCP:LISTEN
 ```
 
-If it is absent, use the desktop's attended Windows session to run the
-`OpenClaw WSL SSH Bridge.cmd` Startup command again. Then confirm Ubuntu's
-`ssh` service and `autossh` process are active before retrying from the Mini.
-Do not expose WSL port 2222 through Windows Firewall or replace the loopback
-listener with a public bind as a shortcut.
+If it is absent, inspect the Windows scheduled task first:
+
+```powershell
+Get-ScheduledTask -TaskName "OpenClaw WSL SSH Bridge"
+Get-ScheduledTaskInfo -TaskName "OpenClaw WSL SSH Bridge"
+```
+
+If the task has not been installed or its boot canary has not yet passed, use
+the desktop's attended Windows session to run the existing Startup command.
+Then confirm Ubuntu's `ssh` service and `autossh` process are active before
+retrying from the Mini. Do not expose WSL port 2222 through Windows Firewall or
+replace the loopback listener with a public bind as a shortcut.
 
 If Ubuntu loses DNS and HTTPS together, confirm `.wslconfig` still uses NAT
 networking and `dnsTunneling=true`. The earlier `networkingMode=none` setting

@@ -1,0 +1,503 @@
+#!/usr/bin/env python3
+"""Forced-command boundary for OpenClaw jobs on the private Windows desktop."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import BinaryIO, NoReturn
+
+
+PROTOCOL = "openclaw-job-v1"
+ROOTS = {
+    "linux": Path("/home/openclaw/work/jobs"),
+    "windows": Path("/mnt/c/Users/Owner/Documents/OpenClaw/jobs"),
+    "splat": Path("/mnt/c/Users/Owner/Documents/OpenClaw/remote-splat/jobs"),
+}
+JOB_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
+REL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,239}\Z")
+SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+MAX_FILE_BYTES = 128 * 1024 * 1024 * 1024
+MAX_LOG_BYTES = 64 * 1024
+SCRIPT_SUFFIXES = {
+    "linux": frozenset((".sh",)),
+    "windows": frozenset((".ps1", ".sh")),
+    "splat": frozenset((".ps1", ".sh")),
+}
+
+
+class RequestError(RuntimeError):
+    """A rejected request that can be reported without exposing host details."""
+
+
+def emit(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+
+
+def fail(message: str, *, code: int = 64) -> NoReturn:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def validate_scope(value: str) -> str:
+    if value not in ROOTS:
+        raise RequestError("invalid workspace scope")
+    return value
+
+
+def validate_job(value: str) -> str:
+    if not JOB_RE.fullmatch(value):
+        raise RequestError("invalid job name")
+    return value
+
+
+def validate_relative(value: str) -> PurePosixPath:
+    if not REL_RE.fullmatch(value):
+        raise RequestError("invalid relative path")
+    relative = PurePosixPath(value)
+    if relative.is_absolute() or any(part in (".", "..") for part in relative.parts):
+        raise RequestError("path escapes the managed job")
+    return relative
+
+
+def validate_sha256(value: str) -> str:
+    normalized = value.casefold()
+    if not SHA256_RE.fullmatch(normalized):
+        raise RequestError("invalid SHA-256")
+    return normalized
+
+
+def validate_size(value: str) -> int:
+    try:
+        size = int(value)
+    except ValueError as error:
+        raise RequestError("invalid byte count") from error
+    if not 0 <= size <= MAX_FILE_BYTES:
+        raise RequestError("byte count is outside the allowed range")
+    return size
+
+
+def root_for(scope: str) -> Path:
+    return ROOTS[validate_scope(scope)]
+
+
+def job_dir(scope: str, job: str) -> Path:
+    root = root_for(scope)
+    if not root.is_dir() or root.is_symlink():
+        raise RequestError("managed workspace root is unavailable")
+    directory = root / validate_job(job)
+    if directory.exists() and (not directory.is_dir() or directory.is_symlink()):
+        raise RequestError("managed job directory is unsafe")
+    return directory
+
+
+def managed_path(base: Path, relative_raw: str, *, require_file: bool = False) -> Path:
+    relative = validate_relative(relative_raw)
+    if base.exists() and (not base.is_dir() or base.is_symlink()):
+        raise RequestError("managed directory is unsafe")
+    resolved_base = base.resolve(strict=False)
+    candidate = base.joinpath(*relative.parts)
+    resolved = candidate.resolve(strict=False)
+    if not resolved.is_relative_to(resolved_base):
+        raise RequestError("path escapes the managed job")
+    current = base
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise RequestError("symbolic links are not allowed")
+    if require_file and (not candidate.is_file() or candidate.is_symlink()):
+        raise RequestError("managed file is unavailable")
+    return candidate
+
+
+def hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def session_name(scope: str, job: str) -> str:
+    if scope == "splat":
+        return f"splat-{job}"
+    return f"compute-{scope}-{job}"
+
+
+def ensure_job(scope: str, job: str) -> Path:
+    directory = job_dir(scope, job)
+    old_umask = os.umask(0o077)
+    try:
+        for child in ("input", "outputs", "logs", "state"):
+            child_path = directory / child
+            if child_path.exists() and (not child_path.is_dir() or child_path.is_symlink()):
+                raise RequestError("managed job directory is unsafe")
+            child_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    finally:
+        os.umask(old_umask)
+    return directory
+
+
+def command_status(arguments: list[str]) -> None:
+    if len(arguments) != 1:
+        raise RequestError("status expects one scope")
+    scope = validate_scope(arguments[0])
+    root = root_for(scope)
+    mount = "/mnt/c" if scope in ("windows", "splat") else "/home/openclaw"
+    disk = shutil.disk_usage(mount)
+
+    sessions: list[str] = []
+    result = subprocess.run(
+        ["/usr/bin/tmux", "list-sessions", "-F", "#{session_name}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    prefix = "splat-" if scope == "splat" else f"compute-{scope}-"
+    if result.returncode == 0:
+        sessions = sorted(line for line in result.stdout.splitlines() if line.startswith(prefix))
+
+    gpu: dict[str, object] = {"available": False}
+    probe = Path("/usr/lib/wsl/lib/nvidia-smi")
+    if probe.is_file():
+        result = subprocess.run(
+            [str(probe), "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        fields = [part.strip() for part in result.stdout.strip().split(",")]
+        if result.returncode == 0 and len(fields) == 3:
+            try:
+                memory_mib = int(fields[1])
+            except ValueError:
+                memory_mib = 0
+            gpu = {
+                "available": True,
+                "name": fields[0],
+                "memoryMiB": memory_mib,
+                "driver": fields[2],
+            }
+
+    tools = {
+        name: shutil.which(name) is not None
+        for name in ("ffmpeg", "git", "jq", "rg", "rsync", "shellcheck", "sqlite3", "tmux", "unzip", "zip")
+    }
+    tools["uv"] = (Path.home() / ".local/bin/uv").is_file()
+    if scope == "splat":
+        tool_root = Path("/mnt/c/Users/Owner/Documents/Codex/2026-09-05/c/work")
+        tools.update(
+            {
+                "brush": (tool_root / "brush/brush_app.exe").is_file(),
+                "colmap": (tool_root / "colmap/bin/colmap.exe").is_file(),
+                "splatTransform": (tool_root / "conversion/node_modules/.bin/splat-transform.cmd").is_file(),
+            }
+        )
+    emit(
+        {
+            "ok": True,
+            "scope": scope,
+            "host": subprocess.check_output(["/usr/bin/hostname"], text=True).strip(),
+            "user": subprocess.check_output(["/usr/bin/id", "-un"], text=True).strip(),
+            "diskFreeBytes": disk.free,
+            "gpu": gpu,
+            "jobRootReady": root.is_dir(),
+            "sessions": sessions,
+            "tools": tools,
+        }
+    )
+
+
+def command_mkdir(arguments: list[str]) -> None:
+    if len(arguments) != 2:
+        raise RequestError("mkdir expects scope and job")
+    scope, job = arguments
+    ensure_job(scope, job)
+    emit({"ok": True, "scope": scope, "job": job})
+
+
+def copy_exact(handle: BinaryIO, target: BinaryIO, size: int) -> str:
+    remaining = size
+    digest = hashlib.sha256()
+    while remaining:
+        chunk = handle.read(min(1024 * 1024, remaining))
+        if not chunk:
+            raise RequestError("upload ended before the declared byte count")
+        target.write(chunk)
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if handle.read(1):
+        raise RequestError("upload exceeded the declared byte count")
+    return digest.hexdigest()
+
+
+def command_put(arguments: list[str]) -> None:
+    if len(arguments) != 5:
+        raise RequestError("put expects scope, job, path, byte count, and SHA-256")
+    scope, job, relative, size_raw, sha_raw = arguments
+    size = validate_size(size_raw)
+    expected = validate_sha256(sha_raw)
+    directory = ensure_job(scope, job)
+    target = managed_path(directory / "input", relative)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if target.exists():
+        if not target.is_file() or target.is_symlink():
+            raise RequestError("upload target is not a regular file")
+        if target.stat().st_size == size and hash_file(target) == expected:
+            with open(os.devnull, "wb") as sink:
+                if copy_exact(sys.stdin.buffer, sink, size) != expected:
+                    raise RequestError("upload SHA-256 did not match")
+            emit({"ok": True, "alreadyPresent": True, "sizeBytes": size, "sha256": expected})
+            return
+
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix=".openclaw-upload-", dir=target.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            actual = copy_exact(sys.stdin.buffer, handle, size)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if actual != expected:
+            raise RequestError("upload SHA-256 did not match")
+        # DrvFS enforces the Windows ACL and may reject POSIX chmod even when
+        # ordinary file creation and atomic rename are permitted. Linux-native
+        # jobs still get an explicit owner-only mode.
+        if scope == "linux":
+            os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    emit({"ok": True, "alreadyPresent": False, "sizeBytes": size, "sha256": expected})
+
+
+def file_metadata(scope: str, job: str, area: str, relative: str) -> dict[str, object]:
+    path = managed_path(job_dir(scope, job) / area, relative, require_file=True)
+    return {"ok": True, "sizeBytes": path.stat().st_size, "sha256": hash_file(path)}
+
+
+def command_stat_input(arguments: list[str]) -> None:
+    if len(arguments) != 3:
+        raise RequestError("stat-input expects scope, job, and path")
+    emit(file_metadata(arguments[0], arguments[1], "input", arguments[2]))
+
+
+def command_stat_output(arguments: list[str]) -> None:
+    if len(arguments) != 3:
+        raise RequestError("stat-output expects scope, job, and path")
+    emit(file_metadata(arguments[0], arguments[1], "outputs", arguments[2]))
+
+
+RUNNER = r'''#!/usr/bin/env bash
+set -uo pipefail
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+scope=$1
+script=$2
+log=$3
+status=$4
+exec > >(tee -a "$log") 2>&1
+printf 'desktop-compute started %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+rc=0
+case "$script" in
+  *.ps1)
+    if [[ "$scope" == linux ]]; then
+      rc=64
+    else
+      windows_script="$(wslpath -w "$script")"
+      /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
+        -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$windows_script" || rc=$?
+    fi
+    ;;
+  *.sh)
+    /bin/bash "$script" || rc=$?
+    ;;
+  *) rc=64 ;;
+esac
+tmp="${status}.tmp.$$"
+printf '%s\n' "$rc" > "$tmp"
+mv -f "$tmp" "$status"
+printf 'desktop-compute finished %s exit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rc"
+exit "$rc"
+'''
+
+
+def command_run(arguments: list[str]) -> None:
+    if len(arguments) != 4:
+        raise RequestError("run expects scope, job, script, and approved SHA-256")
+    scope, job, relative, sha_raw = arguments
+    scope = validate_scope(scope)
+    relative_path = validate_relative(relative)
+    if relative_path.suffix.casefold() not in SCRIPT_SUFFIXES[scope]:
+        raise RequestError("script type is not allowed for this scope")
+    approved = validate_sha256(sha_raw)
+    directory = ensure_job(scope, job)
+    script = managed_path(directory / "input", relative, require_file=True)
+    actual = hash_file(script)
+    if actual != approved:
+        raise RequestError("script SHA-256 no longer matches approval")
+    session = session_name(scope, job)
+    if subprocess.run(
+        ["/usr/bin/tmux", "has-session", "-t", session],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0:
+        raise RequestError("job session already exists")
+
+    runtime = Path.home() / ".local/state/desktop-compute" / scope / job
+    runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+    runner = runtime / "run-approved-script.sh"
+    runner.write_text(RUNNER, encoding="utf-8")
+    runner.chmod(0o700)
+    log = directory / "logs/run.log"
+    status = directory / "state/exit-code"
+    status.unlink(missing_ok=True)
+    record = {
+        "scope": scope,
+        "job": job,
+        "script": relative,
+        "sha256": actual,
+        "session": session,
+    }
+    (directory / "state/run.json").write_text(
+        json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8"
+    )
+    command = shlex.join(
+        [str(runner), scope, str(script), str(log), str(status)]
+    )
+    completed = subprocess.run(
+        ["/usr/bin/tmux", "new-session", "-d", "-s", session, "-c", str(directory), "/bin/bash", "-lc", f"sleep 1; exec {command}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RequestError("job session could not be created")
+    subprocess.run(
+        ["/usr/bin/tmux", "set-option", "-t", session, "remain-on-exit", "on"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    emit({"ok": True, "started": True, "scope": scope, "job": job, "session": session, "sha256": actual})
+
+
+def command_progress(arguments: list[str]) -> None:
+    if len(arguments) != 3:
+        raise RequestError("progress expects scope, job, and line count")
+    scope, job, lines_raw = arguments
+    scope = validate_scope(scope)
+    job = validate_job(job)
+    try:
+        lines = int(lines_raw)
+    except ValueError as error:
+        raise RequestError("invalid line count") from error
+    if not 1 <= lines <= 200:
+        raise RequestError("line count is outside the allowed range")
+    directory = job_dir(scope, job)
+    session = session_name(scope, job)
+    exists = subprocess.run(
+        ["/usr/bin/tmux", "has-session", "-t", session],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+    state = "not_started"
+    if exists:
+        result = subprocess.run(
+            ["/usr/bin/tmux", "list-panes", "-t", session, "-F", "#{pane_dead}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+        pane_dead = result.returncode == 0 and result.stdout.strip().splitlines()[:1] == ["1"]
+        state = "finished" if pane_dead else "running"
+    exit_code: int | None = None
+    status = directory / "state/exit-code"
+    if status.is_file() and not status.is_symlink():
+        try:
+            exit_code = int(status.read_text(encoding="ascii").strip())
+            state = "succeeded" if exit_code == 0 else "failed"
+        except (OSError, ValueError):
+            state = "invalid_status"
+    tail: list[str] = []
+    log = directory / "logs/run.log"
+    if log.is_file() and not log.is_symlink():
+        tail = log.read_bytes()[-MAX_LOG_BYTES:].decode("utf-8", errors="replace").splitlines()[-lines:]
+    emit(
+        {
+            "ok": True,
+            "scope": scope,
+            "job": job,
+            "session": session,
+            "sessionExists": exists,
+            "state": state,
+            "exitCode": exit_code,
+            "logTail": tail,
+        }
+    )
+
+
+def command_get_output(arguments: list[str]) -> None:
+    if len(arguments) != 4:
+        raise RequestError("get-output expects scope, job, path, and SHA-256")
+    scope, job, relative, sha_raw = arguments
+    expected = validate_sha256(sha_raw)
+    path = managed_path(job_dir(scope, job) / "outputs", relative, require_file=True)
+    if hash_file(path) != expected:
+        raise RequestError("output SHA-256 changed")
+    with path.open("rb") as handle:
+        shutil.copyfileobj(handle, sys.stdout.buffer, length=1024 * 1024)
+
+
+def command_attach(arguments: list[str]) -> NoReturn:
+    if len(arguments) != 2:
+        raise RequestError("attach expects scope and job")
+    scope, job = arguments
+    session = session_name(validate_scope(scope), validate_job(job))
+    os.execv("/usr/bin/tmux", ["tmux", "attach-session", "-t", session])
+
+
+COMMANDS = {
+    "status": command_status,
+    "mkdir": command_mkdir,
+    "put": command_put,
+    "stat-input": command_stat_input,
+    "stat-output": command_stat_output,
+    "run": command_run,
+    "progress": command_progress,
+    "get-output": command_get_output,
+    "attach": command_attach,
+}
+
+
+def main() -> int:
+    original = os.environ.get("SSH_ORIGINAL_COMMAND", "")
+    try:
+        tokens = shlex.split(original, posix=True)
+        if len(tokens) < 2 or tokens[0] != PROTOCOL:
+            raise RequestError("request is outside the desktop-compute protocol")
+        command = COMMANDS.get(tokens[1])
+        if command is None:
+            raise RequestError("unknown desktop-compute operation")
+        command(tokens[2:])
+    except (RequestError, OSError, subprocess.SubprocessError) as error:
+        fail(str(error))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

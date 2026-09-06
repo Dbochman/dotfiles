@@ -46,6 +46,25 @@ Host desktop-compute
   ConnectTimeout 8
   ConnectionAttempts 1
 
+# Restricted autonomous-job path to the same WSL host. This key is bound on
+# the server to the fixed-root desktop-compute dispatcher and cannot open an
+# arbitrary shell or create forwarding.
+Host desktop-jobs
+  HostName 127.0.0.1
+  HostKeyAlias desktop-compute-wsl
+  Port 22022
+  User openclaw
+  IdentityFile ~/.ssh/id_desktop_compute_jobs
+  IdentitiesOnly yes
+  IdentityAgent none
+  BatchMode yes
+  StrictHostKeyChecking yes
+  RequestTTY no
+  ServerAliveInterval 10
+  ServerAliveCountMax 3
+  ConnectTimeout 8
+  ConnectionAttempts 1
+
 # MacBook Pro at 19 Crosstown (via Tailscale)
 Host dylans-macbook-pro
   HostName 100.107.209.85

@@ -497,18 +497,34 @@ Mac Mini → MacBook Pro SSH via Tailscale (`ssh dylans-macbook-pro`), dedicated
 
 ## RTX 5090 Desktop Compute
 
-Use the `remote-splat` skill and helper for private COLMAP, Brush, Gaussian-splat
-training, artifact retrieval, and guarded SuperSplat preparation. The reusable
-host transport is the Mini-local `desktop-compute` SSH alias, backed by a
-loopback-only reverse tunnel from the desktop's dedicated non-sudo Ubuntu/WSL
-account. Do not use the raw desktop Tailscale IP as an SSH endpoint and do not
-bypass the workload helper with raw SSH or `rsync`.
+Use the `desktop-compute` skill and helper for general Linux, Windows, CUDA,
+media, data-processing, and long-running work on the private RTX 5090 desktop.
+It stages inputs under fixed roots, binds each run to an exact script SHA-256,
+keeps the job in tmux, returns bounded progress, and checksum-verifies fetched
+outputs. Choose the default Linux scope unless a PowerShell script or
+Windows-native application requires `--scope windows`.
 
-The account has no Linux `sudo` membership, but WSL Windows interop makes the
-SSH key administrator-equivalent. This is why the key stays only on the Mini
-and OpenClaw is limited to the guarded helper.
+Use the more specific `remote-splat` skill for private COLMAP, Brush,
+Gaussian-splat training, `.sog`/`.ply` retrieval, and guarded SuperSplat
+preparation. It now builds on the shared job interface while retaining the
+splat-only output and publishing rules.
+
+The reusable host transport is a loopback-only reverse tunnel from the
+desktop's dedicated non-sudo Ubuntu/WSL account. The interactive Mini-local
+`desktop-compute` SSH alias is for trusted operator maintenance. OpenClaw uses
+the separate `desktop-jobs` key, which is forced through a root-owned dispatcher
+and cannot open an arbitrary shell or forwarding. Do not use the raw desktop
+Tailscale IP as an SSH endpoint and do not bypass either skill with raw SSH,
+`scp`, or `rsync`.
+
+The account has no Linux `sudo` membership, but an approved script can reach
+Windows and re-enter WSL as root through Windows interop. This is why both keys
+stay only on the Mini and OpenClaw's operational boundary is the fixed-root,
+hash-approved dispatcher.
 
 ```bash
+desktop-compute status
+desktop-compute progress --job <job>
 remote-splat status
 remote-splat progress --job <job>
 ```

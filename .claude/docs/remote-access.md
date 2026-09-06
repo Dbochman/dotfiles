@@ -20,7 +20,10 @@ SSH from any tailnet device: `ssh dylans-mac`, `ssh dylans-mac-mini`, `ssh dylan
 
 The RTX 5090 desktop is different: it maintains a reverse SSH tunnel into the
 Mac Mini. From the Mini, use `ssh desktop-compute`; from another device, connect
-to the Mini first. The desktop's raw Tailscale IP is not an SSH endpoint.
+to the Mini first. `desktop-compute` is the trusted maintenance shell;
+OpenClaw's managed jobs use the separate forced-command `desktop-jobs` identity
+through the `desktop-compute` helper. The desktop's raw Tailscale IP is not an
+SSH endpoint.
 
 ## tmux Quick Reference
 
@@ -66,10 +69,12 @@ tmux list-sessions
 
 - tmux config: `~/.tmux.conf` (Ctrl-a prefix, mouse support, mobile-friendly)
 - Auth: 1Password SSH agent (key-based)
-- Desktop compute auth: dedicated Mini-local key and a loopback-only reverse
-  SSH bridge; no password or public listener. Because WSL Windows interop is
-  enabled, treat the key as administrator-equivalent even though the account
-  has no Linux `sudo` membership.
+- Desktop maintenance auth: dedicated Mini-local key and a loopback-only
+  reverse SSH bridge; no password or public listener. Treat the trusted key as
+  administrator-equivalent because WSL Windows interop is enabled.
+- Desktop autonomous jobs: separate restricted key, root-owned forced-command
+  dispatcher, fixed job roots, hash-approved scripts, and verified retrieval.
+  Use `desktop-compute status` rather than raw SSH for this path.
 
 ## Troubleshooting
 
@@ -85,4 +90,5 @@ tmux needs a real terminal. Won't work from Claude Code's bash tool or scripts w
 
 - Run the command from the Mac Mini, where the reverse listener terminates.
 - Check `lsof -nP -iTCP:22022 -sTCP:LISTEN` on the Mini.
-- If absent, rerun the desktop's `OpenClaw WSL SSH Bridge.cmd` Startup command.
+- If absent, inspect the Windows `OpenClaw WSL SSH Bridge` boot task. Until its
+  cold-boot canary has passed, rerun the same-named Startup command as fallback.

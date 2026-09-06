@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# desktop-compute — Restricted managed-job interface for the RTX desktop
+set -euo pipefail
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+export PATH="/opt/homebrew/bin:/usr/bin:/bin"
+exec /usr/bin/python3 "$SCRIPT_DIR/scripts/desktop_compute.py" "$@"

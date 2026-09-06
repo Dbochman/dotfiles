@@ -8,9 +8,10 @@ metadata: {"openclaw":{"emoji":"🫧","requires":{"bins":["remote-splat"]}}}
 # Remote Splat
 
 Use the `remote-splat` helper for every transfer and remote job operation. It
-pins the Mini-local `desktop-compute` SSH alias and confines job data to the
-desktop's managed job root. Do not bypass it with raw SSH, `scp`, `rsync`,
-PowerShell, WSL paths, or direct Windows commands.
+specializes the shared `desktop-compute` job layer with a private splat root,
+restricted forced-command SSH identity, splat-specific output validation, and
+the SuperSplat publication guard. Do not bypass it with raw SSH, `scp`,
+`rsync`, PowerShell, WSL paths, or direct Windows commands.
 
 Read [references/host-and-toolchain.md](references/host-and-toolchain.md) only
 when diagnosing the host or preparing a new job script. Read

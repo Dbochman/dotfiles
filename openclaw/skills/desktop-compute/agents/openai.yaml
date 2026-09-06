@@ -1,0 +1,4 @@
+interface:
+  display_name: "Desktop Compute"
+  short_description: "Run guarded jobs on the private RTX desktop"
+  default_prompt: "Use the desktop-compute interface to stage, run, monitor, and retrieve a private compute job safely."

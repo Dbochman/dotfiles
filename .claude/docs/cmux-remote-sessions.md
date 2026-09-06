@@ -63,6 +63,11 @@ These are the local SSH aliases that matter for cmux remote sessions:
 | `mac-mini` | `dylans-mac-mini.tail3e55f9.ts.net` | `dbochman` | Same Mac Mini with the dedicated `~/.ssh/id_mac_mini` key. |
 | `desktop-compute` | Mini loopback `127.0.0.1:22022` | `openclaw` | RTX 5090 desktop Ubuntu/WSL account over a persistent reverse SSH bridge; usable from the Mini only. |
 
+`desktop-compute` is the trusted interactive target used by tmux/cmux. The
+separate `desktop-jobs` alias is forced through the autonomous job dispatcher
+and should be used only by the `desktop-compute` CLI, not as an interactive
+workspace target.
+
 Prefer `work-mac` or `work-mbp` over `dbochman@100.73.15.5`. The aliases select the right key and bypass the 1Password agent.
 
 ## Current Workflows

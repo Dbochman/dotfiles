@@ -818,6 +818,7 @@ install_openclaw_guarded_helpers() {
     "bin/presence-crosstown-canary|bin/presence-crosstown-canary|755|Crosstown strict presence canary helper"
     "bin/reolink-camera|bin/reolink-camera|755|Reolink guarded camera wrapper"
     "bin/reolink-camera-enroll|bin/reolink-camera-enroll|755|Reolink attended enrollment helper"
+    "bin/desktop-compute|bin/desktop-compute|755|RTX desktop restricted job wrapper"
     "bin/remote-splat|bin/remote-splat|755|RTX desktop guarded splat wrapper"
     "bin/opentable-book|bin/opentable-book|755|OpenTable guarded booking wrapper"
     "bin/opentable-reservations|bin/opentable-reservations|755|OpenTable read-only reservations wrapper"
@@ -861,6 +862,7 @@ publish_openclaw_standalone_skill_wrappers() {
     pinchtab-headless-instance
     plant-tracker
     reolink-camera
+    desktop-compute
     remote-splat
     restaurant-book
     restaurant-snipe

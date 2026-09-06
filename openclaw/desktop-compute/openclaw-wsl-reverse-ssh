@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Start WSL sshd and keep the Mini-local reverse tunnel alive.
+set -euo pipefail
+
+/usr/sbin/sshd -t
+/usr/sbin/service ssh start >/dev/null
+
+if pgrep -u openclaw -f 'autossh.*127\.0\.0\.1:22022:127\.0\.0\.1:2222' >/dev/null; then
+  exit 0
+fi
+
+exec /usr/sbin/runuser -u openclaw -- env AUTOSSH_GATETIME=0 \
+  /usr/bin/autossh -M 0 -N \
+  -o BatchMode=yes \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=3 \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=/home/openclaw/.ssh/known_hosts \
+  -i /home/openclaw/.ssh/id_desktop_compute_tunnel \
+  -R 127.0.0.1:22022:127.0.0.1:2222 \
+  dbochman@100.104.114.1
