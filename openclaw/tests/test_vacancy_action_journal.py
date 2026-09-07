@@ -152,6 +152,49 @@ class VacancyActionJournalTests(unittest.TestCase):
         third = self.journal.begin_run("cabin")
         self.assertNotEqual(first["cycle_id"], third["cycle_id"])
 
+    def test_reconcile_cycle_advances_evidence_without_replaying_a_run(self) -> None:
+        first = self.journal.begin_run("cabin")
+        (self.markers / "cabin").write_text("committed\n", encoding="utf-8")
+        self.journal.complete_run(first["run_id"])
+        self.write_presence(state_changed_at="2026-08-16T12:00:00Z")
+
+        advanced = self.journal.reconcile_cycle("cabin")
+        cycle = json.loads(
+            (self.journal.cycles_dir / "cabin.json").read_text(encoding="utf-8")
+        )
+        current = self.journal.reconcile_cycle("cabin")
+
+        self.assertEqual(advanced, {"ok": True, "status": "advanced"})
+        self.assertEqual(current, {"ok": True, "status": "current"})
+        self.assertEqual(cycle["state_changed_at"], "2026-08-16T12:00:00Z")
+        self.assertNotEqual(cycle["cycle_id"], first["cycle_id"])
+        self.assertEqual(len(tuple(self.journal.runs_dir.glob("run_*.json"))), 1)
+
+    def test_reconcile_cycle_requires_an_existing_safe_marker(self) -> None:
+        self.journal.begin_run("cabin")
+        self.write_presence(state_changed_at="2026-08-16T12:00:00Z")
+
+        with self.assertRaisesRegex(
+            journal_module.JournalError, "vacancy_marker_invalid"
+        ):
+            self.journal.reconcile_cycle("cabin")
+
+    def test_reconcile_cycle_never_moves_evidence_backward(self) -> None:
+        first = self.journal.begin_run("cabin")
+        (self.markers / "cabin").write_text("committed\n", encoding="utf-8")
+        self.journal.complete_run(first["run_id"])
+        self.write_presence(state_changed_at="2026-08-14T12:00:00Z")
+
+        with self.assertRaisesRegex(
+            journal_module.JournalError, "cycle_reconciliation_invalid"
+        ):
+            self.journal.reconcile_cycle("cabin")
+
+        cycle = json.loads(
+            (self.journal.cycles_dir / "cabin.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(cycle["cycle_id"], first["cycle_id"])
+
     def test_stale_unfinished_action_becomes_unknown_without_retry(self) -> None:
         started = self.journal.begin_run("cabin")
         self.journal.begin_action(started["run_id"], "floomba", "start_cleaning")
@@ -254,6 +297,7 @@ class VacancyActionJournalTests(unittest.TestCase):
             "$HOME/.openclaw/bin/vacancy-action-journal.py", runner
         )
         self.assertIn("legacy actions continue", runner)
+        self.assertIn("reconcile-cycle --site", runner)
 
 
 if __name__ == "__main__":

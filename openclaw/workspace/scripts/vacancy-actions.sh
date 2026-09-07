@@ -127,6 +127,36 @@ journal_complete_run() {
   return 0
 }
 
+# A transient loss of cross-site freshness can move canonical occupancy from
+# confirmed_vacant to possibly_vacant and back while the legacy vacancy marker
+# correctly remains committed. Advance only the protected evidence cycle in
+# that case; never replay the physical vacancy actions guarded by the marker.
+journal_reconcile_cycle() {
+  local site="$1" site_name output status
+  case "$site" in
+    cabin) site_name="Cabin" ;;
+    crosstown) site_name="Crosstown" ;;
+    *) journal_warn; return 0 ;;
+  esac
+  [[ "$JOURNAL_TELEMETRY_FAILED" -eq 0 ]] || return 0
+  if [[ ! -x "$VACANCY_ACTION_JOURNAL" ]] || \
+      ! output=$("$VACANCY_ACTION_JOURNAL" reconcile-cycle --site "$site" 2>/dev/null); then
+    journal_warn
+    return 0
+  fi
+  status=$(printf '%s' "$output" | "$VACANCY_JOURNAL_PYTHON" -c \
+    'import json,sys; value=json.load(sys.stdin); print(value.get("status", ""))' \
+    2>/dev/null || true)
+  case "$status" in
+    current) ;;
+    advanced)
+      log "  $site_name vacancy evidence cycle reconciled without replaying actions"
+      ;;
+    *) journal_warn ;;
+  esac
+  return 0
+}
+
 # Return the exact action owner. Once the protected policy exists, an invalid
 # policy or unavailable helper fails closed for that target rather than
 # risking overlap between the legacy runner and the bus worker.
@@ -268,6 +298,15 @@ PY
 IFS=$'\t' read -r crosstown_occupancy cabin_occupancy dylan_location julia_location <<< "$state_values"
 
 log "Check: crosstown=$crosstown_occupancy cabin=$cabin_occupancy dylan=$dylan_location julia=$julia_location"
+
+if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && \
+    [[ -f "$MARKER_DIR/crosstown" ]]; then
+  journal_reconcile_cycle crosstown
+fi
+if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && \
+    [[ -f "$MARKER_DIR/cabin" ]]; then
+  journal_reconcile_cycle cabin
+fi
 
 # --- Crosstown vacancy ---
 if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/crosstown" ]]; then

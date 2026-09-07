@@ -183,6 +183,16 @@ messaging interface. The separately site-gated adapter is the only publisher.
 It ignores all pre-enable history and advances its protected cursor only after
 each event reaches the source spool.
 
+A temporary loss of cross-site freshness may move an already marked site from
+`confirmed_vacant` to `possibly_vacant` and back without representing a human
+return. When the marker remains committed, `vacancy-actions.sh` invokes the
+journal's `reconcile-cycle` operation. The helper revalidates the hash-matched,
+fresh canonical state and the existing safe marker, then advances only the
+protected vacancy evidence cycle. It creates no vacancy run and cannot replay
+lights, locks, HVAC, Roombas, or other device actions. Cat transfer eligibility
+therefore resumes from the re-confirmation time and still requires a newer
+destination litter-box event plus its full settle window.
+
 ## Crosstown lighting handoff
 
 `~/.openclaw/home-events/config/action-policy.json` is the exact ownership

@@ -345,6 +345,16 @@ def summarize_transfer_state(
         and transfer_data.get("coverage_ready") is True
     )
     fully_automatic = all(owner_map.get(site) == "bus" for site in SITE_ORDER)
+    readiness = automation_data.get("cat_transfer_readiness")
+    readiness_data = readiness if isinstance(readiness, dict) else {}
+    readiness_sites = readiness_data.get("sites")
+    readiness_map = readiness_sites if isinstance(readiness_sites, dict) else {}
+    blocked_sites = [
+        site
+        for site in SITE_ORDER
+        if isinstance(readiness_map.get(site), dict)
+        and readiness_map[site].get("state") == "blocked"
+    ]
 
     current_errors: list[str] = []
     transitional = False
@@ -395,6 +405,31 @@ def summarize_transfer_state(
             "summary": "One feeder change needs review",
             "attention": True,
             "notice": "A feeder change could not be confirmed. OpenClaw will not retry it automatically.",
+        }
+    if blocked_sites:
+        blocked_site = blocked_sites[0]
+        reason = readiness_map[blocked_site].get("reason")
+        if reason == "vacancy_cycle_mismatch":
+            description = (
+                f"{SITE_NAMES[blocked_site]} is vacant, but its protected vacancy "
+                "confirmation is out of date. OpenClaw will not change either "
+                "feeder until that safety record is reconciled."
+            )
+        else:
+            description = (
+                "OpenClaw cannot safely match the current home and litter-box "
+                "evidence. No automatic feeder change will be made until the "
+                "safety check recovers."
+            )
+        return {
+            **base,
+            "tone": "bad",
+            "label": "Needs review",
+            "title": "Automatic switching needs a safety check",
+            "description": description,
+            "summary": "Feeder safety check is blocked",
+            "attention": True,
+            "notice": "Automatic feeder switching is waiting for a protected safety check.",
         }
     if len(managed) == 1:
         waiting_site = next(iter(managed))
@@ -447,6 +482,33 @@ def summarize_transfer_state(
             "title": "Feeder schedules are being updated",
             "description": "OpenClaw is checking both homes and will show the final schedule state when the change is confirmed.",
             "summary": "A feeder change is in progress",
+        }
+    litter_waiting_origins = [
+        site
+        for site in SITE_ORDER
+        if isinstance(readiness_map.get(site), dict)
+        and readiness_map[site].get("state") == "waiting"
+        and readiness_map[site].get("reason") == "cat_transfer_not_settled"
+    ]
+    if (
+        len(managed) == 0
+        and len(litter_waiting_origins) == 1
+        and all(schedule_states[site] == "on" for site in SITE_ORDER)
+    ):
+        origin_site = litter_waiting_origins[0]
+        destination_site = "crosstown" if origin_site == "cabin" else "cabin"
+        return {
+            **base,
+            "tone": "warn",
+            "label": "Waiting",
+            "title": f"Waiting for {SITE_NAMES[destination_site]} litter-box confirmation",
+            "description": (
+                f"{SITE_NAMES[origin_site]} is confirmed vacant and scheduled meals "
+                f"remain on at both homes. OpenClaw needs a new {SITE_NAMES[destination_site]} "
+                "cat-detection record and its 30-minute settle time before it can "
+                f"pause {SITE_NAMES[origin_site]} meals."
+            ),
+            "summary": "Waiting for litter-box confirmation",
         }
     if len(managed) == 1:
         paused_site = next(iter(managed))

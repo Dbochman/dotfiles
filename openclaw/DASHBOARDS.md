@@ -225,7 +225,10 @@ with Petlibro feeders and fountains.
   Cabin`, `Both homes are ready`, or an explicit checking/review state), exact
   schedule readback for each home, litter-box freshness, and waiting changes,
   including a non-error waiting state when the correct schedules are already
-  set but the returning cats have not yet used that home's litter box
+  set but the returning cats have not yet used that home's litter box. A newly
+  vacant home with both schedules still on now names the destination
+  litter-box confirmation it needs, while a stale protected vacancy cycle is
+  shown as a blocked safety check instead of `Ready`.
 - **Whisker cards** — one exact enrolled robot per home, including online
   state, waste, litter, cycle count, and a guarded clean action
 - **Petlibro cards** — live feeder and fountain telemetry, exact provider-

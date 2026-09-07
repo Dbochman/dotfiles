@@ -69,6 +69,29 @@ CAT_TRANSFER_RETRYABLE_NO_COMMAND_REASONS = frozenset(
     }
 )
 FEEDER_WAITING_REASONS = frozenset({"cat_transfer_not_settled"})
+CAT_TRANSFER_WAITING_REASONS = frozenset(
+    {
+        "cat_transfer_not_settled",
+        "destination_not_occupied",
+        "origin_litter_activity_observed",
+        "site_not_confirmed_vacant",
+    }
+)
+CAT_TRANSFER_BLOCKED_REASONS = frozenset(
+    {
+        "presence_state_invalid",
+        "presence_state_mismatch",
+        "presence_state_stale",
+        "presence_time_invalid",
+        "producer_state_invalid",
+        "vacancy_cycle_invalid",
+        "vacancy_cycle_mismatch",
+        "whisker_coverage_incomplete",
+        "whisker_coverage_stale",
+        "whisker_coverage_unavailable",
+        "whisker_state_invalid",
+    }
+)
 
 
 class ActionError(Exception):
@@ -2042,11 +2065,75 @@ def reserve_current_canary(
     return {"ok": True, **result}
 
 
-def safe_status(root: Path) -> dict[str, Any]:
+def _cat_transfer_readiness(
+    connection: sqlite3.Connection,
+    *,
+    root: Path,
+    policy: Mapping[str, Any] | None,
+    state_path: Path,
+    producer_path: Path,
+    journal_root: Path,
+    clock: Callable[[], str],
+) -> dict[str, Any]:
+    sites: dict[str, dict[str, str | None]] = {}
+    for origin_site in sorted(SITES):
+        entry = (
+            policy.get("targets", {}).get(origin_site, {}).get("feeding_schedule")
+            if policy is not None
+            else None
+        )
+        if (
+            not isinstance(entry, Mapping)
+            or entry.get("owner") != "bus"
+            or entry.get("mode") not in {"active", "shadow"}
+            or entry.get("trigger") != "cat_transfer"
+        ):
+            sites[origin_site] = {"state": "disabled", "reason": None}
+            continue
+        try:
+            _cat_transfer_evidence(
+                connection,
+                root=root,
+                state_path=state_path,
+                producer_path=producer_path,
+                journal_root=journal_root,
+                origin_site=origin_site,
+                entry=entry,
+                clock=clock,
+            )
+        except ActionError as exc:
+            if exc.code in CAT_TRANSFER_WAITING_REASONS:
+                sites[origin_site] = {"state": "waiting", "reason": exc.code}
+            elif exc.code in CAT_TRANSFER_BLOCKED_REASONS:
+                sites[origin_site] = {"state": "blocked", "reason": exc.code}
+            else:
+                sites[origin_site] = {
+                    "state": "blocked",
+                    "reason": "transfer_evidence_unavailable",
+                }
+        else:
+            sites[origin_site] = {"state": "eligible", "reason": None}
+    return {"sites": sites}
+
+
+def safe_status(
+    root: Path,
+    *,
+    state_path: Path | None = None,
+    producer_path: Path | None = None,
+    journal_root: Path | None = None,
+    clock: Callable[[], str] = utc_now,
+) -> dict[str, Any]:
     paths = validate_runtime(root)
     store = EventStore(paths)
     store.check_schema()
     loaded = load_policy(root, allow_missing=True)
+    state_path = state_path or root.parent / "presence/state.json"
+    producer_path = (
+        producer_path
+        or root.parent / "presence/home-events-outbox/producer-state.json"
+    )
+    journal_root = journal_root or root.parent / "vacancy-actions/journal"
     suspensions = _load_suspensions(root)
     feeder_suspensions = _load_feeder_suspensions(root)
     with contextlib.closing(store.connect(read_only=True)) as connection:
@@ -2076,6 +2163,15 @@ def safe_status(root: Path) -> dict[str, Any]:
             LIMIT 8
             """
         ).fetchall()
+        cat_transfer_readiness = _cat_transfer_readiness(
+            connection,
+            root=root,
+            policy=loaded[0] if loaded is not None else None,
+            state_path=state_path,
+            producer_path=producer_path,
+            journal_root=journal_root,
+            clock=clock,
+        )
     return {
         "ok": True,
         "policy": {
@@ -2131,6 +2227,7 @@ def safe_status(root: Path) -> dict[str, Any]:
                 for row in recent_cat_transfers
             ]
         },
+        "cat_transfer_readiness": cat_transfer_readiness,
         "counts": {
             status: counts.get(status, 0)
             for status in (

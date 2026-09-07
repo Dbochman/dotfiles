@@ -436,6 +436,105 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("Cabin meals are paused", summary["description"])
         self.assertNotIn("cat_transfer_not_settled", json.dumps(summary))
 
+    def test_transfer_summary_surfaces_blocked_vacancy_reconciliation(self) -> None:
+        summary = self.dashboard.summarize_transfer_state(
+            {
+                "ok": True,
+                "feeding_schedule_owners": {"cabin": "bus", "crosstown": "bus"},
+                "feeder_suspensions": {"sites": {}},
+                "cat_transfer_readiness": {
+                    "sites": {
+                        "cabin": {
+                            "state": "waiting",
+                            "reason": "site_not_confirmed_vacant",
+                        },
+                        "crosstown": {
+                            "state": "blocked",
+                            "reason": "vacancy_cycle_mismatch",
+                        },
+                    }
+                },
+            },
+            {
+                "ok": True,
+                "coverage_ready": True,
+                "pending_actions": 0,
+                "unknown_actions": 0,
+            },
+            {
+                "ok": True,
+                "devices": [
+                    {
+                        "selector": "cabin-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": True,
+                    },
+                    {
+                        "selector": "crosstown-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": True,
+                    },
+                ],
+            },
+        )
+
+        self.assertTrue(summary["attention"])
+        self.assertEqual(summary["label"], "Needs review")
+        self.assertEqual(summary["title"], "Automatic switching needs a safety check")
+        self.assertIn("Crosstown is vacant", summary["description"])
+        self.assertNotIn("vacancy_cycle_mismatch", json.dumps(summary))
+
+    def test_transfer_summary_shows_pre_transfer_litter_wait(self) -> None:
+        summary = self.dashboard.summarize_transfer_state(
+            {
+                "ok": True,
+                "feeding_schedule_owners": {"cabin": "bus", "crosstown": "bus"},
+                "feeder_suspensions": {"sites": {}},
+                "cat_transfer_readiness": {
+                    "sites": {
+                        "cabin": {
+                            "state": "waiting",
+                            "reason": "site_not_confirmed_vacant",
+                        },
+                        "crosstown": {
+                            "state": "waiting",
+                            "reason": "cat_transfer_not_settled",
+                        },
+                    }
+                },
+            },
+            {
+                "ok": True,
+                "coverage_ready": True,
+                "pending_actions": 0,
+                "unknown_actions": 0,
+            },
+            {
+                "ok": True,
+                "devices": [
+                    {
+                        "selector": "cabin-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": True,
+                    },
+                    {
+                        "selector": "crosstown-feeder",
+                        "scheduleReadback": "verified",
+                        "scheduleEnabled": True,
+                    },
+                ],
+            },
+        )
+
+        self.assertFalse(summary["attention"])
+        self.assertEqual(summary["label"], "Waiting")
+        self.assertEqual(
+            summary["title"], "Waiting for Cabin litter-box confirmation"
+        )
+        self.assertIn("Crosstown is confirmed vacant", summary["description"])
+        self.assertIn("30-minute settle time", summary["description"])
+        self.assertNotIn("cat_transfer_not_settled", json.dumps(summary))
+
     def test_petlibro_collector_uses_exact_schedule_readback(self) -> None:
         with patch.object(
             self.dashboard,

@@ -306,6 +306,20 @@ class VacancyActionJournal:
             raise JournalError("run_id_invalid")
         return self.runs_dir / f"{run_id}.json"
 
+    def _require_vacancy_marker(self, site: str) -> Path:
+        marker = self.marker_dir / site
+        try:
+            metadata = marker.lstat()
+        except OSError as exc:
+            raise JournalError("vacancy_marker_invalid") from exc
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+        ):
+            raise JournalError("vacancy_marker_invalid")
+        return marker
+
     def _read_run(self, run_id: str) -> dict[str, Any]:
         value = require_exact_keys(
             self._read_json(self._run_path(run_id)),
@@ -415,7 +429,7 @@ class VacancyActionJournal:
             changed_at = canonical[site]["stateChangedAt"]
             cycle_path = self.cycles_dir / f"{site}.json"
             cycle_id: str
-            if cycle_path.exists():
+            if cycle_path.exists() or cycle_path.is_symlink():
                 cycle = require_exact_keys(
                     self._read_json(cycle_path),
                     frozenset(
@@ -465,6 +479,46 @@ class VacancyActionJournal:
             }
             self._atomic_write(self._run_path(run_id), run)
             return {"ok": True, "run_id": run_id, "cycle_id": cycle_id}
+
+    def reconcile_cycle(self, site: str) -> Mapping[str, Any]:
+        """Advance only stale vacancy evidence after canonical re-confirmation."""
+        with self._locked():
+            canonical, _producer = self._validated_presence(site)
+            self._require_vacancy_marker(site)
+            changed_at = canonical[site]["stateChangedAt"]
+            changed_time = parse_time(changed_at)
+            cycle_path = self.cycles_dir / f"{site}.json"
+            if cycle_path.exists() or cycle_path.is_symlink():
+                cycle = require_exact_keys(
+                    self._read_json(cycle_path),
+                    frozenset(
+                        {"schema_version", "site", "state_changed_at", "cycle_id"}
+                    ),
+                    "cycle_record_invalid",
+                )
+                if (
+                    cycle["schema_version"] != SCHEMA_VERSION
+                    or cycle["site"] != site
+                    or not isinstance(cycle["cycle_id"], str)
+                    or ID_RE.fullmatch(cycle["cycle_id"]) is None
+                    or not cycle["cycle_id"].startswith("cycle_")
+                ):
+                    raise JournalError("cycle_record_invalid")
+                prior_changed_time = parse_time(cycle["state_changed_at"])
+                if cycle["state_changed_at"] == changed_at:
+                    return {"ok": True, "status": "current"}
+                if prior_changed_time > changed_time:
+                    raise JournalError("cycle_reconciliation_invalid")
+            self._atomic_write(
+                cycle_path,
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "site": site,
+                    "state_changed_at": changed_at,
+                    "cycle_id": safe_id("cycle"),
+                },
+            )
+            return {"ok": True, "status": "advanced"}
 
     def begin_action(self, run_id: str, target: str, action: str) -> Mapping[str, Any]:
         with self._locked():
@@ -539,14 +593,7 @@ class VacancyActionJournal:
                 raise JournalError("run_not_active")
             if any(item.get("state") != "terminal" for item in run["actions"]):
                 raise JournalError("run_has_pending_actions")
-            marker = self.marker_dir / run["site"]
-            metadata = marker.lstat()
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or stat.S_ISLNK(metadata.st_mode)
-                or metadata.st_uid != os.getuid()
-            ):
-                raise JournalError("vacancy_marker_invalid")
+            self._require_vacancy_marker(run["site"])
             now = self.clock()
             parse_time(now)
             run.update(
@@ -644,6 +691,8 @@ def build_parser() -> argparse.ArgumentParser:
     finish.add_argument("--reason-code", required=True, choices=sorted(REASON_CODES))
     complete = commands.add_parser("complete-run")
     complete.add_argument("--run-id", required=True)
+    reconcile = commands.add_parser("reconcile-cycle")
+    reconcile.add_argument("--site", required=True, choices=sorted(SITES))
     commands.add_parser("recover")
     commands.add_parser("status")
     return parser
@@ -668,6 +717,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         elif args.command == "complete-run":
             result = journal.complete_run(args.run_id)
+        elif args.command == "reconcile-cycle":
+            result = journal.reconcile_cycle(args.site)
         elif args.command == "recover":
             result = journal.recover_stale()
         else:

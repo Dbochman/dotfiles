@@ -212,7 +212,10 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   arrivals/departures and household excursion intervals.
 - `bin/vacancy-action-journal.py` is a local observation-only source journal
   for the legacy vacancy runner. It validates exact protected presence
-  causality and records only allowlisted site/target/action outcomes.
+  causality and records only allowlisted site/target/action outcomes. When an
+  already marked vacancy is re-confirmed after a temporary uncertain interval,
+  its marker-gated reconciliation advances only the evidence cycle and never
+  creates a run or replays a physical action.
 - `bin/vacancy-event-adapter.py` publishes only future terminal runs from
   explicitly enabled sites after a silent baseline. It exposes no command,
   provider identifier, or device interface.
@@ -232,8 +235,10 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   lock across crash recovery, revalidation, command, and readback, and restores
   only state recorded as enabled before the matching vacancy cycle. Its safe
   status includes at most eight confirmed recent feeder transfers as origin,
-  destination, completion time, and whether a schedule command was needed; the
-  Cat Care dashboard uses that bounded view for plain-English move activity.
+  destination, completion time, and whether a schedule command was needed. It
+  also projects a bounded per-site cat-transfer readiness state and allowlisted
+  waiting or blocked reason; the Cat Care dashboard uses those safe fields for
+  plain-English waiting, safety-check, and move activity.
 - `skills/home-events/SKILL.md` constrains OpenClaw to the read-only wrapper and
   delegates only an explicit current-image request to `nest-camera`.
 - `ai.openclaw.ring-event-listener` remains the only Ring FCM connection and

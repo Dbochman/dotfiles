@@ -15,6 +15,11 @@ food, and water—rather than around vendor accounts or a generic device grid.
   and whether the paused schedule will turn back on automatically. Separate
   Cabin/Crosstown meal readbacks, litter-box freshness, and waiting changes
   remain visible without exposing policy-direction or event-bus terminology.
+  After a home becomes vacant but before a qualifying destination litter-box
+  event settles, the card names the destination confirmation it is waiting for
+  instead of continuing to say both homes are merely ready. A stale protected
+  vacancy confirmation becomes an explicit safety-check warning rather than a
+  silent `Ready` state.
   Split human occupancy is a normal state: when the cats remain at one home
   while a person occupies each, the other feeder stays paused and the card
   explains that directly instead of presenting a false automation warning.
@@ -46,7 +51,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   never includes plan IDs, device IDs, raw provider text, or manual feeds.
 - **Attention state** calls out unavailable integrations, stale or incomplete
   transfer evidence, unknown feeder outcomes, offline robots, and full or
-  nearly-full waste drawers. Paired litter readiness is evaluated from the
+  nearly-full waste drawers. This includes a protected vacancy-cycle mismatch
+  that prevents feeder eligibility even while provider reads remain healthy.
+  Paired litter readiness is evaluated from the
   Whisker observer and both fresh site polls, independently of unrelated
   top-level event-bus degradation; broader bus health is shown as a separate
   advisory and does not mislabel healthy feeder protection as unavailable. A
@@ -114,7 +121,7 @@ actions invalidate the snapshot immediately.
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.cat-dashboard.plist` | `~/Library/LaunchAgents/ai.openclaw.cat-dashboard.plist` |
 | Whisker integration | `openclaw/skills/litter-robot/` | `~/.openclaw/skills/litter-robot/` |
 | Petlibro integration | `openclaw/skills/petlibro/` | `~/.openclaw/skills/petlibro/` |
-| Feeder automation status | `openclaw/bin/home_event_action.py` | `~/.openclaw/home-events/state/feeder-schedule-suspensions.json` |
+| Feeder automation status | `openclaw/bin/home_event_action.py` | Safe suspension, transfer-readiness, and recent-transfer projection |
 | Transfer coverage | `openclaw/bin/home_event_bus.py` | Sanitized `home-eventctl status` fields only |
 | Logs | — | `~/.openclaw/logs/cat-dashboard.{log,err.log}` |
 

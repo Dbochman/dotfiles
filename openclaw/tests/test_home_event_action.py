@@ -767,6 +767,48 @@ class HomeEventActionTests(unittest.TestCase):
         self.private_json(self.root / "state/whisker-adapter.json", state)
         self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
 
+    def test_safe_status_exposes_vacancy_cycle_mismatch(self) -> None:
+        self.configure_cat_transfer()
+        state = json.loads(self.state_path.read_text(encoding="utf-8"))
+        state["cabin"]["stateChangedAt"] = "2026-08-22T14:05:00Z"
+        producer = json.loads(self.producer_path.read_text(encoding="utf-8"))
+        producer["state_hash"] = actions.state_hash(state)
+        self.private_json(self.state_path, state)
+        self.private_json(self.producer_path, producer)
+
+        readiness = actions.safe_status(
+            self.root,
+            state_path=self.state_path,
+            producer_path=self.producer_path,
+            journal_root=self.journal,
+            clock=lambda: NOW,
+        )["cat_transfer_readiness"]["sites"]
+
+        self.assertEqual(
+            readiness["cabin"],
+            {"state": "blocked", "reason": "vacancy_cycle_mismatch"},
+        )
+        self.assertEqual(
+            readiness["crosstown"],
+            {"state": "waiting", "reason": "site_not_confirmed_vacant"},
+        )
+
+    def test_safe_status_exposes_wait_for_destination_litter(self) -> None:
+        self.configure_cat_transfer()
+
+        readiness = actions.safe_status(
+            self.root,
+            state_path=self.state_path,
+            producer_path=self.producer_path,
+            journal_root=self.journal,
+            clock=lambda: NOW,
+        )["cat_transfer_readiness"]["sites"]
+
+        self.assertEqual(
+            readiness["cabin"],
+            {"state": "waiting", "reason": "cat_transfer_not_settled"},
+        )
+
     def test_recent_destination_activity_restarts_the_quiet_settle_window(self) -> None:
         self.configure_cat_transfer()
         self.enqueue_litter_activity("crosstown")

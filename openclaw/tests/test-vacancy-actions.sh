@@ -70,6 +70,7 @@ printf '%s\n' \
   '  begin-action) printf "%s\n" '\''{"ok":true,"attempt_id":"attempt_33333333333333333333333333333333"}'\'' ;;' \
   '  finish-action) printf "%s\n" '\''{"ok":true}'\'' ;;' \
   '  complete-run) printf "%s\n" '\''{"ok":true}'\'' ;;' \
+  '  reconcile-cycle) printf "%s\n" '\''{"ok":true,"status":"advanced"}'\'' ;;' \
   '  *) exit 2 ;;' \
   'esac' \
   > "$FAKE_JOURNAL"
@@ -421,6 +422,22 @@ grep -Fqx \
 grep -Fqx \
   'complete-run --run-id run_11111111111111111111111111111111' \
   "$JOURNAL_CALLS_FILE"
+
+# Re-confirming a still-marked vacancy reconciles only its protected evidence
+# cycle. It must not replay any legacy device command or create another run.
+: > "$CALLS_FILE"
+: > "$JOURNAL_CALLS_FILE"
+export VACANCY_ACTION_JOURNAL_OVERRIDE="$FAKE_JOURNAL"
+run_vacancy_actions
+unset VACANCY_ACTION_JOURNAL_OVERRIDE
+
+test ! -s "$CALLS_FILE"
+grep -Fqx 'recover' "$JOURNAL_CALLS_FILE"
+grep -Fqx 'reconcile-cycle --site cabin' "$JOURNAL_CALLS_FILE"
+if grep -Fq 'begin-run' "$JOURNAL_CALLS_FILE"; then
+  echo "cycle reconciliation replayed a vacancy run" >&2
+  exit 1
+fi
 
 # Exact bus ownership removes only Crosstown Hue from the legacy executor.
 mkdir -p \
