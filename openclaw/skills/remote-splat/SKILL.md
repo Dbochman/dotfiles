@@ -1,6 +1,6 @@
 ---
 name: remote-splat
-description: Use the private RTX 5090 desktop to stage photo datasets, run hash-approved COLMAP or Brush Gaussian-splat jobs, monitor them through tmux, validate and retrieve .sog/.ply artifacts, and prepare an explicitly confirmed SuperSplat publish. Use for remote photogrammetry and Gaussian-splat work; not for general desktop administration, unrelated compute jobs, or unconfirmed public uploads.
+description: Prepare long capture videos into reviewable semantic clips and ordered modeling frames, then use the private RTX 5090 desktop to stage photo datasets, run hash-approved COLMAP or Brush Gaussian-splat jobs, monitor them through tmux, validate and retrieve .sog/.ply artifacts, and prepare an explicitly confirmed SuperSplat publish. Use for video-to-photogrammetry preparation, remote reconstruction, and Gaussian-splat work; not for general desktop administration, unrelated compute jobs, or unconfirmed public uploads.
 allowed-tools: Bash(remote-splat:*)
 metadata: {"openclaw":{"emoji":"🫧","requires":{"bins":["remote-splat"]}}}
 ---
@@ -17,15 +17,25 @@ Read [references/host-and-toolchain.md](references/host-and-toolchain.md) only
 when diagnosing the host or preparing a new job script. Read
 [references/workflow.md](references/workflow.md) before changing reconstruction,
 training, export, validation, or publishing behavior.
+Read [references/video-preparation.md](references/video-preparation.md) before
+reviewing long footage, defining semantic segments, or extracting frames.
 
 ## Safety boundary
 
 - Status, planning, progress, and artifact inspection are read-only.
 - `stage` may create or add files only inside one validated remote job.
+- For multi-gigabyte single files, `inbox-stage` uses private Taildrop to the
+  fixed desktop host. The approved job script must verify the returned SHA-256
+  before copying the inbox file into its managed job root; never execute an
+  inbox file in place.
 - A remote script must be staged, inspected, and approved by its exact SHA-256
   before `run`; never infer or reuse approval after the file changes.
 - Each job gets its own `splat-<job>` tmux session. Do not kill another session,
   process, or job to make room.
+- A job name records one exact script run and its tmux session remains as
+  provenance after exit. Use distinct job names for audit, preparation,
+  connectivity, training, and validation phases; do not reuse a completed job
+  name for a different script.
 - Fetch only `.sog` or `.ply` outputs through the helper. It verifies SHA-256
   after transfer and refuses to overwrite a different local file.
 - Never publish, replace, delete, or change sharing on SuperSplat without a
@@ -33,8 +43,43 @@ training, export, validation, or publishing behavior.
 - Treat photos, reconstructions, logs, and scene names as private household
   data. Do not expose local/remote paths, account details, or raw logs in chat
   unless Dylan explicitly asks for diagnostics.
+- Keep source videos immutable. Review and extraction outputs must use new or
+  empty directories; never overwrite or trim an original recording.
 
 ## Workflow
+
+### 0. Prepare long-form footage
+
+Probe each video, then build one private review package for all related footage:
+
+```bash
+remote-splat video-probe --source '/absolute/local/trail-one.mov'
+remote-splat video-review \
+  --source '/absolute/local/trail-one.mov' \
+  --source '/absolute/local/trail-two.mov' \
+  --output '/absolute/local/cabin-video-review' \
+  --interval-seconds 30 --proxy
+```
+
+Open the generated `index.html` or scrub its metadata-free 720p proxies. Copy
+`segments.template.json` to a working manifest and add deliberate lowercase
+segment names plus start/end timecodes. Automatic scene suggestions may help
+with edited footage, but they do not understand semantic areas such as yard,
+interior, or trails.
+
+Validate before extraction, then write frame-accurate silent clips and ordered
+modeling frames to a new directory:
+
+```bash
+remote-splat video-extract --manifest '/absolute/local/segments.json' \
+  --output '/absolute/local/cabin-video-extract' --dry-run
+remote-splat video-extract --manifest '/absolute/local/segments.json' \
+  --output '/absolute/local/cabin-video-extract'
+```
+
+Review the extracted frames for blur, occlusion, repetitive stationary views,
+and weak transitions before staging them. Preserve overlapping boundary frames
+between neighboring semantic segments so COLMAP can connect them.
 
 ### 1. Check the host
 
@@ -59,6 +104,19 @@ remote-splat stage --job cabin-refresh --source '/absolute/local/dataset'
 The source may be one file or directory. The helper copies into the job's
 `input/` directory without deleting remote files. Inspect or create the job's
 `.sh` or `.ps1` script locally before staging it too.
+
+For an unusually large single source file, use the desktop's direct Tailscale
+path and record the returned inbox name and digest in the preparation script:
+
+```bash
+remote-splat inbox-stage --job cabin-refresh --source '/absolute/local/video.MOV' --dry-run
+remote-splat inbox-stage --job cabin-refresh --source '/absolute/local/video.MOV'
+```
+
+The preparation script must hash-verify and ingest the inbox file before it is
+decoded or otherwise used. Current Windows Tailscale clients receive Taildrop
+files in the interactive user's `Downloads` directory; bind the exact inbox
+name and digest rather than scanning or draining unrelated inbox contents.
 
 ### 3. Bind approval to the script
 

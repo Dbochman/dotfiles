@@ -13,6 +13,8 @@ Load this reference only for host diagnosis or when preparing a new job script.
 - Remote job root:
   `/mnt/c/Users/Owner/Documents/OpenClaw/remote-splat/jobs/<job>/`
 - Per-job directories: `input/`, `outputs/`, `logs/`, and `state/`
+- One exact script launch per job name; the retained tmux session and state are
+  immutable run provenance, so multi-phase workflows use separate job names
 - Protected execution helpers:
   `/home/openclaw/.local/state/desktop-compute/splat/<job>/`
 - Durable session: `splat-<job>`
@@ -38,7 +40,8 @@ Verified September 6, 2026:
 - NVIDIA GeForce RTX 5090, 32,607 MiB, driver 610.88
 - Ubuntu 26.04 under WSL 2
 - `tmux` 3.6a, `rsync` 3.4.1, Git 2.53, plus the shared WSL utility baseline
-  (`rg`, `jq`, archives, SQLite, FFmpeg, ShellCheck, and user-local `uv`)
+  (`rg`, `jq`, archives, SQLite, FFmpeg, ShellCheck, user-local `uv`, and
+  headless PySceneDetect)
 - Windows-native COLMAP 4.2.0 at
   `/mnt/c/Users/Owner/Documents/Codex/2026-09-05/c/work/colmap/bin/colmap.exe`
 - Windows-native Brush 0.3.0 at
@@ -50,6 +53,14 @@ Those application paths are the currently verified bootstrap toolchain, not
 the durable storage contract. Discover and validate a replacement path before
 editing a job script if that dated workspace moves. Keep datasets and new
 outputs in the managed job root.
+
+For a seeded Cabin extension, the current verified baseline is
+`work/combined/sparse-lightglue`: 238 registered images, 46,403 points, and
+0.527222 px mean reprojection error. Its database contains 245 images and all
+29,890 baseline image pairs; seven drone inputs are present but unregistered.
+Use `work/combined/images` with that database/model pair, preserve all 238 seed
+poses, and treat the measurements as an audited baseline rather than a generic
+default for other scenes.
 
 After a transport or toolchain repair, the bundled
 `scripts/compute_canary.sh` may be staged, hash-approved, and run as an ordinary

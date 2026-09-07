@@ -9,6 +9,8 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -103,6 +105,44 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertEqual(desktop.call_args.args[0], "stage")
         self.assertIn("--dry-run", desktop.call_args.args[1])
 
+    def test_inbox_stage_is_hash_bound_and_targets_only_the_desktop(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "IMG_4112.MOV"
+            source.write_bytes(b"video-data")
+            with mock.patch.object(self.helper.subprocess, "run") as run:
+                run.return_value.returncode = 0
+                code, stdout, stderr = self.run_main(
+                    ["inbox-stage", "--job", "cabin-trails-v1", "--source", str(source)]
+                )
+        self.assertEqual((code, stderr), (0, ""))
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sha256"], hashlib.sha256(b"video-data").hexdigest())
+        self.assertTrue(payload["requiresHashVerifiedIngest"])
+        command = run.call_args.args[0]
+        self.assertEqual(command[0:3], [self.helper.TAILSCALE, "file", "cp"])
+        self.assertEqual(command[-2], "-")
+        self.assertEqual(command[-1], "desktop-r9js0ok:")
+        self.assertIn("openclaw-splat-cabin-trails-v1-IMG_4112.MOV", command)
+
+    def test_inbox_stage_dry_run_does_not_transfer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "capture.mov"
+            source.write_bytes(b"video")
+            with mock.patch.object(self.helper.subprocess, "run") as run:
+                code, stdout, stderr = self.run_main(
+                    [
+                        "inbox-stage",
+                        "--job",
+                        "cabin",
+                        "--source",
+                        str(source),
+                        "--dry-run",
+                    ]
+                )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertTrue(json.loads(stdout)["dryRun"])
+        run.assert_not_called()
+
     def test_plan_and_run_are_bound_to_exact_hash(self) -> None:
         digest = "a" * 64
         with mock.patch.object(
@@ -192,6 +232,87 @@ class RemoteSplatTests(unittest.TestCase):
         command = self.helper.desktop_arguments("status", ())
         self.assertEqual(command[0], self.helper.DESKTOP_COMPUTE)
         self.assertEqual(command[1:4], ["status", "--scope", "splat"])
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg is required")
+    def test_video_review_and_extract_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "walk.mp4"
+            created = subprocess.run(
+                [
+                    shutil.which("ffmpeg"),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=640x360:rate=30",
+                    "-t",
+                    "6",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(source),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(created.returncode, 0, created.stderr.decode(errors="replace"))
+            original_hash = self.helper.hash_file(source)
+
+            code, stdout, stderr = self.run_main(["video-probe", "--source", str(source)])
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertEqual(json.loads(stdout)["width"], 640)
+
+            review = root / "review"
+            review_args = [
+                "video-review",
+                "--source",
+                str(source),
+                "--output",
+                str(review),
+                "--interval-seconds",
+                "5",
+                "--proxy",
+            ]
+            scene_tool = Path.home() / ".local/bin/scenedetect"
+            if scene_tool.is_file():
+                review_args.append("--scene-suggestions")
+            code, stdout, stderr = self.run_main(review_args)
+            self.assertEqual((code, stderr), (0, ""))
+            review_payload = json.loads(stdout)
+            self.assertGreaterEqual(review_payload["thumbnailCount"], 1)
+            self.assertEqual(review_payload["sceneSuggestionsCreated"], scene_tool.is_file())
+            self.assertTrue((review / "index.html").is_file())
+            self.assertTrue((review / "video-01/review-proxy.mp4").is_file())
+
+            manifest = json.loads((review / "segments.template.json").read_text(encoding="utf-8"))
+            manifest["videos"][0]["segments"] = [
+                {"name": "yard-anchor", "start": "00:00:01.000", "end": "00:00:04.000", "fps": 2.0}
+            ]
+            manifest_path = root / "segments.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            extraction = root / "extraction"
+
+            code, stdout, stderr = self.run_main(
+                ["video-extract", "--manifest", str(manifest_path), "--output", str(extraction), "--dry-run"]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertEqual(json.loads(stdout)["estimatedFrames"], 6)
+            self.assertFalse(extraction.exists())
+
+            code, stdout, stderr = self.run_main(
+                ["video-extract", "--manifest", str(manifest_path), "--output", str(extraction)]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            payload = json.loads(stdout)
+            self.assertEqual(payload["segments"][0]["frameCount"], 6)
+            self.assertTrue((extraction / "clips/yard-anchor.mp4").is_file())
+            self.assertEqual(len(list((extraction / "frames/yard-anchor").glob("*.jpg"))), 6)
+            self.assertEqual(self.helper.hash_file(source), original_hash)
 
 
 if __name__ == "__main__":

@@ -195,6 +195,7 @@ def command_status(arguments: list[str]) -> None:
         for name in ("ffmpeg", "git", "jq", "rg", "rsync", "shellcheck", "sqlite3", "tmux", "unzip", "zip")
     }
     tools["uv"] = (Path.home() / ".local/bin/uv").is_file()
+    tools["scenedetect"] = (Path.home() / ".local/bin/scenedetect").is_file()
     if scope == "splat":
         tool_root = Path("/mnt/c/Users/Owner/Documents/Codex/2026-09-05/c/work")
         tools.update(

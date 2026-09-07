@@ -14,10 +14,19 @@ import sys
 from typing import Sequence
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+import video_prep  # noqa: E402
+
+
 DESKTOP_COMPUTE = os.environ.get("DESKTOP_COMPUTE_BIN", "/opt/homebrew/bin/desktop-compute")
+TAILSCALE = os.environ.get("TAILSCALE_BIN", "/opt/homebrew/bin/tailscale")
+TAILDROP_TARGET = "desktop-r9js0ok:"
 MAX_CAPTURE_BYTES = 128 * 1024
 JOB_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
 REL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,239}\Z")
+INBOX_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,159}\Z")
 SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 SCRIPT_SUFFIXES = frozenset((".ps1", ".sh"))
 ARTIFACT_SUFFIXES = frozenset((".sog", ".ply"))
@@ -111,6 +120,59 @@ def command_stage(args: argparse.Namespace) -> None:
     emit(payload)
 
 
+def command_inbox_stage(args: argparse.Namespace) -> None:
+    """Send one large file directly to the desktop's private Taildrop inbox."""
+    job = validate_job(args.job)
+    input_path = Path(args.source).expanduser()
+    if input_path.is_symlink():
+        raise PublicError("inbox source must be a regular file")
+    source = input_path.resolve()
+    if not source.is_file() or source.stat().st_size <= 0:
+        raise PublicError("inbox source must be a non-empty regular file")
+    if not INBOX_NAME_RE.fullmatch(source.name):
+        raise PublicError("inbox source name may contain only letters, numbers, dots, dashes, and underscores")
+
+    inbox_name = f"openclaw-splat-{job}-{source.name}"
+    payload: dict[str, object] = {
+        "ok": True,
+        "job": job,
+        "source": source.name,
+        "sizeBytes": source.stat().st_size,
+        "sha256": hash_file(source),
+        "transport": "taildrop",
+        "inboxName": inbox_name,
+        "requiresHashVerifiedIngest": True,
+    }
+    if args.dry_run:
+        payload["dryRun"] = True
+        emit(payload)
+        return
+
+    try:
+        with source.open("rb") as input_handle:
+            completed = subprocess.run(
+                [
+                    TAILSCALE,
+                    "file",
+                    "cp",
+                    "--name",
+                    inbox_name,
+                    "--update-interval",
+                    "5s",
+                    "-",
+                    TAILDROP_TARGET,
+                ],
+                stdin=input_handle,
+                check=False,
+                timeout=24 * 60 * 60,
+            )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PublicError("desktop Taildrop transfer is unavailable") from error
+    if completed.returncode != 0:
+        raise PublicError("desktop Taildrop transfer failed")
+    emit(payload)
+
+
 def command_plan_run(args: argparse.Namespace) -> None:
     job = validate_job(args.job)
     script = validate_relative(args.script, suffixes=SCRIPT_SUFFIXES, label="script")
@@ -186,6 +248,36 @@ def command_publish_plan(args: argparse.Namespace) -> None:
     )
 
 
+def command_video_probe(args: argparse.Namespace) -> None:
+    try:
+        source = video_prep.regular_video(args.source)
+        emit(video_prep.probe_video(source))
+    except video_prep.VideoPrepError as error:
+        raise PublicError(str(error)) from error
+
+
+def command_video_review(args: argparse.Namespace) -> None:
+    try:
+        emit(
+            video_prep.review_videos(
+                args.source,
+                args.output,
+                interval_seconds=args.interval_seconds,
+                proxy=args.proxy,
+                scene_suggestions=args.scene_suggestions,
+            )
+        )
+    except video_prep.VideoPrepError as error:
+        raise PublicError(str(error)) from error
+
+
+def command_video_extract(args: argparse.Namespace) -> None:
+    try:
+        emit(video_prep.extract_manifest(args.manifest, args.output, dry_run=args.dry_run))
+    except video_prep.VideoPrepError as error:
+        raise PublicError(str(error)) from error
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     sub = result.add_subparsers(dest="command", required=True)
@@ -198,6 +290,15 @@ def parser() -> argparse.ArgumentParser:
     stage.add_argument("--source", required=True)
     stage.add_argument("--dry-run", action="store_true")
     stage.set_defaults(func=command_stage)
+
+    inbox_stage = sub.add_parser(
+        "inbox-stage",
+        help="send one large file directly to the desktop Taildrop inbox for hash-verified ingest",
+    )
+    inbox_stage.add_argument("--job", required=True)
+    inbox_stage.add_argument("--source", required=True)
+    inbox_stage.add_argument("--dry-run", action="store_true")
+    inbox_stage.set_defaults(func=command_inbox_stage)
 
     plan = sub.add_parser("plan-run", help="inspect a staged script and return its approval hash")
     plan.add_argument("--job", required=True)
@@ -228,6 +329,30 @@ def parser() -> argparse.ArgumentParser:
     publish = sub.add_parser("publish-plan", help="hash a local artifact without uploading it")
     publish.add_argument("--file", required=True)
     publish.set_defaults(func=command_publish_plan)
+
+    video_probe = sub.add_parser("video-probe", help="inspect one source video without modifying it")
+    video_probe.add_argument("--source", required=True)
+    video_probe.set_defaults(func=command_video_probe)
+
+    video_review = sub.add_parser(
+        "video-review",
+        help="create timecoded thumbnails, an optional proxy, and a segment-manifest template",
+    )
+    video_review.add_argument("--source", action="append", required=True)
+    video_review.add_argument("--output", required=True)
+    video_review.add_argument("--interval-seconds", type=float, default=30.0)
+    video_review.add_argument("--proxy", action="store_true")
+    video_review.add_argument("--scene-suggestions", action="store_true")
+    video_review.set_defaults(func=command_video_review)
+
+    video_extract = sub.add_parser(
+        "video-extract",
+        help="validate a named segment manifest and extract clips plus modeling frames",
+    )
+    video_extract.add_argument("--manifest", required=True)
+    video_extract.add_argument("--output", required=True)
+    video_extract.add_argument("--dry-run", action="store_true")
+    video_extract.set_defaults(func=command_video_extract)
     return result
 
 

@@ -507,7 +507,12 @@ Windows-native application requires `--scope windows`.
 Use the more specific `remote-splat` skill for private COLMAP, Brush,
 Gaussian-splat training, `.sog`/`.ply` retrieval, and guarded SuperSplat
 preparation. It now builds on the shared job interface while retaining the
-splat-only output and publishing rules.
+splat-only output and publishing rules. It also prepares long videos into
+timecoded review packages and semantic frame manifests. Multi-gigabyte source
+files may use its fixed-host `inbox-stage` Taildrop path, but an approved job
+must verify the returned digest before ingest; each audit, preparation,
+connectivity, training, and validation phase gets a distinct immutable job
+name.
 
 The reusable host transport is a loopback-only reverse tunnel from the
 desktop's dedicated non-sudo Ubuntu/WSL account. The interactive Mini-local
@@ -527,11 +532,16 @@ desktop-compute status
 desktop-compute progress --job <job>
 remote-splat status
 remote-splat progress --job <job>
+remote-splat video-review --source <video> --output <new-review-dir> --proxy
+remote-splat video-extract --manifest <segments.json> --output <new-extract-dir> --dry-run
 ```
 
 Long jobs run in per-job `tmux` sessions. The current bridge is TCP-only, so
 Mosh is not available. `publish-plan` only hashes and describes a local
 artifact; a SuperSplat upload always requires fresh explicit confirmation.
+Video review/extraction runs locally on the Mini with FFmpeg/FFprobe and an
+optional headless PySceneDetect pass. Originals remain immutable; generated
+proxies, clips, and frames strip audio and source metadata.
 
 ## Financial Dashboard
 
