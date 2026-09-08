@@ -49,6 +49,22 @@ reviewing long footage, defining semantic segments, or extracting frames.
 
 ## Workflow
 
+### Choose the run contract
+
+Select a profile before transferring data or starting a desktop job:
+
+```bash
+remote-splat workflow-plan --job-prefix cabin-refresh --profile best-current
+```
+
+Use `preview` for the first inexpensive private visual, `best-current` when the
+operator wants the strongest artifact available within an explicitly declared
+resource bound, and `promotion-candidate` only when evaluating replacement or
+publication. The command applies no hidden training defaults and performs no
+remote work. It emits immutable phase job names, concurrency constraints,
+fallback policy, and separate private-delivery and promotion gates. Preserve
+that output with the run notes and follow its policy throughout the workflow.
+
 ### 0. Prepare long-form footage
 
 Probe each video, then build one private review package for all related footage:
@@ -141,7 +157,16 @@ remote-splat attach --job cabin-refresh
 
 Use `progress` for ordinary checks. `attach` is interactive and should be used
 only when an operator wants the tmux view. Detach with `Ctrl-b d`; do not stop
-the job. The current reverse bridge is TCP-only, so Mosh is not available.
+the job. Phase scripts should periodically write one bounded marker such as:
+
+```text
+OPENCLAW_PROGRESS {"phase":"mapping","completed":3,"total":5,"unit":"attempts","etaSeconds":1800}
+```
+
+`progress` converts the latest valid marker into a `progressReceipt` while
+retaining the bounded log tail. Never include paths, source names, credentials,
+or household details in a marker. The current reverse bridge is TCP-only, so
+Mosh is not available.
 
 ### 5. Retrieve outputs
 

@@ -105,6 +105,45 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertEqual(desktop.call_args.args[0], "stage")
         self.assertIn("--dry-run", desktop.call_args.args[1])
 
+    def test_workflow_plan_separates_private_delivery_from_promotion(self) -> None:
+        with mock.patch.object(self.helper, "run_desktop") as desktop:
+            code, stdout, stderr = self.run_main(
+                ["workflow-plan", "--job-prefix", "cabin-next", "--profile", "best-current"]
+            )
+        self.assertEqual((code, stderr), (0, ""))
+        desktop.assert_not_called()
+        payload = json.loads(stdout)
+        self.assertEqual(payload["jobs"]["connect"], "cabin-next-connect")
+        self.assertEqual(payload["registeredViewSelection"], "all-registered-within-declared-bound")
+        self.assertFalse(payload["training"]["defaultsApplied"])
+        self.assertEqual(payload["scheduling"]["phaseDependencies"]["train"], ["connect"])
+        self.assertEqual(payload["fallback"]["criticalUntil"], "trainable-primary-reconstruction")
+        self.assertEqual(payload["privateDelivery"]["when"], "immediately-after-basic-validation")
+        self.assertFalse(payload["promotion"]["eligible"])
+        self.assertTrue(payload["promotion"]["requiresExplicitConfirmation"])
+
+    def test_promotion_profile_keeps_full_qa_out_of_private_delivery_gate(self) -> None:
+        code, stdout, stderr = self.run_main(
+            ["workflow-plan", "--job-prefix", "cabin-release", "--profile", "promotion-candidate"]
+        )
+        self.assertEqual((code, stderr), (0, ""))
+        payload = json.loads(stdout)
+        self.assertTrue(payload["promotion"]["eligible"])
+        self.assertEqual(
+            payload["fallback"]["criticalUntil"],
+            "promotion-gates-pass-or-candidate-is-rejected",
+        )
+        self.assertEqual(payload["privateDelivery"]["when"], "immediately-after-basic-validation")
+        self.assertEqual(payload["privateDelivery"]["comparativeQa"], "full-before-promotion")
+        self.assertNotIn("comparative-validation", payload["privateDelivery"]["requires"])
+
+    def test_workflow_plan_rejects_prefix_that_cannot_fit_phase_names(self) -> None:
+        code, _stdout, stderr = self.run_main(
+            ["workflow-plan", "--job-prefix", "a" * 48, "--profile", "preview"]
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("too long", stderr)
+
     def test_inbox_stage_is_hash_bound_and_targets_only_the_desktop(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "IMG_4112.MOV"
@@ -191,6 +230,42 @@ class RemoteSplatTests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertIn("64 hexadecimal", stderr)
+
+    def test_progress_emits_structured_receipt_from_latest_valid_marker(self) -> None:
+        with mock.patch.object(
+            self.helper,
+            "run_desktop",
+            return_value={
+                "ok": True,
+                "state": "running",
+                "logTail": [
+                    'OPENCLAW_PROGRESS {"phase":"matching","completed":50,"total":100}',
+                    "ordinary tool output",
+                    'OPENCLAW_PROGRESS {"phase":"mapping","completed":8,"total":10,'
+                    '"unit":"attempts","etaSeconds":420,"message":"global BA"}',
+                ],
+            },
+        ):
+            code, stdout, stderr = self.run_main(["progress", "--job", "cabin-connect"])
+        self.assertEqual((code, stderr), (0, ""))
+        receipt = json.loads(stdout)["progressReceipt"]
+        self.assertTrue(receipt["reported"])
+        self.assertEqual(receipt["phase"], "mapping")
+        self.assertEqual(receipt["percent"], 80.0)
+        self.assertEqual(receipt["etaSeconds"], 420)
+
+    def test_progress_ignores_malformed_or_unbounded_markers(self) -> None:
+        payload = {
+            "state": "running",
+            "logTail": [
+                "OPENCLAW_PROGRESS not-json",
+                'OPENCLAW_PROGRESS {"phase":"Bad Phase","etaSeconds":999999999}',
+            ],
+        }
+        self.assertEqual(
+            self.helper.progress_receipt(payload),
+            {"state": "running", "reported": False},
+        )
 
     def test_fetch_keeps_splat_suffix_guard_and_delegates(self) -> None:
         digest = "b" * 64

@@ -76,6 +76,30 @@ models publishable and does not relax the SuperSplat confirmation gate.
 
 ## Scheduling and artifact handoff
 
+Start each run with `remote-splat workflow-plan`. Its three profiles make the
+operator's desired outcome explicit:
+
+- `preview` minimizes time to the first private visual candidate;
+- `best-current` spends the declared full resource budget and returns the
+  strongest currently available private candidate; and
+- `promotion-candidate` adds the complete comparative evidence needed before a
+  separate replacement or publication decision.
+
+All three return a converted, readable, hash-verified private artifact after
+basic validation. Comparative QA can follow delivery; only promotion waits for
+it. The plan intentionally does not select iteration, resolution, Gaussian-cap,
+SH-degree, or seed values. Bind those values explicitly in the job manifest so
+known-good historical settings remain a reference rather than an unexplained
+default.
+
+Have each long phase periodically emit a single-line `OPENCLAW_PROGRESS` JSON
+marker. Use a lowercase hyphenated `phase`, integer `completed` and `total`
+counters when the work has a real denominator, a short unit, and a conservative
+`etaSeconds` only when recent throughput supports it. The helper reports the
+latest valid marker as `progressReceipt`; absent or malformed markers remain
+ordinary log text and do not fabricate an ETA. Keep markers operational and
+free of source filenames, paths, credentials, and household content.
+
 Parallelize source transfer, hashing, video review, semantic extraction,
 quality scoring, and job preparation when they use independent inputs. On one
 desktop, serialize large COLMAP mapper/bundle-adjustment phases and avoid

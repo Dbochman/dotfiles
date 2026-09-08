@@ -28,9 +28,42 @@ JOB_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
 REL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,239}\Z")
 INBOX_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,159}\Z")
 SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+PROGRESS_NAME_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
+PROGRESS_UNIT_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._ -]{0,31}\Z")
+PROGRESS_PREFIX = "OPENCLAW_PROGRESS "
 SCRIPT_SUFFIXES = frozenset((".ps1", ".sh"))
 FETCH_SUFFIXES = frozenset((".sog", ".ply", ".webp"))
 PUBLISH_SUFFIXES = frozenset((".sog", ".ply"))
+WORKFLOW_PHASE_SUFFIXES = ("prepare", "connect", "train", "convert", "validate")
+WORKFLOW_PROFILES: dict[str, dict[str, object]] = {
+    "preview": {
+        "objective": "return a fast private visual candidate",
+        "registeredViewSelection": "quality-bucketed",
+        "trainingBudget": "reduced-explicit",
+        "comparativeQa": "small-fixed-set-after-delivery",
+        "fallbackStartCondition": "no-trainable-reconstruction",
+        "fallbackCriticalUntil": "trainable-primary-reconstruction",
+        "promotionEligible": False,
+    },
+    "best-current": {
+        "objective": "return the strongest private candidate within a declared resource bound",
+        "registeredViewSelection": "all-registered-within-declared-bound",
+        "trainingBudget": "full-explicit",
+        "comparativeQa": "non-blocking-after-delivery",
+        "fallbackStartCondition": "no-trainable-reconstruction",
+        "fallbackCriticalUntil": "trainable-primary-reconstruction",
+        "promotionEligible": False,
+    },
+    "promotion-candidate": {
+        "objective": "evaluate a candidate for explicit master replacement or publication",
+        "registeredViewSelection": "quality-and-coverage-aware",
+        "trainingBudget": "baseline-or-explicit",
+        "comparativeQa": "full-before-promotion",
+        "fallbackStartCondition": "named-promotion-gate-deficit",
+        "fallbackCriticalUntil": "promotion-gates-pass-or-candidate-is-rejected",
+        "promotionEligible": True,
+    },
+}
 
 
 class PublicError(RuntimeError):
@@ -109,6 +142,79 @@ def command_status(_args: argparse.Namespace) -> None:
     payload = run_desktop("status")
     assert payload is not None
     emit(payload)
+
+
+def build_workflow_plan(job_prefix: str, profile_name: str) -> dict[str, object]:
+    validate_job(job_prefix)
+    jobs: dict[str, str] = {}
+    for suffix in WORKFLOW_PHASE_SUFFIXES:
+        job = f"{job_prefix}-{suffix}"
+        try:
+            jobs[suffix] = validate_job(job)
+        except PublicError as error:
+            raise PublicError("job prefix is too long for immutable phase job names") from error
+
+    profile = WORKFLOW_PROFILES[profile_name]
+    return {
+        "ok": True,
+        "profile": profile_name,
+        "jobPrefix": job_prefix,
+        "jobs": jobs,
+        "objective": profile["objective"],
+        "registeredViewSelection": profile["registeredViewSelection"],
+        "training": {
+            "budget": profile["trainingBudget"],
+            "defaultsApplied": False,
+            "declare": ["iterations", "maxResolution", "maxSplats", "shDegree", "seed"],
+        },
+        "scheduling": {
+            "parallelBeforeGpu": [
+                "source-transfer",
+                "source-hashing",
+                "video-review",
+                "semantic-extraction-planning",
+                "job-script-preparation",
+            ],
+            "parallelOnlyWhenInputsAreIndependent": True,
+            "exclusiveDesktopOrder": ["connect", "train"],
+            "phaseDependencies": {
+                "prepare": [],
+                "connect": ["prepare"],
+                "train": ["connect"],
+                "convert": ["train"],
+                "validate": ["convert"],
+            },
+            "persistCheckpoints": [
+                "after-feature-matching",
+                "after-each-mapper-attempt",
+                "after-training-export",
+                "after-conversion",
+            ],
+        },
+        "fallback": {
+            "startOnlyWhen": profile["fallbackStartCondition"],
+            "criticalUntil": profile["fallbackCriticalUntil"],
+        },
+        "privateDelivery": {
+            "when": "immediately-after-basic-validation",
+            "requires": [
+                "nonempty-export",
+                "converter-readable",
+                "positive-gaussian-count",
+                "sha256-verified",
+            ],
+            "comparativeQa": profile["comparativeQa"],
+        },
+        "promotion": {
+            "eligible": profile["promotionEligible"],
+            "requiresExplicitConfirmation": True,
+            "requiresFullComparativeValidation": True,
+        },
+    }
+
+
+def command_workflow_plan(args: argparse.Namespace) -> None:
+    emit(build_workflow_plan(args.job_prefix, args.profile))
 
 
 def command_stage(args: argparse.Namespace) -> None:
@@ -194,12 +300,83 @@ def command_run(args: argparse.Namespace) -> None:
     emit(payload)
 
 
+def progress_receipt(payload: dict[str, object]) -> dict[str, object]:
+    state = payload.get("state")
+    receipt: dict[str, object] = {
+        "state": state if isinstance(state, str) else "unknown",
+        "reported": False,
+    }
+    tail = payload.get("logTail")
+    if not isinstance(tail, list):
+        return receipt
+
+    for line in reversed(tail):
+        if not isinstance(line, str) or not line.startswith(PROGRESS_PREFIX):
+            continue
+        encoded = line.removeprefix(PROGRESS_PREFIX)
+        if not encoded or len(encoded.encode("utf-8")) > 2048:
+            continue
+        try:
+            report = json.loads(encoded)
+        except (json.JSONDecodeError, UnicodeError):
+            continue
+        if not isinstance(report, dict):
+            continue
+
+        phase = report.get("phase")
+        if not isinstance(phase, str) or not PROGRESS_NAME_RE.fullmatch(phase):
+            continue
+        candidate: dict[str, object] = {
+            "state": receipt["state"],
+            "reported": True,
+            "phase": phase,
+        }
+
+        completed = report.get("completed")
+        total = report.get("total")
+        if (
+            isinstance(completed, int)
+            and not isinstance(completed, bool)
+            and isinstance(total, int)
+            and not isinstance(total, bool)
+            and 0 <= completed <= total
+            and total > 0
+        ):
+            candidate["completed"] = completed
+            candidate["total"] = total
+            candidate["percent"] = round(completed * 100 / total, 1)
+
+        unit = report.get("unit")
+        if isinstance(unit, str) and PROGRESS_UNIT_RE.fullmatch(unit):
+            candidate["unit"] = unit
+
+        eta_seconds = report.get("etaSeconds")
+        if (
+            isinstance(eta_seconds, int)
+            and not isinstance(eta_seconds, bool)
+            and 0 <= eta_seconds <= 30 * 24 * 60 * 60
+        ):
+            candidate["etaSeconds"] = eta_seconds
+
+        message = report.get("message")
+        if (
+            isinstance(message, str)
+            and len(message) <= 160
+            and "\n" not in message
+            and "\r" not in message
+        ):
+            candidate["message"] = message
+        return candidate
+    return receipt
+
+
 def command_progress(args: argparse.Namespace) -> None:
     job = validate_job(args.job)
     if not 1 <= args.lines <= 200:
         raise PublicError("lines must be between 1 and 200")
     payload = run_desktop("progress", ["--job", job, "--lines", str(args.lines)])
     assert payload is not None
+    payload["progressReceipt"] = progress_receipt(payload)
     emit(payload)
 
 
@@ -282,6 +459,14 @@ def command_video_extract(args: argparse.Namespace) -> None:
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     sub = result.add_subparsers(dest="command", required=True)
+
+    workflow_plan = sub.add_parser(
+        "workflow-plan",
+        help="choose delivery, scheduling, and fallback policy before starting a run",
+    )
+    workflow_plan.add_argument("--job-prefix", required=True)
+    workflow_plan.add_argument("--profile", choices=tuple(WORKFLOW_PROFILES), required=True)
+    workflow_plan.set_defaults(func=command_workflow_plan)
 
     status = sub.add_parser("status", help="check bridge, GPU, tools, disk, and sessions")
     status.set_defaults(func=command_status)
