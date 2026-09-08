@@ -213,6 +213,35 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn(".ply", stderr)
 
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(
+                self.helper,
+                "run_desktop",
+                return_value={"ok": True, "artifact": "orbit-01.webp", "sha256": digest},
+            ) as desktop:
+                code, stdout, stderr = self.run_main(
+                    [
+                        "fetch",
+                        "--job",
+                        "cabin",
+                        "--artifact",
+                        "validation/orbit-01.webp",
+                        "--destination",
+                        directory,
+                    ]
+                )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(json.loads(stdout)["artifact"], "orbit-01.webp")
+        self.assertEqual(desktop.call_args.args[0], "fetch")
+
+    def test_publish_plan_does_not_accept_visual_qa_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            review = Path(directory) / "orbit.webp"
+            review.write_bytes(b"review")
+            code, _stdout, stderr = self.run_main(["publish-plan", "--file", str(review)])
+        self.assertEqual(code, 2)
+        self.assertIn(".sog", stderr)
+
     def test_publish_plan_never_uploads(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "scene.sog"

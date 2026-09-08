@@ -74,6 +74,11 @@ normally preserve source resolution.
 `video-extract --dry-run` validates every source, time range, frame rate, and
 estimated frame count without creating the output directory. The actual run
 recomputes each source SHA-256 and stops if footage changed after review.
+The estimate uses segment duration × cadence; FFmpeg's timestamp rounding can
+legitimately make the decoded inventory differ by a frame at a boundary. Treat
+the per-segment `frameCount` values in `extraction.json` as authoritative,
+require them to agree with the files on disk, and use a narrow predeclared
+total-count bound rather than asserting that the estimate is exact.
 
 The new output directory contains:
 

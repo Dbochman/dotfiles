@@ -44,6 +44,54 @@ or proposing publication:
 6. Preserve a small manifest with versions, settings, metrics, hashes, and the
    selected artifact name.
 
+For a seeded video extension, choose representative render poses from the
+registered COLMAP frames nearest the named semantic checkpoints (for example,
+interior-to-yard, yard-to-trail, midpoint, and return). This is stronger
+evidence than arbitrary orbit views because it tests the exact coverage the
+new footage was meant to add. Render both the baseline and candidate from each
+checkpoint pose for a direct visual comparison. Compare their Gaussian counts
+and coordinate spread, require finite values, and require an exact
+`.ply`→`.sog`→`.ply` Gaussian-count round trip. Treat those numeric checks as a
+gate, then visually inspect the fetched checkpoint renders before selecting an
+artifact.
+
+Walking video often alternates crisp and motion-blurred frames. After
+registration, preserve temporal coverage by choosing the strongest frame in
+each small time bucket using its triangulated COLMAP observation count; do not
+blindly retain every nth frame. Keep the deliberately dense connector regions
+represented so that quality filtering does not remove the transitions that
+join old and new scene areas.
+
+When the operator explicitly prioritizes maximum reconstructed coverage over a
+replacement-master candidate, training may retain every registered view within
+a declared resource bound. Record that selection policy and any failed
+coverage checks in the training manifest, keep the current master protected,
+and label the result as a candidate until the ordinary connectivity and visual
+comparison gates pass. More input views or Gaussians are not by themselves
+evidence of a better model.
+
+Generated `.webp` orbit or checkpoint views may be fetched through
+`remote-splat` for private visual QA. This exception does not make images or
+models publishable and does not relax the SuperSplat confirmation gate.
+
+## Scheduling and artifact handoff
+
+Parallelize source transfer, hashing, video review, semantic extraction,
+quality scoring, and job preparation when they use independent inputs. On one
+desktop, serialize large COLMAP mapper/bundle-adjustment phases and avoid
+overlapping Brush with GPU feature matching; CPU, GPU, memory, and disk
+contention can cost more time than parallelism saves. Prefer bounded mapper
+phases that persist a valid reconstruction between expensive global solves.
+
+Keep private artifact delivery separate from master promotion. When an
+operator asks for the best available candidate, return a readable,
+hash-verified `.sog` as soon as conversion succeeds and carry reconstruction or
+visual-quality shortcomings as explicit advisories. Use those advisories to
+block automatic replacement or publication, not access to the requested
+private candidate. For quick iteration, use a deliberately named preview
+profile with a small fixed QA set; reserve all-view, full-step training for a
+maximum-coverage or promotion candidate.
+
 ## SuperSplat guard
 
 `remote-splat publish-plan` is deliberately non-networking. It establishes the

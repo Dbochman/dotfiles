@@ -36,8 +36,9 @@ reviewing long footage, defining semantic segments, or extracting frames.
   provenance after exit. Use distinct job names for audit, preparation,
   connectivity, training, and validation phases; do not reuse a completed job
   name for a different script.
-- Fetch only `.sog` or `.ply` outputs through the helper. It verifies SHA-256
-  after transfer and refuses to overwrite a different local file.
+- Fetch only `.sog`, `.ply`, or generated `.webp` visual-QA outputs through the
+  helper. It verifies SHA-256 after transfer and refuses to overwrite a
+  different local file. Publication remains limited to `.sog` and `.ply`.
 - Never publish, replace, delete, or change sharing on SuperSplat without a
   fresh explicit confirmation naming the exact artifact and visibility.
 - Treat photos, reconstructions, logs, and scene names as private household
@@ -149,6 +150,8 @@ remote-splat fetch --job cabin-refresh \
   --artifact cabin.sog --destination '/absolute/local/output'
 remote-splat fetch --job cabin-refresh \
   --artifact cabin.compressed.ply --destination '/absolute/local/output'
+remote-splat fetch --job cabin-validation \
+  --artifact validation/orbit-01.webp --destination '/absolute/local/output'
 ```
 
 Report the verified filename, byte size, and SHA-256. Prefer a validated `.sog`

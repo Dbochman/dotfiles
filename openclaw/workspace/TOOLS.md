@@ -512,7 +512,8 @@ timecoded review packages and semantic frame manifests. Multi-gigabyte source
 files may use its fixed-host `inbox-stage` Taildrop path, but an approved job
 must verify the returned digest before ingest; each audit, preparation,
 connectivity, training, and validation phase gets a distinct immutable job
-name.
+name. Fetch is restricted to `.sog`/`.ply` model artifacts and generated
+`.webp` visual-QA renders; only model artifacts can enter publication planning.
 
 The reusable host transport is a loopback-only reverse tunnel from the
 desktop's dedicated non-sudo Ubuntu/WSL account. The interactive Mini-local

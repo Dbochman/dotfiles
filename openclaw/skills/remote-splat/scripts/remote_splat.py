@@ -29,7 +29,8 @@ REL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,239}\Z")
 INBOX_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,159}\Z")
 SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 SCRIPT_SUFFIXES = frozenset((".ps1", ".sh"))
-ARTIFACT_SUFFIXES = frozenset((".sog", ".ply"))
+FETCH_SUFFIXES = frozenset((".sog", ".ply", ".webp"))
+PUBLISH_SUFFIXES = frozenset((".sog", ".ply"))
 
 
 class PublicError(RuntimeError):
@@ -209,7 +210,7 @@ def command_attach(args: argparse.Namespace) -> None:
 
 def command_fetch(args: argparse.Namespace) -> None:
     job = validate_job(args.job)
-    artifact = validate_relative(args.artifact, suffixes=ARTIFACT_SUFFIXES, label="artifact")
+    artifact = validate_relative(args.artifact, suffixes=FETCH_SUFFIXES, label="artifact")
     payload = run_desktop(
         "fetch",
         ["--job", job, "--artifact", artifact, "--destination", args.destination],
@@ -231,7 +232,7 @@ def command_publish_plan(args: argparse.Namespace) -> None:
     if input_path.is_symlink():
         raise PublicError("publish file must be a regular .sog or .ply artifact")
     path = input_path.resolve()
-    if not path.is_file() or path.suffix.casefold() not in ARTIFACT_SUFFIXES:
+    if not path.is_file() or path.suffix.casefold() not in PUBLISH_SUFFIXES:
         raise PublicError("publish file must be a regular .sog or .ply artifact")
     size = path.stat().st_size
     if size <= 0:
@@ -320,7 +321,7 @@ def parser() -> argparse.ArgumentParser:
     attach.add_argument("--job", required=True)
     attach.set_defaults(func=command_attach)
 
-    fetch = sub.add_parser("fetch", help="retrieve and verify one .sog or .ply output")
+    fetch = sub.add_parser("fetch", help="retrieve and verify one .sog, .ply, or .webp output")
     fetch.add_argument("--job", required=True)
     fetch.add_argument("--artifact", required=True)
     fetch.add_argument("--destination", required=True)
