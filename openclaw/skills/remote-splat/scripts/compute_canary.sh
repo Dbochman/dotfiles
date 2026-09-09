@@ -15,17 +15,62 @@ tool_root=/mnt/c/Users/Owner/Documents/Codex/2026-09-05/c/work
 colmap="$tool_root/colmap/bin/colmap.exe"
 brush="$tool_root/brush/brush_app.exe"
 transform_cli="$tool_root/conversion/node_modules/@playcanvas/splat-transform/bin/cli.mjs"
+powershell=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+windows_runner="$script_dir/windows_process_runner.ps1"
+native_pid_file=${OPENCLAW_NATIVE_PID_FILE:-}
 
 if [[ -e "$output_root" ]]; then
   echo "preflight output already exists" >&2
   exit 2
 fi
-for dependency in "$gpu_probe" "$colmap" "$brush" "$transform_cli"; do
+for dependency in "$gpu_probe" "$colmap" "$brush" "$transform_cli" "$powershell" "$windows_runner"; do
   if [[ ! -f "$dependency" ]]; then
     echo "required splat toolchain component is unavailable" >&2
     exit 2
   fi
 done
+if [[ -z "$native_pid_file" ]]; then
+  echo "managed native-process receipt is unavailable" >&2
+  exit 2
+fi
+
+windows_runner_win=$(wslpath -w "$windows_runner")
+native_pid_file_win=$(wslpath -w "$native_pid_file")
+
+encode_windows_arguments() {
+  python3 - "$@" <<'PY'
+import base64
+import json
+import sys
+
+payload = json.dumps(sys.argv[1:], separators=(",", ":")).encode("utf-8")
+print(base64.b64encode(payload).decode("ascii"))
+PY
+}
+
+run_windows() {
+  local executable=$1
+  shift
+  local arguments_base64 executable_win
+  executable_win=$(wslpath -w "$executable")
+  arguments_base64=$(encode_windows_arguments "$@")
+  "$powershell" -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+    -File "$windows_runner_win" -Executable "$executable_win" \
+    -ReceiptFile "$native_pid_file_win" -ArgumentsBase64 "$arguments_base64"
+}
+
+run_windows_timeout() {
+  local duration=$1
+  local executable=$2
+  shift 2
+  local arguments_base64 executable_win
+  executable_win=$(wslpath -w "$executable")
+  arguments_base64=$(encode_windows_arguments "$@")
+  timeout "$duration" "$powershell" -NoProfile -NonInteractive \
+    -ExecutionPolicy Bypass -File "$windows_runner_win" \
+    -Executable "$executable_win" -ReceiptFile "$native_pid_file_win" \
+    -ArgumentsBase64 "$arguments_base64"
+}
 
 node=""
 for candidate in \
@@ -61,7 +106,7 @@ images_win=$(wslpath -w "$images")
 transform_cli_win=$(wslpath -w "$transform_cli")
 
 echo 'OPENCLAW_PROGRESS {"phase":"toolchain-preflight","completed":0,"total":3,"unit":"checks"}'
-"$colmap" feature_extractor \
+run_windows "$colmap" feature_extractor \
   --database_path "$database_win" \
   --image_path "$images_win" \
   --ImageReader.single_camera 1 \
@@ -70,13 +115,13 @@ echo 'OPENCLAW_PROGRESS {"phase":"toolchain-preflight","completed":0,"total":3,"
   --FeatureExtraction.use_gpu 1
 echo 'OPENCLAW_PROGRESS {"phase":"toolchain-preflight","completed":1,"total":3,"unit":"checks"}'
 
-"$colmap" exhaustive_matcher \
+run_windows "$colmap" exhaustive_matcher \
   --database_path "$database_win" \
   --FeatureMatching.type SIFT_BRUTEFORCE \
   --FeatureMatching.use_gpu 1
 echo 'OPENCLAW_PROGRESS {"phase":"toolchain-preflight","completed":2,"total":3,"unit":"checks"}'
 
-if ! brush_help=$(timeout 20s "$brush" --help 2>&1 | tr -d '\r'); then
+if ! brush_help=$(run_windows_timeout 20s "$brush" --help 2>&1 | tr -d '\r'); then
   echo "Brush runtime/DLL canary failed" >&2
   exit 2
 fi
@@ -84,8 +129,8 @@ if [[ -z "$brush_help" ]]; then
   echo "Brush runtime/DLL canary failed" >&2
   exit 2
 fi
-node_version=$("$node" --version | tr -d '\r')
-transform_version=$("$node" "$transform_cli_win" -v 2>&1 | tr -d '\r' | tail -n 1)
+node_version=$(run_windows "$node" --version | tr -d '\r')
+transform_version=$(run_windows "$node" "$transform_cli_win" -v 2>&1 | tr -d '\r' | tail -n 1)
 
 python3 - "$database" "$report" "$node_version" "$transform_version" <<'PY'
 from __future__ import annotations

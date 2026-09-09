@@ -80,10 +80,15 @@ hashes. Cancellation is cooperative and owner-bound. A vanished runner with no
 exit receipt is `interrupted`; its reservation stays held until an operator
 verifies recorded processes and performs deliberate recovery.
 
-Windows phases run through the sealed PID-receipt wrapper. Cancellation kills
-the native Windows tree with `taskkill /T`, verifies the native PID is absent,
-then verifies the complete WSL process group is gone. Resource release is
-recorded only after those checks; a failed verification keeps the reservation.
+Windows phases run through the sealed native-process wrapper. Shell phases
+receive `OPENCLAW_NATIVE_PID_FILE`; every Windows executable they launch must
+use the same helper, as the built-in canary does. Its durable receipt remains
+`running` until a bounded Windows process-tree scan proves the executable left
+no live descendants, then atomically becomes `complete` with
+`treeCleanupVerified: true`. A missing or deleted receipt is not proof.
+Cancellation requires successful `taskkill /T`, verifies the native PID is
+absent, then verifies the complete WSL process group is gone. Resource release
+depends on verified cleanup rather than workflow success.
 
 ## Lightweight preflight and file operations
 
@@ -93,6 +98,12 @@ and `SIFT_BRUTEFORCE` matcher path, validates the SQLite schema and counts with
 `quick_check`, probes Brush/DLL loading, and requires the stable Windows Node
 runtime needed by the converter. A failure stops the workflow before large
 copies, reconstruction, or training.
+
+The low-level `preflight-plan` command builds a sealed preflight-only workflow;
+it never returns a direct canary launch. Before deploying a lifecycle change,
+run one bounded live Windows canary and verify both the completed native receipt
+and released reservation. Local mocks and contract checks do not replace that
+gate.
 
 For large Windows/WSL file moves, call the staged `windows_io.ps1` helper from
 a phase. It uses native `[System.IO.File]::Copy`, hashes source and temporary

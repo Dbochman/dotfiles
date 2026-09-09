@@ -7,35 +7,28 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not (Test-Path -LiteralPath $PhaseScript -PathType Leaf)) {
-    throw 'Windows phase script is unavailable'
-}
-
-$pidPath = [System.IO.Path]::GetFullPath($PidFile)
-$pidDirectory = [System.IO.Path]::GetDirectoryName($pidPath)
-if (-not [System.IO.Directory]::Exists($pidDirectory)) {
-    throw 'Windows phase PID directory is unavailable'
-}
-$temporary = '{0}.tmp.{1}' -f $pidPath, $PID
-try {
-    [System.IO.File]::WriteAllText($temporary, "${PID}`n")
-    [System.IO.File]::Move($temporary, $pidPath)
-} finally {
-    if ([System.IO.File]::Exists($temporary)) {
-        [System.IO.File]::Delete($temporary)
+$powershell = Join-Path $PSHOME 'powershell.exe'
+$runner = Join-Path $PSScriptRoot 'windows_process_runner.ps1'
+foreach ($dependency in @($PhaseScript, $powershell, $runner)) {
+    if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
+        throw 'Windows phase lifecycle dependency is unavailable'
     }
 }
 
-try {
-    & $PhaseScript
-    if (-not $?) {
-        exit 1
-    }
-    if ($null -ne $LASTEXITCODE) {
-        exit $LASTEXITCODE
-    }
-    exit 0
-} catch {
-    Write-Error $_
-    exit 1
-}
+$phaseArguments = @(
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    $PhaseScript
+)
+$argumentsJson = ConvertTo-Json -InputObject $phaseArguments -Compress
+$argumentsBase64 = [System.Convert]::ToBase64String(
+    [System.Text.Encoding]::UTF8.GetBytes($argumentsJson)
+)
+
+& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+    -File $runner -Executable $powershell -ReceiptFile $PidFile `
+    -ArgumentsBase64 $argumentsBase64
+exit $LASTEXITCODE

@@ -321,6 +321,102 @@ class DesktopComputeTests(unittest.TestCase):
                         )
             self.assertEqual(target.read_bytes(), b"printf approved\n")
 
+    def test_run_rechecks_approval_hash_after_acquiring_freeze_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / "approval-race"
+            for child in ("input", "outputs", "logs", "state"):
+                (job / child).mkdir(parents=True, exist_ok=True)
+            script = job / "input/run-workflow.sh"
+            script.write_bytes(b"printf approved\n")
+            approved = self.dispatcher.hash_file(script)
+            replacement = b"printf changed-after-hash\n"
+            launched: list[bytes] = []
+
+            def interleaved_upload(arguments, **kwargs):
+                if "has-session" in arguments:
+                    fake_stdin = mock.Mock(buffer=io.BytesIO(replacement))
+                    with mock.patch.object(self.dispatcher.sys, "stdin", fake_stdin):
+                        self.dispatcher.command_put(
+                            [
+                                "splat",
+                                "approval-race",
+                                script.name,
+                                str(len(replacement)),
+                                hashlib.sha256(replacement).hexdigest(),
+                            ]
+                        )
+                    return subprocess.CompletedProcess(arguments, 1, "", "")
+                if "new-session" in arguments:
+                    launched.append(script.read_bytes())
+                return subprocess.CompletedProcess(arguments, 0, "", "")
+
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=True):
+                with mock.patch.object(Path, "home", return_value=root):
+                    with mock.patch.object(
+                        self.dispatcher.subprocess,
+                        "run",
+                        side_effect=interleaved_upload,
+                    ):
+                        with redirect_stdout(io.StringIO()):
+                            with self.assertRaisesRegex(
+                                self.dispatcher.RequestError, "SHA-256"
+                            ):
+                                self.dispatcher.command_run(
+                                    [
+                                        "splat",
+                                        "approval-race",
+                                        script.name,
+                                        approved,
+                                        "sol",
+                                        "[]",
+                                        '["desktop-heavy"]',
+                                    ]
+                                )
+            self.assertEqual(launched, [])
+
+    def test_managed_runner_supplies_standalone_native_receipt_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / "standalone-preflight"
+            for child in ("input", "outputs", "logs", "state"):
+                (job / child).mkdir(parents=True, exist_ok=True)
+            script = job / "input/canary-environment-gate.sh"
+            script.write_text(
+                "test -n \"${OPENCLAW_NATIVE_PID_FILE:-}\"\n"
+                "test \"$OPENCLAW_NATIVE_PID_FILE\" = "
+                "\"$OPENCLAW_JOB_STATE_DIR/standalone-native-process.json\"\n",
+                encoding="utf-8",
+            )
+            launcher = root / "managed-runner.sh"
+            launcher.write_text(self.dispatcher.RUNNER, encoding="utf-8")
+            environment = os.environ.copy()
+            environment.pop("OPENCLAW_NATIVE_PID_FILE", None)
+            completed = subprocess.run(
+                [
+                    "/bin/bash",
+                    str(launcher),
+                    "splat",
+                    str(script),
+                    str(job / "logs/run.log"),
+                    str(job / "state/exit-code"),
+                    str(job / "state/runner-pid"),
+                    "standalone-preflight",
+                    "sol",
+                    '["desktop-heavy"]',
+                    "[]",
+                    "a" * 64,
+                ],
+                cwd=job,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
     def test_rejected_repeat_run_preserves_completion_receipts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

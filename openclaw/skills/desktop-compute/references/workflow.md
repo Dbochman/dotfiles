@@ -43,13 +43,19 @@ script hash and size. The dispatcher independently recomputes the hash at run
 time and refuses a changed script.
 
 `run` also records one owner, sorted predecessor jobs, reserved resources, and
-the runner PID. Resource acquisition is serialized across every host scope. A
-predecessor must have a zero exit receipt, and an unfinished run holds its
+the runner PID. It rechecks the approved script hash while holding the same
+host-wide lock that freezes inputs and acquires resources. A predecessor must
+have a zero exit receipt, and an unfinished run holds its
 reservations even if its tmux session disappears. In that case `progress`
 reports `interrupted`; this is
 an operator-visible exception, not implicit permission to launch competing
 work. Cooperative `cancel` is limited to the same owner and a sealed
 `run-workflow.sh` job.
+
+The managed launcher supplies a job-scoped native-process receipt path even to
+standalone scripts. Subsystems that execute Windows children must still route
+those scripts through their lifecycle runner so resource release consumes
+positive tree-cleanup evidence.
 
 ## Transfer behavior
 

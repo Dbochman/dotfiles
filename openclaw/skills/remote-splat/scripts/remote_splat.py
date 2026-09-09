@@ -63,6 +63,7 @@ SUPPORT_FILES = (
     SCRIPT_DIR / "compute_canary.sh",
     SCRIPT_DIR / "windows_io.ps1",
     SCRIPT_DIR / "windows_phase_runner.ps1",
+    SCRIPT_DIR / "windows_process_runner.ps1",
     SCRIPT_DIR / "workflow_runner.py",
 )
 SAFE_DESKTOP_ERRORS = frozenset(
@@ -414,37 +415,39 @@ def command_stage(args: argparse.Namespace) -> None:
 
 
 def command_preflight_plan(args: argparse.Namespace) -> None:
-    """Stage the shared lightweight canary/support bundle and return its exact hash."""
+    """Build a sealed preflight-only workflow using the normal lifecycle runner."""
     job = validate_job(args.job)
-    missing = [path.name for path in SUPPORT_FILES if not path.is_file() or path.is_symlink()]
-    if missing:
-        raise PublicError("remote-splat preflight support bundle is incomplete")
-    staged: list[dict[str, object]] = []
-    for path in SUPPORT_FILES:
-        arguments = ["--job", job, "--source", str(path)]
-        if args.dry_run:
-            arguments.append("--dry-run")
-        payload = run_desktop("stage", arguments)
-        assert payload is not None
-        staged.append(
-            {
-                "file": path.name,
-                "sha256": hash_file(path),
-                "sizeBytes": path.stat().st_size,
-                "staged": not args.dry_run,
-            }
+    owner = validate_owner(args.owner)
+    with tempfile.TemporaryDirectory(prefix="remote-splat-preflight-") as directory:
+        bundle = Path(directory)
+        manifest = {
+            "schemaVersion": 1,
+            "job": job,
+            "owner": owner,
+            "settings": {"mode": "preflight-only"},
+            "dependencies": {"managedCanary": "sealed-support-bundle"},
+            "qualityTiers": {
+                "target": {"minimumRegisteredViews": 1},
+                "plausibleCandidate": {"minimumRegisteredViews": 1},
+                "experimentalOnly": {"promotionEligible": False},
+            },
+            "phases": [],
+            "artifacts": [],
+        }
+        (bundle / "workflow.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
-    result: dict[str, object] = {
-        "ok": True,
-        "job": job,
-        "support": staged,
-        "dryRun": args.dry_run,
-        "runPerformed": False,
-    }
-    if not args.dry_run:
-        plan = run_desktop("plan-run", ["--job", job, "--script", "compute_canary.sh"])
-        assert plan is not None
-        result["canary"] = plan
+        lifecycle_args = argparse.Namespace(
+            job=job,
+            bundle=str(bundle),
+            owner=owner,
+            depends_on=args.depends_on,
+            reserve=args.reserve or ["desktop-heavy"],
+            dry_run=args.dry_run,
+        )
+        result = prepare_workflow(lifecycle_args)
+    result["preflightOnly"] = True
     emit(result)
 
 
@@ -1226,6 +1229,9 @@ def parser() -> argparse.ArgumentParser:
         help="stage the shared lightweight canary/support bundle and return its approval hash",
     )
     preflight.add_argument("--job", required=True)
+    preflight.add_argument("--owner", default="sol")
+    preflight.add_argument("--depends-on", action="append", default=[])
+    preflight.add_argument("--reserve", action="append", default=[])
     preflight.add_argument("--dry-run", action="store_true")
     preflight.set_defaults(func=command_preflight_plan)
 

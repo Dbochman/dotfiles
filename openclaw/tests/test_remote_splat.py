@@ -6,9 +6,11 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import importlib.util
+from importlib.machinery import SourceFileLoader
 import io
 import json
 import os
+import shlex
 from pathlib import Path
 import shutil
 import signal
@@ -24,12 +26,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "openclaw" / "skills" / "remote-splat"
 HELPER = SKILL_DIR / "scripts" / "remote_splat.py"
 WORKFLOW_RUNNER = SKILL_DIR / "scripts" / "workflow_runner.py"
+DESKTOP_DISPATCHER = (
+    REPO_ROOT / "openclaw" / "desktop-compute" / "openclaw-desktop-dispatch"
+)
 SKILL = SKILL_DIR / "SKILL.md"
 WRAPPER = REPO_ROOT / "openclaw" / "bin" / "remote-splat"
+REAL_SLEEP = time.sleep
 
 
 def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
+    if path.suffix:
+        spec = importlib.util.spec_from_file_location(name, path)
+    else:
+        loader = SourceFileLoader(name, str(path))
+        spec = importlib.util.spec_from_loader(name, loader)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -72,6 +82,68 @@ class RemoteSplatTests(unittest.TestCase):
             "interior-b=30",
         ]
 
+    def runner_fixture(
+        self, root: Path, script_text: str
+    ) -> tuple[Path, dict[str, str]]:
+        job = root / "review"
+        for child in ("input", "outputs", "logs", "state"):
+            (job / child).mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "schemaVersion": 1,
+            "job": "review",
+            "owner": "sol",
+            "settings": {"iterations": 5000},
+            "dependencies": {"fixture": "local-only"},
+            "qualityTiers": {
+                "target": {"minimumRegisteredViews": 300},
+                "plausibleCandidate": {"minimumRegisteredViews": 248},
+                "experimentalOnly": {"promotionEligible": False},
+            },
+            "phases": [{"name": "finish", "script": "finish.sh"}],
+        }
+        execution = {
+            "job": "review",
+            "owner": "sol",
+            "externalDependencies": [],
+            "resources": ["desktop-heavy"],
+        }
+        (job / "input/workflow.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        (job / "input/compute_canary.sh").write_text(
+            "exit 0\n", encoding="utf-8"
+        )
+        (job / "input/finish.sh").write_text(script_text, encoding="utf-8")
+        (job / "input/approval-inventory.json").write_text(
+            json.dumps(
+                {
+                    "approvalSha256": "a" * 64,
+                    "execution": execution,
+                    "files": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job / "state/run.json").write_text(
+            json.dumps(
+                {
+                    "script": "run-workflow.sh",
+                    "owner": "sol",
+                    "resources": ["desktop-heavy"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        environment = {
+            "OPENCLAW_WORKFLOW_APPROVAL_SHA256": "a" * 64,
+            "OPENCLAW_JOB_NAME": "review",
+            "OPENCLAW_JOB_OWNER": "sol",
+            "OPENCLAW_JOB_DEPENDENCIES_JSON": "[]",
+            "OPENCLAW_JOB_RESOURCES_JSON": '["desktop-heavy"]',
+            "OPENCLAW_RUNNER_SHA256": "b" * 64,
+        }
+        return job, environment
+
     def test_skill_and_wrapper_contracts(self) -> None:
         text = SKILL.read_text(encoding="utf-8")
         self.assertIn("name: remote-splat", text)
@@ -80,6 +152,7 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertNotIn("TODO", text)
         self.assertIn("$HOME/.openclaw/skills/remote-splat", WRAPPER.read_text(encoding="utf-8"))
         self.assertTrue((SKILL_DIR / "scripts/compute_canary.sh").is_file())
+        self.assertTrue((SKILL_DIR / "scripts/windows_process_runner.ps1").is_file())
 
         installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
         deployer = (REPO_ROOT / "openclaw/bin/dotfiles-pull.command").read_text(encoding="utf-8")
@@ -480,6 +553,25 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertRegex(payload["sealedRunnerSha256"], r"\A[0-9a-f]{64}\Z")
         desktop.assert_not_called()
 
+    def test_standalone_preflight_uses_sealed_workflow_lifecycle(self) -> None:
+        with mock.patch.object(self.helper, "run_desktop") as desktop:
+            code, stdout, stderr = self.run_main(
+                [
+                    "preflight-plan",
+                    "--job",
+                    "standalone-preflight",
+                    "--dry-run",
+                ]
+            )
+        self.assertEqual((code, stderr), (0, ""))
+        payload = json.loads(stdout)
+        self.assertTrue(payload["preflightOnly"])
+        self.assertTrue(payload["dryRun"])
+        self.assertEqual(payload["resources"], ["desktop-heavy"])
+        self.assertRegex(payload["approvalSha256"], r"\A[0-9a-f]{64}\Z")
+        self.assertRegex(payload["sealedRunnerSha256"], r"\A[0-9a-f]{64}\Z")
+        desktop.assert_not_called()
+
     def test_shared_support_scripts_encode_preflight_copy_and_checkpoint_contracts(self) -> None:
         scripts = self.helper.SCRIPT_DIR
         canary = (scripts / "compute_canary.sh").read_text(encoding="utf-8")
@@ -487,6 +579,9 @@ class RemoteSplatTests(unittest.TestCase):
         windows_runner = (scripts / "windows_phase_runner.ps1").read_text(
             encoding="utf-8"
         )
+        windows_process_runner = (
+            scripts / "windows_process_runner.ps1"
+        ).read_text(encoding="utf-8")
         runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_checkpoint_test")
         self.assertIn("SIFT_BRUTEFORCE", canary)
         self.assertIn("--FeatureExtraction.type SIFT", canary)
@@ -496,9 +591,15 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertIn("Windows Node runtime", canary)
         self.assertIn("[System.IO.File]::Copy", windows_io)
         self.assertIn("Get-FileHash", windows_io)
-        self.assertIn("[System.IO.File]::WriteAllText", windows_runner)
-        self.assertIn('"${PID}`n"', windows_runner)
-        self.assertIn("& $PhaseScript", windows_runner)
+        self.assertIn("windows_process_runner.ps1", windows_runner)
+        self.assertIn("-ReceiptFile $PidFile", windows_runner)
+        self.assertIn("OPENCLAW_NATIVE_PID_FILE", canary)
+        self.assertGreaterEqual(canary.count("run_windows"), 6)
+        self.assertIn("[System.IO.File]::WriteAllText", windows_process_runner)
+        self.assertIn("[System.Diagnostics.ProcessStartInfo]", windows_process_runner)
+        self.assertIn("Get-CimInstance -ClassName Win32_Process", windows_process_runner)
+        self.assertIn("treeCleanupVerified = $TreeCleanupVerified", windows_process_runner)
+        self.assertNotIn("Delete($receiptPath)", windows_process_runner)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             checkpoints = root / "checkpoints"
@@ -555,7 +656,8 @@ class RemoteSplatTests(unittest.TestCase):
         gate = source[source.index("if ! brush_help=") : source.index("node_version=")]
         shell = (
             "set -euo pipefail\n"
-            'timeout() { printf "simulated runtime error\\n" >&2; return 53; }\n'
+            'run_windows_timeout() { printf "simulated runtime error\\n" >&2; '
+            "return 53; }\n"
             "brush=/unused\n"
             + gate
         )
@@ -610,6 +712,133 @@ class RemoteSplatTests(unittest.TestCase):
                     pass
                 process.wait(timeout=5)
 
+    def test_successful_phase_cannot_release_with_live_descendants(
+        self,
+    ) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_lingering_child_test")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pid_path = root / "child.pid"
+            parent_source = (
+                "import subprocess,sys; from pathlib import Path; "
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
+                "Path(sys.argv[1]).write_text(str(child.pid))"
+            )
+            script = (
+                "exec "
+                + shlex.join([sys.executable, "-c", parent_source, str(pid_path)])
+                + "\n"
+            )
+            job, environment = self.runner_fixture(root, script)
+            child_pid = None
+            try:
+                with mock.patch.dict(runner.os.environ, environment, clear=False):
+                    with mock.patch.object(
+                        runner.time, "sleep", side_effect=lambda _: REAL_SLEEP(0.01)
+                    ):
+                        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                            self.assertNotEqual(
+                                runner.main([str(job / "input/workflow.json")]), 0
+                            )
+                child_pid = int(pid_path.read_text(encoding="ascii"))
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child_pid, 0)
+                state = json.loads(
+                    (job / "state/workflow-state.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(state["state"], "failed")
+                self.assertFalse(
+                    state["resourceReleaseVerified"] and runner.process_group_exists(
+                        state["phases"]["finish"]["pid"]
+                    )
+                )
+            finally:
+                if child_pid is not None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_deleted_native_receipt_cannot_prove_detached_child_cleanup(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_native_evidence_test")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child_pid_path = root / "native-child.pid"
+            wrapper_source = (
+                "import os,subprocess,sys,time; from pathlib import Path; "
+                "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
+                "start_new_session=True); "
+                "Path(sys.argv[1]).write_text(str(child.pid)); "
+                "receipt=Path(os.environ['OPENCLAW_NATIVE_PID_FILE']); "
+                "receipt.write_text(str(os.getpid())); time.sleep(0.15); receipt.unlink()"
+            )
+            script = (
+                "exec "
+                + shlex.join(
+                    [sys.executable, "-c", wrapper_source, str(child_pid_path)]
+                )
+                + "\n"
+            )
+            job, environment = self.runner_fixture(root, script)
+            child_pid = None
+            try:
+                with mock.patch.dict(runner.os.environ, environment, clear=False):
+                    with mock.patch.object(
+                        runner.time, "sleep", side_effect=lambda _: REAL_SLEEP(0.01)
+                    ):
+                        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                            self.assertNotEqual(
+                                runner.main([str(job / "input/workflow.json")]), 0
+                            )
+                state = json.loads(
+                    (job / "state/workflow-state.json").read_text(encoding="utf-8")
+                )
+                self.assertIn("nativePid", state["phases"]["finish"])
+                child_pid = int(child_pid_path.read_text(encoding="ascii"))
+                os.kill(child_pid, 0)
+                self.assertFalse(state["resourceReleaseVerified"])
+            finally:
+                if child_pid is not None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_clean_phase_failure_releases_resources_after_verified_cleanup(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_clean_failure_test")
+        dispatcher = load_module(
+            DESKTOP_DISPATCHER, "desktop_compute_for_clean_failure_test"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job, environment = self.runner_fixture(root, "exit 7\n")
+            with mock.patch.dict(runner.os.environ, environment, clear=False):
+                with mock.patch.object(
+                    runner.time, "sleep", side_effect=lambda _: REAL_SLEEP(0.01)
+                ):
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        return_code = runner.main(
+                            [str(job / "input/workflow.json")]
+                        )
+            self.assertNotEqual(return_code, 0)
+            (job / "state/exit-code").write_text(
+                f"{return_code}\n", encoding="ascii"
+            )
+            state = json.loads(
+                (job / "state/workflow-state.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(state["resourceReleaseVerified"])
+            for details in state["phases"].values():
+                if "pid" in details:
+                    self.assertFalse(runner.process_group_exists(details["pid"]))
+            with mock.patch.dict(dispatcher.ROOTS, {"splat": root}, clear=True):
+                self.assertEqual(
+                    dispatcher.active_resource_holders(
+                        "splat", ["desktop-heavy"], "replacement"
+                    ),
+                    [],
+                )
+
     def test_native_windows_termination_requires_absence_verification(self) -> None:
         runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_native_termination_test")
         taskkill_result = subprocess.CompletedProcess([], 0)
@@ -622,6 +851,48 @@ class RemoteSplatTests(unittest.TestCase):
             with mock.patch.object(runner.time, "monotonic", side_effect=[0, 16]):
                 with self.assertRaisesRegex(runner.WorkflowError, "still running"):
                     runner.terminate_windows_process_tree(1234)
+
+    def test_failed_taskkill_cannot_be_verified_by_parent_absence(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_taskkill_failure_test")
+        taskkill_failed = subprocess.CompletedProcess([], 128)
+        parent_absent = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(
+            runner.subprocess,
+            "run",
+            side_effect=[taskkill_failed, parent_absent],
+        ):
+            with self.assertRaisesRegex(runner.WorkflowError, "termination failed"):
+                runner.terminate_windows_process_tree(1234)
+
+    def test_durable_native_completion_receipt_is_positive_cleanup_evidence(
+        self,
+    ) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_native_receipt_test")
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "native-process.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "state": "complete",
+                        "rootPid": 1234,
+                        "targetPid": 5678,
+                        "treeCleanupVerified": True,
+                        "exitCode": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            process = mock.Mock(pid=4321)
+            with mock.patch.object(runner, "process_group_exists", return_value=False):
+                with mock.patch.object(runner, "windows_process_exists", return_value=False):
+                    self.assertTrue(
+                        runner.process_tree_absent(
+                            process,
+                            receipt,
+                            native_evidence_required=True,
+                        )
+                    )
 
     def test_workflow_approval_binds_dependencies_and_resources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

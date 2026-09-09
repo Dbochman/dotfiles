@@ -490,6 +490,8 @@ export OPENCLAW_JOB_RESOURCES_JSON="$resources"
 export OPENCLAW_JOB_DEPENDENCIES_JSON="$dependencies"
 export OPENCLAW_RUNNER_SHA256="$runner_sha"
 export OPENCLAW_JOB_STATE_DIR="$(dirname -- "$status")"
+export OPENCLAW_NATIVE_PID_FILE="$OPENCLAW_JOB_STATE_DIR/standalone-native-process.json"
+rm -f -- "$OPENCLAW_NATIVE_PID_FILE"
 printf 'desktop-compute started %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 printf 'OPENCLAW_PROCESS {"kind":"job-runner","pid":%s}\n' "$$"
 rc=0
@@ -534,10 +536,6 @@ def command_run(arguments: list[str]) -> None:
     if job in dependencies:
         raise RequestError("a job cannot depend on itself")
     directory = ensure_job(scope, job)
-    script = managed_path(directory / "input", relative, require_file=True)
-    actual = hash_file(script)
-    if actual != approved:
-        raise RequestError("script SHA-256 no longer matches approval")
     session = session_name(scope, job)
     if subprocess.run(
         ["/usr/bin/tmux", "has-session", "-t", session],
@@ -553,6 +551,10 @@ def command_run(arguments: list[str]) -> None:
     with host_state_lock():
         if read_run_record(scope, job) is not None:
             raise RequestError("job already has immutable run provenance")
+        script = managed_path(directory / "input", relative, require_file=True)
+        actual = hash_file(script)
+        if actual != approved:
+            raise RequestError("script SHA-256 no longer matches approval")
         incomplete = [
             dependency for dependency in dependencies if exit_code_for(scope, dependency) != 0
         ]

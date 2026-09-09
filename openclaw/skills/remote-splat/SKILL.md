@@ -59,9 +59,9 @@ remote-splat retrieve --job cabin-interior-v1 \
 `inspect` is read-only and reports the run owner, reservations, recorded
 process IDs, phase state, and `waitingOn` dependency or checkpoint. Do not
 create diagnostic compute jobs for routine monitoring. `cancel` is
-owner-bound and cooperative. An interrupted runner stays visibly blocked and
-retains its resources until an operator verifies the recorded processes and
-performs recovery.
+owner-bound and cooperative. Resources are released after verified process-tree
+cleanup, including for an ordinary phase failure; a failed or interrupted
+cleanup stays visibly blocked for operator recovery.
 
 ## Safety boundary
 
@@ -74,7 +74,9 @@ performs recovery.
   quality tiers, artifacts, and at least one reserved resource.
 - The automatic lightweight preflight must pass before expensive phases. It
   exercises the actual COLMAP feature/matcher database path, checks schema,
-  probes Brush/DLL loading, and requires a stable Windows Node runtime.
+  probes Brush/DLL loading, and requires a stable Windows Node runtime. Its
+  native tools use the sealed Windows wrapper and retain positive tree-cleanup
+  evidence.
 - Use the staged native Windows copy/hash helper for large Windows/WSL moves.
   Do not use metadata-preserving copies across those filesystems.
 - Fetch only `.sog`, `.ply`, or generated `.webp` QA outputs. Retrieval checks
@@ -99,7 +101,9 @@ cases the workflow must verify the recorded inbox hash before ingest.
 
 Low-level `workflow-plan`, `stage`, `preflight-plan`, `plan-run`, `run`,
 `progress`, `attach`, and `fetch` commands remain for debugging and recovery.
-They are not the normal operator workflow.
+They are not the normal operator workflow. `preflight-plan` produces a sealed,
+preflight-only workflow runner rather than approving the canary as a direct
+standalone script.
 
 ## Publication guard
 

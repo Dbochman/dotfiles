@@ -101,8 +101,8 @@ def validate_manifest(payload: object) -> dict[str, Any]:
         raise WorkflowError("workflow quality tiers are invalid")
 
     phases = payload.get("phases")
-    if not isinstance(phases, list) or not phases:
-        raise WorkflowError("workflow must declare internal phases")
+    if not isinstance(phases, list):
+        raise WorkflowError("workflow phases must be a list")
     names: set[str] = {"preflight"}
     normalized_phases: list[dict[str, Any]] = [
         {
@@ -455,13 +455,15 @@ def windows_process_exists(pid: int) -> bool:
 def terminate_windows_process_tree(pid: int) -> None:
     if not 1 <= pid <= 2**31 - 1:
         raise WorkflowError("native Windows PID receipt is invalid")
-    subprocess.run(
+    completed = subprocess.run(
         [TASKKILL, "/PID", str(pid), "/T", "/F"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=30,
         check=False,
     )
+    if completed.returncode != 0:
+        raise WorkflowError("native Windows process-tree termination failed")
     deadline = time.monotonic() + 15
     while windows_process_exists(pid):
         if time.monotonic() >= deadline:
@@ -505,20 +507,105 @@ def terminate_process(
         raise WorkflowError("native Windows process tree could not be verified") from native_error
 
 
-def read_pid_receipt(path: Path, *, wait_seconds: float = 0) -> int | None:
+def read_native_receipt(
+    path: Path,
+    *,
+    wait_seconds: float = 0,
+) -> dict[str, Any] | None:
     deadline = time.monotonic() + wait_seconds
     while True:
         if path.is_file() and not path.is_symlink():
             try:
-                pid = int(path.read_text(encoding="ascii").strip())
-            except (OSError, ValueError):
-                raise WorkflowError("native Windows PID receipt is invalid")
-            if not 1 <= pid <= 2**31 - 1:
-                raise WorkflowError("native Windows PID receipt is invalid")
-            return pid
+                text = path.read_text(encoding="utf-8").strip()
+            except FileNotFoundError:
+                if time.monotonic() >= deadline:
+                    return None
+                continue
+            except (OSError, UnicodeError):
+                raise WorkflowError("native Windows process receipt is invalid")
+            if text.isdigit():
+                pid = int(text)
+                if 1 <= pid <= 2**31 - 1:
+                    return {
+                        "schemaVersion": 0,
+                        "state": "running",
+                        "rootPid": pid,
+                        "treeCleanupVerified": False,
+                    }
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError as error:
+                raise WorkflowError("native Windows process receipt is invalid") from error
+            if not isinstance(payload, dict):
+                raise WorkflowError("native Windows process receipt is invalid")
+            root_pid = payload.get("rootPid")
+            target_pid = payload.get("targetPid")
+            exit_code = payload.get("exitCode")
+            state = payload.get("state")
+            cleanup_verified = payload.get("treeCleanupVerified")
+            if (
+                payload.get("schemaVersion") != 1
+                or state not in {"unused", "running", "complete"}
+                or not isinstance(cleanup_verified, bool)
+                or (state == "unused" and not cleanup_verified)
+                or (state == "running" and cleanup_verified)
+                or (state == "complete" and not cleanup_verified)
+                or (
+                    state == "unused"
+                    and (root_pid is not None or target_pid is not None or exit_code is not None)
+                )
+                or (
+                    state != "unused"
+                    and (
+                        not isinstance(root_pid, int)
+                        or isinstance(root_pid, bool)
+                        or not 1 <= root_pid <= 2**31 - 1
+                    )
+                )
+                or (
+                    target_pid is not None
+                    and (
+                        not isinstance(target_pid, int)
+                        or isinstance(target_pid, bool)
+                        or not 1 <= target_pid <= 2**31 - 1
+                    )
+                )
+                or (state == "complete" and target_pid is None)
+                or (
+                    exit_code is not None
+                    and (not isinstance(exit_code, int) or isinstance(exit_code, bool))
+                )
+                or (state == "complete" and exit_code is None)
+            ):
+                raise WorkflowError("native Windows process receipt is invalid")
+            return payload
         if time.monotonic() >= deadline:
             return None
         time.sleep(0.05)
+
+
+def process_tree_absent(
+    process: subprocess.Popen[bytes],
+    native_pid_path: Path | None,
+    *,
+    native_evidence_required: bool = False,
+    native_termination_verified: bool = False,
+) -> bool:
+    if process_group_exists(process.pid):
+        return False
+    if native_pid_path is None:
+        return not native_evidence_required
+    receipt = read_native_receipt(native_pid_path)
+    if receipt is None:
+        return not native_evidence_required
+    if receipt["state"] == "unused":
+        return receipt["treeCleanupVerified"] is True
+    root_pid = receipt["rootPid"]
+    if receipt["state"] == "complete":
+        return receipt["treeCleanupVerified"] is True and not windows_process_exists(
+            root_pid
+        )
+    return native_termination_verified and not windows_process_exists(root_pid)
 
 
 def run_workflow(manifest_path: Path) -> int:
@@ -580,15 +667,86 @@ def run_workflow(manifest_path: Path) -> int:
     }
     write_json_atomic(state_path, state)
     running: dict[str, dict[str, Any]] = {}
+    launched: list[dict[str, Any]] = []
 
     def terminate_phase(entry: dict[str, Any]) -> None:
         native_pid_path = entry["nativePidPath"]
         native_pid = None
-        if native_pid_path is not None:
-            native_pid = read_pid_receipt(native_pid_path, wait_seconds=3)
-            if native_pid is None:
-                raise WorkflowError("native Windows PID receipt is unavailable")
-        terminate_process(entry["process"], native_pid=native_pid)
+        errors: list[BaseException] = []
+        try:
+            receipt = read_native_receipt(
+                native_pid_path,
+                wait_seconds=3 if entry["nativeEvidenceRequired"] else 0.25,
+            )
+            if receipt is not None:
+                entry["nativePidObserved"] = True
+                native_pid = (
+                    receipt["rootPid"] if receipt["state"] == "running" else None
+                )
+            if receipt is None and (
+                entry["nativeEvidenceRequired"] or entry["nativePidObserved"]
+            ):
+                raise WorkflowError("native Windows process receipt is unavailable")
+        except BaseException as error:
+            errors.append(error)
+        try:
+            terminate_process(entry["process"], native_pid=native_pid)
+            if native_pid is not None:
+                entry["nativeTerminationVerified"] = True
+        except BaseException as error:
+            errors.append(error)
+        try:
+            if not process_tree_absent(
+                entry["process"],
+                native_pid_path,
+                native_evidence_required=(
+                    entry["nativeEvidenceRequired"] or entry["nativePidObserved"]
+                ),
+                native_termination_verified=entry["nativeTerminationVerified"],
+            ):
+                raise WorkflowError("phase process tree is still running")
+        except BaseException as error:
+            errors.append(error)
+        entry["cleanupVerified"] = not errors
+        if errors:
+            raise WorkflowError("phase process cleanup could not be verified") from errors[0]
+
+    def cleanup_running_phases() -> bool:
+        cleanup_verified = True
+        for name, entry in running.items():
+            try:
+                terminate_phase(entry)
+            except BaseException:
+                cleanup_verified = False
+            phase_state[name]["cleanupVerified"] = entry["cleanupVerified"]
+        return cleanup_verified
+
+    def all_process_cleanup_verified() -> bool:
+        verified = True
+        for entry in launched:
+            if entry["cleanupVerified"] is False:
+                verified = False
+                continue
+            if entry["cleanupVerified"] is not True:
+                try:
+                    entry["cleanupVerified"] = process_tree_absent(
+                        entry["process"],
+                        entry["nativePidPath"],
+                        native_evidence_required=(
+                            entry["nativeEvidenceRequired"]
+                            or entry["nativePidObserved"]
+                        ),
+                        native_termination_verified=entry[
+                            "nativeTerminationVerified"
+                        ],
+                    )
+                except BaseException:
+                    entry["cleanupVerified"] = False
+            phase_state[entry["name"]]["cleanupVerified"] = entry[
+                "cleanupVerified"
+            ]
+            verified = verified and entry["cleanupVerified"] is True
+        return verified
 
     def unmet_dependencies(phase: dict[str, Any]) -> list[dict[str, str]]:
         unmet: list[dict[str, str]] = []
@@ -603,8 +761,10 @@ def run_workflow(manifest_path: Path) -> int:
     try:
         while True:
             if cancel_request.is_file() and not cancel_request.is_symlink():
-                for entry in running.values():
-                    terminate_phase(entry)
+                cleanup_verified = cleanup_running_phases()
+                cleanup_verified = all_process_cleanup_verified() and cleanup_verified
+                if not cleanup_verified:
+                    raise WorkflowError("cancelled process cleanup could not be verified")
                 state["state"] = "cancelled"
                 state["resourceReleaseVerified"] = True
                 write_json_atomic(state_path, state)
@@ -614,16 +774,38 @@ def run_workflow(manifest_path: Path) -> int:
             for name, entry in list(running.items()):
                 process = entry["process"]
                 native_pid_path = entry["nativePidPath"]
-                if native_pid_path is not None and "nativePid" not in phase_state[name]:
-                    native_pid = read_pid_receipt(native_pid_path)
-                    if native_pid is not None:
-                        phase_state[name]["nativePid"] = native_pid
+                receipt = read_native_receipt(native_pid_path)
+                if receipt is not None:
+                    entry["nativePidObserved"] = True
+                    if (
+                        receipt["rootPid"] is not None
+                        and phase_state[name].get("nativePid") != receipt["rootPid"]
+                    ):
+                        phase_state[name]["nativePid"] = receipt["rootPid"]
+                        changed = True
+                    if phase_state[name].get("nativeState") != receipt["state"]:
+                        phase_state[name]["nativeState"] = receipt["state"]
                         changed = True
                 return_code = process.poll()
                 if return_code is None:
                     continue
                 phase_state[name]["exitCode"] = return_code
-                phase_state[name]["state"] = "succeeded" if return_code == 0 else "failed"
+                if not process_tree_absent(
+                    process,
+                    native_pid_path,
+                    native_evidence_required=(
+                        entry["nativeEvidenceRequired"]
+                        or entry["nativePidObserved"]
+                    ),
+                    native_termination_verified=entry["nativeTerminationVerified"],
+                ):
+                    phase_state[name]["state"] = "failed"
+                    raise WorkflowError(f"phase {name} left a running process tree")
+                entry["cleanupVerified"] = True
+                phase_state[name]["cleanupVerified"] = True
+                phase_state[name]["state"] = (
+                    "succeeded" if return_code == 0 else "failed"
+                )
                 del running[name]
                 changed = True
                 if return_code != 0:
@@ -662,10 +844,20 @@ def run_workflow(manifest_path: Path) -> int:
                 script = input_root / phase["script"]
                 if not script.is_file() or script.is_symlink():
                     raise WorkflowError(f"phase {name} script is unavailable")
-                native_pid_path = None
-                if script.suffix.casefold() == ".ps1":
-                    native_pid_path = state_root / f"phase-{name}-windows-pid"
-                    native_pid_path.unlink(missing_ok=True)
+                native_pid_path = state_root / f"phase-{name}-native-process.json"
+                write_json_atomic(
+                    native_pid_path,
+                    {
+                        "schemaVersion": 1,
+                        "state": "unused",
+                        "rootPid": None,
+                        "targetPid": None,
+                        "treeCleanupVerified": True,
+                        "exitCode": None,
+                    },
+                )
+                phase_environment = os.environ.copy()
+                phase_environment["OPENCLAW_NATIVE_PID_FILE"] = str(native_pid_path)
                 process = subprocess.Popen(
                     phase_command(
                         script,
@@ -673,6 +865,7 @@ def run_workflow(manifest_path: Path) -> int:
                         native_pid_path=native_pid_path,
                     ),
                     cwd=job_root,
+                    env=phase_environment,
                     start_new_session=True,
                 )
                 print(
@@ -682,10 +875,17 @@ def run_workflow(manifest_path: Path) -> int:
                 )
                 phase_state[name].pop("waitingOn", None)
                 phase_state[name].update({"state": "running", "pid": process.pid})
-                running[name] = {
+                entry = {
+                    "name": name,
                     "process": process,
                     "nativePidPath": native_pid_path,
+                    "nativeEvidenceRequired": True,
+                    "nativePidObserved": False,
+                    "nativeTerminationVerified": False,
+                    "cleanupVerified": None,
                 }
+                running[name] = entry
+                launched.append(entry)
                 changed = True
                 if phase["mode"] == "foreground":
                     break
@@ -712,6 +912,8 @@ def run_workflow(manifest_path: Path) -> int:
                     "sha256": sha256(path),
                 }
             )
+        if not all_process_cleanup_verified():
+            raise WorkflowError("successful workflow cleanup could not be verified")
         state["state"] = "succeeded"
         state["resourceReleaseVerified"] = True
         state["artifacts"] = artifacts
@@ -744,13 +946,10 @@ def run_workflow(manifest_path: Path) -> int:
         )
         return 0
     except BaseException:
-        for entry in running.values():
-            try:
-                terminate_phase(entry)
-            except BaseException:
-                pass
+        cleanup_verified = cleanup_running_phases()
+        cleanup_verified = all_process_cleanup_verified() and cleanup_verified
         state["state"] = "failed"
-        state["resourceReleaseVerified"] = False
+        state["resourceReleaseVerified"] = cleanup_verified
         write_json_atomic(state_path, state)
         raise
 
