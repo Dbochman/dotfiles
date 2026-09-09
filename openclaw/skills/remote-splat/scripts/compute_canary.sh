@@ -76,7 +76,10 @@ echo 'OPENCLAW_PROGRESS {"phase":"toolchain-preflight","completed":1,"total":3,"
   --FeatureMatching.use_gpu 1
 echo 'OPENCLAW_PROGRESS {"phase":"toolchain-preflight","completed":2,"total":3,"unit":"checks"}'
 
-brush_help=$(timeout 20s "$brush" --help 2>&1 | tr -d '\r' || true)
+if ! brush_help=$(timeout 20s "$brush" --help 2>&1 | tr -d '\r'); then
+  echo "Brush runtime/DLL canary failed" >&2
+  exit 2
+fi
 if [[ -z "$brush_help" ]]; then
   echo "Brush runtime/DLL canary failed" >&2
   exit 2

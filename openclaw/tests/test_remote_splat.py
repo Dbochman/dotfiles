@@ -8,10 +8,14 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -463,6 +467,8 @@ class RemoteSplatTests(unittest.TestCase):
                         "cabin-one-run",
                         "--bundle",
                         str(bundle),
+                        "--reserve",
+                        "desktop-heavy",
                         "--dry-run",
                     ]
                 )
@@ -478,6 +484,9 @@ class RemoteSplatTests(unittest.TestCase):
         scripts = self.helper.SCRIPT_DIR
         canary = (scripts / "compute_canary.sh").read_text(encoding="utf-8")
         windows_io = (scripts / "windows_io.ps1").read_text(encoding="utf-8")
+        windows_runner = (scripts / "windows_phase_runner.ps1").read_text(
+            encoding="utf-8"
+        )
         runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_checkpoint_test")
         self.assertIn("SIFT_BRUTEFORCE", canary)
         self.assertIn("--FeatureExtraction.type SIFT", canary)
@@ -487,11 +496,28 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertIn("Windows Node runtime", canary)
         self.assertIn("[System.IO.File]::Copy", windows_io)
         self.assertIn("Get-FileHash", windows_io)
+        self.assertIn("[System.IO.File]::WriteAllText", windows_runner)
+        self.assertIn('"${PID}`n"', windows_runner)
+        self.assertIn("& $PhaseScript", windows_runner)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             checkpoints = root / "checkpoints"
             checkpoints.mkdir()
-            (checkpoints / "scene_05000.ply").write_bytes(b"checkpoint")
+            checkpoint = checkpoints / "scene_05000.ply"
+            checkpoint.write_bytes(
+                b"ply\nformat binary_little_endian 1.0\n"
+                b"element vertex 1\nproperty float x\nend_header\n"
+                b"\x00\x00\x00\x00"
+            )
+            (checkpoints / "scene_05000.ply.complete.json").write_text(
+                json.dumps(
+                    {
+                        "sizeBytes": checkpoint.stat().st_size,
+                        "sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
             ready, name, step = runner.checkpoint_ready(
                 root,
                 {
@@ -504,6 +530,143 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertTrue(ready)
         self.assertEqual(name, "scene_05000.ply")
         self.assertEqual(step, 5000)
+
+    def test_incomplete_checkpoint_without_readable_receipt_is_not_ready(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_partial_checkpoint_test")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "checkpoints").mkdir()
+            (root / "checkpoints/scene_05000.ply").write_bytes(b"p")
+            ready, name, step = runner.checkpoint_ready(
+                root,
+                {
+                    "directory": "checkpoints",
+                    "prefix": "scene_",
+                    "suffix": ".ply",
+                    "minimumStep": 5000,
+                },
+            )
+        self.assertFalse(ready)
+        self.assertIsNone(name)
+        self.assertIsNone(step)
+
+    def test_brush_preflight_preserves_runtime_failure_status(self) -> None:
+        source = (self.helper.SCRIPT_DIR / "compute_canary.sh").read_text(encoding="utf-8")
+        gate = source[source.index("if ! brush_help=") : source.index("node_version=")]
+        shell = (
+            "set -euo pipefail\n"
+            'timeout() { printf "simulated runtime error\\n" >&2; return 53; }\n'
+            "brush=/unused\n"
+            + gate
+        )
+        completed = subprocess.run(
+            ["/bin/bash", "-c", shell],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+
+    def test_terminate_process_removes_complete_process_group(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_termination_test")
+        with tempfile.TemporaryDirectory() as directory:
+            pid_path = Path(directory) / "child.pid"
+            child_source = (
+                "import os,signal,sys,time; from pathlib import Path; "
+                "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+                "Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(60)"
+            )
+            parent_source = (
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]); "
+                "time.sleep(60)"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c", parent_source, child_source, str(pid_path)],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            child_pid = None
+            try:
+                deadline = time.monotonic() + 5
+                while not pid_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(pid_path.exists())
+                child_pid = int(pid_path.read_text(encoding="ascii"))
+                runner.terminate_process(process)
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(child_pid, 0)
+            finally:
+                if child_pid is not None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=5)
+
+    def test_native_windows_termination_requires_absence_verification(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_native_termination_test")
+        taskkill_result = subprocess.CompletedProcess([], 0)
+        still_running = subprocess.CompletedProcess([], 3)
+        with mock.patch.object(
+            runner.subprocess,
+            "run",
+            side_effect=[taskkill_result, still_running],
+        ):
+            with mock.patch.object(runner.time, "monotonic", side_effect=[0, 16]):
+                with self.assertRaisesRegex(runner.WorkflowError, "still running"):
+                    runner.terminate_windows_process_tree(1234)
+
+    def test_workflow_approval_binds_dependencies_and_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            (bundle / "finish.sh").write_text("exit 0\n", encoding="utf-8")
+            (bundle / "workflow.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "job": "approval-review",
+                        "owner": "sol",
+                        "settings": {"iterations": 5000},
+                        "dependencies": {"colmap": "4.2.0"},
+                        "qualityTiers": {
+                            "target": {"minimumRegisteredViews": 300},
+                            "plausibleCandidate": {"minimumRegisteredViews": 248},
+                            "experimentalOnly": {"promotionEligible": False},
+                        },
+                        "phases": [{"name": "finish", "script": "finish.sh"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            approvals = []
+            for reservation, dependency in (
+                ("desktop-heavy", "base-model"),
+                ("anything-else", "different-base"),
+            ):
+                code, stdout, stderr = self.run_main(
+                    [
+                        "start",
+                        "--job",
+                        "approval-review",
+                        "--bundle",
+                        str(bundle),
+                        "--reserve",
+                        reservation,
+                        "--depends-on",
+                        dependency,
+                        "--dry-run",
+                    ]
+                )
+                self.assertEqual((code, stderr), (0, ""))
+                approvals.append(json.loads(stdout)["approvalSha256"])
+        self.assertNotEqual(*approvals)
 
     def test_runner_owns_phases_and_writes_one_complete_run_manifest(self) -> None:
         runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_execution_test")
@@ -538,7 +701,18 @@ class RemoteSplatTests(unittest.TestCase):
             manifest_path = input_root / "workflow.json"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             (input_root / "approval-inventory.json").write_text(
-                json.dumps({"approvalSha256": approval, "files": []}),
+                json.dumps(
+                    {
+                        "approvalSha256": approval,
+                        "execution": {
+                            "job": "one-run",
+                            "owner": "sol",
+                            "externalDependencies": ["base-model"],
+                            "resources": ["desktop-heavy"],
+                        },
+                        "files": [],
+                    }
+                ),
                 encoding="utf-8",
             )
             environment = {

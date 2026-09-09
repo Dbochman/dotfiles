@@ -62,6 +62,7 @@ WORKFLOW_PHASE_SUFFIXES = (
 SUPPORT_FILES = (
     SCRIPT_DIR / "compute_canary.sh",
     SCRIPT_DIR / "windows_io.ps1",
+    SCRIPT_DIR / "windows_phase_runner.ps1",
     SCRIPT_DIR / "workflow_runner.py",
 )
 SAFE_DESKTOP_ERRORS = frozenset(
@@ -478,7 +479,10 @@ def workflow_bundle_files(bundle: Path) -> list[tuple[Path, str]]:
     return sorted(files, key=lambda item: item[1])
 
 
-def workflow_inventory(files: Sequence[tuple[Path, str]]) -> tuple[list[dict[str, object]], str]:
+def workflow_inventory(
+    files: Sequence[tuple[Path, str]],
+    execution: dict[str, object],
+) -> tuple[list[dict[str, object]], str]:
     inventory = [
         {
             "path": relative,
@@ -487,7 +491,11 @@ def workflow_inventory(files: Sequence[tuple[Path, str]]) -> tuple[list[dict[str
         }
         for path, relative in files
     ]
-    encoded = json.dumps(inventory, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    encoded = json.dumps(
+        {"execution": execution, "files": inventory},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
     return inventory, hashlib.sha256(encoded).hexdigest()
 
 
@@ -557,6 +565,18 @@ def prepare_workflow(
         raise PublicError(str(error)) from error
     if manifest["job"] != job:
         raise PublicError("workflow manifest job does not match --job")
+    dependencies = sorted({validate_job(value) for value in args.depends_on})
+    if job in dependencies:
+        raise PublicError("a job cannot depend on itself")
+    resources = sorted({validate_resource(value) for value in args.reserve})
+    if not resources:
+        raise PublicError("at least one resource reservation is required")
+    execution: dict[str, object] = {
+        "job": job,
+        "owner": manifest["owner"],
+        "externalDependencies": dependencies,
+        "resources": resources,
+    }
     file_map = {relative: path for path, relative in files}
     for phase in manifest["phases"]:
         if phase["name"] == "preflight":
@@ -568,10 +588,11 @@ def prepare_workflow(
             raise PublicError("remote-splat workflow support bundle is incomplete")
         files.append((support, support.name))
     files = sorted(files, key=lambda item: item[1])
-    inventory, approval_sha256 = workflow_inventory(files)
+    inventory, approval_sha256 = workflow_inventory(files, execution)
     approval_payload = {
         "schemaVersion": 1,
         "approvalSha256": approval_sha256,
+        "execution": execution,
         "files": inventory,
     }
     inventory_text = json.dumps(approval_payload, indent=2, sort_keys=True) + "\n"
@@ -582,6 +603,8 @@ def prepare_workflow(
         "ok": True,
         "job": job,
         "owner": manifest["owner"],
+        "externalDependencies": dependencies,
+        "resources": resources,
         "approvalSha256": approval_sha256,
         "sealedRunnerSha256": seal_sha256,
         "fileCount": len(inventory),
@@ -628,12 +651,8 @@ def command_start(args: argparse.Namespace) -> None:
     approved_workflow = validate_sha256(args.approved_workflow_sha256)
     result = prepare_workflow(args, expected_approval_sha256=approved_workflow)
     owner = validate_owner(str(result["owner"]))
-    dependencies = sorted({validate_job(value) for value in args.depends_on})
-    if args.job in dependencies:
-        raise PublicError("a job cannot depend on itself")
-    resources = sorted({validate_resource(value) for value in args.reserve})
-    if not resources:
-        raise PublicError("at least one resource reservation is required")
+    dependencies = list(result["externalDependencies"])
+    resources = list(result["resources"])
     payload = run_desktop(
         "run",
         [
@@ -1160,6 +1179,8 @@ def parser() -> argparse.ArgumentParser:
     )
     start_plan.add_argument("--job", required=True)
     start_plan.add_argument("--bundle", required=True)
+    start_plan.add_argument("--depends-on", action="append", default=[])
+    start_plan.add_argument("--reserve", action="append", required=True)
     start_plan.add_argument("--dry-run", action="store_true")
     start_plan.set_defaults(func=command_start_plan)
 

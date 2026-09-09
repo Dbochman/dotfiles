@@ -42,9 +42,10 @@ remote-splat start --job cabin-interior-v1 \
   --reserve desktop-heavy
 ```
 
-The manifest supplies the one run owner. `start` stages the bundle and shared
-helpers, verifies the seal on the desktop, and launches one durable job. It
-does not need a second phase-by-phase assembly step.
+The manifest supplies the one run owner. The approval digest also binds the
+external job dependencies and host-wide resource reservations. `start` stages
+the bundle and shared helpers, freezes that job's inputs, verifies the seal on
+the desktop, and launches one durable job.
 
 Inspect, request cancellation, or retrieve a declared artifact:
 
@@ -66,8 +67,9 @@ performs recovery.
 
 - Keep originals immutable. A workflow bundle contains `workflow.json` and its
   phase scripts; generated data stays under its managed job.
-- The dry-run approval covers every bundle and shared-runner file by size and
-  SHA-256. If anything changes, recompute and disclose the new approval scope.
+- The dry-run approval covers every bundle/shared-runner file by size and
+  SHA-256 plus dependencies and reservations. Inputs cannot change after run
+  provenance exists. Recompute and disclose approval after any contract change.
 - Every run declares one owner, explicit dependencies, explicit settings,
   quality tiers, artifacts, and at least one reserved resource.
 - The automatic lightweight preflight must pass before expensive phases. It
@@ -77,9 +79,9 @@ performs recovery.
   Do not use metadata-preserving copies across those filesystems.
 - Fetch only `.sog`, `.ply`, or generated `.webp` QA outputs. Retrieval checks
   size and SHA-256 and refuses to overwrite a different local file.
-- A preview checkpoint is private, explicitly labeled non-final, and never
-  promotion-eligible. Missing a target tier must be disclosed even when a
-  lower declared tier passes.
+- A preview checkpoint requires a readable file plus a matching size/SHA-256
+  completion receipt. It is private, explicitly non-final, and never
+  promotion-eligible. Missing a target tier must be disclosed.
 - Never publish, replace, delete, or change sharing on SuperSplat without fresh
   explicit confirmation naming the exact artifact and visibility.
 - Treat footage, reconstructions, logs, and scene names as private household

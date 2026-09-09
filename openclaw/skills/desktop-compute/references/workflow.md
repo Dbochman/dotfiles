@@ -43,16 +43,18 @@ script hash and size. The dispatcher independently recomputes the hash at run
 time and refuses a changed script.
 
 `run` also records one owner, sorted predecessor jobs, reserved resources, and
-the runner PID. Resource acquisition is serialized. A predecessor must have a
-zero exit receipt, and an unfinished run holds its reservations even if its
-tmux session disappears. In that case `progress` reports `interrupted`; this is
+the runner PID. Resource acquisition is serialized across every host scope. A
+predecessor must have a zero exit receipt, and an unfinished run holds its
+reservations even if its tmux session disappears. In that case `progress`
+reports `interrupted`; this is
 an operator-visible exception, not implicit permission to launch competing
 work. Cooperative `cancel` is limited to the same owner and a sealed
 `run-workflow.sh` job.
 
 ## Transfer behavior
 
-`stage` walks regular files only and keeps their relative paths. Empty
+`stage` walks regular files only and keeps their relative paths until run
+provenance freezes the input tree. Empty
 directories are not materialized because they carry no job input. An already
 present file with the same size and SHA-256 is reused. No stage operation
 deletes remote files.

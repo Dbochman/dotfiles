@@ -287,6 +287,154 @@ class DesktopComputeTests(unittest.TestCase):
                     [],
                 )
 
+    def test_staging_cannot_mutate_inputs_after_run_provenance_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / "running"
+            for child in ("input", "outputs", "logs", "state"):
+                (job / child).mkdir(parents=True, exist_ok=True)
+            target = job / "input/convert.sh"
+            target.write_bytes(b"printf approved\n")
+            (job / "state/run.json").write_text(
+                json.dumps(
+                    {
+                        "script": "run-workflow.sh",
+                        "owner": "sol",
+                        "resources": ["desktop-heavy"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            replacement = b"printf replaced\n"
+            fake_stdin = mock.Mock(buffer=io.BytesIO(replacement))
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=True):
+                with mock.patch.object(self.dispatcher.sys, "stdin", fake_stdin):
+                    with self.assertRaisesRegex(self.dispatcher.RequestError, "frozen"):
+                        self.dispatcher.command_put(
+                            [
+                                "splat",
+                                "running",
+                                "convert.sh",
+                                str(len(replacement)),
+                                hashlib.sha256(replacement).hexdigest(),
+                            ]
+                        )
+            self.assertEqual(target.read_bytes(), b"printf approved\n")
+
+    def test_rejected_repeat_run_preserves_completion_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / "completed"
+            for child in ("input", "outputs", "logs", "state"):
+                (job / child).mkdir(parents=True, exist_ok=True)
+            script = job / "input/run-workflow.sh"
+            script.write_text("exit 0\n", encoding="utf-8")
+            (job / "state/run.json").write_text(
+                json.dumps({"resources": ["desktop-heavy"]}), encoding="utf-8"
+            )
+            (job / "state/exit-code").write_text("0\n", encoding="ascii")
+            (job / "state/runner-pid").write_text("12345\n", encoding="ascii")
+            no_session = subprocess.CompletedProcess([], 1, "", "")
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=True):
+                with mock.patch.object(Path, "home", return_value=root):
+                    with mock.patch.object(
+                        self.dispatcher.subprocess, "run", return_value=no_session
+                    ):
+                        with self.assertRaisesRegex(
+                            self.dispatcher.RequestError, "immutable"
+                        ):
+                            self.dispatcher.command_run(
+                                [
+                                    "splat",
+                                    "completed",
+                                    script.name,
+                                    self.dispatcher.hash_file(script),
+                                    "sol",
+                                    "[]",
+                                    '["desktop-heavy"]',
+                                ]
+                            )
+                self.assertEqual(self.dispatcher.exit_code_for("splat", "completed"), 0)
+            self.assertEqual(
+                (job / "state/runner-pid").read_text(encoding="ascii"), "12345\n"
+            )
+
+    def test_host_wide_resource_blocks_across_windows_and_splat_scopes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            windows_root = root / "windows"
+            splat_root = root / "splat"
+            old_job = windows_root / "existing-heavy"
+            new_job = splat_root / "new-heavy"
+            for job in (old_job, new_job):
+                for child in ("input", "outputs", "logs", "state"):
+                    (job / child).mkdir(parents=True, exist_ok=True)
+            (old_job / "state/run.json").write_text(
+                json.dumps({"owner": "other", "resources": ["desktop-heavy"]}),
+                encoding="utf-8",
+            )
+            script = new_job / "input/run-workflow.sh"
+            script.write_text("exit 0\n", encoding="utf-8")
+            no_session = subprocess.CompletedProcess([], 1, "", "")
+            with mock.patch.dict(
+                self.dispatcher.ROOTS,
+                {"windows": windows_root, "splat": splat_root},
+                clear=True,
+            ):
+                with mock.patch.object(Path, "home", return_value=root):
+                    with mock.patch.object(
+                        self.dispatcher.subprocess, "run", return_value=no_session
+                    ):
+                        with self.assertRaisesRegex(
+                            self.dispatcher.RequestError, "resources are held"
+                        ):
+                            self.dispatcher.command_run(
+                                [
+                                    "splat",
+                                    "new-heavy",
+                                    script.name,
+                                    self.dispatcher.hash_file(script),
+                                    "sol",
+                                    "[]",
+                                    '["desktop-heavy"]',
+                                ]
+                            )
+
+    def test_workflow_failure_holds_resources_until_termination_is_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / "failed-workflow"
+            (job / "state").mkdir(parents=True)
+            (job / "state/run.json").write_text(
+                json.dumps(
+                    {
+                        "script": "run-workflow.sh",
+                        "resources": ["desktop-heavy"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (job / "state/exit-code").write_text("130\n", encoding="ascii")
+            (job / "state/workflow-state.json").write_text(
+                json.dumps({"resourceReleaseVerified": False}), encoding="utf-8"
+            )
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=True):
+                self.assertEqual(
+                    self.dispatcher.active_resource_holders(
+                        "splat", ["desktop-heavy"], "replacement"
+                    ),
+                    ["failed-workflow"],
+                )
+                (job / "state/workflow-state.json").write_text(
+                    json.dumps({"resourceReleaseVerified": True}), encoding="utf-8"
+                )
+                self.assertEqual(
+                    self.dispatcher.active_resource_holders(
+                        "splat", ["desktop-heavy"], "replacement"
+                    ),
+                    [],
+                )
+
     def test_progress_surfaces_interrupted_run_and_cancel_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

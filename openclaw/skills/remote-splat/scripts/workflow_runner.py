@@ -21,6 +21,28 @@ TOKEN_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 ARTIFACT_SUFFIXES = frozenset((".sog", ".ply", ".webp"))
 DEPENDENCY_STATES = frozenset(("started", "succeeded"))
+POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+TASKKILL = "/mnt/c/Windows/System32/taskkill.exe"
+CHECKPOINT_RECEIPT_SUFFIX = ".complete.json"
+MAX_PLY_HEADER_BYTES = 1024 * 1024
+PLY_SCALAR_BYTES = {
+    "char": 1,
+    "uchar": 1,
+    "int8": 1,
+    "uint8": 1,
+    "short": 2,
+    "ushort": 2,
+    "int16": 2,
+    "uint16": 2,
+    "int": 4,
+    "uint": 4,
+    "int32": 4,
+    "uint32": 4,
+    "float": 4,
+    "float32": 4,
+    "double": 8,
+    "float64": 8,
+}
 
 
 class WorkflowError(RuntimeError):
@@ -129,6 +151,7 @@ def validate_manifest(payload: object) -> dict[str, Any]:
             directory = relative_path(checkpoint.get("directory"))
             prefix = checkpoint.get("prefix")
             suffix = checkpoint.get("suffix", ".ply")
+            receipt_suffix = checkpoint.get("receiptSuffix", CHECKPOINT_RECEIPT_SUFFIX)
             minimum_step = checkpoint.get("minimumStep")
             if (
                 not isinstance(prefix, str)
@@ -136,6 +159,9 @@ def validate_manifest(payload: object) -> dict[str, Any]:
                 or not isinstance(suffix, str)
                 or not suffix.startswith(".")
                 or not TOKEN_RE.fullmatch(suffix[1:])
+                or not isinstance(receipt_suffix, str)
+                or not receipt_suffix.startswith(".")
+                or not TOKEN_RE.fullmatch(receipt_suffix[1:])
                 or not isinstance(minimum_step, int)
                 or isinstance(minimum_step, bool)
                 or minimum_step <= 0
@@ -146,6 +172,7 @@ def validate_manifest(payload: object) -> dict[str, Any]:
                 "prefix": prefix,
                 "suffix": suffix,
                 "minimumStep": minimum_step,
+                "receiptSuffix": receipt_suffix,
             }
         normalized = {
             "name": name,
@@ -251,6 +278,91 @@ def environment_name_list(name: str, expression: re.Pattern[str], *, required: b
     return payload
 
 
+def readable_ply(path: Path) -> bool:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            prefix = handle.read(MAX_PLY_HEADER_BYTES + 1)
+    except OSError:
+        return False
+    if (
+        size <= 0
+        or not (prefix.startswith(b"ply\n") or prefix.startswith(b"ply\r\n"))
+    ):
+        return False
+    marker = b"end_header\n"
+    marker_at = prefix.find(marker)
+    if marker_at < 0:
+        marker = b"end_header\r\n"
+        marker_at = prefix.find(marker)
+    if marker_at < 0:
+        return False
+    header_size = marker_at + len(marker)
+    try:
+        lines = prefix[:header_size].decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return False
+    file_format = ""
+    current_element = ""
+    vertex_count: int | None = None
+    vertex_stride = 0
+    vertex_properties = 0
+    for line in lines[1:]:
+        fields = line.split()
+        if not fields:
+            continue
+        if fields[0] == "format" and len(fields) == 3:
+            file_format = fields[1]
+        elif fields[0] == "element" and len(fields) == 3:
+            current_element = fields[1]
+            if current_element == "vertex":
+                try:
+                    vertex_count = int(fields[2])
+                except ValueError:
+                    return False
+        elif fields[0] == "property" and current_element == "vertex":
+            if len(fields) != 3 or fields[1] == "list" or fields[1] not in PLY_SCALAR_BYTES:
+                return False
+            vertex_stride += PLY_SCALAR_BYTES[fields[1]]
+            vertex_properties += 1
+    if vertex_count is None or vertex_count <= 0 or vertex_properties == 0:
+        return False
+    if file_format in {"binary_little_endian", "binary_big_endian"}:
+        return size >= header_size + vertex_count * vertex_stride
+    if file_format != "ascii":
+        return False
+    try:
+        with path.open("rb") as handle:
+            handle.seek(header_size)
+            for _ in range(vertex_count):
+                if len(handle.readline().split()) < vertex_properties:
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def checkpoint_receipt_valid(path: Path, receipt_suffix: str) -> bool:
+    receipt = path.with_name(path.name + receipt_suffix)
+    if (
+        not receipt.is_file()
+        or receipt.is_symlink()
+        or not 0 < receipt.stat().st_size <= 4096
+    ):
+        return False
+    try:
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("sizeBytes") == path.stat().st_size
+        and isinstance(payload.get("sha256"), str)
+        and SHA256_RE.fullmatch(payload["sha256"]) is not None
+        and sha256(path) == payload["sha256"]
+    )
+
+
 def checkpoint_ready(job_root: Path, trigger: dict[str, Any]) -> tuple[bool, str | None, int | None]:
     directory = job_root / trigger["directory"]
     expression = re.compile(
@@ -261,41 +373,152 @@ def checkpoint_ready(job_root: Path, trigger: dict[str, Any]) -> tuple[bool, str
     if directory.is_dir() and not directory.is_symlink():
         for path in directory.iterdir():
             match = expression.fullmatch(path.name)
-            if match and path.is_file() and not path.is_symlink() and path.stat().st_size > 0:
-                found.append((int(match.group(1)), path.name))
+            if not match or not path.is_file() or path.is_symlink():
+                continue
+            if path.suffix.casefold() == ".ply" and not readable_ply(path):
+                continue
+            if not checkpoint_receipt_valid(
+                path, trigger.get("receiptSuffix", CHECKPOINT_RECEIPT_SUFFIX)
+            ):
+                continue
+            found.append((int(match.group(1)), path.name))
     if not found:
         return False, None, None
     step, name = max(found)
     return step >= trigger["minimumStep"], name, step
 
 
-def phase_command(script: Path) -> list[str]:
+def phase_command(
+    script: Path,
+    *,
+    input_root: Path,
+    native_pid_path: Path | None,
+) -> list[str]:
     if script.suffix.casefold() == ".sh":
         return ["/bin/bash", str(script)]
+    if native_pid_path is None:
+        raise WorkflowError("Windows phase requires a native PID receipt")
+    wrapper = input_root / "windows_phase_runner.ps1"
+    if not wrapper.is_file() or wrapper.is_symlink():
+        raise WorkflowError("Windows phase runner is unavailable")
     return [
-        "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+        POWERSHELL,
         "-NoProfile",
         "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
+        subprocess.check_output(["wslpath", "-w", str(wrapper)], text=True).strip(),
+        "-PhaseScript",
         subprocess.check_output(["wslpath", "-w", str(script)], text=True).strip(),
+        "-PidFile",
+        subprocess.check_output(["wslpath", "-w", str(native_pid_path)], text=True).strip(),
     ]
 
 
-def terminate_process(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
+def process_group_exists(process_group: int) -> bool:
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=15)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        if process.poll() is None:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def wait_for_process_group_exit(process_group: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while process_group_exists(process_group):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def windows_process_exists(pid: int) -> bool:
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 3 }}; exit 0",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    if completed.returncode not in {0, 3}:
+        raise WorkflowError("native Windows process verification failed")
+    return completed.returncode == 3
+
+
+def terminate_windows_process_tree(pid: int) -> None:
+    if not 1 <= pid <= 2**31 - 1:
+        raise WorkflowError("native Windows PID receipt is invalid")
+    subprocess.run(
+        [TASKKILL, "/PID", str(pid), "/T", "/F"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=30,
+        check=False,
+    )
+    deadline = time.monotonic() + 15
+    while windows_process_exists(pid):
+        if time.monotonic() >= deadline:
+            raise WorkflowError("native Windows process tree is still running")
+        time.sleep(0.25)
+
+
+def terminate_process(
+    process: subprocess.Popen[bytes],
+    *,
+    native_pid: int | None = None,
+) -> None:
+    native_error: BaseException | None = None
+    if native_pid is not None:
+        try:
+            terminate_windows_process_tree(native_pid)
+        except BaseException as error:
+            native_error = error
+    process_group = process.pid
+    if process_group_exists(process_group):
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+        if not wait_for_process_group_exit(process_group, 2):
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                os.killpg(process_group, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.wait(timeout=10)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            if not wait_for_process_group_exit(process_group, 5):
+                raise WorkflowError("phase process tree is still running")
+    if native_error is not None:
+        raise WorkflowError("native Windows process tree could not be verified") from native_error
+
+
+def read_pid_receipt(path: Path, *, wait_seconds: float = 0) -> int | None:
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        if path.is_file() and not path.is_symlink():
+            try:
+                pid = int(path.read_text(encoding="ascii").strip())
+            except (OSError, ValueError):
+                raise WorkflowError("native Windows PID receipt is invalid")
+            if not 1 <= pid <= 2**31 - 1:
+                raise WorkflowError("native Windows PID receipt is invalid")
+            return pid
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.05)
 
 
 def run_workflow(manifest_path: Path) -> int:
@@ -326,6 +549,15 @@ def run_workflow(manifest_path: Path) -> int:
     resources = environment_name_list(
         "OPENCLAW_JOB_RESOURCES_JSON", TOKEN_RE, required=True
     )
+    approved_execution = approval_inventory.get("execution")
+    actual_execution = {
+        "job": manifest["job"],
+        "owner": manifest["owner"],
+        "externalDependencies": external_dependencies,
+        "resources": resources,
+    }
+    if approved_execution != actual_execution:
+        raise WorkflowError("managed execution contract does not match workflow approval")
     sealed_runner_sha256 = os.environ.get("OPENCLAW_RUNNER_SHA256", "")
     if not SHA256_RE.fullmatch(sealed_runner_sha256):
         raise WorkflowError("managed runner approval is invalid")
@@ -339,6 +571,7 @@ def run_workflow(manifest_path: Path) -> int:
         "job": manifest["job"],
         "owner": manifest["owner"],
         "state": "running",
+        "resourceReleaseVerified": False,
         "approvalSha256": os.environ.get("OPENCLAW_WORKFLOW_APPROVAL_SHA256"),
         "sealedRunnerSha256": sealed_runner_sha256,
         "externalDependencies": external_dependencies,
@@ -346,7 +579,16 @@ def run_workflow(manifest_path: Path) -> int:
         "phases": phase_state,
     }
     write_json_atomic(state_path, state)
-    running: dict[str, subprocess.Popen[bytes]] = {}
+    running: dict[str, dict[str, Any]] = {}
+
+    def terminate_phase(entry: dict[str, Any]) -> None:
+        native_pid_path = entry["nativePidPath"]
+        native_pid = None
+        if native_pid_path is not None:
+            native_pid = read_pid_receipt(native_pid_path, wait_seconds=3)
+            if native_pid is None:
+                raise WorkflowError("native Windows PID receipt is unavailable")
+        terminate_process(entry["process"], native_pid=native_pid)
 
     def unmet_dependencies(phase: dict[str, Any]) -> list[dict[str, str]]:
         unmet: list[dict[str, str]] = []
@@ -361,14 +603,22 @@ def run_workflow(manifest_path: Path) -> int:
     try:
         while True:
             if cancel_request.is_file() and not cancel_request.is_symlink():
-                for process in running.values():
-                    terminate_process(process)
+                for entry in running.values():
+                    terminate_phase(entry)
                 state["state"] = "cancelled"
+                state["resourceReleaseVerified"] = True
                 write_json_atomic(state_path, state)
                 return 130
 
             changed = False
-            for name, process in list(running.items()):
+            for name, entry in list(running.items()):
+                process = entry["process"]
+                native_pid_path = entry["nativePidPath"]
+                if native_pid_path is not None and "nativePid" not in phase_state[name]:
+                    native_pid = read_pid_receipt(native_pid_path)
+                    if native_pid is not None:
+                        phase_state[name]["nativePid"] = native_pid
+                        changed = True
                 return_code = process.poll()
                 if return_code is None:
                     continue
@@ -412,8 +662,16 @@ def run_workflow(manifest_path: Path) -> int:
                 script = input_root / phase["script"]
                 if not script.is_file() or script.is_symlink():
                     raise WorkflowError(f"phase {name} script is unavailable")
+                native_pid_path = None
+                if script.suffix.casefold() == ".ps1":
+                    native_pid_path = state_root / f"phase-{name}-windows-pid"
+                    native_pid_path.unlink(missing_ok=True)
                 process = subprocess.Popen(
-                    phase_command(script),
+                    phase_command(
+                        script,
+                        input_root=input_root,
+                        native_pid_path=native_pid_path,
+                    ),
                     cwd=job_root,
                     start_new_session=True,
                 )
@@ -424,7 +682,10 @@ def run_workflow(manifest_path: Path) -> int:
                 )
                 phase_state[name].pop("waitingOn", None)
                 phase_state[name].update({"state": "running", "pid": process.pid})
-                running[name] = process
+                running[name] = {
+                    "process": process,
+                    "nativePidPath": native_pid_path,
+                }
                 changed = True
                 if phase["mode"] == "foreground":
                     break
@@ -452,6 +713,7 @@ def run_workflow(manifest_path: Path) -> int:
                 }
             )
         state["state"] = "succeeded"
+        state["resourceReleaseVerified"] = True
         state["artifacts"] = artifacts
         write_json_atomic(state_path, state)
         write_json_atomic(
@@ -482,9 +744,13 @@ def run_workflow(manifest_path: Path) -> int:
         )
         return 0
     except BaseException:
-        for process in running.values():
-            terminate_process(process)
+        for entry in running.values():
+            try:
+                terminate_phase(entry)
+            except BaseException:
+                pass
         state["state"] = "failed"
+        state["resourceReleaseVerified"] = False
         write_json_atomic(state_path, state)
         raise
 

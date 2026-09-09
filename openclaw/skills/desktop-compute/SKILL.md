@@ -24,13 +24,14 @@ status reports that the host or a required tool is unavailable.
 ## Safety boundary
 
 - Keep every input, script, log, and output inside one validated managed job.
-- `stage` adds or replaces files under that job's `input/` directory. It never
-  deletes remote data and rejects symlinks and path traversal.
+- `stage` adds or replaces files only before immutable run provenance exists.
+  Once a run is accepted, its inputs are frozen. Staging never deletes remote
+  data and rejects symlinks and path traversal.
 - Inspect a staged script with `plan-run` before execution. `run` accepts only
   the exact SHA-256 returned for that unchanged script.
 - Every run declares one owner, zero or more completed job dependencies, and at
-  least one reserved resource. Unfinished or interrupted jobs retain their
-  reservations so a lost tmux session cannot silently allow competing work.
+  least one host-wide reserved resource. Windows and splat jobs share the same
+  namespace; interrupted jobs retain reservations.
 - A clear user request for the described computation authorizes that exact
   hash-bound run; do not add a generic trust prompt or ask the user to repeat
   approval. Re-plan if the script changes.

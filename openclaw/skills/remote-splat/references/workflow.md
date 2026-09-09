@@ -68,8 +68,10 @@ and `state/` relative paths.
 `foreground` phases serialize with one another. A `background` phase may keep
 training while a foreground preview converts the first readable checkpoint.
 Checkpoint steps are integers, so `scene_05000.ply` and `scene_5000.ply` both
-mean step 5000. The runner records dependency and checkpoint waits in each
-phase's `waitingOn` field rather than spawning inspection jobs.
+mean step 5000. A checkpoint is ready only after its PLY structure is readable
+and `<checkpoint>.complete.json` contains its exact `sizeBytes` and `sha256`.
+Write that receipt after the checkpoint is closed. The runner records waits in
+each phase's `waitingOn` field rather than spawning inspection jobs.
 
 On success, `outputs/run-manifest.json` records the exact approval scope and
 input hashes, manifest settings and declared dependencies, external job
@@ -77,6 +79,11 @@ dependencies, owner, resource reservations, phase results, and output artifact
 hashes. Cancellation is cooperative and owner-bound. A vanished runner with no
 exit receipt is `interrupted`; its reservation stays held until an operator
 verifies recorded processes and performs deliberate recovery.
+
+Windows phases run through the sealed PID-receipt wrapper. Cancellation kills
+the native Windows tree with `taskkill /T`, verifies the native PID is absent,
+then verifies the complete WSL process group is gone. Resource release is
+recorded only after those checks; a failed verification keeps the reservation.
 
 ## Lightweight preflight and file operations
 
@@ -125,6 +132,10 @@ Declare target, plausible-candidate, and experimental-only tiers before the
 run. A lower tier may permit private review, but every target miss remains in
 the result and blocks automatic promotion. More registered views or Gaussians
 alone do not establish quality.
+
+The runner currently records these tiers; phase scripts still produce and
+evaluate the scene-specific metrics. Treat this as a workflow foundation, not
+yet a general automatic QA evaluator.
 
 Before retrieving a final candidate, require a nonempty reconstruction and
 export, finite reported values, converter readability, a positive Gaussian

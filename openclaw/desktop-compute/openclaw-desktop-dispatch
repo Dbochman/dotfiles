@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import fcntl
 import json
@@ -203,6 +204,15 @@ def ensure_job(scope: str, job: str) -> Path:
     return directory
 
 
+@contextmanager
+def host_state_lock():
+    lock_root = Path.home() / ".local/state/desktop-compute"
+    lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (lock_root / "host-state.lock").open("a+", encoding="ascii") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
+
+
 def command_status(arguments: list[str]) -> None:
     if len(arguments) != 1:
         raise RequestError("status expects one scope")
@@ -307,34 +317,49 @@ def command_put(arguments: list[str]) -> None:
     size = validate_size(size_raw)
     expected = validate_sha256(sha_raw)
     directory = ensure_job(scope, job)
-    target = managed_path(directory / "input", relative)
-    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if target.exists():
-        if not target.is_file() or target.is_symlink():
-            raise RequestError("upload target is not a regular file")
-        if target.stat().st_size == size and hash_file(target) == expected:
-            with open(os.devnull, "wb") as sink:
-                if copy_exact(sys.stdin.buffer, sink, size) != expected:
-                    raise RequestError("upload SHA-256 did not match")
-            emit({"ok": True, "alreadyPresent": True, "sizeBytes": size, "sha256": expected})
-            return
+    if read_run_record(scope, job) is not None:
+        raise RequestError("job inputs are frozen after immutable run provenance exists")
+    with host_state_lock():
+        if read_run_record(scope, job) is not None:
+            raise RequestError("job inputs are frozen after immutable run provenance exists")
 
     temporary: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(prefix=".openclaw-upload-", dir=target.parent, delete=False) as handle:
+        with tempfile.NamedTemporaryFile(
+            prefix=".openclaw-upload-",
+            dir=directory / "state",
+            delete=False,
+        ) as handle:
             temporary = Path(handle.name)
             actual = copy_exact(sys.stdin.buffer, handle, size)
             handle.flush()
             os.fsync(handle.fileno())
         if actual != expected:
             raise RequestError("upload SHA-256 did not match")
-        # DrvFS enforces the Windows ACL and may reject POSIX chmod even when
-        # ordinary file creation and atomic rename are permitted. Linux-native
-        # jobs still get an explicit owner-only mode.
-        if scope == "linux":
-            os.chmod(temporary, 0o600)
-        os.replace(temporary, target)
-        temporary = None
+        with host_state_lock():
+            if read_run_record(scope, job) is not None:
+                raise RequestError("job inputs are frozen after immutable run provenance exists")
+            target = managed_path(directory / "input", relative)
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if target.exists():
+                if not target.is_file() or target.is_symlink():
+                    raise RequestError("upload target is not a regular file")
+                if target.stat().st_size == size and hash_file(target) == expected:
+                    emit(
+                        {
+                            "ok": True,
+                            "alreadyPresent": True,
+                            "sizeBytes": size,
+                            "sha256": expected,
+                        }
+                    )
+                    return
+            # DrvFS enforces the Windows ACL and may reject POSIX chmod even
+            # when ordinary file creation and atomic rename are permitted.
+            if scope == "linux":
+                os.chmod(temporary, 0o600)
+            os.replace(temporary, target)
+            temporary = None
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -404,27 +429,42 @@ def exit_code_for(scope: str, job: str) -> int | None:
         return None
 
 
+def run_releases_resources(scope: str, job: str, record: dict[str, object]) -> bool:
+    if exit_code_for(scope, job) is None:
+        return False
+    if record.get("script") != "run-workflow.sh":
+        return True
+    workflow = read_state_json(scope, job, "workflow-state.json")
+    return workflow is not None and workflow.get("resourceReleaseVerified") is True
+
+
 def active_resource_holders(scope: str, resources: list[str], current_job: str) -> list[str]:
     requested = set(resources)
     holders: list[str] = []
-    root = root_for(scope)
-    for candidate in root.iterdir():
-        if (
-            candidate.name == current_job
-            or not JOB_RE.fullmatch(candidate.name)
-            or not candidate.is_dir()
-            or candidate.is_symlink()
-        ):
+    for candidate_scope, root in ROOTS.items():
+        if not root.is_dir() or root.is_symlink():
             continue
-        record = read_run_record(scope, candidate.name)
-        if record is None or exit_code_for(scope, candidate.name) is not None:
-            continue
-        reserved = record.get("resources")
-        if not isinstance(reserved, list) or not all(isinstance(item, str) for item in reserved):
-            continue
-        if requested.intersection(reserved):
-            holders.append(candidate.name)
-    return sorted(holders)
+        for candidate in root.iterdir():
+            if (
+                (candidate_scope == scope and candidate.name == current_job)
+                or not JOB_RE.fullmatch(candidate.name)
+                or not candidate.is_dir()
+                or candidate.is_symlink()
+            ):
+                continue
+            record = read_run_record(candidate_scope, candidate.name)
+            if record is None or run_releases_resources(
+                candidate_scope, candidate.name, record
+            ):
+                continue
+            reserved = record.get("resources")
+            if not isinstance(reserved, list) or not all(
+                isinstance(item, str) for item in reserved
+            ):
+                continue
+            if requested.intersection(reserved):
+                holders.append(candidate.name)
+    return sorted(set(holders))
 
 
 RUNNER = r'''#!/usr/bin/env bash
@@ -507,35 +547,10 @@ def command_run(arguments: list[str]) -> None:
     ).returncode == 0:
         raise RequestError("job session already exists")
 
-    runtime = Path.home() / ".local/state/desktop-compute" / scope / job
-    runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
-    runner = runtime / "run-approved-script.sh"
-    runner.write_text(RUNNER, encoding="utf-8")
-    runner.chmod(0o700)
     log = directory / "logs/run.log"
     status = directory / "state/exit-code"
     runner_pid = directory / "state/runner-pid"
-    status.unlink(missing_ok=True)
-    runner_pid.unlink(missing_ok=True)
-    command = shlex.join(
-        [
-            str(runner),
-            scope,
-            str(script),
-            str(log),
-            str(status),
-            str(runner_pid),
-            job,
-            owner,
-            json.dumps(resources, separators=(",", ":")),
-            json.dumps(dependencies, separators=(",", ":")),
-            actual,
-        ]
-    )
-    lock_root = Path.home() / ".local/state/desktop-compute"
-    lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with (lock_root / f"{scope}-resources.lock").open("a+", encoding="ascii") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    with host_state_lock():
         if read_run_record(scope, job) is not None:
             raise RequestError("job already has immutable run provenance")
         incomplete = [
@@ -548,6 +563,28 @@ def command_run(arguments: list[str]) -> None:
             raise RequestError(
                 "requested resources are held by unfinished jobs: " + ",".join(holders)
             )
+        runtime = Path.home() / ".local/state/desktop-compute" / scope / job
+        runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+        runner = runtime / "run-approved-script.sh"
+        runner.write_text(RUNNER, encoding="utf-8")
+        runner.chmod(0o700)
+        status.unlink(missing_ok=True)
+        runner_pid.unlink(missing_ok=True)
+        command = shlex.join(
+            [
+                str(runner),
+                scope,
+                str(script),
+                str(log),
+                str(status),
+                str(runner_pid),
+                job,
+                owner,
+                json.dumps(resources, separators=(",", ":")),
+                json.dumps(dependencies, separators=(",", ":")),
+                actual,
+            ]
+        )
         record = {
             "scope": scope,
             "job": job,
