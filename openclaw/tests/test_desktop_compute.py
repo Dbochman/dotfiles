@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -141,11 +142,72 @@ class DesktopComputeTests(unittest.TestCase):
             return_value={"ok": True, "started": True, "sha256": digest},
         ) as remote:
             code, stdout, stderr = self.run_client(
-                ["run", "--job", "video", "--script", "process.sh", "--approved-sha256", digest]
+                [
+                    "run",
+                    "--job",
+                    "video",
+                    "--script",
+                    "process.sh",
+                    "--approved-sha256",
+                    digest,
+                    "--owner",
+                    "sol",
+                    "--depends-on",
+                    "prepare",
+                    "--reserve",
+                    "desktop-heavy",
+                ]
             )
         self.assertEqual((code, stderr), (0, ""))
         self.assertTrue(json.loads(stdout)["started"])
-        self.assertEqual(remote.call_args.args[-1], digest)
+        self.assertEqual(
+            remote.call_args.args,
+            (
+                "run",
+                "linux",
+                "video",
+                "process.sh",
+                digest,
+                "sol",
+                '["prepare"]',
+                '["desktop-heavy"]',
+            ),
+        )
+
+    def test_cancel_is_owner_bound(self) -> None:
+        with mock.patch.object(
+            self.client,
+            "call_json",
+            return_value={"ok": True, "cancelRequested": True},
+        ) as remote:
+            code, stdout, stderr = self.run_client(
+                ["cancel", "--job", "video", "--owner", "sol"]
+            )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertTrue(json.loads(stdout)["cancelRequested"])
+        self.assertEqual(remote.call_args.args, ("cancel", "linux", "video", "sol"))
+
+    def test_only_bounded_blocking_errors_cross_the_ssh_boundary(self) -> None:
+        blocked = subprocess.CompletedProcess(
+            args=[],
+            returncode=64,
+            stdout=b"",
+            stderr=b"requested resources are held by unfinished jobs: old-run\n",
+        )
+        with mock.patch.object(self.client.subprocess, "run", return_value=blocked):
+            with self.assertRaisesRegex(self.client.PublicError, "old-run"):
+                self.client.run_ssh("run", ())
+
+        unsafe = subprocess.CompletedProcess(
+            args=[],
+            returncode=64,
+            stdout=b"",
+            stderr=b"unexpected failure at /private/secret\n",
+        )
+        with mock.patch.object(self.client.subprocess, "run", return_value=unsafe):
+            with self.assertRaisesRegex(self.client.PublicError, "request failed") as error:
+                self.client.run_ssh("run", ())
+        self.assertNotIn("secret", str(error.exception))
 
     def test_fetch_verifies_stream_before_atomic_install(self) -> None:
         body = b"verified desktop artifact"
@@ -201,6 +263,59 @@ class DesktopComputeTests(unittest.TestCase):
             with mock.patch.dict(self.dispatcher.ROOTS, {"linux": root}, clear=False):
                 with self.assertRaises(self.dispatcher.RequestError):
                     self.dispatcher.job_dir("linux", "linked")
+
+    def test_unfinished_run_holds_its_resource_without_a_tmux_session(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / "orphaned"
+            (job / "state").mkdir(parents=True)
+            (job / "state/run.json").write_text(
+                json.dumps({"resources": ["desktop-heavy"]}), encoding="utf-8"
+            )
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=False):
+                self.assertEqual(
+                    self.dispatcher.active_resource_holders(
+                        "splat", ["desktop-heavy"], "new-run"
+                    ),
+                    ["orphaned"],
+                )
+                (job / "state/exit-code").write_text("130\n", encoding="ascii")
+                self.assertEqual(
+                    self.dispatcher.active_resource_holders(
+                        "splat", ["desktop-heavy"], "new-run"
+                    ),
+                    [],
+                )
+
+    def test_progress_surfaces_interrupted_run_and_cancel_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = root / "interrupted"
+            for child in ("input", "outputs", "logs", "state"):
+                (job / child).mkdir(parents=True, exist_ok=True)
+            (job / "state/run.json").write_text(
+                json.dumps(
+                    {
+                        "script": "run-workflow.sh",
+                        "owner": "sol",
+                        "resources": ["desktop-heavy"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            no_session = mock.Mock(returncode=1, stdout="")
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=False):
+                with mock.patch.object(
+                    self.dispatcher.subprocess, "run", return_value=no_session
+                ):
+                    stdout = io.StringIO()
+                    with redirect_stdout(stdout):
+                        self.dispatcher.command_progress(["splat", "interrupted", "40"])
+                    with self.assertRaisesRegex(
+                        self.dispatcher.RequestError, "interrupted"
+                    ):
+                        self.dispatcher.command_cancel(["splat", "interrupted", "sol"])
+        self.assertEqual(json.loads(stdout.getvalue())["state"], "interrupted")
 
 
 if __name__ == "__main__":

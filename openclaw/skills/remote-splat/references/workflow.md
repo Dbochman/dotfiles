@@ -1,129 +1,151 @@
-# Reconstruction, training, and publishing workflow
+# Manifest-driven reconstruction workflow
 
-Load this reference before changing a job's COLMAP, Brush, conversion,
-validation, or publication behavior.
+Load this reference when authoring or debugging a remote-splat workflow. The
+supported operator path is `start`, `inspect`, `cancel`, and `retrieve`; the
+runner keeps the individual phases internal for diagnosis and reproducibility.
 
-## Input contract
+## Workflow bundle
 
-Keep original photos immutable. Put selected source images and the exact job
-script under the managed `input/` directory. Give generated COLMAP databases,
-sparse/dense reconstructions, checkpoints, evaluations, and final exports
-separate subdirectories so a rerun cannot overwrite source media.
+A bundle contains `workflow.json` plus the scripts named by its phases. Every
+file is included in the dry-run approval inventory. The helper also seals the
+shared runner, preflight, and Windows I/O helper into that inventory.
 
-Record in the job script or a staged manifest:
+Minimal shape:
 
-- source image count and any aerial/ground subsets;
-- feature extractor and matcher;
-- registered image and sparse-point counts plus reprojection error;
-- training version, resolution, iterations, splat cap, SH degree, and seed;
-- train/evaluation split and evaluation cadence;
-- exact final `.ply` and `.sog` names; and
-- validation commands and expected reports.
+```json
+{
+  "schemaVersion": 1,
+  "job": "cabin-interior-v1",
+  "owner": "sol",
+  "settings": {
+    "extractor": "sift",
+    "matcher": "sift-bruteforce",
+    "iterations": 30000,
+    "maxResolution": 1900,
+    "maxSplats": 6000000,
+    "shDegree": 3,
+    "seed": 42
+  },
+  "dependencies": {
+    "colmap": "4.2.0",
+    "brush": "0.3.0",
+    "splatTransform": "pinned-lockfile",
+    "baseModel": "sha256:<digest>"
+  },
+  "qualityTiers": {
+    "target": {"minimumRegisteredViews": 300},
+    "plausibleCandidate": {"minimumRegisteredViews": 248},
+    "experimentalOnly": {"promotionEligible": false}
+  },
+  "phases": [
+    {"name": "prepare", "script": "prepare.sh"},
+    {"name": "reconstruct", "script": "reconstruct.sh",
+     "dependsOn": [{"phase": "prepare", "state": "succeeded"}]},
+    {"name": "train", "script": "train.sh", "mode": "background",
+     "dependsOn": [{"phase": "reconstruct", "state": "succeeded"}]},
+    {"name": "preview", "script": "convert-preview.sh",
+     "dependsOn": [{"phase": "train", "state": "started"}],
+     "waitForCheckpoint": {"directory": "outputs/checkpoints",
+       "prefix": "scene_", "suffix": ".ply", "minimumStep": 5000}},
+    {"name": "convert", "script": "convert-final.sh",
+     "dependsOn": [{"phase": "train", "state": "succeeded"}]},
+    {"name": "validate", "script": "validate.sh",
+     "dependsOn": [{"phase": "convert", "state": "succeeded"}]}
+  ],
+  "artifacts": [
+    {"name": "preview", "path": "preview.sog", "required": false},
+    {"name": "final", "path": "cabin-interior.sog", "required": true}
+  ]
+}
+```
 
-## Known-good baseline
+The runner rejects undeclared settings/dependencies, malformed tiers, missing
+scripts, dependency cycles, unsafe paths, and changed approval inputs. It
+automatically injects a successful `preflight` dependency into every phase.
+Phase scripts start in the managed job root and must use `input/`, `outputs/`,
+and `state/` relative paths.
 
-The September 5 Cabin combined model used 223 ground images plus 15 registered
-drone views. Its validated baseline was COLMAP 4.2.0 followed by Brush 0.3.0 on
-the RTX 5090: 30,000 iterations, maximum resolution 1900, six-million-splat cap,
-SH degree 3, seed 42, and a 214/24 train/evaluation split. It completed in about
-19 minutes with 4,042,995 splats. Treat these as a reproducible reference, not
-automatic settings for a different dataset.
+`foreground` phases serialize with one another. A `background` phase may keep
+training while a foreground preview converts the first readable checkpoint.
+Checkpoint steps are integers, so `scene_05000.ply` and `scene_5000.ply` both
+mean step 5000. The runner records dependency and checkpoint waits in each
+phase's `waitingOn` field rather than spawning inspection jobs.
 
-## Completion gate
+On success, `outputs/run-manifest.json` records the exact approval scope and
+input hashes, manifest settings and declared dependencies, external job
+dependencies, owner, resource reservations, phase results, and output artifact
+hashes. Cancellation is cooperative and owner-bound. A vanished runner with no
+exit receipt is `interrupted`; its reservation stays held until an operator
+verifies recorded processes and performs deliberate recovery.
 
-A job is not complete merely because its process exits zero. Before fetching
-or proposing publication:
+## Lightweight preflight and file operations
 
-1. Confirm the intended COLMAP registration/reconstruction exists.
-2. Confirm the final Brush export exists and is nonempty.
-3. Run the job's declared converter/validator for each deliverable.
-4. Confirm all reported values are finite and the export round-trips when the
-   selected format supports that check.
-5. Review representative views for obvious holes, floaters, failed alignment,
-   or privacy-sensitive content.
-6. Preserve a small manifest with versions, settings, metrics, hashes, and the
-   selected artifact name.
+Preflight runs before expensive preparation or GPU work. It creates two tiny
+synthetic images inside the job, exercises the actual COLMAP SIFT extraction
+and `SIFT_BRUTEFORCE` matcher path, validates the SQLite schema and counts with
+`quick_check`, probes Brush/DLL loading, and requires the stable Windows Node
+runtime needed by the converter. A failure stops the workflow before large
+copies, reconstruction, or training.
 
-For a seeded video extension, choose representative render poses from the
-registered COLMAP frames nearest the named semantic checkpoints (for example,
-interior-to-yard, yard-to-trail, midpoint, and return). This is stronger
-evidence than arbitrary orbit views because it tests the exact coverage the
-new footage was meant to add. Render both the baseline and candidate from each
-checkpoint pose for a direct visual comparison. Compare their Gaussian counts
-and coordinate spread, require finite values, and require an exact
-`.ply`→`.sog`→`.ply` Gaussian-count round trip. Treat those numeric checks as a
-gate, then visually inspect the fetched checkpoint renders before selecting an
-artifact.
+For large Windows/WSL file moves, call the staged `windows_io.ps1` helper from
+a phase. It uses native `[System.IO.File]::Copy`, hashes source and temporary
+copies, and atomically promotes only a matching destination. Do not request
+metadata preservation across DrvFS, and do not re-read an already verified
+multi-gigabyte source merely to recreate the same receipt.
 
-Walking video often alternates crisp and motion-blurred frames. After
-registration, preserve temporal coverage by choosing the strongest frame in
-each small time bucket using its triangulated COLMAP observation count; do not
-blindly retain every nth frame. Keep the deliberately dense connector regions
-represented so that quality filtering does not remove the transitions that
-join old and new scene areas.
+## Reconstruction and incremental extension
 
-When the operator explicitly prioritizes maximum reconstructed coverage over a
-replacement-master candidate, training may retain every registered view within
-a declared resource bound. Record that selection policy and any failed
-coverage checks in the training manifest, keep the current master protected,
-and label the result as a candidate until the ordinary connectivity and visual
-comparison gates pass. More input views or Gaussians are not by themselves
-evidence of a better model.
+Keep original photos immutable. Separate source images, COLMAP databases,
+sparse models, checkpoints, evaluation renders, and final exports. Record
+source counts, semantic segments, feature/matcher settings, registered views,
+sparse points, reprojection error, train/evaluation selection, and exact output
+names in the manifest or declared reports.
 
-Generated `.webp` orbit or checkpoint views may be fetched through
-`remote-splat` for private visual QA. This exception does not make images or
-models publishable and does not relax the SuperSplat confirmation gate.
+For an incremental model, preserve an immutable feature-compatible base with
+its image inventory, source hashes, feature dimensions/settings, matched
+database, binary/text seed model, metrics, and artifact hashes. Do not
+re-extract base features in an ordinary extension. Match sequential neighbors
+within each new segment, deliberate cross-segment connectors, and targeted new
+views to known anchors; avoid recomputing every base/base pair.
 
-## Scheduling and artifact handoff
+Register with normal thresholds, triangulate, retry, and relax only
+still-unregistered connector frames. Persist a valid model after each bounded
+attempt and stop when the registered count no longer grows. Report per-segment
+coverage so a strong exterior cannot hide a weak interior.
 
-Start each run with `remote-splat workflow-plan`. Its three profiles make the
-operator's desired outcome explicit:
+Use `quick_check` plus the table/column, image, keypoint, descriptor,
+association, and camera invariants needed by the next phase. Reserve a full
+SQLite integrity scan for promotion of a new immutable base or evidence of
+corruption. When reading a manifest in a shell loop, detach a child tool's stdin
+with `</dev/null` so it cannot consume later records.
 
-- `preview` minimizes time to the first private visual candidate;
-- `best-current` spends the declared full resource budget and returns the
-  strongest currently available private candidate; and
-- `promotion-candidate` adds the complete comparative evidence needed before a
-  separate replacement or publication decision.
+## Quality and delivery gates
 
-All three return a converted, readable, hash-verified private artifact after
-basic validation. Comparative QA can follow delivery; only promotion waits for
-it. The plan intentionally does not select iteration, resolution, Gaussian-cap,
-SH-degree, or seed values. Bind those values explicitly in the job manifest so
-known-good historical settings remain a reference rather than an unexplained
-default.
+Declare target, plausible-candidate, and experimental-only tiers before the
+run. A lower tier may permit private review, but every target miss remains in
+the result and blocks automatic promotion. More registered views or Gaussians
+alone do not establish quality.
 
-Have each long phase periodically emit a single-line `OPENCLAW_PROGRESS` JSON
-marker. Use a lowercase hyphenated `phase`, integer `completed` and `total`
-counters when the work has a real denominator, a short unit, and a conservative
-`etaSeconds` only when recent throughput supports it. The helper reports the
-latest valid marker as `progressReceipt`; absent or malformed markers remain
-ordinary log text and do not fabricate an ETA. Keep markers operational and
-free of source filenames, paths, credentials, and household content.
+Before retrieving a final candidate, require a nonempty reconstruction and
+export, finite reported values, converter readability, a positive Gaussian
+count, and an exact `.ply` to `.sog` to `.ply` count round-trip where supported.
+Use registered camera poses near named semantic checkpoints for representative
+QA. Compare baseline and candidate at transitions, interior, exterior, and weak
+segments, then visually inspect for holes, floaters, smearing, and failed
+alignment.
 
-Parallelize source transfer, hashing, video review, semantic extraction,
-quality scoring, and job preparation when they use independent inputs. On one
-desktop, serialize large COLMAP mapper/bundle-adjustment phases and avoid
-overlapping Brush with GPU feature matching; CPU, GPU, memory, and disk
-contention can cost more time than parallelism saves. Prefer bounded mapper
-phases that persist a valid reconstruction between expensive global solves.
+A readable 5,000-step conversion may be delivered early as a private preview
+while final training continues. Label it preview/non-final; it cannot replace a
+master or become publication-eligible.
 
-Keep private artifact delivery separate from master promotion. When an
-operator asks for the best available candidate, return a readable,
-hash-verified `.sog` as soon as conversion succeeds and carry reconstruction or
-visual-quality shortcomings as explicit advisories. Use those advisories to
-block automatic replacement or publication, not access to the requested
-private candidate. For quick iteration, use a deliberately named preview
-profile with a small fixed QA set; reserve all-view, full-step training for a
-maximum-coverage or promotion candidate.
+## Reproducible reference, not a default
 
-## SuperSplat guard
+The September 5, 2026 Cabin combined model used 223 ground images plus 15
+registered drone views. COLMAP 4.2.0 and Brush 0.3.0 trained 30,000 iterations
+at resolution 1900, six-million-splat cap, SH degree 3, seed 42, and a 214/24
+train/evaluation split. It produced 4,042,995 splats. Declare settings for each
+new workflow rather than silently inheriting these values.
 
-`remote-splat publish-plan` is deliberately non-networking. It establishes the
-local artifact name, size, and SHA-256 that an approval must bind to. Before an
-authenticated upload, state the proposed title and visibility and obtain fresh
-explicit confirmation. Re-hash immediately before upload and stop if it differs.
-
-After uploading, verify the exact title, visibility, and resulting project or
-share state. Do not make an artifact public merely to test it, do not overwrite
-an existing project without naming it in the confirmation, and do not retry
-when the first publish result is ambiguous.
+Publication is always separate. `publish-plan` only hashes a local `.sog` or
+`.ply`; authenticated upload still requires fresh confirmation of the exact
+artifact, title, and visibility.

@@ -42,6 +42,14 @@ The `plan-run` response is the approval boundary. It reports the exact staged
 script hash and size. The dispatcher independently recomputes the hash at run
 time and refuses a changed script.
 
+`run` also records one owner, sorted predecessor jobs, reserved resources, and
+the runner PID. Resource acquisition is serialized. A predecessor must have a
+zero exit receipt, and an unfinished run holds its reservations even if its
+tmux session disappears. In that case `progress` reports `interrupted`; this is
+an operator-visible exception, not implicit permission to launch competing
+work. Cooperative `cancel` is limited to the same owner and a sealed
+`run-workflow.sh` job.
+
 ## Transfer behavior
 
 `stage` walks regular files only and keeps their relative paths. Empty

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -13,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import BinaryIO, NoReturn
 
 
@@ -25,8 +27,11 @@ ROOTS = {
 JOB_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
 REL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,239}\Z")
 SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+OWNER_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
+RESOURCE_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 MAX_FILE_BYTES = 128 * 1024 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024
+MAX_STATE_BYTES = 64 * 1024
 SCRIPT_SUFFIXES = {
     "linux": frozenset((".sh",)),
     "windows": frozenset((".ps1", ".sh")),
@@ -73,6 +78,38 @@ def validate_sha256(value: str) -> str:
     if not SHA256_RE.fullmatch(normalized):
         raise RequestError("invalid SHA-256")
     return normalized
+
+
+def validate_owner(value: str) -> str:
+    if not OWNER_RE.fullmatch(value):
+        raise RequestError("invalid job owner")
+    return value
+
+
+def validate_resource(value: str) -> str:
+    if not RESOURCE_RE.fullmatch(value):
+        raise RequestError("invalid resource reservation")
+    return value
+
+
+def validate_name_list(value: str, *, resource: bool) -> list[str]:
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, UnicodeError) as error:
+        raise RequestError("invalid run contract") from error
+    if not isinstance(decoded, list) or not 0 <= len(decoded) <= 32:
+        raise RequestError("invalid run contract")
+    validator = validate_resource if resource else validate_job
+    result: list[str] = []
+    for item in decoded:
+        if not isinstance(item, str):
+            raise RequestError("invalid run contract")
+        result.append(validator(item))
+    if result != sorted(set(result)):
+        raise RequestError("run contract names must be unique and sorted")
+    if resource and not result:
+        raise RequestError("at least one resource reservation is required")
+    return result
 
 
 def validate_size(value: str) -> int:
@@ -130,6 +167,26 @@ def session_name(scope: str, job: str) -> str:
     if scope == "splat":
         return f"splat-{job}"
     return f"compute-{scope}-{job}"
+
+
+def tmux_session_state(session: str) -> tuple[bool, bool]:
+    exists = subprocess.run(
+        ["/usr/bin/tmux", "has-session", "-t", session],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    ).returncode == 0
+    if not exists:
+        return False, False
+    result = subprocess.run(
+        ["/usr/bin/tmux", "list-panes", "-t", session, "-F", "#{pane_dead}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    pane_dead = result.returncode == 0 and result.stdout.strip().splitlines()[:1] == ["1"]
+    return True, pane_dead
 
 
 def ensure_job(scope: str, job: str) -> Path:
@@ -301,6 +358,75 @@ def command_stat_output(arguments: list[str]) -> None:
     emit(file_metadata(arguments[0], arguments[1], "outputs", arguments[2]))
 
 
+def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_text_atomic(path: Path, value: str) -> None:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(value, encoding="ascii")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def read_run_record(scope: str, job: str) -> dict[str, object] | None:
+    return read_state_json(scope, job, "run.json")
+
+
+def read_state_json(scope: str, job: str, name: str) -> dict[str, object] | None:
+    path = job_dir(scope, job) / "state" / name
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_STATE_BYTES:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeError, OSError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def exit_code_for(scope: str, job: str) -> int | None:
+    path = job_dir(scope, job) / "state/exit-code"
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        return int(path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def active_resource_holders(scope: str, resources: list[str], current_job: str) -> list[str]:
+    requested = set(resources)
+    holders: list[str] = []
+    root = root_for(scope)
+    for candidate in root.iterdir():
+        if (
+            candidate.name == current_job
+            or not JOB_RE.fullmatch(candidate.name)
+            or not candidate.is_dir()
+            or candidate.is_symlink()
+        ):
+            continue
+        record = read_run_record(scope, candidate.name)
+        if record is None or exit_code_for(scope, candidate.name) is not None:
+            continue
+        reserved = record.get("resources")
+        if not isinstance(reserved, list) or not all(isinstance(item, str) for item in reserved):
+            continue
+        if requested.intersection(reserved):
+            holders.append(candidate.name)
+    return sorted(holders)
+
+
 RUNNER = r'''#!/usr/bin/env bash
 set -uo pipefail
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -308,8 +434,24 @@ scope=$1
 script=$2
 log=$3
 status=$4
+runner_pid=$5
+job=$6
+owner=$7
+resources=$8
+dependencies=$9
+runner_sha=${10}
 exec > >(tee -a "$log") 2>&1
+tmp_pid="${runner_pid}.tmp.$$"
+printf '%s\n' "$$" > "$tmp_pid"
+mv -f "$tmp_pid" "$runner_pid"
+export OPENCLAW_JOB_NAME="$job"
+export OPENCLAW_JOB_OWNER="$owner"
+export OPENCLAW_JOB_RESOURCES_JSON="$resources"
+export OPENCLAW_JOB_DEPENDENCIES_JSON="$dependencies"
+export OPENCLAW_RUNNER_SHA256="$runner_sha"
+export OPENCLAW_JOB_STATE_DIR="$(dirname -- "$status")"
 printf 'desktop-compute started %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf 'OPENCLAW_PROCESS {"kind":"job-runner","pid":%s}\n' "$$"
 rc=0
 case "$script" in
   *.ps1)
@@ -335,14 +477,22 @@ exit "$rc"
 
 
 def command_run(arguments: list[str]) -> None:
-    if len(arguments) != 4:
-        raise RequestError("run expects scope, job, script, and approved SHA-256")
-    scope, job, relative, sha_raw = arguments
+    if len(arguments) != 7:
+        raise RequestError(
+            "run expects scope, job, script, approved SHA-256, owner, dependencies, and resources"
+        )
+    scope, job, relative, sha_raw, owner_raw, dependencies_raw, resources_raw = arguments
     scope = validate_scope(scope)
+    job = validate_job(job)
     relative_path = validate_relative(relative)
     if relative_path.suffix.casefold() not in SCRIPT_SUFFIXES[scope]:
         raise RequestError("script type is not allowed for this scope")
     approved = validate_sha256(sha_raw)
+    owner = validate_owner(owner_raw)
+    dependencies = validate_name_list(dependencies_raw, resource=False)
+    resources = validate_name_list(resources_raw, resource=True)
+    if job in dependencies:
+        raise RequestError("a job cannot depend on itself")
     directory = ensure_job(scope, job)
     script = managed_path(directory / "input", relative, require_file=True)
     actual = hash_file(script)
@@ -364,35 +514,80 @@ def command_run(arguments: list[str]) -> None:
     runner.chmod(0o700)
     log = directory / "logs/run.log"
     status = directory / "state/exit-code"
+    runner_pid = directory / "state/runner-pid"
     status.unlink(missing_ok=True)
-    record = {
-        "scope": scope,
-        "job": job,
-        "script": relative,
-        "sha256": actual,
-        "session": session,
-    }
-    (directory / "state/run.json").write_text(
-        json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8"
-    )
+    runner_pid.unlink(missing_ok=True)
     command = shlex.join(
-        [str(runner), scope, str(script), str(log), str(status)]
+        [
+            str(runner),
+            scope,
+            str(script),
+            str(log),
+            str(status),
+            str(runner_pid),
+            job,
+            owner,
+            json.dumps(resources, separators=(",", ":")),
+            json.dumps(dependencies, separators=(",", ":")),
+            actual,
+        ]
     )
-    completed = subprocess.run(
-        ["/usr/bin/tmux", "new-session", "-d", "-s", session, "-c", str(directory), "/bin/bash", "-lc", f"sleep 1; exec {command}"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise RequestError("job session could not be created")
+    lock_root = Path.home() / ".local/state/desktop-compute"
+    lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (lock_root / f"{scope}-resources.lock").open("a+", encoding="ascii") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if read_run_record(scope, job) is not None:
+            raise RequestError("job already has immutable run provenance")
+        incomplete = [
+            dependency for dependency in dependencies if exit_code_for(scope, dependency) != 0
+        ]
+        if incomplete:
+            raise RequestError("a declared dependency has not succeeded")
+        holders = active_resource_holders(scope, resources, job)
+        if holders:
+            raise RequestError(
+                "requested resources are held by unfinished jobs: " + ",".join(holders)
+            )
+        record = {
+            "scope": scope,
+            "job": job,
+            "script": relative,
+            "sha256": actual,
+            "session": session,
+            "owner": owner,
+            "dependencies": dependencies,
+            "resources": resources,
+            "nativeProcessMarkersRequired": True,
+        }
+        write_json_atomic(directory / "state/run.json", record)
+        completed = subprocess.run(
+            ["/usr/bin/tmux", "new-session", "-d", "-s", session, "-c", str(directory), "/bin/bash", "-lc", f"sleep 1; exec {command}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if completed.returncode != 0:
+            write_text_atomic(status, "125\n")
+            raise RequestError("job session could not be created")
     subprocess.run(
         ["/usr/bin/tmux", "set-option", "-t", session, "remain-on-exit", "on"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
-    emit({"ok": True, "started": True, "scope": scope, "job": job, "session": session, "sha256": actual})
+    emit(
+        {
+            "ok": True,
+            "started": True,
+            "scope": scope,
+            "job": job,
+            "session": session,
+            "sha256": actual,
+            "owner": owner,
+            "dependencies": dependencies,
+            "resources": resources,
+        }
+    )
 
 
 def command_progress(arguments: list[str]) -> None:
@@ -409,22 +604,11 @@ def command_progress(arguments: list[str]) -> None:
         raise RequestError("line count is outside the allowed range")
     directory = job_dir(scope, job)
     session = session_name(scope, job)
-    exists = subprocess.run(
-        ["/usr/bin/tmux", "has-session", "-t", session],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    ).returncode == 0
+    run_record = read_run_record(scope, job)
+    workflow_state = read_state_json(scope, job, "workflow-state.json")
+    exists, pane_dead = tmux_session_state(session)
     state = "not_started"
     if exists:
-        result = subprocess.run(
-            ["/usr/bin/tmux", "list-panes", "-t", session, "-F", "#{pane_dead}"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            check=False,
-        )
-        pane_dead = result.returncode == 0 and result.stdout.strip().splitlines()[:1] == ["1"]
         state = "finished" if pane_dead else "running"
     exit_code: int | None = None
     status = directory / "state/exit-code"
@@ -432,8 +616,22 @@ def command_progress(arguments: list[str]) -> None:
         try:
             exit_code = int(status.read_text(encoding="ascii").strip())
             state = "succeeded" if exit_code == 0 else "failed"
+            if exit_code == 130 and workflow_state is not None:
+                if workflow_state.get("state") == "cancelled":
+                    state = "cancelled"
         except (OSError, ValueError):
             state = "invalid_status"
+    elif run_record is not None and (not exists or pane_dead):
+        state = "interrupted"
+    runner_pid: int | None = None
+    runner_pid_path = directory / "state/runner-pid"
+    if runner_pid_path.is_file() and not runner_pid_path.is_symlink():
+        try:
+            candidate_pid = int(runner_pid_path.read_text(encoding="ascii").strip())
+            if 1 <= candidate_pid <= 2**31 - 1:
+                runner_pid = candidate_pid
+        except (OSError, ValueError):
+            runner_pid = None
     tail: list[str] = []
     log = directory / "logs/run.log"
     if log.is_file() and not log.is_symlink():
@@ -447,7 +645,57 @@ def command_progress(arguments: list[str]) -> None:
             "sessionExists": exists,
             "state": state,
             "exitCode": exit_code,
+            "run": run_record,
+            "workflow": workflow_state,
+            "runnerPid": runner_pid,
             "logTail": tail,
+        }
+    )
+
+
+def command_cancel(arguments: list[str]) -> None:
+    if len(arguments) != 3:
+        raise RequestError("cancel expects scope, job, and owner")
+    scope, job, owner = arguments
+    scope = validate_scope(scope)
+    job = validate_job(job)
+    owner = validate_owner(owner)
+    record = read_run_record(scope, job)
+    if record is None or record.get("script") != "run-workflow.sh":
+        raise RequestError("job is not a managed workflow")
+    if record.get("owner") != owner:
+        raise RequestError("workflow owner does not match")
+    existing_exit = exit_code_for(scope, job)
+    if existing_exit is not None:
+        emit(
+            {
+                "ok": True,
+                "scope": scope,
+                "job": job,
+                "cancelRequested": False,
+                "alreadyFinished": True,
+                "exitCode": existing_exit,
+            }
+        )
+        return
+    session = session_name(scope, job)
+    session_exists, pane_dead = tmux_session_state(session)
+    if not session_exists or pane_dead:
+        raise RequestError(
+            "workflow is interrupted; inspect recorded process IDs before operator recovery"
+        )
+    request = job_dir(scope, job) / "state/cancel-request.json"
+    write_json_atomic(
+        request,
+        {"job": job, "owner": owner, "requestedUnixSeconds": int(time.time())},
+    )
+    emit(
+        {
+            "ok": True,
+            "scope": scope,
+            "job": job,
+            "cancelRequested": True,
+            "alreadyFinished": False,
         }
     )
 
@@ -480,6 +728,7 @@ COMMANDS = {
     "stat-output": command_stat_output,
     "run": command_run,
     "progress": command_progress,
+    "cancel": command_cancel,
     "get-output": command_get_output,
     "attach": command_attach,
 }

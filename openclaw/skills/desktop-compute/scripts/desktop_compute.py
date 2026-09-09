@@ -25,11 +25,22 @@ SCOPES = ("linux", "windows", "splat")
 JOB_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
 REL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,239}\Z")
 SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+OWNER_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
+RESOURCE_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 SCRIPT_SUFFIXES = {
     "linux": frozenset((".sh",)),
     "windows": frozenset((".ps1", ".sh")),
     "splat": frozenset((".ps1", ".sh")),
 }
+SAFE_REMOTE_ERRORS = frozenset(
+    (
+        "a declared dependency has not succeeded",
+        "job already has immutable run provenance",
+        "workflow is interrupted; inspect recorded process IDs before operator recovery",
+        "workflow owner does not match",
+    )
+)
+RESOURCE_BLOCK_PREFIX = "requested resources are held by unfinished jobs: "
 
 
 class PublicError(RuntimeError):
@@ -76,8 +87,35 @@ def validate_sha256(value: str) -> str:
     return normalized
 
 
+def validate_owner(value: str) -> str:
+    if not OWNER_RE.fullmatch(value):
+        raise PublicError("owner must be 1-48 lowercase letters, numbers, or hyphens")
+    return value
+
+
+def validate_resource(value: str) -> str:
+    if not RESOURCE_RE.fullmatch(value):
+        raise PublicError("resource must be 1-32 lowercase letters, numbers, or hyphens")
+    return value
+
+
 def protocol_command(operation: str, *arguments: str) -> str:
     return shlex.join((PROTOCOL, operation, *arguments))
+
+
+def safe_remote_error(stderr: bytes) -> str | None:
+    if len(stderr) > 1024:
+        return None
+    text = stderr.decode("utf-8", errors="replace").strip()
+    if "\n" in text or "\r" in text:
+        return None
+    if text in SAFE_REMOTE_ERRORS:
+        return text
+    if text.startswith(RESOURCE_BLOCK_PREFIX):
+        holders = text.removeprefix(RESOURCE_BLOCK_PREFIX).split(",")
+        if holders and len(holders) <= 32 and all(JOB_RE.fullmatch(job) for job in holders):
+            return text
+    return None
 
 
 def run_ssh(
@@ -103,6 +141,9 @@ def run_ssh(
     if completed.returncode != 0:
         if completed.returncode == 255:
             raise PublicError("desktop compute host is unavailable")
+        remote_error = safe_remote_error(completed.stderr)
+        if remote_error is not None:
+            raise PublicError(remote_error)
         raise PublicError(f"desktop compute request failed (exit {completed.returncode})")
     return completed
 
@@ -244,7 +285,23 @@ def command_run(args: argparse.Namespace) -> None:
     job = validate_job(args.job)
     script = validate_script(args.script, scope)
     approved = validate_sha256(args.approved_sha256)
-    payload = call_json("run", scope, job, script, approved)
+    owner = validate_owner(args.owner)
+    dependencies = sorted({validate_job(value) for value in args.depends_on})
+    if job in dependencies:
+        raise PublicError("a job cannot depend on itself")
+    resources = sorted({validate_resource(value) for value in args.reserve})
+    if not resources:
+        raise PublicError("at least one resource reservation is required")
+    payload = call_json(
+        "run",
+        scope,
+        job,
+        script,
+        approved,
+        owner,
+        json.dumps(dependencies, separators=(",", ":")),
+        json.dumps(resources, separators=(",", ":")),
+    )
     if payload.get("started") is not True:
         raise PublicError("desktop compute job did not start")
     emit(payload)
@@ -256,6 +313,13 @@ def command_progress(args: argparse.Namespace) -> None:
     if not 1 <= args.lines <= 200:
         raise PublicError("lines must be between 1 and 200")
     emit(call_json("progress", scope, job, str(args.lines)))
+
+
+def command_cancel(args: argparse.Namespace) -> None:
+    scope = validate_scope(args.scope)
+    job = validate_job(args.job)
+    owner = validate_owner(args.owner)
+    emit(call_json("cancel", scope, job, owner))
 
 
 def command_attach(args: argparse.Namespace) -> None:
@@ -373,6 +437,9 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--job", required=True)
     run.add_argument("--script", required=True)
     run.add_argument("--approved-sha256", required=True)
+    run.add_argument("--owner", required=True)
+    run.add_argument("--depends-on", action="append", default=[])
+    run.add_argument("--reserve", action="append", required=True)
     run.set_defaults(func=command_run)
 
     progress = sub.add_parser("progress", help="read bounded state and log output for one job")
@@ -380,6 +447,12 @@ def parser() -> argparse.ArgumentParser:
     progress.add_argument("--job", required=True)
     progress.add_argument("--lines", type=int, default=40)
     progress.set_defaults(func=command_progress)
+
+    cancel = sub.add_parser("cancel", help="request cancellation of an owned managed workflow")
+    add_scope(cancel)
+    cancel.add_argument("--job", required=True)
+    cancel.add_argument("--owner", required=True)
+    cancel.set_defaults(func=command_cancel)
 
     attach = sub.add_parser("attach", help="interactively attach to one job's tmux session")
     add_scope(attach)

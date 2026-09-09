@@ -91,12 +91,29 @@ extraction.json
 
 For a multi-gigabyte source, `remote-splat inbox-stage` can use the desktop's
 private direct Tailscale path when the guarded SSH copy is materially slower.
+If the source already resides in Dylan's Mac Downloads directory, use
+`workstation-inbox-stage` so that Mac sends it directly to the desktop and the
+Mini handles only guarded orchestration. The helper verifies the remote source
+size and digest before and after transfer; the desktop preparation job must
+still bind and independently verify that exact digest before ingest.
+Serialize large workstation transfers. Multiple simultaneous Taildrop sends
+share the same constrained path and usually reduce useful throughput; prepare
+and review an already delivered source while the next source transfers instead.
+When the workstation has no Tailscale CLI, this command may relay the byte
+stream through the Mini's Taildrop client without writing an intermediate
+file. Treat that as a transport fallback, not a weaker ingest contract.
 The remote preparation script must verify the recorded SHA-256 before bringing
 that Taildrop inbox file into the managed job root. On a current Windows
 receiver, address the exact file under `C:\Users\<user>\Downloads`; do not call
 an unfiltered `tailscale file get`, because that could move unrelated inbox
 items. Preserve the received source and copy through a hash-verified temporary
 file before atomically promoting it into the job.
+
+Treat the successful source-hash and copied-temporary-hash checks as the ingest
+receipt. Do not immediately read the same multi-gigabyte file a third time from
+the Windows filesystem through WSL merely to reproduce that digest; bind later
+steps to the receipt plus exact path and size, and reserve another full hash for
+artifact handoff or when provenance has become ambiguous.
 
 Clips are frame-accurate H.264 review/reference copies with audio and metadata
 removed. Modeling frames are high-quality JPEGs extracted directly from the
@@ -109,6 +126,12 @@ the grid after extraction and make an explicit selection: trail foliage,
 ground texture, and rapid turns can fool generic blur and duplicate metrics.
 Keep enough neighboring frames that every stable feature appears from several
 translated viewpoints.
+
+For sparse review sheets from an indexed long video, seek directly to each
+sample time and decode one thumbnail rather than decoding every intervening 4K
+frame through an `fps` filter. Tile those small thumbnails afterward. This is
+both faster and easier to resume, and it keeps review generation independent
+from the later modeling-frame decode.
 
 ## Modeling handoff
 

@@ -34,3 +34,10 @@ The trusted `desktop-compute` SSH identity remains available for deliberate
 maintenance. OpenClaw uses a different Mini-local identity through the
 `desktop-jobs` alias. Its authorized-key entry is restricted and forces the
 root-owned dispatcher; it cannot request an arbitrary shell or forwarding.
+
+The dispatcher records immutable run ownership, dependencies, resource
+reservations, and runner PIDs. Resource acquisition is lock-serialized, and an
+unfinished run remains a holder even after its tmux session disappears. The
+restricted cancellation operation only writes an owner-checked cooperative
+request for a sealed workflow; interrupted-run recovery remains a deliberate
+operator task after process inspection.

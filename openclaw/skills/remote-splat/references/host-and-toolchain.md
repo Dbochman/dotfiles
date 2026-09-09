@@ -13,8 +13,8 @@ Load this reference only for host diagnosis or when preparing a new job script.
 - Remote job root:
   `/mnt/c/Users/Owner/Documents/OpenClaw/remote-splat/jobs/<job>/`
 - Per-job directories: `input/`, `outputs/`, `logs/`, and `state/`
-- One exact script launch per job name; the retained tmux session and state are
-  immutable run provenance, so multi-phase workflows use separate job names
+- One exact sealed workflow launch per job name; the retained tmux session and
+  state are immutable run provenance, while internal phases share that owner
 - Protected execution helpers:
   `/home/openclaw/.local/state/desktop-compute/splat/<job>/`
 - Durable session: `splat-<job>`
@@ -62,10 +62,18 @@ Use `work/combined/images` with that database/model pair, preserve all 238 seed
 poses, and treat the measurements as an audited baseline rather than a generic
 default for other scenes.
 
-After a transport or toolchain repair, the bundled
-`scripts/compute_canary.sh` may be staged, hash-approved, and run as an ordinary
-job. It is read-only and verifies the expected GPU plus all three application
-paths without starting reconstruction or training.
+Every manifest workflow runs the bundled `scripts/compute_canary.sh` first. It
+writes only a tiny synthetic fixture inside the managed job, then exercises the
+actual COLMAP feature-extraction and matcher path, checks the resulting SQLite
+schema and counts, probes Brush/DLL loading, and requires a stable Windows Node
+runtime for conversion. It does not start reconstruction or training. Treat a
+missing stable Node path as a preflight failure to repair, not a reason to begin
+expensive preparation and hope conversion works later.
+
+The staged `scripts/windows_io.ps1` helper is the supported large-file copy and
+hash path across Windows/WSL. It uses native Windows I/O, hash-verifies the
+temporary copy, and atomically promotes it on the same volume. Do not substitute
+metadata-preserving WSL copies across DrvFS.
 
 Windows executables can be launched from WSL and Windows paths can be produced
 with `wslpath -w`. Prefer script-relative inputs and outputs. Do not assume a

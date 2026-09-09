@@ -1,199 +1,107 @@
 ---
 name: remote-splat
-description: Prepare long capture videos into reviewable semantic clips and ordered modeling frames, then use the private RTX 5090 desktop to stage photo datasets, run hash-approved COLMAP or Brush Gaussian-splat jobs, monitor them through tmux, validate and retrieve .sog/.ply artifacts, and prepare an explicitly confirmed SuperSplat publish. Use for video-to-photogrammetry preparation, remote reconstruction, and Gaussian-splat work; not for general desktop administration, unrelated compute jobs, or unconfirmed public uploads.
+description: Prepare private capture footage and run sealed, manifest-driven COLMAP, Brush, conversion, and QA workflows on Dylan's RTX 5090 desktop. Use for video-to-photogrammetry, Gaussian-splat reconstruction, verified .sog/.ply retrieval, or an explicitly confirmed SuperSplat publish; not for general desktop administration or unconfirmed uploads.
 allowed-tools: Bash(remote-splat:*)
 metadata: {"openclaw":{"emoji":"🫧","requires":{"bins":["remote-splat"]}}}
 ---
 
 # Remote Splat
 
-Use the `remote-splat` helper for every transfer and remote job operation. It
-specializes the shared `desktop-compute` job layer with a private splat root,
-restricted forced-command SSH identity, splat-specific output validation, and
-the SuperSplat publication guard. Do not bypass it with raw SSH, `scp`,
-`rsync`, PowerShell, WSL paths, or direct Windows commands.
+Use `remote-splat` as the only operator interface. One sealed workflow runner
+owns preflight, preparation, reconstruction, training, preview conversion,
+final conversion, QA, checkpoints, dependency transitions, cancellation, and
+recovery state. Do not assemble routine workflows from separate scripts or tmux
+sessions, or bypass the helper with raw SSH, `scp`, `rsync`, PowerShell, WSL
+paths, or direct Windows commands.
 
-Read [references/host-and-toolchain.md](references/host-and-toolchain.md) only
-when diagnosing the host or preparing a new job script. Read
-[references/workflow.md](references/workflow.md) before changing reconstruction,
-training, export, validation, or publishing behavior.
-Read [references/video-preparation.md](references/video-preparation.md) before
-reviewing long footage, defining semantic segments, or extracting frames.
+Read [references/workflow.md](references/workflow.md) when authoring or debugging
+a workflow manifest. Read
+[references/video-preparation.md](references/video-preparation.md) for long
+footage and semantic extraction. Read
+[references/host-and-toolchain.md](references/host-and-toolchain.md) only for a
+reported host, runtime, or toolchain fault.
+
+## Operator interface
+
+Preview the exact workflow approval scope locally:
+
+```bash
+remote-splat start --job cabin-interior-v1 \
+  --bundle '/absolute/local/workflow-bundle' \
+  --reserve desktop-heavy --dry-run
+```
+
+After describing the manifest, inputs, declared settings, dependencies,
+quality tiers, outputs, and resource reservation, start that unchanged bundle
+with the returned `approvalSha256`:
+
+```bash
+remote-splat start --job cabin-interior-v1 \
+  --bundle '/absolute/local/workflow-bundle' \
+  --approved-workflow-sha256 '<approvalSha256>' \
+  --reserve desktop-heavy
+```
+
+The manifest supplies the one run owner. `start` stages the bundle and shared
+helpers, verifies the seal on the desktop, and launches one durable job. It
+does not need a second phase-by-phase assembly step.
+
+Inspect, request cancellation, or retrieve a declared artifact:
+
+```bash
+remote-splat inspect --job cabin-interior-v1
+remote-splat cancel --job cabin-interior-v1 --owner sol
+remote-splat retrieve --job cabin-interior-v1 \
+  --artifact cabin-interior.sog --destination '/absolute/local/output'
+```
+
+`inspect` is read-only and reports the run owner, reservations, recorded
+process IDs, phase state, and `waitingOn` dependency or checkpoint. Do not
+create diagnostic compute jobs for routine monitoring. `cancel` is
+owner-bound and cooperative. An interrupted runner stays visibly blocked and
+retains its resources until an operator verifies the recorded processes and
+performs recovery.
 
 ## Safety boundary
 
-- Status, planning, progress, and artifact inspection are read-only.
-- `stage` may create or add files only inside one validated remote job.
-- For multi-gigabyte single files, `inbox-stage` uses private Taildrop to the
-  fixed desktop host. The approved job script must verify the returned SHA-256
-  before copying the inbox file into its managed job root; never execute an
-  inbox file in place.
-- A remote script must be staged, inspected, and approved by its exact SHA-256
-  before `run`; never infer or reuse approval after the file changes.
-- Each job gets its own `splat-<job>` tmux session. Do not kill another session,
-  process, or job to make room.
-- A job name records one exact script run and its tmux session remains as
-  provenance after exit. Use distinct job names for audit, preparation,
-  connectivity, training, and validation phases; do not reuse a completed job
-  name for a different script.
-- Fetch only `.sog`, `.ply`, or generated `.webp` visual-QA outputs through the
-  helper. It verifies SHA-256 after transfer and refuses to overwrite a
-  different local file. Publication remains limited to `.sog` and `.ply`.
-- Never publish, replace, delete, or change sharing on SuperSplat without a
-  fresh explicit confirmation naming the exact artifact and visibility.
-- Treat photos, reconstructions, logs, and scene names as private household
-  data. Do not expose local/remote paths, account details, or raw logs in chat
-  unless Dylan explicitly asks for diagnostics.
-- Keep source videos immutable. Review and extraction outputs must use new or
-  empty directories; never overwrite or trim an original recording.
+- Keep originals immutable. A workflow bundle contains `workflow.json` and its
+  phase scripts; generated data stays under its managed job.
+- The dry-run approval covers every bundle and shared-runner file by size and
+  SHA-256. If anything changes, recompute and disclose the new approval scope.
+- Every run declares one owner, explicit dependencies, explicit settings,
+  quality tiers, artifacts, and at least one reserved resource.
+- The automatic lightweight preflight must pass before expensive phases. It
+  exercises the actual COLMAP feature/matcher database path, checks schema,
+  probes Brush/DLL loading, and requires a stable Windows Node runtime.
+- Use the staged native Windows copy/hash helper for large Windows/WSL moves.
+  Do not use metadata-preserving copies across those filesystems.
+- Fetch only `.sog`, `.ply`, or generated `.webp` QA outputs. Retrieval checks
+  size and SHA-256 and refuses to overwrite a different local file.
+- A preview checkpoint is private, explicitly labeled non-final, and never
+  promotion-eligible. Missing a target tier must be disclosed even when a
+  lower declared tier passes.
+- Never publish, replace, delete, or change sharing on SuperSplat without fresh
+  explicit confirmation naming the exact artifact and visibility.
+- Treat footage, reconstructions, logs, and scene names as private household
+  data. Keep operational markers free of paths, filenames, credentials, and
+  household details.
 
-## Workflow
+## Input transport and local preparation
 
-### Choose the run contract
+Use `video-probe`, `video-review`, and `video-extract` before staging long
+footage. For a large file already on the Mini, use `inbox-stage`. For a
+supported video directly in Dylan's Mac `Downloads`, use
+`workstation-inbox-stage`; it sends directly when possible and otherwise uses
+a bounded streaming relay without retaining an intermediate Mini copy. In all
+cases the workflow must verify the recorded inbox hash before ingest.
 
-Select a profile before transferring data or starting a desktop job:
+Low-level `workflow-plan`, `stage`, `preflight-plan`, `plan-run`, `run`,
+`progress`, `attach`, and `fetch` commands remain for debugging and recovery.
+They are not the normal operator workflow.
 
-```bash
-remote-splat workflow-plan --job-prefix cabin-refresh --profile best-current
-```
+## Publication guard
 
-Use `preview` for the first inexpensive private visual, `best-current` when the
-operator wants the strongest artifact available within an explicitly declared
-resource bound, and `promotion-candidate` only when evaluating replacement or
-publication. The command applies no hidden training defaults and performs no
-remote work. It emits immutable phase job names, concurrency constraints,
-fallback policy, and separate private-delivery and promotion gates. Preserve
-that output with the run notes and follow its policy throughout the workflow.
-
-### 0. Prepare long-form footage
-
-Probe each video, then build one private review package for all related footage:
-
-```bash
-remote-splat video-probe --source '/absolute/local/trail-one.mov'
-remote-splat video-review \
-  --source '/absolute/local/trail-one.mov' \
-  --source '/absolute/local/trail-two.mov' \
-  --output '/absolute/local/cabin-video-review' \
-  --interval-seconds 30 --proxy
-```
-
-Open the generated `index.html` or scrub its metadata-free 720p proxies. Copy
-`segments.template.json` to a working manifest and add deliberate lowercase
-segment names plus start/end timecodes. Automatic scene suggestions may help
-with edited footage, but they do not understand semantic areas such as yard,
-interior, or trails.
-
-Validate before extraction, then write frame-accurate silent clips and ordered
-modeling frames to a new directory:
-
-```bash
-remote-splat video-extract --manifest '/absolute/local/segments.json' \
-  --output '/absolute/local/cabin-video-extract' --dry-run
-remote-splat video-extract --manifest '/absolute/local/segments.json' \
-  --output '/absolute/local/cabin-video-extract'
-```
-
-Review the extracted frames for blur, occlusion, repetitive stationary views,
-and weak transitions before staging them. Preserve overlapping boundary frames
-between neighboring semantic segments so COLMAP can connect them.
-
-### 1. Check the host
-
-```bash
-remote-splat status
-```
-
-Require `ok: true`, the expected WSL host/user, an available RTX 5090, and the
-needed toolchain components. If the bridge is unavailable, report that concise
-fault and use the canonical remote-access recovery documentation; do not open a
-firewall port or weaken SSH.
-
-### 2. Stage one job
-
-Choose a short descriptive lowercase job name. Preview if useful, then stage:
-
-```bash
-remote-splat stage --job cabin-refresh --source '/absolute/local/dataset' --dry-run
-remote-splat stage --job cabin-refresh --source '/absolute/local/dataset'
-```
-
-The source may be one file or directory. The helper copies into the job's
-`input/` directory without deleting remote files. Inspect or create the job's
-`.sh` or `.ps1` script locally before staging it too.
-
-For an unusually large single source file, use the desktop's direct Tailscale
-path and record the returned inbox name and digest in the preparation script:
-
-```bash
-remote-splat inbox-stage --job cabin-refresh --source '/absolute/local/video.MOV' --dry-run
-remote-splat inbox-stage --job cabin-refresh --source '/absolute/local/video.MOV'
-```
-
-The preparation script must hash-verify and ingest the inbox file before it is
-decoded or otherwise used. Current Windows Tailscale clients receive Taildrop
-files in the interactive user's `Downloads` directory; bind the exact inbox
-name and digest rather than scanning or draining unrelated inbox contents.
-
-### 3. Bind approval to the script
-
-```bash
-remote-splat plan-run --job cabin-refresh --script retrain.ps1
-remote-splat run --job cabin-refresh --script retrain.ps1 \
-  --approved-sha256 '<exact hash returned by plan-run>'
-```
-
-Before `run`, summarize the script, important input/output directories,
-COLMAP/Brush settings, expected runtime, and the returned hash. A request to
-perform that clearly described run is sufficient approval. If the helper says
-the hash changed, inspect and plan again; do not substitute a new hash silently.
-
-### 4. Monitor durably
-
-```bash
-remote-splat progress --job cabin-refresh
-remote-splat attach --job cabin-refresh
-```
-
-Use `progress` for ordinary checks. `attach` is interactive and should be used
-only when an operator wants the tmux view. Detach with `Ctrl-b d`; do not stop
-the job. Phase scripts should periodically write one bounded marker such as:
-
-```text
-OPENCLAW_PROGRESS {"phase":"mapping","completed":3,"total":5,"unit":"attempts","etaSeconds":1800}
-```
-
-`progress` converts the latest valid marker into a `progressReceipt` while
-retaining the bounded log tail. Never include paths, source names, credentials,
-or household details in a marker. The current reverse bridge is TCP-only, so
-Mosh is not available.
-
-### 5. Retrieve outputs
-
-```bash
-remote-splat fetch --job cabin-refresh \
-  --artifact cabin.sog --destination '/absolute/local/output'
-remote-splat fetch --job cabin-refresh \
-  --artifact cabin.compressed.ply --destination '/absolute/local/output'
-remote-splat fetch --job cabin-validation \
-  --artifact validation/orbit-01.webp --destination '/absolute/local/output'
-```
-
-Report the verified filename, byte size, and SHA-256. Prefer a validated `.sog`
-for efficient viewing/sharing and retain the `.ply` when future conversion or
-editing is likely.
-
-### 6. Guard publication
-
-Prepare the exact local artifact:
-
-```bash
-remote-splat publish-plan --file '/absolute/local/output/cabin.sog'
-```
-
-This command never uploads. Present its exact filename, size, SHA-256, proposed
-SuperSplat title, and intended visibility, then obtain fresh explicit
-confirmation. Only after confirmation may an authenticated browser upload that
-unchanged file. Verify the resulting title and visibility before reporting
-success. Stop on an account mismatch, challenge, changed hash, ambiguous
-receipt, or unexpected public visibility; never retry an ambiguous publish.
+`remote-splat publish-plan --file <local.sog-or-ply>` is read-only. Present its
+exact name, size, SHA-256, proposed title, and visibility, then obtain fresh
+confirmation before any authenticated upload. Re-hash immediately before
+upload and stop if it differs.

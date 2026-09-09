@@ -28,6 +28,9 @@ status reports that the host or a required tool is unavailable.
   deletes remote data and rejects symlinks and path traversal.
 - Inspect a staged script with `plan-run` before execution. `run` accepts only
   the exact SHA-256 returned for that unchanged script.
+- Every run declares one owner, zero or more completed job dependencies, and at
+  least one reserved resource. Unfinished or interrupted jobs retain their
+  reservations so a lost tmux session cannot silently allow competing work.
 - A clear user request for the described computation authorizes that exact
   hash-bound run; do not add a generic trust prompt or ask the user to repeat
   approval. Re-plan if the script changes.
@@ -69,7 +72,8 @@ Bind a run to the staged script, then start it:
 ```bash
 desktop-compute plan-run --job video-index --script process.sh
 desktop-compute run --job video-index --script process.sh \
-  --approved-sha256 '<exact hash from plan-run>'
+  --approved-sha256 '<exact hash from plan-run>' \
+  --owner sol --reserve desktop-heavy
 ```
 
 For Windows scope, pass `--scope windows` to both commands and use `.ps1` or
@@ -85,6 +89,15 @@ desktop-compute attach --job video-index
 
 Ordinarily use `progress`; `attach` is for an operator who wants the live tmux
 view. Detach with `Ctrl-b d`.
+
+Only manifest-driven workflows support cooperative cancellation:
+
+```bash
+desktop-compute cancel --job video-index --owner sol
+```
+
+If `progress` reports `interrupted`, do not clear the reservation or start a
+replacement until the recorded processes have been checked deliberately.
 
 Retrieve one output:
 

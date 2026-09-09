@@ -19,16 +19,21 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_DIR = REPO_ROOT / "openclaw" / "skills" / "remote-splat"
 HELPER = SKILL_DIR / "scripts" / "remote_splat.py"
+WORKFLOW_RUNNER = SKILL_DIR / "scripts" / "workflow_runner.py"
 SKILL = SKILL_DIR / "SKILL.md"
 WRAPPER = REPO_ROOT / "openclaw" / "bin" / "remote-splat"
 
 
-def load_helper():
-    spec = importlib.util.spec_from_file_location("remote_splat_for_test", HELPER)
+def load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_helper():
+    return load_module(HELPER, "remote_splat_for_test")
 
 
 class RemoteSplatTests(unittest.TestCase):
@@ -41,6 +46,27 @@ class RemoteSplatTests(unittest.TestCase):
         with redirect_stdout(stdout), redirect_stderr(stderr):
             result = self.helper.main(argv)
         return result, stdout.getvalue(), stderr.getvalue()
+
+    def workflow_args(self, prefix: str, profile: str) -> list[str]:
+        return [
+            "workflow-plan",
+            "--job-prefix",
+            prefix,
+            "--profile",
+            profile,
+            "--target-registered-views",
+            "300",
+            "--plausible-registered-views",
+            "248",
+            "--minimum-points",
+            "25000",
+            "--maximum-reprojection-error-px",
+            "1.25",
+            "--segment-floor",
+            "interior-a=15",
+            "--segment-floor",
+            "interior-b=30",
+        ]
 
     def test_skill_and_wrapper_contracts(self) -> None:
         text = SKILL.read_text(encoding="utf-8")
@@ -108,7 +134,7 @@ class RemoteSplatTests(unittest.TestCase):
     def test_workflow_plan_separates_private_delivery_from_promotion(self) -> None:
         with mock.patch.object(self.helper, "run_desktop") as desktop:
             code, stdout, stderr = self.run_main(
-                ["workflow-plan", "--job-prefix", "cabin-next", "--profile", "best-current"]
+                self.workflow_args("cabin-next", "best-current")
             )
         self.assertEqual((code, stderr), (0, ""))
         desktop.assert_not_called()
@@ -116,15 +142,32 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertEqual(payload["jobs"]["connect"], "cabin-next-connect")
         self.assertEqual(payload["registeredViewSelection"], "all-registered-within-declared-bound")
         self.assertFalse(payload["training"]["defaultsApplied"])
-        self.assertEqual(payload["scheduling"]["phaseDependencies"]["train"], ["connect"])
+        self.assertEqual(
+            payload["scheduling"]["phaseDependencies"]["train"],
+            ["preflight", "connect"],
+        )
+        self.assertEqual(payload["jobs"]["preview"], "cabin-next-preview")
+        self.assertTrue(payload["qualityTiers"]["declaredBeforePreparation"])
+        self.assertEqual(
+            payload["qualityTiers"]["plausibleCandidate"]["minimumRegisteredViews"],
+            248,
+        )
+        self.assertTrue(payload["runOwnership"]["ownerRequired"])
+        self.assertTrue(payload["monitoring"]["checkpointStepsNormalizeZeroPadding"])
         self.assertEqual(payload["fallback"]["criticalUntil"], "trainable-primary-reconstruction")
+        incremental = payload["incrementalExtension"]
+        self.assertEqual(incremental["basePolicy"], "immutable-versioned-feature-compatible")
+        self.assertIn("feature-schema", incremental["preflightRequires"])
+        self.assertIn("targeted-new-to-known-anchors", incremental["matching"])
+        self.assertEqual(incremental["registration"][-1], "repeat-until-count-stable")
+        self.assertIn("without-stopping-final", incremental["preview"])
         self.assertEqual(payload["privateDelivery"]["when"], "immediately-after-basic-validation")
         self.assertFalse(payload["promotion"]["eligible"])
         self.assertTrue(payload["promotion"]["requiresExplicitConfirmation"])
 
     def test_promotion_profile_keeps_full_qa_out_of_private_delivery_gate(self) -> None:
         code, stdout, stderr = self.run_main(
-            ["workflow-plan", "--job-prefix", "cabin-release", "--profile", "promotion-candidate"]
+            self.workflow_args("cabin-release", "promotion-candidate")
         )
         self.assertEqual((code, stderr), (0, ""))
         payload = json.loads(stdout)
@@ -139,7 +182,7 @@ class RemoteSplatTests(unittest.TestCase):
 
     def test_workflow_plan_rejects_prefix_that_cannot_fit_phase_names(self) -> None:
         code, _stdout, stderr = self.run_main(
-            ["workflow-plan", "--job-prefix", "a" * 48, "--profile", "preview"]
+            self.workflow_args("a" * 48, "preview")
         )
         self.assertEqual(code, 2)
         self.assertIn("too long", stderr)
@@ -182,6 +225,106 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertTrue(json.loads(stdout)["dryRun"])
         run.assert_not_called()
 
+    def test_workstation_inbox_stage_hash_binds_direct_taildrop(self) -> None:
+        digest = "c" * 64
+        source = "/Users/dylanbochman/Downloads/IMG_4113.MOV"
+        with mock.patch.object(
+            self.helper,
+            "workstation_metadata",
+            side_effect=[(611075882, digest), (611075882, digest)],
+        ) as metadata:
+            with mock.patch.object(
+                self.helper,
+                "workstation_tailscale_path",
+                return_value="/usr/local/bin/tailscale",
+            ):
+                with mock.patch.object(self.helper, "run_workstation", return_value="") as remote:
+                    code, stdout, stderr = self.run_main(
+                        ["workstation-inbox-stage", "--job", "cabin-structure", "--source", source]
+                    )
+        self.assertEqual((code, stderr), (0, ""))
+        payload = json.loads(stdout)
+        self.assertEqual(payload["sha256"], digest)
+        self.assertEqual(payload["transport"], "workstation-taildrop")
+        self.assertTrue(payload["requiresHashVerifiedIngest"])
+        self.assertEqual(metadata.call_count, 2)
+        command = remote.call_args.args[0]
+        self.assertEqual(command[0:3], ["/usr/local/bin/tailscale", "file", "cp"])
+        self.assertEqual(command[-2:], [source, self.helper.TAILDROP_TARGET])
+
+    def test_workstation_tailscale_path_uses_known_executable(self) -> None:
+        with mock.patch.object(
+            self.helper,
+            "WORKSTATION_TAILSCALE_CANDIDATES",
+            ("/missing/tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"),
+        ):
+            with mock.patch.object(
+                self.helper,
+                "run_workstation",
+                side_effect=[self.helper.PublicError("missing"), ""],
+            ) as remote:
+                path = self.helper.workstation_tailscale_path()
+        self.assertEqual(path, "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+        self.assertEqual(remote.call_count, 2)
+
+    def test_workstation_inbox_stage_falls_back_to_guarded_relay(self) -> None:
+        digest = "e" * 64
+        source = "/Users/dylanbochman/Downloads/IMG_4117.MOV"
+        with mock.patch.object(
+            self.helper,
+            "workstation_metadata",
+            side_effect=[(759447867, digest), (759447867, digest)],
+        ):
+            with mock.patch.object(
+                self.helper,
+                "workstation_tailscale_path",
+                side_effect=self.helper.PublicError("unavailable"),
+            ):
+                with mock.patch.object(self.helper, "relay_workstation_taildrop") as relay:
+                    code, stdout, stderr = self.run_main(
+                        ["workstation-inbox-stage", "--job", "cabin", "--source", source]
+                    )
+        self.assertEqual((code, stderr), (0, ""))
+        payload = json.loads(stdout)
+        self.assertEqual(payload["transport"], "workstation-relay-taildrop")
+        relay.assert_called_once_with(
+            self.helper.PurePosixPath(source),
+            inbox_name="openclaw-splat-cabin-IMG_4117.MOV",
+        )
+
+    def test_workstation_inbox_stage_dry_run_is_read_only(self) -> None:
+        digest = "d" * 64
+        with mock.patch.object(
+            self.helper, "workstation_metadata", return_value=(345170785, digest)
+        ):
+            with mock.patch.object(self.helper, "run_workstation") as remote:
+                code, stdout, stderr = self.run_main(
+                    [
+                        "workstation-inbox-stage",
+                        "--job",
+                        "cabin-structure",
+                        "--source",
+                        "/Users/dylanbochman/Downloads/IMG_4114.MOV",
+                        "--dry-run",
+                    ]
+                )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertTrue(json.loads(stdout)["dryRun"])
+        remote.assert_not_called()
+
+    def test_workstation_inbox_stage_rejects_other_paths(self) -> None:
+        for source in (
+            "/Users/dylanbochman/Desktop/IMG_4113.MOV",
+            "/Users/dylanbochman/Downloads/../private.MOV",
+            "/Users/dylanbochman/Downloads/notes.txt",
+        ):
+            with self.subTest(source=source):
+                code, _stdout, stderr = self.run_main(
+                    ["workstation-inbox-stage", "--job", "cabin", "--source", source]
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("directly inside Downloads", stderr)
+
     def test_plan_and_run_are_bound_to_exact_hash(self) -> None:
         digest = "a" * 64
         with mock.patch.object(
@@ -211,11 +354,19 @@ class RemoteSplatTests(unittest.TestCase):
                     "retrain.ps1",
                     "--approved-sha256",
                     digest,
+                    "--owner",
+                    "sol",
+                    "--depends-on",
+                    "cabin-prepare",
+                    "--reserve",
+                    "desktop-heavy",
                 ]
             )
         self.assertEqual(code, 0)
         self.assertTrue(json.loads(stdout)["started"])
         self.assertIn(digest, desktop.call_args.args[1])
+        self.assertIn("sol", desktop.call_args.args[1])
+        self.assertIn("desktop-heavy", desktop.call_args.args[1])
 
         code, _stdout, stderr = self.run_main(
             [
@@ -226,10 +377,34 @@ class RemoteSplatTests(unittest.TestCase):
                 "retrain.ps1",
                 "--approved-sha256",
                 "not-a-hash",
+                "--owner",
+                "sol",
+                "--reserve",
+                "desktop-heavy",
             ]
         )
         self.assertEqual(code, 2)
         self.assertIn("64 hexadecimal", stderr)
+
+    def test_resource_blocker_is_visible_without_forwarding_arbitrary_stderr(self) -> None:
+        blocked = mock.Mock(
+            returncode=2,
+            stdout="",
+            stderr="requested resources are held by unfinished jobs: old-run\n",
+        )
+        with mock.patch.object(self.helper.subprocess, "run", return_value=blocked):
+            with self.assertRaisesRegex(self.helper.PublicError, "old-run"):
+                self.helper.run_desktop("status")
+
+        unsafe = mock.Mock(
+            returncode=2,
+            stdout="",
+            stderr="unexpected failure at /private/secret\n",
+        )
+        with mock.patch.object(self.helper.subprocess, "run", return_value=unsafe):
+            with self.assertRaisesRegex(self.helper.PublicError, "operation failed") as error:
+                self.helper.run_desktop("status")
+        self.assertNotIn("secret", str(error.exception))
 
     def test_progress_emits_structured_receipt_from_latest_valid_marker(self) -> None:
         with mock.patch.object(
@@ -241,8 +416,10 @@ class RemoteSplatTests(unittest.TestCase):
                 "logTail": [
                     'OPENCLAW_PROGRESS {"phase":"matching","completed":50,"total":100}',
                     "ordinary tool output",
+                    'OPENCLAW_PROCESS {"kind":"brush","pid":32780}',
                     'OPENCLAW_PROGRESS {"phase":"mapping","completed":8,"total":10,'
-                    '"unit":"attempts","etaSeconds":420,"message":"global BA"}',
+                    '"unit":"attempts","etaSeconds":420,"message":"global BA",'
+                    '"checkpoint":"cabin_interior_05000.ply"}',
                 ],
             },
         ):
@@ -253,6 +430,220 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertEqual(receipt["phase"], "mapping")
         self.assertEqual(receipt["percent"], 80.0)
         self.assertEqual(receipt["etaSeconds"], 420)
+        self.assertEqual(receipt["checkpoint"]["step"], 5000)
+        process = json.loads(stdout)["processReceipt"]
+        self.assertEqual(process, {"reported": True, "kind": "brush", "pid": 32780})
+
+    def test_start_plan_dry_run_seals_one_manifest_bundle_locally(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            (bundle / "train.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            manifest = {
+                "schemaVersion": 1,
+                "job": "cabin-one-run",
+                "owner": "sol",
+                "settings": {"iterations": 30000, "seed": 42},
+                "dependencies": {"colmap": "4.2.0", "brush": "0.3.0"},
+                "qualityTiers": {
+                    "target": {"minimumRegisteredViews": 300},
+                    "plausibleCandidate": {"minimumRegisteredViews": 248},
+                    "experimentalOnly": {"promotionEligible": False},
+                },
+                "phases": [{"name": "train", "script": "train.sh"}],
+                "artifacts": [
+                    {"name": "final-sog", "path": "scene.sog", "required": True}
+                ],
+            }
+            (bundle / "workflow.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with mock.patch.object(self.helper, "run_desktop") as desktop:
+                code, stdout, stderr = self.run_main(
+                    [
+                        "start-plan",
+                        "--job",
+                        "cabin-one-run",
+                        "--bundle",
+                        str(bundle),
+                        "--dry-run",
+                    ]
+                )
+        self.assertEqual((code, stderr), (0, ""))
+        payload = json.loads(stdout)
+        self.assertTrue(payload["dryRun"])
+        self.assertEqual(payload["owner"], "sol")
+        self.assertRegex(payload["approvalSha256"], r"\A[0-9a-f]{64}\Z")
+        self.assertRegex(payload["sealedRunnerSha256"], r"\A[0-9a-f]{64}\Z")
+        desktop.assert_not_called()
+
+    def test_shared_support_scripts_encode_preflight_copy_and_checkpoint_contracts(self) -> None:
+        scripts = self.helper.SCRIPT_DIR
+        canary = (scripts / "compute_canary.sh").read_text(encoding="utf-8")
+        windows_io = (scripts / "windows_io.ps1").read_text(encoding="utf-8")
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_checkpoint_test")
+        self.assertIn("SIFT_BRUTEFORCE", canary)
+        self.assertIn("--FeatureExtraction.type SIFT", canary)
+        self.assertIn("--FeatureMatching.type SIFT_BRUTEFORCE", canary)
+        self.assertNotIn("feature_type", canary)
+        self.assertIn("PRAGMA table_info", canary)
+        self.assertIn("Windows Node runtime", canary)
+        self.assertIn("[System.IO.File]::Copy", windows_io)
+        self.assertIn("Get-FileHash", windows_io)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkpoints = root / "checkpoints"
+            checkpoints.mkdir()
+            (checkpoints / "scene_05000.ply").write_bytes(b"checkpoint")
+            ready, name, step = runner.checkpoint_ready(
+                root,
+                {
+                    "directory": "checkpoints",
+                    "prefix": "scene_",
+                    "suffix": ".ply",
+                    "minimumStep": 5000,
+                },
+            )
+        self.assertTrue(ready)
+        self.assertEqual(name, "scene_05000.ply")
+        self.assertEqual(step, 5000)
+
+    def test_runner_owns_phases_and_writes_one_complete_run_manifest(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_execution_test")
+        approval = "f" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            job_root = Path(directory) / "one-run"
+            input_root = job_root / "input"
+            (job_root / "state").mkdir(parents=True)
+            (job_root / "outputs").mkdir()
+            input_root.mkdir()
+            (input_root / "compute_canary.sh").write_text(
+                "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+            )
+            (input_root / "finish.sh").write_text(
+                "#!/usr/bin/env bash\nprintf 'sog' > outputs/scene.sog\n",
+                encoding="utf-8",
+            )
+            manifest = {
+                "schemaVersion": 1,
+                "job": "one-run",
+                "owner": "sol",
+                "settings": {"iterations": 5000, "seed": 42},
+                "dependencies": {"colmap": "4.2.0", "brush": "0.3.0"},
+                "qualityTiers": {
+                    "target": {"minimumRegisteredViews": 300},
+                    "plausibleCandidate": {"minimumRegisteredViews": 248},
+                    "experimentalOnly": {"promotionEligible": False},
+                },
+                "phases": [{"name": "finish", "script": "finish.sh"}],
+                "artifacts": [{"name": "scene", "path": "scene.sog"}],
+            }
+            manifest_path = input_root / "workflow.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            (input_root / "approval-inventory.json").write_text(
+                json.dumps({"approvalSha256": approval, "files": []}),
+                encoding="utf-8",
+            )
+            environment = {
+                "OPENCLAW_WORKFLOW_APPROVAL_SHA256": approval,
+                "OPENCLAW_JOB_NAME": "one-run",
+                "OPENCLAW_JOB_OWNER": "sol",
+                "OPENCLAW_JOB_DEPENDENCIES_JSON": '["base-model"]',
+                "OPENCLAW_JOB_RESOURCES_JSON": '["desktop-heavy"]',
+                "OPENCLAW_RUNNER_SHA256": "e" * 64,
+            }
+            with mock.patch.dict(runner.os.environ, environment, clear=False):
+                with mock.patch.object(runner.time, "sleep", return_value=None):
+                    self.assertEqual(runner.run_workflow(manifest_path), 0)
+            result = json.loads(
+                (job_root / "outputs/run-manifest.json").read_text(encoding="utf-8")
+            )
+        self.assertEqual(result["approvalScope"]["sha256"], approval)
+        self.assertEqual(result["execution"]["owner"], "sol")
+        self.assertEqual(result["execution"]["externalDependencies"], ["base-model"])
+        self.assertEqual(result["execution"]["resources"], ["desktop-heavy"])
+        self.assertEqual(result["execution"]["sealedRunnerSha256"], "e" * 64)
+        self.assertEqual(result["manifest"]["settings"]["iterations"], 5000)
+        self.assertEqual(result["artifacts"][0]["sha256"], hashlib.sha256(b"sog").hexdigest())
+
+    def test_primary_operator_commands_delegate_without_new_diagnostic_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            (bundle / "finish.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            (bundle / "workflow.json").write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "job": "one-run",
+                        "owner": "sol",
+                        "settings": {"iterations": 5000},
+                        "dependencies": {"colmap": "4.2.0"},
+                        "qualityTiers": {
+                            "target": {"minimumRegisteredViews": 300},
+                            "plausibleCandidate": {"minimumRegisteredViews": 248},
+                            "experimentalOnly": {"promotionEligible": False},
+                        },
+                        "phases": [{"name": "finish", "script": "finish.sh"}],
+                        "artifacts": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            code, stdout, stderr = self.run_main(
+                [
+                    "start",
+                    "--job",
+                    "one-run",
+                    "--bundle",
+                    str(bundle),
+                    "--reserve",
+                    "desktop-heavy",
+                    "--dry-run",
+                ]
+            )
+            self.assertEqual((code, stderr), (0, ""))
+            approval = json.loads(stdout)["approvalSha256"]
+            sealed_runner_sha = ""
+
+            def remote(command, arguments=(), **_kwargs):
+                nonlocal sealed_runner_sha
+                if command == "stage":
+                    source = Path(arguments[arguments.index("--source") + 1])
+                    seal = source / "run-workflow.sh" if source.is_dir() else source
+                    if seal.name == "run-workflow.sh" and seal.is_file():
+                        sealed_runner_sha = self.helper.hash_file(seal)
+                    return {"ok": True}
+                if command == "plan-run":
+                    return {"ok": True, "sha256": sealed_runner_sha}
+                if command == "run":
+                    return {"ok": True, "started": True}
+                if command == "progress":
+                    return {"ok": True, "state": "running", "logTail": []}
+                if command == "cancel":
+                    return {"ok": True, "cancelRequested": True}
+                self.fail(f"unexpected remote command: {command}")
+
+            with mock.patch.object(self.helper, "run_desktop", side_effect=remote) as desktop:
+                code, stdout, stderr = self.run_main(
+                    [
+                        "start",
+                        "--job",
+                        "one-run",
+                        "--bundle",
+                        str(bundle),
+                        "--approved-workflow-sha256",
+                        approval,
+                        "--reserve",
+                        "desktop-heavy",
+                    ]
+                )
+                self.assertEqual((code, stderr), (0, ""))
+                self.assertTrue(json.loads(stdout)["runPerformed"])
+                self.assertEqual(self.run_main(["inspect", "--job", "one-run"])[0], 0)
+                self.assertEqual(
+                    self.run_main(["cancel", "--job", "one-run", "--owner", "sol"])[0],
+                    0,
+                )
+        commands = [call.args[0] for call in desktop.call_args_list]
+        self.assertEqual(commands.count("run"), 1)
+        self.assertEqual(commands[-2:], ["progress", "cancel"])
 
     def test_progress_ignores_malformed_or_unbounded_markers(self) -> None:
         payload = {
