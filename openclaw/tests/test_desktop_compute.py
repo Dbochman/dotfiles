@@ -46,6 +46,48 @@ class DesktopComputeTests(unittest.TestCase):
             result = self.client.main(argv)
         return result, stdout.getvalue(), stderr.getvalue()
 
+    def supervised_job(self, root: Path, *, job_name: str = "completed") -> Path:
+        job = root / job_name
+        (job / "state").mkdir(parents=True)
+        (job / "state/run.json").write_text(
+            json.dumps(
+                {
+                    "script": "run-workflow.sh",
+                    "owner": "sol",
+                    "resources": ["desktop-heavy"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job / "state/exit-code").write_text("0\n", encoding="ascii")
+        (job / "state/workflow-state.json").write_text(
+            json.dumps(
+                {
+                    "state": "succeeded",
+                    "approvalSha256": "a" * 64,
+                    "resourceReleaseVerified": False,
+                    "reservationState": "awaiting_manual_windows_verification",
+                    "reservationVerificationRequiredUnixSeconds": 100,
+                    "phases": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (job / "state/phase-finish-native-process.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "state": "complete",
+                    "rootPid": 1234,
+                    "targetPid": 5678,
+                    "treeCleanupVerified": True,
+                    "exitCode": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return job
+
     def test_skill_wrapper_and_deployment_contracts(self) -> None:
         text = SKILL.read_text(encoding="utf-8")
         self.assertIn("name: desktop-compute", text)
@@ -186,6 +228,54 @@ class DesktopComputeTests(unittest.TestCase):
         self.assertEqual((code, stderr), (0, ""))
         self.assertTrue(json.loads(stdout)["cancelRequested"])
         self.assertEqual(remote.call_args.args, ("cancel", "linux", "video", "sol"))
+
+    def test_manual_release_requires_and_forwards_explicit_confirmation(self) -> None:
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.client.parser().parse_args(
+                [
+                    "verify-release",
+                    "--scope",
+                    "splat",
+                    "--job",
+                    "video",
+                    "--owner",
+                    "sol",
+                    "--approved-workflow-sha256",
+                    "a" * 64,
+                ]
+            )
+        with mock.patch.object(
+            self.client,
+            "call_json",
+            return_value={"ok": True, "released": True},
+        ) as remote:
+            code, stdout, stderr = self.run_client(
+                [
+                    "verify-release",
+                    "--scope",
+                    "splat",
+                    "--job",
+                    "video",
+                    "--owner",
+                    "sol",
+                    "--approved-workflow-sha256",
+                    "a" * 64,
+                    "--confirm-windows-processes-absent",
+                ]
+            )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertTrue(json.loads(stdout)["released"])
+        self.assertEqual(
+            remote.call_args.args,
+            (
+                "verify-release",
+                "splat",
+                "video",
+                "sol",
+                "a" * 64,
+                "windows-processes-absent",
+            ),
+        )
 
     def test_only_bounded_blocking_errors_cross_the_ssh_boundary(self) -> None:
         blocked = subprocess.CompletedProcess(
@@ -530,6 +620,230 @@ class DesktopComputeTests(unittest.TestCase):
                     ),
                     [],
                 )
+
+    def test_manual_release_accepts_retained_dead_tmux_and_releases_resource(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = self.supervised_job(root)
+            stdout = io.StringIO()
+            repeated = io.StringIO()
+            progress_before = io.StringIO()
+            progress_after = io.StringIO()
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=True):
+                with mock.patch.object(self.dispatcher, "host_state_lock"):
+                    with mock.patch.object(
+                        self.dispatcher, "tmux_session_state", return_value=(True, True)
+                    ):
+                        with mock.patch.object(
+                            self.dispatcher, "windows_process_exists", return_value=False
+                        ):
+                            with mock.patch.object(self.dispatcher.time, "time", return_value=200):
+                                with redirect_stdout(progress_before):
+                                    self.dispatcher.command_progress(
+                                        ["splat", "completed", "40"]
+                                    )
+                                with redirect_stdout(stdout):
+                                    self.dispatcher.command_verify_release(
+                                        [
+                                            "splat",
+                                            "completed",
+                                            "sol",
+                                            "a" * 64,
+                                            "windows-processes-absent",
+                                        ]
+                                    )
+                                with redirect_stdout(progress_after):
+                                    self.dispatcher.command_progress(
+                                        ["splat", "completed", "40"]
+                                    )
+                                with redirect_stdout(repeated):
+                                    self.dispatcher.command_verify_release(
+                                        [
+                                            "splat",
+                                            "completed",
+                                            "sol",
+                                            "a" * 64,
+                                            "windows-processes-absent",
+                                        ]
+                                    )
+                self.assertEqual(
+                    self.dispatcher.active_resource_holders(
+                        "splat", ["desktop-heavy"], "replacement"
+                    ),
+                    [],
+                )
+            payload = json.loads(stdout.getvalue())
+            receipt = json.loads(
+                (job / "state/manual-windows-release.json").read_text(encoding="utf-8")
+            )
+        self.assertTrue(payload["released"])
+        self.assertFalse(payload["alreadyConfirmed"])
+        self.assertTrue(json.loads(repeated.getvalue())["alreadyConfirmed"])
+        self.assertEqual(json.loads(progress_before.getvalue())["state"], "succeeded")
+        self.assertEqual(
+            json.loads(progress_before.getvalue())["reservationState"],
+            "awaiting_manual_windows_verification",
+        )
+        self.assertTrue(
+            json.loads(progress_before.getvalue())["humanConfirmationRequired"]
+        )
+        self.assertEqual(json.loads(progress_after.getvalue())["state"], "succeeded")
+        self.assertEqual(
+            json.loads(progress_after.getvalue())["reservationState"], "released"
+        )
+        self.assertFalse(
+            json.loads(progress_after.getvalue())["humanConfirmationRequired"]
+        )
+        self.assertEqual(receipt["job"], "completed")
+        self.assertEqual(receipt["owner"], "sol")
+        self.assertEqual(receipt["approvalSha256"], "a" * 64)
+        self.assertEqual(receipt["confirmedUnixSeconds"], 200)
+
+    def test_invalid_manual_release_receipt_cannot_release_resource(self) -> None:
+        invalid_receipts = (
+            {"job": "different"},
+            {"owner": "different"},
+            {"approvalSha256": "b" * 64},
+            {"confirmation": "agent-inferred"},
+            {"confirmedUnixSeconds": 99},
+            {"confirmedUnixSeconds": 201},
+        )
+        for changed in invalid_receipts:
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                job = self.supervised_job(root)
+                receipt = {
+                    "schemaVersion": 1,
+                    "job": "completed",
+                    "owner": "sol",
+                    "approvalSha256": "a" * 64,
+                    "confirmation": "windows-processes-absent",
+                    "confirmedUnixSeconds": 200,
+                    **changed,
+                }
+                (job / "state/manual-windows-release.json").write_text(
+                    json.dumps(receipt), encoding="utf-8"
+                )
+                with mock.patch.dict(
+                    self.dispatcher.ROOTS, {"splat": root}, clear=True
+                ):
+                    with mock.patch.object(self.dispatcher.time, "time", return_value=200):
+                        self.assertEqual(
+                            self.dispatcher.active_resource_holders(
+                                "splat", ["desktop-heavy"], "replacement"
+                            ),
+                            ["completed"],
+                        )
+                        with mock.patch.object(self.dispatcher, "host_state_lock"):
+                            with self.assertRaisesRegex(
+                                self.dispatcher.RequestError, "receipt is invalid"
+                            ):
+                                self.dispatcher.command_verify_release(
+                                    [
+                                        "splat",
+                                        "completed",
+                                        "sol",
+                                        "a" * 64,
+                                        "windows-processes-absent",
+                                    ]
+                                )
+
+    def test_manual_release_rejects_mismatch_or_active_processes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.supervised_job(root)
+            base_arguments = [
+                "splat",
+                "completed",
+                "sol",
+                "a" * 64,
+                "windows-processes-absent",
+            ]
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=True):
+                with mock.patch.object(self.dispatcher, "host_state_lock"):
+                    with self.assertRaisesRegex(
+                        self.dispatcher.RequestError, "owner does not match"
+                    ):
+                        self.dispatcher.command_verify_release(
+                            [*base_arguments[:2], "other", *base_arguments[3:]]
+                        )
+                    with self.assertRaisesRegex(
+                        self.dispatcher.RequestError, "not awaiting"
+                    ):
+                        self.dispatcher.command_verify_release(
+                            [*base_arguments[:3], "b" * 64, base_arguments[4]]
+                        )
+                    with mock.patch.object(
+                        self.dispatcher, "tmux_session_state", return_value=(True, False)
+                    ):
+                        with self.assertRaisesRegex(
+                            self.dispatcher.RequestError, "runner is still active"
+                        ):
+                            self.dispatcher.command_verify_release(base_arguments)
+                    with mock.patch.object(
+                        self.dispatcher, "tmux_session_state", return_value=(True, True)
+                    ):
+                        with mock.patch.object(
+                            self.dispatcher, "windows_process_exists", return_value=True
+                        ):
+                            with self.assertRaisesRegex(
+                                self.dispatcher.RequestError,
+                                "Windows process is still active",
+                            ):
+                                self.dispatcher.command_verify_release(base_arguments)
+
+    def test_manual_release_checks_workflow_phase_process_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job = self.supervised_job(root)
+            state_path = job / "state/workflow-state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["phases"] = {
+                "finish": {"state": "failed", "pid": 4001, "nativePid": 1234}
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            arguments = [
+                "splat",
+                "completed",
+                "sol",
+                "a" * 64,
+                "windows-processes-absent",
+            ]
+            with mock.patch.dict(self.dispatcher.ROOTS, {"splat": root}, clear=True):
+                with mock.patch.object(self.dispatcher, "host_state_lock"):
+                    with mock.patch.object(
+                        self.dispatcher, "tmux_session_state", return_value=(True, True)
+                    ):
+                        with mock.patch.object(
+                            self.dispatcher,
+                            "process_exists",
+                            side_effect=lambda pid: pid == 4001,
+                        ):
+                            with self.assertRaisesRegex(
+                                self.dispatcher.RequestError,
+                                "workflow phase is still active",
+                            ):
+                                self.dispatcher.command_verify_release(arguments)
+
+                        (job / "state/phase-finish-native-process.json").unlink()
+                        with mock.patch.object(
+                            self.dispatcher, "process_exists", return_value=False
+                        ):
+                            with mock.patch.object(
+                                self.dispatcher,
+                                "process_group_exists",
+                                return_value=False,
+                            ):
+                                with mock.patch.object(
+                                    self.dispatcher,
+                                    "windows_process_exists",
+                                    side_effect=lambda pid: pid == 1234,
+                                ):
+                                    with self.assertRaisesRegex(
+                                        self.dispatcher.RequestError,
+                                        "Windows process is still active",
+                                    ):
+                                        self.dispatcher.command_verify_release(arguments)
 
     def test_progress_surfaces_interrupted_run_and_cancel_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -70,6 +70,16 @@ SAFE_DESKTOP_ERRORS = frozenset(
     (
         "a declared dependency has not succeeded",
         "job already has immutable run provenance",
+        "explicit human Windows process confirmation is required",
+        "manual Windows release receipt is invalid",
+        "native Windows process receipt is invalid",
+        "a recorded Windows process is still active",
+        "a recorded workflow phase is still active",
+        "Windows process verification failed",
+        "workflow process inventory is invalid",
+        "workflow is not awaiting manual Windows verification",
+        "workflow runner is still active",
+        "workflow runner PID receipt is invalid",
         "workflow is interrupted; inspect recorded process IDs before operator recovery",
         "workflow owner does not match",
     )
@@ -691,6 +701,26 @@ def command_cancel(args: argparse.Namespace) -> None:
     emit(payload)
 
 
+def command_verify_release(args: argparse.Namespace) -> None:
+    job = validate_job(args.job)
+    owner = validate_owner(args.owner)
+    approval = validate_sha256(args.approved_workflow_sha256)
+    payload = run_desktop(
+        "verify-release",
+        [
+            "--job",
+            job,
+            "--owner",
+            owner,
+            "--approved-workflow-sha256",
+            approval,
+            "--confirm-windows-processes-absent",
+        ],
+    )
+    assert payload is not None
+    emit(payload)
+
+
 def command_retrieve(args: argparse.Namespace) -> None:
     command_fetch(args)
 
@@ -1208,6 +1238,18 @@ def parser() -> argparse.ArgumentParser:
     cancel.add_argument("--job", required=True)
     cancel.add_argument("--owner", required=True)
     cancel.set_defaults(func=command_cancel)
+
+    verify_release = sub.add_parser(
+        "verify-release",
+        help="record explicit human verification before releasing a Windows reservation",
+    )
+    verify_release.add_argument("--job", required=True)
+    verify_release.add_argument("--owner", required=True)
+    verify_release.add_argument("--approved-workflow-sha256", required=True)
+    verify_release.add_argument(
+        "--confirm-windows-processes-absent", action="store_true", required=True
+    )
+    verify_release.set_defaults(func=command_verify_release)
 
     retrieve = sub.add_parser("retrieve", help="retrieve one verified workflow artifact")
     retrieve.add_argument("--job", required=True)

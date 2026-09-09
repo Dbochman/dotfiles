@@ -36,6 +36,16 @@ SAFE_REMOTE_ERRORS = frozenset(
     (
         "a declared dependency has not succeeded",
         "job already has immutable run provenance",
+        "explicit human Windows process confirmation is required",
+        "manual Windows release receipt is invalid",
+        "native Windows process receipt is invalid",
+        "a recorded Windows process is still active",
+        "a recorded workflow phase is still active",
+        "Windows process verification failed",
+        "workflow process inventory is invalid",
+        "workflow is not awaiting manual Windows verification",
+        "workflow runner is still active",
+        "workflow runner PID receipt is invalid",
         "workflow is interrupted; inspect recorded process IDs before operator recovery",
         "workflow owner does not match",
     )
@@ -322,6 +332,23 @@ def command_cancel(args: argparse.Namespace) -> None:
     emit(call_json("cancel", scope, job, owner))
 
 
+def command_verify_release(args: argparse.Namespace) -> None:
+    scope = validate_scope(args.scope)
+    job = validate_job(args.job)
+    owner = validate_owner(args.owner)
+    approval = validate_sha256(args.approved_workflow_sha256)
+    emit(
+        call_json(
+            "verify-release",
+            scope,
+            job,
+            owner,
+            approval,
+            "windows-processes-absent",
+        )
+    )
+
+
 def command_attach(args: argparse.Namespace) -> None:
     scope = validate_scope(args.scope)
     job = validate_job(args.job)
@@ -453,6 +480,19 @@ def parser() -> argparse.ArgumentParser:
     cancel.add_argument("--job", required=True)
     cancel.add_argument("--owner", required=True)
     cancel.set_defaults(func=command_cancel)
+
+    verify_release = sub.add_parser(
+        "verify-release",
+        help="record explicit human verification before releasing a Windows reservation",
+    )
+    add_scope(verify_release)
+    verify_release.add_argument("--job", required=True)
+    verify_release.add_argument("--owner", required=True)
+    verify_release.add_argument("--approved-workflow-sha256", required=True)
+    verify_release.add_argument(
+        "--confirm-windows-processes-absent", action="store_true", required=True
+    )
+    verify_release.set_defaults(func=command_verify_release)
 
     attach = sub.add_parser("attach", help="interactively attach to one job's tmux session")
     add_scope(attach)

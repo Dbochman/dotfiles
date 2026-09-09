@@ -804,7 +804,7 @@ class RemoteSplatTests(unittest.TestCase):
                     except ProcessLookupError:
                         pass
 
-    def test_clean_phase_failure_releases_resources_after_verified_cleanup(self) -> None:
+    def test_clean_phase_failure_still_awaits_manual_windows_verification(self) -> None:
         runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_clean_failure_test")
         dispatcher = load_module(
             DESKTOP_DISPATCHER, "desktop_compute_for_clean_failure_test"
@@ -827,7 +827,14 @@ class RemoteSplatTests(unittest.TestCase):
             state = json.loads(
                 (job / "state/workflow-state.json").read_text(encoding="utf-8")
             )
-            self.assertTrue(state["resourceReleaseVerified"])
+            self.assertFalse(state["resourceReleaseVerified"])
+            self.assertEqual(
+                state["reservationState"],
+                "awaiting_manual_windows_verification",
+            )
+            self.assertIsInstance(
+                state["reservationVerificationRequiredUnixSeconds"], int
+            )
             for details in state["phases"].values():
                 if "pid" in details:
                     self.assertFalse(runner.process_group_exists(details["pid"]))
@@ -836,8 +843,31 @@ class RemoteSplatTests(unittest.TestCase):
                     dispatcher.active_resource_holders(
                         "splat", ["desktop-heavy"], "replacement"
                     ),
-                    [],
+                    ["review"],
                 )
+
+    def test_success_keeps_computation_and_reservation_states_separate(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_supervised_success_test")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            job, environment = self.runner_fixture(root, "exit 0\n")
+            with mock.patch.dict(runner.os.environ, environment, clear=False):
+                with mock.patch.object(
+                    runner.time, "sleep", side_effect=lambda _: REAL_SLEEP(0.01)
+                ):
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        return_code = runner.main(
+                            [str(job / "input/workflow.json")]
+                        )
+            state = json.loads(
+                (job / "state/workflow-state.json").read_text(encoding="utf-8")
+            )
+        self.assertEqual(return_code, 0)
+        self.assertEqual(state["state"], "succeeded")
+        self.assertEqual(
+            state["reservationState"], "awaiting_manual_windows_verification"
+        )
+        self.assertFalse(state["resourceReleaseVerified"])
 
     def test_native_windows_termination_requires_absence_verification(self) -> None:
         runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_native_termination_test")
@@ -1102,6 +1132,41 @@ class RemoteSplatTests(unittest.TestCase):
             self.helper.progress_receipt(payload),
             {"state": "running", "reported": False},
         )
+
+    def test_manual_release_is_human_confirmed_and_hash_bound(self) -> None:
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.helper.parser().parse_args(
+                [
+                    "verify-release",
+                    "--job",
+                    "one-run",
+                    "--owner",
+                    "sol",
+                    "--approved-workflow-sha256",
+                    "a" * 64,
+                ]
+            )
+        with mock.patch.object(
+            self.helper,
+            "run_desktop",
+            return_value={"ok": True, "released": True},
+        ) as desktop:
+            code, stdout, stderr = self.run_main(
+                [
+                    "verify-release",
+                    "--job",
+                    "one-run",
+                    "--owner",
+                    "sol",
+                    "--approved-workflow-sha256",
+                    "a" * 64,
+                    "--confirm-windows-processes-absent",
+                ]
+            )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertTrue(json.loads(stdout)["released"])
+        self.assertEqual(desktop.call_args.args[0], "verify-release")
+        self.assertIn("--confirm-windows-processes-absent", desktop.call_args.args[1])
 
     def test_fetch_keeps_splat_suffix_guard_and_delegates(self) -> None:
         digest = "b" * 64

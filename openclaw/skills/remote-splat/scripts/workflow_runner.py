@@ -608,6 +608,12 @@ def process_tree_absent(
     return native_termination_verified and not windows_process_exists(root_pid)
 
 
+def require_manual_windows_release(state: dict[str, Any]) -> None:
+    state["resourceReleaseVerified"] = False
+    state["reservationState"] = "awaiting_manual_windows_verification"
+    state["reservationVerificationRequiredUnixSeconds"] = int(time.time())
+
+
 def run_workflow(manifest_path: Path) -> int:
     input_root = manifest_path.resolve().parent
     job_root = input_root.parent
@@ -659,6 +665,7 @@ def run_workflow(manifest_path: Path) -> int:
         "owner": manifest["owner"],
         "state": "running",
         "resourceReleaseVerified": False,
+        "reservationState": "held_by_running_workflow",
         "approvalSha256": os.environ.get("OPENCLAW_WORKFLOW_APPROVAL_SHA256"),
         "sealedRunnerSha256": sealed_runner_sha256,
         "externalDependencies": external_dependencies,
@@ -766,7 +773,7 @@ def run_workflow(manifest_path: Path) -> int:
                 if not cleanup_verified:
                     raise WorkflowError("cancelled process cleanup could not be verified")
                 state["state"] = "cancelled"
-                state["resourceReleaseVerified"] = True
+                require_manual_windows_release(state)
                 write_json_atomic(state_path, state)
                 return 130
 
@@ -915,7 +922,7 @@ def run_workflow(manifest_path: Path) -> int:
         if not all_process_cleanup_verified():
             raise WorkflowError("successful workflow cleanup could not be verified")
         state["state"] = "succeeded"
-        state["resourceReleaseVerified"] = True
+        require_manual_windows_release(state)
         state["artifacts"] = artifacts
         write_json_atomic(state_path, state)
         write_json_atomic(
@@ -946,10 +953,10 @@ def run_workflow(manifest_path: Path) -> int:
         )
         return 0
     except BaseException:
-        cleanup_verified = cleanup_running_phases()
-        cleanup_verified = all_process_cleanup_verified() and cleanup_verified
+        cleanup_running_phases()
+        all_process_cleanup_verified()
         state["state"] = "failed"
-        state["resourceReleaseVerified"] = cleanup_verified
+        require_manual_windows_release(state)
         write_json_atomic(state_path, state)
         raise
 

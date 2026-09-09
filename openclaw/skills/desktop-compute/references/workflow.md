@@ -55,7 +55,12 @@ work. Cooperative `cancel` is limited to the same owner and a sealed
 The managed launcher supplies a job-scoped native-process receipt path even to
 standalone scripts. Subsystems that execute Windows children must still route
 those scripts through their lifecycle runner so resource release consumes
-positive tree-cleanup evidence.
+lifecycle evidence. Managed remote-splat workflows additionally
+use supervised release: terminal computation and reservation state remain
+separate, a retained tmux session is allowed when its pane is dead, and a human
+must explicitly confirm Windows process absence before the dispatcher writes a
+validated release receipt. An agent must not synthesize that confirmation from
+its own inspection.
 
 ## Transfer behavior
 

@@ -33,6 +33,9 @@ RESOURCE_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?\Z")
 MAX_FILE_BYTES = 128 * 1024 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024
 MAX_STATE_BYTES = 64 * 1024
+POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+MANUAL_RELEASE_CONFIRMATION = "windows-processes-absent"
+MANUAL_RELEASE_RECEIPT = "manual-windows-release.json"
 SCRIPT_SUFFIXES = {
     "linux": frozenset((".sh",)),
     "windows": frozenset((".ps1", ".sh")),
@@ -429,13 +432,48 @@ def exit_code_for(scope: str, job: str) -> int | None:
         return None
 
 
+def valid_manual_release_receipt(
+    job: str,
+    record: dict[str, object],
+    workflow: dict[str, object],
+    receipt: dict[str, object],
+    *,
+    now: int | None = None,
+) -> bool:
+    confirmed = receipt.get("confirmedUnixSeconds")
+    required = workflow.get("reservationVerificationRequiredUnixSeconds")
+    current = int(time.time()) if now is None else now
+    return (
+        receipt.get("schemaVersion") == 1
+        and receipt.get("job") == job
+        and receipt.get("owner") == record.get("owner")
+        and receipt.get("approvalSha256") == workflow.get("approvalSha256")
+        and receipt.get("confirmation") == MANUAL_RELEASE_CONFIRMATION
+        and workflow.get("state") in {"succeeded", "failed", "cancelled"}
+        and workflow.get("resourceReleaseVerified") is False
+        and isinstance(confirmed, int)
+        and not isinstance(confirmed, bool)
+        and isinstance(required, int)
+        and not isinstance(required, bool)
+        and required > 0
+        and required <= confirmed <= current
+    )
+
+
 def run_releases_resources(scope: str, job: str, record: dict[str, object]) -> bool:
     if exit_code_for(scope, job) is None:
         return False
     if record.get("script") != "run-workflow.sh":
         return True
     workflow = read_state_json(scope, job, "workflow-state.json")
-    return workflow is not None and workflow.get("resourceReleaseVerified") is True
+    if workflow is None:
+        return False
+    if workflow.get("reservationState") != "awaiting_manual_windows_verification":
+        return workflow.get("resourceReleaseVerified") is True
+    receipt = read_state_json(scope, job, MANUAL_RELEASE_RECEIPT)
+    return receipt is not None and valid_manual_release_receipt(
+        job, record, workflow, receipt
+    )
 
 
 def active_resource_holders(scope: str, resources: list[str], current_job: str) -> list[str]:
@@ -662,6 +700,16 @@ def command_progress(arguments: list[str]) -> None:
             state = "invalid_status"
     elif run_record is not None and (not exists or pane_dead):
         state = "interrupted"
+    reservation_state: str | None = None
+    if run_record is not None:
+        if exit_code is not None and run_releases_resources(scope, job, run_record):
+            reservation_state = "released"
+        elif workflow_state is not None and isinstance(
+            workflow_state.get("reservationState"), str
+        ):
+            reservation_state = str(workflow_state["reservationState"])
+        else:
+            reservation_state = "held"
     runner_pid: int | None = None
     runner_pid_path = directory / "state/runner-pid"
     if runner_pid_path.is_file() and not runner_pid_path.is_symlink():
@@ -683,6 +731,10 @@ def command_progress(arguments: list[str]) -> None:
             "session": session,
             "sessionExists": exists,
             "state": state,
+            "reservationState": reservation_state,
+            "humanConfirmationRequired": (
+                reservation_state == "awaiting_manual_windows_verification"
+            ),
             "exitCode": exit_code,
             "run": run_record,
             "workflow": workflow_state,
@@ -739,6 +791,180 @@ def command_cancel(arguments: list[str]) -> None:
     )
 
 
+def process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def process_group_exists(pid: int) -> bool:
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def windows_process_exists(pid: int) -> bool:
+    completed = subprocess.run(
+        [
+            POWERSHELL,
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 3 }}; exit 0",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    if completed.returncode not in {0, 3}:
+        raise RequestError("Windows process verification failed")
+    return completed.returncode == 3
+
+
+def recorded_windows_pids(directory: Path) -> set[int]:
+    paths = list((directory / "state").glob("phase-*-native-process.json"))
+    standalone = directory / "state/standalone-native-process.json"
+    if standalone.exists():
+        paths.append(standalone)
+    result: set[int] = set()
+    for path in paths:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_STATE_BYTES:
+            raise RequestError("native Windows process receipt is invalid")
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+            if text.isdigit():
+                payload: object = {"rootPid": int(text)}
+            else:
+                payload = json.loads(text)
+        except (json.JSONDecodeError, UnicodeError, OSError, ValueError) as error:
+            raise RequestError("native Windows process receipt is invalid") from error
+        if not isinstance(payload, dict):
+            raise RequestError("native Windows process receipt is invalid")
+        for name in ("rootPid", "targetPid"):
+            pid = payload.get(name)
+            if pid is None:
+                continue
+            if (
+                not isinstance(pid, int)
+                or isinstance(pid, bool)
+                or not 1 <= pid <= 2**31 - 1
+            ):
+                raise RequestError("native Windows process receipt is invalid")
+            result.add(pid)
+    return result
+
+
+def recorded_workflow_pids(workflow: dict[str, object]) -> tuple[set[int], set[int]]:
+    phases = workflow.get("phases")
+    if not isinstance(phases, dict):
+        raise RequestError("workflow process inventory is invalid")
+    phase_pids: set[int] = set()
+    native_pids: set[int] = set()
+    for details in phases.values():
+        if not isinstance(details, dict):
+            raise RequestError("workflow process inventory is invalid")
+        for name, destination in (("pid", phase_pids), ("nativePid", native_pids)):
+            pid = details.get(name)
+            if pid is None:
+                continue
+            if (
+                not isinstance(pid, int)
+                or isinstance(pid, bool)
+                or not 1 <= pid <= 2**31 - 1
+            ):
+                raise RequestError("workflow process inventory is invalid")
+            destination.add(pid)
+    return phase_pids, native_pids
+
+
+def command_verify_release(arguments: list[str]) -> None:
+    if len(arguments) != 5:
+        raise RequestError(
+            "verify-release expects scope, job, owner, approval SHA-256, and confirmation"
+        )
+    scope, job, owner, approval, confirmation = arguments
+    scope = validate_scope(scope)
+    job = validate_job(job)
+    owner = validate_owner(owner)
+    approval = validate_sha256(approval)
+    if scope != "splat" or confirmation != MANUAL_RELEASE_CONFIRMATION:
+        raise RequestError("explicit human Windows process confirmation is required")
+
+    with host_state_lock():
+        directory = job_dir(scope, job)
+        record = read_run_record(scope, job)
+        workflow = read_state_json(scope, job, "workflow-state.json")
+        if record is None or record.get("script") != "run-workflow.sh":
+            raise RequestError("job is not a managed workflow")
+        if record.get("owner") != owner:
+            raise RequestError("workflow owner does not match")
+        if (
+            workflow is None
+            or workflow.get("approvalSha256") != approval
+            or workflow.get("state") not in {"succeeded", "failed", "cancelled"}
+            or workflow.get("reservationState")
+            != "awaiting_manual_windows_verification"
+            or exit_code_for(scope, job) is None
+        ):
+            raise RequestError("workflow is not awaiting manual Windows verification")
+
+        receipt_path = directory / "state" / MANUAL_RELEASE_RECEIPT
+        if receipt_path.exists():
+            receipt = read_state_json(scope, job, MANUAL_RELEASE_RECEIPT)
+            if receipt is None or not valid_manual_release_receipt(
+                job, record, workflow, receipt
+            ):
+                raise RequestError("manual Windows release receipt is invalid")
+            emit({"ok": True, "released": True, "alreadyConfirmed": True, **receipt})
+            return
+
+        session_exists, pane_dead = tmux_session_state(session_name(scope, job))
+        if session_exists and not pane_dead:
+            raise RequestError("workflow runner is still active")
+        runner_pid_path = directory / "state/runner-pid"
+        if runner_pid_path.exists():
+            if not runner_pid_path.is_file() or runner_pid_path.is_symlink():
+                raise RequestError("workflow runner PID receipt is invalid")
+            try:
+                runner_pid = int(runner_pid_path.read_text(encoding="ascii").strip())
+            except (OSError, ValueError) as error:
+                raise RequestError("workflow runner PID receipt is invalid") from error
+            if not 1 <= runner_pid <= 2**31 - 1:
+                raise RequestError("workflow runner PID receipt is invalid")
+            if process_exists(runner_pid):
+                raise RequestError("workflow runner is still active")
+        phase_pids, native_pids = recorded_workflow_pids(workflow)
+        if any(
+            process_exists(pid) or process_group_exists(pid) for pid in phase_pids
+        ):
+            raise RequestError("a recorded workflow phase is still active")
+        native_pids.update(recorded_windows_pids(directory))
+        if any(windows_process_exists(pid) for pid in native_pids):
+            raise RequestError("a recorded Windows process is still active")
+
+        receipt = {
+            "schemaVersion": 1,
+            "job": job,
+            "owner": owner,
+            "approvalSha256": approval,
+            "confirmation": MANUAL_RELEASE_CONFIRMATION,
+            "confirmedUnixSeconds": int(time.time()),
+        }
+        write_json_atomic(receipt_path, receipt)
+        if not valid_manual_release_receipt(job, record, workflow, receipt):
+            raise RequestError("manual Windows release receipt is invalid")
+        emit({"ok": True, "released": True, "alreadyConfirmed": False, **receipt})
+
+
 def command_get_output(arguments: list[str]) -> None:
     if len(arguments) != 4:
         raise RequestError("get-output expects scope, job, path, and SHA-256")
@@ -768,6 +994,7 @@ COMMANDS = {
     "run": command_run,
     "progress": command_progress,
     "cancel": command_cancel,
+    "verify-release": command_verify_release,
     "get-output": command_get_output,
     "attach": command_attach,
 }

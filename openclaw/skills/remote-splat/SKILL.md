@@ -59,9 +59,12 @@ remote-splat retrieve --job cabin-interior-v1 \
 `inspect` is read-only and reports the run owner, reservations, recorded
 process IDs, phase state, and `waitingOn` dependency or checkpoint. Do not
 create diagnostic compute jobs for routine monitoring. `cancel` is
-owner-bound and cooperative. Resources are released after verified process-tree
-cleanup, including for an ordinary phase failure; a failed or interrupted
-cleanup stays visibly blocked for operator recovery.
+owner-bound and cooperative. The runner performs its existing cleanup checks
+before recording a terminal computation state. Windows-backed workflows remain
+visibly blocked after computation finishes until a human verifies the
+Windows processes are absent and explicitly runs `verify-release`. Never infer
+or supply that confirmation from an agent's own checks; ask the user to perform
+the supervised verification and invoke the confirmation themselves.
 
 ## Safety boundary
 
@@ -75,8 +78,10 @@ cleanup stays visibly blocked for operator recovery.
 - The automatic lightweight preflight must pass before expensive phases. It
   exercises the actual COLMAP feature/matcher database path, checks schema,
   probes Brush/DLL loading, and requires a stable Windows Node runtime. Its
-  native tools use the sealed Windows wrapper and retain positive tree-cleanup
-  evidence.
+  native tools use the sealed Windows wrapper and retain lifecycle evidence.
+- Keep computation and reservation status separate. `succeeded, awaiting
+  manual Windows verification` is a valid terminal result and does not permit
+  another reserved job to start.
 - Use the staged native Windows copy/hash helper for large Windows/WSL moves.
   Do not use metadata-preserving copies across those filesystems.
 - Fetch only `.sog`, `.ply`, or generated `.webp` QA outputs. Retrieval checks

@@ -83,12 +83,33 @@ verifies recorded processes and performs deliberate recovery.
 Windows phases run through the sealed native-process wrapper. Shell phases
 receive `OPENCLAW_NATIVE_PID_FILE`; every Windows executable they launch must
 use the same helper, as the built-in canary does. Its durable receipt remains
-`running` until a bounded Windows process-tree scan proves the executable left
-no live descendants, then atomically becomes `complete` with
-`treeCleanupVerified: true`. A missing or deleted receipt is not proof.
+`running` through the wrapper's bounded process checks, then atomically becomes
+`complete` with its observed cleanup result. A missing or deleted receipt is
+not proof, and a completed receipt is not sufficient to release a Windows
+reservation because snapshot polling can miss a descendant behind a
+short-lived intermediate process.
 Cancellation requires successful `taskkill /T`, verifies the native PID is
 absent, then verifies the complete WSL process group is gone. Resource release
-depends on verified cleanup rather than workflow success.
+does not follow automatically: computation remains `succeeded`, `failed`, or
+`cancelled` while reservation state becomes
+`awaiting_manual_windows_verification`.
+
+After the runner or retained tmux pane is inactive, a human must inspect the
+Windows process list and GPU activity, verify the recorded wrapper and target
+PIDs are absent, and explicitly run:
+
+```bash
+remote-splat verify-release --job <job> --owner <owner> \
+  --approved-workflow-sha256 <approvalSha256> \
+  --confirm-windows-processes-absent
+```
+
+An agent must not supply this confirmation based on its own checks. The
+dispatcher accepts a retained tmux session with a dead pane, rejects an active
+runner or recorded Windows PID, and writes an atomic manual-release receipt.
+Reservation release requires a valid receipt whose job, owner, approval hash,
+confirmation value, and timestamp match the terminal workflow. An invalid or
+missing receipt keeps the host-wide reservation held.
 
 ## Lightweight preflight and file operations
 
