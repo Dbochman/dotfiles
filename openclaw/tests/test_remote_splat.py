@@ -651,6 +651,24 @@ class RemoteSplatTests(unittest.TestCase):
         self.assertIsNone(name)
         self.assertIsNone(step)
 
+    def test_windows_native_wrapper_preserves_powershell_51_argument_array(self) -> None:
+        source = (self.helper.SCRIPT_DIR / "windows_process_runner.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "[string[]]$Arguments = ConvertFrom-Json -InputObject $argumentsJson", source
+        )
+        self.assertNotIn("@(ConvertFrom-Json -InputObject $argumentsJson)", source)
+
+    def test_windows_native_receipt_replacement_uses_true_null_string(self) -> None:
+        source = (self.helper.SCRIPT_DIR / "windows_process_runner.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "[System.IO.File]::Replace($temporary, $receiptPath, [NullString]::Value)",
+            source,
+        )
+
     def test_brush_preflight_preserves_runtime_failure_status(self) -> None:
         source = (self.helper.SCRIPT_DIR / "compute_canary.sh").read_text(encoding="utf-8")
         gate = source[source.index("if ! brush_help=") : source.index("node_version=")]

@@ -38,7 +38,7 @@ function Write-NativeReceipt {
     try {
         [System.IO.File]::WriteAllText($temporary, "${payload}`n")
         if ([System.IO.File]::Exists($receiptPath)) {
-            [System.IO.File]::Replace($temporary, $receiptPath, $null)
+            [System.IO.File]::Replace($temporary, $receiptPath, [NullString]::Value)
         } else {
             [System.IO.File]::Move($temporary, $receiptPath)
         }
@@ -116,7 +116,7 @@ try {
     $argumentsJson = [System.Text.Encoding]::UTF8.GetString(
         [System.Convert]::FromBase64String($ArgumentsBase64)
     )
-    [string[]]$Arguments = @(ConvertFrom-Json -InputObject $argumentsJson)
+    [string[]]$Arguments = ConvertFrom-Json -InputObject $argumentsJson
 } catch {
     throw 'Windows executable arguments are invalid'
 }
