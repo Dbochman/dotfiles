@@ -421,6 +421,8 @@ def process_group_exists(process_group: int) -> bool:
         os.killpg(process_group, 0)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 

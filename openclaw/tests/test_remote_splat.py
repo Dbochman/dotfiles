@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+import errno
 import hashlib
 import importlib.util
 from importlib.machinery import SourceFileLoader
@@ -687,6 +688,42 @@ class RemoteSplatTests(unittest.TestCase):
             check=False,
         )
         self.assertNotEqual(completed.returncode, 0)
+
+    def test_process_group_permission_error_blocks_cleanup_verification(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_permission_test")
+        process = mock.Mock(pid=12345)
+        with mock.patch.object(runner.os, "killpg", side_effect=PermissionError) as killpg:
+            self.assertTrue(runner.process_group_exists(process.pid))
+            self.assertFalse(runner.process_tree_absent(process, None))
+        self.assertEqual(killpg.call_args_list, [mock.call(process.pid, 0)] * 2)
+
+    def test_process_group_wait_retries_transient_permission_error(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_transient_permission_test")
+        with mock.patch.object(
+            runner.os, "killpg", side_effect=[PermissionError, ProcessLookupError]
+        ) as killpg:
+            with mock.patch.object(runner.time, "monotonic", return_value=0):
+                with mock.patch.object(runner.time, "sleep") as sleep:
+                    self.assertTrue(runner.wait_for_process_group_exit(12345, 1))
+        self.assertEqual(killpg.call_args_list, [mock.call(12345, 0)] * 2)
+        sleep.assert_called_once_with(0.05)
+
+    def test_process_group_wait_times_out_on_persistent_permission_error(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_persistent_permission_test")
+        with mock.patch.object(runner.os, "killpg", side_effect=PermissionError) as killpg:
+            with mock.patch.object(runner.time, "monotonic", side_effect=[0, 0, 1]):
+                with mock.patch.object(runner.time, "sleep") as sleep:
+                    self.assertFalse(runner.wait_for_process_group_exit(12345, 1))
+        self.assertEqual(killpg.call_args_list, [mock.call(12345, 0)] * 2)
+        sleep.assert_called_once_with(0.05)
+
+    def test_process_group_probe_propagates_unexpected_errors(self) -> None:
+        runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_probe_error_test")
+        error = OSError(errno.EIO, "process probe failed")
+        with mock.patch.object(runner.os, "killpg", side_effect=error):
+            with self.assertRaises(OSError) as raised:
+                runner.process_group_exists(12345)
+        self.assertIs(raised.exception, error)
 
     def test_terminate_process_removes_complete_process_group(self) -> None:
         runner = load_module(WORKFLOW_RUNNER, "workflow_runner_for_termination_test")
