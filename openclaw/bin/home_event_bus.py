@@ -4138,6 +4138,16 @@ class EventStore:
                     "SELECT status, COUNT(*) FROM action_reservations GROUP BY status"
                 ).fetchall()
             }
+            feeding_schedule_counts = {
+                status: count
+                for status, count in connection.execute(
+                    """
+                    SELECT status, COUNT(*) FROM action_reservations
+                    WHERE target_alias = 'feeding_schedule'
+                    GROUP BY status
+                    """
+                ).fetchall()
+            }
             action_outcomes = {
                 outcome: count
                 for outcome, count in connection.execute(
@@ -4313,6 +4323,16 @@ class EventStore:
                 "actions": {
                     "counts": {
                         state: action_counts.get(state, 0)
+                        for state in (
+                            "pending",
+                            "claimed",
+                            "complete",
+                            "cancelled",
+                            "outcome_unknown",
+                        )
+                    },
+                    "feeding_schedule_counts": {
+                        state: feeding_schedule_counts.get(state, 0)
                         for state in (
                             "pending",
                             "claimed",

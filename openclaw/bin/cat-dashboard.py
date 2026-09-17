@@ -246,7 +246,9 @@ def collect_transfer_coverage() -> dict[str, object]:
     whisker = sources.get("whisker") if isinstance(sources, dict) else None
     observer = whisker.get("observer") if isinstance(whisker, dict) else None
     sites = observer.get("sites") if isinstance(observer, dict) else None
-    counts = actions.get("counts") if isinstance(actions, dict) else None
+    counts = (
+        actions.get("feeding_schedule_counts") if isinstance(actions, dict) else None
+    )
     if not isinstance(sites, dict) or not isinstance(counts, dict):
         return {"ok": False, "error": "Cat transfer coverage is unavailable"}
 

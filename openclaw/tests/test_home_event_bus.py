@@ -1623,6 +1623,58 @@ class ConsumerAndQueryTests(HomeEventTestCase):
         self.event = self.enqueue(ring_payload())
         self.ingest()
 
+    def test_status_scopes_feeder_counts_without_hiding_other_actions(self) -> None:
+        with self.connection() as connection:
+            for index, (target, status) in enumerate(
+                (
+                    ("daily_automations", "outcome_unknown"),
+                    ("all_lights", "pending"),
+                    ("feeding_schedule", "complete"),
+                    ("feeding_schedule", "outcome_unknown"),
+                    ("feeding_schedule", "pending"),
+                )
+            ):
+                connection.execute(
+                    """
+                    INSERT INTO action_reservations(
+                        reservation_uid, site, target_alias, action,
+                        vacancy_cycle_id, trigger_state_hash, reserved_state_hash,
+                        policy_hash, status, reserved_at, expires_at
+                    ) VALUES (?, 'cabin', ?, 'suspend_restore', ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"act_{index:032x}",
+                        target,
+                        f"cycle_{index:032x}",
+                        "1" * 64,
+                        "2" * 64,
+                        "3" * 64,
+                        status,
+                        NOW,
+                        "2026-07-12T15:10:00Z",
+                    ),
+                )
+
+        actions = self.store.status_snapshot()["actions"]
+
+        self.assertEqual(actions["counts"]["outcome_unknown"], 2)
+        self.assertEqual(actions["counts"]["pending"], 2)
+        self.assertEqual(
+            actions["feeding_schedule_counts"],
+            {
+                "pending": 1,
+                "claimed": 0,
+                "complete": 1,
+                "cancelled": 0,
+                "outcome_unknown": 1,
+            },
+        )
+
+    def test_status_returns_zero_feeder_counts_when_no_actions_exist(self) -> None:
+        counts = self.store.status_snapshot()["actions"]["feeding_schedule_counts"]
+        self.assertEqual(len(counts), 5)
+        self.assertTrue(all(count == 0 for count in counts.values()))
+
     def test_claim_acknowledge_and_expired_reclaim_are_lease_safe(self) -> None:
         claimed = self.store.claim_deliveries("correlator", lease_seconds=120)
         self.assertEqual(len(claimed["deliveries"]), 1)

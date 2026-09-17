@@ -155,7 +155,9 @@ class CatDashboardTests(unittest.TestCase):
                             },
                         }
                     },
-                    "actions": {"counts": {"pending": 0, "outcome_unknown": 0}},
+                    "actions": {
+                        "feeding_schedule_counts": {"pending": 0, "outcome_unknown": 0}
+                    },
                 },
             ],
         ) as run:
@@ -264,13 +266,56 @@ class CatDashboardTests(unittest.TestCase):
                         },
                     }
                 },
-                "actions": {"counts": {"pending": 0, "outcome_unknown": 0}},
+                "actions": {
+                    "feeding_schedule_counts": {"pending": 0, "outcome_unknown": 0}
+                },
             },
         ):
             transfer = self.dashboard.collect_transfer_coverage()
 
         self.assertEqual(transfer["bus_health"], "degraded")
         self.assertTrue(transfer["coverage_ready"])
+
+    def test_transfer_coverage_scopes_action_counts_to_feeders(self) -> None:
+        payload = {
+            "health": "ok",
+            "sources": {
+                "whisker": {
+                    "observer": {
+                        "health": "ok",
+                        "sites": {
+                            site: {
+                                "enabled": True,
+                                "baselined": True,
+                                "health": "ok",
+                                "poll_age_seconds": 12,
+                            }
+                            for site in ("cabin", "crosstown")
+                        },
+                    },
+                },
+            },
+            "actions": {
+                "counts": {"pending": 9, "outcome_unknown": 7},
+            },
+        }
+        for counts in (
+            {"pending": 0, "outcome_unknown": 0},
+            {"pending": 2, "outcome_unknown": 1},
+            None,
+        ):
+            with self.subTest(counts=counts):
+                payload["actions"]["feeding_schedule_counts"] = counts
+                with patch.object(self.dashboard, "_run_json", return_value=payload):
+                    transfer = self.dashboard.collect_transfer_coverage()
+                if counts is None:
+                    self.assertFalse(transfer["ok"])
+                else:
+                    self.assertTrue(transfer["ok"])
+                    self.assertEqual(transfer["pending_actions"], counts["pending"])
+                    self.assertEqual(
+                        transfer["unknown_actions"], counts["outcome_unknown"]
+                    )
 
     def test_transfer_summary_describes_confirmed_cabin_state_in_plain_english(
         self,

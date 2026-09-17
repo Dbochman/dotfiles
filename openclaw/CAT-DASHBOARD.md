@@ -57,6 +57,10 @@ food, and water—rather than around vendor accounts or a generic device grid.
   Whisker observer and both fresh site polls, independently of unrelated
   top-level event-bus degradation; broader bus health is shown as a separate
   advisory and does not mislabel healthy feeder protection as unavailable. A
+  pending or unknown feeder action comes only from the event bus's
+  `actions.feeding_schedule_counts`, never from its all-device totals. An
+  uncertain lighting action remains in the event journal without becoming a
+  feeder warning; missing feeder-specific counts make coverage unavailable. A
   prior feeder-readback error stops appearing as current attention after the
   action worker or a fresh dashboard readback confirms the expected schedule.
   When a human has already restored the returning home's schedule and the

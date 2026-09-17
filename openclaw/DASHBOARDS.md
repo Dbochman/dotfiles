@@ -242,7 +242,8 @@ with Petlibro feeders and fountains.
   Litter-Robot sensor and cleaning records are collapsed out
 - **Attention state** — integration errors, offline robots, and waste drawers
   that are full or approaching full, plus stale transfer evidence or unknown
-  feeder outcomes
+  feeder outcomes; pending/unknown action counts are feeder-specific, so
+  unrelated lighting actions cannot produce a feeder warning
 
 ### Files
 
