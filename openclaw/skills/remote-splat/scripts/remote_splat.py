@@ -9,10 +9,12 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import selectors
 import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Sequence
 
 
@@ -35,6 +37,7 @@ WORKSTATION_TAILSCALE_CANDIDATES = (
     "/opt/homebrew/bin/tailscale",
 )
 MAX_CAPTURE_BYTES = 128 * 1024
+WORKSTATION_FETCH_TIMEOUT = 30 * 60
 JOB_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?\Z")
 REL_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,239}\Z")
 INBOX_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,159}\Z")
@@ -790,6 +793,19 @@ def validate_workstation_video(value: str) -> PurePosixPath:
     return source
 
 
+def validate_local_video_destination(value: str) -> Path:
+    destination = Path(value)
+    if not destination.is_absolute() or destination.suffix.casefold() not in video_prep.VIDEO_SUFFIXES:
+        raise PublicError("workstation destination must be an absolute supported video path")
+    if destination.is_symlink() or destination.parent.is_symlink():
+        raise PublicError("workstation destination must not use a symlink")
+    if not destination.parent.is_dir():
+        raise PublicError("workstation destination parent must be an existing directory")
+    if destination.exists() and not destination.is_file():
+        raise PublicError("workstation destination must be a regular file")
+    return destination
+
+
 def run_workstation(arguments: Sequence[str], *, timeout: int = 120) -> str:
     try:
         completed = subprocess.run(
@@ -828,6 +844,153 @@ def workstation_metadata(source: PurePosixPath) -> tuple[int, str]:
     if size <= 0 or not SHA256_RE.fullmatch(digest):
         raise PublicError("workstation video metadata is invalid")
     return size, digest
+
+
+def workstation_source_size(source: PurePosixPath) -> int:
+    output = run_workstation(
+        [
+            "/bin/sh",
+            "-c",
+            '[ -f "$1" ] && [ ! -L "$1" ] && /usr/bin/stat -f %z "$1"',
+            "remote-splat-workstation-fetch",
+            str(source),
+        ],
+        timeout=30,
+    )
+    try:
+        size = int(output.strip())
+    except ValueError as error:
+        raise PublicError("workstation video metadata is invalid") from error
+    if size <= 0:
+        raise PublicError("workstation video metadata is invalid")
+    return size
+
+
+def start_workstation_cat(source: PurePosixPath) -> subprocess.Popen[bytes]:
+    try:
+        return subprocess.Popen(
+            [
+                WORKSTATION_SSH,
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=8",
+                WORKSTATION_HOST,
+                shlex.join(["/bin/cat", str(source)]),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        raise PublicError("Dylan's workstation is unavailable") from error
+
+
+def stream_workstation_video(
+    source: PurePosixPath,
+    output_handle: object,
+    *,
+    expected_size: int,
+    timeout: float | None = None,
+) -> tuple[int, str]:
+    if timeout is None:
+        timeout = WORKSTATION_FETCH_TIMEOUT
+    producer = start_workstation_cat(source)
+    assert producer.stdout is not None
+    digest = hashlib.sha256()
+    size = 0
+    deadline = time.monotonic() + timeout
+    selector = selectors.DefaultSelector()
+    try:
+        selector.register(producer.stdout, selectors.EVENT_READ)
+        reached_eof = False
+        while not reached_eof:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise PublicError("workstation fetch timed out")
+            if not selector.select(remaining):
+                raise PublicError("workstation fetch timed out")
+            chunk = os.read(producer.stdout.fileno(), min(1024 * 1024, expected_size - size + 1))
+            if not chunk:
+                reached_eof = True
+                continue
+            size += len(chunk)
+            if size > expected_size:
+                raise PublicError("workstation transfer exceeded expected size")
+            output_handle.write(chunk)
+            digest.update(chunk)
+        try:
+            producer.wait(timeout=max(0.1, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired as error:
+            raise PublicError("workstation fetch timed out") from error
+        if producer.returncode != 0:
+            raise PublicError("workstation fetch failed")
+    finally:
+        selector.close()
+        producer.stdout.close()
+        if producer.poll() is None:
+            producer.terminate()
+            try:
+                producer.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                producer.kill()
+                producer.wait(timeout=5)
+    return size, digest.hexdigest()
+
+
+def command_workstation_fetch(args: argparse.Namespace) -> None:
+    source = validate_workstation_video(args.source)
+    destination = validate_local_video_destination(args.destination)
+    expected_digest = validate_sha256(args.expected_sha256)
+    expected_size = args.expected_size_bytes
+    if expected_size <= 0:
+        raise PublicError("expected size bytes must be positive")
+
+    payload: dict[str, object] = {
+        "ok": True,
+        "source": source.name,
+        "destination": str(destination),
+        "sizeBytes": expected_size,
+        "sha256": expected_digest,
+        "transport": "workstation-ssh",
+    }
+    if destination.exists():
+        if destination.stat().st_size != expected_size or hash_file(destination) != expected_digest:
+            raise PublicError("workstation destination already exists with different content")
+        payload["reused"] = True
+        emit(payload)
+        return
+
+    if workstation_source_size(source) != expected_size:
+        raise PublicError("workstation source size does not match expected size")
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=destination.parent,
+        prefix=f".{destination.name}.",
+        suffix=".partial",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output_handle:
+            size, digest = stream_workstation_video(
+                source,
+                output_handle,
+                expected_size=expected_size,
+            )
+            output_handle.flush()
+            os.fsync(output_handle.fileno())
+        if size != expected_size:
+            raise PublicError("workstation transfer was truncated")
+        if digest != expected_digest:
+            raise PublicError("workstation transfer SHA-256 does not match expected SHA-256")
+        try:
+            os.link(temporary, destination)
+        except FileExistsError as error:
+            raise PublicError("workstation destination appeared during transfer") from error
+        temporary.unlink()
+    finally:
+        temporary.unlink(missing_ok=True)
+    payload["reused"] = False
+    emit(payload)
 
 
 def workstation_tailscale_path() -> str:
@@ -1294,6 +1457,16 @@ def parser() -> argparse.ArgumentParser:
     workstation_inbox_stage.add_argument("--source", required=True)
     workstation_inbox_stage.add_argument("--dry-run", action="store_true")
     workstation_inbox_stage.set_defaults(func=command_workstation_inbox_stage)
+
+    workstation_fetch = sub.add_parser(
+        "workstation-fetch",
+        help="fetch one manifest-bound Downloads video into a new local file",
+    )
+    workstation_fetch.add_argument("--source", required=True)
+    workstation_fetch.add_argument("--destination", required=True)
+    workstation_fetch.add_argument("--expected-sha256", required=True)
+    workstation_fetch.add_argument("--expected-size-bytes", required=True, type=int)
+    workstation_fetch.set_defaults(func=command_workstation_fetch)
 
     plan = sub.add_parser("plan-run", help="inspect a staged script and return its approval hash")
     plan.add_argument("--job", required=True)

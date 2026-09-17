@@ -403,6 +403,170 @@ class RemoteSplatTests(unittest.TestCase):
                 self.assertEqual(code, 2)
                 self.assertIn("directly inside Downloads", stderr)
 
+    def workstation_fetch_args(self, destination: Path, data: bytes) -> list[str]:
+        return [
+            "workstation-fetch",
+            "--source",
+            "/Users/dylanbochman/Downloads/IMG_4120.MOV",
+            "--destination",
+            str(destination),
+            "--expected-sha256",
+            hashlib.sha256(data).hexdigest(),
+            "--expected-size-bytes",
+            str(len(data)),
+        ]
+
+    def mocked_workstation_cat(self, data: bytes, *, delay: float = 0) -> subprocess.Popen[bytes]:
+        script = "import sys,time; time.sleep(float(sys.argv[1])); sys.stdout.buffer.write(sys.argv[2].encode())"
+        return subprocess.Popen(
+            [sys.executable, "-c", script, str(delay), data.decode()],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def test_workstation_fetch_streams_and_emits_json(self) -> None:
+        data = b"manifest-bound-video"
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "prepared.mov"
+            with mock.patch.object(
+                self.helper, "workstation_source_size", return_value=len(data)
+            ) as metadata:
+                with mock.patch.object(
+                    self.helper,
+                    "start_workstation_cat",
+                    side_effect=lambda _source: self.mocked_workstation_cat(data),
+                ):
+                    code, stdout, stderr = self.run_main(
+                        self.workstation_fetch_args(destination, data)
+                    )
+            self.assertEqual(destination.read_bytes(), data)
+            self.assertEqual(list(destination.parent.glob("*.partial")), [])
+        self.assertEqual((code, stderr), (0, ""))
+        payload = json.loads(stdout)
+        self.assertFalse(payload["reused"])
+        self.assertEqual(payload["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(payload["sizeBytes"], len(data))
+        metadata.assert_called_once()
+
+    def test_workstation_fetch_rejects_corrupt_truncated_and_oversized_streams(self) -> None:
+        expected = b"expected-video"
+        cases = {
+            "corrupt": b"unexpected-vid",
+            "truncated": expected[:-1],
+            "oversized": expected + b"x",
+        }
+        for label, received in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory) / "prepared.mov"
+                with mock.patch.object(
+                    self.helper, "workstation_source_size", return_value=len(expected)
+                ):
+                    with mock.patch.object(
+                        self.helper,
+                        "start_workstation_cat",
+                        side_effect=lambda _source, data=received: self.mocked_workstation_cat(data),
+                    ):
+                        code, _stdout, _stderr = self.run_main(
+                            self.workstation_fetch_args(destination, expected)
+                        )
+                self.assertEqual(code, 2)
+                self.assertFalse(destination.exists())
+                self.assertEqual(list(destination.parent.glob("*.partial")), [])
+
+    def test_workstation_fetch_rejects_timeout_and_missing_source(self) -> None:
+        data = b"video"
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "prepared.mov"
+            with mock.patch.object(
+                self.helper, "workstation_source_size", return_value=len(data)
+            ):
+                with mock.patch.object(
+                    self.helper,
+                    "start_workstation_cat",
+                    side_effect=lambda _source: self.mocked_workstation_cat(data, delay=1),
+                ):
+                    with mock.patch.object(self.helper, "WORKSTATION_FETCH_TIMEOUT", 0.01):
+                        code, _stdout, stderr = self.run_main(
+                            self.workstation_fetch_args(destination, data)
+                        )
+            self.assertEqual(code, 2)
+            self.assertIn("timed out", stderr)
+            self.assertFalse(destination.exists())
+
+            with mock.patch.object(
+                self.helper,
+                "workstation_source_size",
+                side_effect=self.helper.PublicError("workstation splat operation failed"),
+            ):
+                code, _stdout, stderr = self.run_main(
+                    self.workstation_fetch_args(destination, data)
+                )
+            self.assertEqual(code, 2)
+            self.assertIn("operation failed", stderr)
+
+    def test_workstation_fetch_reuses_match_and_rejects_collisions_and_symlinks(self) -> None:
+        data = b"existing-video"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "prepared.mov"
+            destination.write_bytes(data)
+            with mock.patch.object(self.helper, "workstation_source_size") as metadata:
+                code, stdout, stderr = self.run_main(
+                    self.workstation_fetch_args(destination, data)
+                )
+            self.assertEqual((code, stderr), (0, ""))
+            self.assertTrue(json.loads(stdout)["reused"])
+            metadata.assert_not_called()
+
+            destination.write_bytes(b"different")
+            code, _stdout, stderr = self.run_main(
+                self.workstation_fetch_args(destination, data)
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("different content", stderr)
+
+            destination.unlink()
+            destination.symlink_to(root / "missing.mov")
+            code, _stdout, stderr = self.run_main(
+                self.workstation_fetch_args(destination, data)
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("symlink", stderr)
+
+            destination.unlink()
+            symlink_parent = root / "linked"
+            symlink_parent.symlink_to(root)
+            code, _stdout, stderr = self.run_main(
+                self.workstation_fetch_args(symlink_parent / "prepared.mov", data)
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("symlink", stderr)
+
+    def test_workstation_fetch_cli_requires_manifest_arguments(self) -> None:
+        arguments = [
+            "workstation-fetch",
+            "--source",
+            "/Users/dylanbochman/Downloads/IMG_4120.MOV",
+            "--destination",
+            "/tmp/prepared.mov",
+            "--expected-sha256",
+            "a" * 64,
+            "--expected-size-bytes",
+            "5",
+        ]
+        for option in (
+            "--source",
+            "--destination",
+            "--expected-sha256",
+            "--expected-size-bytes",
+        ):
+            with self.subTest(option=option):
+                omitted = list(arguments)
+                index = omitted.index(option)
+                del omitted[index : index + 2]
+                with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    self.helper.parser().parse_args(omitted)
+
     def test_plan_and_run_are_bound_to_exact_hash(self) -> None:
         digest = "a" * 64
         with mock.patch.object(

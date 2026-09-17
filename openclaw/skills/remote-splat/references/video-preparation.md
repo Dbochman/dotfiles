@@ -115,6 +115,27 @@ the Windows filesystem through WSL merely to reproduce that digest; bind later
 steps to the receipt plus exact path and size, and reserve another full hash for
 artifact handoff or when provenance has become ambiguous.
 
+For native preparation on the Mini, fetch one manifest-bound original into a
+local working directory without modifying the workstation source:
+
+```bash
+remote-splat workstation-fetch \
+  --source '/Users/dylanbochman/Downloads/IMG_4120.MOV' \
+  --destination '/absolute/local/preparation/IMG_4120.MOV' \
+  --expected-sha256 '<64-hex-manifest-sha256>' \
+  --expected-size-bytes '<positive-manifest-size>'
+```
+
+The source must be a supported video directly inside Dylan's Mac `Downloads`.
+The destination must be an absolute supported-video path under an existing
+local directory. The helper verifies a regular non-symlink remote source and
+its expected size, streams `/bin/cat` through the configured workstation SSH
+identity into a same-directory temporary file, and enforces a 30-minute timeout
+plus the expected-size ceiling. It checks the received size and SHA-256 before
+an atomic no-clobber promotion. An existing matching destination is reused;
+mismatches, collisions, and symlinks fail closed. Run `video-review` and
+`video-extract` only against the verified local path.
+
 Clips are frame-accurate H.264 review/reference copies with audio and metadata
 removed. Modeling frames are high-quality JPEGs extracted directly from the
 original source at the requested cadence. `frames.csv` maps ordered filenames
