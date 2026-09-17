@@ -12,6 +12,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "bin/home_event_action.py"
@@ -360,6 +361,17 @@ class HomeEventActionTests(unittest.TestCase):
             sleeper=lambda _seconds: None,
         )
 
+    def reserve_automations(self) -> dict:
+        return actions.reserve_current_canary(
+            self.root,
+            "crosstown",
+            "daily_automations",
+            state_path=self.state_path,
+            producer_path=self.producer_path,
+            journal_root=self.journal,
+            clock=lambda: NOW,
+        )
+
     def database_row(self) -> sqlite3.Row:
         connection = sqlite3.connect(self.root / "state/events.sqlite3")
         self.addCleanup(connection.close)
@@ -483,6 +495,115 @@ class HomeEventActionTests(unittest.TestCase):
             actions.safe_status(self.root)["automation_suspensions"]["active_count"],
             0,
         )
+
+    def test_missing_automation_bindings_fail_without_command_or_retry(self) -> None:
+        self.automation_state.write_text("{}", encoding="utf-8")
+        self.reserve_automations()
+
+        with patch.object(actions, "_hue_automation_set") as mutation:
+            result = self.run_worker()
+            second = self.run_worker()
+
+        mutation.assert_not_called()
+        self.assertEqual(result["outcome"], "failed")
+        self.assertEqual(result["reason_code"], "automation_binding_missing")
+        self.assertFalse(result["command_attempted"])
+        self.assertEqual(second["mode"], "idle")
+        self.assertEqual(self.reserve_automations()["status"], "duplicate")
+        self.assertEqual(self.database_row()["status"], "complete")
+        self.assertEqual(self.database_row()["command_attempted"], 0)
+        self.assertFalse(actions._suspension_path(self.root).exists())
+
+    def test_automation_inventory_failure_is_not_a_command_attempt(self) -> None:
+        self.reserve_automations()
+
+        with patch.object(
+            actions,
+            "_hue_automation_inventory",
+            side_effect=actions.ActionError("automation_readback_unavailable"),
+        ), patch.object(actions, "_hue_automation_set") as mutation:
+            result = self.run_worker()
+
+        mutation.assert_not_called()
+        self.assertEqual(result["outcome"], "failed")
+        self.assertFalse(result["command_attempted"])
+        self.assertEqual(self.database_row()["command_attempted"], 0)
+
+    def test_first_automation_command_failure_remains_unknown(self) -> None:
+        self.reserve_automations()
+
+        with patch.object(
+            actions,
+            "_hue_automation_set",
+            side_effect=actions.ActionError("automation_command_failed"),
+        ) as mutation:
+            result = self.run_worker()
+
+        self.assertEqual(mutation.call_count, 1)
+        self.assertEqual(result["outcome"], "outcome_unknown")
+        self.assertTrue(result["command_attempted"])
+        self.assertEqual(self.database_row()["command_attempted"], 1)
+        self.assertEqual(self.reserve_automations()["status"], "duplicate")
+
+    def test_partial_automation_command_failure_remains_unknown(self) -> None:
+        self.reserve_automations()
+
+        with patch.object(
+            actions,
+            "_hue_automation_set",
+            side_effect=[True, actions.ActionError("automation_command_failed")],
+        ) as mutation:
+            result = self.run_worker()
+
+        self.assertEqual(mutation.call_count, 2)
+        self.assertEqual(result["outcome"], "outcome_unknown")
+        self.assertTrue(result["command_attempted"])
+        self.assertEqual(self.database_row()["command_attempted"], 1)
+
+    def test_automation_post_command_readback_failure_remains_unknown(self) -> None:
+        self.reserve_automations()
+        inventory = json.loads(self.automation_state.read_text())
+
+        with patch.object(
+            actions,
+            "_hue_automation_inventory",
+            side_effect=[inventory, actions.ActionError("automation_readback_unavailable")],
+        ), patch.object(actions, "_hue_automation_set", return_value=True) as mutation:
+            result = self.run_worker()
+
+        self.assertEqual(mutation.call_count, 2)
+        self.assertEqual(result["outcome"], "outcome_unknown")
+        self.assertTrue(result["command_attempted"])
+        self.assertEqual(self.database_row()["command_attempted"], 1)
+
+    def test_already_disabled_automations_require_no_command(self) -> None:
+        values = json.loads(self.automation_state.read_text())
+        self.automation_state.write_text(json.dumps({name: False for name in values}))
+        self.reserve_automations()
+
+        with patch.object(actions, "_hue_automation_set") as mutation:
+            result = self.run_worker()
+
+        mutation.assert_not_called()
+        self.assertEqual(result["outcome"], "state_confirmed")
+        self.assertFalse(result["command_attempted"])
+
+    def test_tracked_policy_retires_routines_but_preserves_lights_and_feeders(self) -> None:
+        path = MODULE_PATH.parents[1] / "home-event-action-policy.json"
+        value = actions.validate_policy(json.loads(path.read_text()))
+        self.assertTrue(value["active"])
+        self.assertNotIn("daily_automations", value["targets"]["crosstown"])
+        for site, light_owner in (("cabin", "legacy"), ("crosstown", "bus")):
+            targets = value["targets"][site]
+            self.assertEqual(set(targets), {"all_lights", "feeding_schedule"})
+            self.assertEqual(targets["all_lights"]["owner"], light_owner)
+            self.assertEqual(targets["all_lights"]["desired_state"], "all_off")
+            self.assertEqual(
+                targets["feeding_schedule"],
+                cat_policy()["targets"][site]["feeding_schedule"],
+            )
+        actions.install_policy(self.root, json.dumps(value).encode())
+        self.assertEqual(self.reserve_automations()["status"], "disabled")
 
     def test_cat_transfer_resumes_owned_destination_before_disabling_origin(self) -> None:
         self.configure_cat_transfer()

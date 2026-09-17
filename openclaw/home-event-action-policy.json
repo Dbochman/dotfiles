@@ -36,20 +36,6 @@
         "expiry_seconds": 600,
         "settle_seconds": 10
       },
-      "daily_automations": {
-        "owner": "bus",
-        "mode": "active",
-        "trigger": "vacancy",
-        "action": "suspend_restore",
-        "desired_state": "vacancy_suspended",
-        "expiry_seconds": 600,
-        "settle_seconds": 10,
-        "automations": [
-          "Bedroom lights After dark",
-          "Master Bath Off",
-          "Potato Nightlight"
-        ]
-      },
       "feeding_schedule": {
         "owner": "bus",
         "mode": "active",

@@ -1024,22 +1024,28 @@ def _suspend_automations(
         state["sites"][site] = existing
         _write_suspensions(root, state)
     attempted = False
-    for name in existing["automations"]:
-        if inventory[name]:
-            attempted = _hue_automation_set(hue_bin, site, name, False) or attempted
-    confirmed = _hue_automation_inventory(hue_bin, site)
-    if any(confirmed.get(name) is not False for name in existing["automations"]):
-        raise ActionError("automation_verification_failed")
-    existing["phase"] = "suspended"
-    existing["updated_at"] = clock()
-    existing["last_error"] = None
-    state["latest"] = {
-        "site": site,
-        "outcome": "suspended",
-        "count": len(existing["restore"]),
-        "at": existing["updated_at"],
-    }
-    _write_suspensions(root, state)
+    try:
+        for name in existing["automations"]:
+            if inventory[name]:
+                attempted = True
+                _hue_automation_set(hue_bin, site, name, False)
+        confirmed = _hue_automation_inventory(hue_bin, site)
+        if any(confirmed.get(name) is not False for name in existing["automations"]):
+            raise ActionError("automation_verification_failed")
+        existing["phase"] = "suspended"
+        existing["updated_at"] = clock()
+        existing["last_error"] = None
+        state["latest"] = {
+            "site": site,
+            "outcome": "suspended",
+            "count": len(existing["restore"]),
+            "at": existing["updated_at"],
+        }
+        _write_suspensions(root, state)
+    except ActionError as exc:
+        raise ActionError(
+            exc.code, command_attempted=attempted or exc.command_attempted
+        ) from exc
     return attempted, "completed" if existing["restore"] else "already_satisfied"
 
 
@@ -1882,7 +1888,6 @@ def _run_worker_once_locked(
                         "verification_failed",
                     )
         elif target == "daily_automations":
-            command_attempted = True
             attempted, reason = _suspend_automations(
                 root,
                 site=str(reservation["site"]),

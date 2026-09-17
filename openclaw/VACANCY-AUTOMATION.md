@@ -209,15 +209,19 @@ reads Hue group 0 first, sends at most one `all-off` command only when needed,
 and requires an all-off readback. A prior claimed attempt is terminal
 `outcome_unknown` after restart and is never replayed.
 
-The same protected policy separately delegates Crosstown
-`daily_automations`. At vacancy start, the worker inventories the three exact
-allowlisted Hue routines, durably records only those that were enabled, then
-disables all three with per-routine readback. While the site remains confirmed
-vacant, the 30-second worker also corrects a manually or externally re-enabled
-routine. On a fresh `occupied` state that places at least one sticky resident at
-Crosstown, it restores only the routines recorded as enabled at the start of
-that vacancy cycle. Previously disabled routines therefore remain disabled.
-Stale, uncertain, malformed, or ambiguous presence defers restoration.
+Crosstown's separate `daily_automations` policy was retired on 2026-09-17
+after the owner intentionally deleted its three managed Hue routines. The
+retirement removes only that target; both homes' light ownership and feeder
+policies remain unchanged. It neither recreates routines nor replays the
+historical failed action. Before retiring a routine target, verify under the
+action-worker lock that there is no active owned routine suspension to restore.
+
+The worker retains support for explicitly configured exact routine policies.
+Missing routine bindings or inventory failures before a change command are
+known failures with `command_attempted=false`, not unknown device outcomes.
+Once a change command is invoked, a failure or unverifiable readback remains
+`outcome_unknown`. The existing one-attempt reservation boundary remains intact;
+neither classification permits replay of the same routine reservation.
 
 The owner-only suspension record is
 `~/.openclaw/home-events/state/hue-automation-suspensions.json`. It contains
