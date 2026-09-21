@@ -80,7 +80,6 @@
     ],
     "defaultMode": "bypassPermissions"
   },
-  "model": "claude-fable-5[1m]",
   "effortLevel": "xhigh",
   "tui": "fullscreen",
   "theme": "dark"
