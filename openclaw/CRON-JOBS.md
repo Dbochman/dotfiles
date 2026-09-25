@@ -365,6 +365,73 @@ mutations and record the failed refresh. Never automatically retry mailbox
 mutations or ambiguous writes. Other per-message failures retain the existing
 leave-unread-and-record-error behavior.
 
+### Julia inbox outcome review (local proposal, not deployed)
+
+The smaller first release preserves the existing unread-mail cleanup and
+routine-labeled archival policy. After cleanup verification and the final
+unread snapshot, an optional **read-only** review examines Action/Urgent inbox
+threads regardless of read state. `bin/julia-inbox-review.py --scope actions`
+is the daily path and default scope. It uses sequential GWS read methods only,
+explicit Julia account routing, no retries, a 150-second deadline, at most
+1000 message IDs and metadata for 20 distinct threads. No bodies or attachments
+are fetched. Unknown or truncated inventory counts are null, never zero.
+A complete inventory does not imply every thread's content was reviewed.
+The job only starts this optional review with 210 seconds remaining, allowing
+180 seconds for execution/polling and 30 seconds for handoff validation.
+
+Backlog review is **on demand only**, using `julia-inbox-review.py --scope backlog`
+with the existing explicit `JULIA_EMAIL` environment routing. This separate
+read-only invocation samples read inbox messages without an OpenClaw primary
+label. It is not called by either daily job, does not advance a persistent
+cursor, and does not change the mailbox. Keep its output private and out of
+Git. A cleanup policy and approval are required before applying recommendations.
+
+Action review proposes concrete next steps, waiting states, possible resolution,
+or a request for more context. Read status, age, and a later reply never prove
+resolution. It authorizes no new labeling, stars, read-state changes, archiving,
+draft creation/deletion, trashing, or sending. Confirmed attention from the
+full-message triage retains every sender, subject, reason, deadline, and draft
+status; overlapping weaker preview entries are removed instead. Safe reminder
+grouping is attached to the retained attention, and changed confirmed details
+remain prominent even when the preview metadata did not change.
+
+The schema-version-2 handoff separates primary cleanup `status`/`errors`,
+`cleanupVerified`, `unreadSnapshotVerified`, and optional `review.status`/`errors`.
+The primary result is finalized before optional review. Review timeout, auth
+failure, or insufficient time cannot retroactively invalidate verified cleanup
+or a verified unread snapshot. Missing readback evidence still makes cleanup
+partial; an unverified snapshot never establishes a new-arrival baseline.
+Successful writes alone do not prove cleanup; readbacks must verify the effects.
+Review records inbox/unread and Action/Urgent message counts, inventory
+completeness and bounded recommendations, not daily backlog fields. Counts
+describe sequential snapshots, not an atomic mailbox transaction.
+The agent writes a private mode-0600 JSON file in a mode-0700 temporary directory,
+runs `julia-morning-briefing-data.py --validate-handoff <file>`, and returns only
+validated JSON. This validator checks representation, bounds, and consistency;
+it does not independently prove semantic classifications or Gmail effects.
+
+The briefing still emits schema version 1 externally and accepts legacy triage
+schema version 1. It rejects a malformed/failed latest same-day run rather than
+falling back to an earlier success. New version-2 review fields omit internal
+IDs and activity hashes from briefing input. Unchanged action threads are
+consolidated only against a valid successful handoff from the previous day;
+missing history keeps them visible as new. Urgent/due items remain prominent,
+and Monday reminders ask for a disposition on unchanged items at least seven
+days old. A proposed resolution is never reported as an applied closure.
+
+Evaluate outcomes over several days before approving broader cleanup: verified
+routine removals, unresolved Action/Urgent coverage, reminder usefulness,
+incomplete samples, and primary versus optional-review errors. Track backlog
+size only in separately requested reviews, not in the daily briefing.
+Scheduler success, unread count, and inbox size alone do not establish quality.
+No new job, schedule, skill, service restart, or delivery is required.
+
+Deployment is explicitly held for review. Both helpers run directly from the
+production dotfiles checkout, so local experiments must remain in an isolated
+worktree rather than modifying that live path. After approval, deploy both
+Julia prompts and helper changes together; do not rerun mutating triage or
+resend the briefing as a smoke test.
+
 ### Julia morning briefing data path
 
 `gws-julia-morning-briefing-0001` must call
@@ -390,13 +457,15 @@ the collector, read stale output, or render until exit zero and a complete
 schema-version-1 object with expected sections. Julia's payload must also
 carry today's Eastern date; Dylan's schema has no top-level date field.
 
-Julia's `auth_error`, `partial`, or unknown triage handoffs still contribute
-their bounded status, counters, and attention, but cannot establish a verified
-post-triage unread baseline. Skip new-arrival comparison for those handoffs
-instead of treating an empty or incomplete snapshot as proof that the entire
-inbox just arrived. A parsed handoff is not an inbox all-clear; only successful
-triage with empty attention supports that claim. Calendar, Sleep, and Finances
-remain independent.
+Legacy `auth_error`, `partial`, or unknown handoffs contribute status, counters,
+and attention but cannot establish a new-arrival baseline. Version 2 uses the
+explicit `unreadSnapshotVerified` flag independently of optional review and
+cleanup status; a partial cleanup can still provide a complete verified unread
+snapshot. Never use an unverified snapshot as proof that the whole inbox just
+arrived. A complete successful daily review with no attention, no Action/Urgent
+messages, and no new arrivals supports only a scoped "no action items surfaced"
+statement, never a whole-inbox all-clear: unclassified read backlog is excluded.
+Calendar, Sleep, and Finances remain independent.
 
 The September 24 missing-result incident was recorded as scheduler `ok`
 because a fallback message was delivered. These prompt guards fix the known

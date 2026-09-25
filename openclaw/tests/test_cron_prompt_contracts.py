@@ -196,6 +196,44 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertIn("Do not use ThreadPoolExecutor, concurrent futures, xargs -P", prompt)
         self.assertIn("or parallel tool calls for Gmail", prompt)
 
+    def test_julia_outcome_review_is_bounded_and_recommendations_only(self) -> None:
+        prompt = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]
+        self.assertIn("Keep steps 1-6 unchanged", prompt)
+        self.assertIn("no new labeling, stars, archiving, read-state changes, trashing, drafts, draft deletion, or sending", prompt)
+        self.assertIn("Never feed these candidates back into steps 1-6", prompt)
+        self.assertIn("20 distinct threads", prompt)
+        self.assertIn("regardless of read state", prompt)
+        self.assertIn("A sent reply alone is not proof of resolution", prompt)
+        self.assertIn("do not infer success from an accepted write or counts alone", prompt)
+        self.assertIn("--validate-handoff <private-file>", prompt)
+        self.assertIn('"schemaVersion": 2', prompt)
+        self.assertIn("exactly the validator's complete JSON stdout", prompt)
+        self.assertIn("No corrective writes or retries during this verification", prompt)
+        self.assertIn("julia-inbox-review.py --scope actions", prompt)
+        self.assertNotIn("--scope backlog", prompt)
+        self.assertNotIn('"backlogPreview"', prompt)
+        self.assertNotIn("unclassifiedReadCount", prompt)
+        self.assertIn("Never run backlog review in this scheduled job", prompt)
+        self.assertLess(prompt.index("7. VERIFY CLEANUP"), prompt.index("8. OPTIONAL READ-ONLY"))
+        self.assertIn("at least 210 seconds remain", prompt)
+        self.assertIn("Reserve at least 30 seconds", prompt)
+        self.assertIn("Store optional failures in review.errors, not the primary errors", prompt)
+        self.assertIn("An optional review failure never retroactively invalidates the verified primary result", prompt)
+
+    def test_julia_review_reminders_never_hide_unresolved_read_mail(self) -> None:
+        prompt = self.jobs["gws-julia-morning-briefing-0001"]["payload"]["message"]
+        self.assertIn("read as well as unread threads", prompt)
+        self.assertIn("do not silently drop them", prompt)
+        self.assertIn("keep open, defer, or close", prompt)
+        self.assertIn("recommendations, not proof of completion", prompt)
+        self.assertIn("actionMessageCount zero", prompt)
+        self.assertIn("postTriage.status is ok with count zero", prompt)
+        self.assertIn("Unknown/null counts or incomplete inventories are not zeros", prompt)
+        self.assertIn("Confirmed attention takes precedence", prompt)
+        self.assertIn("unclassified read backlog is not reviewed daily", prompt)
+        self.assertIn("do not call verified cleanup failed", prompt)
+        self.assertIn("does not disable a verified post-triage new-arrival check", prompt)
+
     def test_julia_triage_preserves_completed_work_after_later_auth_failure(self) -> None:
         prompt = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]
 
