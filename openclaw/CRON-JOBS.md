@@ -316,7 +316,8 @@ and perform reservation plus calendar idempotency checks before acting.
 |----|----------|---------|----------|-------------|
 | `gws-julia-morning-triage-0001` | Daily 6:45 AM ET | `agentTurn` | `none` | Silent, fully paginated Gmail triage: labels, thread-aware reply drafts, read-state cleanup, archiving, and conservative spam trashing |
 | `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `agentTurn` | announce to Julia via iMessage | Read-only, high-signal briefing from the deterministic `julia-morning-briefing-data.py` collector |
-| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `agentTurn` | announce to Dylan via iMessage | Read-only seven-day calendar and 24-hour inbox briefing from the deterministic `dylan-morning-briefing-data.py` collector |
+| `gws-dylan-morning-triage-0001` | Daily 7:40 AM ET | `agentTurn` | `none` | Julia-style automatic Gmail cleanup, verified handoff, and bounded read-only Action/Urgent review; newly scheduled for the next deployment |
+| `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `agentTurn` | announce to Dylan via iMessage | Read-only seven-day Calendar, confirmed triage attention, action reminders, post-triage arrivals, and bounded recent-inbox summary |
 | `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via iMessage | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
 | `financial-scrape-0001` | Sundays 4:05 AM ET | exact-argv `command` | `none`; nonzero/timeout/output-bound failures trigger the six-hour-cooldown job failure alert, while detailed nonhealthy results attempt a durable alert-outbox handoff | Invokes only the deterministic cache-only `openclaw/bin/weekly-financial-scrape.py` helper without a model turn. It requires the repo's exact contract-v2 version and seven-source manifest before credentials/browser/data, pins every merge to `--wrapper-contract 2`, permits bounded browser recovery, validates one allowlisted status marker per successful scraper, and uses one run ID for every scraper/import. BoA retains exact-profile raw CDP and one guarded re-auth only after explicit `not_authenticated`. Production Plaid sync is a separate daily cache-only LaunchAgent. |
 | `financial-scrape-alert-delivery-0001` | Every 15 minutes | exact-argv `command` | `none`; nonzero/timeout/output-bound failures trigger a six-hour-cooldown job failure alert | Invokes only `financial-scrape-alert-notifier.py` without a model turn. It drains due protected alerts, retains failed delivery with bounded exponential backoff, and cannot run a scraper, import, browser, or source sync. |
@@ -365,7 +366,7 @@ mutations and record the failed refresh. Never automatically retry mailbox
 mutations or ambiguous writes. Other per-message failures retain the existing
 leave-unread-and-record-error behavior.
 
-### Julia inbox outcome review (local proposal, not deployed)
+### Julia inbox outcome review (pending scheduled deployment)
 
 The smaller first release preserves the existing unread-mail cleanup and
 routine-labeled archival policy. After cleanup verification and the final
@@ -410,6 +411,11 @@ runs `julia-morning-briefing-data.py --validate-handoff <file>`, and returns onl
 validated JSON. This validator checks representation, bounds, and consistency;
 it does not independently prove semantic classifications or Gmail effects.
 
+Both owners share `bin/morning-triage.py` for schema validation, latest-run
+selection, safe attention precedence, and reminder grouping. Every history read
+requires the owner's explicit job ID and cron store key; Julia's handoff or
+reminder history must never substitute for Dylan's, or vice versa.
+
 The briefing still emits schema version 1 externally and accepts legacy triage
 schema version 1. It rejects a malformed/failed latest same-day run rather than
 falling back to an earlier success. New version-2 review fields omit internal
@@ -426,11 +432,12 @@ size only in separately requested reviews, not in the daily briefing.
 Scheduler success, unread count, and inbox size alone do not establish quality.
 No new job, schedule, skill, service restart, or delivery is required.
 
-Deployment is explicitly held for review. Both helpers run directly from the
-production dotfiles checkout, so local experiments must remain in an isolated
-worktree rather than modifying that live path. After approval, deploy both
-Julia prompts and helper changes together; do not rerun mutating triage or
-resend the briefing as a smoke test.
+Pushing to main and the next automatic deployment are approved. Until that
+deployment, development stays in the isolated worktree because live helpers
+run directly from the production checkout. Deploy the paired prompts and
+helpers together; do not rerun mutating triage or resend a briefing as a smoke
+test. This rollout also includes Dylan's separate, explicitly approved cleanup
+job and briefing integration below.
 
 ### Julia morning briefing data path
 
@@ -455,7 +462,7 @@ while a process is running is not failure. Collection and polling are bounded
 to 180 seconds; cancellation may target only that execution. Do not relaunch
 the collector, read stale output, or render until exit zero and a complete
 schema-version-1 object with expected sections. Both payloads must carry
-today's Eastern date; the local Dylan update adds that freshness check.
+today's Eastern date; Dylan's update adds that freshness check.
 
 Legacy `auth_error`, `partial`, or unknown handoffs contribute status, counters,
 and attention but cannot establish a new-arrival baseline. Version 2 uses the
@@ -474,13 +481,38 @@ semantics. Delivery success alone is not evidence of a complete briefing.
 
 ### Dylan morning briefing data path
 
+The approved `gws-dylan-morning-triage-0001` job runs silently at 7:40 AM ET
+with a 900-second budget, leaving five minutes before the existing 8 AM
+read-only briefing. It mirrors Julia's reviewed policy: classify unread mail,
+create thread-aware reply drafts (never send), resolve routine read state,
+archive eligible routine-labeled mail, and conservatively trash only clear spam.
+Unread, starred, Action/Urgent, sensitive, and ambiguous messages retain their
+policy protections. No new cleanup of unclassified read backlog is authorized.
+Existing drafts are preserved; ambiguous mutations are never retried.
+
+Cleanup readback and a complete unread snapshot precede optional action review.
+`dylan-inbox-review.py --scope actions` calls the shared read-only collector with
+the explicit `DYLAN_EMAIL` identity; a missing identity fails closed rather
+than falling back to Julia or a default GWS account. Only the selected mailbox
+is queried, including read Action/Urgent threads. `--scope backlog` remains an
+on-demand preview, never part of either owner's scheduled job. The thin wrapper
+reuses the tested collector rather than introducing a second policy engine.
+
+The triage job validates its schema-version-2 JSON via
+`dylan-morning-briefing-data.py --validate-handoff <private-file>`. The shared
+validator performs no Gmail, Calendar, sleep, or finance collection. The
+briefing reads only Dylan's latest same-day handoff and Dylan's prior-day
+history. Confirmed attention survives weaker previews; unchanged reminders
+are consolidated, and Monday prompts ask for disposition without acting on it.
+An optional review failure cannot invalidate a verified cleanup/unread snapshot.
+
 `gws-dylan-morning-briefing-0001` must call
 `/Users/dbochman/dotfiles/openclaw/bin/dylan-morning-briefing-data.py` exactly
 once and must not synthesize `gws`, retry, or `jq` shell pipelines itself. The
 helper uses `--account` only for the Calendar helper and
 `GOOGLE_WORKSPACE_CLI_ACCOUNT` for raw Gmail endpoints, retries only the known
 token-cache race once, handles an empty inbox as success, and filters metadata
-to From/Subject/Date without emitting message IDs or snippets. The local update
+to From/Subject/Date without emitting message IDs or snippets. The update
 restricts the query to `in:inbox newer_than:1d`, paginates up to 1000 IDs, and
 samples at most 25 message headers. Counts are exact only when the inventory
 completes; incomplete counts are null with `observedCount` as a lower bound.
@@ -488,10 +520,13 @@ Token cycles, invalid pages, and scan limits cannot produce an inbox all-clear.
 The response carries today's Eastern date and explicitly reports truncated
 or failed detail coverage. A failed detail command stops further fetching,
 preserving already collected summaries without retrying ambiguous auth errors.
-These are read-only reliability changes, not a new mailbox cleanup policy.
-Expected
-Calendar or Gmail failures are returned as bounded `unavailable`/`partial`
-status objects with exit zero so the other section can still be delivered.
+The collector prioritizes the verified post-triage unread comparison before
+the recent-inbox sample, and never treats a missing/unverified handoff as an
+empty baseline. Its top-level sections are `triage`, `calendar`, `postTriage`,
+and `inbox`. The briefing itself remains read-only; the new 7:40 AM job is the
+only scheduled cleanup actor. Expected Calendar or Gmail failures are returned
+as bounded `unavailable`/`partial` status objects with exit zero so the other
+section can still be delivered.
 The collector has a 150-second global deadline, while the agent turn has a
 240-second timeout so partial data can still be composed before cron aborts.
 

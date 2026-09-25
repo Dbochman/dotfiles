@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect a bounded, read-only preview of Julia's inbox review queues."""
+"""Collect bounded read-only inbox previews, defaulting to Julia's account."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ BACKLOG_QUERY = "in:inbox is:read " + " ".join(
 ACTION_QUERY = 'in:inbox {label:"OpenClaw/Action" label:"OpenClaw/Urgent"}'
 
 
-def collect_review(*, scope="actions", now=None, runner=None, clock=time.monotonic):
+def collect_review(*, scope="actions", account=None, now=None, runner=None, clock=time.monotonic):
     if scope not in ("actions", "backlog"):
         raise ValueError("invalid_scope")
     local_now = now.astimezone(briefing.TIME_ZONE) if now else datetime.now(briefing.TIME_ZONE)
@@ -45,9 +45,12 @@ def collect_review(*, scope="actions", now=None, runner=None, clock=time.monoton
         "queue": {"count": None, "complete": False, "candidates": [], "hasMoreCandidates": True},
         "errors": [],
     }
-    if not briefing.ACCOUNT.strip():
+    selected_account = briefing.ACCOUNT if account is None else account
+    if not selected_account.strip():
         result.update(status="unavailable", errors=["missing_account"])
         return result
+    environment = briefing.gws_environment()
+    environment["GOOGLE_WORKSPACE_CLI_ACCOUNT"] = selected_account
 
     def read(resource, method, params):
         if (resource, method) not in {
@@ -61,7 +64,7 @@ def collect_review(*, scope="actions", now=None, runner=None, clock=time.monoton
         response = (runner or briefing.run_command)(
             [briefing.GWS_BIN, "gmail", "users", resource, method, "--params",
              json.dumps({"userId": "me", **params})],
-            briefing.gws_environment(), min(briefing.COMMAND_TIMEOUT_SECONDS, remaining),
+            environment, min(briefing.COMMAND_TIMEOUT_SECONDS, remaining),
         )
         payload, error = briefing.parse_object(response)
         if error:
@@ -158,7 +161,7 @@ def summarize_thread(entry, messages, names, now):
             "from": briefing.clean_text(headers.get("from", ""), 120),
             "subject": briefing.clean_text(headers.get("subject", ""), 180),
             "snippet": briefing.clean_text(message.get("snippet", ""), 240),
-            "sentByJulia": "SENT" in message.get("labelIds", []),
+            "sentByAccount": "SENT" in message.get("labelIds", []),
         })
     labels = {names.get(label, label) for message in ordered for label in message.get("labelIds", [])}
     activity = [
@@ -174,19 +177,19 @@ def summarize_thread(entry, messages, names, now):
         "protected": bool(labels & {"STARRED", "OpenClaw/Urgent", "OpenClaw/Action", "DRAFT"}),
         "urgent": "OpenClaw/Urgent" in labels,
         "draftCount": sum("DRAFT" in message.get("labelIds", []) for message in ordered),
-        "latestNonDraftSentByJulia": "SENT" in latest.get("labelIds", []),
+        "latestNonDraftSentByAccount": "SENT" in latest.get("labelIds", []),
         "recentMessages": summaries,
         "contextLimited": len(non_drafts) > len(summaries),
     }
 
 
-def main(argv=None):
+def main(argv=None, *, account=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", choices=("actions", "backlog"), default="actions")
     args = parser.parse_args(argv)
     try:
         with briefing.termination_signal_handlers():
-            result = collect_review(scope=args.scope)
+            result = collect_review(scope=args.scope, account=account)
     except Exception:
         result = {"schemaVersion": 1, "mode": "preview", "status": "unavailable", "errors": ["internal_error"]}
     print(json.dumps(result, separators=(",", ":"), ensure_ascii=False))

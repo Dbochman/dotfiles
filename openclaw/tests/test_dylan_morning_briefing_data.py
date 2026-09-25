@@ -7,13 +7,17 @@ import importlib.util
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
+
+from openclaw.tests import test_julia_morning_briefing_data as julia_fixtures
 
 
 SCRIPT = Path(__file__).parents[1] / "bin" / "dylan-morning-briefing-data.py"
@@ -29,6 +33,11 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
         original_account = briefing.ACCOUNT
         briefing.ACCOUNT = "dylan@example.invalid"
         self.addCleanup(setattr, briefing, "ACCOUNT", original_account)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        original_database = briefing.STATE_DB
+        briefing.STATE_DB = Path(temporary.name) / "state.sqlite"
+        self.addCleanup(setattr, briefing, "STATE_DB", original_database)
 
     def test_missing_account_fails_unavailable_before_spawning_gws(self) -> None:
         briefing.ACCOUNT = ""
@@ -40,6 +49,110 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
 
         self.assertEqual(result["calendar"]["reason"], "missing_account")
         self.assertEqual(result["inbox"]["reason"], "missing_account")
+        self.assertEqual(result["triage"]["reason"], "missing_account")
+        self.assertEqual(result["postTriage"]["status"], "skipped")
+
+    def seed_handoff(self, payload, *, job_id=None, day=13):
+        with sqlite3.connect(briefing.STATE_DB) as connection:
+            connection.execute("""CREATE TABLE IF NOT EXISTS cron_run_logs (
+                store_key TEXT, job_id TEXT, status TEXT, run_at_ms INTEGER, summary TEXT
+            )""")
+            timestamp = datetime(2026, 7, day, 7, 40, tzinfo=briefing.TIME_ZONE)
+            connection.execute("INSERT INTO cron_run_logs VALUES (?, ?, 'ok', ?, ?)", (
+                briefing.CRON_STORE_KEY, job_id or briefing.TRIAGE_JOB_ID,
+                int(timestamp.timestamp() * 1000), json.dumps(payload),
+            ))
+
+    def test_julia_handoff_never_substitutes_for_missing_dylan_triage(self):
+        payload = julia_fixtures.JuliaMorningBriefingDataTests().version_two_handoff()
+        self.seed_handoff(payload, job_id="gws-julia-morning-triage-0001")
+
+        def runner(args, env, timeout):
+            if "+agenda" in args:
+                return briefing.CommandResult(0, '{"events":[]}', "")
+            self.assertEqual(json.loads(args[-1])["q"], "in:inbox newer_than:1d")
+            return briefing.CommandResult(0, '{"messages":[]}', "")
+
+        result = briefing.collect_data(
+            now=datetime(2026, 7, 13, 8, tzinfo=briefing.TIME_ZONE), runner=runner,
+        )
+        self.assertEqual(result["triage"]["status"], "unavailable")
+        self.assertEqual(result["postTriage"]["status"], "skipped")
+        self.assertEqual(result["calendar"]["status"], "ok")
+        self.assertEqual(result["inbox"]["status"], "ok")
+
+    def test_optional_review_failure_preserves_dylan_arrivals_and_attention(self):
+        payload = julia_fixtures.JuliaMorningBriefingDataTests().version_two_handoff()
+        payload["review"].update(status="partial", errors=["timeout"])
+        payload["attention"][0].update(
+            threadId="review-private-thread", reason="Confirmed Dylan request",
+            deadline="2026-07-13", draftStatus="created",
+        )
+        payload["actionReview"][0].update(state="needs_context", deadline="", draftStatus="none")
+        self.seed_handoff(payload)
+        self.seed_handoff(
+            julia_fixtures.JuliaMorningBriefingDataTests().version_two_handoff(),
+            job_id="gws-julia-morning-triage-0001",
+        )
+        queries = []
+
+        def runner(args, env, timeout):
+            if "+agenda" in args:
+                return briefing.CommandResult(0, '{"events":[]}', "")
+            self.assertEqual(env["GOOGLE_WORKSPACE_CLI_ACCOUNT"], "dylan@example.invalid")
+            params = json.loads(args[-1])
+            if "list" in args:
+                queries.append(params["q"])
+                messages = [{"id": "old-private-id"}, {"id": "new-private-id"}]
+                return briefing.CommandResult(0, json.dumps({"messages": messages}), "")
+            return briefing.CommandResult(0, json.dumps({
+                "payload": {"headers": [{"name": "Subject", "value": "Synthetic request"}]},
+            }), "")
+
+        result = briefing.collect_data(
+            now=datetime(2026, 7, 13, 8, tzinfo=briefing.TIME_ZONE), runner=runner,
+        )
+        self.assertEqual(queries, ["is:unread in:inbox", "in:inbox newer_than:1d"])
+        self.assertEqual(result["triage"]["handoffStatus"], "ok")
+        self.assertEqual(result["triage"]["outcomes"]["status"], "partial")
+        attention = result["triage"]["attention"][0]
+        self.assertEqual(attention["reason"], "Confirmed Dylan request")
+        self.assertEqual(attention["deadline"], "2026-07-13")
+        self.assertEqual(attention["draftStatus"], "created")
+        self.assertEqual(result["triage"]["actionReview"], [])
+        self.assertEqual(result["postTriage"]["status"], "ok")
+        self.assertEqual(result["postTriage"]["count"], 1)
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_reminder_history_is_scoped_to_dylan(self):
+        payload = julia_fixtures.JuliaMorningBriefingDataTests().version_two_handoff()
+        self.seed_handoff(payload)
+        previous = {**payload, "date": "2026-07-12"}
+        self.seed_handoff(previous, job_id="gws-julia-morning-triage-0001", day=12)
+        today = datetime(2026, 7, 13, 8, tzinfo=briefing.TIME_ZONE)
+        handoff, _ = briefing.triage.load_triage_handoff(
+            today, db_path=briefing.STATE_DB, job_id=briefing.TRIAGE_JOB_ID,
+            store_key=briefing.CRON_STORE_KEY,
+        )
+        self.assertEqual(handoff["actionReview"][0]["group"], "new_or_changed")
+        self.seed_handoff(previous, day=12)
+        handoff, _ = briefing.triage.load_triage_handoff(
+            today, db_path=briefing.STATE_DB, job_id=briefing.TRIAGE_JOB_ID,
+            store_key=briefing.CRON_STORE_KEY,
+        )
+        self.assertEqual(handoff["actionReview"][0]["group"], "decision_needed")
+
+    def test_handoff_validation_cli_never_collects_data(self):
+        with mock.patch.object(briefing, "collect_data", side_effect=AssertionError("Unexpected collection")):
+            with mock.patch.object(briefing.sys, "stderr"):
+                self.assertEqual(briefing.main(["--validate-handoff", "/nonexistent/handoff.json"]), 2)
+
+    def test_unverified_snapshot_skips_post_triage_without_gmail(self):
+        result = briefing.collect_post_triage_arrivals(
+            None, deadline=150, clock=lambda: 0,
+            runner=lambda *_: self.fail("Unexpected Gmail call"), sleeper=lambda _: None,
+        )
+        self.assertEqual(result, {"status": "skipped", "reason": "triage_unavailable"})
 
     def test_success_filters_gmail_output_and_uses_raw_api_account_env(self) -> None:
         calls: list[tuple[list[str], dict[str, str]]] = []
@@ -404,6 +517,7 @@ child.wait()
             env["GWS_BIN"] = str(fake_gws)
             env["CHILD_MARKER"] = str(marker)
             env["DYLAN_EMAIL"] = "dylan@example.invalid"
+            env["OPENCLAW_STATE_DB"] = str(temp_path / "missing-state.sqlite")
             process = subprocess.Popen(
                 [sys.executable, str(SCRIPT)],
                 env=env,

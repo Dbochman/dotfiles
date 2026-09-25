@@ -3,20 +3,34 @@
 
 from __future__ import annotations
 
+import argparse
+import importlib.util
 import json
 import os
 import signal
 import subprocess
+import sys
 import time
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
 
+TRIAGE_SPEC = importlib.util.spec_from_file_location(
+    "dylan_triage_common", Path(__file__).with_name("morning-triage.py")
+)
+assert TRIAGE_SPEC and TRIAGE_SPEC.loader
+triage = importlib.util.module_from_spec(TRIAGE_SPEC)
+TRIAGE_SPEC.loader.exec_module(triage)
+
 ACCOUNT = os.environ.get("DYLAN_EMAIL", "")
+STATE_DB = Path(os.environ.get("OPENCLAW_STATE_DB", str(Path.home() / ".openclaw/state/openclaw.sqlite")))
+CRON_STORE_KEY = str(Path.home() / ".openclaw/cron/jobs.json")
+TRIAGE_JOB_ID = "gws-dylan-morning-triage-0001"
 GWS_BIN = os.environ.get("GWS_BIN", "/opt/homebrew/bin/gws")
 COMMAND_TIMEOUT_SECONDS = 30.0
 OVERALL_TIMEOUT_SECONDS = 150.0
@@ -321,9 +335,10 @@ def header_summary(payload: dict[str, object]) -> dict[str, str] | None:
 
 
 def collect_inbox(
-    *, deadline: float, clock: Clock, runner: Runner, sleeper: Sleeper
+    *, deadline: float, clock: Clock, runner: Runner, sleeper: Sleeper,
+    query: str = "in:inbox newer_than:1d", exclude_ids: set[str] | None = None,
 ) -> dict[str, object]:
-    params = {"userId": "me", "q": "in:inbox newer_than:1d", "maxResults": 100}
+    params = {"userId": "me", "q": query, "maxResults": 100}
     message_ids = []
     seen_ids = set()
     seen_tokens = set()
@@ -355,6 +370,8 @@ def collect_inbox(
             break
         seen_tokens.add(token)
         params["pageToken"] = token
+    if exclude_ids is not None:
+        message_ids = [message_id for message_id in message_ids if message_id not in exclude_ids]
     if not inventory_complete:
         return {
             "status": "partial" if message_ids else "unavailable",
@@ -405,18 +422,35 @@ def collect_inbox(
     return result
 
 
+def collect_post_triage_arrivals(
+    baseline: set[str] | None,
+    *, deadline: float, clock: Clock, runner: Runner, sleeper: Sleeper,
+) -> dict[str, object]:
+    if baseline is None:
+        return {"status": "skipped", "reason": "triage_unavailable"}
+    if not ACCOUNT.strip():
+        return {"status": "unavailable", "reason": "missing_account"}
+    return collect_inbox(
+        deadline=deadline, clock=clock, runner=runner, sleeper=sleeper,
+        query="is:unread in:inbox", exclude_ids=baseline,
+    )
+
+
 def collect_data(
     *,
     now: datetime | None = None,
     runner: Runner = run_command,
     sleeper: Sleeper = time.sleep,
     clock: Clock = time.monotonic,
+    db_path: Path | None = None,
 ) -> dict[str, object]:
     local_now = now.astimezone(TIME_ZONE) if now else datetime.now(TIME_ZONE)
     if not ACCOUNT.strip():
         return {
             "schemaVersion": 1,
             "date": local_now.date().isoformat(),
+            "triage": {"status": "unavailable", "reason": "missing_account"},
+            "postTriage": {"status": "skipped", "reason": "triage_unavailable"},
             "calendar": {"status": "unavailable", "reason": "missing_account"},
             "inbox": {
                 "status": "unavailable",
@@ -427,11 +461,19 @@ def collect_data(
             },
         }
     deadline = clock() + OVERALL_TIMEOUT_SECONDS
+    handoff, baseline = triage.load_triage_handoff(
+        local_now, db_path=STATE_DB if db_path is None else db_path,
+        job_id=TRIAGE_JOB_ID, store_key=CRON_STORE_KEY,
+    )
     return {
         "schemaVersion": 1,
         "date": local_now.date().isoformat(),
+        "triage": handoff,
         "calendar": collect_calendar(
             deadline=deadline, clock=clock, runner=runner, sleeper=sleeper
+        ),
+        "postTriage": collect_post_triage_arrivals(
+            baseline, deadline=deadline, clock=clock, runner=runner, sleeper=sleeper,
         ),
         "inbox": collect_inbox(
             deadline=deadline, clock=clock, runner=runner, sleeper=sleeper
@@ -439,7 +481,18 @@ def collect_data(
     }
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--validate-handoff", type=Path)
+    args = parser.parse_args(argv)
+    if args.validate_handoff:
+        try:
+            payload = triage.validate_handoff_file(args.validate_handoff)
+        except (OSError, ValueError, TypeError):
+            print("Invalid or inaccessible current-day triage handoff", file=sys.stderr)
+            return 2
+        print(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+        return 0
     try:
         with termination_signal_handlers():
             payload = collect_data()
@@ -447,6 +500,8 @@ def main() -> int:
         payload = {
             "schemaVersion": 1,
             "date": datetime.now(TIME_ZONE).date().isoformat(),
+            "triage": {"status": "unavailable", "reason": "internal_error"},
+            "postTriage": {"status": "skipped", "reason": "triage_unavailable"},
             "calendar": {"status": "unavailable", "reason": "internal_error"},
             "inbox": {
                 "status": "unavailable",

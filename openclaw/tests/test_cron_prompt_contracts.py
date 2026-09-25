@@ -175,7 +175,7 @@ class CronPromptContractTests(unittest.TestCase):
                 self.assertIn("one complete schemaVersion 1 JSON object", prompt)
                 self.assertIn("today's America/New_York date", prompt)
                 if owner == "dylan":
-                    self.assertIn("section objects (calendar and inbox)", prompt)
+                    self.assertIn("section objects (calendar, inbox, triage, and postTriage)", prompt)
                 self.assertIn("all expected section objects", prompt)
                 self.assertIn("Do not rerun the helper or substitute yesterday's output", prompt)
                 self.assertIn("one source or triage failure must not suppress healthy sections", prompt)
@@ -194,6 +194,39 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertIn("not the whole inbox", prompt)
         self.assertIn("Never infer no outstanding work", prompt)
         self.assertIn("Unknown/null counts are not zero", prompt)
+
+    def test_dylan_triage_matches_reviewed_julia_policy_with_separate_account(self) -> None:
+        job = self.jobs["gws-dylan-morning-triage-0001"]
+        expected = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]
+        expected = expected.replace("Julia", "Dylan").replace("julia", "dylan")
+        expected = expected.replace("JULIA_EMAIL", "DYLAN_EMAIL")
+        expected = expected.replace("7:00 AM briefing", "8:00 AM briefing")
+        expected = expected.replace("she must read", "he must read").replace("needs her", "needs him")
+        self.assertEqual(job["payload"]["message"], expected)
+        self.assertIn("GOOGLE_WORKSPACE_CLI_ACCOUNT=${DYLAN_EMAIL}", expected)
+        self.assertNotIn("JULIA_EMAIL", expected)
+        self.assertNotIn("julia-", expected)
+        self.assertIn("dylan-inbox-review.py --scope actions", expected)
+        self.assertIn("dylan-morning-briefing-data.py --validate-handoff", expected)
+        self.assertTrue(job["enabled"])
+        self.assertEqual(job["delivery"]["mode"], "none")
+        self.assertEqual(job["payload"]["timeoutSeconds"], 900)
+        self.assertEqual(job["schedule"], {"kind": "cron", "expr": "40 7 * * *", "tz": "America/New_York"})
+
+    def test_dylan_briefing_prioritizes_confirmed_actions_and_preserves_read_only_boundary(self) -> None:
+        job = self.jobs["gws-dylan-morning-briefing-0001"]
+        prompt = job["payload"]["message"]
+        self.assertEqual(job["schedule"]["expr"], "0 8 * * *")
+        self.assertEqual(job["payload"]["timeoutSeconds"], 240)
+        self.assertEqual(job["delivery"]["to"], "chat_id:${DYLAN_CHAT_ID}")
+        self.assertIn("Confirmed attention takes precedence", prompt)
+        self.assertIn("keep open, defer, or close", prompt)
+        self.assertIn("does not disable a verified post-triage new-arrival check", prompt)
+        self.assertIn("unclassified read backlog is not reviewed daily", prompt)
+        self.assertIn("postTriage.status ok or partial", prompt)
+        self.assertIn("No email actions", prompt)
+        self.assertNotIn("no action items unless", prompt)
+        self.assertNotIn("julia-", prompt)
 
     def test_julia_triage_serializes_gmail_calls(self) -> None:
         prompt = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]

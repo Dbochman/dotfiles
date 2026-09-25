@@ -82,7 +82,7 @@ class InboxReviewTests(unittest.TestCase):
         queries = [json.loads(args[-1])["q"] for args in self.calls if args[3:5] == ["messages", "list"]]
         self.assertEqual(queries, [review.ACTION_QUERY])
         action = result["queue"]["candidates"][0]
-        self.assertTrue(action["latestNonDraftSentByJulia"])
+        self.assertTrue(action["latestNonDraftSentByAccount"])
         self.assertEqual(action["draftCount"], 1)
         self.assertEqual(action["ageDays"], 10)
         self.assertTrue(action["protected"])
@@ -104,7 +104,7 @@ class InboxReviewTests(unittest.TestCase):
             with self.subTest(scope=scope), mock.patch.object(review, "collect_review", return_value={"status": "ok"}) as collect:
                 with mock.patch("builtins.print"):
                     self.assertEqual(review.main(arguments), 0)
-                collect.assert_called_once_with(scope=scope)
+                collect.assert_called_once_with(scope=scope, account=None)
 
     def test_candidate_limit_does_not_claim_full_content_review(self):
         def runner(args, env, timeout):
@@ -193,6 +193,27 @@ class InboxReviewTests(unittest.TestCase):
     def test_missing_account_never_launches_gws(self):
         review.briefing.ACCOUNT = ""
         result = review.collect_review(runner=lambda *_: self.fail("Unexpected GWS launch"))
+        self.assertEqual(result["status"], "unavailable")
+
+    def test_explicit_account_never_uses_julia_or_inherited_gmail_routing(self):
+        calls = []
+
+        def runner(args, env, timeout):
+            calls.append(args)
+            self.assertEqual(env["GOOGLE_WORKSPACE_CLI_ACCOUNT"], "dylan@example.invalid")
+            if args[3:5] == ["labels", "list"]:
+                payload = {"labels": []}
+            elif args[3:5] == ["labels", "get"]:
+                payload = {"messagesTotal": 0, "messagesUnread": 0}
+            else:
+                payload = {"messages": []}
+            return review.briefing.CommandResult(0, json.dumps(payload), "")
+
+        result = review.collect_review(account="dylan@example.invalid", runner=runner)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(review.briefing.ACCOUNT, "julia@example.invalid")
+        result = review.collect_review(account="", runner=lambda *_: self.fail("Unexpected Julia fallback"))
         self.assertEqual(result["status"], "unavailable")
 
     def test_read_state_does_not_change_activity_key(self):
