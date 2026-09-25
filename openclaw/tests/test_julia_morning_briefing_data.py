@@ -237,6 +237,72 @@ class JuliaMorningBriefingDataTests(unittest.TestCase):
         self.assertIsNone(unread_ids)
         self.assertEqual(sleep, {"status": "unavailable", "reason": "stale"})
 
+    def test_failed_triage_preserves_sections_without_inventing_new_arrivals(self) -> None:
+        for handoff_status in ("auth_error", "partial", "unknown"):
+            with self.subTest(handoff_status=handoff_status), tempfile.TemporaryDirectory() as temp_dir:
+                temp = Path(temp_dir)
+                database = temp / "state.sqlite"
+                snapshot = temp / "sleep.txt"
+                handoff = self.handoff()
+                handoff["status"] = handoff_status
+                handoff["unreadAfter"] = []
+                handoff["errors"] = ["Synthetic failure"]
+                self.make_database(database, handoff)
+                snapshot.write_text("Eight Sleep snapshot 2026-07-13\nScore 88")
+                calls: list[list[str]] = []
+
+                def runner(args: list[str], env: dict[str, str], timeout: float):
+                    calls.append(args)
+                    self.assertEqual(args[1:4], ["calendar", "events", "list"])
+                    return briefing.CommandResult(0, json.dumps({"items": []}), "")
+
+                def http_getter(url: str, timeout: float):
+                    if url == briefing.NET_WORTH_URL:
+                        return {
+                            "known_value": 100,
+                            "complete": True,
+                            "as_of": "2026-07-13",
+                        }
+                    return {"progress_pct": 10, "fire_target": 1000}
+
+                result = briefing.collect_data(
+                    now=self.now,
+                    runner=runner,
+                    sleeper=lambda _: self.fail("No retry should be needed"),
+                    clock=lambda: 0.0,
+                    http_getter=http_getter,
+                    db_path=database,
+                    sleep_path=snapshot,
+                )
+
+                self.assertEqual(result["triage"]["handoffStatus"], handoff_status)
+                self.assertEqual(result["triage"]["processed"], 4)
+                self.assertEqual(result["triage"]["errorCount"], 1)
+                self.assertEqual(len(result["triage"]["attention"]), 1)
+                self.assertEqual(result["calendar"]["status"], "ok")
+                self.assertEqual(result["sleep"]["status"], "ok")
+                self.assertEqual(result["finances"]["status"], "ok")
+                self.assertEqual(result["postTriage"]["status"], "skipped")
+                self.assertEqual(len(calls), 1)
+
+    def test_ambiguous_auth_error_is_not_retried(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(args: list[str], env: dict[str, str], timeout: float):
+            calls.append(args)
+            return briefing.CommandResult(1, "", "No credentials provided")
+
+        result = briefing.collect_calendar(
+            self.now,
+            deadline=150.0,
+            clock=lambda: 0.0,
+            runner=runner,
+            sleeper=lambda _: self.fail("Ambiguous auth errors must not be retried"),
+        )
+
+        self.assertEqual(result, {"status": "unavailable", "reason": "auth_error"})
+        self.assertEqual(len(calls), 1)
+
     def test_missing_account_fails_closed_without_spawning_gws(self) -> None:
         briefing.ACCOUNT = ""
 

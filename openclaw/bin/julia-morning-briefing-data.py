@@ -340,10 +340,11 @@ def load_triage_handoff(
 
         errors = payload.get("errors")
         error_count = len(errors) if isinstance(errors, list) else 0
+        handoff_status = clean_text(payload.get("status", "unknown"), 24)
         return (
             {
                 "status": "ok",
-                "handoffStatus": clean_text(payload.get("status", "unknown"), 24),
+                "handoffStatus": handoff_status,
                 "processed": safe_nonnegative_int(payload.get("processed")),
                 "markedRead": safe_nonnegative_int(payload.get("markedRead")),
                 "leftUnread": safe_nonnegative_int(payload.get("leftUnread")),
@@ -354,7 +355,7 @@ def load_triage_handoff(
                 "errorCount": error_count,
                 "attention": attention,
             },
-            set(unread_raw),
+            set(unread_raw) if handoff_status == "ok" else None,
         )
     return {"status": "unavailable", "reason": "same_day_handoff_missing"}, None
 

@@ -340,10 +340,30 @@ pinned GWS 0.4.4, each shell invocation must export
 `GOOGLE_WORKSPACE_CLI_ACCOUNT` for Julia before running those commands; the
 raw resource path must not rely on the CLI account flag. During the preflight
 auth check, retry once only for the exact transient `Failed to get token`
-cache race. Treat a preflight `No credentials provided` response as a
-non-retryable routing/configuration error and return an `auth_error` handoff
-before any mailbox mutation. Later per-message failures retain the prompt's
-existing leave-unread-and-record-error behavior.
+cache race. Treat a preflight `No credentials provided` response as
+non-retryable and return an `auth_error` handoff before any mailbox mutation;
+it does not prove that credentials were revoked. GWS 0.4.4's
+[raw-command authentication path](https://github.com/googleworkspace/cli/blob/v0.4.4/src/main.rs#L219-L223)
+discards the original token-loading error and proceeds unauthenticated, so
+the eventual error cannot distinguish bad routing from a transient token
+failure. Its token cache also uses a
+[shared temporary filename during writes](https://github.com/googleworkspace/cli/blob/v0.4.4/src/fs_util.rs#L44-L55).
+
+Run this job's Gmail CLI calls sequentially, never with a thread pool or
+parallel shell/tool calls. The September 24 investigation found successful
+account preflight and message reads alongside an authentication failure in an
+eight-worker fetch batch; sequential checks, including the failed message,
+then passed without reauthentication. A cache race is consistent with this
+evidence, but the swallowed underlying error prevents a definitive diagnosis.
+Do not upgrade GWS or reset credentials to address this incident.
+
+An authentication failure after successful preflight stops further Gmail
+calls and returns `partial`, retaining completed-work counters and attention
+rather than falsely reporting zero changes. If the final unread refresh is
+unavailable, retain the last verified snapshot adjusted only for confirmed
+mutations and record the failed refresh. Never automatically retry mailbox
+mutations or ambiguous writes. Other per-message failures retain the existing
+leave-unread-and-record-error behavior.
 
 ### Julia morning briefing data path
 
@@ -358,6 +378,30 @@ Expected source failures become section-level `unavailable`, `partial`, or
 `skipped` objects while the process exits zero, so one unavailable source does
 not suppress the rest of the briefing. The helper has a 150-second global
 deadline and the agent turn has a 240-second timeout.
+
+Both morning briefing prompts distinguish one command launch from result
+retrieval. Preserve the full tool response, including background session and
+outer exec cell IDs; code-mode callers must emit `text(result)`, not only
+`text(result.output)`. Wait for an outer exec cell and poll the same command
+session as needed, accumulating output until terminal exit. Empty output
+while a process is running is not failure. Collection and polling are bounded
+to 180 seconds; cancellation may target only that execution. Do not relaunch
+the collector, read stale output, or render until exit zero and a complete
+schema-version-1 object with expected sections. Julia's payload must also
+carry today's Eastern date; Dylan's schema has no top-level date field.
+
+Julia's `auth_error`, `partial`, or unknown triage handoffs still contribute
+their bounded status, counters, and attention, but cannot establish a verified
+post-triage unread baseline. Skip new-arrival comparison for those handoffs
+instead of treating an empty or incomplete snapshot as proof that the entire
+inbox just arrived. A parsed handoff is not an inbox all-clear; only successful
+triage with empty attention supports that claim. Calendar, Sleep, and Finances
+remain independent.
+
+The September 24 missing-result incident was recorded as scheduler `ok`
+because a fallback message was delivered. These prompt guards fix the known
+execution-lifecycle error; they do not change OpenClaw's scheduler status
+semantics. Delivery success alone is not evidence of a complete briefing.
 
 ### Dylan morning briefing data path
 

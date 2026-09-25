@@ -107,10 +107,10 @@ class CronPromptContractTests(unittest.TestCase):
             prompt,
         )
         self.assertIn(
-            "A `No credentials provided` response is a non-retryable "
-            "account-routing error",
+            "A `No credentials provided` response is non-retryable",
             prompt,
         )
+        self.assertIn("does not prove credentials were revoked", prompt)
         self.assertEqual(job["payload"]["timeoutSeconds"], 900)
         self.assertEqual(job["delivery"]["mode"], "none")
         self.assertEqual(job["schedule"]["expr"], "45 6 * * *")
@@ -135,10 +135,78 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertNotIn("gws gmail", prompt)
         self.assertNotIn("set +e", prompt)
         self.assertNotIn("status=$?", prompt)
-        self.assertIn("do not make any other tool calls", prompt)
+        self.assertIn("do not make unrelated tool calls", prompt)
         self.assertNotIn("STARMARKET_GMAIL", prompt)
         self.assertNotIn("TRYFI_EMAIL", prompt)
         self.assertEqual(job["payload"]["timeoutSeconds"], 240)
+
+    def test_briefings_preserve_handles_and_wait_for_terminal_results(self) -> None:
+        for owner in ("julia", "dylan"):
+            with self.subTest(owner=owner):
+                job = self.jobs[f"gws-{owner}-morning-briefing-0001"]
+                prompt = job["payload"]["message"]
+                helper = (
+                    "/usr/bin/python3 /Users/dbochman/dotfiles/openclaw/bin/"
+                    f"{owner}-morning-briefing-data.py"
+                )
+
+                self.assertEqual(prompt.count(helper), 1)
+                self.assertIn("Exactly one command launch does not mean exactly one tool call", prompt)
+                self.assertIn("session_id, exit_code, output, and any outer exec cell ID", prompt)
+                self.assertIn("use text(result), not text(result.output)", prompt)
+                self.assertIn("If exec yields a running cell, use its wait tool", prompt)
+                self.assertIn("write_stdin (empty chars) or process poll until terminal", prompt)
+                self.assertIn("Accumulate output from the initial call and every poll in order", prompt)
+                self.assertIn("Empty output while running is not a collection failure", prompt)
+                self.assertNotIn("do not make any other tool calls", prompt)
+
+    def test_briefings_bound_waiting_and_reject_incomplete_or_stale_results(self) -> None:
+        for owner in ("julia", "dylan"):
+            with self.subTest(owner=owner):
+                job = self.jobs[f"gws-{owner}-morning-briefing-0001"]
+                prompt = job["payload"]["message"]
+
+                self.assertIn("at most 180 seconds from command launch", prompt)
+                self.assertEqual(job["payload"]["timeoutSeconds"], 240)
+                self.assertIn("cancel only that execution", prompt)
+                self.assertIn("without claiming cleanup", prompt)
+                self.assertIn("Require a terminal exit code of 0", prompt)
+                self.assertIn("exit_code or the tool's equivalent", prompt)
+                self.assertIn("one complete schemaVersion 1 JSON object", prompt)
+                if owner == "julia":
+                    self.assertIn("today's America/New_York date", prompt)
+                else:
+                    self.assertIn("section objects (calendar and inbox)", prompt)
+                    self.assertNotIn("today's America/New_York date", prompt)
+                self.assertIn("all expected section objects", prompt)
+                self.assertIn("Do not rerun the helper or substitute yesterday's output", prompt)
+                self.assertIn("one source or triage failure must not suppress healthy sections", prompt)
+
+    def test_julia_briefing_never_gives_all_clear_from_failed_triage(self) -> None:
+        prompt = self.jobs["gws-julia-morning-briefing-0001"]["payload"]["message"]
+
+        self.assertIn("triage.status ok means the handoff was parsed", prompt)
+        self.assertIn("Only when handoffStatus is ok and attention is empty", prompt)
+        self.assertIn("Never give an inbox all-clear from a failed or incomplete handoff", prompt)
+
+    def test_julia_triage_serializes_gmail_calls(self) -> None:
+        prompt = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]
+
+        self.assertIn("Run Gmail CLI calls sequentially: at most one gws process at a time", prompt)
+        self.assertIn("Do not use ThreadPoolExecutor, concurrent futures, xargs -P", prompt)
+        self.assertIn("or parallel tool calls for Gmail", prompt)
+
+    def test_julia_triage_preserves_completed_work_after_later_auth_failure(self) -> None:
+        prompt = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]
+
+        self.assertIn("After a successful preflight", prompt)
+        self.assertIn("stop further Gmail calls without retrying the failed operation", prompt)
+        self.assertIn("return `status: partial`, preserve actual completed-work counters", prompt)
+        self.assertIn("Never reset counters or claim no mailbox changes if earlier changes succeeded", prompt)
+        self.assertIn("record that it was not refreshed", prompt)
+        self.assertIn("The single allowed token retry applies only to the read-only preflight", prompt)
+        self.assertIn("reserve `auth_error` with zero counters for a failed preflight before mailbox changes", prompt)
+        self.assertIn("Never automatically retry a send, draft creation", prompt)
 
     def test_double_date_invites_use_general_identity_keys(self) -> None:
         for job_id in (
