@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -70,6 +71,8 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
                 )
             params = json.loads(args[args.index("--params") + 1])
             if "list" in args:
+                self.assertEqual(params["q"], "in:inbox newer_than:1d")
+                self.assertEqual(params["maxResults"], 100)
                 return briefing.CommandResult(
                     0,
                     json.dumps(
@@ -154,6 +157,111 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
         self.assertEqual(result["inbox"]["status"], "ok")
         self.assertEqual(attempts, {"calendar": 2, "list": 2})
         self.assertEqual(sleeps, [5.0, 5.0])
+
+    def test_inbox_paginates_exact_counts_and_bounds_header_sampling(self) -> None:
+        calls = []
+
+        def runner(args, env, timeout):
+            calls.append(args)
+            params = json.loads(args[-1])
+            if "list" in args:
+                if "pageToken" not in params:
+                    payload = {
+                        "messages": [{"id": f"private-{index}"} for index in range(20)],
+                        "nextPageToken": "private-next", "resultSizeEstimate": 1,
+                    }
+                else:
+                    self.assertEqual(params["pageToken"], "private-next")
+                    payload = {"messages": [{"id": f"private-{index}"} for index in range(19, 31)]}
+            else:
+                payload = {"payload": {"headers": [{"name": "Subject", "value": "Synthetic"}]}}
+            return briefing.CommandResult(0, json.dumps(payload), "")
+
+        result = briefing.collect_inbox(deadline=150, clock=lambda: 0, runner=runner, sleeper=lambda _: None)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["count"], 31)
+        self.assertTrue(result["inventoryComplete"])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["sampledCount"], 25)
+        self.assertEqual(len(result["messages"]), 25)
+        self.assertEqual(len(calls), 27)
+        self.assertNotIn("private-", json.dumps(result))
+
+    def test_failed_or_cyclic_inventory_is_not_an_exact_count(self) -> None:
+        for failure in ("auth", "cycle", "malformed"):
+            with self.subTest(failure=failure):
+                calls = []
+
+                def runner(args, env, timeout):
+                    calls.append(args)
+                    self.assertIn("list", args)
+                    if len(calls) > 1 and failure == "auth":
+                        return briefing.CommandResult(1, "", "No credentials provided PRIVATE_DETAIL")
+                    payload = {"messages": [{"id": "private-id"}], "nextPageToken": "same"}
+                    if len(calls) > 1 and failure == "malformed":
+                        payload = {"messages": [{"id": None}]}
+                    return briefing.CommandResult(0, json.dumps(payload), "")
+
+                result = briefing.collect_inbox(deadline=150, clock=lambda: 0, runner=runner, sleeper=lambda _: self.fail("No retry"))
+                self.assertEqual(result["status"], "partial")
+                self.assertIsNone(result["count"])
+                self.assertEqual(result["observedCount"], 1)
+                self.assertFalse(result["inventoryComplete"])
+                self.assertEqual(len(calls), 2)
+                self.assertNotIn("PRIVATE_DETAIL", json.dumps(result))
+
+    def test_inventory_scan_limit_is_explicit(self) -> None:
+        calls = []
+
+        def runner(args, env, timeout):
+            calls.append(args)
+            return briefing.CommandResult(0, json.dumps({
+                "messages": [{"id": f"private-{len(calls)}"}],
+                "nextPageToken": str(len(calls)),
+            }), "")
+
+        result = briefing.collect_inbox(deadline=150, clock=lambda: 0, runner=runner, sleeper=lambda _: None)
+        self.assertEqual(len(calls), 10)
+        self.assertEqual(result["reason"], "inventory_truncated")
+        self.assertIsNone(result["count"])
+        self.assertEqual(result["observedCount"], 10)
+
+    def test_metadata_auth_failure_stops_and_preserves_existing_summaries(self) -> None:
+        calls = []
+
+        def runner(args, env, timeout):
+            calls.append(args)
+            if "list" in args:
+                return briefing.CommandResult(0, json.dumps({
+                    "messages": [{"id": str(index)} for index in range(3)],
+                }), "")
+            if len(calls) == 2:
+                return briefing.CommandResult(0, json.dumps({
+                    "payload": {"headers": [{"name": "Subject", "value": "Known subject"}]},
+                }), "")
+            return briefing.CommandResult(1, "", "No credentials provided")
+
+        result = briefing.collect_inbox(deadline=150, clock=lambda: 0, runner=runner, sleeper=lambda _: self.fail("No retry"))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["count"], 3)
+        self.assertEqual(result["sampledCount"], 2)
+        self.assertEqual(result["messages"][0]["subject"], "Known subject")
+        self.assertEqual(result["failedCount"], 1)
+
+    def test_current_eastern_date_and_independent_source_failures(self) -> None:
+        def runner(args, env, timeout):
+            if "+agenda" in args:
+                return briefing.CommandResult(1, "", "No credentials provided")
+            return briefing.CommandResult(0, json.dumps({"messages": []}), "")
+
+        result = briefing.collect_data(
+            now=datetime(2026, 9, 26, 1, tzinfo=timezone.utc),
+            runner=runner, sleeper=lambda _: self.fail("No retry"),
+        )
+        self.assertEqual(result["date"], "2026-09-25")
+        self.assertEqual(result["calendar"]["status"], "unavailable")
+        self.assertEqual(result["inbox"]["status"], "ok")
 
     def test_empty_inbox_is_success(self) -> None:
         def runner(args: list[str], env: dict[str, str], timeout: float):

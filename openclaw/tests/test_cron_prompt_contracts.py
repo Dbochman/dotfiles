@@ -173,11 +173,9 @@ class CronPromptContractTests(unittest.TestCase):
                 self.assertIn("Require a terminal exit code of 0", prompt)
                 self.assertIn("exit_code or the tool's equivalent", prompt)
                 self.assertIn("one complete schemaVersion 1 JSON object", prompt)
-                if owner == "julia":
-                    self.assertIn("today's America/New_York date", prompt)
-                else:
+                self.assertIn("today's America/New_York date", prompt)
+                if owner == "dylan":
                     self.assertIn("section objects (calendar and inbox)", prompt)
-                    self.assertNotIn("today's America/New_York date", prompt)
                 self.assertIn("all expected section objects", prompt)
                 self.assertIn("Do not rerun the helper or substitute yesterday's output", prompt)
                 self.assertIn("one source or triage failure must not suppress healthy sections", prompt)
@@ -188,6 +186,14 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertIn("triage.status ok means the handoff was parsed", prompt)
         self.assertIn("Only when handoffStatus is ok and attention is empty", prompt)
         self.assertIn("Never give an inbox all-clear from a failed or incomplete handoff", prompt)
+
+    def test_dylan_briefing_never_calls_a_bounded_sample_the_whole_inbox(self) -> None:
+        prompt = self.jobs["gws-dylan-morning-briefing-0001"]["payload"]["message"]
+        self.assertIn("inventoryComplete", prompt)
+        self.assertIn("observedCount", prompt)
+        self.assertIn("not the whole inbox", prompt)
+        self.assertIn("Never infer no outstanding work", prompt)
+        self.assertIn("Unknown/null counts are not zero", prompt)
 
     def test_julia_triage_serializes_gmail_calls(self) -> None:
         prompt = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]

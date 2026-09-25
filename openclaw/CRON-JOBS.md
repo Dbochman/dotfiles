@@ -454,8 +454,8 @@ session as needed, accumulating output until terminal exit. Empty output
 while a process is running is not failure. Collection and polling are bounded
 to 180 seconds; cancellation may target only that execution. Do not relaunch
 the collector, read stale output, or render until exit zero and a complete
-schema-version-1 object with expected sections. Julia's payload must also
-carry today's Eastern date; Dylan's schema has no top-level date field.
+schema-version-1 object with expected sections. Both payloads must carry
+today's Eastern date; the local Dylan update adds that freshness check.
 
 Legacy `auth_error`, `partial`, or unknown handoffs contribute status, counters,
 and attention but cannot establish a new-arrival baseline. Version 2 uses the
@@ -480,7 +480,16 @@ once and must not synthesize `gws`, retry, or `jq` shell pipelines itself. The
 helper uses `--account` only for the Calendar helper and
 `GOOGLE_WORKSPACE_CLI_ACCOUNT` for raw Gmail endpoints, retries only the known
 token-cache race once, handles an empty inbox as success, and filters metadata
-to From/Subject/Date without emitting message IDs or snippets. Expected
+to From/Subject/Date without emitting message IDs or snippets. The local update
+restricts the query to `in:inbox newer_than:1d`, paginates up to 1000 IDs, and
+samples at most 25 message headers. Counts are exact only when the inventory
+completes; incomplete counts are null with `observedCount` as a lower bound.
+Token cycles, invalid pages, and scan limits cannot produce an inbox all-clear.
+The response carries today's Eastern date and explicitly reports truncated
+or failed detail coverage. A failed detail command stops further fetching,
+preserving already collected summaries without retrying ambiguous auth errors.
+These are read-only reliability changes, not a new mailbox cleanup policy.
+Expected
 Calendar or Gmail failures are returned as bounded `unavailable`/`partial`
 status objects with exit zero so the other section can still be delivered.
 The collector has a 150-second global deadline, while the agent turn has a

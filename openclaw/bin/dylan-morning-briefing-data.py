@@ -11,7 +11,9 @@ import time
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 
 ACCOUNT = os.environ.get("DYLAN_EMAIL", "")
@@ -22,6 +24,9 @@ TOKEN_RETRY_SECONDS = 5.0
 TOKEN_RACE_TEXT = "failed to get token"
 HEADER_LIMITS = {"from": 320, "subject": 500, "date": 160}
 CALENDAR_EVENT_LIMIT = 100
+INBOX_SCAN_LIMIT = 1000
+INBOX_DETAIL_LIMIT = 25
+TIME_ZONE = ZoneInfo("America/New_York")
 PROCESS_GROUP_GRACE_SECONDS = 1.0
 
 _ACTIVE_PROCESS: subprocess.Popen[str] | None = None
@@ -318,42 +323,56 @@ def header_summary(payload: dict[str, object]) -> dict[str, str] | None:
 def collect_inbox(
     *, deadline: float, clock: Clock, runner: Runner, sleeper: Sleeper
 ) -> dict[str, object]:
-    listing, error = gmail_call(
-        "list",
-        {"userId": "me", "q": "newer_than:1d", "maxResults": 25},
-        deadline=deadline,
-        clock=clock,
-        runner=runner,
-        sleeper=sleeper,
-    )
-    if listing is None:
+    params = {"userId": "me", "q": "in:inbox newer_than:1d", "maxResults": 100}
+    message_ids = []
+    seen_ids = set()
+    seen_tokens = set()
+    inventory_complete = False
+    inventory_error = None
+    for _ in range(INBOX_SCAN_LIMIT // 100):
+        listing, inventory_error = gmail_call(
+            "list", params, deadline=deadline, clock=clock, runner=runner, sleeper=sleeper,
+        )
+        if listing is None:
+            break
+        entries = listing.get("messages", [])
+        if not isinstance(entries, list) or len(entries) > 100 or not all(
+            isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"]
+            for item in entries
+        ):
+            inventory_error = "invalid_response"
+            break
+        for entry in entries:
+            if entry["id"] not in seen_ids:
+                seen_ids.add(entry["id"])
+                message_ids.append(entry["id"])
+        token = listing.get("nextPageToken")
+        if not token:
+            inventory_complete = True
+            break
+        if not isinstance(token, str) or token in seen_tokens:
+            inventory_error = "invalid_pagination"
+            break
+        seen_tokens.add(token)
+        params["pageToken"] = token
+    if not inventory_complete:
         return {
-            "status": "unavailable",
-            "reason": error or "command_error",
-            "count": 0,
+            "status": "partial" if message_ids else "unavailable",
+            "reason": inventory_error or "inventory_truncated",
+            "count": None,
+            "observedCount": len(message_ids),
+            "inventoryComplete": False,
+            "truncated": True,
             "messages": [],
+            "sampledCount": 0,
+            "failedCount": 0,
         }
 
-    raw_messages = listing.get("messages") or []
-    if not isinstance(raw_messages, list):
-        return {
-            "status": "unavailable",
-            "reason": "invalid_response",
-            "count": 0,
-            "messages": [],
-        }
-
-    message_ids = [
-        item.get("id")
-        for item in raw_messages
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    ][:25]
     summaries: list[dict[str, str]] = []
     errors: Counter[str] = Counter()
-    for message_id in message_ids:
-        # GWS 0.4.4 omits payload.headers when metadataHeaders is supplied.
-        # Request metadata without that parameter, then retain only three
-        # headers locally so snippets, IDs, and other metadata are not emitted.
+    sampled_count = 0
+    for message_id in message_ids[:INBOX_DETAIL_LIMIT]:
+        sampled_count += 1
         message, fetch_error = gmail_call(
             "get",
             {"userId": "me", "id": message_id, "format": "metadata"},
@@ -364,20 +383,20 @@ def collect_inbox(
         )
         if message is None:
             errors[fetch_error or "command_error"] += 1
-            continue
+            break
         summary = header_summary(message)
         if summary is None:
             errors["missing_headers"] += 1
             continue
         summaries.append(summary)
 
-    estimate = listing.get("resultSizeEstimate")
-    estimated_count = estimate if isinstance(estimate, int) else len(message_ids)
     result: dict[str, object] = {
         "status": "partial" if errors else "ok",
         "count": len(message_ids),
-        "estimatedCount": estimated_count,
-        "truncated": estimated_count > len(message_ids),
+        "observedCount": len(message_ids),
+        "inventoryComplete": True,
+        "sampledCount": sampled_count,
+        "truncated": len(message_ids) > sampled_count,
         "messages": summaries,
         "failedCount": sum(errors.values()),
     }
@@ -388,24 +407,29 @@ def collect_inbox(
 
 def collect_data(
     *,
+    now: datetime | None = None,
     runner: Runner = run_command,
     sleeper: Sleeper = time.sleep,
     clock: Clock = time.monotonic,
 ) -> dict[str, object]:
+    local_now = now.astimezone(TIME_ZONE) if now else datetime.now(TIME_ZONE)
     if not ACCOUNT.strip():
         return {
             "schemaVersion": 1,
+            "date": local_now.date().isoformat(),
             "calendar": {"status": "unavailable", "reason": "missing_account"},
             "inbox": {
                 "status": "unavailable",
                 "reason": "missing_account",
-                "count": 0,
+                "count": None,
+                "inventoryComplete": False,
                 "messages": [],
             },
         }
     deadline = clock() + OVERALL_TIMEOUT_SECONDS
     return {
         "schemaVersion": 1,
+        "date": local_now.date().isoformat(),
         "calendar": collect_calendar(
             deadline=deadline, clock=clock, runner=runner, sleeper=sleeper
         ),
@@ -422,11 +446,13 @@ def main() -> int:
     except Exception:
         payload = {
             "schemaVersion": 1,
+            "date": datetime.now(TIME_ZONE).date().isoformat(),
             "calendar": {"status": "unavailable", "reason": "internal_error"},
             "inbox": {
                 "status": "unavailable",
                 "reason": "internal_error",
-                "count": 0,
+                "count": None,
+                "inventoryComplete": False,
                 "messages": [],
             },
         }
