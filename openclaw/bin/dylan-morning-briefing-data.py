@@ -30,7 +30,7 @@ TRIAGE_SPEC.loader.exec_module(triage)
 ACCOUNT = os.environ.get("DYLAN_EMAIL", "")
 STATE_DB = Path(os.environ.get("OPENCLAW_STATE_DB", str(Path.home() / ".openclaw/state/openclaw.sqlite")))
 CRON_STORE_KEY = str(Path.home() / ".openclaw/cron/jobs.json")
-TRIAGE_JOB_ID = "gws-dylan-morning-triage-0001"
+TRIAGE_JOB_ID = "b7119197-b8e5-4f7d-9af2-edd268637cc8"
 GWS_BIN = os.environ.get("GWS_BIN", "/opt/homebrew/bin/gws")
 COMMAND_TIMEOUT_SECONDS = 30.0
 OVERALL_TIMEOUT_SECONDS = 150.0

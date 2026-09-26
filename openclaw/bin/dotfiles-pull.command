@@ -1514,8 +1514,13 @@ fi
 
 # Deploy updated cron job definitions (preserves runtime state)
 if [ -x "$REPO/openclaw/sync-cron-jobs.sh" ]; then
-  SYNC_OUT=$("$REPO/openclaw/sync-cron-jobs.sh" deploy 2>&1)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sync-cron-jobs: $SYNC_OUT" >> "$LOG"
+  if SYNC_OUT=$("$REPO/openclaw/sync-cron-jobs.sh" deploy 2>&1); then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sync-cron-jobs: $SYNC_OUT" >> "$LOG"
+  else
+    SYNC_STATUS=$?
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sync-cron-jobs failed (exit=$SYNC_STATUS): $SYNC_OUT" >> "$LOG"
+    exit "$SYNC_STATUS"
+  fi
 fi
 
 # Self-update: keep the deployed copy of this script in sync with repo HEAD.

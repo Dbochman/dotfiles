@@ -323,6 +323,53 @@ with sqlite3.connect(sqlite_path) as conn:
 PY
 
 : > "$OPENCLAW_CALL_LOG"
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+
+path = os.path.expanduser("~/dotfiles/openclaw/cron/jobs.json")
+with open(path) as source_file:
+    data = json.load(source_file)
+missing_job = dict(data["jobs"][0])
+missing_job["id"] = "unregistered"
+data["jobs"][0]["payload"] = {"kind": "agentTurn", "message": "must not update before registration"}
+data["jobs"].append(missing_job)
+with open(path, "w") as source_file:
+    json.dump(data, source_file)
+PY
+if REGISTRATION_OUT=$(deploy 2>&1); then
+  echo "unregistered canonical job was imported behind the Gateway" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$REGISTRATION_OUT" | grep -q 'registered through the active Gateway' || \
+   ! printf '%s\n' "$REGISTRATION_OUT" | grep -q 'unregistered'; then
+  echo "missing job did not report the live registration requirement" >&2
+  exit 1
+fi
+if [ -s "$OPENCLAW_CALL_LOG" ] || [ -e "$TEST_HOME/.openclaw/cron/jobs.json" ]; then
+  echo "missing registration did not stop before deployment mutations" >&2
+  exit 1
+fi
+HOME="$TEST_HOME" python3 <<'PY'
+import json
+import os
+import sqlite3
+
+path = os.path.expanduser("~/dotfiles/openclaw/cron/jobs.json")
+with open(path) as source_file:
+    data = json.load(source_file)
+data["jobs"] = [job for job in data["jobs"] if job["id"] != "unregistered"]
+data["jobs"][0]["payload"] = {"kind": "agentTurn", "message": "test"}
+with open(path, "w") as source_file:
+    json.dump(data, source_file)
+database = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
+with sqlite3.connect(database) as connection:
+    rows = connection.execute("SELECT job_json FROM cron_jobs").fetchall()
+assert len(rows) == 1
+assert json.loads(rows[0][0])["payload"]["message"] == "test"
+PY
+
+: > "$OPENCLAW_CALL_LOG"
 deploy
 if grep -q 'cron.update' "$OPENCLAW_CALL_LOG"; then
   echo "matching SQLite schedule unexpectedly triggered cron.update" >&2

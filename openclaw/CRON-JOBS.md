@@ -24,8 +24,15 @@ shortcut.
 The repository remains the durable definition record, but SQLite changes how
 deployment works. `sync-cron-jobs.sh deploy` filters completed
 `deleteAfterRun` jobs using `cron_run_logs`, stages the remaining definitions,
-reconciles changed existing definitions through the live gateway, then imports
-new IDs through `openclaw doctor`. Only drifted fields are patched, so payload
+reconciles changed existing definitions through the live gateway, then
+normalizes existing storage through `openclaw doctor`. In a SQLite-backed
+installation, new jobs must first be registered through `openclaw cron add`
+or the Gateway `cron.add` API. Record the returned ID in the canonical
+definition and any handoff consumers. For a staged rollout, create disabled,
+validate the paired code/definition, then enable through the Gateway. Do not
+invent a new ID and depend on the legacy JSON migration to activate it.
+Deployment rejects unregistered IDs before staging or updating any definition.
+Only drifted fields are patched, so payload
 or delivery edits preserve runtime state and retry backoff while schedule or
 enabled edits recalculate `nextRunAtMs`. The daily deployment runs at 6 AM; a
 manual `dotfiles-pull.command` deploys immediately. Deployment returns nonzero
@@ -37,6 +44,9 @@ canonical field. Missing, extra, or field-drifted jobs therefore fail the
 deployment instead of letting a successful-but-no-op RPC mask stale work. The
 script reports extra IDs but does not silently remove them; inspect an unknown
 job before removing it through the cron API and the canonical file.
+
+The pull wrapper records cron-sync output and the actual failure exit code
+before stopping. A successful Git pull is not proof that jobs were deployed.
 
 ### CLI commands
 
@@ -316,7 +326,7 @@ and perform reservation plus calendar idempotency checks before acting.
 |----|----------|---------|----------|-------------|
 | `gws-julia-morning-triage-0001` | Daily 6:45 AM ET | `agentTurn` | `none` | Silent, fully paginated Gmail triage: labels, thread-aware reply drafts, read-state cleanup, archiving, and conservative spam trashing |
 | `gws-julia-morning-briefing-0001` | Daily 7 AM ET | `agentTurn` | announce to Julia via iMessage | Read-only, high-signal briefing from the deterministic `julia-morning-briefing-data.py` collector |
-| `gws-dylan-morning-triage-0001` | Daily 7:40 AM ET | `agentTurn` | `none` | Julia-style automatic Gmail cleanup, verified handoff, and bounded read-only Action/Urgent review; newly scheduled for the next deployment |
+| `b7119197-b8e5-4f7d-9af2-edd268637cc8` | Daily 7:40 AM ET | `agentTurn` | `none` | Dylan Morning Gmail Triage: automatic cleanup, verified handoff, and bounded read-only Action/Urgent review |
 | `gws-dylan-morning-briefing-0001` | Daily 8 AM ET | `agentTurn` | announce to Dylan via iMessage | Read-only seven-day Calendar, confirmed triage attention, action reminders, post-triage arrivals, and bounded recent-inbox summary |
 | `weekly-report-0001` | Sundays 3 PM ET | `agentTurn` | announce to Dylan via iMessage | Runs `openclaw-weekly-report.py`, then announces its deterministic activity and live-health report |
 | `financial-scrape-0001` | Sundays 4:05 AM ET | exact-argv `command` | `none`; nonzero/timeout/output-bound failures trigger the six-hour-cooldown job failure alert, while detailed nonhealthy results attempt a durable alert-outbox handoff | Invokes only the deterministic cache-only `openclaw/bin/weekly-financial-scrape.py` helper without a model turn. It requires the repo's exact contract-v2 version and seven-source manifest before credentials/browser/data, pins every merge to `--wrapper-contract 2`, permits bounded browser recovery, validates one allowlisted status marker per successful scraper, and uses one run ID for every scraper/import. BoA retains exact-profile raw CDP and one guarded re-auth only after explicit `not_authenticated`. Production Plaid sync is a separate daily cache-only LaunchAgent. |
@@ -481,7 +491,7 @@ semantics. Delivery success alone is not evidence of a complete briefing.
 
 ### Dylan morning briefing data path
 
-The approved `gws-dylan-morning-triage-0001` job runs silently at 7:40 AM ET
+The approved `b7119197-b8e5-4f7d-9af2-edd268637cc8` job runs silently at 7:40 AM ET
 with a 900-second budget, leaving five minutes before the existing 8 AM
 read-only briefing. It mirrors Julia's reviewed policy: classify unread mail,
 create thread-aware reply drafts (never send), resolve routine read state,
@@ -529,6 +539,13 @@ as bounded `unavailable`/`partial` status objects with exit zero so the other
 section can still be delivered.
 The collector has a 150-second global deadline, while the agent turn has a
 240-second timeout so partial data can still be composed before cron aborts.
+
+The September 26 rollout exposed a legacy-import/live-scheduler mismatch:
+doctor recorded a 14-job SQLite import, but the active Gateway retained 13
+jobs and Dylan's new triage job was absent by briefing time. The old intended
+ID `gws-dylan-morning-triage-0001` had no run history. Its replacement uses
+the Gateway-assigned ID above, with the briefing consumer updated to match;
+no old handoff is reused and no cleanup is replayed as a deployment test.
 
 ## Temporary World Cup Briefings
 

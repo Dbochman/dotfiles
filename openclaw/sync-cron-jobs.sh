@@ -505,10 +505,16 @@ if os.path.isfile(sqlite_path):
         next_run_by_id[job_id] = next_run_at_ms
         last_run_by_id[job_id] = last_run_at_ms
 
-# Merge definitions from dotfiles with non-scheduling runtime state. Existing
-# SQLite definitions are reconciled through the gateway before doctor imports
-# newly staged IDs. A changed schedule or enabled flag must never retain
-# nextRunAtMs/runningAtMs from the previous schedule.
+if os.path.isfile(sqlite_path):
+    missing_ids = sorted(job['id'] for job in new_defs['jobs'] if job['id'] not in sqlite_job_ids)
+    if missing_ids:
+        raise SystemExit(
+            'Error: cron jobs must be registered through the active Gateway before deployment: '
+            + ', '.join(missing_ids)
+            + '. Use openclaw cron add, then record the returned IDs in canonical definitions '
+            + 'and their consumers. No deployment changes were applied.'
+        )
+
 cron_updates = []
 for job in new_defs['jobs']:
     job_id = job['id']
@@ -536,8 +542,6 @@ for job in new_defs['jobs']:
     if stale_at_runtime and 'enabled' not in patch and 'schedule' not in patch:
         patch['schedule'] = job.get('schedule')
 
-    # Doctor imports newly staged IDs. Only IDs already present in SQLite can
-    # be updated through cron.update without an "id not found" failure.
     if patch and job_id in sqlite_job_ids:
         cron_updates.append({
             'id': job_id,
@@ -580,7 +584,7 @@ preserved = sum(1 for j in new_defs['jobs'] if 'state' in j)
 completed_summary = ', '.join(completed_ids) if completed_ids else 'none'
 update_summary = ', '.join(item['id'] for item in cron_updates) if cron_updates else 'none'
 print(
-    f'Deployed {len(new_defs["jobs"])} jobs to {live_path} '
+    f'Staged {len(new_defs["jobs"])} jobs at {live_path} '
     f'({preserved} with preserved state; completed one-shots skipped: {completed_summary}; '
     f'gateway reconciliations planned: {update_summary})'
 )

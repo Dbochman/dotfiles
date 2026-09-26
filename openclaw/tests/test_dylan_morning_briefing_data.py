@@ -29,6 +29,14 @@ SPEC.loader.exec_module(briefing)
 
 
 class DylanMorningBriefingDataTests(unittest.TestCase):
+    def test_triage_history_uses_registered_canonical_job_id(self) -> None:
+        path = SCRIPT.parents[1] / "cron" / "jobs.json"
+        jobs = json.loads(path.read_text())["jobs"]
+        matches = [job for job in jobs if job.get("name") == "Dylan Morning Gmail Triage"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(briefing.TRIAGE_JOB_ID, matches[0]["id"])
+        self.assertNotEqual(briefing.TRIAGE_JOB_ID, "gws-dylan-morning-triage-0001")
+
     def setUp(self) -> None:
         original_account = briefing.ACCOUNT
         briefing.ACCOUNT = "dylan@example.invalid"

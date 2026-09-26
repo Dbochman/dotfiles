@@ -162,6 +162,26 @@ class DeploymentContractTests(unittest.TestCase):
         end = text.index(f"\n{marker}\n", start)
         return text[start:end] + "\n"
 
+    def test_cron_sync_failure_is_logged_before_pull_exits(self) -> None:
+        text = DOTFILES_PULL.read_text(encoding="utf-8")
+        block = text.split("# Deploy updated cron job definitions (preserves runtime state)\n", 1)[1].split("# Self-update:", 1)[0]
+        repository = self.root / "repo"
+        script = repository / "openclaw" / "sync-cron-jobs.sh"
+        script.parent.mkdir(parents=True)
+        for status in (0, 23):
+            with self.subTest(status=status):
+                script.write_text(f"#!/bin/bash\necho cron-sync-diagnostic\nexit {status}\n", encoding="utf-8")
+                script.chmod(0o700)
+                log = self.root / f"pull-{status}.log"
+                result = self.run_bash('set -euo pipefail\nREPO="$1"\nLOG="$2"\n' + block + '\necho continued\n', repository, log)
+                self.assertEqual(result.returncode, status)
+                self.assertIn("cron-sync-diagnostic", log.read_text(encoding="utf-8"))
+                if status:
+                    self.assertIn("sync-cron-jobs failed (exit=23)", log.read_text(encoding="utf-8"))
+                    self.assertNotIn("continued", result.stdout)
+                else:
+                    self.assertIn("continued", result.stdout)
+
     def make_skill_fixture(self, root: Path, *, include_symlink: bool = False) -> None:
         (root / "nested" / "__pycache__").mkdir(parents=True)
         (root / ".pytest_cache").mkdir()

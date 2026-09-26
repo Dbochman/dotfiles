@@ -196,7 +196,7 @@ class CronPromptContractTests(unittest.TestCase):
         self.assertIn("Unknown/null counts are not zero", prompt)
 
     def test_dylan_triage_matches_reviewed_julia_policy_with_separate_account(self) -> None:
-        job = self.jobs["gws-dylan-morning-triage-0001"]
+        job = self.jobs["b7119197-b8e5-4f7d-9af2-edd268637cc8"]
         expected = self.jobs["gws-julia-morning-triage-0001"]["payload"]["message"]
         expected = expected.replace("Julia", "Dylan").replace("julia", "dylan")
         expected = expected.replace("JULIA_EMAIL", "DYLAN_EMAIL")
