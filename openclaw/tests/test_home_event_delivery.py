@@ -287,6 +287,77 @@ class HomeEventDeliveryTests(unittest.TestCase):
         delivery.validate_receipt(self.receipt(via="gateway").stdout, self.TARGET)
         delivery.validate_receipt(self.receipt(via="direct").stdout, self.TARGET)
 
+    def test_receipt_accepts_one_compact_or_formatted_json_document(self) -> None:
+        for via in ("gateway", "direct"):
+            payload = json.loads(self.receipt(via=via).stdout)
+            for indent in (None, 2):
+                receipt = json.dumps(payload, indent=indent)
+                for whitespace in ("", "\n", " \r\n\t"):
+                    with self.subTest(via=via, indent=indent, whitespace=whitespace):
+                        delivery.validate_receipt(
+                            whitespace + receipt + whitespace, self.TARGET
+                        )
+
+    def test_receipt_rejects_malformed_or_mixed_stdout(self) -> None:
+        receipt = json.dumps(json.loads(self.receipt().stdout), indent=2)
+        for invalid in (
+            "",
+            " \r\n\t",
+            "[]",
+            "null",
+            "true",
+            '"receipt"',
+            "{}",
+            receipt[:-1],
+            "warning\n" + receipt,
+            receipt + "\nwarning",
+            receipt + "\n" + receipt,
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(delivery.DeliveryError) as caught:
+                    delivery.validate_receipt(invalid, self.TARGET)
+                self.assertEqual(caught.exception.code, "message_receipt_invalid")
+                self.assertTrue(caught.exception.uncertain)
+
+    def test_receipt_preserves_utf8_byte_limit_with_formatting(self) -> None:
+        payload = json.loads(self.receipt().stdout)
+        payload["messageId"] = "message-\u00e9"
+        payload["payload"]["result"]["messageId"] = "message-\u00e9"
+        receipt = json.dumps(payload, indent=2, ensure_ascii=False)
+        padding = delivery.MAX_RECEIPT_BYTES - len(receipt.encode("utf-8"))
+        bounded = receipt + (" " * padding)
+        delivery.validate_receipt(bounded, self.TARGET)
+        with self.assertRaises(delivery.DeliveryError) as caught:
+            delivery.validate_receipt(bounded + " ", self.TARGET)
+        self.assertTrue(caught.exception.uncertain)
+
+    def test_formatted_receipt_preserves_identity_and_delivery_guards(self) -> None:
+        changes = (
+            (("action",), "read"),
+            (("channel",), "sms"),
+            (("dryRun",), True),
+            (("handledBy",), "plugin"),
+            (("payload", "channel"), "sms"),
+            (("payload", "to"), "chat_id:999"),
+            (("payload", "via"), "unrecognized"),
+            (("payload", "deliveryStatus"), "pending"),
+            (("payload", "deliveryStatus"), "failed"),
+            (("messageId",), "other-message-guid"),
+            (("messageId",), "unknown"),
+            (("payload", "result", "messageId"), "other-message-guid"),
+            (("unexpected",), True),
+        )
+        for path, value in changes:
+            with self.subTest(path=path, value=value):
+                payload = json.loads(self.receipt().stdout)
+                record = payload
+                for key in path[:-1]:
+                    record = record[key]
+                record[path[-1]] = value
+                with self.assertRaises(delivery.DeliveryError) as caught:
+                    delivery.validate_receipt(json.dumps(payload, indent=2), self.TARGET)
+                self.assertTrue(caught.exception.uncertain)
+
     def test_native_direct_receipt_requires_confirmed_delivery(self) -> None:
         payload = json.loads(self.receipt(via="direct").stdout)
         payload["payload"]["deliveryStatus"] = "failed"
@@ -334,6 +405,24 @@ class HomeEventDeliveryTests(unittest.TestCase):
         self.assertEqual(message, delivery.TEMPLATES["person_activity"].format(site="Cabin"))
         self.assertNotIn("inc_", message)
         self.assertNotIn("res_", message)
+
+    def test_formatted_receipt_records_success_without_reconciliation_or_resend(self) -> None:
+        self.activate()
+        self.reserve()
+        receipt = self.receipt()
+        receipt.stdout = json.dumps(json.loads(receipt.stdout), indent=2) + "\n"
+        with (
+            mock.patch.object(delivery.subprocess, "run", return_value=receipt) as run,
+            mock.patch.object(delivery, "reconcile_local_imessage") as reconcile,
+        ):
+            first = self.worker().run_once()
+            second = self.worker().run_once()
+        self.assertEqual(first["outcome"], "sent")
+        self.assertEqual(second["outcome"], "idle")
+        self.assertEqual(self.row()["status"], "sent")
+        self.assertEqual(self.row()["attempt_count"], 1)
+        run.assert_called_once()
+        reconcile.assert_not_called()
 
     def test_structured_camera_result_adds_only_fixed_context_clause(self) -> None:
         self.activate(camera=True)

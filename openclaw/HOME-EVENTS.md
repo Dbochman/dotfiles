@@ -293,10 +293,14 @@ single attempt before calling OpenClaw's supervised iMessage channel, rechecks
 fresh vacancy, and holds the dedicated rollback lock across the send and
 receipt transition without blocking event ingestion. A structurally valid JSON
 receipt is authoritative even if OpenClaw also writes a non-fatal diagnostic to
-stderr. After a timeout, nonzero child exit, or malformed receipt, the worker
-does not resend. Instead it performs a read-only, exact comparison against
-`~/Library/Messages/chat.db`, scoped to the protected destination chat, the
-fully rendered fixed template, and a five-minute attempt window. Exactly one
+stderr. The receipt parser accepts one complete compact or pretty-printed JSON
+document, capped at 64 KiB of UTF-8 output. It rejects mixed log/JSON output and
+multiple documents while preserving recipient, channel, delivery-status, and
+message-identity checks. After a timeout, nonzero child exit, or malformed
+receipt, the worker does not resend. Instead it performs a read-only, exact
+comparison against `~/Library/Messages/chat.db`, scoped to the protected
+destination chat, the fully rendered fixed template, and a five-minute attempt
+window. Exactly one
 outbound `iMessage` row with sent, delivered, and zero-error flags resolves the
 reservation as sent; one exact finished failure becomes a dead letter. A
 missing match remains provisional while fresh unknowns are rechecked for

@@ -243,10 +243,7 @@ def validate_receipt(stdout: str, target: str) -> None:
     if not stdout or len(stdout.encode("utf-8")) > MAX_RECEIPT_BYTES:
         raise DeliveryError("message_receipt_invalid", uncertain=True)
     try:
-        lines = stdout.splitlines()
-        if len(lines) != 1 or not lines[0]:
-            raise ValueError
-        payload = json.loads(lines[0])
+        payload = json.loads(stdout)
     except (json.JSONDecodeError, ValueError) as exc:
         raise DeliveryError("message_receipt_invalid", uncertain=True) from exc
     expected = {"action", "channel", "dryRun", "handledBy", "payload"}
