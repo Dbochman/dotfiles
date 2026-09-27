@@ -91,7 +91,24 @@ pause, clears the obsolete `site_not_confirmed_vacant` warning, and exposes
 person's arrival or issue a feeder command. Normal paired litter evidence and
 the other home's later vacancy are still required before automatic restore.
 
-Safe status projection schema 9 separates current camera degradation from
+Safe status projection schema 10 separates overall health from core ingestion
+health. `bus_health` retains the durable ingestion status; `health` is degraded
+when that status, any observed source, camera evaluation, or delivery is
+currently degraded. `degraded_components` names the affected components.
+Historical reviewed delivery outcomes and old camera errors do not by
+themselves make the overall status unhealthy. SQLite remains schema v8.
+
+`sources.presence.freshness` reads the protected canonical evaluation and both
+site scan files without writing presence or invoking a scanner. It reports
+only bounded health codes, observation timestamps, and ages. Missing, unsafe,
+invalid, more-than-five-minutes-future, or 30-minutes-old inputs fail closed;
+the canonical per-site `fresh` flags must also be true. Ages are recomputed at
+`checked_at`, so fresh event ingestion or an evaluation rewritten by the other
+site cannot hide an old scan. An unchanged occupancy emits no transition and
+does not make presence stale. Freshness does not prove occupancy or physical
+whereabouts, and it does not override existing automation gates.
+
+The camera projection separates current camera degradation from
 historical error evidence. `camera.degradation.active` and its bounded active
 error fields reflect only a presently degraded camera worker;
 `camera.degradation.recovered_at` identifies a later successful evaluation.
@@ -400,7 +417,8 @@ every 24 hours; a missing, invalid, or future marker triggers one immediate
 repair prune. Process restarts do not reset the gate. An explicit
 `home-eventctl prune` remains a forced maintenance operation and checkpoints
 the WAL. The internal maintenance marker is not exposed through safe status.
-Status includes bus-observed per-source health and safe failure state, consumer
+Status includes bus-observed per-source health, independent per-site presence
+freshness, safe failure state, consumer
 depth and oldest unfinished time, retention, database size, camera-evaluation
 health/counts with explicit active-versus-recovered degradation, unresolved
 delivery-outcome attention, and a separate

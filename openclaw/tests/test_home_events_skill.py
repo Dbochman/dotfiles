@@ -54,6 +54,18 @@ class HomeEventsSkillTests(unittest.TestCase):
         self.assertIn("Living Room Wired", self.content)
         self.assertIn("Never capture merely because an incident exists", self.content)
 
+    def test_health_guidance_distinguishes_ingestion_and_presence_freshness(self) -> None:
+        for field in (
+            "`bus_health`",
+            "`degraded_components`",
+            "`sources.presence.freshness`",
+            "`checked_at`",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, self.content)
+        self.assertIn("unchanged occupancy", self.content)
+        self.assertIn("not proof of occupancy", self.content)
+
     def test_local_presence_language_preserves_evidence_limits(self) -> None:
         for event_type in (
             "presence.local_departure_inferred",

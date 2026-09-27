@@ -32,6 +32,15 @@ Report mode, bus-observed source health, queue depth, consumer lag, and safe
 error codes. Treat `unknown` as unknown, and do not infer that a source is
 healthy merely because its process is running.
 
+Use overall `health` and `degraded_components`, not `bus_health` alone.
+`bus_health` describes core ingestion; a working queue does not prove usable
+presence, cameras, or delivery. Inspect `sources.presence.freshness` for the
+canonical evaluation and each site's observation age at `checked_at`.
+Missing, invalid, stale, or not-fresh presence degrades health even if new
+events are arriving. Do not infer scan freshness from the last presence
+transition: unchanged occupancy may legitimately emit no event. A healthy
+freshness check is not proof of occupancy or successful notification receipt.
+
 ### Review recent activity
 
 ```bash

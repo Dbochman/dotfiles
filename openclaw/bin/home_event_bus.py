@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, T
 
 
 SCHEMA_VERSION = 8
-STATUS_SCHEMA_VERSION = 9
+STATUS_SCHEMA_VERSION = 10
 EVENT_SCHEMA_VERSION = 1
 DELIVERY_POLICY_SCHEMA_VERSION = 3
 SERVICE_NAME = "home-events"
@@ -50,6 +50,7 @@ ACCESS_ATTENTION_LAST_REVIEWED_EPOCH = "access_attention_last_reviewed_epoch"
 RING_LIVE_MAX_AGE = dt.timedelta(seconds=60)
 RING_BACKFILL_MAX_AGE = dt.timedelta(minutes=15)
 WHISKER_MAX_AGE = dt.timedelta(days=30)
+PRESENCE_MAX_AGE_SECONDS = 30 * 60
 AUGUST_OBSERVE_STAGE_CODES = frozenset(
     {
         "observe_transport_unavailable",
@@ -1675,6 +1676,90 @@ def _whisker_adapter_status(paths: RuntimePaths, now: str) -> Mapping[str, Any]:
         }
     except (HomeEventError, OSError, UnicodeError, ValueError, TypeError):
         return {"health": "degraded", "sites": empty_sites}
+
+
+def _presence_freshness(paths: RuntimePaths, now: str) -> Mapping[str, Any]:
+    directory = paths.root.parent / "presence"
+    now_value = _parse_now(now)
+    maximum = 1024 * 1024
+
+    def snapshot(name: str) -> tuple[dict, dict]:
+        result = {
+            "health": "degraded",
+            "observed_at": None,
+            "age_seconds": None,
+            "error_code": "presence_unavailable",
+        }
+        try:
+            _assert_private_directory(directory)
+            descriptor = os.open(
+                directory / name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            )
+            with os.fdopen(descriptor, "rb") as stream:
+                metadata = os.fstat(stream.fileno())
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_uid != os.geteuid()
+                    or stat.S_IMODE(metadata.st_mode) & 0o077
+                    or not 0 < metadata.st_size <= maximum
+                ):
+                    return {}, result
+                payload = _decode_json(
+                    stream.read(maximum + 1),
+                    max_bytes=maximum,
+                    code="presence_invalid",
+                )
+            if not isinstance(payload, dict):
+                raise PayloadError("presence_invalid")
+            observed_at, observed = _parse_timestamp(
+                payload.get("timestamp"), "presence_invalid"
+            )
+        except (HomeEventError, OSError, ValueError, OverflowError, RecursionError):
+            return {}, result
+        age = (now_value - observed).total_seconds()
+        result.update(observed_at=observed_at, age_seconds=max(0, int(age)))
+        if age < -300:
+            result["error_code"] = "presence_future"
+        elif age >= PRESENCE_MAX_AGE_SECONDS:
+            result["error_code"] = "presence_stale"
+        else:
+            result.update(health="ok", error_code=None)
+        return payload, result
+
+    canonical, evaluation = snapshot("state.json")
+    sites = {}
+    for site in SITES:
+        payload, result = snapshot(f"{site}-scan.json")
+        if result["health"] == "ok":
+            people = payload.get("presence")
+            site_state = canonical.get(site)
+            if (
+                payload.get("location") != site
+                or not isinstance(people, dict)
+                or any(
+                    not isinstance(people.get(person), dict)
+                    or type(people[person].get("present")) is not bool
+                    for person in ("Dylan", "Julia")
+                )
+                or not isinstance(site_state, dict)
+                or type(site_state.get("fresh")) is not bool
+                or site_state.get("occupancy")
+                not in ("occupied", "confirmed_vacant", "possibly_vacant")
+            ):
+                result.update(health="degraded", error_code="presence_invalid")
+            elif site_state["fresh"] is not True:
+                result.update(health="degraded", error_code="presence_not_fresh")
+        sites[site] = result
+    degraded = evaluation["health"] != "ok" or any(
+        result["health"] != "ok" for result in sites.values()
+    )
+    return {
+        "health": "degraded" if degraded else "ok",
+        "max_age_seconds": PRESENCE_MAX_AGE_SECONDS,
+        "evaluation": evaluation,
+        "sites": sites,
+    }
 
 
 def _fsync_directory(path: Path) -> None:
@@ -4071,6 +4156,7 @@ class EventStore:
         )
 
     def status_snapshot(self) -> Mapping[str, Any]:
+        checked_at = self._now()
         with contextlib.closing(self.connect(read_only=True)) as connection:
             runtime = connection.execute(
                 "SELECT * FROM runtime_status WHERE singleton = 1"
@@ -4235,10 +4321,33 @@ class EventStore:
             sources["ring"]["publisher"] = ring_publisher
             if ring_publisher["health"] == "degraded":
                 sources["ring"]["health"] = "degraded"
-            whisker_observer = _whisker_adapter_status(self.paths, self._now())
+            whisker_observer = _whisker_adapter_status(self.paths, checked_at)
             sources["whisker"]["observer"] = whisker_observer
             if whisker_observer["health"] == "degraded":
                 sources["whisker"]["health"] = "degraded"
+            presence_freshness = _presence_freshness(self.paths, checked_at)
+            sources["presence"]["freshness"] = presence_freshness
+            if presence_freshness["health"] == "degraded":
+                sources["presence"]["health"] = "degraded"
+            delivery_health = (
+                "degraded"
+                if delivery_attention["pending"] > 0
+                else delivery_runtime["health"]
+            )
+            component_health = {
+                "bus": runtime["health"],
+                "camera": camera_runtime["health"],
+                "delivery": delivery_health,
+                **{
+                    f"source_{source}": detail["health"]
+                    for source, detail in sources.items()
+                },
+            }
+            degraded_components = [
+                component
+                for component, health in component_health.items()
+                if health == "degraded"
+            ]
             camera_degradation_active = camera_runtime["health"] == "degraded"
             camera_recovered_at = None
             if (
@@ -4251,7 +4360,10 @@ class EventStore:
             return {
                 "schema_version": STATUS_SCHEMA_VERSION,
                 "mode": runtime["mode"],
-                "health": runtime["health"],
+                "health": "degraded" if degraded_components else runtime["health"],
+                "bus_health": runtime["health"],
+                "checked_at": checked_at,
+                "degraded_components": degraded_components,
                 "started_at": runtime["started_at"],
                 "updated_at": runtime["updated_at"],
                 "last_ingest_at": runtime["last_ingest_at"],
@@ -4259,11 +4371,7 @@ class EventStore:
                 "last_error_at": runtime["last_error_at"],
                 "last_error_code": runtime["last_error_code"],
                 "delivery": {
-                    "health": (
-                        "degraded"
-                        if delivery_attention["pending"] > 0
-                        else delivery_runtime["health"]
-                    ),
+                    "health": delivery_health,
                     "policy": delivery_policy_projection(self.paths),
                     "counts": {
                         status: outbox_counts.get(status, 0)

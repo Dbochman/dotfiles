@@ -740,7 +740,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
 
         self.assertEqual(result["acknowledged"], 1)
         status = store.status_snapshot()
-        self.assertEqual(status["health"], "ok")
+        self.assertEqual(status["bus_health"], "ok")
         self.assertIsNone(status["last_error_code"])
         self.assertEqual(status["counts"]["dead_letters"], 0)
 
@@ -1185,7 +1185,7 @@ class HomeEventCorrelatorTests(unittest.TestCase):
         incident = self.rows("SELECT * FROM incidents")[0]
         self.assertEqual(incident["state"], "expired_unresolved")
         status = bus.EventStore(bus.RuntimePaths(self.root)).status_snapshot()
-        self.assertEqual(status["health"], "ok")
+        self.assertEqual(status["bus_health"], "ok")
         self.assertIsNone(status["last_error_code"])
         self.assertEqual(
             status["attention"],

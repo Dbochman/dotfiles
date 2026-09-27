@@ -275,6 +275,188 @@ class HomeEventTestCase(unittest.TestCase):
         return connection
 
 
+class PresenceHealthTests(HomeEventTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.presence = self.root.parent / "presence"
+        self.presence.mkdir(mode=0o700)
+        self.write_fresh_presence()
+
+    def write_private_json(self, name: str, payload: dict) -> None:
+        path = self.presence / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        path.chmod(0o600)
+
+    def write_fresh_presence(self) -> None:
+        self.write_private_json(
+            "state.json",
+            {
+                "timestamp": NOW,
+                "cabin": {"fresh": True, "occupancy": "possibly_vacant"},
+                "crosstown": {"fresh": True, "occupancy": "occupied"},
+            },
+        )
+        for site in home_events.SITES:
+            self.write_private_json(
+                f"{site}-scan.json",
+                {
+                    "timestamp": NOW,
+                    "location": site,
+                    "presence": {
+                        "Dylan": {"present": False},
+                        "Julia": {"present": True},
+                    },
+                    "private_marker": "must-not-appear-in-status",
+                },
+            )
+
+    def freshness(self) -> dict:
+        return self.store.status_snapshot()["sources"]["presence"]["freshness"]
+
+    def test_fresh_inputs_are_healthy_without_presence_transition_events(self) -> None:
+        status = self.store.status_snapshot()
+        self.assertEqual(status["health"], "ok")
+        self.assertEqual(status["bus_health"], "ok")
+        self.assertEqual(status["checked_at"], NOW)
+        self.assertEqual(status["degraded_components"], [])
+        self.assertEqual(status["sources"]["presence"]["accepted"], 0)
+        self.assertEqual(self.freshness()["health"], "ok")
+        self.assertEqual(self.freshness()["max_age_seconds"], 1800)
+        for site in home_events.SITES:
+            self.assertEqual(self.freshness()["sites"][site]["age_seconds"], 0)
+        for private_value in ("Dylan", "Julia", "must-not-appear-in-status"):
+            self.assertNotIn(private_value, json.dumps(status))
+
+    def test_stale_scan_degrades_overall_health_despite_fresh_evaluation(self) -> None:
+        path = self.presence / "crosstown-scan.json"
+        payload = json.loads(path.read_text())
+        payload["timestamp"] = "2026-07-11T15:00:00Z"
+        self.write_private_json(path.name, payload)
+        status = self.store.status_snapshot()
+        self.assertEqual(status["health"], "degraded")
+        self.assertEqual(status["bus_health"], "ok")
+        self.assertEqual(status["degraded_components"], ["source_presence"])
+        self.assertEqual(status["sources"]["presence"]["health"], "degraded")
+        freshness = self.freshness()
+        self.assertEqual(freshness["evaluation"]["health"], "ok")
+        self.assertEqual(freshness["sites"]["cabin"]["health"], "ok")
+        self.assertEqual(freshness["sites"]["crosstown"]["age_seconds"], 86400)
+        self.assertEqual(
+            freshness["sites"]["crosstown"]["error_code"], "presence_stale"
+        )
+
+    def test_age_is_recomputed_without_new_events_or_state_writes(self) -> None:
+        self.store.clock = lambda: "2026-07-12T15:29:59Z"
+        self.assertEqual(self.store.status_snapshot()["health"], "ok")
+        self.store.clock = lambda: "2026-07-12T15:30:00Z"
+        self.assertEqual(self.store.status_snapshot()["health"], "degraded")
+        self.assertEqual(self.freshness()["sites"]["crosstown"]["age_seconds"], 1800)
+
+    def test_stale_evaluation_or_false_fresh_flag_degrades_health(self) -> None:
+        for change in ("evaluation", "site_flag"):
+            with self.subTest(change=change):
+                self.write_fresh_presence()
+                payload = json.loads((self.presence / "state.json").read_text())
+                if change == "evaluation":
+                    payload["timestamp"] = "2026-07-12T14:29:00Z"
+                else:
+                    payload["crosstown"]["fresh"] = False
+                self.write_private_json("state.json", payload)
+                self.assertEqual(self.store.status_snapshot()["health"], "degraded")
+                if change == "evaluation":
+                    self.assertEqual(
+                        self.freshness()["evaluation"]["error_code"], "presence_stale"
+                    )
+                else:
+                    self.assertEqual(
+                        self.freshness()["sites"]["crosstown"]["error_code"],
+                        "presence_not_fresh",
+                    )
+
+    def test_missing_or_unsafe_files_fail_closed_without_chmod_or_creation(self) -> None:
+        for name in ("state.json", "cabin-scan.json", "crosstown-scan.json"):
+            for kind in ("missing", "symlink", "permissions", "fifo"):
+                with self.subTest(name=name, kind=kind):
+                    path = self.presence / name
+                    original = path.read_bytes()
+                    path.unlink()
+                    if kind == "symlink":
+                        path.symlink_to(self.presence / "absent.json")
+                    elif kind == "permissions":
+                        path.write_bytes(original)
+                        path.chmod(0o644)
+                    elif kind == "fifo":
+                        os.mkfifo(path, 0o600)
+                    try:
+                        self.assertEqual(self.store.status_snapshot()["health"], "degraded")
+                        if kind == "missing":
+                            self.assertFalse(path.exists())
+                        elif kind == "permissions":
+                            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+                    finally:
+                        if path.exists() or path.is_symlink():
+                            path.unlink()
+                        path.write_bytes(original)
+                        path.chmod(0o600)
+
+    def test_malformed_incomplete_future_and_wrong_site_inputs_fail_closed(self) -> None:
+        path = self.presence / "crosstown-scan.json"
+        original = json.loads(path.read_text())
+        cases = [
+            b"not-json",
+            b"[]",
+            b"x" * (1024 * 1024 + 1),
+            json.dumps(dict(original, timestamp="2026-07-12T15:05:01Z")).encode(),
+            json.dumps(dict(original, timestamp="2026-07-12T15:00:00")).encode(),
+            json.dumps(dict(original, location="cabin")).encode(),
+            json.dumps(dict(original, presence={})).encode(),
+        ]
+        for payload in cases:
+            with self.subTest(size=len(payload)):
+                path.write_bytes(payload)
+                self.assertEqual(self.store.status_snapshot()["health"], "degraded")
+        self.write_fresh_presence()
+        self.write_private_json("state.json", {"timestamp": NOW})
+        self.assertEqual(self.store.status_snapshot()["health"], "degraded")
+
+    def test_status_does_not_rewrite_presence_or_generate_events(self) -> None:
+        paths = tuple(self.presence.iterdir())
+        before = {path: (path.read_bytes(), path.stat().st_ctime_ns) for path in paths}
+        status = self.store.status_snapshot()
+        after = {path: (path.read_bytes(), path.stat().st_ctime_ns) for path in paths}
+        self.assertEqual(after, before)
+        self.assertEqual(status["counts"]["events"], 0)
+        self.assertEqual(status["counts"]["spool_ready"], 0)
+
+    def test_recovery_clears_presence_warning_without_masking_bus_failure(self) -> None:
+        (self.presence / "crosstown-scan.json").unlink()
+        self.assertEqual(self.store.status_snapshot()["health"], "degraded")
+        self.write_fresh_presence()
+        self.assertEqual(self.store.status_snapshot()["health"], "ok")
+        with self.connection() as connection:
+            connection.execute("UPDATE runtime_status SET health='degraded'")
+        self.assertEqual(self.store.status_snapshot()["health"], "degraded")
+        self.assertEqual(self.store.status_snapshot()["degraded_components"], ["bus"])
+
+    def test_active_camera_and_delivery_failures_affect_overall_health(self) -> None:
+        with self.connection() as connection:
+            connection.execute("UPDATE camera_runtime SET health='degraded'")
+            connection.execute("UPDATE delivery_runtime SET health='degraded'")
+        status = self.store.status_snapshot()
+        self.assertEqual(status["bus_health"], "ok")
+        self.assertEqual(status["health"], "degraded")
+        self.assertEqual(status["degraded_components"], ["camera", "delivery"])
+
+    def test_written_status_includes_current_presence_health(self) -> None:
+        (self.presence / "crosstown-scan.json").unlink()
+        self.assertTrue(self.store.write_status_best_effort())
+        status = json.loads(self.paths.status.read_text())
+        self.assertEqual(status["health"], "degraded")
+        self.assertEqual(
+            status["sources"]["presence"]["freshness"]["health"], "degraded"
+        )
+
+
 class RuntimeSecurityTests(HomeEventTestCase):
     def test_init_builds_private_runtime_and_expected_schema(self) -> None:
         directories = [
@@ -353,7 +535,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
         self.assertNotIn("front_door", encoded)
         self.assertEqual(stat.S_IMODE(self.paths.status.stat().st_mode), 0o600)
         status = json.loads(encoded)
-        self.assertEqual(status["schema_version"], 9)
+        self.assertEqual(status["schema_version"], 10)
         self.assertEqual(status["counts"]["events"], 1)
         self.assertEqual(status["sources"]["ring"]["accepted"], 1)
         self.assertEqual(status["sources"]["ring"]["health"], "ok")
@@ -632,7 +814,7 @@ class RuntimeSecurityTests(HomeEventTestCase):
             },
         )
         after = self.store.status_snapshot()
-        self.assertEqual(after["health"], "ok")
+        self.assertEqual(after["bus_health"], "ok")
         self.assertIsNone(after["last_error_code"])
         self.assertEqual(after["attention"]["expired_unresolved"], 1)
         self.assertEqual(after["attention"]["reviewed"], 1)
