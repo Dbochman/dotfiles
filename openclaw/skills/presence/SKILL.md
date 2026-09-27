@@ -117,7 +117,7 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 │     scan.json          │──named cp─▶│ ~/Downloads/              │
 └───────────────────────┘            │ com.openclaw.             │
                                      │   presence-receive        │
-                                     │ WatchPaths one-shot:      │
+                                     │ WatchPaths + 60s timer:    │
                                      │   Validate + atomic move  │
                                      │   Trigger evaluate        │
                                      │                           │
@@ -133,7 +133,16 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 |-------|------|----------|---------|
 | `com.openclaw.presence-cabin` | Mac Mini | Every 15 min | Scan cabin WiFi, evaluate |
 | `com.openclaw.presence-crosstown` | MacBook Pro | Every 15 min | Scan Crosstown LAN, push to Mac Mini |
-| `com.openclaw.presence-receive` | Mac Mini | WatchPaths on `~/Downloads` | Ingest named Crosstown Taildrop state |
+| `com.openclaw.presence-receive` | Mac Mini | WatchPaths on `~/Downloads` + every 60s | Ingest named Crosstown Taildrop state |
+
+The receiver remains a short-lived, idempotent job. Its 60-second fallback
+drains named scans even when a filesystem notification is missed; an empty
+inbox is a no-op. Do not remove this timer in favor of WatchPaths alone.
+The September 26 repair found a fresh MacBook Pro scan but stale canonical
+state on the Mini, ten unprocessed named Taildrop files, and no receiver run
+after a successful independent transfer. A manual drain succeeded. The
+fallback prevents that missed-notification backlog without replacing either
+site's hash-approved scanner or changing presence and automation policy.
 
 ### Files on Mac Mini (`~/.openclaw/presence/`)
 

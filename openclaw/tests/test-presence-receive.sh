@@ -116,6 +116,8 @@ plist="$REPO_ROOT/openclaw/launchagents/com.openclaw.presence-receive.plist"
 plutil -lint "$plist" >/dev/null
 test "$(/usr/libexec/PlistBuddy -c 'Print :WatchPaths:0' "$plist")" \
   = "/Users/dbochman/Downloads"
+test "$(/usr/libexec/PlistBuddy -c 'Print :StartInterval' "$plist")" = "60"
+test "$(/usr/libexec/PlistBuddy -c 'Print :RunAtLoad' "$plist")" = "true"
 if /usr/libexec/PlistBuddy -c 'Print :KeepAlive' "$plist" >/dev/null 2>&1; then
   echo "presence receiver must not remain a KeepAlive job" >&2
   exit 1
