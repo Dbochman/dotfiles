@@ -167,12 +167,6 @@ class JuliaMorningBriefingDataTests(unittest.TestCase):
                     }
                 if url == briefing.CRYPTO_POSITIONS_URL:
                     return {"scopes": {"julia": {"total_value": 50_000}}}
-                if url == briefing.HOUSEHOLD_NET_WORTH_URL:
-                    return {
-                        "components": [
-                            {"id": "physical-precious-metals", "value": 20_000}
-                        ]
-                    }
                 self.assertEqual(url, briefing.FIRE_URL)
                 return {"progress_pct": 15.2, "fire_target": 6_300_000}
 
@@ -277,12 +271,6 @@ class JuliaMorningBriefingDataTests(unittest.TestCase):
                         }
                     if url == briefing.CRYPTO_POSITIONS_URL:
                         return {"scopes": {"julia": {"total_value": 25}}}
-                    if url == briefing.HOUSEHOLD_NET_WORTH_URL:
-                        return {
-                            "components": [
-                                {"id": "physical-precious-metals", "value": 50}
-                            ]
-                        }
                     return {"progress_pct": 10, "fire_target": 1000}
 
                 result = briefing.collect_data(

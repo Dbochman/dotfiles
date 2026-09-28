@@ -45,7 +45,6 @@ TRIAGE_JOB_ID = "gws-julia-morning-triage-0001"
 TIME_ZONE = ZoneInfo("America/New_York")
 NET_WORTH_URL = "http://127.0.0.1:8585/api/net-worth-breakdown?owner=julia"
 CRYPTO_POSITIONS_URL = "http://127.0.0.1:8586/api/crypto/positions"
-HOUSEHOLD_NET_WORTH_URL = "http://127.0.0.1:8586/api/household-net-worth"
 FIRE_URL = "http://127.0.0.1:8585/api/fire?owner=julia"
 
 COMMAND_TIMEOUT_SECONDS = 30.0
@@ -515,7 +514,6 @@ def collect_finances(*, http_getter: HttpGetter = default_http_getter) -> dict[s
         as_of = net_worth_payload.get("as_of_date")
         if financial_net_worth is not None and isinstance(as_of, str):
             crypto_value: float | None = None
-            metals_value: float | None = None
             complete = True
 
             try:
@@ -526,24 +524,6 @@ def collect_finances(*, http_getter: HttpGetter = default_http_getter) -> dict[s
                     if isinstance(julia_scope, dict):
                         crypto_value = finite_number(julia_scope.get("total_value"))
                 if crypto_value is None:
-                    complete = False
-            except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
-                complete = False
-
-            try:
-                household_payload = http_getter(HOUSEHOLD_NET_WORTH_URL, HTTP_TIMEOUT_SECONDS)
-                components = household_payload.get("components")
-                if isinstance(components, list):
-                    for component in components:
-                        if (
-                            isinstance(component, dict)
-                            and component.get("id") == "physical-precious-metals"
-                        ):
-                            household_metals = finite_number(component.get("value"))
-                            if household_metals is not None:
-                                metals_value = household_metals / 2
-                            break
-                if metals_value is None:
                     complete = False
             except (OSError, ValueError, json.JSONDecodeError, urllib.error.URLError):
                 complete = False
@@ -563,15 +543,6 @@ def collect_finances(*, http_getter: HttpGetter = default_http_getter) -> dict[s
                         "id": "ownedCrypto",
                         "label": "Julia owned crypto",
                         "value": crypto_value,
-                    }
-                )
-            if metals_value is not None:
-                known_value += metals_value
-                components.append(
-                    {
-                        "id": "attributedMetals",
-                        "label": "50% household precious metals",
-                        "value": metals_value,
                     }
                 )
 
