@@ -161,7 +161,18 @@ class JuliaMorningBriefingDataTests(unittest.TestCase):
             def http_getter(url: str, timeout: float) -> dict[str, object]:
                 self.assertEqual(timeout, briefing.HTTP_TIMEOUT_SECONDS)
                 if url == briefing.NET_WORTH_URL:
-                    return {"known_value": 2_100_000, "complete": True, "as_of": "2026-07-13"}
+                    return {
+                        "financial_net_worth": 2_100_000,
+                        "as_of_date": "2026-07-13",
+                    }
+                if url == briefing.CRYPTO_POSITIONS_URL:
+                    return {"scopes": {"julia": {"total_value": 50_000}}}
+                if url == briefing.HOUSEHOLD_NET_WORTH_URL:
+                    return {
+                        "components": [
+                            {"id": "physical-precious-metals", "value": 20_000}
+                        ]
+                    }
                 self.assertEqual(url, briefing.FIRE_URL)
                 return {"progress_pct": 15.2, "fire_target": 6_300_000}
 
@@ -261,9 +272,16 @@ class JuliaMorningBriefingDataTests(unittest.TestCase):
                 def http_getter(url: str, timeout: float):
                     if url == briefing.NET_WORTH_URL:
                         return {
-                            "known_value": 100,
-                            "complete": True,
-                            "as_of": "2026-07-13",
+                            "financial_net_worth": 100,
+                            "as_of_date": "2026-07-13",
+                        }
+                    if url == briefing.CRYPTO_POSITIONS_URL:
+                        return {"scopes": {"julia": {"total_value": 25}}}
+                    if url == briefing.HOUSEHOLD_NET_WORTH_URL:
+                        return {
+                            "components": [
+                                {"id": "physical-precious-metals", "value": 50}
+                            ]
                         }
                     return {"progress_pct": 10, "fire_target": 1000}
 
