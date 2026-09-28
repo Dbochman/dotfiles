@@ -195,6 +195,31 @@
       }
     },
     {
+      "id": "5ef9f82c-47b4-4a2a-b814-c632b15c49b2",
+      "declarationKey": "julia-manual-finance-estimate-reminder",
+      "agentId": "main",
+      "name": "Julia Monthly Manual Finance Estimate Reminder",
+      "enabled": true,
+      "createdAtMs": 1790594808540,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 9 1 * *",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "next-heartbeat",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Send Julia exactly this reminder and nothing else:\n\nMonthly finance check-in: until Dylan links the missing Julia accounts into the dashboard, can you send me updated rough balances for Schwab, T. Rowe Price, HSA, and T-bills? I’m currently using temporary estimates in your morning net-worth text.",
+        "timeoutSeconds": 240
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "imessage",
+        "to": "chat_id:1"
+      }
+    },
+    {
       "id": "qd-booking-2026-10-sep15",
       "agentId": "main",
       "name": "Quarterly Group Dinner - Book October Reservation (run Sep 15)",

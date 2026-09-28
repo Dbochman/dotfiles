@@ -46,6 +46,12 @@ TIME_ZONE = ZoneInfo("America/New_York")
 NET_WORTH_URL = "http://127.0.0.1:8585/api/net-worth-breakdown?owner=julia"
 CRYPTO_POSITIONS_URL = "http://127.0.0.1:8586/api/crypto/positions"
 FIRE_URL = "http://127.0.0.1:8585/api/fire?owner=julia"
+JULIA_MANUAL_FINANCIAL_ESTIMATES = (
+    ("estimatedSchwab", "Estimated missing Julia Schwab account", 15_000.0),
+    ("estimatedTRowe", "Estimated missing Julia T. Rowe account", 60_000.0),
+    ("estimatedHsa", "Estimated missing Julia HSA", 16_000.0),
+    ("estimatedTBills", "Estimated missing Julia T-bills", 11_000.0),
+)
 
 COMMAND_TIMEOUT_SECONDS = 30.0
 OVERALL_TIMEOUT_SECONDS = 150.0
@@ -543,6 +549,16 @@ def collect_finances(*, http_getter: HttpGetter = default_http_getter) -> dict[s
                         "id": "ownedCrypto",
                         "label": "Julia owned crypto",
                         "value": crypto_value,
+                    }
+                )
+            for estimate_id, label, value in JULIA_MANUAL_FINANCIAL_ESTIMATES:
+                known_value += value
+                components.append(
+                    {
+                        "id": estimate_id,
+                        "label": label,
+                        "value": value,
+                        "estimated": True,
                     }
                 )
 
