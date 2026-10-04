@@ -107,45 +107,69 @@ wc -l "$WORK/candidates.psv"
 
 Already-synced photos live in `~/Desktop/cabin pix/`. Apple exports as `IMG_XXXX.jpeg` (iPhone) or `dji_fly_*_photo_optimized.jpeg` (drone — those aren't in the Photos library so they're never a dup here).
 
-Two dedupe passes:
+Three dedupe passes, in order:
 1. **UUID match** — files in `cabin pix/` named `<UUID>.jpeg` match by local_identifier.
-2. **(date, GPS) cross-ref against manifest** — for `IMG_*` manifest entries (which outnumber UUID-named ones ~5:1), use (`YYYY-MM-DD`, lat rounded to 5 decimals, lon rounded to 5 decimals) as the uniqueness key. The archive and manifest both derive GPS from the same source, so 5-decimal rounding is a safe tight match. False positives on burst-mode shots at identical GPS are OK — those bursts arrive as adjacent `IMG_XXXX` names already present, so dropping them is correct.
+2. **Original filename match** — this is the big one. `asset_resource.original_filename` stores the `IMG_XXXX.HEIC` (or similar) name from the camera roll. The manifest's ~85% `IMG_*` entries match that stem directly. Dropped 793/812 candidates in the 2026-10 run — far better than any (date, gps) heuristic.
+3. **(date±1 day, gps tolerance) fallback** — for the rare case where the archive doesn't record an `IMG_*` filename or the manifest uses a different naming. Use `abs(lat-h_lat) < 1e-5` instead of `round(,5)`-equality (floating-point representation of `.600975` rounds to `.60097`, not `.60098`, missing matches). ±1 day window handles UTC-vs-local-date mismatches for late-evening shots.
 
 ```bash
 python3 - <<'PY' > "$WORK/new.psv"
-import json, sys
-with open('/Users/juliajoy/Repos/cabin/docs/photo-library.json') as f:
-    m = json.load(f)
-have_uuids = {p['file'].split('.')[0].upper() for p in m['photos']
-              if len(p['file']) >= 36 and p['file'][8] == '-'}
-have_tuples = set()
-for p in m['photos']:
-    d, gps = p.get('date', ''), p.get('gps')
-    if not gps or not d or not d.startswith('20'):
-        continue
-    have_tuples.add((d[:10], round(gps[0], 5), round(gps[1], 5)))
-import os
-work = os.environ['WORK']
-# Also check what's on disk by UUID (manifest may lag folder)
-import subprocess
-disk_uuids = set()
+import datetime, json, os, sqlite3
+MANIFEST = os.path.expanduser('~/Repos/cabin/docs/photo-library.json')
+DB = os.path.expanduser('~/Library/Application Support/photoscrawl/photos.sqlite')
+
+m = json.load(open(MANIFEST))
+manifest_stems = {p['file'].split('.')[0].upper() for p in m['photos']}
+have_uuids = {s for s in manifest_stems if len(s) >= 36 and s[8] == '-'}
 for name in os.listdir(os.path.expanduser('~/Desktop/cabin pix/')):
+    stem = name.split('.')[0].upper()
+    manifest_stems.add(stem)
     if len(name) >= 36 and name[8] == '-':
-        disk_uuids.add(name.split('.')[0].upper())
-have_uuids |= disk_uuids
-for line in open(f'{work}/candidates.psv'):
-    parts = line.strip().split('|')
-    if len(parts) < 5: continue
-    asset_id, local_id, created, lat_s, lon_s = parts
+        have_uuids.add(stem)
+
+by_date = {}
+for p in m['photos']:
+    d, gps = p.get('date',''), p.get('gps')
+    if not gps or not d or not d.startswith('20'): continue
+    by_date.setdefault(d[:10], []).append((gps[0], gps[1]))
+
+TOL = 1e-5
+def nearby(utc_date):
+    y, mo, da = map(int, utc_date.split('-'))
+    base = datetime.date(y, mo, da)
+    return [(base + datetime.timedelta(days=o)).isoformat() for o in (-1, 0, 1)]
+
+rows = sqlite3.connect(DB).execute("""
+SELECT a.id, a.local_identifier, a.creation_date, l.latitude, l.longitude,
+       COALESCE((SELECT r.original_filename FROM asset_resource r
+                 WHERE r.asset_id = a.id AND r.original_filename != ''
+                 ORDER BY r.id LIMIT 1), '') AS orig
+FROM asset a JOIN location_observation l ON l.asset_id = a.id
+WHERE l.latitude BETWEEN 42.54 AND 42.66
+  AND l.longitude BETWEEN -72.30 AND -72.08
+  AND a.creation_date >= '2025-01-01'
+  AND a.deleted_at IS NULL
+  AND a.media_type = 'image'
+GROUP BY a.id ORDER BY a.creation_date
+""").fetchall()
+
+for asset_id, local_id, created, lat, lon, orig in rows:
     if local_id.upper() in have_uuids: continue
-    key = (created[:10], round(float(lat_s), 5), round(float(lon_s), 5))
-    if key in have_tuples: continue
-    print(line.rstrip())
+    orig_stem = orig.split('.')[0].upper() if orig else ''
+    if orig_stem and orig_stem in manifest_stems: continue
+    matched = False
+    for d in nearby(created[:10]):
+        for h_lat, h_lon in by_date.get(d, []):
+            if abs(lat - h_lat) < TOL and abs(lon - h_lon) < TOL:
+                matched = True; break
+        if matched: break
+    if matched: continue
+    print(f"{asset_id}|{local_id}|{created}|{lat}|{lon}|{orig}")
 PY
 wc -l "$WORK/new.psv"
 ```
 
-Review `$WORK/new.psv` with the user before exporting — do NOT bulk-export hundreds of photos silently. Show a summary (count, date range, GPS cluster) and let them narrow the window.
+Review `$WORK/new.psv` with the user before exporting — do NOT bulk-export silently. Show count, date range, GPS cluster; let them narrow.
 
 Sort by creation_date and take the newest N for a small-batch workflow:
 
@@ -181,11 +205,12 @@ from pathlib import Path
 work = Path(os.environ['WORK'])
 rows = []
 for line in (work / 'batch.psv').read_text().strip().split('\n'):
-    asset_id, local_id, created, lat, lon = line.split('|')
+    parts = line.split('|')
+    asset_id, local_id, created = parts[0], parts[1], parts[2]
     bin_path = work / 'export' / f"{asset_id.replace('asset:', '')}.bin"
     md5 = hashlib.md5(bin_path.read_bytes()).hexdigest()
     rows.append(dict(asset_id=asset_id, local_id=local_id, created=created,
-                     lat=lat, lon=lon, bin=bin_path, md5=md5))
+                     bin=bin_path, md5=md5))
 groups = {}
 for r in rows:
     groups.setdefault(r['md5'], []).append(r)
@@ -231,6 +256,12 @@ The schema lives in `~/Repos/cabin/docs/photo-library.json`. Read `tagVocabulary
 
 **Do not invent tags.** Only use values from `tagVocabulary`. The `notes` array documents the invariants — read them (season via `date` field only, `people-identifiable` is a privacy signal, `cover-candidate` is subjective, etc.).
 
+**Use local-time date, not UTC.** The archive's `creation_date` is UTC; EXIF datetime (preserved through sips) is local. For a shutter press at 8pm EDT the archive shows `2026-03-18T00:40:16Z` but the manifest wants `date: "2026-03-17"`. Pull local date from the converted jpeg:
+
+```bash
+sips -g creation "$WORK/staged/<local_id>.jpeg"  # yields "creation: YYYY:MM:DD HH:MM:SS"
+```
+
 Append entries to `photos`. Keep the array roughly chronological.
 
 **Do not use `json.dump` to write the file** — it will reformat all `tagVocabulary` arrays onto multiple lines and `ensure_ascii`-escape em-dashes, producing a thousand-line diff. The existing file has tag arrays on a single line and uses literal `—`. Insert new entries as a textual splice before the closing `  ]\n}\n`, formatted to match the existing 4-space indent and single-line `tags` style. Use `json.dumps(..., ensure_ascii=False)` for individual field values only. Validate with `python3 -c "import json; json.load(open('docs/photo-library.json'))"` after writing.
@@ -271,7 +302,7 @@ git commit -m "photos: ingest <N> new cabin photos from <date-range>"
 - **Never push.** The user commits locally and pushes manually.
 - **Never bulk-tag.** The caption/tag step is human-in-the-loop; propose entries one batch at a time and wait for confirmation.
 - **Never invent tag values** — stick to `tagVocabulary`.
-- **Dedupe twice**: (date, gps5) against the manifest before exporting (step 3), then md5 of exported bytes to collapse iOS asset-dupes (step 5). `photoscrawl export` is slow; the pre-export filter saves minutes, the post-export md5 pass catches iCloud-duplicated asset records that look distinct in the archive.
+- **Dedupe twice**: `asset_resource.original_filename` → manifest file stems before exporting (step 3, catches ~95%+ of dupes), then md5 of exported bytes to collapse iOS asset-dupes (step 5). `photoscrawl export` is slow and `photoscrawl export` fails with `PhotoKit asset not found` when the asset was deleted from Photos.app but the archive still has a tombstone — pre-export dedupe avoids that failure mode entirely.
 - **Terminal.app TCC** gates the whole chain. FDA covers crawl/import; **Photos privacy covers export/sheet** — they are separate panes and both are needed. If export produces "placeholder" tiles or "Photos access is denied," the Photos pane is missing Terminal.app. See the `macos-tahoe-fda-headless-binary` skill for the general TCC-for-bare-CLI pattern (though note: for PhotoKit, the responsible process is the user-facing Terminal, not the bare binary — adding Terminal is sufficient; the .app wrapper trick is not required here).
 
 ## Related
