@@ -337,8 +337,8 @@ if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cr
 
   # Thermostat eco
   journal_begin_action central_hvac enable_eco
-  if nest eco crosstown on >> "$LOG_FILE" 2>&1; then
-    journal_finish_action command_accepted command_exit completed
+  if nest eco-site crosstown on >> "$LOG_FILE" 2>&1; then
+    journal_finish_action state_confirmed state_confirmed completed
     log "  Crosstown thermostat: ECO"
   else
     journal_finish_action failed command_exit command_failed
@@ -473,8 +473,8 @@ if [[ "$cabin_occupancy" == "confirmed_vacant" ]] && [[ ! -f "$MARKER_DIR/cabin"
 
   # Thermostat eco
   journal_begin_action central_hvac enable_eco
-  if nest eco cabin on >> "$LOG_FILE" 2>&1; then
-    journal_finish_action command_accepted command_exit completed
+  if nest eco-site cabin on >> "$LOG_FILE" 2>&1; then
+    journal_finish_action state_confirmed state_confirmed completed
     log "  Cabin thermostat: ECO"
   else
     journal_finish_action failed command_exit command_failed

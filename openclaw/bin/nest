@@ -510,12 +510,21 @@ _structure_map=""
 _build_structure_map() {
   if [[ -n "$_structure_map" ]]; then return; fi
   _structure_map=$(_api GET /structures | python3 -c "
-import sys, json
+import sys, json, re
 data = json.load(sys.stdin)
-for s in data.get('structures', []):
-    sid = s['name'].split('/')[-1]
-    name = s.get('traits', {}).get('sdm.structures.traits.Info', {}).get('customName', 'Unknown')
-    print(f'{sid}\t{name}')
+identifiers = set()
+names = set()
+for structure in data.get('structures', []):
+    resource = re.fullmatch(r'enterprises/[^/]+/structures/([A-Za-z0-9_-]+)', structure.get('name', ''))
+    name = structure.get('traits', {}).get('sdm.structures.traits.Info', {}).get('customName')
+    if not resource or not isinstance(name, str) or not name.strip() or any(character in name for character in '\t\r\n'):
+        sys.exit('Nest structure inventory is invalid')
+    identifier = resource.group(1)
+    if identifier in identifiers or name.casefold() in names:
+        sys.exit('Nest structure inventory is ambiguous')
+    identifiers.add(identifier)
+    names.add(name.casefold())
+    print(f'{identifier}\t{name}')
 ")
 }
 
@@ -524,57 +533,90 @@ for s in data.get('structures', []):
 _device_map=""
 _build_device_map() {
   if [[ -n "$_device_map" ]]; then return; fi
-  _build_structure_map
+  _build_structure_map || return
   local devices_json structures_json
-  devices_json=$(_api GET /devices)
+  devices_json=$(_api GET /devices) || return
   structures_json="$_structure_map"
   _device_map=$(STRUCT_MAP="$structures_json" python3 -c "
-import sys, json, os
+import sys, json, os, re
 data = json.load(sys.stdin)
 struct_map = {}
 for line in os.environ.get('STRUCT_MAP', '').strip().split('\n'):
     if '\t' in line:
         sid, name = line.split('\t', 1)
         struct_map[sid] = name
-multi = len(struct_map) > 1
-for d in data.get('devices', []):
-    room = d.get('parentRelations', [{}])[0].get('displayName', 'Unknown')
-    did = d['name'].split('/')[-1]
-    if multi:
-        parent = d.get('parentRelations', [{}])[0].get('parent', '')
-        for sid, sname in struct_map.items():
-            if sid in parent:
-                room = f'{sname} {room}'
-                break
-    print(f'{room}\t{did}')
+for device in data.get('devices', []):
+    if device.get('type') != 'sdm.devices.types.THERMOSTAT':
+        continue
+    relations = device.get('parentRelations', [])
+    if len(relations) != 1:
+        sys.exit('Thermostat structure is missing or ambiguous')
+    relation = relations[0]
+    parent = re.fullmatch(r'enterprises/[^/]+/structures/([^/]+)(?:/rooms/[^/]+)?', relation.get('parent', ''))
+    resource = re.fullmatch(r'enterprises/[^/]+/devices/([A-Za-z0-9_-]+)', device.get('name', ''))
+    structure = struct_map.get(parent.group(1)) if parent else None
+    room = relation.get('displayName')
+    if not resource or not structure or not isinstance(room, str) or not room.strip():
+        sys.exit('Thermostat inventory is incomplete')
+    if any(character in structure + room for character in '\t\r\n'):
+        sys.exit('Thermostat inventory is invalid')
+    print(f'{structure} {room}\t{resource.group(1)}\t{structure}')
 " <<< "$devices_json")
 }
 
 _resolve_device() {
   local query
   query="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
-  _build_device_map
+  [[ -n "${query//[[:space:]]/}" ]] || { echo "Thermostat query must not be empty" >&2; return 2; }
+  _build_device_map || return
   local match
   match=$(python3 -c '
 import sys
 
-query = sys.argv[1]
+query = sys.argv[1].strip()
+rows = []
 for line in sys.stdin:
-    name, separator, device_id = line.rstrip("\n").partition("\t")
-    if separator and query in name.lower():
-        print(device_id)
-        break
-' "$query" <<< "$_device_map")
-  if [[ -z "$match" ]]; then
-    echo "No thermostat matching '$1'. Available:" >&2
-    echo "$_device_map" | awk -F'\t' '{print "  - " $1}' >&2
-    exit 1
-  fi
+    fields = line.rstrip("\n").split("\t")
+    if len(fields) == 3:
+        rows.append(fields)
+matches = [row for row in rows if row[0].lower() == query]
+if not matches:
+    matches = [row for row in rows if query in row[0].lower()]
+if len(matches) != 1:
+    sys.exit("Thermostat query must match exactly one thermostat")
+print(matches[0][1])
+' "$query" <<< "$_device_map") || return
   echo "$match"
 }
 
 _device_path() {
-  echo "/devices/$(_resolve_device "$1")"
+  local device_id
+  device_id=$(_resolve_device "$1") || return
+  printf '/devices/%s\n' "$device_id"
+}
+
+_resolve_site_thermostats() {
+  _build_device_map || return
+  python3 -c '
+import sys
+
+groups = {
+    "cabin": ("Philly", ["Solarium", "Living Room", "Bedroom"]),
+    "crosstown": ("19Crosstown", ["Living Room"]),
+}
+if sys.argv[1] not in groups:
+    sys.exit("Unknown thermostat site")
+structure, rooms = groups[sys.argv[1]]
+expected = [structure + " " + room for room in rooms]
+rows = [line.rstrip("\n").split("\t") for line in sys.stdin]
+targets = [row for row in rows if len(row) == 3 and row[2] == structure]
+if (sorted(row[0] for row in targets) != sorted(expected)
+        or len({row[1] for row in targets}) != len(expected)):
+    sys.exit("Site thermostat inventory is missing, duplicated, or unexpected; no commands sent")
+for name in expected:
+    target = next(row for row in targets if row[0] == name)
+    print(name + "\t/devices/" + target[1])
+' "$1" <<< "$_device_map"
 }
 
 cmd_status() {
@@ -747,7 +789,7 @@ cmd_set() {
     echo "Temperature must be a finite number from 45 to 90°F" >&2
     return 2
   fi
-  device_path=$(_device_path "$room")
+  device_path=$(_device_path "$room") || return
   payload=$(_thermostat_payload \
     "sdm.devices.commands.ThermostatTemperatureSetpoint.SetHeat" \
     "heatCelsius" "$temp_c" "number")
@@ -769,7 +811,7 @@ cmd_mode() {
     echo "Mode must be HEAT or OFF" >&2
     return 2
   fi
-  device_path=$(_device_path "$room")
+  device_path=$(_device_path "$room") || return
   payload=$(_thermostat_payload \
     "sdm.devices.commands.ThermostatMode.SetMode" \
     "mode" "$mode" "string")
@@ -786,15 +828,21 @@ cmd_mode() {
 cmd_eco() {
   local room="$1" mode
   mode="$(echo "${2:-MANUAL_ECO}" | tr '[:lower:]' '[:upper:]')"
-  local device_path payload post_error
+  local device_path
   if [[ "$mode" != "MANUAL_ECO" && "$mode" != "OFF" ]]; then
     echo "Eco mode must be MANUAL_ECO or OFF" >&2
     return 2
   fi
-  device_path=$(_device_path "$room")
+  device_path=$(_device_path "$room") || return
+  _eco_device "$room" "$device_path" "$mode"
+}
+
+_eco_device() {
+  local room="$1" device_path="$2" mode="$3"
+  local payload post_error
   payload=$(_thermostat_payload \
     "sdm.devices.commands.ThermostatEco.SetMode" \
-    "mode" "$mode" "string")
+    "mode" "$mode" "string") || return
 
   if _mutation_matches "$device_path" eco "$mode" 2>/dev/null; then
     echo "$room eco is already ${mode}"
@@ -815,6 +863,39 @@ cmd_eco() {
   _verify_mutation "$device_path" eco "$mode" || return
 
   echo "Set $room eco to ${mode}"
+}
+
+cmd_eco_site() {
+  local site="$1" toggle="$2" preview="$3" mode targets room device_path current failed=0
+  case "$site" in cabin|crosstown) ;; *) echo "Unknown thermostat site" >&2; return 2 ;; esac
+  case "$toggle" in on) mode="MANUAL_ECO" ;; off) mode="OFF" ;; *) echo "Eco toggle must be on or off" >&2; return 2 ;; esac
+  targets=$(_resolve_site_thermostats "$site") || return
+  while IFS=$'\t' read -r room device_path; do
+    current=$(_api GET "$device_path") || return
+    if ! python3 -c '
+import json, sys
+try:
+    traits = json.load(sys.stdin)["traits"]
+    if traits["sdm.devices.traits.ThermostatEco"]["mode"] not in ["OFF", "MANUAL_ECO"]:
+        sys.exit(1)
+    if traits["sdm.devices.traits.ThermostatMode"]["mode"] not in ["OFF", "HEAT", "COOL", "HEATCOOL"]:
+        sys.exit(1)
+except (KeyError, TypeError, ValueError):
+    sys.exit(1)
+' <<< "$current"; then
+      echo "Site thermostat preflight failed; no commands sent" >&2
+      return 1
+    fi
+  done <<< "$targets"
+  while IFS=$'\t' read -r room device_path; do
+    if [[ "$preview" == "--dry-run" ]]; then
+      printf 'Would set %s eco to %s\n' "$room" "$mode"
+    elif ! _eco_device "$room" "$device_path" "$mode"; then
+      printf 'Eco verification failed for %s\n' "$room" >&2
+      failed=1
+    fi
+  done <<< "$targets"
+  return "$failed"
 }
 
 cmd_snapshot() {
@@ -1235,6 +1316,8 @@ Commands:
   set <room> <temp°F>       Set temperature (e.g. nest set bedroom 72)
   mode <room> <HEAT|OFF>    Set thermostat mode
   eco <room> [on|off]       Toggle eco mode
+  eco-site <cabin|crosstown> <on|off> [--dry-run]
+                           Preflight exact site thermostats, then verify each
   camera snap [room] [out]  Attended display-name camera diagnostic
   camera snap-config <alias> <out>
                             Capture an exact protected camera resource
@@ -1665,6 +1748,13 @@ case "${1:-help}" in
       off) cmd_eco "$room" "OFF" ;;
       *)   echo "Usage: nest eco <room> [on|off]" >&2; exit 2 ;;
     esac
+    ;;
+  eco-site)
+    [[ "$#" -ge 3 && "$#" -le 4 && ( "$#" -eq 3 || "$4" == "--dry-run" ) ]] || {
+      echo "Usage: nest eco-site <cabin|crosstown> <on|off> [--dry-run]" >&2
+      exit 2
+    }
+    cmd_eco_site "$2" "$3" "${4:-}"
     ;;
   camera)
     case "${2:-}" in

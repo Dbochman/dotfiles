@@ -40,6 +40,21 @@ nest eco <room> on
 nest eco <room> off
 ```
 
+### Toggle an entire site's thermostat group
+```bash
+nest eco-site cabin on --dry-run
+nest eco-site cabin on
+nest eco-site crosstown off
+```
+The dry run is read-only. Site groups require the exact thermostats listed
+below; missing, duplicated, or unexpected site thermostats fail before writes.
+Every target must pass state preflight before any target is changed. Each
+change requires Eco-mode readback; already-satisfied targets are skipped.
+A partial failure returns nonzero without rolling back other targets.
+Do not clear vacancy markers to retry HVAC: use only the approved site command
+and check `nest status` afterward. See
+[vacancy recovery](../../VACANCY-AUTOMATION.md#thermostat-targeting-and-recovery).
+
 ### Record a snapshot to history
 ```bash
 nest snapshot
@@ -74,9 +89,14 @@ There are two homes. Rooms are prefixed with home name in the Nest API.
 ### Crosstown (Boston — Crosstown residence)
 - **19Crosstown Living Room** (matches: crosstown)
 
-Room names are fuzzy-matched — use any substring. "crosstown" matches the Crosstown thermostat, "solar" matches Philly Solarium, etc.
+Room commands prefer an exact qualified name, then accept a case-insensitive
+substring only when it matches exactly one thermostat. Empty, missing, or
+ambiguous queries fail before device commands; cameras never participate.
+"crosstown" matches one thermostat and "solar" matches Philly Solarium.
+"Philly" and "living room" are ambiguous. "cabin" is a site alias for
+`eco-site`, not a room substring.
 
-**Disambiguation:** When the user says "living room" without context, it's ambiguous — ask which home. Use "philly living" for Cabin or "crosstown" for Crosstown. Unique rooms (solarium, cat room) are unambiguous.
+**Disambiguation:** When the user says "living room" without context, ask which home. Use "philly living" for Cabin or "crosstown" for Crosstown. Never substitute the first match or a similarly named camera.
 
 ## Notes
 

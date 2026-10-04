@@ -55,7 +55,7 @@ present. It vetoes `confirmed_vacant` for safety, but does not prove a return.
 | System | CLI | Action |
 |--------|-----|--------|
 | Hue lights | Event-bus reservation and guarded Hue worker | All lights off after fresh vacancy revalidation and exact readback |
-| Nest thermostat | `nest eco crosstown on` | Require confirmed Eco mode; an already-satisfied state or post-error readback succeeds without a duplicate command |
+| Nest thermostat | `nest eco-site crosstown on` | Preflight the exact site inventory and require confirmed Eco mode on 19Crosstown Living Room |
 | Cielo minisplits | `cielo off -d <unit>` | Bedroom, Office, Living Room off |
 | Eight Sleep Pods | `8sleep --location cabin home <side>` | For each person confirmed at Cabin, make Cabin current; their Crosstown side becomes away |
 | August lock | `august status` / `august lock` | Check status first and stay silent when already locked; notify only after a lock attempt or failure |
@@ -94,7 +94,7 @@ history cannot be validated.
 | System | CLI | Action |
 |--------|-----|--------|
 | Hue lights | `hue --cabin all-off` | All lights off |
-| Nest thermostat | `nest eco cabin on` | Require confirmed Eco mode; an already-satisfied state or post-error readback succeeds without a duplicate command |
+| Nest thermostats | `nest eco-site cabin on` | Preflight the exact site inventory and require confirmed Eco mode on Philly Solarium, Living Room, and Bedroom |
 | Eight Sleep Pods | `8sleep --location crosstown home <side>` | For each person confirmed at Crosstown, make Crosstown current; their Cabin side becomes away |
 | Roombas | `roomba start floomba` / `roomba start philly` | Both Roombas start cleaning |
 
@@ -106,6 +106,50 @@ history cannot be validated.
 
 The general Cabin vacancy marker is also cleared; other systems are not
 automatically restored.
+
+## Thermostat targeting and recovery
+
+`eco-site` selects thermostats by exact structure and room names, never by a
+first substring match. Cameras are excluded. A missing, duplicated, renamed,
+or additional site thermostat blocks the whole group before any write, as
+does an unreadable or invalid preflight state on any target. Each mutation
+requires bounded Eco-mode readback; already-satisfied targets need no POST.
+A failed POST is not blindly retried: only a matching readback can establish
+success. Success is journaled as `state_confirmed`, not merely command exit.
+
+After preflight, a failure on one thermostat does not roll back confirmed
+changes on others. The command tries the remaining known targets and returns
+nonzero if any target cannot be verified. An operator-approved rerun skips
+targets already in the requested state. This is not an atomic device transaction
+and does not establish heating activity or change numeric temperature setpoints.
+
+On October 4, 2026, the Cabin HVAC vacancy step failed because the old command
+used `cabin` as a room substring, but the API names the structure `Philly`.
+The resolver also swallowed the failure and attempted an invalid device path.
+This was a targeting failure, not evidence that the HVAC equipment was broken.
+The corrected resolver propagates failures and rejects ambiguous room queries.
+
+A site marker means the vacancy routine was attempted, not that every device
+succeeded. **Do not delete it or replay the full routine to repair HVAC**:
+that can repeat light, vacuum, and other device actions. First inspect current
+presence, the protected action journal, and thermostat status; preview only:
+
+```bash
+nest status
+nest eco-site cabin on --dry-run
+```
+
+After confirming the intended site/settings and receiving recovery approval,
+run only `nest eco-site cabin on`, then `nest status`. Keep the existing vacancy
+marker and historical failure intact. A dry run validates current inventory
+and readable traits; it cannot prove the provider will accept a future write.
+
+The October phone-replacement repair is recorded in the
+[Cabin enrollment record](plans/cabin-starlink-presence-enrollment.md#october-4-phone-replacement-repair)
+and [Crosstown canary record](plans/crosstown-strict-presence-canary.md#october-4-phone-replacement-repair).
+Use the [phone replacement procedure](skills/presence/SKILL.md#phone-replacement-or-transfer)
+before changing protected bindings; enrollment traffic can otherwise activate
+this routine and Eight Sleep routing.
 
 ## Deduplication
 

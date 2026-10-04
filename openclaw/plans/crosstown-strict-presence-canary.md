@@ -54,6 +54,35 @@ healthy with zero pending or leased deliveries, dead letters, or ready spool
 files; the sole open incident was the expected shadowed occupied-activity
 observation.
 
+## October 4 phone replacement repair
+
+Dylan's new phone and Julia's inherited phone now have corrected protected
+Crosstown bindings on the MacBook Pro. Both use Fixed Private Wi-Fi Address on
+the main Crosstown network. Owner-attributed per-network identity and attended
+off/on observations established each binding; Julia's owner-confirmed current
+IP supported a targeted return check when inbound ARP evidence was intermittent.
+Three targeted observations verified her return. Cached ARP, hostnames, and
+anonymous device-set differences were not accepted as ownership evidence.
+Speed-test traffic assisted observation only; it is not a runtime requirement.
+
+The production config was backed up, validated, and atomically replaced.
+Scanner bytes and the existing approval hash were unchanged. The remote
+publisher resumed first; fresh Crosstown receipt and Cabin observations were
+checked before restoring downstream actions. The final audit at
+`2026-10-04T23:18:25Z` showed both people at Crosstown, Cabin confirmed vacant,
+all seven paused services restored, and both Eight Sleep assignments at
+Crosstown with Cabin thermal activity idle. No stale queued actions were
+replayed. Historical failures and unrelated camera/source health degradations
+were not erased or described as healthy.
+
+Owner-only config backups, attribution evidence, activation/restoration
+receipts, and the Mini's final audit are retained under each host's
+`~/.openclaw/presence-phone-repair-crosstown-20261004/` directory. Full network
+addresses remain on the owning host, not in these docs. See the
+[Cabin correction record](cabin-starlink-presence-enrollment.md#october-4-phone-replacement-repair)
+and [replacement procedure](../skills/presence/SKILL.md#phone-replacement-or-transfer).
+These checks establish the repair, not a new sleeping-phone or hour-long soak.
+
 ## One-time updater bootstrap
 
 The Mini's deployed updater predates this approval gate. Its old process keeps

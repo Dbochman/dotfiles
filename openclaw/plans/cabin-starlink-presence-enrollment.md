@@ -10,6 +10,43 @@ the 12/12 live observation run and full test results. The exact scanner hash is
 approved, enrollment staging is cleaned, and all protected jobs are restored.
 A natural departure/return transition remains a non-blocking follow-up.
 
+## October 4 phone replacement repair
+
+Dylan replaced his phone and Julia inherited his old phone. Both use Fixed
+Private Wi-Fi Address on the Cabin network; the address is network-specific,
+not a permanent owner identifier. Protected bindings were repaired with attended
+off/on evidence, without changing scanner bytes or the existing approval hash.
+
+The initial repair mistakenly attributed another active controller device to
+Dylan from an anonymous off/on difference. His verified mesh binding was
+correct. Saved evidence from two attended cycles showed the verified identity
+also disappearing and returning at the controller, whose strict liveness was
+intermittent. After explicit approval, only Dylan's controller binding was
+corrected; his mesh binding and both Julia bindings were preserved.
+
+Do not repeat that attribution shortcut: require owner-attributed exact
+identity, then validate source-specific liveness separately. A singleton
+anonymous transition, display name, or speed test does not prove ownership.
+Compare identities across sources only when the evidence establishes their
+relationship; source-local identifiers are not generally interchangeable.
+
+At the final restoration audit (`2026-10-04T23:18:25Z`), both people were at
+Crosstown, Cabin's strict observation reported both absent, and canonical Cabin
+occupancy was confirmed vacant. Eight Sleep readback placed both people at
+Crosstown with Cabin thermal activity idle. The six Mini consumers/producers
+and the Crosstown publisher were restored after checking stale work; no queued
+camera/action/delivery work was replayed. Historical unknown/dead-letter
+records were retained, and unrelated camera/source health degradations remained.
+The subsequent Cabin HVAC targeting failure is documented separately in
+[vacancy recovery](../VACANCY-AUTOMATION.md#thermostat-targeting-and-recovery).
+
+Protected backups, the one-binding correction receipt, and final audit live
+under `~/.openclaw/presence-phone-repair-crosstown-20261004/` on the Mini.
+Earlier Cabin cycle evidence remains under
+`~/.openclaw/presence-phone-repair-20261003/`. Do not copy private identifiers
+into Git. This was an attended repair of existing v2 bindings, not a new
+v1-to-v2 migration or renewed long-duration scanner canary.
+
 ## Outcome
 
 Safely replace the Cabin's permissive Starlink display-name matching with exact,

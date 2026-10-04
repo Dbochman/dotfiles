@@ -58,6 +58,9 @@ elif "api.open-meteo.com" in url:
         }
     }))
 elif url.endswith("/structures"):
+    if os.environ.get("FAKE_STRUCTURES_FILE"):
+        print(Path(os.environ["FAKE_STRUCTURES_FILE"]).read_text())
+        sys.exit(0)
     print(json.dumps({
         "structures": [{
             "name": "enterprises/fake-project/structures/s1",
@@ -65,9 +68,13 @@ elif url.endswith("/structures"):
         }]
     }))
 elif url.endswith("/devices"):
+    if os.environ.get("FAKE_DEVICES_FILE"):
+        print(Path(os.environ["FAKE_DEVICES_FILE"]).read_text())
+        sys.exit(0)
     print(json.dumps({
         "devices": [{
             "name": "enterprises/fake-project/devices/dev1",
+            "type": "sdm.devices.types.THERMOSTAT",
             "parentRelations": [{
                 "displayName": "Bedroom",
                 "parent": "enterprises/fake-project/structures/s1/rooms/r1",
@@ -76,6 +83,18 @@ elif url.endswith("/devices"):
         }]
     }))
 elif url.endswith(":executeCommand"):
+    if os.environ.get("FAKE_DEVICE_STATES_FILE"):
+        device_id = url.rsplit("/", 1)[1].split(":", 1)[0]
+        if device_id == os.environ.get("FAKE_SITE_FAIL_ID"):
+            print('{"error":{"message":"private failure"}}')
+            sys.exit(22)
+        if device_id != os.environ.get("FAKE_SITE_IGNORE_ID"):
+            state_path = Path(os.environ["FAKE_DEVICE_STATES_FILE"])
+            states = json.loads(state_path.read_text())
+            states[device_id]["traits"]["sdm.devices.traits.ThermostatEco"]["mode"] = json.loads(body)["params"]["mode"]
+            state_path.write_text(json.dumps(states))
+        print("{}")
+        sys.exit(0)
     if mode == "post_invalid":
         print("not-json")
     elif mode == "post_error":
@@ -85,6 +104,13 @@ elif url.endswith(":executeCommand"):
         sys.exit(22)
     else:
         print("{}")
+elif "/devices/" in url and os.environ.get("FAKE_DEVICE_STATES_FILE"):
+    device_id = url.rsplit("/", 1)[1]
+    if device_id == os.environ.get("FAKE_SITE_GET_FAIL_ID"):
+        print('{"error":{"message":"private failure"}}')
+    else:
+        states = json.loads(Path(os.environ["FAKE_DEVICE_STATES_FILE"]).read_text())
+        print(json.dumps(states[device_id]))
 elif url.endswith("/devices/dev1"):
     if mode == "post_fail_then_match":
         records = [json.loads(line) for line in Path(os.environ["FAKE_CURL_LOG"]).read_text().splitlines()]
@@ -191,6 +217,182 @@ class NestMutationSafetyTests(unittest.TestCase):
         if not self.log.exists():
             return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def site_fixture(self) -> dict[str, str]:
+        self.structures_file = self.root / "structures.json"
+        self.devices_file = self.root / "devices.json"
+        self.states_file = self.root / "states.json"
+        structures = [
+            {"name": f"enterprises/fake-project/structures/{identifier}",
+             "traits": {"sdm.structures.traits.Info": {"customName": name}}}
+            for identifier, name in [("s1", "Philly"), ("s10", "19Crosstown")]
+        ]
+        devices = []
+        states = {}
+        for identifier, structure, room in [
+            ("solar", "s1", "Solarium"),
+            ("living", "s1", "Living Room"),
+            ("bedroom", "s1", "Bedroom"),
+            ("town", "s10", "Living Room"),
+        ]:
+            traits = {
+                "sdm.devices.traits.ThermostatEco": {"mode": "OFF"},
+                "sdm.devices.traits.ThermostatMode": {"mode": "HEAT"},
+            }
+            devices.append({
+                "name": f"enterprises/fake-project/devices/{identifier}",
+                "type": "sdm.devices.types.THERMOSTAT",
+                "parentRelations": [{
+                    "displayName": room,
+                    "parent": f"enterprises/fake-project/structures/{structure}/rooms/room",
+                }],
+                "traits": traits,
+            })
+            states[identifier] = {"traits": traits}
+        devices.append({
+            "name": "enterprises/fake-project/devices/camera",
+            "type": "sdm.devices.types.CAMERA",
+            "parentRelations": [{
+                "displayName": "Living Room",
+                "parent": "enterprises/fake-project/structures/s1/rooms/room",
+            }],
+            "traits": {},
+        })
+        self.structures_file.write_text(json.dumps({"structures": structures}))
+        self.devices_file.write_text(json.dumps({"devices": devices}))
+        self.states_file.write_text(json.dumps(states))
+        return {
+            "FAKE_STRUCTURES_FILE": str(self.structures_file),
+            "FAKE_DEVICES_FILE": str(self.devices_file),
+            "FAKE_DEVICE_STATES_FILE": str(self.states_file),
+        }
+
+    def test_room_resolution_rejects_missing_ambiguous_and_empty_queries(self) -> None:
+        environment = self.site_fixture()
+        for command in ["eco", "mode", "set"]:
+            for query in ["cabin", "living", "Philly", "", "   "]:
+                with self.subTest(command=command, query=query):
+                    self.log.unlink(missing_ok=True)
+                    argument = {"eco": "on", "mode": "OFF", "set": "65"}[command]
+                    result = self.run_nest(command, query, argument, **environment)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(any(record["method"] == "POST" for record in self.records()))
+                    self.assertFalse(any("/devices/" in record["url"] for record in self.records()))
+
+    def test_room_resolution_ignores_same_named_camera_and_uses_exact_structure(self) -> None:
+        environment = self.site_fixture()
+        result = self.run_nest("eco", "Philly Living Room", "on", **environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        posts = [record for record in self.records() if record["method"] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(posts[0]["url"].endswith("/devices/living:executeCommand"))
+
+    def test_site_preflights_every_target_and_verifies_each_mutation(self) -> None:
+        environment = self.site_fixture()
+        result = self.run_nest("eco-site", "cabin", "on", **environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = self.records()
+        posts = [record for record in records if record["method"] == "POST"]
+        self.assertEqual([record["url"].rsplit("/", 1)[1] for record in posts],
+                         ["solar:executeCommand", "living:executeCommand", "bedroom:executeCommand"])
+        before_first_post = records[:records.index(posts[0])]
+        for identifier in ["solar", "living", "bedroom"]:
+            self.assertTrue(any(record["url"].endswith("/devices/" + identifier) for record in before_first_post))
+            self.assertTrue(any(record["method"] == "GET" and record["url"].endswith("/devices/" + identifier)
+                                for record in records[records.index(next(post for post in posts if post["url"].endswith(identifier + ":executeCommand"))) + 1:]))
+        self.assertNotIn("fake-project", result.stdout + result.stderr)
+
+    def test_site_dry_run_is_read_only_and_names_all_targets(self) -> None:
+        environment = self.site_fixture()
+        result = self.run_nest("eco-site", "cabin", "on", "--dry-run", **environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.count("Would set Philly"), 3)
+        self.assertFalse(any(record["method"] == "POST" for record in self.records()))
+
+    def test_crosstown_group_does_not_match_structure_id_prefix(self) -> None:
+        environment = self.site_fixture()
+        result = self.run_nest("eco-site", "crosstown", "on", **environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        posts = [record for record in self.records() if record["method"] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(posts[0]["url"].endswith("/devices/town:executeCommand"))
+
+    def test_site_inventory_failures_send_no_mutations(self) -> None:
+        for problem in ["missing", "duplicate", "extra", "camera", "duplicate_id", "duplicate_structure"]:
+            with self.subTest(problem=problem):
+                environment = self.site_fixture()
+                self.log.unlink(missing_ok=True)
+                devices = json.loads(self.devices_file.read_text())
+                if problem == "missing":
+                    devices["devices"].pop(0)
+                elif problem == "duplicate":
+                    devices["devices"].append(devices["devices"][0])
+                elif problem == "extra":
+                    extra = json.loads(json.dumps(devices["devices"][0]))
+                    extra["name"] += "-extra"
+                    extra["parentRelations"][0]["displayName"] = "Garage"
+                    devices["devices"].append(extra)
+                elif problem == "camera":
+                    devices["devices"][0]["type"] = "sdm.devices.types.CAMERA"
+                elif problem == "duplicate_id":
+                    devices["devices"][1]["name"] = devices["devices"][0]["name"]
+                elif problem == "duplicate_structure":
+                    structures = json.loads(self.structures_file.read_text())
+                    duplicate = json.loads(json.dumps(structures["structures"][0]))
+                    duplicate["name"] += "-duplicate"
+                    structures["structures"].append(duplicate)
+                    self.structures_file.write_text(json.dumps(structures))
+                self.devices_file.write_text(json.dumps(devices))
+                result = self.run_nest("eco-site", "cabin", "on", **environment)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any(record["method"] == "POST" for record in self.records()))
+
+    def test_failed_or_invalid_preflight_blocks_all_site_writes(self) -> None:
+        for problem in ["read_error", "missing_trait"]:
+            with self.subTest(problem=problem):
+                environment = self.site_fixture()
+                self.log.unlink(missing_ok=True)
+                if problem == "read_error":
+                    environment["FAKE_SITE_GET_FAIL_ID"] = "bedroom"
+                else:
+                    states = json.loads(self.states_file.read_text())
+                    states["bedroom"]["traits"] = {}
+                    self.states_file.write_text(json.dumps(states))
+                result = self.run_nest("eco-site", "cabin", "on", **environment)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any(record["method"] == "POST" for record in self.records()))
+
+    def test_site_partial_failure_is_nonzero_and_recovery_skips_satisfied_rooms(self) -> None:
+        environment = self.site_fixture()
+        result = self.run_nest("eco-site", "cabin", "on", FAKE_SITE_FAIL_ID="living", **environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Eco verification failed for Philly Living Room", result.stderr)
+        self.assertEqual(len([record for record in self.records() if record["method"] == "POST"]), 3)
+        self.log.unlink()
+        result = self.run_nest("eco-site", "cabin", "on", **environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        posts = [record for record in self.records() if record["method"] == "POST"]
+        self.assertEqual(len(posts), 1)
+        self.assertTrue(posts[0]["url"].endswith("/devices/living:executeCommand"))
+
+    def test_site_mismatched_readback_does_not_report_group_success(self) -> None:
+        environment = self.site_fixture()
+        result = self.run_nest("eco-site", "cabin", "on", FAKE_SITE_IGNORE_ID="living", **environment)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("Set Philly Living Room", result.stdout)
+        self.assertIn("Eco verification failed for Philly Living Room", result.stderr)
+
+    def test_site_off_and_invalid_arguments(self) -> None:
+        environment = self.site_fixture()
+        result = self.run_nest("eco-site", "cabin", "off", **environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(record["method"] == "POST" for record in self.records()))
+        for arguments in [("cabin",), ("unknown", "on"), ("cabin", "bad"), ("cabin", "on", "--force")]:
+            with self.subTest(arguments=arguments):
+                self.log.unlink(missing_ok=True)
+                result = self.run_nest("eco-site", *arguments, **environment)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.records(), [])
 
     def test_set_prints_success_only_after_matching_readback(self) -> None:
         self.write_device_response(

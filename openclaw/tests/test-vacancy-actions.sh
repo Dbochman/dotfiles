@@ -46,6 +46,9 @@ printf '%s\n' \
   'if [[ "$cmd" == "8sleep" && -n "${FAKE_8SLEEP_FAIL_ARGS:-}" && "$*" == "$FAKE_8SLEEP_FAIL_ARGS" ]]; then' \
   '  exit 1' \
   'fi' \
+  'if [[ "$cmd" == "nest" && -n "${FAKE_NEST_FAIL_ARGS:-}" && "$*" == "$FAKE_NEST_FAIL_ARGS" ]]; then' \
+  '  exit 1' \
+  'fi' \
   > "$FAKE_BIN/device-recorder"
 chmod +x "$FAKE_BIN/device-recorder"
 
@@ -250,7 +253,7 @@ write_state occupied confirmed_vacant crosstown crosstown
 run_vacancy_actions
 
 assert_call hue --cabin all-off
-assert_call nest eco cabin on
+assert_call nest eco-site cabin on
 assert_call roomba start floomba
 assert_call roomba start philly
 assert_call_count 4
@@ -272,7 +275,7 @@ write_state occupied confirmed_vacant crosstown crosstown
 run_vacancy_actions
 
 assert_call hue --cabin all-off
-assert_call nest eco cabin on
+assert_call nest eco-site cabin on
 assert_call_count 2
 test -f "$MARKER_DIR/cabin"
 if grep -Eq '^roomba\tstart\t' "$CALLS_FILE"; then
@@ -316,7 +319,7 @@ run_vacancy_actions
 unset FAKE_VACANT_ROOMBA_OUTCOME
 
 assert_call hue --crosstown all-off
-assert_call nest eco crosstown on
+assert_call nest eco-site crosstown on
 assert_call cielo off -d bedroom
 assert_call cielo off -d office
 assert_call cielo off -d "living room"
@@ -341,7 +344,7 @@ printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-julia-home"
 run_vacancy_actions
 
 assert_call hue --cabin all-off
-assert_call nest eco cabin on
+assert_call nest eco-site cabin on
 assert_call_count 2
 if grep -Eq '^roomba\tstart\t' "$CALLS_FILE"; then
   echo "invalid snooze policy allowed a Roomba start" >&2
@@ -406,7 +409,7 @@ run_vacancy_actions
 unset VACANCY_ACTION_JOURNAL_OVERRIDE
 
 assert_call hue --cabin all-off
-assert_call nest eco cabin on
+assert_call nest eco-site cabin on
 assert_call roomba start floomba
 assert_call roomba start philly
 assert_call_count 4
@@ -422,6 +425,9 @@ grep -Fqx \
 grep -Fqx \
   'complete-run --run-id run_11111111111111111111111111111111' \
   "$JOURNAL_CALLS_FILE"
+grep -Fqx \
+  'finish-action --run-id run_11111111111111111111111111111111 --attempt-id attempt_33333333333333333333333333333333 --outcome state_confirmed --verification state_confirmed --reason-code completed' \
+  "$JOURNAL_CALLS_FILE"
 
 # Re-confirming a still-marked vacancy reconciles only its protected evidence
 # cycle. It must not replay any legacy device command or create another run.
@@ -436,6 +442,30 @@ grep -Fqx 'recover' "$JOURNAL_CALLS_FILE"
 grep -Fqx 'reconcile-cycle --site cabin' "$JOURNAL_CALLS_FILE"
 if grep -Fq 'begin-run' "$JOURNAL_CALLS_FILE"; then
   echo "cycle reconciliation replayed a vacancy run" >&2
+  exit 1
+fi
+
+rm -f "$MARKER_DIR/cabin"
+: > "$CALLS_FILE"
+: > "$JOURNAL_CALLS_FILE"
+export VACANCY_ACTION_JOURNAL_OVERRIDE="$FAKE_JOURNAL"
+export FAKE_NEST_FAIL_ARGS="eco-site cabin on"
+run_vacancy_actions
+unset FAKE_NEST_FAIL_ARGS
+assert_call nest eco-site cabin on
+assert_call_count 4
+test -f "$MARKER_DIR/cabin"
+grep -Fqx \
+  'finish-action --run-id run_11111111111111111111111111111111 --attempt-id attempt_33333333333333333333333333333333 --outcome failed --verification command_exit --reason-code command_failed' \
+  "$JOURNAL_CALLS_FILE"
+: > "$CALLS_FILE"
+: > "$JOURNAL_CALLS_FILE"
+run_vacancy_actions
+unset VACANCY_ACTION_JOURNAL_OVERRIDE
+test ! -s "$CALLS_FILE"
+grep -Fqx 'reconcile-cycle --site cabin' "$JOURNAL_CALLS_FILE"
+if grep -Fq 'begin-run' "$JOURNAL_CALLS_FILE"; then
+  echo "failed HVAC action replayed a vacancy run" >&2
   exit 1
 fi
 
@@ -468,7 +498,7 @@ if grep -Eq '^hue\t--crosstown\tall-off$' "$CALLS_FILE"; then
   echo "bus-owned Crosstown Hue still ran through the legacy executor" >&2
   exit 1
 fi
-assert_call nest eco crosstown on
+assert_call nest eco-site crosstown on
 assert_call cielo off -d bedroom
 assert_call cielo off -d office
 assert_call cielo off -d "living room"

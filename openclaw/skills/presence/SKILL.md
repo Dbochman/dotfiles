@@ -311,6 +311,43 @@ ssh dylans-macbook-pro \
   '~/.openclaw/workspace/scripts/presence-detect.sh validate-config crosstown'
 ```
 
+## Phone replacement or transfer
+
+Replacing a phone or transferring it to another resident requires fresh
+owner attribution at **each home**. Fixed Private Wi-Fi Address is per network:
+it does not prove who owns a device or make one home's binding valid elsewhere.
+Do not disable it or change its mode merely to simplify enrollment.
+
+1. Record who owns each phone and its current per-network private-address mode.
+   Pause affected publishers and downstream consumers with approval, recording
+   which services were running. Enrollment scans and receipt processing can
+   otherwise cause real vacancy actions or Eight Sleep routing changes.
+2. Establish the exact identity from owner-confirmed network settings and
+   attended off/on evidence. Retain full addresses only in protected host-local
+   evidence. Do not infer ownership from display names, old owner labels, or a
+   single anonymous device disappearing while Wi-Fi is off. If ambiguous,
+   resolve identity first rather than requesting repeated blind toggles.
+3. Validate liveness independently of ownership: Crosstown requires live inbound
+   ARP evidence on the correct interface, not a cached row; Cabin requires each
+   configured source's strict predicate. Check controller and mesh bindings
+   separately. A positive on one source must not justify an unrelated binding
+   on another. Traffic-assisted return checks are not sleeping-phone evidence.
+4. Back up and atomically replace only approved bindings; preserve unrelated
+   residents and sources. Validate config and fresh read-only observations.
+   Existing scanner approval applies only if scanner bytes are unchanged;
+   changed source still requires its own canary approval. The Cabin mesh
+   migration helper is not a generic existing-v2 replacement workflow.
+5. Inspect stale queued work before restoration. Resume producers and receipt
+   processing in a controlled order, verify fresh observations at both homes
+   and canonical occupancy, then restore downstream services. Preserve vacancy
+   markers, expired/unknown history, and dead letters rather than replaying
+   them. Verify Eight Sleep home assignment and both Pods' resulting state.
+
+The October 2026 repair and corrected Cabin controller misattribution are
+recorded in the [Cabin record](../../plans/cabin-starlink-presence-enrollment.md#october-4-phone-replacement-repair)
+and [Crosstown record](../../plans/crosstown-strict-presence-canary.md#october-4-phone-replacement-repair).
+Those are historical repair results, not a substitute for current observations.
+
 ## Important Notes
 
 - **Cached reporting is read-only; live scans are not** — `presence-detect.sh cabin` evaluates and writes `state.json`, while a Crosstown scan pushes a file that the Mini receiver evaluates. Either path can trigger the separate vacancy automation.

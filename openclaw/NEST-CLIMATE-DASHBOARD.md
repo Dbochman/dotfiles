@@ -307,6 +307,8 @@ nest weather                   Show current outdoor weather only
 nest set <room> <temp°F>       Set temperature (e.g. nest set bedroom 72)
 nest mode <room> <HEAT|OFF>    Set thermostat mode
 nest eco <room> [on|off]       Toggle eco mode
+nest eco-site <cabin|crosstown> <on|off> [--dry-run]
+                               Preflight exact site group and verify each target
 nest camera snap [room] [out]  Attended display-name camera diagnostic
 nest camera snap-config <alias> <out>  Exact protected camera capture
 nest camera clip-config <alias> <seconds> <out>  Exact 1-30s live clip
@@ -316,7 +318,14 @@ nest dashboard [open|start|stop|restart|status]
 nest raw                       Raw JSON device dump
 ```
 
-Room names are fuzzy-matched case-insensitively by substring (e.g., "bed" matches "Bedroom").
+Thermostat room commands prefer exact qualified names, then require a unique
+case-insensitive substring match (e.g., "bed" matches "Philly Bedroom").
+Ambiguous names fail rather than choosing a first match; cameras are excluded.
+`eco-site cabin` targets all three Philly thermostats, while `eco-site crosstown`
+targets 19Crosstown Living Room. Complete inventory and state preflight precedes
+all writes; each target requires Eco-mode readback. A partial failure returns
+nonzero. `--dry-run` performs only reads. See
+[targeted recovery](VACANCY-AUTOMATION.md#thermostat-targeting-and-recovery).
 
 ---
 
