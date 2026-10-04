@@ -240,8 +240,11 @@ Append entries to `photos`. Keep the array roughly chronological.
 Tar-batch the new files and rsync. `rsync` alone is fine for small deltas, but a tar pipe is faster on many small files over SSH.
 
 ```bash
-# Small delta (<50 files): plain rsync
-rsync -av --progress "$HOME/Desktop/cabin pix/" "dylans-mac-mini:/Users/dbochman/Desktop/cabin pix/"
+# Small delta (<50 files): plain rsync.
+# NOTE: the remote path's space MUST be backslash-escaped INSIDE the quoted argument
+# — macOS openrsync (and rsync 2.6.9) will otherwise error with
+# "server receiver mode requires two argument". -s / --protect-args is not supported.
+rsync -av "$HOME/Desktop/cabin pix/" 'dylans-mac-mini:/Users/dbochman/Desktop/cabin\ pix/'
 
 # Larger delta: tar pipe (preserves mtimes; faster per-file)
 cd "$HOME/Desktop/cabin pix" && \
