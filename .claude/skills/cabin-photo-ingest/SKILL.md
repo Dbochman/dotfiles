@@ -120,6 +120,8 @@ DB = os.path.expanduser('~/Library/Application Support/photoscrawl/photos.sqlite
 
 m = json.load(open(MANIFEST))
 manifest_stems = {p['file'].split('.')[0].upper() for p in m['photos']}
+# Deliberately-skipped source names (IMG_*.HEIC) also count as "already handled"
+manifest_stems |= {s['file'].split('.')[0].upper() for s in m.get('skipped', [])}
 have_uuids = {s for s in manifest_stems if len(s) >= 36 and s[8] == '-'}
 for name in os.listdir(os.path.expanduser('~/Desktop/cabin pix/')):
     stem = name.split('.')[0].upper()
