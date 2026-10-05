@@ -11,6 +11,9 @@ Host dylans-mac
 Host dylans-mac-mini
   HostName dylans-mac-mini
   User dbochman
+  IdentityFile ~/.ssh/id_launchd
+  IdentitiesOnly yes
+  IdentityAgent none
   ServerAliveInterval 10
   ServerAliveCountMax 3
   ConnectTimeout 8
