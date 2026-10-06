@@ -14,6 +14,7 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.usage-dashboard` | `usage-dashboard.py` | 8551 | AI usage, gateway, and native iMessage health dashboard |
 | `ai.openclaw.dog-walk-dashboard` | `dog-walk-dashboard.py` | 8552 | Dog walk dashboard (walk history, Fi GPS, maps, presence, and return signals) |
 | `ai.openclaw.roomba-dashboard` | `roomba-dashboard.py` | 8553 | Roomba state and command dashboard |
+| `ai.openclaw.cabin-magazine` | `scripts/serve.js` | 8555 | Cabin Magazine server with shared SQLite checklist and observation state |
 | `ai.openclaw.home-dashboard` | `home-dashboard.py` | 8558 | Home Control Plane dashboard and provider status API |
 | `ai.openclaw.financial-dashboard` | `serve_dashboard.py` | 8585 | Canonical financial dashboard and owner-aware forecast baseline source |
 | `ai.openclaw.forecast-dashboard` | `serve_forecast_dashboard.py` | 8586 | Forecast dashboard and five-minute live projection snapshot |
