@@ -214,6 +214,12 @@ Two-home Roomba status and automation view with explicit telemetry provenance.
 
 **Port 8554** · [Full spec](CAT-DASHBOARD.md)
 
+The approved October 8 feeder policy follows confirmed household relocation:
+both residents and all cats travel together. The card labels the inference
+`Feeding at …`; missing litter history is advisory, while stale presence,
+unverified destination feeding, manual pauses, and uncertain commands remain
+safety gates. A feeder-only CLI hold handles exceptional cats-stay-behind trips.
+
 A cat-specific care view across both homes, combining Whisker Litter-Robots
 with Petlibro feeders and fountains.
 
@@ -236,6 +242,10 @@ with Petlibro feeders and fountains.
   observation time, guarded pause/resume, and guarded 1–3 portion manual
   feeding when an enrolled device is reporting; OpenClaw-owned vacancy pauses
   are marked for automatic resume and block conflicting manual toggles
+- **Manual-pause recovery** — an explicit operator-only
+  [audited ownership handoff](HOME-EVENTS.md#audited-feeder-return-to-automation)
+  can return an already-paused feeder to automation after the normal evidence
+  gates pass; it changes no device setting and uses the existing managed card
 - **Cat activity** — one combined, location-filterable timeline of named and
   weighted litter visits, provider-confirmed scheduled feedings with actual
   portions, and confirmed vacancy-driven moves between homes; low-level

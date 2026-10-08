@@ -2,6 +2,14 @@
 
 ## Status
 
+As of October 8, the approved household-relocation policy supersedes the
+litter-gated design below. Both residents relocate with all cats; use fresh
+canonical confirmed vacancy and verify destination feeding before disabling
+the origin. Manual pauses, uncertain outcomes, audit records, and exact-device
+guards remain protected. Whisker is advisory, not a switching prerequisite.
+See the [current policy and exceptional-trip hold](../HOME-EVENTS.md#household-relocation-feeder-policy).
+The remainder documents the original implementation and legacy compatibility.
+
 Implemented on `2026-08-26` and activated on `2026-08-27`. Both installed
 Whisker site flags completed a silent future-only baseline and a zero-publish
 duplicate scan. Exact readback then confirmed that both feeder schedules were
@@ -14,6 +22,18 @@ preserve the attended runtime values.
 
 This plan extends the existing home event bus and vacancy-action control plane.
 It does not create a second source of occupancy truth.
+
+## Operator-authorized recovery
+
+The unattended worker still never adopts a manual pause. The explicit
+`home-event-action return-feeder-to-automation` recovery can now transfer
+ownership of an already-paused exact feeder, without changing either schedule.
+It requires both active policies, ordinary settled cat-transfer evidence,
+verified destination feeding, no unresolved feeder reservation, and a
+cycle-pinned operator confirmation. Intent and completion receipts preserve
+the original manual-pause history instead of rewriting prior outcomes.
+See the [recovery runbook](../HOME-EVENTS.md#audited-feeder-return-to-automation).
+No confirmation is implied by a previous generic request to enable meals.
 
 ## Goal
 

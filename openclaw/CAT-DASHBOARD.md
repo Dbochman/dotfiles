@@ -11,11 +11,15 @@ food, and water—rather than around vendor accounts or a generic device grid.
 - **Both / Crosstown / Cabin filter** scopes stations and the combined cat
   activity timeline. A move between homes appears in both location views.
 - **Feeding between homes** leads with one plain-English household state, such
-  as `Cats are at Cabin`, then says which home's meals are on, which are paused,
+  as `Feeding at Cabin`, then says which home's meals are on, which are paused,
   and whether the paused schedule will turn back on automatically. Separate
   Cabin/Crosstown meal readbacks, litter-box freshness, and waiting changes
   remain visible without exposing policy-direction or event-bus terminology.
-  After a home becomes vacant but before a qualifying destination litter-box
+  The approved household-relocation policy follows fresh confirmed vacancy
+  after both residents relocate, based on their explicit all-cats-travel
+  assumption. It does not wait for litter-box history or a settling interval.
+  Litter activity at the vacant home is an advisory to check that assumption.
+  Under the legacy litter-gated policy, before a qualifying destination litter-box
   event settles, the card names the destination confirmation it is waiting for
   instead of continuing to say both homes are merely ready. A stale protected
   vacancy confirmation becomes an explicit safety-check warning rather than a
@@ -53,7 +57,7 @@ food, and water—rather than around vendor accounts or a generic device grid.
   transfer evidence, unknown feeder outcomes, offline robots, and full or
   nearly-full waste drawers. This includes a protected vacancy-cycle mismatch
   that prevents feeder eligibility even while provider reads remain healthy.
-  Paired litter readiness is evaluated from the
+  For legacy policy, paired litter readiness is evaluated from the
   Whisker observer and both fresh site polls, independently of unrelated
   top-level event-bus degradation; broader bus health is shown as a separate
   advisory and does not mislabel healthy feeder protection as unavailable. A
@@ -65,7 +69,9 @@ food, and water—rather than around vendor accounts or a generic device grid.
   action worker or a fresh dashboard readback confirms the expected schedule.
   When a human has already restored the returning home's schedule and the
   empty home's schedule is paused, the normal wait for a new litter-box visit
-  is shown as `Waiting for litter-box confirmation`, not as a failed change.
+  under legacy policy is shown as `Waiting for litter-box confirmation`, not
+  as a failed change. Under household-relocation policy, missing litter data
+  does not block switching; stale presence or a vacancy-cycle mismatch still does.
 
 ## Controls and safety
 
@@ -81,7 +87,10 @@ then requires a verified readback. Pausing the schedule does not delete meal
 definitions or block manual feeding. An uncertain result is shown as a failure
 and is never retried automatically.
 
-If a transfer stops before any command because the occupied destination's
+Under household-relocation policy, each vacancy cycle permits one attempt;
+failed or uncertain attempts require review and are not automatically replayed.
+The legacy litter-gated policy alone permits the following limited retry:
+if a transfer stops before any command because the occupied destination's
 schedule is disabled or unavailable, the failed outcome remains visible in the
 event journal. A newer litter event at that destination must complete the same
 30-minute settle period before the current vacancy cycle may reserve one new
@@ -92,10 +101,19 @@ When the event bus owns a feeder pause, the manual schedule button is disabled
 and labeled `Managed automatically`. The card explains that meals are paused
 while the home is vacant and will turn back on automatically. The action
 worker—not the dashboard—restores that exact schedule after a later qualifying
-paired-home return. A manually paused schedule is never adopted or
-automatically resumed. Both exact feeder directions were activated on
+paired-home return. A manually paused schedule is never automatically adopted
+or resumed. An explicit operator can use the
+[audited return-to-automation command](HOME-EVENTS.md#audited-feeder-return-to-automation)
+to hand off an already-paused schedule after all normal safety gates pass;
+the dashboard then shows it as managed automatically. This is not a dashboard
+button and does not bypass return evidence. Both exact feeder directions were activated on
 `2026-08-27`; the action worker still fails closed whenever the underlying
 state cannot be verified.
+
+For a trip where cats stay behind, use the feeder-only
+[`set-feeder-mode --mode disabled` hold](HOME-EVENTS.md#household-relocation-feeder-policy)
+before relocating, then verify their home's meals remain on. This is not a
+dashboard mutation and does not change schedules or lighting by itself.
 
 Browser mutations require a per-process bearer token embedded into the served
 page, a same-origin request, a bounded JSON body, and an exact allowlisted

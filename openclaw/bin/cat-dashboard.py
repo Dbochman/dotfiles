@@ -249,14 +249,17 @@ def collect_transfer_coverage() -> dict[str, object]:
     counts = (
         actions.get("feeding_schedule_counts") if isinstance(actions, dict) else None
     )
-    if not isinstance(sites, dict) or not isinstance(counts, dict):
+    if not isinstance(counts, dict):
         return {"ok": False, "error": "Cat transfer coverage is unavailable"}
+    sites = sites if isinstance(sites, dict) else {}
+    observer = observer if isinstance(observer, dict) else {}
+    whisker = whisker if isinstance(whisker, dict) else {}
 
     site_status: dict[str, dict[str, object]] = {}
     for site in sorted(set(PETLIBRO_FEEDER_SELECTORS.values())):
         record = sites.get(site)
         if not isinstance(record, dict):
-            return {"ok": False, "error": "Cat transfer coverage is incomplete"}
+            record = {}
         site_status[site] = {
             "enabled": record.get("enabled") is True,
             "baselined": record.get("baselined") is True,
@@ -351,6 +354,17 @@ def summarize_transfer_state(
     readiness_data = readiness if isinstance(readiness, dict) else {}
     readiness_sites = readiness_data.get("sites")
     readiness_map = readiness_sites if isinstance(readiness_sites, dict) else {}
+    feeder_policy = automation_data.get("feeder_policy", {})
+    relocation = isinstance(feeder_policy, dict) and all(
+        isinstance(feeder_policy.get(site), dict)
+        and feeder_policy[site].get("trigger") == "household_relocation"
+        for site in SITE_ORDER
+    )
+    switching_ready = coverage_ready or (relocation and all(
+        isinstance(readiness_map.get(site), dict)
+        and readiness_map[site].get("state") in {"eligible", "waiting"}
+        for site in SITE_ORDER
+    ))
     blocked_sites = [
         site
         for site in SITE_ORDER
@@ -382,6 +396,10 @@ def summarize_transfer_state(
         "attention": False,
         "notice": None,
     }
+    if relocation:
+        base["control_basis"] = "Confirmed household relocation; cats travel with both residents"
+        if any(isinstance(value, dict) and value.get("warning") == "litter_activity_at_vacant_home" for value in readiness_map.values()):
+            base["notice"] = "Litter activity was recorded at the vacant home. Check whether any cats stayed behind; use the feeder automation hold if needed."
     if (
         automation_data.get("ok") is not True
         or transfer_data.get("ok") is not True
@@ -419,8 +437,8 @@ def summarize_transfer_state(
             )
         else:
             description = (
-                "OpenClaw cannot safely match the current home and litter-box "
-                "evidence. No automatic feeder change will be made until the "
+                "OpenClaw cannot safely verify the current home "
+                "state. No automatic feeder change will be made until the "
                 "safety check recovers."
             )
         return {
@@ -521,6 +539,8 @@ def summarize_transfer_state(
             and schedule_states[cat_site] == "on"
         ):
             coverage_note = (
+                " Switching follows confirmed household relocation, not litter-box visits."
+                if relocation else
                 " Both litter boxes are reporting."
                 if coverage_ready
                 else " The next automatic change will wait for fresh data from both litter boxes."
@@ -529,8 +549,9 @@ def summarize_transfer_state(
                 description = (
                     f"{SITE_NAMES[cat_site]} scheduled meals are on. "
                     f"{SITE_NAMES[paused_site]} scheduled meals remain paused because the cats are still at {SITE_NAMES[cat_site]}, even though someone is home at each house. "
-                    "They will turn back on automatically after the cats return and the matching litter-box evidence settles."
-                    f"{coverage_note}"
+                    + ("They will turn back on automatically when both residents relocate here."
+                       if relocation else "They will turn back on automatically after the cats return and the matching litter-box evidence settles.")
+                    + coverage_note
                 )
                 summary = f"Cats remain at {SITE_NAMES[cat_site]}"
             else:
@@ -542,9 +563,9 @@ def summarize_transfer_state(
                 summary = f"{SITE_NAMES[paused_site]} meals paused automatically"
             return {
                 **base,
-                "tone": "ok" if coverage_ready else "warn",
-                "label": "Working" if coverage_ready else "Protected",
-                "title": f"Cats are at {SITE_NAMES[cat_site]}",
+                "tone": "ok" if switching_ready else "warn",
+                "label": "Working" if switching_ready else "Protected",
+                "title": f"Feeding at {SITE_NAMES[cat_site]}" if relocation else f"Cats are at {SITE_NAMES[cat_site]}",
                 "description": description,
                 "summary": summary,
             }
@@ -573,10 +594,12 @@ def summarize_transfer_state(
     if all(schedule_states[site] == "on" for site in SITE_ORDER):
         return {
             **base,
-            "tone": "ok" if coverage_ready else "warn",
-            "label": "Ready" if coverage_ready else "Waiting",
+            "tone": "ok" if switching_ready else "warn",
+            "label": "Ready" if switching_ready else "Waiting",
             "title": "Both homes are ready",
             "description": (
+                "Scheduled meals are on at both homes. OpenClaw switches schedules after both residents relocate, verifying destination feeding before pausing the vacant home."
+                if relocation else
                 "Scheduled meals are on at both homes. OpenClaw will pause the empty home after the cats settle at the other home."
                 if coverage_ready
                 else "Scheduled meals are on at both homes. Automatic switching will wait for fresh data from both litter boxes."

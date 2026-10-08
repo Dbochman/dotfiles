@@ -366,6 +366,39 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("turn back on automatically", summary["description"])
         self.assertNotIn("feeder_readback_unavailable", json.dumps(summary))
 
+    def test_household_relocation_does_not_require_litter_coverage(self) -> None:
+        automation = {
+            "ok": True,
+            "feeding_schedule_owners": {site: "bus" for site in ("cabin", "crosstown")},
+            "feeder_policy": {site: {"trigger": "household_relocation", "mode": "active"} for site in ("cabin", "crosstown")},
+            "feeder_suspensions": {"sites": {"cabin": {"phase": "suspended", "attention": False}}},
+            "cat_transfer_readiness": {"sites": {
+                "cabin": {"state": "eligible", "reason": None},
+                "crosstown": {"state": "waiting", "reason": "site_not_confirmed_vacant"},
+            }},
+        }
+        with patch.object(self.dashboard, "_run_json", return_value={
+            "actions": {"feeding_schedule_counts": {"pending": 0, "outcome_unknown": 0}}
+        }):
+            transfer = self.dashboard.collect_transfer_coverage()
+        self.assertTrue(transfer["ok"])
+        self.assertFalse(transfer["coverage_ready"])
+        devices = {"ok": True, "devices": [
+            {"selector": site + "-feeder", "scheduleReadback": "verified", "scheduleEnabled": site == "crosstown"}
+            for site in ("cabin", "crosstown")
+        ]}
+        summary = self.dashboard.summarize_transfer_state(automation, transfer, devices)
+        self.assertEqual(summary["label"], "Working")
+        self.assertEqual(summary["title"], "Feeding at Crosstown")
+        self.assertNotIn("wait for", summary["description"])
+        automation["cat_transfer_readiness"]["sites"]["cabin"]["warning"] = "litter_activity_at_vacant_home"
+        summary = self.dashboard.summarize_transfer_state(automation, transfer, devices)
+        self.assertIn("stayed behind", summary["notice"])
+        automation["cat_transfer_readiness"]["sites"]["cabin"] = {"state": "blocked", "reason": "presence_state_stale"}
+        summary = self.dashboard.summarize_transfer_state(automation, transfer, devices)
+        self.assertTrue(summary["attention"])
+        self.assertEqual(summary["label"], "Needs review")
+
     def test_transfer_summary_treats_split_household_as_stable(self) -> None:
         summary = self.dashboard.summarize_transfer_state(
             {

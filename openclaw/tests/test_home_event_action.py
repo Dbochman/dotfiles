@@ -76,6 +76,16 @@ def cat_policy(*, cabin_mode: str = "active", crosstown_mode: str = "active") ->
     return value
 
 
+def relocation_policy() -> dict:
+    value = cat_policy()
+    value["schema_version"] = 4
+    for site in actions.SITES:
+        entry = value["targets"][site]["feeding_schedule"]
+        entry["trigger"] = "household_relocation"
+        del entry["evidence_settle_seconds"]
+    return value
+
+
 class HomeEventActionTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
@@ -320,6 +330,165 @@ class HomeEventActionTests(unittest.TestCase):
             clock=lambda: NOW,
         )
         ingest_once(self.root, clock=lambda: NOW)
+
+    def configure_relocation(self) -> None:
+        self.configure_cat_transfer()
+        actions.install_policy(self.root, json.dumps(relocation_policy()).encode())
+        state = json.loads(self.state_path.read_text())
+        state["people"]["Julia"] = {"location": "crosstown"}
+        self.update_canonical(state)
+        (self.root / "state/whisker-adapter.json").unlink()
+
+    def update_canonical(self, state: dict) -> None:
+        self.private_json(self.state_path, state)
+        producer = json.loads(self.producer_path.read_text())
+        producer["state_hash"] = actions.state_hash(state)
+        producer["evaluated_at"] = state["timestamp"]
+        self.private_json(self.producer_path, producer)
+
+    def test_relocation_needs_no_litter_data_and_runs_once_per_cycle(self) -> None:
+        self.configure_relocation()
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 1)
+        self.assertEqual(self.run_worker()["outcome"], "state_confirmed")
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+        self.assertEqual(self.run_worker()["mode"], "idle")
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+
+    def test_relocation_requires_both_people_fresh_sites_and_exact_cycle(self) -> None:
+        self.configure_relocation()
+        original = json.loads(self.state_path.read_text())
+        for change in ("one_person", "stale", "possibly_vacant", "split", "cycle", "destination_stale"):
+            with self.subTest(change=change):
+                state = json.loads(json.dumps(original))
+                if change == "one_person":
+                    state["people"]["Julia"]["location"] = "cabin"
+                elif change == "stale":
+                    state["timestamp"] = "2026-08-22T13:00:00Z"
+                elif change == "possibly_vacant":
+                    state["cabin"]["occupancy"] = "possibly_vacant"
+                elif change == "split":
+                    state["cabin"]["occupancy"] = "occupied"
+                elif change == "cycle":
+                    state["cabin"]["stateChangedAt"] = NOW
+                else:
+                    state["crosstown"]["fresh"] = False
+                self.update_canonical(state)
+                self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+        self.assertFalse(self.petlibro_log.exists())
+
+    def test_relocation_restores_owned_destination_before_origin_off(self) -> None:
+        self.configure_relocation()
+        owned = actions._empty_feeder_suspensions()
+        owned["sites"]["crosstown"] = {
+            "selector": "crosstown-feeder", "cycle_id": "cycle_" + "f" * 32,
+            "phase": "suspended", "restore_owned": True,
+            "occupancy_context": "origin_vacant", "updated_at": NOW, "last_error": None,
+        }
+        actions._write_feeder_suspensions(self.root, owned)
+        devices = json.loads(self.petlibro_state.read_text())
+        devices["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(devices))
+        self.reserve_cat_transfer()
+        self.run_worker()
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["crosstown-feeder on", "cabin-feeder off"])
+
+    def test_relocation_manual_destination_blocks_without_retry_or_origin_change(self) -> None:
+        self.configure_relocation()
+        devices = json.loads(self.petlibro_state.read_text())
+        devices["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(devices))
+        self.reserve_cat_transfer()
+        result = self.run_worker()
+        self.assertEqual(self.database_row()["reason_code"], "destination_schedule_manually_disabled")
+        self.assertFalse(self.petlibro_log.exists())
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+
+    def test_relocation_manual_origin_requires_audited_adoption(self) -> None:
+        self.configure_relocation()
+        devices = json.loads(self.petlibro_state.read_text())
+        devices["cabin-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(devices))
+        self.reserve_cat_transfer()
+        self.run_worker()
+        self.assertEqual(actions._load_feeder_suspensions(self.root)["sites"], {})
+        self.assertEqual(self.recover_feeder(dry_run=True)["mode"], "eligible")
+        self.assertEqual(self.recover_feeder()["mode"], "returned_to_automation")
+        self.assertFalse(self.petlibro_log.exists())
+
+    def test_feeder_hold_preserves_other_policies_and_does_not_touch_devices(self) -> None:
+        self.configure_relocation()
+        before = actions.load_policy(self.root)[0]
+        self.reserve_cat_transfer()
+        actions.set_feeder_mode(self.root, "disabled")
+        after = actions.load_policy(self.root)[0]
+        for site in actions.SITES:
+            self.assertEqual(after["targets"][site]["all_lights"], before["targets"][site]["all_lights"])
+            self.assertEqual(after["targets"][site]["feeding_schedule"]["mode"], "disabled")
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+        self.run_worker()
+        self.assertFalse(self.petlibro_log.exists())
+        actions.set_feeder_mode(self.root, "active")
+        self.assertEqual(actions.load_policy(self.root)[0], before)
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+
+    def test_relocation_litter_contradiction_is_advisory_not_a_control_gate(self) -> None:
+        self.configure_relocation()
+        self.enqueue_litter_activity("cabin")
+        status = actions.safe_status(self.root, state_path=self.state_path,
+            producer_path=self.producer_path, journal_root=self.journal, clock=lambda: NOW)
+        site = status["cat_transfer_readiness"]["sites"]["cabin"]
+        self.assertEqual(site["state"], "eligible")
+        self.assertEqual(site["warning"], "litter_activity_at_vacant_home")
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 1)
+
+    def test_relocation_requires_paired_policy_and_new_schema(self) -> None:
+        self.configure_relocation()
+        value = relocation_policy()
+        value["schema_version"] = 3
+        with self.assertRaises(actions.ActionError):
+            actions.validate_policy(value)
+        value = relocation_policy()
+        value["targets"]["crosstown"]["feeding_schedule"]["mode"] = "disabled"
+        actions.install_policy(self.root, json.dumps(value).encode())
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+
+    def test_relocation_round_trip_and_split_household_preserve_feeding(self) -> None:
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        self.run_worker()
+        state = json.loads(self.state_path.read_text())
+        state["cabin"]["occupancy"] = "occupied"
+        state["cabin"]["stateChangedAt"] = "2026-08-22T14:40:00Z"
+        state["people"]["Dylan"]["location"] = "cabin"
+        self.update_canonical(state)
+        self.run_worker()
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+        state["people"]["Julia"]["location"] = "cabin"
+        state["crosstown"]["occupancy"] = "confirmed_vacant"
+        state["crosstown"]["stateChangedAt"] = "2026-08-22T14:50:00Z"
+        self.update_canonical(state)
+        self.private_json(self.journal / "cycles/crosstown.json", {
+            "schema_version": 1, "site": "crosstown",
+            "state_changed_at": state["crosstown"]["stateChangedAt"],
+            "cycle_id": "cycle_" + "f" * 32,
+        })
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 1)
+        self.run_worker()
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), [
+            "cabin-feeder off", "cabin-feeder on", "crosstown-feeder off",
+        ])
+
+    def test_relocation_uncertain_write_is_not_retried(self) -> None:
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        with patch.object(actions, "_petlibro_schedule_set",
+                          side_effect=actions.ActionError("feeder_outcome_unknown", command_attempted=True)) as mutation:
+            result = self.run_worker()
+            self.assertEqual(result["outcome"], "outcome_unknown")
+            self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+            self.run_worker()
+            self.assertEqual(mutation.call_count, 1)
 
     def reserve_cat_transfer(self) -> dict:
         from home_event_bus import EventStore, RuntimePaths
@@ -600,10 +769,288 @@ class HomeEventActionTests(unittest.TestCase):
             self.assertEqual(targets["all_lights"]["desired_state"], "all_off")
             self.assertEqual(
                 targets["feeding_schedule"],
-                cat_policy()["targets"][site]["feeding_schedule"],
+                relocation_policy()["targets"][site]["feeding_schedule"],
             )
         actions.install_policy(self.root, json.dumps(value).encode())
         self.assertEqual(self.reserve_automations()["status"], "disabled")
+
+    def prepare_feeder_recovery(self) -> None:
+        self.configure_cat_transfer()
+        self.enqueue_litter_activity("crosstown")
+        devices = json.loads(self.petlibro_state.read_text())
+        devices["cabin-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(devices))
+
+    def recover_feeder(self, **options) -> dict:
+        parameters = {
+            "confirm_manual_pause": True,
+            "expected_cycle_id": self.cycle_id,
+            "state_path": self.state_path,
+            "producer_path": self.producer_path,
+            "journal_root": self.journal,
+            "petlibro_bin": str(self.petlibro),
+            "clock": lambda: NOW,
+        }
+        parameters.update(options)
+        return actions.return_feeder_to_automation(self.root, "cabin", **parameters)
+
+    def recovery_receipts(self) -> list[Path]:
+        return sorted((self.root / "state").glob("feeder-recovery-*.json"))
+
+    def test_feeder_recovery_is_audited_idempotent_and_commandless(self) -> None:
+        self.prepare_feeder_recovery()
+        self.reserve_cat_transfer()
+        self.run_worker()
+        prior_outcome = dict(self.database_row())
+        before = actions._load_feeder_suspensions(self.root)
+        with patch.object(actions, "_petlibro_schedule_set") as mutation:
+            result = self.recover_feeder()
+            self.assertEqual(result["mode"], "returned_to_automation")
+            self.assertFalse(result["schedule_changed"])
+            receipts = self.recovery_receipts()
+            self.assertEqual(len(receipts), 2)
+            original = {path: path.read_bytes() for path in receipts}
+            for path in receipts:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            intent = json.loads(next(path for path in receipts if ".intent." in path.name).read_text())
+            self.assertEqual(intent["authorization"], "explicit_operator_request")
+            self.assertEqual(intent["before"], before)
+            self.assertEqual(intent["cycle_id"], self.cycle_id)
+            self.assertEqual(self.recover_feeder()["mode"], "already_managed")
+            self.assertEqual({path: path.read_bytes() for path in receipts}, original)
+            mutation.assert_not_called()
+        self.assertEqual(dict(self.database_row()), prior_outcome)
+        self.assertFalse(self.petlibro_log.exists())
+        safe = actions.safe_status(self.root)["feeder_suspensions"]
+        self.assertEqual(safe["active_sites"], ["cabin"])
+        self.assertEqual(safe["sites"]["cabin"]["phase"], "suspended")
+        self.assertFalse(safe["sites"]["cabin"]["attention"])
+
+    def test_feeder_recovery_dry_run_does_not_adopt_or_write_receipts(self) -> None:
+        self.prepare_feeder_recovery()
+        before = actions._load_feeder_suspensions(self.root)
+        result = self.recover_feeder(dry_run=True, confirm_manual_pause=False, expected_cycle_id=None)
+        self.assertEqual(result["mode"], "eligible")
+        self.assertEqual(result["cycle_id"], self.cycle_id)
+        self.assertEqual(actions._load_feeder_suspensions(self.root), before)
+        self.assertEqual(self.recovery_receipts(), [])
+        self.assertFalse(self.petlibro_log.exists())
+
+    def test_feeder_recovery_requires_explicit_confirmation_and_exact_cycle(self) -> None:
+        self.prepare_feeder_recovery()
+        for options in (
+            {"confirm_manual_pause": False},
+            {"expected_cycle_id": None},
+            {"expected_cycle_id": "../../escape"},
+            {"expected_cycle_id": "cycle_" + "b" * 32},
+        ):
+            with self.subTest(options=options), self.assertRaises(actions.ActionError):
+                self.recover_feeder(**options)
+        self.assertEqual(self.recovery_receipts(), [])
+        self.assertFalse(actions._load_feeder_suspensions(self.root)["sites"])
+
+    def test_feeder_recovery_rejects_unsafe_schedule_states_without_mutation(self) -> None:
+        self.prepare_feeder_recovery()
+        original = json.loads(self.petlibro_state.read_text())
+        for selector, key, value in (
+            ("cabin-feeder", "enabled", True),
+            ("crosstown-feeder", "enabled", False),
+            ("crosstown-feeder", "meals", 0),
+        ):
+            devices = json.loads(json.dumps(original))
+            devices[selector][key] = value
+            self.petlibro_state.write_text(json.dumps(devices))
+            with self.subTest(selector=selector, key=key), self.assertRaises(actions.ActionError):
+                self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+        self.assertFalse(self.petlibro_log.exists())
+
+    def test_feeder_recovery_preserves_all_evidence_gates(self) -> None:
+        self.prepare_feeder_recovery()
+        for reason in (
+            "presence_state_stale", "presence_state_mismatch", "vacancy_cycle_mismatch",
+            "whisker_coverage_incomplete", "whisker_coverage_stale",
+            "origin_litter_activity_observed", "cat_transfer_not_settled",
+        ):
+            with self.subTest(reason=reason), patch.object(
+                actions, "_cat_transfer_evidence", side_effect=actions.ActionError(reason)
+            ), self.assertRaisesRegex(actions.ActionError, reason):
+                self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+        self.assertFalse(actions._load_feeder_suspensions(self.root)["sites"])
+
+    def test_feeder_recovery_blocks_unsettled_real_event(self) -> None:
+        self.prepare_feeder_recovery()
+        self.enqueue_litter_activity("crosstown", occurred_at="2026-08-22T14:50:00Z")
+        with self.assertRaisesRegex(actions.ActionError, "cat_transfer_not_settled"):
+            self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+
+    def test_feeder_recovery_blocks_pending_claimed_and_uncertain_feeder_actions(self) -> None:
+        self.prepare_feeder_recovery()
+        self.reserve_cat_transfer()
+        store = actions.EventStore(actions.RuntimePaths(self.root))
+        for status in ("pending", "claimed", "outcome_unknown"):
+            with store.connect() as connection:
+                connection.execute("UPDATE action_reservations SET status=?", (status,))
+            with self.subTest(status=status), self.assertRaisesRegex(
+                actions.ActionError, "feeder_recovery_unresolved_action"
+            ):
+                self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+
+    def test_feeder_recovery_requires_both_active_policies(self) -> None:
+        self.prepare_feeder_recovery()
+        for mode in ("shadow", "disabled"):
+            actions.install_policy(self.root, actions.canonical_json(cat_policy(crosstown_mode=mode)))
+            with self.subTest(mode=mode), self.assertRaisesRegex(
+                actions.ActionError, "feeder_recovery_policy_inactive"
+            ):
+                self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+
+    def test_feeder_recovery_preserves_unrelated_unknown_lighting_action(self) -> None:
+        self.reserve()
+        store = actions.EventStore(actions.RuntimePaths(self.root))
+        with store.connect() as connection:
+            connection.execute("UPDATE action_reservations SET status='outcome_unknown'")
+        prior = dict(self.database_row())
+        self.prepare_feeder_recovery()
+        self.assertEqual(self.recover_feeder()["mode"], "returned_to_automation")
+        self.assertEqual(dict(self.database_row()), prior)
+
+    def test_feeder_recovery_rejects_unavailable_readback(self) -> None:
+        self.prepare_feeder_recovery()
+        with patch.object(
+            actions, "_petlibro_schedule_state",
+            side_effect=actions.ActionError("feeder_readback_unavailable"),
+        ), self.assertRaisesRegex(actions.ActionError, "feeder_readback_unavailable"):
+            self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+        self.assertFalse(actions._load_feeder_suspensions(self.root)["sites"])
+
+    def test_feeder_recovery_rejects_existing_transition_or_destination_ownership(self) -> None:
+        self.prepare_feeder_recovery()
+        for site, phase in (("cabin", "suspending"), ("cabin", "restoring"), ("crosstown", "suspended")):
+            state = actions._empty_feeder_suspensions()
+            state["sites"][site] = {
+                "selector": actions.FEEDER_SELECTORS[site],
+                "cycle_id": self.cycle_id,
+                "phase": phase,
+                "restore_owned": True,
+                "occupancy_context": "origin_vacant",
+                "updated_at": NOW,
+                "last_error": None,
+            }
+            actions._write_feeder_suspensions(self.root, state)
+            with self.subTest(site=site, phase=phase), self.assertRaises(actions.ActionError):
+                self.recover_feeder()
+            self.assertEqual(actions._load_feeder_suspensions(self.root), state)
+        self.assertEqual(self.recovery_receipts(), [])
+
+    def test_feeder_recovery_receipt_creation_never_overwrites(self) -> None:
+        path = self.root / "state/receipt.json"
+        actions._write_recovery_receipt(path, {"original": True})
+        before = path.read_bytes()
+        with self.assertRaises(FileExistsError):
+            actions._write_recovery_receipt(path, {"original": False})
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(path.stat().st_nlink, 1)
+
+    def test_feeder_recovery_obeys_worker_lock(self) -> None:
+        self.prepare_feeder_recovery()
+        paths = actions.validate_runtime(self.root)
+        with paths.action_lock.open("r+") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(actions.ActionError, "action_worker_busy"):
+                self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+
+    def test_feeder_recovery_rechecks_policy_before_ownership_write(self) -> None:
+        self.prepare_feeder_recovery()
+        original = actions._petlibro_schedule_state
+
+        def changed_policy(*args, **kwargs):
+            result = original(*args, **kwargs)
+            actions.install_policy(self.root, actions.canonical_json(cat_policy(crosstown_mode="disabled")))
+            return result
+
+        with patch.object(actions, "_petlibro_schedule_state", side_effect=changed_policy):
+            with self.assertRaisesRegex(actions.ActionError, "feeder_recovery_state_changed"):
+                self.recover_feeder()
+        self.assertEqual(self.recovery_receipts(), [])
+
+    def test_feeder_recovery_requires_durable_intent_before_ownership(self) -> None:
+        self.prepare_feeder_recovery()
+        with patch.object(actions, "_write_recovery_receipt", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.recover_feeder()
+        self.assertFalse(actions._load_feeder_suspensions(self.root)["sites"])
+
+    def test_interrupted_feeder_recovery_is_not_replayed(self) -> None:
+        self.prepare_feeder_recovery()
+        with patch.object(actions, "_write_feeder_suspensions", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.recover_feeder()
+        self.assertEqual(len(self.recovery_receipts()), 1)
+        with self.assertRaisesRegex(actions.ActionError, "feeder_recovery_incomplete"):
+            self.recover_feeder()
+        self.assertFalse(actions._load_feeder_suspensions(self.root)["sites"])
+
+    def test_feeder_recovery_incomplete_completion_is_not_reported_success(self) -> None:
+        self.prepare_feeder_recovery()
+        original = actions._write_recovery_receipt
+
+        def fail_completion(path, value):
+            if ".applied." in path.name:
+                raise OSError("disk full")
+            original(path, value)
+
+        with patch.object(actions, "_write_recovery_receipt", side_effect=fail_completion):
+            with self.assertRaises(OSError):
+                self.recover_feeder()
+        self.assertIn("cabin", actions._load_feeder_suspensions(self.root)["sites"])
+        with self.assertRaisesRegex(actions.ActionError, "feeder_recovery_incomplete"):
+            self.recover_feeder()
+        self.assertFalse(self.petlibro_log.exists())
+
+    def test_feeder_recovery_rejects_corrupt_or_symlink_receipts(self) -> None:
+        self.prepare_feeder_recovery()
+        self.recover_feeder()
+        receipt = next(path for path in self.recovery_receipts() if ".applied." in path.name)
+        original = receipt.read_bytes()
+        receipt.write_text('{"schema_version":1,"intent_sha256":"wrong"}')
+        with self.assertRaisesRegex(actions.ActionError, "feeder_recovery_receipt_invalid"):
+            self.recover_feeder()
+        receipt.unlink()
+        target = self.home / "receipt-target"
+        target.write_bytes(original)
+        target.chmod(0o600)
+        receipt.symlink_to(target)
+        with self.assertRaises(actions.ActionError):
+            self.recover_feeder()
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_recovered_feeder_restores_through_normal_return_evidence(self) -> None:
+        self.prepare_feeder_recovery()
+        self.recover_feeder()
+        self.write_presence()
+        state = json.loads(self.state_path.read_text())
+        state["crosstown"]["stateChangedAt"] = "2026-08-22T14:25:00Z"
+        self.private_json(self.state_path, state)
+        producer = json.loads(self.producer_path.read_text())
+        producer["state_hash"] = actions.state_hash(state)
+        self.private_json(self.producer_path, producer)
+        cycle = json.loads((self.journal / "cycles/crosstown.json").read_text())
+        cycle["state_changed_at"] = state["crosstown"]["stateChangedAt"]
+        cycle["cycle_id"] = "cycle_" + "b" * 32
+        self.private_json(self.journal / "cycles/crosstown.json", cycle)
+        self.enqueue_litter_activity("cabin", occurred_at="2026-08-22T14:28:00Z")
+        result = self.run_worker()
+        self.assertEqual(result["feeder_reconcile"]["changed"], 1)
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder on"])
+        self.assertFalse(actions._load_feeder_suspensions(self.root)["sites"])
+        self.assertEqual(len(self.recovery_receipts()), 2)
 
     def test_cat_transfer_resumes_owned_destination_before_disabling_origin(self) -> None:
         self.configure_cat_transfer()

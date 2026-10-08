@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "active": true,
   "targets": {
     "cabin": {
@@ -15,13 +15,12 @@
       "feeding_schedule": {
         "owner": "bus",
         "mode": "active",
-        "trigger": "cat_transfer",
+        "trigger": "household_relocation",
         "action": "suspend_restore",
         "selector": "cabin-feeder",
         "destination_site": "crosstown",
         "destination_selector": "crosstown-feeder",
         "desired_state": "vacant_disabled",
-        "evidence_settle_seconds": 1800,
         "expiry_seconds": 600,
         "settle_seconds": 3
       }
@@ -39,13 +38,12 @@
       "feeding_schedule": {
         "owner": "bus",
         "mode": "active",
-        "trigger": "cat_transfer",
+        "trigger": "household_relocation",
         "action": "suspend_restore",
         "selector": "crosstown-feeder",
         "destination_site": "cabin",
         "destination_selector": "cabin-feeder",
         "desired_state": "vacant_disabled",
-        "evidence_settle_seconds": 1800,
         "expiry_seconds": 600,
         "settle_seconds": 3
       }

@@ -84,9 +84,30 @@ If the result contains
 check reconciles the current portion count.
 
 The home-event worker may suspend and later restore an exact full schedule only
-under the disabled-by-default cat-transfer policy. It restores only a schedule
+under its exact active feeder policy. The approved `household_relocation`
+policy follows fresh confirmed vacancy with both residents at the other home;
+all cats are assumed to travel with them. Litter observations are advisory,
+not a prerequisite. It verifies destination feeding before disabling origin
+feeding. It restores only a schedule
 recorded as previously suspended by that worker. A manual pause remains paused,
 and no automation path imports or invokes `petlibro feed`.
+
+An explicit request to **return a manual pause to automation** is different
+from `schedule-set ... on`. Do not enable meals at the vacant home or toggle
+them to manufacture ownership. Use the operator-only
+[audited recovery](../../HOME-EVENTS.md#audited-feeder-return-to-automation)
+through `home-event-action return-feeder-to-automation`: preview first, then
+pin its vacancy cycle and supply `--confirm-manual-pause` only for a current
+explicit operator request. It adopts an already-paused schedule without a
+device command, retains receipts, and requires all normal transfer evidence.
+If blocked, leave schedules unchanged and report the reason. Later automatic
+resume still requires the ordinary verified return; arrival alone is not enough.
+
+If cats will stay behind, use `home-event-action set-feeder-mode --mode disabled`
+before the trip and verify feeding at their home. This holds both feeder
+directions without changing either schedule or lighting. Re-enable with
+`--mode active` only after explicit confirmation that the normal travel
+assumption applies again. Never clear an uncertain or terminal attempt to retry.
 
 ## Manual feeding
 

@@ -346,7 +346,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.presence-local-event-adapter` | 60s | `home-event-service-wrapper.sh presence-local` | Derives shadow-only named local arrivals/departures and household excursion intervals from advancing sanitized scans; both tracked site flags remain `0`. |
 | `ai.openclaw.vacancy-event-adapter` | 60s | `home-event-service-wrapper.sh vacancy` | Silently baselines existing protected vacancy runs, then publishes future completed runs for independently enabled sites; both tracked site flags remain `0`. |
 | `ai.openclaw.whisker-event-adapter` | 60s | `home-event-service-wrapper.sh whisker` | Silently baselines the two exact Litter-Robot histories, then publishes only future normalized cat-presence observations while paired history remains continuous; both tracked site flags remain `0`. |
-| `ai.openclaw.home-event-action` | 30s | `home-event-action-wrapper.sh` | Processes exact policy-owned Hue and separately gated Petlibro schedule actions with fresh evidence and device readback; restores only automation-owned state and never adopts a manual pause. |
+| `ai.openclaw.home-event-action` | 30s | `home-event-action-wrapper.sh` | Processes exact policy-owned Hue and separately gated Petlibro schedule actions with fresh evidence and device readback; restores only owned state. It never invokes the operator-only audited `return-feeder-to-automation` command or automatically adopts a manual pause. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `ai.openclaw.airthings-snapshot` | 5min + login | `airthings-snapshot` | Reads the exact Cabin Living Room Wave Enhance over local BLE and appends one Airthings-only row through the shared locked climate-history writer; failures update protected safe health without appending stale data |
 | `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
@@ -379,6 +379,14 @@ presence, August, Nest, vacancy, or Whisker publication. All producer flags defa
 off. The shared wrapper uses a
 sanitized environment and one bounded owner-only log, and neither it nor its
 children call `op`.
+
+Feeder action-policy schema 4 uses the approved household-relocation assumption
+in the existing correlator/action jobs; no new LaunchAgent or presence writer
+is added. Deploy the compatible worker module before changing the protected
+feeder policy. `set-feeder-mode` serializes a two-direction hold with the action
+lock and leaves other targets and physical schedules unchanged. Whisker keeps
+observing but no longer gates relocation-based feeding. Cat Care needs only its
+own restart when presentation code changes; do not restart the gateway.
 
 Create and validate the protected runtime before bootstrapping the ingester or
 correlator. Configure the exact August observe binding separately on the

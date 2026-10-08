@@ -246,9 +246,10 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   actions.
   It handles Crosstown all-lights-off plus exact standing-automation
   suspension, continuous vacant-state enforcement, and restore-on-confirmed-
-  return. Separately disabled feeder targets require paired cat-transfer
-  evidence, restore an OpenClaw-owned destination pause before origin
-  suspension, and never resume a manual pause. The worker holds an exclusive
+  return. Feeder targets use the explicitly selected household-relocation
+  policy below, restore an OpenClaw-owned destination pause before origin
+  suspension, and never automatically adopt a manual pause. The explicit
+  operator recovery below is the only manual-pause ownership handoff. The worker holds an exclusive
   lock across crash recovery, revalidation, command, and readback, and restores
   only state recorded as enabled before the matching vacancy cycle. Its safe
   status includes at most eight confirmed recent feeder transfers as origin,
@@ -256,6 +257,94 @@ safe `dylan` policy-route alias; the protected `chat_id` never enters it.
   also projects a bounded per-site cat-transfer readiness state and allowlisted
   waiting or blocked reason; the Cat Care dashboard uses those safe fields for
   plain-English waiting, safety-check, and move activity.
+### Household-relocation feeder policy
+
+On October 8, Dylan confirmed that all cats reliably travel whenever both
+residents relocate. Action-policy schema 4 selects `household_relocation` for
+both exact feeder targets. This is an explicit household assumption, not a
+claim that phone presence proves animal location. Older schema-3
+`cat_transfer` policies retain their litter-evidence behavior for compatibility.
+
+The existing correlator and action worker require fresh, hash-matched canonical
+presence, a current protected vacancy cycle, one confirmed-vacant home, and
+both Dylan and Julia assigned to the occupied destination. Brief Wi-Fi absences,
+`possibly_vacant`, stale scans, or split occupancy do not move feeding.
+Verify the destination is online with scheduled meals enabled before disabling
+the origin; restore an existing automation-owned destination pause first.
+Manual pauses still require attended adoption. Unknown outcomes are never
+automatically retried. Reservations are cycle-bound, not litter-event-bound;
+any prior attempt in that cycle blocks another automatic attempt, including
+historical attempts from the previous policy. A blocked/failed cycle needs
+operator review, not a fabricated event or deleted reservation.
+
+Whisker remains useful care telemetry. Its absence, history gaps, and 30-minute
+settling no longer gate feeding. A recorded litter event at the vacant home
+produces an advisory to check the travel assumption, not a new control path.
+Cat Care labels the inferred state as `Feeding at …` rather than claiming
+direct evidence of all cats' location.
+
+For an exceptional trip where cats stay behind, hold both feeder directions
+before relocating, then verify the cats' home's schedule remains on:
+
+```bash
+~/.openclaw/bin/home-event-action set-feeder-mode --mode disabled
+~/.openclaw/bin/home-event-action status
+```
+
+This serialized, feeder-only policy change leaves both physical schedules,
+lighting policy, ownership records, and presence untouched. After explicitly
+confirming normal travel again, `set-feeder-mode --mode active` restores the
+two policy modes; it does not erase an earlier terminal attempt or replay it.
+Do not broadly redeploy the event bus to toggle this override.
+
+### Audited feeder return to automation
+
+Use this only after an explicit operator request to return an existing manual
+pause to automatic control. It adopts an already-paused exact feeder; it does
+not turn a schedule on/off, dispense food, change meals, or manufacture a
+historical automatic suspension. It has no scheduler or dashboard mutation route.
+
+```bash
+~/.openclaw/bin/home-event-action return-feeder-to-automation --site cabin --dry-run
+~/.openclaw/bin/home-event-action return-feeder-to-automation --site cabin \
+  --expected-cycle-id <cycle_id-from-preview> --confirm-manual-pause
+~/.openclaw/bin/home-event-action status
+petlibro --json schedule-state cabin-feeder
+petlibro --json schedule-state crosstown-feeder
+```
+
+Both feeder policies must be active. The selected policy's fresh
+canonical/producer presence and exact vacancy-cycle checks still apply.
+Legacy `cat_transfer` additionally requires paired coverage, origin-quiet,
+and settled destination litter evidence; `household_relocation` does not.
+Both devices must be online, the
+origin already paused, and the destination enabled with an active meal and no
+owned pause. Pending, claimed, or uncertain **feeder** reservations block
+recovery; an unrelated lighting outcome does not. A missing/new destination
+litter event returns `cat_transfer_not_settled`: wait for an organic visit and
+its configured settle period. Never reset a cycle or fabricate an event.
+
+The command holds the action-worker lock, serializes its final checks against
+reservation writers, pins the preview's cycle, and rechecks policy/presence
+before ownership changes. Owner-only, atomically created, non-overwriting
+receipts are stored as
+`state/feeder-recovery-<site>-<cycle_id>.intent.json` and `.applied.json` under
+the protected event-bus root. Intent records explicit operator authorization,
+safe device readbacks, evidence, prior suspension state, and the intended
+ownership record **before** the state write. Completion references the intent
+hash after ownership readback. Existing reservations, outcomes, vacancy markers,
+and unrelated suspension records are preserved. Successful repeat requests are
+idempotent while the same verified ownership/cycle remains current.
+
+An incomplete or invalid receipt fails closed; do not delete it or blindly
+retry. A crash after ownership was written can leave an owned pause with only
+an intent receipt: inspect both records before any attended repair. The
+receipt records adoption, not proof that OpenClaw originally disabled feeding.
+Normal future return evidence is still required before the worker can resume
+the owned schedule. The dashboard uses its existing managed-pause presentation.
+
+### Remaining components
+
 - `skills/home-events/SKILL.md` constrains OpenClaw to the read-only wrapper and
   delegates only an explicit current-image request to `nest-camera`.
 - `ai.openclaw.ring-event-listener` remains the only Ring FCM connection and

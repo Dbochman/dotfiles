@@ -246,13 +246,13 @@ def validate_policy(value: object) -> dict[str, Any]:
     }:
         raise ActionError("action_policy_invalid")
     schema_version = value["schema_version"]
-    if schema_version not in {2, 3} or not isinstance(value["active"], bool):
+    if schema_version not in {2, 3, 4} or not isinstance(value["active"], bool):
         raise ActionError("action_policy_invalid")
     targets = value["targets"]
     if not isinstance(targets, dict) or set(targets) != SITES:
         raise ActionError("action_policy_invalid")
     normalized: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": max(3, schema_version),
         "active": value["active"],
         "targets": {},
     }
@@ -273,19 +273,23 @@ def validate_policy(value: object) -> dict[str, Any]:
             }
             if target == "daily_automations":
                 expected_keys.add("automations")
-            if schema_version == 3:
+            if schema_version >= 3:
                 expected_keys.update({"mode", "trigger"})
             if target == "feeding_schedule":
-                if schema_version != 3:
+                if schema_version < 3:
                     raise ActionError("action_policy_invalid")
                 expected_keys.update(
                     {
                         "selector",
                         "destination_site",
                         "destination_selector",
-                        "evidence_settle_seconds",
                     }
                 )
+                if isinstance(entry, dict) and entry.get("trigger") == "household_relocation":
+                    if schema_version != 4:
+                        raise ActionError("action_policy_invalid")
+                else:
+                    expected_keys.add("evidence_settle_seconds")
             if not isinstance(entry, dict) or set(entry) != expected_keys:
                 raise ActionError("action_policy_invalid")
             expected_action, expected_state = TARGETS[site][target]
@@ -294,7 +298,7 @@ def validate_policy(value: object) -> dict[str, Any]:
             if (
                 entry["owner"] not in {"legacy", "bus"}
                 or mode not in {"disabled", "shadow", "active"}
-                or trigger not in {"vacancy", "cat_transfer"}
+                or trigger not in {"vacancy", "cat_transfer", "household_relocation"}
                 or entry["action"] != expected_action
                 or entry["desired_state"] != expected_state
                 or not isinstance(entry["expiry_seconds"], int)
@@ -309,13 +313,14 @@ def validate_policy(value: object) -> dict[str, Any]:
                 destination = OTHER_SITE[site]
                 if (
                     entry["owner"] != "bus"
-                    or trigger != "cat_transfer"
+                    or trigger not in {"cat_transfer", "household_relocation"}
                     or entry["selector"] != FEEDER_SELECTORS[site]
                     or entry["destination_site"] != destination
                     or entry["destination_selector"] != FEEDER_SELECTORS[destination]
-                    or not isinstance(entry["evidence_settle_seconds"], int)
-                    or isinstance(entry["evidence_settle_seconds"], bool)
-                    or not 300 <= entry["evidence_settle_seconds"] <= 7200
+                    or (trigger == "cat_transfer" and (
+                        type(entry["evidence_settle_seconds"]) is not int
+                        or not 300 <= entry["evidence_settle_seconds"] <= 7200
+                    ))
                 ):
                     raise ActionError("action_policy_invalid")
             elif trigger != "vacancy" or mode != "active":
@@ -381,6 +386,29 @@ def ownership(root: Path, site: str, target: str) -> str:
         if entry is None or entry["mode"] != "active"
         else str(entry["owner"])
     )
+
+
+def set_feeder_mode(root: Path, mode: str) -> dict[str, Any]:
+    if mode not in {"active", "disabled"}:
+        raise ActionError("action_policy_invalid")
+    paths = validate_runtime(root)
+    descriptor = os.open(paths.action_lock, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ActionError("action_worker_busy") from exc
+        loaded = load_policy(root)
+        policy = loaded[0]
+        for site in SITES:
+            entry = policy["targets"][site].get("feeding_schedule")
+            if entry is None:
+                raise ActionError("action_policy_invalid")
+            entry["mode"] = mode
+        install_policy(root, canonical_json(policy))
+        return {"ok": True, "mode": mode, "schedule_changed": False}
+    finally:
+        os.close(descriptor)
 
 
 def validate_presence(
@@ -580,7 +608,7 @@ def _cat_transfer_evidence(
     entry: Mapping[str, Any],
     clock: Callable[[], str],
 ) -> dict[str, Any]:
-    if origin_site not in SITES or entry.get("trigger") != "cat_transfer":
+    if origin_site not in SITES or entry.get("trigger") not in {"cat_transfer", "household_relocation"}:
         raise ActionError("cat_transfer_invalid")
     destination = OTHER_SITE[origin_site]
     now = parse_time(clock(), "clock_invalid")
@@ -623,6 +651,33 @@ def _cat_transfer_evidence(
         journal_root=journal_root,
         now=now,
     )
+    if entry["trigger"] == "household_relocation":
+        if connection.execute(
+            "SELECT 1 FROM action_reservations WHERE target_alias='feeding_schedule' "
+            "AND status='outcome_unknown' LIMIT 1"
+        ).fetchone() is not None:
+            raise ActionError("feeder_outcome_unknown")
+        loaded = load_policy(root)
+        paired = loaded[0]["targets"].get(destination, {}).get("feeding_schedule", {})
+        if (
+            not loaded[0]["active"] or paired.get("owner") != "bus"
+            or paired.get("trigger") != "household_relocation"
+            or paired.get("mode") != entry.get("mode")
+            or entry.get("mode") not in {"active", "shadow"}
+        ):
+            raise ActionError("feeder_recovery_policy_inactive")
+        people = canonical.get("people", {})
+        if any(
+            not isinstance(people.get(person), dict)
+            or people[person].get("location") != destination
+            for person in ("Dylan", "Julia")
+        ):
+            raise ActionError("destination_not_occupied")
+        return {
+            "origin_site": origin_site, "destination_site": destination,
+            "cycle_id": cycle["cycle_id"], "trigger_state_hash": producer_hash,
+            "event_id": None, "occurred_at": cycle["state_changed_at"],
+        }
     whisker = _load_whisker_state(root)
     for site in SITES:
         record = whisker["sites"][site]
@@ -698,7 +753,7 @@ def reserve_cat_transfers(
             entry is None
             or entry["owner"] != "bus"
             or entry["mode"] == "disabled"
-            or entry["trigger"] != "cat_transfer"
+            or entry["trigger"] not in {"cat_transfer", "household_relocation"}
         ):
             continue
         try:
@@ -720,7 +775,7 @@ def reserve_cat_transfers(
                 INSERT INTO service_counters(name, value) VALUES (?, ?)
                 ON CONFLICT(name) DO UPDATE SET value=excluded.value
                 """,
-                (f"cat_transfer_shadow_{origin_site}", evidence["event_id"]),
+                (f"cat_transfer_shadow_{origin_site}", evidence["event_id"] or 0),
             )
             shadowed += 1
             continue
@@ -739,7 +794,8 @@ def reserve_cat_transfers(
         retry = False
         if prior:
             if any(
-                row["trigger_event_id"] == evidence["event_id"]
+                entry["trigger"] == "household_relocation"
+                or row["trigger_event_id"] == evidence["event_id"]
                 or row["status"] in {"pending", "claimed", "outcome_unknown"}
                 or row["outcome"] in {"state_confirmed", "outcome_unknown"}
                 or row["command_attempted"] == 1
@@ -768,7 +824,7 @@ def reserve_cat_transfers(
             target="feeding_schedule",
             cycle_id=str(evidence["cycle_id"]),
             trigger_state_hash=str(evidence["trigger_state_hash"]),
-            trigger_event_id=int(evidence["event_id"]),
+            trigger_event_id=evidence["event_id"],
             clock=clock,
         )
         reserved += result["status"] == "reserved"
@@ -1352,7 +1408,7 @@ def _transfer_feeding_schedule(
             or destination_state["enabledMealCount"] < 1
         ):
             raise ActionError("destination_schedule_unavailable")
-        _cat_transfer_evidence(
+        refreshed = _cat_transfer_evidence(
             connection,
             root=root,
             state_path=state_path,
@@ -1362,6 +1418,8 @@ def _transfer_feeding_schedule(
             entry=entry,
             clock=clock,
         )
+        if refreshed["cycle_id"] != cycle_id:
+            raise ActionError("vacancy_cycle_mismatch")
         origin_observed = _petlibro_schedule_state(
             petlibro_bin,
             FEEDER_SELECTORS[origin_site],
@@ -1595,7 +1653,7 @@ def _reconcile_feeder_suspensions(
                     now=parse_time(clock(), "clock_invalid"),
                 )
                 if site_state.get("occupancy") == "confirmed_vacant":
-                    _cat_transfer_evidence(
+                    evidence = _cat_transfer_evidence(
                         connection,
                         root=root,
                         state_path=state_path,
@@ -1605,7 +1663,19 @@ def _reconcile_feeder_suspensions(
                         entry=entry,
                         clock=clock,
                     )
+                    if evidence["cycle_id"] != record["cycle_id"]:
+                        raise ActionError("vacancy_cycle_mismatch")
                     if observed["scheduleEnabled"]:
+                        destination = OTHER_SITE[site]
+                        destination_state = _petlibro_schedule_state(
+                            petlibro_bin, FEEDER_SELECTORS[destination], destination,
+                            now=parse_time(clock(), "clock_invalid"),
+                        )
+                        if not destination_state["scheduleEnabled"] or destination_state["enabledMealCount"] < 1:
+                            raise ActionError("destination_schedule_unavailable")
+                        record["phase"] = "suspending"
+                        record["updated_at"] = clock()
+                        _write_feeder_suspensions(root, state)
                         changed += _petlibro_schedule_set(
                             petlibro_bin, FEEDER_SELECTORS[site], site, False
                         )
@@ -1619,6 +1689,8 @@ def _reconcile_feeder_suspensions(
                             raise ActionError(
                                 "feeder_outcome_unknown", command_attempted=True
                             )
+                        record["phase"] = "suspended"
+                        _write_feeder_suspensions(root, state)
                     if (
                         record["last_error"] is not None
                         or record["occupancy_context"] != "origin_vacant"
@@ -1819,7 +1891,8 @@ def _run_worker_once_locked(
     command_attempted = False
     try:
         loaded = load_policy(root)
-        assert loaded is not None
+        if loaded is None:
+            raise ActionError("feeder_recovery_policy_inactive")
         policy, current_policy_hash = loaded
         entry = policy["targets"].get(reservation["site"], {}).get(
             reservation["target_alias"]
@@ -2025,6 +2098,198 @@ def run_worker_once(
         os.close(descriptor)
 
 
+def _write_recovery_receipt(path: Path, value: Mapping[str, Any]) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".feeder-recovery-", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(canonical_json(value) + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, path, follow_symlinks=False)
+        temporary.unlink()
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def return_feeder_to_automation(
+    root: Path,
+    site: str,
+    *,
+    confirm_manual_pause: bool = False,
+    expected_cycle_id: str | None = None,
+    dry_run: bool = False,
+    state_path: Path = DEFAULT_PRESENCE_STATE,
+    producer_path: Path = DEFAULT_PRODUCER_STATE,
+    journal_root: Path = DEFAULT_JOURNAL_ROOT,
+    petlibro_bin: str = str(Path("~/.openclaw/bin/petlibro").expanduser()),
+    clock: Callable[[], str] = utc_now,
+) -> dict[str, Any]:
+    if site not in SITES:
+        raise ActionError("site_invalid")
+    if not dry_run and (
+        confirm_manual_pause is not True
+        or not isinstance(expected_cycle_id, str)
+        or ID_RE.fullmatch(expected_cycle_id) is None
+        or not expected_cycle_id.startswith("cycle_")
+    ):
+        raise ActionError("feeder_recovery_confirmation_required")
+    paths = validate_runtime(root)
+    descriptor = os.open(paths.action_lock, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ActionError("action_worker_busy") from exc
+        loaded = load_policy(root)
+        assert loaded is not None
+        policy, policy_hash = loaded
+        for policy_site in SITES:
+            entry = policy["targets"][policy_site].get("feeding_schedule", {})
+            if (
+                not policy["active"]
+                or entry.get("owner") != "bus"
+                or entry.get("mode") != "active"
+                    or entry.get("trigger") not in {"cat_transfer", "household_relocation"}
+            ):
+                raise ActionError("feeder_recovery_policy_inactive")
+        before = _load_feeder_suspensions(root)
+        destination = OTHER_SITE[site]
+        if destination in before["sites"]:
+            raise ActionError("feeder_recovery_destination_owned")
+        observed = {
+            observed_site: _petlibro_schedule_state(
+                petlibro_bin,
+                FEEDER_SELECTORS[observed_site],
+                observed_site,
+                now=parse_time(clock(), "clock_invalid"),
+            )
+            for observed_site in (destination, site)
+        }
+        if observed[site]["scheduleEnabled"]:
+            raise ActionError("feeder_recovery_requires_paused_schedule")
+        if (
+            not observed[destination]["scheduleEnabled"]
+            or observed[destination]["enabledMealCount"] < 1
+        ):
+            raise ActionError("destination_schedule_unavailable")
+        store = EventStore(paths, clock=clock)
+        store.check_schema()
+        with contextlib.closing(store.connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM action_reservations WHERE target_alias='feeding_schedule' "
+                "AND status IN ('pending','claimed','outcome_unknown') LIMIT 1"
+            ).fetchone() is not None:
+                raise ActionError("feeder_recovery_unresolved_action")
+            evidence = _cat_transfer_evidence(
+                connection,
+                root=root,
+                state_path=state_path,
+                producer_path=producer_path,
+                journal_root=journal_root,
+                origin_site=site,
+                entry=policy["targets"][site]["feeding_schedule"],
+                clock=clock,
+            )
+            cycle_id = evidence["cycle_id"]
+            if expected_cycle_id is not None and expected_cycle_id != cycle_id:
+                raise ActionError("vacancy_cycle_mismatch")
+            existing = before["sites"].get(site)
+            if existing is not None and (
+                existing["cycle_id"] != cycle_id
+                or existing["phase"] != "suspended"
+                or existing["last_error"] is not None
+            ):
+                raise ActionError("feeder_recovery_existing_state_conflict")
+            prefix = root / "state" / f"feeder-recovery-{site}-{cycle_id}"
+            intent_path = prefix.with_suffix(".intent.json")
+            applied_path = prefix.with_suffix(".applied.json")
+            has_intent = intent_path.exists() or intent_path.is_symlink()
+            has_applied = applied_path.exists() or applied_path.is_symlink()
+            if has_intent or has_applied:
+                intent = _read_json(intent_path, MAX_POLICY_BYTES, "feeder_recovery_receipt_invalid")
+                applied = _read_json(applied_path, 4096, "feeder_recovery_incomplete")
+                if (
+                    set(applied) != {"schema_version", "intent_sha256", "completed_at"}
+                    or applied.get("schema_version") != 1
+                    or set(intent) != {
+                        "schema_version", "operation", "authorization", "site",
+                        "cycle_id", "policy_hash", "evidence", "readbacks", "before",
+                        "adopted_record", "authorized_at",
+                    }
+                    or intent.get("schema_version") != 1
+                    or applied.get("intent_sha256") != state_hash(intent)
+                    or intent.get("operation") != "return_feeder_to_automation"
+                    or intent.get("site") != site
+                    or intent.get("cycle_id") != cycle_id
+                    or intent.get("policy_hash") != policy_hash
+                    or intent.get("authorization") != "explicit_operator_request"
+                    or existing is None
+                ):
+                    raise ActionError("feeder_recovery_receipt_invalid")
+                parse_time(applied.get("completed_at"), "feeder_recovery_receipt_invalid")
+                parse_time(intent.get("authorized_at"), "feeder_recovery_receipt_invalid")
+                return {"ok": True, "mode": "already_managed", "site": site, "cycle_id": cycle_id}
+            if existing is not None:
+                return {"ok": True, "mode": "already_managed", "site": site, "cycle_id": cycle_id}
+            if dry_run:
+                return {"ok": True, "mode": "eligible", "site": site, "cycle_id": cycle_id}
+            if load_policy(root) != loaded or _load_feeder_suspensions(root) != before:
+                raise ActionError("feeder_recovery_state_changed")
+            latest_presence_hash = validate_presence(
+                site, cycle_id,
+                state_path=state_path,
+                producer_path=producer_path,
+                journal_root=journal_root,
+                now=parse_time(clock(), "clock_invalid"),
+            )
+            if latest_presence_hash != evidence["trigger_state_hash"]:
+                raise ActionError("feeder_recovery_state_changed")
+            adopted = {
+                "selector": FEEDER_SELECTORS[site],
+                "cycle_id": cycle_id,
+                "phase": "suspended",
+                "restore_owned": True,
+                "occupancy_context": "origin_vacant",
+                "updated_at": clock(),
+                "last_error": None,
+            }
+            intent = {
+                "schema_version": 1,
+                "operation": "return_feeder_to_automation",
+                "authorization": "explicit_operator_request",
+                "site": site,
+                "cycle_id": cycle_id,
+                "policy_hash": policy_hash,
+                "evidence": evidence,
+                "readbacks": observed,
+                "before": before,
+                "adopted_record": adopted,
+                "authorized_at": clock(),
+            }
+            _write_recovery_receipt(intent_path, intent)
+            after = {**before, "sites": {**before["sites"], site: adopted}}
+            _write_feeder_suspensions(root, after)
+            if _load_feeder_suspensions(root) != after:
+                raise ActionError("feeder_recovery_write_unverified")
+            _write_recovery_receipt(applied_path, {
+                "schema_version": 1,
+                "intent_sha256": state_hash(intent),
+                "completed_at": clock(),
+            })
+            connection.commit()
+            return {
+                "ok": True, "mode": "returned_to_automation", "site": site,
+                "cycle_id": cycle_id, "schedule_changed": False,
+                "receipt": applied_path.name,
+            }
+    finally:
+        os.close(descriptor)
+
+
 def reserve_current_canary(
     root: Path,
     site: str,
@@ -2091,7 +2356,7 @@ def _cat_transfer_readiness(
             not isinstance(entry, Mapping)
             or entry.get("owner") != "bus"
             or entry.get("mode") not in {"active", "shadow"}
-            or entry.get("trigger") != "cat_transfer"
+            or entry.get("trigger") not in {"cat_transfer", "household_relocation"}
         ):
             sites[origin_site] = {"state": "disabled", "reason": None}
             continue
@@ -2118,6 +2383,15 @@ def _cat_transfer_readiness(
                 }
         else:
             sites[origin_site] = {"state": "eligible", "reason": None}
+            if entry["trigger"] == "household_relocation":
+                cycle = _read_json(journal_root / "cycles" / f"{origin_site}.json", 4096, "vacancy_cycle_invalid")
+                contradiction = connection.execute(
+                    "SELECT 1 FROM events WHERE source='whisker' AND event_type='pet.litter_box_activity' "
+                    "AND site=? AND entity_alias=? AND occurred_at>=? AND occurred_at<=? LIMIT 1",
+                    (origin_site, WHISKER_ALIASES[origin_site], cycle["state_changed_at"], clock()),
+                ).fetchone()
+                if contradiction is not None:
+                    sites[origin_site]["warning"] = "litter_activity_at_vacant_home"
     return {"sites": sites}
 
 
@@ -2221,6 +2495,13 @@ def safe_status(
             },
             "latest": feeder_suspensions["latest"],
         },
+        "feeder_policy": {
+            site: {
+                key: loaded[0]["targets"].get(site, {}).get("feeding_schedule", {}).get(key)
+                for key in ("mode", "trigger")
+            }
+            for site in sorted(SITES)
+        } if loaded is not None else {},
         "cat_transfers": {
             "recent": [
                 {
@@ -2257,6 +2538,13 @@ def build_parser() -> argparse.ArgumentParser:
     own.add_argument("--site", required=True, choices=sorted(SITES))
     own.add_argument("--target", required=True)
     commands.add_parser("run-once")
+    feeder_mode = commands.add_parser("set-feeder-mode")
+    feeder_mode.add_argument("--mode", required=True, choices=("active", "disabled"))
+    recovery = commands.add_parser("return-feeder-to-automation")
+    recovery.add_argument("--site", required=True, choices=sorted(SITES))
+    recovery.add_argument("--dry-run", action="store_true")
+    recovery.add_argument("--expected-cycle-id")
+    recovery.add_argument("--confirm-manual-pause", action="store_true")
     canary = commands.add_parser("canary")
     canary.add_argument("--site", required=True, choices=sorted(SITES))
     canary.add_argument("--target", required=True)
@@ -2278,8 +2566,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = {"ok": True, "owner": ownership(root, args.site, args.target)}
         elif args.command == "run-once":
             result = run_worker_once(root)
+        elif args.command == "set-feeder-mode":
+            result = set_feeder_mode(root, args.mode)
         elif args.command == "canary":
             result = reserve_current_canary(root, args.site, args.target)
+        elif args.command == "return-feeder-to-automation":
+            result = return_feeder_to_automation(
+                root, args.site, dry_run=args.dry_run,
+                expected_cycle_id=args.expected_cycle_id,
+                confirm_manual_pause=args.confirm_manual_pause,
+            )
         else:
             result = safe_status(root)
     except (ActionError, sqlite3.Error, OSError) as exc:
