@@ -417,8 +417,8 @@ Review records inbox/unread and Action/Urgent message counts, inventory
 completeness and bounded recommendations, not daily backlog fields. Counts
 describe sequential snapshots, not an atomic mailbox transaction.
 The agent writes a private mode-0600 JSON file in a mode-0700 temporary directory,
-runs `julia-morning-briefing-data.py --validate-handoff <file>`, and returns only
-validated JSON. This validator checks representation, bounds, and consistency;
+runs `julia-morning-briefing-data.py --publish-handoff <file>`, and returns only
+the compact publication receipt. This validator checks representation, bounds, and consistency;
 it does not independently prove semantic classifications or Gmail effects.
 
 Both owners share `bin/morning-triage.py` for schema validation, latest-run
@@ -448,6 +448,63 @@ run directly from the production checkout. Deploy the paired prompts and
 helpers together; do not rerun mutating triage or resend a briefing as a smoke
 test. This rollout also includes Dylan's separate, explicitly approved cleanup
 job and briefing integration below.
+
+### Durable triage handoffs and health checks
+
+OpenClaw cron summaries are diagnostic text capped at 2,000 characters plus an
+ellipsis, not lossless JSON transport. The October 8 investigation confirmed
+truncated handoffs for Julia since September 26 and Dylan since October 2.
+Scheduler `ok` did not establish a usable result. Never parse partial JSON,
+discard obligations to shrink a result, or substitute an older success.
+
+Each owner's `--publish-handoff <private-file>` validates the complete version-2
+payload, binds it to that exact owner's active registered cron job/store/run
+and Eastern date, and atomically writes and reads back an immutable file:
+
+`~/.openclaw/morning-triage/<julia|dylan>/<run_at_ms>.json`
+
+Run identity comes from the single active cron task-ledger entry's actual
+`started_at`, with its execution ID checked against the job and timestamp.
+The persisted job `running_at_ms` is only a reservation guard: it can precede
+the actual start and must not be used as the receipt's run timestamp. Missing
+or ambiguous active ledger entries fail publication closed.
+
+Directories must be owner-only `0700`; files must be regular, single-link,
+owner-owned `0600`. Symlinks at these boundaries are rejected. Missing,
+disabled, stale, future, completed, or changed active runs cannot publish.
+Identical publication during the same active run is idempotent; different data
+cannot replace it. These files contain sensitive mailbox metadata: keep them
+out of Git, general logs, and dashboard output. This mode makes no mailbox or
+other external-source calls.
+
+Only the small receipt is returned as the agent's final response:
+`handoffReceiptVersion`, `owner`, `jobId`, `storeKey`, `runAtMs`, `date`, and
+`sha256`. The reader first selects the latest run, requires scheduler success,
+then verifies the receipt bindings, protected file, full-envelope hash, and
+payload schema. Prior-day reminders independently resolve their exact receipt.
+A newer failed, malformed, missing-file, or still-running run never falls back
+to an earlier same-day success. Complete legacy inline JSON remains supported;
+truncated history remains unavailable and is not rewritten.
+
+Content-free read-only health checks (no Gmail, Calendar, sleep, or finance):
+
+```bash
+/usr/bin/python3 ~/dotfiles/openclaw/bin/julia-morning-briefing-data.py --triage-status
+/usr/bin/python3 ~/dotfiles/openclaw/bin/dylan-morning-briefing-data.py --triage-status
+```
+
+They exit nonzero on unavailable/invalid handoffs and report only owner, date,
+status/reason, and primary status. Valid partial cleanup remains partial, not
+an all-clear. The agent must report `HANDOFF_PUBLICATION_FAILED` if publication
+cannot finish, never fabricate a receipt. Scheduler `ok` may still describe a
+fallback response; these checks and the briefing's explicit triage status are
+the outcome checks. No additional scheduled checker is installed.
+
+Deploy reader/publisher helpers before the two triage prompts. Briefing job
+definitions, cleanup policy, schedules, and delivery routes stay unchanged.
+Test with oversized fixtures; never rerun mutating triage or resend a briefing
+as a smoke test. The first organic daily receipt/file must be verified before
+claiming live end-to-end success.
 
 ### Julia morning briefing data path
 
@@ -508,8 +565,10 @@ is queried, including read Action/Urgent threads. `--scope backlog` remains an
 on-demand preview, never part of either owner's scheduled job. The thin wrapper
 reuses the tested collector rather than introducing a second policy engine.
 
-The triage job validates its schema-version-2 JSON via
-`dylan-morning-briefing-data.py --validate-handoff <private-file>`. The shared
+The triage job validates and publishes its schema-version-2 JSON via
+`dylan-morning-briefing-data.py --publish-handoff <private-file>` and returns
+only the compact receipt. `--validate-handoff` remains a local diagnostic,
+not the scheduled publication path. The shared
 validator performs no Gmail, Calendar, sleep, or finance collection. The
 briefing reads only Dylan's latest same-day handoff and Dylan's prior-day
 history. Confirmed attention survives weaker previews; unchanged reminders

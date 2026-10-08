@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import sqlite3
 import stat
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +18,11 @@ from zoneinfo import ZoneInfo
 TIME_ZONE = ZoneInfo("America/New_York")
 HANDOFF_LIMIT_BYTES = 128 * 1024
 REVIEW_LIMIT = 20
+HANDOFF_ROOT = Path.home() / ".openclaw/morning-triage"
+OWNER_JOBS = {
+    "julia": "gws-julia-morning-triage-0001",
+    "dylan": "b7119197-b8e5-4f7d-9af2-edd268637cc8",
+}
 HANDOFF_COUNTERS = (
     "processed", "markedRead", "leftUnread", "draftsCreated", "draftsExisting",
     "archived", "trashed",
@@ -186,12 +193,175 @@ def review_presentation(items, previous, today, *, attention=(), previous_attent
     return presented
 
 
+def _private_directory(path: Path, *, create: bool = False) -> None:
+    if create:
+        path.mkdir(mode=0o700, exist_ok=True)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+    ):
+        raise ValueError("unsafe_handoff_directory")
+
+
+def _private_bytes(path: Path, limit: int) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as source:
+        metadata = os.fstat(source.fileno())
+        if (
+            not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_nlink != 1
+            or not 0 < metadata.st_size <= limit
+        ):
+            raise ValueError("invalid_handoff_file")
+        content = source.read(limit + 1)
+    if len(content) > limit:
+        raise ValueError("invalid_handoff_file")
+    return content
+
+
+def _active_run(db_path: Path, store_key: str, job_id: str, today: datetime) -> int:
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        connection.execute("BEGIN")
+        row = connection.execute(
+            "SELECT enabled, running_at_ms FROM cron_jobs WHERE store_key=? AND job_id=?",
+            (store_key, job_id),
+        ).fetchone()
+        tasks = connection.execute(
+            "SELECT started_at, run_id, ended_at FROM task_runs "
+            "WHERE runtime='cron' AND source_id=? AND status='running' LIMIT 2",
+            (job_id,),
+        ).fetchall()
+        if (
+            row is None or row[0] != 1 or type(row[1]) is not int
+            or len(tasks) != 1 or type(tasks[0][0]) is not int
+            or tasks[0][0] < row[1] or tasks[0][2] is not None
+            or tasks[0][1] != f"cron:{job_id}:{tasks[0][0]}"
+        ):
+            raise ValueError("active_triage_run_missing")
+        run_at_ms = tasks[0][0]
+        finished = connection.execute(
+            "SELECT 1 FROM cron_run_logs WHERE store_key=? AND job_id=? AND run_at_ms>=? LIMIT 1",
+            (store_key, job_id, run_at_ms),
+        ).fetchone() is not None
+    finally:
+        connection.close()
+    if finished:
+        raise ValueError("active_triage_run_missing")
+    for timestamp in (row[1], run_at_ms):
+        started = datetime.fromtimestamp(timestamp / 1000, TIME_ZONE)
+        if started.date() != today.date() or not 0 <= (today - started).total_seconds() <= 1200:
+            raise ValueError("active_triage_run_invalid")
+    return run_at_ms
+
+
+def publish_handoff_file(
+    path: Path, *, owner: str, db_path: Path, store_key: str,
+    root: Path | None = None, now: datetime | None = None,
+) -> dict[str, object]:
+    if owner not in OWNER_JOBS:
+        raise ValueError("handoff_owner_invalid")
+    today = (now or datetime.now(TIME_ZONE)).astimezone(TIME_ZONE)
+    payload = validate_handoff(json.loads(_private_bytes(path, HANDOFF_LIMIT_BYTES)), today)
+    if payload["schemaVersion"] != 2:
+        raise ValueError("invalid_handoff")
+    job_id = OWNER_JOBS[owner]
+    run_at_ms = _active_run(db_path, store_key, job_id, today)
+    metadata = {
+        "handoffReceiptVersion": 1, "owner": owner, "jobId": job_id,
+        "storeKey": store_key, "runAtMs": run_at_ms, "date": payload["date"],
+    }
+    content = json.dumps(
+        {**metadata, "payload": payload}, separators=(",", ":"),
+        sort_keys=True, ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    if len(content) > HANDOFF_LIMIT_BYTES + 4096:
+        raise ValueError("invalid_handoff_file")
+    root = root or HANDOFF_ROOT
+    _private_directory(root.parent)
+    _private_directory(root, create=True)
+    directory = root / owner
+    _private_directory(directory, create=True)
+    target = directory / f"{run_at_ms}.json"
+    if target.exists() or target.is_symlink():
+        if _private_bytes(target, HANDOFF_LIMIT_BYTES + 4096) != content:
+            raise ValueError("handoff_already_published")
+    else:
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".handoff-", dir=directory)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as destination:
+                os.fchmod(destination.fileno(), 0o600)
+                destination.write(content)
+                destination.flush()
+                os.fsync(destination.fileno())
+            if _active_run(db_path, store_key, job_id, today) != run_at_ms:
+                raise ValueError("active_triage_run_changed")
+            os.link(temporary, target, follow_symlinks=False)
+        except FileExistsError:
+            if _private_bytes(target, HANDOFF_LIMIT_BYTES + 4096) != content:
+                raise ValueError("handoff_already_published") from None
+        finally:
+            temporary.unlink(missing_ok=True)
+    descriptor = os.open(directory, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    if _private_bytes(target, HANDOFF_LIMIT_BYTES + 4096) != content:
+        raise ValueError("handoff_write_unverified")
+    return {**metadata, "sha256": hashlib.sha256(content).hexdigest()}
+
+
+def _run_payload(
+    summary: str, today: datetime, *, run_at_ms: int, job_id: str,
+    store_key: str, root: Path,
+) -> dict[str, object]:
+    if not isinstance(summary, str) or len(summary.encode("utf-8")) > HANDOFF_LIMIT_BYTES:
+        raise ValueError("invalid_handoff")
+    value = json.loads(strip_json_fence(summary))
+    if not isinstance(value, dict) or "handoffReceiptVersion" not in value:
+        return validate_handoff(value, today)
+    owner = next((name for name, identifier in OWNER_JOBS.items() if identifier == job_id), None)
+    expected = {
+        "handoffReceiptVersion": 1, "owner": owner, "jobId": job_id,
+        "storeKey": store_key, "runAtMs": run_at_ms, "date": today.date().isoformat(),
+    }
+    if (
+        owner is None or set(value) != set(expected) | {"sha256"}
+        or any(value.get(key) != content for key, content in expected.items())
+        or type(value["handoffReceiptVersion"]) is not int
+        or type(value["runAtMs"]) is not int
+        or not isinstance(value["sha256"], str)
+        or re.fullmatch(r"[a-f0-9]{64}", value["sha256"]) is None
+    ):
+        raise ValueError("invalid_handoff_receipt")
+    _private_directory(root.parent)
+    _private_directory(root)
+    _private_directory(root / owner)
+    content = _private_bytes(root / owner / f"{run_at_ms}.json", HANDOFF_LIMIT_BYTES + 4096)
+    if hashlib.sha256(content).hexdigest() != value["sha256"]:
+        raise ValueError("handoff_digest_mismatch")
+    envelope = json.loads(content)
+    if (
+        not isinstance(envelope, dict) or set(envelope) != set(expected) | {"payload"}
+        or any(envelope.get(key) != expected_value for key, expected_value in expected.items())
+    ):
+        raise ValueError("invalid_handoff_receipt")
+    payload = validate_handoff(envelope["payload"], today)
+    if payload["schemaVersion"] != 2:
+        raise ValueError("invalid_handoff")
+    return payload
+
+
 def load_triage_handoff(
     today: datetime,
     *,
     db_path: Path,
     job_id: str,
     store_key: str,
+    handoff_root: Path | None = None,
 ) -> tuple[dict[str, object], set[str] | None]:
     try:
         connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -202,12 +372,25 @@ def load_triage_handoff(
                    ORDER BY run_at_ms DESC LIMIT 50""",
                 (store_key, job_id),
             ).fetchall()
+            has_jobs = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cron_jobs'"
+            ).fetchone()
+            active = connection.execute(
+                "SELECT running_at_ms FROM cron_jobs WHERE store_key=? AND job_id=?",
+                (store_key, job_id),
+            ).fetchone() if has_jobs else None
         finally:
             connection.close()
     except (OSError, sqlite3.Error):
         return {"status": "unavailable", "reason": "database_unavailable"}, None
 
     today_date = today.date()
+    if (
+        active is not None and type(active[0]) is int
+        and datetime.fromtimestamp(active[0] / 1000, TIME_ZONE).date() == today_date
+        and (not rows or active[0] > rows[0][0])
+    ):
+        return {"status": "unavailable", "reason": "triage_run_in_progress"}, None
     for row_index, (run_at_ms, summary, run_status) in enumerate(rows):
         if not isinstance(run_at_ms, int):
             continue
@@ -221,8 +404,11 @@ def load_triage_handoff(
         if not isinstance(summary, str) or len(summary.encode("utf-8")) > HANDOFF_LIMIT_BYTES:
             return {"status": "unavailable", "reason": "invalid_handoff"}, None
         try:
-            payload = validate_handoff(json.loads(strip_json_fence(summary)), today)
-        except (ValueError, TypeError):
+            payload = _run_payload(
+                summary, today, run_at_ms=run_at_ms, job_id=job_id,
+                store_key=store_key, root=handoff_root or HANDOFF_ROOT,
+            )
+        except (OSError, ValueError, TypeError):
             return {"status": "unavailable", "reason": "invalid_handoff"}, None
 
         unread_raw = payload.get("unreadAfter")
@@ -268,8 +454,11 @@ def load_triage_handoff(
                 if previous_status != "ok" or not isinstance(previous_summary, str) or len(previous_summary.encode("utf-8")) > HANDOFF_LIMIT_BYTES:
                     break
                 try:
-                    older = validate_handoff(json.loads(strip_json_fence(previous_summary)), previous_date)
-                except (ValueError, TypeError):
+                    older = _run_payload(
+                        previous_summary, previous_date, run_at_ms=previous_ms,
+                        job_id=job_id, store_key=store_key, root=handoff_root or HANDOFF_ROOT,
+                    )
+                except (OSError, ValueError, TypeError):
                     break
                 if older.get("schemaVersion") == 2 and older.get("status") == "ok":
                     previous = older["actionReview"]
@@ -321,14 +510,7 @@ def load_triage_handoff(
 
 
 def validate_handoff_file(path: Path) -> dict[str, object]:
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, "rb") as source:
-        metadata = os.fstat(source.fileno())
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_size > HANDOFF_LIMIT_BYTES:
-            raise ValueError("invalid_handoff_file")
-        content = source.read(HANDOFF_LIMIT_BYTES + 1)
-    if len(content) > HANDOFF_LIMIT_BYTES:
-        raise ValueError("invalid_handoff_file")
+    content = _private_bytes(path, HANDOFF_LIMIT_BYTES)
     payload = validate_handoff(json.loads(content), datetime.now(TIME_ZONE))
     if payload["schemaVersion"] != 2:
         raise ValueError("invalid_handoff")

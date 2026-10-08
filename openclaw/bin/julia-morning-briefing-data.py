@@ -10,6 +10,7 @@ import math
 import os
 import re
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -648,8 +649,32 @@ def unavailable_payload() -> dict[str, object]:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--validate-handoff", type=Path)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--validate-handoff", type=Path)
+    mode.add_argument("--publish-handoff", type=Path)
+    mode.add_argument("--triage-status", action="store_true")
     args = parser.parse_args(argv)
+    if args.publish_handoff:
+        try:
+            receipt = triage.publish_handoff_file(
+                args.publish_handoff, owner="julia", db_path=STATE_DB,
+                store_key=CRON_STORE_KEY,
+            )
+        except (OSError, ValueError, TypeError, sqlite3.Error):
+            print("Triage handoff publication failed; do not repeat mailbox changes", file=sys.stderr)
+            return 2
+        print(json.dumps(receipt, separators=(",", ":"), ensure_ascii=False))
+        return 0
+    if args.triage_status:
+        today = datetime.now(TIME_ZONE)
+        handoff, _ = triage.load_triage_handoff(
+            today, db_path=STATE_DB, job_id=TRIAGE_JOB_ID, store_key=CRON_STORE_KEY,
+        )
+        print(json.dumps({
+            "owner": "julia", "date": today.date().isoformat(),
+            **{key: handoff[key] for key in ("status", "reason", "handoffStatus") if key in handoff},
+        }, separators=(",", ":")))
+        return 0 if handoff["status"] == "ok" else 1
     if args.validate_handoff:
         try:
             payload = validate_handoff_file(args.validate_handoff)
