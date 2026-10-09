@@ -39,6 +39,7 @@ Each service uses one of two patterns:
 | `nest-dashboard.log` / `.err.log` | `ai.openclaw.nest-dashboard` | Nest dashboard HTTP server |
 | `usage-dashboard.log` / `.err.log` | `ai.openclaw.usage-dashboard` | Usage dashboard HTTP server |
 | `usage-snapshot.log` / `.err.log` | `ai.openclaw.usage-snapshot` | Usage metrics snapshot |
+| `cabin-magazine.log` / `.err.log` | `ai.openclaw.cabin-magazine` | Cabin Magazine HTTP server and state API |
 | `financial-dashboard.log` / `.err.log` | `ai.openclaw.financial-dashboard` | Financial dashboard HTTP server |
 | `finance-refresh.log` / `.err.log` | `ai.openclaw.finance-refresh` | Daily cache-only Plaid → crypto source refresh; combined and component status metadata is stored outside the log directory |
 | `forecast-dashboard.log` / `.err.log` | `ai.openclaw.forecast-dashboard` | Forecast dashboard HTTP server and current-snapshot source integration |
