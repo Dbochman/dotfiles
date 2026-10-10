@@ -127,8 +127,7 @@
               "id": "codex"
             },
             "compat": {
-              "supportsReasoningEffort": true,
-              "supportsUsageInStreaming": true
+              "supportsReasoningEffort": true
             }
           }
         ]

@@ -61,6 +61,14 @@ them from `save`; their owning feature configuration remains authoritative.
 Unknown extra jobs still fail parity checks. Do not copy these system jobs into
 the repository's user-managed job list or silently delete them.
 
+As of the October 9 native-runtime rollout, Astra's provider entry intentionally
+omits `compat.supportsUsageInStreaming`: on `2026.8.35` that authored transport
+override routes turns through OpenClaw rather than native Codex. A temporary,
+no-delivery cron canary verified native Astra's tool bridge with a bounded
+`read,exec` allowlist and a generated local fixture; the job was removed after
+completion. Existing job definitions and restrictions were not changed. This
+does not replace verification of the next organic triage/briefing handoff.
+
 The pull wrapper records cron-sync output and the actual failure exit code
 before stopping. A successful Git pull is not proof that jobs were deployed.
 

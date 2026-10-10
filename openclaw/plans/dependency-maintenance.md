@@ -290,6 +290,101 @@ evaluate native-runtime compatibility separately rather than changing models
 as part of this recovery. Private authentication and backup artifacts remain
 outside the repository.
 
+#### Native Codex compatibility investigation (2026-10-09)
+
+The installed `2026.8.35` route classifier treats
+`compat.supportsUsageInStreaming: true` as authored request behavior. The Codex
+harness explicitly declines that route and declares the OpenClaw runtime as
+its exact-request fallback, even with `agentRuntime.id: "codex"`. Both the
+Astra and Sol provider entries contain this flag; GPT-5.5 does not. Removing
+only Astra's flag in memory changes its actual installed harness support check
+from unsupported/OpenClaw fallback to supported/Codex, without changing model
+defaults. This proves the selection cause, not end-to-end native execution.
+
+A bounded `agent exec` canary used a private config copy, separate state and
+empty workspace, denied all tools, selected only Astra, and requested the
+freshly authenticated profile. The first attempt stopped at an unresolved
+memory-search SecretRef; memory search was disabled only in the canary copy.
+The second reached native Codex preflight but failed before inference because
+the selected generic profile lacked a ChatGPT account ID.
+
+Source inspection explains why that result is not a valid test of the fresh
+login: `withAuthProfileStoreAgentDir` filters the shared store to
+`portable-static-credential` entries, excluding OAuth profiles. With the
+requested profile absent, auth ordering can select remaining stored profiles.
+Do not treat a canary `auth.order` entry as a hard account lock, infer that the
+attended login is broken, copy refresh tokens to bypass this boundary, or
+request another sign-in based on this result. Live auth still reports usable,
+with no unusable profiles. The live config hash is unchanged and gateway
+health passes. No tool calls, messages, service restart, or live routing change
+was performed by this investigation.
+
+Protected evidence is in `~/Backups/openclaw-native-codex-9tnmYh9m/`, including
+offline classifier/harness checks and failed canary receipts. Next, with an
+approved live maintenance window, remove only Astra's streaming-usage override
+through the supported config path and make one fresh no-delivery gateway turn
+using the verified profile. Accept only the actual `codex` harness, Astra,
+the expected profile, successful completion, and no model fallback; otherwise
+restore the prior config. Preserve all model defaults, fallback ordering,
+tool/cron restrictions, and other model entries. Do not roll out Sol's analogous
+change without its own verification, or regard a text-only smoke test as proof
+that cron/tool workflows remain compatible.
+
+Approved live canary result: **passed**. A fresh gateway session pinned to the
+attended-login profile returned `NATIVE_OK` with provider `openai`, requested and
+effective model `gpt-6-astra`, actual harness `codex`, one successful attempt,
+and `fallbackUsed: false`. The session's native thread binding independently
+matched the attended profile. Its terminal receipt lists no successful tools.
+The session used read-only permission mode with web search disabled; delivery
+was false and the message tool was disabled explicitly. A preliminary attempt
+to apply inherited tool-deny policy was rejected because that policy is scoped
+to subagent/ACP sessions; no inference or live routing change occurred before
+that rejection. No restrictions on existing sessions or cron jobs were changed.
+
+The test removed only Astra's `supportsUsageInStreaming` flag using
+`openclaw config unset`, then restored it with `config set` while reviewing the
+receipts. The original config is semantically restored (only last-touched
+metadata may differ); no model-default or fallback changes remain active.
+Gateway health passes. Evidence and the protected config backup are under
+`~/Backups/openclaw-native-live-rYa9nv6d/`. Native authentication/inference are
+now proven; permanent removal should update the tracked Astra entry and live
+config together, followed by separately bounded tool/cron compatibility checks.
+Sol remains untested. This canary does not itself deploy a permanent routing
+change or authorize rerunning household/email automation.
+
+Approved permanent promotion (2026-10-09): removed only Astra's
+`compat.supportsUsageInStreaming` from the tracked `openclaw/openclaw.json`
+and the live config. A semantic comparison verifies that no other live setting
+changed, apart from last-touched metadata. Astra stays primary, existing
+fallbacks stay in order, and Sol's entry stays unchanged. Regression coverage
+in `tests/test_native_codex_config.py` protects Astra's explicit native runtime
+and compatible model metadata.
+
+Separate bounded verification passed:
+
+- A fresh read-only session used native Codex shell execution to read a
+  generated non-sensitive fixture and return its unpredictable value. The
+  receipt identifies `codex`, `gpt-6-astra`, and no model fallback.
+- A temporary disabled cron job, scheduled in the future and manually run once,
+  used an isolated/light-context agent turn with a 120-second deadline,
+  `toolsAllow: ["read", "exec"]`, and `delivery.mode: "none"`. Its native
+  Code Mode tool discovered and invoked `openclaw__read` for the fixture.
+  Scheduler status and completion status succeeded, the returned value matched,
+  and delivery was `not-requested`. Native rollout context independently
+  confirms Astra; both test rollouts match the previously verified account.
+- The temporary job was removed after terminal completion, with no running
+  receipt remaining. All 16 pre-existing job definitions and IDs are unchanged.
+  Gateway health and iMessage running status pass; no restart, message delivery,
+  or household/email job rerun was needed.
+- 89 focused Python tests, the cron-sync shell regression, compilation, and
+  repository validation passed. This verifies basic native execution and the
+  scheduled tool bridge, not every application workflow, mutation, approval,
+  long-running continuation, or next morning's organic briefing handoff.
+
+Protected rollout evidence is under
+`~/Backups/openclaw-native-rollout-VsXZnvc9/`. The routing fix is live; tracked
+configuration and regression coverage preserve the same Astra-only change.
+
 Follow the `openclaw-upgrade-plist-overwrite` skill. Outline:
 
 ```bash
