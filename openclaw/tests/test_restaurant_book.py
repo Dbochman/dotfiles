@@ -35,8 +35,15 @@ class AuditBaseException(BaseException):
     pass
 
 
-def canonical_scope() -> dict[str, object]:
+def historical_test_registry() -> dict[str, object]:
     payload = json.loads(SCOPES_PATH.read_text(encoding="utf-8"))
+    archived = SCOPES_PATH.parent / "archive" / "retired-booking-scopes-2026-10-10.json"
+    payload["jobs"].update(json.loads(archived.read_text())["jobs"])
+    return payload
+
+
+def canonical_scope() -> dict[str, object]:
+    payload = historical_test_registry()
     return restaurant_book.validate_scope(payload["jobs"][JOB_ID], JOB_ID)
 
 
@@ -351,7 +358,7 @@ class RestaurantBookTests(unittest.TestCase):
         scope_parent = self.home / ".openclaw" / "restaurant-bookings"
         scope_parent.mkdir(mode=0o700, parents=True)
         self.scopes = scope_parent / "scopes.json"
-        shutil.copyfile(SCOPES_PATH, self.scopes)
+        self.scopes.write_text(json.dumps(historical_test_registry()))
         self.scopes.chmod(0o600)
         self.resy = FakeResy()
         self.opentable = FakeOpenTable()
@@ -363,8 +370,8 @@ class RestaurantBookTests(unittest.TestCase):
             now=lambda: NOW,
         )
 
-    def test_registry_contains_exact_nine_dual_provider_scopes(self) -> None:
-        payload = json.loads(SCOPES_PATH.read_text(encoding="utf-8"))
+    def test_historical_fixture_contains_exact_nine_dual_provider_scopes(self) -> None:
+        payload = historical_test_registry()
         self.assertEqual(
             set(payload["jobs"]),
             {

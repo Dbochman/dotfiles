@@ -14,6 +14,7 @@ import os
 import re
 import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import threading
@@ -89,8 +90,7 @@ def _downsample_hourly(records):
         if key not in buckets:
             buckets[key] = rec
             extras[key] = []
-        elif ts.minute < _ts_minute(buckets[key]):
-            # New winner — demote old winner to extras
+        elif ts > datetime.fromisoformat(buckets[key]["timestamp"].replace("Z", "+00:00")):
             extras[key].append(buckets[key])
             buckets[key] = rec
         else:
@@ -98,6 +98,11 @@ def _downsample_hourly(records):
 
     # Merge activity deltas and cron_jobs from dropped snapshots into the kept one
     for key, kept in buckets.items():
+        cron_jobs = [
+            job
+            for snapshot in sorted([kept, *extras.get(key, [])], key=lambda item: item["timestamp"])
+            for job in snapshot.get("cron_jobs", [])
+        ]
         for dropped in extras.get(key, []):
             da = dropped.get("activity", {})
             if da:
@@ -105,19 +110,10 @@ def _downsample_hourly(records):
                 for field in ("agent_runs", "messages_sent", "messages_received",
                               "cron_runs", "errors", "gateway_restarts"):
                     ka[field] = ka.get(field, 0) + da.get(field, 0)
-            dc = dropped.get("cron_jobs", [])
-            if dc:
-                kept.setdefault("cron_jobs", []).extend(dc)
+        if cron_jobs:
+            kept["cron_jobs"] = cron_jobs
 
     return [buckets[k] for k in sorted(buckets.keys())]
-
-
-def _ts_minute(rec):
-    ts_str = rec.get("timestamp", "")
-    try:
-        return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).minute
-    except (ValueError, AttributeError):
-        return 60
 
 
 def load_ccusage():
@@ -283,19 +279,21 @@ def get_launchagent_status():
                 last_exit = None
 
             plist = _plist_info(label)
-            log_path = plist.get("StandardOutPath") or plist.get("StandardErrorPath") or ""
-
-            # Last activity time from log file mtime
-            last_run_iso = None
-            last_run_ts = None
-            if log_path:
+            log_times = []
+            for log_path in (plist.get("StandardOutPath"), plist.get("StandardErrorPath")):
+                if not log_path:
+                    continue
                 try:
-                    last_run_ts = os.path.getmtime(log_path)
-                    last_run_iso = datetime.fromtimestamp(last_run_ts, tz=timezone.utc).isoformat()
+                    metadata = os.stat(log_path)
+                    if stat.S_ISREG(metadata.st_mode):
+                        log_times.append(metadata.st_mtime)
                 except OSError:
                     pass
-
-            next_run_iso, schedule_kind = _compute_next_run(plist, last_run_ts)
+            log_activity = (
+                datetime.fromtimestamp(max(log_times), tz=timezone.utc).isoformat()
+                if log_times else None
+            )
+            next_run_iso, schedule_kind = _compute_next_run(plist, None)
 
             services.append({
                 "label": label,
@@ -305,9 +303,11 @@ def get_launchagent_status():
                 # KeepAlive service has restarted. It is diagnostic history,
                 # not the health of the process that is currently running.
                 "exit_relevant": status != "running",
-                "last_run": last_run_iso,
+                "last_run": None,
+                "log_activity_at": log_activity,
                 "next_run": next_run_iso,
                 "schedule": schedule_kind,
+                "interval_seconds": plist.get("StartInterval"),
             })
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -1001,6 +1001,21 @@ def fetch_imessage_health():
 CRON_DB_PATH = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
 CRON_STORE_KEY = os.path.expanduser("~/.openclaw/cron/jobs.json")
 
+def get_cron_job_names():
+    try:
+        connection = connect_cron(CRON_DB_PATH, timeout=1)
+        try:
+            rows = connection.execute(
+                "SELECT job_id, name FROM cron_jobs WHERE store_key = ?",
+                (CRON_STORE_KEY,),
+            ).fetchall()
+            return {job_id: name.strip() for job_id, name in rows
+                    if isinstance(name, str) and name.strip()}
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error):
+        return {}
+
 def get_upcoming_cron_jobs():
     """Read the live SQLite cron store and return upcoming scheduled runs."""
     try:
@@ -1098,6 +1113,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             },
             "snapshots": records,
             "ccusage": ccusage,
+            "cron_names": get_cron_job_names(),
         })
 
     def _serve_current(self):
@@ -1305,7 +1321,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 <div class="cron-section">
   <h2>LaunchAgent Services</h2>
   <table class="cron-table" id="servicesTable">
-    <thead><tr><th>Service</th><th>Status</th><th>Last Run</th><th>Next Run</th><th>Exit</th></tr></thead>
+    <thead><tr><th>Service</th><th>Status</th><th>Log Activity (not last run)</th><th>Schedule / Next Slot</th><th>Last Exit</th></tr></thead>
     <tbody id="servicesBody"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
   </table>
 </div>
@@ -1386,6 +1402,20 @@ function shortJobId(id) {
   // Trim UUID-style prefixes, keep readable part
   return id.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, id.slice(0,8))
             .replace(/-0001$/, '');
+}
+
+let cronNameMap = {};
+
+function jobTitle(job) {
+  const identifier = job.id || job.job_id || '';
+  const name = job.name || cronNameMap[identifier];
+  return typeof name === 'string' && name.trim() ? name.trim() : shortJobId(identifier);
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[character]));
 }
 
 function setImessageMetric(id, text, tone) {
@@ -1737,7 +1767,7 @@ function renderCronTable(jobs) {
     const delColor = j.delivered === true ? C.green : j.delivered === false ? C.red : C.muted;
     const trend = durationTrend(j, jobs);
     return `<tr>
-    <td style="font-weight:500">${shortJobId(j.job_id)}</td>
+    <td style="font-weight:500">${escapeHtml(jobTitle(j))}</td>
     <td><span class="badge ${j.status === 'ok' ? 'badge-ok' : 'badge-err'}">${j.status}</span></td>
     <td style="color:${delColor};text-align:center">${delIcon}</td>
     <td style="color:${C.muted}">${j.model || '-'}</td>
@@ -1831,9 +1861,9 @@ function buildCharts(snaps, agg, ccusage, gwData) {
   }
 
   // Tokens by job (doughnut) — hide entirely when no data
-  const jobTokens = {};
+  const jobTokens = Object.create(null);
   for (const j of agg.cronJobs) {
-    const name = shortJobId(j.job_id);
+    const name = jobTitle(j);
     jobTokens[name] = (jobTokens[name] || 0) + (j.total_tokens || 0);
   }
   const jobNames = Object.keys(jobTokens).sort((a,b) => jobTokens[b] - jobTokens[a]);
@@ -1852,7 +1882,12 @@ function buildCharts(snaps, agg, ccusage, gwData) {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position:'right', labels:{ color:C.muted, boxWidth:10, padding:6, font:{size:10} } } },
+        plugins: { legend: { position:'right', labels:{
+          color:C.muted, boxWidth:10, padding:4, font:{size:10},
+          generateLabels: chart => Chart.overrides.doughnut.plugins.legend.labels.generateLabels(chart).map(label => ({
+            ...label, text: label.text.length > 34 ? label.text.slice(0, 33) + '…' : label.text
+          }))
+        } } },
         cutout: '60%',
       },
     });
@@ -1989,7 +2024,7 @@ async function refreshServices() {
           '<span class="badge badge-ok">current</span>') :
         exitCode == null ? '<span style="color:' + C.muted + '">-</span>' :
           exitCode === 0 ? '<span class="badge badge-ok">ok</span>' :
-          '<span class="badge badge-err">error (' + exitCode + ')</span>';
+          '<span class="badge badge-err">last exit (' + exitCode + ')</span>';
       let nextCell;
       if (s.next_run) {
         const nextMs = new Date(s.next_run).getTime();
@@ -1997,7 +2032,9 @@ async function refreshServices() {
       } else if (s.schedule === 'keepalive') {
         nextCell = '<span style="color:' + C.muted + '">always-on</span>';
       } else if (s.schedule === 'watch') {
-        nextCell = '<span style="color:' + C.muted + '">on event</span>';
+        nextCell = '<span style="color:' + C.muted + '">on event' + (s.interval_seconds ? ' / every ' + fmtDuration(s.interval_seconds * 1000) : '') + '</span>';
+      } else if (s.schedule === 'interval') {
+        nextCell = '<span style="color:' + C.muted + '">every ' + fmtDuration(s.interval_seconds * 1000) + '; next unknown</span>';
       } else if (s.schedule === 'runonce') {
         nextCell = '<span style="color:' + C.muted + '">run-once</span>';
       } else {
@@ -2006,7 +2043,7 @@ async function refreshServices() {
       return `<tr>
         <td><span style="color:${dotColor};margin-right:0.4rem">${dot}</span>${label}</td>
         <td><span class="badge ${isRunning ? 'badge-ok' : ''}" style="${isRunning ? '' : 'color:' + C.muted}">${isRunning ? 'running' : 'idle'}</span></td>
-        <td style="color:${C.muted}">${fmtAgo(s.last_run)}</td>
+        <td style="color:${C.muted}" title="Log writes do not prove a job ran or succeeded">${s.log_activity_at ? fmtAgo(s.log_activity_at) : 'unknown'}</td>
         <td>${nextCell}</td>
         <td>${exitBadge}</td>
       </tr>`;
@@ -2058,7 +2095,7 @@ async function refreshUpcoming() {
       const countdown = j.next_run_ms ? 'in ' + fmtRelativeTime(j.next_run_ms) : '-';
       const isOverdue = j.next_run_ms && j.next_run_ms < Date.now();
       return `<tr>
-        <td style="font-weight:500">${shortJobId(j.id)}</td>
+        <td style="font-weight:500">${escapeHtml(jobTitle(j))}</td>
         <td style="color:${isOverdue ? C.red : C.muted}">${countdown}<br><span style="font-size:0.7rem">${fmtDate(j.next_run_ms)}</span></td>
         <td>${lastBadge}</td>
         <td>${typeLabel}</td>
@@ -2220,6 +2257,7 @@ async function refresh() {
   gwUsageData = gwData;
   const snaps = data.snapshots || [];
   const ccusage = data.ccusage || [];
+  cronNameMap = data.cron_names || {};
 
   if (snaps.length === 0 && !gwData) {
     document.getElementById('gauges').innerHTML = '<div class="loading">No data available</div>';

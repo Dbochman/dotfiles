@@ -8,6 +8,15 @@ Python HTTP server (threaded) serving 6 HTML dashboard pages with 33 JSON API en
 
 ---
 
+## Plaid Sync Error Reporting
+
+Daily sync records a bounded Plaid error code (for example `NO_ACCOUNTS`), HTTP
+status fallback, or exception class instead of a truncated raw SDK exception.
+This keeps response headers and request identifiers out of new error records
+and preserves the actionable classification. Existing data and safety checks
+remain intact; an authentication or consent failure still requires targeted
+recovery, not a broad refresh or automatic relinking.
+
 ## Forecast Baseline Contract
 
 `/api/forecast-baseline` is the source contract consumed by the Forecast Dashboard. It returns safe aggregates only, never account names, identifiers, or Plaid tokens.

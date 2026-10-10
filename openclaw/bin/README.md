@@ -55,7 +55,7 @@ active post-deploy checks.
 | Script | Port | Description |
 |--------|------|-------------|
 | `nest-dashboard.py` | 8550 | Home climate dashboard — Chart.js UI over JSONL history. Serves thermostat/AC temperatures, Wave Enhance CO2/VOC data, humidity, weather, and presence over the home LAN and Tailscale tailnet. |
-| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, cron, and native iMessage health over LAN/Tailscale. Separates component readiness from recent inbound evidence; reports metadata-only sent-to-ingress and ingress-to-linked-reply timing using retained receipts, without a new daemon or recovery actions. |
+| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, named cron jobs, and native iMessage health over LAN/Tailscale. Separates component readiness from recent inbound evidence and log activity from execution; interval deadlines remain unknown without scheduler evidence. Reports metadata-only message timing without a new daemon or recovery actions. |
 | `dog-walk-dashboard.py` | 8552 | Dog walk history, Fi route maps, coverage/heatmaps, and return-signal telemetry over the home LAN and Tailscale tailnet. |
 | `roomba-dashboard.py` | 8553 | Crosstown/Cabin Roomba status, command, snooze, and run-history dashboard. |
 | `cat-dashboard.py` | 8554 | Cat profiles, care stations, feeder-transfer state, and one combined timeline of named litter visits, successful scheduled feedings, and confirmed cat-home moves. |

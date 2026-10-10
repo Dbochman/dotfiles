@@ -113,6 +113,24 @@ Tracks OpenClaw session activity, token consumption and costs alongside Anthropi
 | Codex CLI data | `~/.openclaw/usage-history/ccusage-codex-<hostname>.json` |
 | Logs | `~/.openclaw/logs/usage-dashboard.{log,err.log}` |
 
+### Cron names and service evidence
+
+Upcoming jobs use scheduler names rather than shortened IDs. Run history and
+token charts resolve names from the same active store, including disabled
+definitions, with snapshot names and readable IDs as fallbacks. Names are
+escaped in HTML. This changes display only, not job identity or schedules.
+
+Service timestamps are labeled **Log Activity (not last run)**. Only regular
+stdout/stderr files contribute; `/dev/null` and missing files yield unknown.
+Log writes do not prove execution or success, and quiet logs may remain old.
+Interval schedules show their frequency with the next run unknown rather than
+inventing a timer from log modification time. Calendar times are configured
+slots, not execution guarantees. Last exits remain historical evidence;
+running services retain neutral prior-exit badges.
+Long-range hourly downsampling retains the newest sample in each hour, while
+merging all activity deltas. It no longer makes fresh snapshots appear stale
+by retaining the hour's oldest timestamp and gauge values.
+
 ### iMessage timing and health semantics
 
 `/api/imessage-health` separates `component_status` from overall `status`.
@@ -272,6 +290,11 @@ Two-home Roomba status and automation view with explicit telemetry provenance.
 | Daily decisions | `~/.openclaw/vacant-roomba/crosstown/runs/YYYY-MM-DD.json` |
 | Latest decision | `~/.openclaw/vacant-roomba/crosstown/latest-status.json` |
 | Logs | `~/.openclaw/logs/roomba-dashboard.{log,err.log}` |
+
+Vacancy cleaning reports `robot_disconnected` when a robot explicitly reports
+`connected: false`; malformed or missing connection evidence remains
+`robot_status_invalid`. Neither condition permits cleaning. A disconnected
+robot's cached battery or mission phase is not evidence of current activity.
 
 ---
 

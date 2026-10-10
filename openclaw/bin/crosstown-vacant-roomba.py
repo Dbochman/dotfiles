@@ -365,6 +365,8 @@ class CrosstownVacantRoomba:
         value = self._command_json(
             ["crosstown-roomba", "state", alias], "robot_status_unavailable"
         )
+        if value.get("connected") is False:
+            raise AutomationError("robot_disconnected")
         mission = value.get("cleanMissionStatus")
         bin_state = value.get("bin")
         battery = value.get("batPct")

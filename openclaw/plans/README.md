@@ -6,6 +6,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 
 | Plan | Summary |
 |------|---------|
+| [maintenance-repairs-2026-10](maintenance-repairs-2026-10.md) | Queued dashboard, cron deployment, authentication, finance, Roomba, and heartbeat repairs from the October 10 review |
 | [camera-dashboard](camera-dashboard.md) | Image-first Cabin/Crosstown camera wall with exact still capture, protected caching, and session-scoped refresh |
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
 | [dog-walk-route-visualization](dog-walk-route-visualization.md) | Approximate Fi-based walk maps, per-house filtering, and split `Both` view |

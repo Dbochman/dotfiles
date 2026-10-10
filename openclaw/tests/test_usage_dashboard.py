@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -19,6 +20,20 @@ SPEC.loader.exec_module(usage_dashboard)
 
 
 class CcusageIngestionTests(unittest.TestCase):
+    def test_hourly_downsampling_retains_freshest_snapshot_and_all_deltas(self):
+        records = [
+            {"timestamp": "2026-10-10T14:04:00Z", "activity": {"errors": 1},
+             "cron_jobs": [{"job_id": "early"}], "utilization": {"value": 1}},
+            {"timestamp": "2026-10-10T14:49:00Z", "activity": {"errors": 2},
+             "cron_jobs": [{"job_id": "latest"}], "utilization": {"value": 2}},
+        ]
+        sampled = usage_dashboard._downsample_hourly(records)
+        self.assertEqual(len(sampled), 1)
+        self.assertEqual(sampled[0]["timestamp"], "2026-10-10T14:49:00Z")
+        self.assertEqual(sampled[0]["utilization"], {"value": 2})
+        self.assertEqual(sampled[0]["activity"]["errors"], 3)
+        self.assertEqual([job["job_id"] for job in sampled[0]["cron_jobs"]], ["early", "latest"])
+
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
         self.original_history_dir = usage_dashboard.HISTORY_DIR
@@ -160,6 +175,28 @@ class GatewayUsageSchemaTests(unittest.TestCase):
 
 
 class LaunchAgentStatusTests(unittest.TestCase):
+    def test_log_activity_excludes_devices_and_does_not_predict_interval(self):
+        completed = usage_dashboard.subprocess.CompletedProcess(
+            [], 0, stdout="-\t1\tai.openclaw.test\n", stderr=""
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "error.log"
+            log.write_text("historical failure\n")
+            os.utime(log, (1000000, 1000000))
+            plist = {"StandardOutPath": "/dev/null", "StandardErrorPath": str(log),
+                     "StartInterval": 300}
+            with mock.patch.object(usage_dashboard.subprocess, "run", return_value=completed), \
+                 mock.patch.object(usage_dashboard, "_plist_info", return_value=plist):
+                service = usage_dashboard.get_launchagent_status()[0]
+            self.assertIsNone(service["last_run"])
+            self.assertEqual(service["log_activity_at"], "1970-01-12T13:46:40+00:00")
+            self.assertIsNone(service["next_run"])
+            self.assertEqual(service["interval_seconds"], 300)
+            plist["StandardErrorPath"] = str(log.parent / "missing")
+            with mock.patch.object(usage_dashboard.subprocess, "run", return_value=completed), \
+                 mock.patch.object(usage_dashboard, "_plist_info", return_value=plist):
+                self.assertIsNone(usage_dashboard.get_launchagent_status()[0]["log_activity_at"])
+
     def test_running_service_marks_prior_exit_as_not_current(self):
         output = (
             "123\t143\tai.openclaw.running-service\n"
@@ -186,6 +223,54 @@ class LaunchAgentStatusTests(unittest.TestCase):
         self.assertIn("const exitRelevant = s.exit_relevant !== false", usage_dashboard.DASHBOARD_HTML)
         self.assertIn("prior exit (", usage_dashboard.DASHBOARD_HTML)
         self.assertIn("badge-prior", usage_dashboard.DASHBOARD_HTML)
+
+
+class CronTitleTests(unittest.TestCase):
+    def test_name_lookup_includes_disabled_jobs_but_not_other_stores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "state.sqlite"
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE cron_jobs (store_key, job_id, name, enabled)")
+                connection.executemany("INSERT INTO cron_jobs VALUES (?, ?, ?, ?)", [
+                    ("active", "named", " Morning briefing ", 1),
+                    ("active", "disabled", "Old reminder", 0),
+                    ("active", "system", "heartbeat-main", 1),
+                    ("active", "unnamed", " ", 1),
+                    ("other", "foreign", "Wrong store", 1),
+                ])
+            connection.close()
+            with mock.patch.object(usage_dashboard, "CRON_DB_PATH", str(database)), \
+                 mock.patch.object(usage_dashboard, "CRON_STORE_KEY", "active"):
+                self.assertEqual(usage_dashboard.get_cron_job_names(), {
+                    "named": "Morning briefing", "disabled": "Old reminder",
+                    "system": "heartbeat-main",
+                })
+
+    def test_missing_database_keeps_id_fallback_available(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(usage_dashboard, "CRON_DB_PATH", str(Path(directory) / "missing")):
+            self.assertEqual(usage_dashboard.get_cron_job_names(), {})
+
+    @unittest.skipUnless(shutil.which("node"), "Node required for dashboard JS regression")
+    def test_javascript_titles_and_html_escaping(self):
+        html = usage_dashboard.DASHBOARD_HTML
+        helpers = html[html.index("function shortJobId("):html.index("function setImessageMetric(")]
+        script = helpers + """
+const assert = require('node:assert/strict');
+cronNameMap = {disabled: 'Old reminder', system: 'heartbeat-main'};
+assert.equal(jobTitle({id: 'named', name: ' Morning briefing '}), 'Morning briefing');
+assert.equal(jobTitle({job_id: 'disabled'}), 'Old reminder');
+assert.equal(jobTitle({id: 'system'}), 'heartbeat-main');
+assert.equal(jobTitle({job_id: 'removed-0001', name: 'Historical title'}), 'Historical title');
+assert.equal(jobTitle({id: 'missing-0001'}), 'missing');
+assert.equal(jobTitle({}), '?');
+assert.equal(escapeHtml(jobTitle({name: '<img onerror="bad">&'})), '&lt;img onerror=&quot;bad&quot;&gt;&amp;');
+"""
+        result = usage_dashboard.subprocess.run(["node", "-e", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(html.count("${escapeHtml(jobTitle(j))}"), 2)
+        self.assertIn("const name = jobTitle(j)", html)
+        self.assertIn("cronNameMap = data.cron_names || {}", html)
 
 
 class IMessageResponseLatencyTests(unittest.TestCase):

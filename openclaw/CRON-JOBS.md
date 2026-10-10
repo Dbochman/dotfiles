@@ -809,6 +809,17 @@ after a new `confirmed` reservation and only when no matching event exists.
 
 ## Removed Jobs (Historical)
 
+On October 10, 2026, Dylan approved retiring 19 expired one-shots absent from
+the active scheduler and retained completion history. Their exact definitions
+are preserved in `cron/archive/retired-one-shots-2026-10-10.json`, outside the
+deployable `cron/jobs.json`. This is retirement, **not verified completion**:
+do not import, register, or rerun the archive. It covers July 6–19 World Cup
+briefings and the expired August–October date-night, Q4 double-date, and
+September 15 quarterly-booking tasks. Other definitions are unchanged.
+The five corresponding standing booking scopes are also removed from the
+deployable registry and preserved in
+`cron/archive/retired-booking-scopes-2026-10-10.json` for historical tests only.
+
 | ID | Removed | Reason |
 |----|---------|--------|
 | `datenight-jul-japanese` | 2026-07-05 | Completed successfully on July 1; run-history tombstone retained and canonical one-shot removed |

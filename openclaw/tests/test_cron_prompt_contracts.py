@@ -92,6 +92,18 @@ class CronPromptContractTests(unittest.TestCase):
         payload = json.loads(JOBS_PATH.read_text())
         cls.jobs = {job["id"]: job for job in payload["jobs"]}
         cls.scopes = json.loads(SCOPES_PATH.read_text())["jobs"]
+        cls.active_jobs = dict(cls.jobs)
+        cls.active_scopes = dict(cls.scopes)
+        retired = json.loads((JOBS_PATH.parent / "archive/retired-one-shots-2026-10-10.json").read_text())
+        cls.jobs.update({job["id"]: job for job in retired["jobs"]})
+        cls.scopes.update(json.loads((JOBS_PATH.parent / "archive/retired-booking-scopes-2026-10-10.json").read_text())["jobs"])
+
+    def test_only_remaining_restaurant_jobs_have_deployable_scopes(self) -> None:
+        expected = {"datenight-nov-american", "datenight-dec-upscale",
+                    "doubledate-q1-jan27-french", "qd-booking-2027-01-dec15"}
+        self.assertEqual(set(self.active_scopes), expected)
+        self.assertEqual({job_id for job_id in self.active_jobs
+                          if job_id.startswith(("datenight-", "doubledate-", "qd-booking-"))}, expected)
 
     def test_julia_triage_uses_raw_api_environment_account_routing(self) -> None:
         job = self.jobs["gws-julia-morning-triage-0001"]

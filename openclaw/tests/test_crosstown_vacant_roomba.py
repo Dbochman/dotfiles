@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 
 MODULE_PATH = (
@@ -259,6 +260,27 @@ class CrosstownVacantRoombaTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(result["outcome"], "robot_not_ready")
         self.assertFalse(any(call[1:2] == ("start",) for call in self.commands.calls))
+
+    def test_disconnected_robot_reports_specific_failure_without_actions(self) -> None:
+        original = self.automation._command_json
+
+        def disconnected(command, reason):
+            value = original(command, reason)
+            if command[:2] == ["crosstown-roomba", "state"]:
+                value["connected"] = False
+            return value
+
+        with mock.patch.object(self.automation, "_command_json", side_effect=disconnected):
+            code, result = self.automation.run("scheduled")
+        self.assertEqual(code, 1)
+        self.assertEqual(result["reason"], "robot_disconnected")
+        self.assertFalse(any(call[1:2] == ("start",) for call in self.commands.calls))
+
+    def test_missing_connection_evidence_remains_invalid(self) -> None:
+        with mock.patch.object(self.automation, "_command_json", return_value={}):
+            with self.assertRaises(automation_module.AutomationError) as raised:
+                self.automation._robot_state("roomba")
+        self.assertEqual(raised.exception.code, "robot_status_invalid")
 
     def test_history_failure_is_fail_closed_and_not_retried_that_day(self) -> None:
         self.commands.litter_failure = True
