@@ -26,6 +26,7 @@ active post-deploy checks.
 | Script | Location on Mini | Description |
 |--------|-----------------|-------------|
 | `openclaw-refresh-secrets` | `~/bin/` | Attended exact-field refresh of `~/.openclaw/.secrets-cache` plus the optional complete dedicated finance cache; run with `--interactive` after key rotation, never from launchd/cron. |
+| `oauth-refresh.sh` | `~/.openclaw/bin/` | Isolated enterprise Claude OAuth refresh using `~/.openclaw/claude-automation`; explicit attended `--login` bootstrap, serialized bounded refresh, validated atomic consumer-cache publication, no personal CLI/keychain fallback. See `LAUNCHAGENTS.md` before migration. |
 | `ola-webhook-bridge.py` | `~/.openclaw/bin/` | Loopback-only Ola callback boundary. Verifies the raw-body HMAC, discards the external envelope, and forwards one fixed content-free wake to OpenClaw with a separate private hook token. |
 | `ola-webhook-bridge-wrapper.sh` | `~/.openclaw/bin/` | Cache-only LaunchAgent wrapper for the Ola bridge; enforces protected-cache ownership, exports only the two required credentials into a clean environment, and never invokes `op`. |
 | `openai-memory-key` | `~/.openclaw/bin/` | Exec secret-provider adapter for memory embeddings. Emits only the existing gateway-exported `OPENAI_API_KEY`, admitted by the provider's exact `passEnv` list; no auth-database lookup or login-token reuse. Never log or invoke its secret output directly for diagnostics. |

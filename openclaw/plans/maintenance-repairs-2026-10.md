@@ -55,6 +55,10 @@ snapshot, not a continuously updated health report.
   deployment has not been run. The reduced four-job booking-scope registry is
   hash-verified live under explicit approval; no cron definition RPC was needed
   or executed. The next automatic deployment's final outcome remains unverified.
+  **October 10 evening:** Repair commit `a236299` is pushed to `origin/main`.
+  Read-only active-store parity still matches all 13 canonical jobs. The daily
+  deployment is scheduled for 06:00 Eastern; it was not forced during the
+  user's movie or while unrelated local edits remain present.
 
 ## Authentication and financial refresh
 
@@ -84,6 +88,16 @@ snapshot, not a continuously updated health report.
   Node 22, interactive CLI auth reports logged in, but that is not validation
   of the separate automation refresh chain. No token copied or rotated;
   intended-account reconciliation and supervised recovery remain pending.
+  **October 10 evening:** Dylan confirmed NVIDIA enterprise and approved a
+  separate automation login, preserving the working interactive CLI login.
+  The revised wrapper uses a dedicated config directory, no personal/cache
+  fallback, a refresh lock, bounded CLI execution, private validated credentials,
+  and atomic consumer-cache publication. Fake-only regressions pass. No manual
+  deployment or attended SSO/bootstrap will run during the movie; the pushed
+  source is eligible for the next daily deployment but will fail closed until
+  its dedicated login exists. No authentication change or browser launch was
+  performed. The next normal
+  snapshot must show real utilization before this item is complete.
 
 - [ ] **Repair the failing Plaid component of daily finance refresh.** The
   October 10 run finished partial: Plaid failed twice; crypto succeeded.
@@ -99,6 +113,13 @@ snapshot, not a continuously updated health report.
   Attended account-sharing recovery and subsequent targeted sync remain pending.
   This checkout is the daily sync's source, so the diagnostic change is eligible
   for the next scheduled run without a service restart; no sync was triggered.
+  **October 10 evening:** Financial-dashboard commit `27ddf0a` is pushed to
+  `origin/master`; all 32 foundation tests pass. A new production Item probe
+  still reports `NO_ACCOUNTS`. An existing-Item, account-selection-only Link
+  recovery was prepared without new product consent or token exchange. No
+  successful completion was recorded; Dylan deferred sign-ins until after the
+  movie and the owned loopback listener was stopped. Create a fresh bounded
+  Link session when he is ready, then verify account access and targeted sync.
 
 - [x] **Recover Eversource weekly scraping.** The latest inspected weekly
   receipt shows failed scraping and reauthentication, with import skipped;
@@ -132,6 +153,9 @@ snapshot, not a continuously updated health report.
   this helper is now hash-verified live under explicit approval.
   Eleven fake-only automation tests pass. Physical bin/dock/connectivity checks
   are needed; no robot commands or daily-receipt resets were performed.
+  **Operator follow-up:** Dylan and Julia are at the Cabin; Dylan will inspect
+  the Crosstown robots when they return Monday, October 12. Leave this pending
+  without remotely starting either robot.
 
 - [ ] **Verify heartbeat recovery after the memory fix.** Its last failure
   was at 09:19 Eastern, before the memory-auth repair, reporting an unresolved
@@ -168,8 +192,11 @@ each implementation.
   unchanged HEAD definitions and tests. Retirement-specific failures are fixed
   by keeping historical safety fixtures explicitly separate from live scopes.
 - Repository validation, Python compilation, and diff whitespace checks passed.
-- Changes are uncommitted and unpushed. Unrelated presence and Codex-rule edits
-  are preserved; no broad deployment, gateway restart, or message send occurred.
+- The dashboard/retirement repair batch is committed and pushed as `a236299`;
+  financial diagnostics are committed and pushed as `27ddf0a`. Unrelated
+  presence and Codex-rule edits are preserved; no broad deployment, gateway
+  restart, or message send occurred. The isolated OAuth follow-up is source
+  preparation only until attended bootstrap and live verification are complete.
 - Rollback copies for the three deployed files are protected in
   `/tmp/openclaw-repairs.Lw00hj/deployment-backup`; this is temporary rollback
   storage, not a substitute for a commit. Do not overwrite the preserved runtime

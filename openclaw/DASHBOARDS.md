@@ -79,6 +79,12 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 
 Tracks OpenClaw session activity, token consumption and costs alongside Anthropic utilization and Codex CLI usage.
 
+Anthropic utilization uses the protected consumer cache written by the isolated
+enterprise `oauth-refresh.sh` helper. A healthy interactive Claude CLI login is
+not proof this separate chain works. After its attended `--login` bootstrap,
+verify an unattended refresh and non-null utilization from a subsequent normal
+snapshot; do not synthesize healthy utilization from successful login alone.
+
 ### What It Shows
 
 - **Utilization gauges** — 5-hour and 7-day token usage rings (green/amber/red thresholds)
