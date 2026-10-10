@@ -14,7 +14,16 @@ OpenClaw 2026.6 migrated executable cron state and run history to SQLite:
 | **1. Repo (canonical intent)** | `~/dotfiles/openclaw/cron/jobs.json` | git commits |
 | **2. Live definitions and runtime** | `~/.openclaw/state/openclaw.sqlite`, table `cron_jobs` | gateway cron API and the deploy bridge |
 | **3. Gateway scheduler** | in-memory timers loaded from `cron_jobs` | gateway process |
-| **4. Run history / one-shot tombstones** | the same SQLite database, table `cron_run_logs` | gateway after each run |
+| **4. Run history / one-shot tombstones** | the same SQLite database, terminal `task_runs` records with `detail_json.kind = "cron-run"` on 2026.8.35; `cron_run_logs` on older releases | gateway after each run |
+
+OpenClaw `2026.8.35` removes the denormalized scheduling columns from
+`cron_jobs`; read their values from `state_json` and `job_json`. The shared
+`bin/openclaw_cron_sqlite.py` reader supplies connection-local temporary views
+for our existing read queries on either schema. It opens durable state
+read-only, retains exact store/job scoping, and never creates persistent
+compatibility tables. Triage publication still requires a matching active task;
+only terminal, explicitly classified cron history can verify a finished handoff.
+Deploy this helper alongside the triage, usage, and weekly-report readers.
 
 Files named `~/.openclaw/cron/jobs.json.migrated`, `jobs.json.bak*`, and
 `runs/*.jsonl.migrated` are historical migration artifacts. They are not
@@ -23,7 +32,7 @@ shortcut.
 
 The repository remains the durable definition record, but SQLite changes how
 deployment works. `sync-cron-jobs.sh deploy` filters completed
-`deleteAfterRun` jobs using `cron_run_logs`, stages the remaining definitions,
+`deleteAfterRun` jobs using the version-aware history reader, stages the remaining definitions,
 reconciles changed existing definitions through the live gateway, then
 normalizes existing storage through `openclaw doctor`. In a SQLite-backed
 installation, new jobs must first be registered through `openclaw cron add`
@@ -39,11 +48,18 @@ manual `dotfiles-pull.command` deploys immediately. Deployment returns nonzero
 when protected identities are unavailable or SQLite normalization fails; a
 caller must never report those cases as a successful rollout. It also reads
 SQLite and the active Gateway back after reconciliation and requires both live
-ID sets to match the deployable canonical set exactly, then verifies every
+ID sets to match the deployable canonical set plus preserved system-owned jobs exactly, then verifies every
 canonical field. Missing, extra, or field-drifted jobs therefore fail the
 deployment instead of letting a successful-but-no-op RPC mask stale work. The
 script reports extra IDs but does not silently remove them; inspect an unknown
 job before removing it through the cron API and the canonical file.
+
+August's scheduler also exposes system-owned heartbeat, skill-collection review,
+and memory-dreaming jobs. Recognize them by their exact declaration/payload
+contracts, preserve their current definitions during deployment, and exclude
+them from `save`; their owning feature configuration remains authoritative.
+Unknown extra jobs still fail parity checks. Do not copy these system jobs into
+the repository's user-managed job list or silently delete them.
 
 The pull wrapper records cron-sync output and the actual failure exit code
 before stopping. A successful Git pull is not proof that jobs were deployed.
@@ -87,7 +103,7 @@ openclaw cron list --all --json | jq '.jobs[] | select(.id == "<job-id>")'
 
 # Persisted SQLite view (read-only)
 sqlite3 -readonly ~/.openclaw/state/openclaw.sqlite \
-  "SELECT job_json, state_json, next_run_at_ms FROM cron_jobs WHERE job_id = '<job-id>';"
+  "SELECT job_json, state_json, json_extract(state_json, '$.nextRunAtMs') FROM cron_jobs WHERE job_id = '<job-id>';"
 
 # Canonical repo view
 grep -A2 '<job-id>' ~/dotfiles/openclaw/cron/jobs.json | head
@@ -466,8 +482,12 @@ and Eastern date, and atomically writes and reads back an immutable file:
 Run identity comes from the single active cron task-ledger entry's actual
 `started_at`, with its execution ID checked against the job and timestamp.
 The persisted job `running_at_ms` is only a reservation guard: it can precede
-the actual start and must not be used as the receipt's run timestamp. Missing
-or ambiguous active ledger entries fail publication closed.
+the actual start and must not be used as the receipt's run timestamp. On
+`2026.8.35`, publication also requires the task's exact store binding and one
+live `cron_run_receipts` row matching the job and execution start. The task run
+ID must match that receipt ID and its optional public request ID; a matching
+prefix alone is insufficient. Legacy stores retain their exact legacy ID check.
+Missing or ambiguous active ledger entries fail publication closed.
 
 Directories must be owner-only `0700`; files must be regular, single-link,
 owner-owned `0600`. Symlinks at these boundaries are rejected. Missing,

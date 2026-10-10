@@ -12,12 +12,16 @@ import re
 import sqlite3
 import stat
 import subprocess
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from openclaw_cron_sqlite import connect as connect_cron
 
 
 HOME = Path.home()
@@ -138,7 +142,7 @@ def collect_cron_runs(start, end):
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
     try:
-        with sqlite3.connect(f"file:{CRON_DB}?mode=ro", uri=True, timeout=5) as conn:
+        with connect_cron(CRON_DB) as conn:
             rows = conn.execute(
                 """
                 SELECT status, delivered

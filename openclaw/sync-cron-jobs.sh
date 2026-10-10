@@ -12,6 +12,8 @@
 
 set -euo pipefail
 
+export PYTHONPATH="$(cd "$(dirname "$0")/bin" && pwd)${PYTHONPATH:+:$PYTHONPATH}"
+
 NODE22_BIN="${OPENCLAW_NODE22_BIN:-/opt/homebrew/opt/node@22/bin}"
 if [ -x "$NODE22_BIN/node" ]; then
   PATH="$NODE22_BIN:$PATH"
@@ -82,6 +84,8 @@ import os
 import sqlite3
 import sys
 
+from openclaw_cron_sqlite import connect as connect_cron, is_system_job
+
 dotfiles_path = os.environ["DOTFILES_JOBS"]
 live_path = os.environ["LIVE_JOBS"]
 sqlite_path = os.environ["SQLITE_DB"]
@@ -130,14 +134,14 @@ def load_from_legacy_json():
         return None
     with open(live_path) as f:
         data = json.load(f)
-    jobs = [strip_state(job) for job in data.get("jobs", []) if isinstance(job, dict)]
+    jobs = [strip_state(job) for job in data.get("jobs", []) if isinstance(job, dict) and not is_system_job(job)]
     return {"version": data.get("version", 1), "jobs": jobs}, "legacy JSON"
 
 
 def load_from_sqlite():
     if not os.path.isfile(sqlite_path):
         return None
-    with sqlite3.connect(sqlite_path) as conn:
+    with connect_cron(sqlite_path) as conn:
         rows = conn.execute(
             """
             SELECT job_json
@@ -161,7 +165,7 @@ def load_from_sqlite():
             job = json.loads(raw_job)
         except (TypeError, json.JSONDecodeError):
             continue
-        if isinstance(job, dict):
+        if isinstance(job, dict) and not is_system_job(job):
             jobs.append(strip_state(job))
     if not jobs:
         return None
@@ -201,6 +205,8 @@ import os
 import sqlite3
 import tempfile
 from datetime import datetime
+
+from openclaw_cron_sqlite import connect as connect_cron, is_system_job
 
 dotfiles_path = os.environ["DOTFILES_JOBS"]
 live_path = os.environ["LIVE_JOBS"]
@@ -276,7 +282,7 @@ def completed_one_shot(job):
     if not os.path.isfile(sqlite_path):
         return False
     try:
-        with sqlite3.connect(sqlite_path) as conn:
+        with connect_cron(sqlite_path) as conn:
             rows = conn.execute(
                 """
                 SELECT entry_json
@@ -470,7 +476,7 @@ if os.path.exists(live_path):
             state_by_id[job['id']] = job['state']
 if os.path.isfile(sqlite_path):
     try:
-        with sqlite3.connect(sqlite_path) as conn:
+        with connect_cron(sqlite_path) as conn:
             rows = conn.execute(
                 """
                 SELECT job_id, state_json, job_json, next_run_at_ms, last_run_at_ms
@@ -547,6 +553,12 @@ for job in new_defs['jobs']:
             'id': job_id,
             'patch': patch,
         })
+
+managed_ids = {job['id'] for job in new_defs['jobs']}
+new_defs['jobs'].extend(
+    job for job_id, job in live_jobs_by_id.items()
+    if job_id not in managed_ids and is_system_job(job)
+)
 
 with open(os.environ['CRON_UPDATE_PLAN'], 'w') as update_file:
     for params in cron_updates:
@@ -749,7 +761,8 @@ try:
     desired = by_id(load_jobs(expected_path))
     gateway = by_id(load_jobs(gateway_path))
     uri = "file:" + sqlite_path + "?mode=ro"
-    with sqlite3.connect(uri, uri=True) as connection:
+    from openclaw_cron_sqlite import connect as connect_cron
+    with connect_cron(sqlite_path) as connection:
         rows = connection.execute(
             "SELECT job_id, job_json FROM cron_jobs WHERE store_key = ?",
             (live_path,),

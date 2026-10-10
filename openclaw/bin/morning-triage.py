@@ -9,10 +9,14 @@ import os
 import re
 import sqlite3
 import stat
+import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from openclaw_cron_sqlite import connect as connect_cron
 
 
 TIME_ZONE = ZoneInfo("America/New_York")
@@ -221,15 +225,19 @@ def _private_bytes(path: Path, limit: int) -> bytes:
 
 
 def _active_run(db_path: Path, store_key: str, job_id: str, today: datetime) -> int:
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    connection = connect_cron(db_path)
     try:
         connection.execute("BEGIN")
         row = connection.execute(
             "SELECT enabled, running_at_ms FROM cron_jobs WHERE store_key=? AND job_id=?",
             (store_key, job_id),
         ).fetchone()
+        compact = "state_json" in {
+            column[1] for column in connection.execute("PRAGMA main.table_info(cron_jobs)")
+        }
+        task_columns = "started_at, run_id, ended_at" + (", detail_json" if compact else "")
         tasks = connection.execute(
-            "SELECT started_at, run_id, ended_at FROM task_runs "
+            f"SELECT {task_columns} FROM task_runs "
             "WHERE runtime='cron' AND source_id=? AND status='running' LIMIT 2",
             (job_id,),
         ).fetchall()
@@ -237,10 +245,32 @@ def _active_run(db_path: Path, store_key: str, job_id: str, today: datetime) -> 
             row is None or row[0] != 1 or type(row[1]) is not int
             or len(tasks) != 1 or type(tasks[0][0]) is not int
             or tasks[0][0] < row[1] or tasks[0][2] is not None
-            or tasks[0][1] != f"cron:{job_id}:{tasks[0][0]}"
         ):
             raise ValueError("active_triage_run_missing")
         run_at_ms = tasks[0][0]
+        expected_run_id = f"cron:{job_id}:{run_at_ms}"
+        if compact:
+            detail = json.loads(tasks[0][3] or "null")
+            receipts = connection.execute(
+                "SELECT receipt_id, request_run_id, started_at_ms, finished_at_ms "
+                "FROM cron_run_receipts WHERE store_key=? AND job_id=? "
+                "AND status='running' LIMIT 2", (store_key, job_id),
+            ).fetchall()
+            if (
+                not isinstance(detail, dict) or detail.get("storeKey") != store_key
+                or len(receipts) != 1 or receipts[0][2] != run_at_ms
+                or receipts[0][3] is not None
+                or not isinstance(receipts[0][0], str) or not receipts[0][0].strip()
+                or (receipts[0][1] is not None and not isinstance(receipts[0][1], str))
+            ):
+                raise ValueError("active_triage_run_missing")
+            receipt_id = receipts[0][0].strip()
+            public_id = (receipts[0][1] or "").strip()
+            expected_run_id += f":{receipt_id}"
+            if public_id and public_id != receipt_id:
+                expected_run_id += f":{public_id}"
+        if tasks[0][1] != expected_run_id:
+            raise ValueError("active_triage_run_missing")
         finished = connection.execute(
             "SELECT 1 FROM cron_run_logs WHERE store_key=? AND job_id=? AND run_at_ms>=? LIMIT 1",
             (store_key, job_id, run_at_ms),
@@ -364,7 +394,7 @@ def load_triage_handoff(
     handoff_root: Path | None = None,
 ) -> tuple[dict[str, object], set[str] | None]:
     try:
-        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        connection = connect_cron(db_path)
         try:
             rows = connection.execute(
                 """SELECT run_at_ms, summary, status FROM cron_run_logs

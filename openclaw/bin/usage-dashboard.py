@@ -23,6 +23,9 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from urllib.request import urlopen
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from openclaw_cron_sqlite import connect as connect_cron
+
 HISTORY_DIR = os.path.expanduser("~/.openclaw/usage-history")
 PORT = 8551
 MAX_HOURS = 8760  # 1 year
@@ -890,9 +893,7 @@ CRON_STORE_KEY = os.path.expanduser("~/.openclaw/cron/jobs.json")
 def get_upcoming_cron_jobs():
     """Read the live SQLite cron store and return upcoming scheduled runs."""
     try:
-        connection = sqlite3.connect(
-            f"file:{CRON_DB_PATH}?mode=ro", uri=True, timeout=1,
-        )
+        connection = connect_cron(CRON_DB_PATH, timeout=1)
         try:
             rows = connection.execute(
                 """

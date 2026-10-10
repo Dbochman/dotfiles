@@ -238,6 +238,58 @@ ssh dylans-mac-mini 'PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH;
 
 ### OpenClaw on Mini (Tier 3)
 
+The 2026-10-09 maintenance target is pinned `2026.8.35` extended-stable,
+compatible with the installed Node `22.23.1`. Do not substitute the `latest`
+tag: September stable requires a newer Node runtime. Keep the unfinished
+Crosstown additive phone-binding changes out of this deployment.
+
+The July-to-August transition requires these additional checks:
+
+- Create and verify a full-state backup, preserve the installed package, and
+  separately preserve the generated launch plist, service environment, and FDA
+  wrapper. An older package alone cannot undo database migrations.
+- Inspect and obtain explicit consent for changed official plugin capabilities;
+  pin Codex and iMessage to the core version. Do not blanket-approve other plugins.
+- If startup rejects an unowned legacy Tailscale root handler, verify its exact
+  upstream is this gateway before replacing only that handler. Preserve the
+  independent port-10000 wake-hook route and Funnel settings.
+- Update the read-only custom cron readers for compact `cron_jobs` and terminal
+  `task_runs` history; see `CRON-JOBS.md`. Preserve newly visible system-owned
+  jobs without adding them to the user-managed canonical definitions.
+- Compare original job payloads, schedules, delivery routes, and tool allowlists;
+  verify channel status and a no-delivery model turn. A working Anthropic fallback
+  does not prove that the configured Astra/Codex authentication is healthy.
+
+Recovery checkpoint (2026-10-09): core and the two explicitly approved official
+plugins are installed at `2026.8.35`; migrations passed. The verified full-state
+backup, exact old package, and protected diagnostic receipts are under
+`~/Backups/openclaw-2026.8.35-yidy52u_/`. The original gateway launch contract was
+restored byte-for-byte after temporary stderr capture. Gateway health and
+iMessage running status pass. Cabin enrollment, scanner approval, and unfinished
+Crosstown source changes remain unchanged.
+
+The five custom cron readers/helpers are deployed with hash verification.
+Receipt-backed active run IDs are checked exactly; 87 focused Python tests,
+the cron-sync shell regression, and repository validation pass. Two broader
+prompt-contract tests still expect the superseded `--validate-handoff` wording;
+those tests and the canonical job definitions are unchanged. No triage cleanup
+rerun or message test was performed. Attended device sign-in completed and the
+OpenAI runtime auth route now reports usable. A fresh no-delivery gateway turn
+returned `AUTH_OK` from `openai/gpt-6-astra`, with one successful attempt and
+`fallbackUsed: false`. Defaults and fallback ordering are unchanged; all 13
+original cron definitions still match, alongside three system-owned jobs.
+
+The successful turn reports the `openclaw` harness, not native `codex`. The
+existing Astra `compat.supportsUsageInStreaming` setting is an authored request
+override under the new runtime selector, which permits exact-request OpenClaw
+execution rather than discarding that setting. It was left unchanged; this
+check proves Astra authentication and inference, not native Codex execution.
+An older unused OAuth profile still reports expired; it was not deleted or
+substituted. Keep the verified Astra default and existing fallback ordering;
+evaluate native-runtime compatibility separately rather than changing models
+as part of this recovery. Private authentication and backup artifacts remain
+outside the repository.
+
 Follow the `openclaw-upgrade-plist-overwrite` skill. Outline:
 
 ```bash

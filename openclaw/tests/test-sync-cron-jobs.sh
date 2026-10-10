@@ -24,6 +24,9 @@ chmod 600 "$TEST_HOME/.openclaw/.secrets-cache"
 cp "$REPO_ROOT/openclaw/sync-cron-jobs.sh" \
   "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh"
 chmod +x "$TEST_HOME/dotfiles/openclaw/sync-cron-jobs.sh"
+mkdir -p "$TEST_HOME/dotfiles/openclaw/bin"
+cp "$REPO_ROOT/openclaw/bin/openclaw_cron_sqlite.py" \
+  "$TEST_HOME/dotfiles/openclaw/bin/openclaw_cron_sqlite.py"
 
 write_definitions() {
   printf '%s\n' '{

@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+export PYTHONPATH="$(cd "$(dirname "$0")" && pwd)${PYTHONPATH:+:$PYTHONPATH}"
+
 exec python3 - "$@" <<'PYTHON_SCRIPT'
 import json
 import os
@@ -15,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import URLError
+from openclaw_cron_sqlite import connect as connect_cron
 
 HISTORY_DIR = Path.home() / ".openclaw" / "usage-history"
 STATE_FILE = HISTORY_DIR / ".snapshot-state"
@@ -233,7 +236,7 @@ def parse_cron_runs(last_cursor, last_ts):
             # On a fresh install, establish a high-water mark without turning
             # all retained history into current-period usage.
             try:
-                with sqlite3.connect(f"file:{CRON_DB}?mode=ro", uri=True, timeout=5) as conn:
+                with connect_cron(CRON_DB) as conn:
                     newest = conn.execute(
                         """
                         SELECT created_at, job_id, seq
@@ -258,7 +261,7 @@ def parse_cron_runs(last_cursor, last_ts):
     job_id = str(cursor.get("job_id", ""))
     seq = int(cursor.get("seq", 0))
     try:
-        with sqlite3.connect(f"file:{CRON_DB}?mode=ro", uri=True, timeout=5) as conn:
+        with connect_cron(CRON_DB) as conn:
             rows = conn.execute(
                 """
                 SELECT job_id, seq, ts, status, delivered, run_at_ms,
