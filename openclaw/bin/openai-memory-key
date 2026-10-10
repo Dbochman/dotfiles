@@ -1,10 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
-readonly auth_db="/Users/dbochman/.openclaw/agents/main/agent/openclaw-agent.sqlite"
+if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+  printf '%s\n' 'Memory embedding API key is unavailable in the provider environment' >&2
+  exit 1
+fi
 
-/usr/bin/sqlite3 "$auth_db" <<'SQL'
-SELECT json_extract(store_json, '$.profiles."openai:default".token')
-FROM auth_profile_store
-WHERE store_key = 'primary';
-SQL
+printf '%s\n' "$OPENAI_API_KEY"

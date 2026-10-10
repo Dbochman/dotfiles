@@ -1428,7 +1428,7 @@ fi
 WORKSPACE_SRC="$REPO/openclaw/workspace"
 WORKSPACE_DST="$HOME/.openclaw/workspace"
 if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
-  for f in TOOLS.md HEARTBEAT.md; do
+  for f in OPERATIONS.md TOOLS.md HEARTBEAT.md; do
     if [ -f "$WORKSPACE_SRC/$f" ]; then
       # Remove symlinks first — cp fails if dst is a symlink to src
       [ -L "$WORKSPACE_DST/$f" ] && rm -f "$WORKSPACE_DST/$f"
@@ -1436,7 +1436,7 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
     fi
   done
   # SOUL.md has real values on Mini (not placeholders) — don't overwrite
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed TOOLS.md, HEARTBEAT.md" >> "$LOG"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed OPERATIONS.md, TOOLS.md index, HEARTBEAT.md" >> "$LOG"
 
   # Deploy workspace scripts (presence-detect, grocery-reorder, etc.)
   SCRIPTS_SRC="$REPO/openclaw/workspace/scripts"

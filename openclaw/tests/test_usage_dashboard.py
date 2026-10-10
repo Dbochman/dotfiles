@@ -226,12 +226,15 @@ class IMessageResponseLatencyTests(unittest.TestCase):
         )
         self.connection.commit()
         self.original_db = usage_dashboard.MESSAGES_DB
+        self.original_ingress_db = usage_dashboard.INGRESS_DB
+        usage_dashboard.INGRESS_DB = os.path.join(self.tempdir.name, "missing-ingress.db")
         self.original_config = usage_dashboard.OPENCLAW_CONFIG
         usage_dashboard.MESSAGES_DB = self.db_path
         self.now = datetime(2026, 6, 27, 20, 0, tzinfo=timezone.utc)
 
     def tearDown(self):
         usage_dashboard.MESSAGES_DB = self.original_db
+        usage_dashboard.INGRESS_DB = self.original_ingress_db
         usage_dashboard.OPENCLAW_CONFIG = self.original_config
         self.connection.close()
         self.tempdir.cleanup()
@@ -322,7 +325,7 @@ class IMessageResponseLatencyTests(unittest.TestCase):
                 "available", "window_hours", "sample_count", "latest_ms",
                 "median_ms", "p95_ms", "over_120s_count",
                 "pending_turn_count", "unmatched_turn_count",
-                "latest_received_at", "latest_response_at",
+                "latest_received_at", "latest_response_at", "ingress",
             },
         )
 
@@ -363,6 +366,27 @@ class IMessageResponseLatencyTests(unittest.TestCase):
         values = list(range(1000, 21000, 1000))
         self.assertEqual(usage_dashboard._nearest_rank_percentile(values, 0.95), 19000)
 
+    def test_native_linked_type_100_reply_is_counted_but_reactions_are_not(self):
+        self.add_message(1, "native-inbound", 100)
+        self.add_message(1, "reaction", 99, from_me=True,
+                         reply_to="native-inbound", associated_message_type=2000)
+        self.add_message(1, "native-reply", 90, from_me=True,
+                         reply_to="native-inbound", associated_message_type=100)
+        self.add_message(2, "other-inbound", 80)
+        self.add_message(2, "unlinked", 70, from_me=True, associated_message_type=100)
+        result = usage_dashboard._imessage_response_latency(now=self.now)
+        self.assertEqual(result["sample_count"], 1)
+        self.assertEqual(result["latest_ms"], 10000)
+        usage_dashboard.INGRESS_DB = os.path.join(self.tempdir.name, "ingress.db")
+        with sqlite3.connect(usage_dashboard.INGRESS_DB) as ingress:
+            ingress.execute("CREATE TABLE channel_ingress_events "
+                            "(event_id TEXT, received_at INTEGER, channel_id TEXT)")
+            ingress.execute("INSERT INTO channel_ingress_events VALUES (?, ?, 'imessage')",
+                            ("native-inbound", int((self.now.timestamp() - 99) * 1000)))
+        result = usage_dashboard._imessage_response_latency(now=self.now)
+        self.assertEqual(result["ingress"]["latest_sent_to_ingress_ms"], 1000)
+        self.assertEqual(result["ingress"]["latest_ingress_to_reply_ms"], 9000)
+
     def test_missing_database_is_structured_and_private(self):
         usage_dashboard.MESSAGES_DB = os.path.join(self.tempdir.name, "missing.db")
         summary = usage_dashboard._imessage_response_latency(now=self.now)
@@ -392,6 +416,7 @@ class IMessageResponseLatencyTests(unittest.TestCase):
         })
         self.assertNotIn("private", behavior)
         self.assertNotIn("token", behavior)
+
 
     def test_runtime_behavior_honors_fallbacks_and_defaults(self):
         config_path = os.path.join(self.tempdir.name, "openclaw-defaults.json")
@@ -424,6 +449,130 @@ class IMessageResponseLatencyTests(unittest.TestCase):
         self.assertNotIn("'imessageBridge'", usage_dashboard.DASHBOARD_HTML)
         self.assertNotIn("i.typing_indicators === true", usage_dashboard.DASHBOARD_HTML)
 
+
+class IMessageIngressTimingTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = Path(self.tempdir.name) / "ingress.db"
+        self.connection = sqlite3.connect(self.path)
+        self.connection.execute(
+            "CREATE TABLE channel_ingress_events (event_id TEXT, received_at INTEGER, "
+            "channel_id TEXT, payload_json TEXT)"
+        )
+        self.patch = mock.patch.object(usage_dashboard, "INGRESS_DB", str(self.path))
+        self.patch.start()
+        self.now = datetime(2026, 10, 10, 14, tzinfo=timezone.utc)
+        self.now_ms = self.now.timestamp() * 1000
+
+    def tearDown(self):
+        self.patch.stop()
+        self.connection.close()
+        self.tempdir.cleanup()
+
+    def add(self, guid, age=60, delay=1000, channel="imessage", from_me=False):
+        received = self.now_ms - age * 1000
+        self.connection.execute(
+            "INSERT INTO channel_ingress_events VALUES (?, ?, ?, ?)",
+            (guid, received, channel, "PRIVATE MESSAGE MUST NOT LEAK"),
+        )
+        self.connection.commit()
+        return {"guid": guid, "seconds": (received - delay) / 1000 - 978307200,
+                "is_from_me": from_me}
+
+    def summarize(self, rows, samples=None):
+        return usage_dashboard._imessage_ingress_timing(rows, samples or [], self.now)
+
+    def test_exact_match_separates_ingress_and_reply_without_private_data(self):
+        row = self.add("private-guid", delay=245000)
+        samples = [{"inbound_guid": "private-guid", "response_seconds":
+                    self.now.timestamp() - 50 - 978307200}]
+        result = self.summarize([row], samples)
+        self.assertEqual(result["state"], "delayed")
+        self.assertEqual(result["latest_sent_to_ingress_ms"], 245000)
+        self.assertEqual(result["latest_ingress_to_reply_ms"], 10000)
+        self.assertEqual(result["reply_sample_count"], 1)
+        serialized = json.dumps(result)
+        for private in ["private-guid", "PRIVATE MESSAGE", "payload", "chat_id"]:
+            self.assertNotIn(private, serialized)
+
+    def test_recent_stale_and_empty_are_not_equivalent_to_outage(self):
+        recent = self.add("recent")
+        stale = self.add("stale", age=901)
+        self.assertEqual(self.summarize([recent])["state"], "recent")
+        self.assertEqual(self.summarize([stale])["state"], "stale")
+        unmatched = dict(recent, guid="unmatched")
+        self.assertEqual(self.summarize([unmatched])["state"], "unverified")
+
+    def test_wrong_channel_outbound_and_future_timestamps_are_excluded(self):
+        rows = [self.add("wrong", channel="other"), self.add("outbound", from_me=True),
+                self.add("future", age=-10), self.add("negative-delay", delay=-1000),
+                self.add("expired", age=14401)]
+        result = self.summarize(rows)
+        self.assertEqual(result["sample_count"], 0)
+        self.assertEqual(result["state"], "unverified")
+
+    def test_ambiguous_duplicate_event_is_not_timing_evidence(self):
+        row = self.add("duplicate")
+        self.add("duplicate", age=50)
+        self.assertEqual(self.summarize([row])["sample_count"], 0)
+
+    def test_reply_before_ingress_is_excluded(self):
+        row = self.add("reply")
+        sample = {"inbound_guid": "reply", "response_seconds":
+                  self.now.timestamp() - 100 - 978307200}
+        self.assertEqual(self.summarize([row], [sample])["reply_sample_count"], 0)
+
+    def test_capped_history_is_disclosed(self):
+        row = self.add("oldest", age=90)
+        self.connection.executemany(
+            "INSERT INTO channel_ingress_events VALUES (?, ?, 'imessage', '')",
+            [(str(index), self.now_ms - index) for index in range(1001)],
+        )
+        self.connection.commit()
+        result = self.summarize([row])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["state"], "unverified")
+
+    def test_missing_or_incompatible_database_fails_closed_without_creation(self):
+        row = self.add("row")
+        absent = str(self.path.parent / "absent.db")
+        with mock.patch.object(usage_dashboard, "INGRESS_DB", absent):
+            self.assertEqual(self.summarize([row])["state"], "unavailable")
+        self.assertFalse(Path(absent).exists())
+        self.connection.execute("DROP TABLE channel_ingress_events")
+        self.connection.commit()
+        self.assertEqual(self.summarize([row])["state"], "unavailable")
+
+    def test_healthy_components_do_not_claim_unverified_inbound_health(self):
+        bridge = {"basic_features": True, "advanced_features": True, "v2_ready": True}
+        with mock.patch.object(usage_dashboard, "_run_json_probe", return_value=bridge), \
+                mock.patch.object(usage_dashboard, "_imessage_runtime_behavior", return_value={}), \
+                mock.patch.object(usage_dashboard, "_latest_imessage_delivery", return_value={}), \
+                mock.patch.object(usage_dashboard, "_gateway_is_live", return_value=True), \
+                mock.patch.object(usage_dashboard, "_gateway_launchd_pid", return_value=123), \
+                mock.patch.object(usage_dashboard, "_gateway_imsg_worker_count", return_value=1), \
+                mock.patch.object(usage_dashboard, "_imessage_health_cache", {"data": None, "ts": 0}):
+            for state, expected in [("recent", "healthy"), ("delayed", "degraded"),
+                                    ("stale", "unknown"), ("unavailable", "unknown"),
+                                    ("unverified", "unknown")]:
+                usage_dashboard._imessage_health_cache["data"] = None
+                with mock.patch.object(usage_dashboard, "_imessage_response_latency",
+                                       return_value={"ingress": {"state": state}}):
+                    result = usage_dashboard.fetch_imessage_health()
+                self.assertEqual(result["component_status"], "healthy")
+                self.assertEqual(result["status"], expected)
+            usage_dashboard._imessage_health_cache["data"] = None
+            with mock.patch.object(usage_dashboard, "_gateway_is_live", return_value=False), \
+                    mock.patch.object(usage_dashboard, "_imessage_response_latency",
+                                      return_value={"ingress": {"state": "recent"}}):
+                self.assertEqual(usage_dashboard.fetch_imessage_health()["status"], "down")
+
+    def test_ui_distinguishes_measurement_from_guarantees(self):
+        html = usage_dashboard.DASHBOARD_HTML
+        self.assertIn("Quiet chat is not an outage", html)
+        self.assertIn("not Apple arrival time or model-only duration", html)
+        for field in ["imessageInbound", "imessageIngressTiming", "imessageReplyTiming"]:
+            self.assertIn('id="' + field + '"', html)
 
 if __name__ == "__main__":
     unittest.main()

@@ -50,7 +50,7 @@ nothing with the continuity capsule from every other session.
 - **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
 - "Mental notes" don't survive session restarts. Files do.
 - When someone says "remember this" → update `memory/YYYY-MM-DD.md` or relevant file
-- When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
+- When you learn a lesson → update AGENTS.md, OPERATIONS.md, or the relevant skill
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Text > Brain** 📝
 
@@ -113,11 +113,21 @@ For iMessage-specific reaction types and strings, see `SOUL.md` — the rules th
 
 ## Tools
 
-Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
+Skills provide your tools. Before using a subsystem, read its `SKILL.md` and
+the relevant section of `OPERATIONS.md`. That on-demand reference preserves
+device bindings, account routing, command examples, and subsystem-specific
+safety/approval rules; those rules remain mandatory. Read only what the task
+needs, not the entire reference on every turn.
+
+Keep AGENTS.md and the compatibility TOOLS.md index small enough to fit the
+default 20,000-character bootstrap limit together. Never paste OPERATIONS.md
+into either file or raise the bootstrap budget to accommodate a tool manual.
+Keep general safety, private-memory boundaries, and Reachy continuity rules
+here; detailed operational changes belong in OPERATIONS.md or the skill.
 
 **Browser automation:** Prefer a purpose-built API/CLI when available; when a
 browser is actually required on the Mac Mini, use PinchTab by default. Read the
-prominent PinchTab section in `TOOLS.md` and its skill before acting, create a
+prominent PinchTab section in `OPERATIONS.md` and its skill before acting, create a
 dedicated agent session before navigation, and never kill or repurpose a shared
 PinchTab instance. Do not assume a Codex in-app browser or account-bound Chrome
 extension is connected to this agent.

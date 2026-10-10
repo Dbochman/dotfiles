@@ -28,7 +28,7 @@ active post-deploy checks.
 | `openclaw-refresh-secrets` | `~/bin/` | Attended exact-field refresh of `~/.openclaw/.secrets-cache` plus the optional complete dedicated finance cache; run with `--interactive` after key rotation, never from launchd/cron. |
 | `ola-webhook-bridge.py` | `~/.openclaw/bin/` | Loopback-only Ola callback boundary. Verifies the raw-body HMAC, discards the external envelope, and forwards one fixed content-free wake to OpenClaw with a separate private hook token. |
 | `ola-webhook-bridge-wrapper.sh` | `~/.openclaw/bin/` | Cache-only LaunchAgent wrapper for the Ola bridge; enforces protected-cache ownership, exports only the two required credentials into a clean environment, and never invokes `op`. |
-| `openai-memory-key` | `~/.openclaw/bin/` | Mode-restricted exec secret-provider helper for memory search. Emits the existing `openai:default` token from the agent auth database; never log or call it for diagnostics. |
+| `openai-memory-key` | `~/.openclaw/bin/` | Exec secret-provider adapter for memory embeddings. Emits only the existing gateway-exported `OPENAI_API_KEY`, admitted by the provider's exact `passEnv` list; no auth-database lookup or login-token reuse. Never log or invoke its secret output directly for diagnostics. |
 | `pinchtab-headless-instance` | `~/.openclaw/bin/` | Acquires, inventories, scopes, and releases managed headless PinchTab instances without navigating a visible browser. |
 | `cielo-auth.py` | `~/.openclaw/bin/` | Canonical Cielo `/web/token/refresh/1` client. Serializes rotating-token use, atomically replaces the protected config, and emits only safe operational metadata. |
 | `cielo-reauth` | `~/.openclaw/bin/` | Capture-first attended Cielo recovery. Owns one visible dedicated-profile instance, requires a refresh token from that exact login, proves one API rotation plus status, and cleans up only its own state. |
@@ -55,7 +55,7 @@ active post-deploy checks.
 | Script | Port | Description |
 |--------|------|-------------|
 | `nest-dashboard.py` | 8550 | Home climate dashboard — Chart.js UI over JSONL history. Serves thermostat/AC temperatures, Wave Enhance CO2/VOC data, humidity, weather, and presence over the home LAN and Tailscale tailnet. |
-| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, cron, and native iMessage health/response latency over the home LAN and Tailscale tailnet. |
+| `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, cron, and native iMessage health over LAN/Tailscale. Separates component readiness from recent inbound evidence; reports metadata-only sent-to-ingress and ingress-to-linked-reply timing using retained receipts, without a new daemon or recovery actions. |
 | `dog-walk-dashboard.py` | 8552 | Dog walk history, Fi route maps, coverage/heatmaps, and return-signal telemetry over the home LAN and Tailscale tailnet. |
 | `roomba-dashboard.py` | 8553 | Crosstown/Cabin Roomba status, command, snooze, and run-history dashboard. |
 | `cat-dashboard.py` | 8554 | Cat profiles, care stations, feeder-transfer state, and one combined timeline of named litter visits, successful scheduled feedings, and confirmed cat-home moves. |
@@ -160,7 +160,7 @@ not require an OpenClaw gateway restart.
 **Collections** (4 — deduplicated to avoid duplicate result slots):
 | Name | Path | Contents |
 |------|------|----------|
-| `workspace` | `~/.openclaw/workspace/` | SOUL.md, TOOLS.md, HEARTBEAT.md |
+| `workspace` | `~/.openclaw/workspace/` | Core instructions, short TOOLS.md compatibility index, on-demand OPERATIONS.md, and HEARTBEAT.md |
 | `skills` | `~/.openclaw/skills/` | All SKILL.md files |
 | `plans` | `~/dotfiles/openclaw/plans/` | Current plans plus archived architecture and migration records |
 | `bin-scripts` | `~/dotfiles/openclaw/bin/` | README.md |

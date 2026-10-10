@@ -83,7 +83,7 @@ Tracks OpenClaw session activity, token consumption and costs alongside Anthropi
 
 - **Utilization gauges** — 5-hour and 7-day token usage rings (green/amber/red thresholds)
 - **Stat cards** — total cost, all-session total tokens, cron runs, messages sent/received, sessions, errors, gateway restarts
-- **Native iMessage Health** — live OpenClaw channel and `imsg` bridge readiness, configured typing/read-receipt behavior, latest outbound delivery, and privacy-safe seven-day direct-response latency
+- **Native iMessage Health** — separate component readiness and recent inbound evidence, configured typing/read-receipt behavior, latest outbound delivery, seven-day linked-response latency, and retained four-hour ingress timing
 - **Token Usage Over Time** — stacked daily OpenClaw all-session/Codex CLI bars
 - **Activity chart** — sent/received/cron messages over time
 - **Cost Over Time** — aggregate daily cost, with a component breakdown when supplied
@@ -100,7 +100,7 @@ Tracks OpenClaw session activity, token consumption and costs alongside Anthropi
 | Gateway RPC | 5 min cache/UI refresh | Session data (tool calls, costs, latency) |
 | SQLite `cron_run_logs` | 15 min cursor | Job ID, status, duration, model, delivery, and tokens |
 | Local Messages database | 15 min | Native iMessage send/receive counts |
-| Native iMessage health probes | 60 sec | Gateway health, configured typing/read-receipt behavior, attached `imsg rpc` worker, basic/advanced/v2 readiness, latest outbound delivery, and direct-response latest/median/p95 plus slow/open counts |
+| Native iMessage health probes | 60 sec | Component readiness, last observed inbound, sent-to-ingress and ingress-to-linked-reply timing, latest outbound delivery, and seven-day direct-response statistics |
 | ccusage push | 30 min | Codex CLI daily token usage (from Mini and MacBook) |
 
 ### Files
@@ -112,6 +112,71 @@ Tracks OpenClaw session activity, token consumption and costs alongside Anthropi
 | Data | `~/.openclaw/usage-history/YYYY-MM-DD.jsonl` |
 | Codex CLI data | `~/.openclaw/usage-history/ccusage-codex-<hostname>.json` |
 | Logs | `~/.openclaw/logs/usage-dashboard.{log,err.log}` |
+
+### iMessage timing and health semantics
+
+`/api/imessage-health` separates `component_status` from overall `status`.
+Ready components alone do not establish working Apple push delivery. Overall
+health requires a matching inbound admission in the last 15 minutes; quiet chat,
+missing/expired receipts, or an unavailable timing database yield `unknown`,
+not an outage. A recent admission taking over 30 seconds from its sender
+timestamp yields `degraded`. Actual component failures still take precedence.
+These are dashboard observation thresholds, not automatic recovery triggers.
+
+The existing read-only 60-second probe joins direct-chat message GUIDs to
+`channel_ingress_events` in `~/.openclaw/state/openclaw.sqlite`, reading only
+event IDs and admission timestamps. It selects at most 1,000 recent records
+plus a truncation sentinel, has a two-second SQLite execution budget, and
+discloses capped samples. Only aggregate timing/counts and observation times
+leave the collector; no message bodies, sender identities, GUIDs, or new
+on-disk history are emitted. Retained ingress receipts normally cover about
+four hours, not the full seven-day Messages history. No new sampler, APNs
+capture, synthetic message, restart, or database write is introduced.
+
+- **Sent → ingress** includes Apple delivery and the local reader; it cannot
+  separate them retrospectively. Sender clock skew can affect this interval.
+- **Ingress → linked reply** includes queueing, prompt preparation, model/tool
+  work, and sending. It is not model-only duration. Successful native linked
+  outbound type-100 rows are included; reactions and unlinked sends are not.
+- **Seven-day response timing** starts at the sender timestamp, not the time
+  Apple inserted the row. `latest_received_at` is a legacy API name for that
+  sender timestamp. Native links can include manual replies; no adjacency-based
+  reply attribution is used. Negative timing and ambiguous ingress IDs are
+  excluded rather than reported as fast samples.
+
+### Focused Mini latency audit — October 10, 2026
+
+Two attended post-APNs-refresh tests reached OpenClaw in approximately 1.0–1.3
+seconds. Local database-observation-to-ingress was about 0.4–0.5 seconds.
+Ingress-to-reply was roughly 10.5–13.6 seconds. Nearby runtime metadata places
+startup/version validation about 1.3–1.5 seconds after admission and the message
+tool completion about 9.1–12.3 seconds later; the send tool itself reported
+361–369 ms. These boundaries do not isolate model generation from internal
+runtime overhead or establish a general latency benchmark.
+
+The live configuration had no explicit inbound debounce, queue override, or
+human-delay setting; instant typing and medium thinking were configured. The
+installed runtime documents a default 500 ms queue batching debounce, not a
+multi-minute wait. Both test outcomes reported the configured Astra model.
+No model, concurrency, queue, authentication, or prompt settings were changed.
+
+Both test windows also logged unavailable memory-provider secret capability
+errors and truncation of a 41,565-character workspace `AGENTS.md` at a
+20,000-character limit. They deserve separate capability-recovery and focused
+instruction-size reviews, but their contribution to latency was not measured.
+Do not disable memory, remove safety instructions, or change credentials as an
+unverified performance fix. The sampled APNs reconnects themselves took under
+0.3 seconds; no periodic reset-recovery daemon is warranted by that evidence.
+
+Follow-up repair: the memory resolver now uses the existing gateway-exported
+API key through an exact environment allowlist instead of the obsolete
+`openai:default` auth-database lookup. `secrets reload` returned zero warnings,
+and the live gateway's main-agent embedding probe passed. A no-delivery Astra
+canary confirmed the on-demand operations reference and memory-search tool
+were available, with no new memory-provider or AGENTS truncation warnings.
+Core AGENTS.md is now about 7.3k characters; all detailed tool notes are retained
+in OPERATIONS.md. Gateway, APNs, and Messages PIDs remained unchanged. These
+checks verify recovery, not a measured improvement in reply speed.
 
 ---
 

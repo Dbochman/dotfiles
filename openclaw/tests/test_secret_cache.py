@@ -784,7 +784,7 @@ esac
         self.assertIn('GWS_ACCOUNT="$OPENTABLE_EMAIL"', opentable_refresh)
         self.assertNotIn('GWS_ACCOUNT="$OPENCLAW_EMAIL"', opentable_refresh)
 
-        tools = (REPO_ROOT / "openclaw/workspace/TOOLS.md").read_text(
+        tools = (REPO_ROOT / "openclaw/workspace/OPERATIONS.md").read_text(
             encoding="utf-8"
         )
         spam_rows = [
@@ -800,6 +800,7 @@ esac
             "openclaw/workspace/MEMORY.md",
             "openclaw/workspace/SOUL.md",
             "openclaw/workspace/TOOLS.md",
+            "openclaw/workspace/OPERATIONS.md",
         ):
             with self.subTest(path=relative):
                 content = (REPO_ROOT / relative).read_text(encoding="utf-8")

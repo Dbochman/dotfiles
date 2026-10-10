@@ -79,15 +79,6 @@
       "maxConcurrent": 4,
       "subagents": {
         "maxConcurrent": 8
-      },
-      "memorySearch": {
-        "remote": {
-          "apiKey": {
-            "source": "exec",
-            "provider": "openai_memory_profile",
-            "id": "value"
-          }
-        }
       }
     }
   },
@@ -454,9 +445,21 @@
       "openai_memory_profile": {
         "source": "exec",
         "command": "/Users/dbochman/.openclaw/bin/openai-memory-key",
+        "passEnv": ["OPENAI_API_KEY"],
         "timeoutMs": 5000,
         "maxOutputBytes": 16384,
         "jsonOnly": false
+      }
+    }
+  },
+  "memory": {
+    "search": {
+      "remote": {
+        "apiKey": {
+          "source": "exec",
+          "provider": "openai_memory_profile",
+          "id": "value"
+        }
       }
     }
   }

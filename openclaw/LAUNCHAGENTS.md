@@ -425,6 +425,39 @@ organic departure/return intervals without changing canonical authority. The
 tracked plist keeps both flags at `0` so a fresh install cannot inherit either
 attended decision.
 
+### Memory Authentication and Bootstrap Size
+
+Memory embeddings use the existing `OPENAI_API_KEY` exported by the gateway
+wrapper from its protected secrets cache. The `openai_memory_profile` exec
+provider retains its existing identity for no-restart recovery, but its exact
+`passEnv` list contains only `OPENAI_API_KEY`. The `openai-memory-key` adapter
+only emits that supplied value and fails on missing/empty input; it no longer
+queries the mutable auth database or reuses a model-login token. Never invoke
+its secret output directly for diagnostics. The current configuration path is
+`memory.search.remote.apiKey`, not `agents.defaults.memorySearch`.
+
+After updating this adapter and the provider's `passEnv`, use the supported
+`openclaw secrets reload` to refresh the gateway's owner-aware secret snapshot.
+Verify the response has no degradation warnings and run a scoped main-agent
+embedding-readiness probe without reindexing. Do not change the memory
+SecretRef itself during a no-restart repair: this release's reload planner
+treats that path as restart-requiring. Preserve model defaults and memory data.
+
+OpenClaw's TOOLS.md migration had expanded runtime AGENTS.md to about 41.6k
+characters, exceeding its 20k per-file bootstrap limit. Detailed notes now live
+unchanged in `workspace/OPERATIONS.md` (apart from the title); AGENTS.md keeps
+general safety/continuity rules and requires the relevant reference/skill
+before subsystem actions. The short TOOLS.md compatibility pointer may safely
+migrate into AGENTS.md. Tests bound their combined size below 12k, with margin
+for migration formatting; do not increase the context budget to fit a manual.
+
+The daily deployment copies OPERATIONS.md before the TOOLS.md index, retaining
+the existing policy of not overwriting machine-local AGENTS.md or SOUL.md.
+Existing oversized AGENTS.md files require a one-time attended reconciliation:
+verify the migrated block matches the preserved reference, retain local/core
+rules, back up all affected files, and install the concise core. New detailed
+notes belong in OPERATIONS.md or skills, not the bootstrap index.
+
 ### Native iMessage Reboot Recovery
 
 The `imsg` v2 dylib injection does not survive a Messages.app or macOS restart.
@@ -432,6 +465,13 @@ The `imsg` v2 dylib injection does not survive a Messages.app or macOS restart.
 seconds for login services to settle, and checks both `bridge_version >= 2` and
 `v2_ready=true`. A healthy check is read-only and never sends a synthetic
 message.
+
+Bridge readiness does not verify inbound Apple push delivery. The usage
+dashboard's existing 60-second read-only probe separately reports recent
+ingress evidence and stage timings; quiet or unverified delivery is not a
+reason to restart Messages, APNs, or the gateway. See
+[iMessage timing semantics and the Mini audit](DASHBOARDS.md#imessage-timing-and-health-semantics).
+No additional LaunchAgent or periodic APNs restart is required.
 
 When the bridge is degraded, the watchdog:
 

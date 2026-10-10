@@ -17,7 +17,9 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
@@ -318,6 +320,7 @@ OPENCLAW_CONFIG = os.path.expanduser("~/.openclaw/openclaw.json")
 OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 IMSG_BIN = "/opt/homebrew/bin/imsg"
 MESSAGES_DB = os.path.expanduser("~/Library/Messages/chat.db")
+INGRESS_DB = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
 
 # Gateway usage RPC cache (5-minute TTL)
 _gw_usage_cache = {"data": None, "ts": 0}
@@ -408,6 +411,8 @@ IMESSAGE_RESPONSE_WINDOW_HOURS = 168
 IMESSAGE_MAX_RESPONSE_MS = 30 * 60 * 1000
 IMESSAGE_SLOW_RESPONSE_MS = 2 * 60 * 1000
 IMESSAGE_DIRECT_CHAT_STYLE = 45  # Messages chat.style value for one-to-one chats.
+IMESSAGE_INGRESS_FRESH_SECONDS = 15 * 60
+IMESSAGE_INGRESS_SLOW_MS = 30 * 1000
 
 
 def _run_json_probe(command, timeout, env=None):
@@ -577,8 +582,101 @@ def _nearest_rank_percentile(values, percentile):
     return ordered[index]
 
 
+def _imessage_ingress_timing(rows, samples, observed_at):
+    """Join bounded ingress metadata; never infer Apple database arrival time."""
+    result = {
+        "available": False,
+        "state": "unavailable",
+        "window_hours": 4,
+        "truncated": False,
+        "sample_count": 0,
+        "last_observed_at": None,
+        "last_observed_age_seconds": None,
+        "latest_sent_to_ingress_ms": None,
+        "sent_to_ingress_p95_ms": None,
+        "reply_sample_count": 0,
+        "latest_ingress_to_reply_ms": None,
+        "ingress_to_reply_p95_ms": None,
+    }
+    if not rows:
+        return result
+    now_ms = observed_at.timestamp() * 1000
+    deadline = time.monotonic() + 2
+    try:
+        connection = sqlite3.connect(
+            Path(INGRESS_DB).resolve().as_uri() + "?mode=ro", uri=True, timeout=1,
+        )
+        try:
+            connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+            records = connection.execute(
+                """
+                SELECT event_id, received_at
+                  FROM channel_ingress_events
+                 WHERE channel_id = 'imessage' AND received_at BETWEEN ? AND ?
+                 ORDER BY received_at DESC LIMIT 1001
+                """,
+                (int(now_ms - 4 * 3600 * 1000), int(now_ms)),
+            ).fetchall()
+        finally:
+            connection.close()
+    except (OSError, ValueError, sqlite3.Error):
+        return result
+    result.update(available=True, state="unverified", truncated=len(records) > 1000)
+    received_by_guid = {}
+    duplicates = set()
+    for guid, received_at in records[:1000]:
+        if guid in received_by_guid:
+            duplicates.add(guid)
+        received_by_guid[guid] = received_at
+    for guid in duplicates:
+        received_by_guid.pop(guid, None)
+    matches = {}
+    for row in rows:
+        received_at = received_by_guid.get(row["guid"])
+        if row["is_from_me"] or received_at is None:
+            continue
+        sent_at = (row["seconds"] + 978307200) * 1000
+        if not isinstance(received_at, (int, float)) or not sent_at <= received_at <= now_ms:
+            continue
+        matches[row["guid"]] = (received_at, received_at - sent_at)
+    if not matches:
+        return result
+    latest_received, latest_delay = max(matches.values())
+    age = (now_ms - latest_received) / 1000
+    state = "stale" if age > IMESSAGE_INGRESS_FRESH_SECONDS else (
+        "delayed" if latest_delay > IMESSAGE_INGRESS_SLOW_MS else "recent"
+    )
+    result.update({
+        "state": state,
+        "sample_count": len(matches),
+        "last_observed_at": datetime.fromtimestamp(latest_received / 1000, timezone.utc).isoformat(),
+        "last_observed_age_seconds": round(age, 1),
+        "latest_sent_to_ingress_ms": round(latest_delay, 1),
+        "sent_to_ingress_p95_ms": round(_nearest_rank_percentile(
+            [delay for received, delay in matches.values()], 0.95,
+        ), 1),
+    })
+    replies = []
+    for sample in samples:
+        match = matches.get(sample["inbound_guid"])
+        if match is not None:
+            response_ms = (sample["response_seconds"] + 978307200) * 1000
+            delay = response_ms - match[0]
+            if 0 <= delay <= IMESSAGE_MAX_RESPONSE_MS:
+                replies.append((response_ms, delay))
+    if replies:
+        result.update({
+            "reply_sample_count": len(replies),
+            "latest_ingress_to_reply_ms": round(max(replies)[1], 1),
+            "ingress_to_reply_p95_ms": round(_nearest_rank_percentile(
+                [delay for response, delay in replies], 0.95,
+            ), 1),
+        })
+    return result
+
+
 def _imessage_response_latency(window_hours=IMESSAGE_RESPONSE_WINDOW_HOURS, now=None):
-    """Summarize privacy-safe direct-chat receive-to-response latency.
+    """Summarize privacy-safe direct-chat sender-timestamp-to-response latency.
 
     A response must be a successful outbound iMessage whose native reply link
     targets an inbound message in the same direct chat. This excludes unlinked
@@ -598,6 +696,7 @@ def _imessage_response_latency(window_hours=IMESSAGE_RESPONSE_WINDOW_HOURS, now=
         "unmatched_turn_count": 0,
         "latest_received_at": None,
         "latest_response_at": None,
+        "ingress": None,
     }
     if not MESSAGES_DB or not os.path.exists(MESSAGES_DB):
         return result
@@ -630,7 +729,11 @@ def _imessage_response_latency(window_hours=IMESSAGE_RESPONSE_WINDOW_HOURS, now=
                    AND COALESCE(m.item_type, 0) = 0
                    AND COALESCE(m.is_empty, 0) = 0
                    AND COALESCE(m.is_system_message, 0) = 0
-                   AND COALESCE(m.associated_message_type, 0) = 0
+                   AND (
+                        COALESCE(m.associated_message_type, 0) = 0
+                        OR (m.is_from_me = 1 AND m.associated_message_type = 100
+                            AND NULLIF(m.reply_to_guid, '') IS NOT NULL)
+                   )
                    AND COALESCE(m.is_finished, 0) = 1
                    AND (
                         m.date BETWEEN ? AND ?
@@ -700,6 +803,7 @@ def _imessage_response_latency(window_hours=IMESSAGE_RESPONSE_WINDOW_HOURS, now=
         latency_ms = (row["seconds"] - inbound["seconds"]) * 1000
         if 0 < latency_ms <= IMESSAGE_MAX_RESPONSE_MS:
             samples.append({
+                "inbound_guid": inbound["guid"],
                 "latency_ms": latency_ms,
                 "received_seconds": inbound["seconds"],
                 "response_seconds": row["seconds"],
@@ -721,6 +825,7 @@ def _imessage_response_latency(window_hours=IMESSAGE_RESPONSE_WINDOW_HOURS, now=
     result["available"] = True
     result["pending_turn_count"] = pending_count
     result["unmatched_turn_count"] = unmatched
+    result["ingress"] = _imessage_ingress_timing(normalized, samples, observed_at)
     if not samples:
         return result
 
@@ -873,8 +978,14 @@ def fetch_imessage_health():
         else:
             status = "unknown"
 
+        component_status = status
+        inbound_state = (response_latency.get("ingress") or {}).get("state")
+        if status == "healthy" and inbound_state != "recent":
+            status = "degraded" if inbound_state == "delayed" else "unknown"
+
         data = {
             "status": status,
+            "component_status": component_status,
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "gateway": gateway,
             "imsg": imsg,
@@ -1168,7 +1279,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
     <div class="health-metric"><span class="health-label">OpenClaw channel</span><span class="health-value" id="imessageChannel">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Message behavior</span><span class="health-value" id="imessageFeatures">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Last outbound</span><span class="health-value" id="imessageDelivery">Checking...</span></div>
-    <div class="health-metric"><span class="health-label">Latest direct response</span><span class="health-value" id="imessageResponseLatest">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Last observed inbound</span><span class="health-value" id="imessageInbound">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Sent → OpenClaw ingress</span><span class="health-value" id="imessageIngressTiming">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Ingress → linked reply</span><span class="health-value" id="imessageReplyTiming">Checking...</span></div>
+    <div class="health-metric"><span class="health-label">Latest sent → linked reply</span><span class="health-value" id="imessageResponseLatest">Checking...</span></div>
     <div class="health-metric"><span class="health-label">7-day direct response</span><span class="health-value" id="imessageResponseWindow">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Slow / unresolved</span><span class="health-value" id="imessageResponseTail">Checking...</span></div>
     <div class="health-metric"><span class="health-label">Runtime</span><span class="health-value" id="imessageRuntime">Checking...</span></div>
@@ -1298,7 +1412,7 @@ async function refreshImessageHealth() {
     const allowedStates = ['healthy', 'degraded', 'down', 'unknown'];
     const state = allowedStates.includes(d.status) ? d.status : 'unknown';
     const stateMeta = {
-      healthy: ['Healthy', 'Channel, delivery worker, and native bridge probes passed.'],
+      healthy: ['Recent ingress', 'Components ready; a recent inbound message reached OpenClaw. Not a continuous APNs guarantee.'],
       degraded: ['Degraded', 'The native path is available, but one capability is unverified.'],
       down: ['Down', 'The OpenClaw channel or native iMessage bridge is not ready.'],
       unknown: ['Unknown', 'Native iMessage health could not be fully verified.'],
@@ -1306,6 +1420,11 @@ async function refreshImessageHealth() {
     stateEl.textContent = stateMeta[0];
     stateEl.className = 'health-state health-state-' + state;
     summaryEl.textContent = stateMeta[1];
+    if (d.component_status === 'healthy' && state !== 'healthy') {
+      summaryEl.textContent = state === 'degraded'
+        ? 'Components ready; the latest observed inbound took over 30 seconds to reach OpenClaw.'
+        : 'Components ready; recent inbound delivery is unverified. Quiet chat is not an outage.';
+    }
 
     const g = d.gateway || {};
     if (!g.available) {
@@ -1348,6 +1467,17 @@ async function refreshImessageHealth() {
     }
 
     const response = d.response_latency || {};
+    const ingress = response.ingress || {};
+    const inboundTone = ingress.state === 'recent' ? 'good' : 'warn';
+    setImessageMetric('imessageInbound', ingress.last_observed_at
+      ? fmtAgo(ingress.last_observed_at) + ' · ' + ingress.state
+      : 'Unverified · no retained matching evidence', inboundTone);
+    setImessageMetric('imessageIngressTiming', ingress.sample_count
+      ? 'Latest ' + fmtDuration(ingress.latest_sent_to_ingress_ms) + ' · p95 ' + fmtDuration(ingress.sent_to_ingress_p95_ms) + ' · n=' + ingress.sample_count
+      : 'No matched samples', ingress.sent_to_ingress_p95_ms > 30000 ? 'warn' : inboundTone);
+    setImessageMetric('imessageReplyTiming', ingress.reply_sample_count
+      ? 'Latest ' + fmtDuration(ingress.latest_ingress_to_reply_ms) + ' · p95 ' + fmtDuration(ingress.ingress_to_reply_p95_ms) + ' · n=' + ingress.reply_sample_count
+      : 'No matched linked replies', '');
     if (!response.available) {
       setImessageMetric('imessageResponseLatest', 'History unavailable', '');
       setImessageMetric('imessageResponseWindow', 'History unavailable', '');
@@ -1395,12 +1525,15 @@ async function refreshImessageHealth() {
     let timing = 'Checked ' + fmtAgo(d.checked_at);
     if (g.last_probe_at) timing += ' · channel probe ' + fmtAgo(g.last_probe_at);
     if (response.available) timing += ' · direct reply links, 7-day window';
+    timing += ' · ingress: retained 4h metadata, not Apple arrival time or model-only duration; linked manual replies may be included';
+    if (ingress.truncated) timing += ' · ingress sample capped at 1,000';
     footEl.textContent = timing;
   } catch (e) {
     stateEl.textContent = 'Unknown';
     stateEl.className = 'health-state health-state-unknown';
     summaryEl.textContent = 'The native iMessage health endpoint is unavailable.';
     ['imessageChannel', 'imessageFeatures', 'imessageDelivery',
+     'imessageInbound', 'imessageIngressTiming', 'imessageReplyTiming',
      'imessageResponseLatest', 'imessageResponseWindow', 'imessageResponseTail',
      'imessageRuntime']
       .forEach(id => setImessageMetric(id, 'Unavailable', ''));
