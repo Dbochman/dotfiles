@@ -562,6 +562,25 @@ class DeploymentContractTests(unittest.TestCase):
         for _, (destination_relative, _) in REQUIRED_PROTECTED_FILES.items():
             self.assertIn(str(destination / destination_relative), completed.stdout)
 
+    def test_workspace_sync_preserves_operator_operations(self) -> None:
+        source = self.root / "repo" / "openclaw" / "workspace"
+        destination = self.root / "home" / ".openclaw" / "workspace"
+        source.mkdir(parents=True)
+        destination.mkdir(parents=True)
+        for name in ("OPERATIONS.md", "TOOLS.md", "HEARTBEAT.md"):
+            (source / name).write_text("tracked " + name)
+            (destination / name).write_text("operator " + name)
+        script = DOTFILES_PULL.read_text().split('WORKSPACE_SRC="$REPO/openclaw/workspace"', 1)[1]
+        block = 'WORKSPACE_SRC="$REPO/openclaw/workspace"' + script.split("  # Deploy workspace scripts", 1)[0] + "fi\n"
+        completed = self.run_bash(
+            'REPO="$1"; HOME="$2"; LOG="$3"\n' + block,
+            self.root / "repo", self.root / "home", self.root / "deploy.log",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual((destination / "OPERATIONS.md").read_text(), "operator OPERATIONS.md")
+        for name in ("TOOLS.md", "HEARTBEAT.md"):
+            self.assertEqual((destination / name).read_text(), "tracked " + name)
+
     def test_real_gateway_path_exposes_guarded_restaurant_wrappers(self) -> None:
         source = self.root / "openclaw-source"
         home = self.root / "home"
