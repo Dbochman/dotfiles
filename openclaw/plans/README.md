@@ -6,6 +6,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 
 | Plan | Summary |
 |------|---------|
+| [post-upgrade-review-2026-10-11](post-upgrade-review-2026-10-11.md) | Claude authentication/permissions audit, plugin provenance follow-up, and protected backup review |
 | [maintenance-repairs-2026-10](maintenance-repairs-2026-10.md) | Queued dashboard, cron deployment, authentication, finance, Roomba, and heartbeat repairs from the October 10 review |
 | [camera-dashboard](camera-dashboard.md) | Image-first Cabin/Crosstown camera wall with exact still capture, protected caching, and session-scoped refresh |
 | [dashboard-home-state](dashboard-home-state.md) | Home state dashboard API — aggregated IoT data endpoint |
@@ -17,6 +18,14 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 | [cat-feeder-vacancy-automation](cat-feeder-vacancy-automation.md) | Exact Whisker evidence and owned Petlibro schedule transfer for vacant-house cat care |
 | [cabin-starlink-presence-enrollment](cabin-starlink-presence-enrollment.md) | Cabin exact controller/mesh schema v2 activated; natural transition verification remains |
 | [crosstown-strict-presence-canary](crosstown-strict-presence-canary.md) | Strict Crosstown scanner activated with exact approval and a protected legacy rollback |
+
+## Accepted upgrades
+
+| Record | Summary |
+| --- | --- |
+| [node24-openclaw-stable-upgrade](node24-openclaw-stable-upgrade.md) | Upgrade design and safety gates |
+| [node24-phase-a-cutover](node24-phase-a-cutover.md) | Accepted official Node24.21.0 runtime cutover |
+| [node24-phase-b-cutover](node24-phase-b-cutover.md) | Accepted OpenClaw2026.10.1 and pinned plugin cutover |
 
 ## Archive
 

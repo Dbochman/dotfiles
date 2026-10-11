@@ -69,6 +69,11 @@ older checkpoint. Total measured backup usage was about46.3GiB, below the approv
 acceptance; do not automatically delete them or launch old code against migrated
 state. Acceptance covers these bounded checks, not a full future overnight cycle.
 
+See the [October11 post-upgrade review](post-upgrade-review-2026-10-11.md) for
+subsequent Claude CLI/authentication and permission checks, the remaining plugin
+provenance warning, and the private cleanup register. November11 is a review
+date only; the older full-state backup is not superseded by these scoped sets.
+
 ## Approved scope
 
 - Exact target: OpenClaw2026.10.1, official Codex2026.10.1 and iMessage2026.10.1.
