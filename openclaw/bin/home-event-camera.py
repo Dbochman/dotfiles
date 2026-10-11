@@ -135,7 +135,7 @@ class CameraCommands:
     def _environment() -> Mapping[str, str]:
         result = {
             "HOME": str(Path.home()),
-            "PATH": "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/bin:/bin",
+            "PATH": "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/usr/bin:/bin",
             "LANG": "en_US.UTF-8",
         }
         for key in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"):

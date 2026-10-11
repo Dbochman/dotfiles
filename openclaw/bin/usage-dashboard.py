@@ -372,7 +372,7 @@ def fetch_gateway_usage():
 
     # Build env with secrets
     env = os.environ.copy()
-    env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:" + env.get("PATH", "")
+    env["PATH"] = "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:" + env.get("PATH", "")
     if os.path.exists(SECRETS_CACHE):
         try:
             for line in open(SECRETS_CACHE):

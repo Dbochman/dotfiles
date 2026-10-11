@@ -63,6 +63,12 @@ class FakeCommands:
 
 
 class HomeEventCameraTests(unittest.TestCase):
+    def test_inference_environment_prefers_approved_node24(self):
+        self.assertEqual(
+            camera.CameraCommands._environment()["PATH"].split(":", 1)[0],
+            "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin",
+        )
+
     NOW = "2026-07-12T15:00:00Z"
 
     def setUp(self) -> None:

@@ -1216,7 +1216,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("bounded_log_stream", wrapper_text)
         self.assertIn("/usr/bin/mkfifo -m 600", wrapper_text)
         self.assertIn(
-            'readonly RUNTIME_PATH="/opt/homebrew/opt/node@22/bin:'
+            'readonly RUNTIME_PATH="/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:'
             '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"',
             wrapper_text,
         )

@@ -111,6 +111,18 @@ class CcusageIngestionTests(unittest.TestCase):
 
 
 class GatewayUsageSchemaTests(unittest.TestCase):
+    def test_gateway_query_prefers_approved_node24_over_ambient_node(self):
+        completed = usage_dashboard.subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+        with mock.patch.object(usage_dashboard.subprocess, "run", return_value=completed) as run, \
+             mock.patch.object(usage_dashboard.os.path, "exists", return_value=False), \
+             mock.patch.dict(usage_dashboard.os.environ, {"PATH": "/opt/homebrew/bin"}), \
+             mock.patch.dict(usage_dashboard._gw_usage_cache, {"data": None, "ts": 0}):
+            usage_dashboard.fetch_gateway_usage()
+        self.assertEqual(
+            run.call_args.kwargs["env"]["PATH"].split(":", 1)[0],
+            "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin",
+        )
+
     def test_current_daily_schema_gets_stable_token_and_cost_aliases(self):
         data = {
             "aggregates": {

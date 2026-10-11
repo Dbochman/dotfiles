@@ -375,8 +375,12 @@ class HomeEventDeliveryTests(unittest.TestCase):
         result = self.receipt()
         result.stderr = "non-fatal runtime warning\n"
 
-        with mock.patch.object(delivery.subprocess, "run", return_value=result):
+        with mock.patch.object(delivery.subprocess, "run", return_value=result) as run:
             delivery.send_message(self.TARGET, "fixed message")
+        self.assertEqual(
+            run.call_args.kwargs["env"]["PATH"].split(":", 1)[0],
+            "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin",
+        )
 
     def test_shadow_worker_is_inert_without_target(self) -> None:
         with mock.patch.object(delivery.subprocess, "run") as run:

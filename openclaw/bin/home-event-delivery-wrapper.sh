@@ -72,7 +72,7 @@ run_delivery() (
   fi
   child_env=(
     "HOME=$HOME"
-    "PATH=/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/bin:/bin"
+    "PATH=/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/usr/bin:/bin"
     "HOME_EVENTS_ROOT=$ROOT"
     "HOME_EVENTS_PRESENCE_STATE=$HOME/.openclaw/presence/state.json"
     "OPENCLAW_DYLAN_IMESSAGE_TARGET=$target"
