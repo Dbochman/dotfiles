@@ -11,6 +11,58 @@ remains on `main`; its existing uncommitted plan amendments are preserved. Do no
 merge this branch or enable auto-merge before the approved maintenance window:
 the live app is symlinked into that checkout and `main` feeds automatic deployment.
 
+## Latest attempt: stopped before runtime mutation
+
+The 2026-10-11 attended attempt drained successfully with no active work, unloaded
+the gateway, and verified both Codex provider children exited. The final checks
+on manifest-matching offline database copies found no pending deliveries, running
+cron/tasks, unfinished subagents, restart sentinel, pending inputs or recovery
+sessions. Read-only opens of the live closed WAL-mode database were unavailable;
+the copy checks avoided creating live sidecars or ignoring WAL.
+
+The archive was created, but restore acceptance failed: non-root bsdtar restored
+49,300 entries' group as `staff` instead of their recorded `admin` group. The check
+was **not** loosened. A preceding budget-monitor scan also encountered a transient
+extraction filename; the private monitor now tolerates files disappearing during
+that scan. Failed artifacts remain protected and are not accepted checkpoints.
+
+The cutover was aborted before changing runtime, package, wrapper, generated
+plist, deployed pull script, activation receipt or live Git checkout. The original
+Node22.23.1 / OpenClaw2026.8.35 gateway was restored (PID15208 at verification),
+its read-only activation/health/required-skill checks passed, iMessage reported
+connected, and the original deployment schedule was restored. The scheduler
+still reported 16 jobs, 15 enabled and none running at the check. Normal recovery
+was allowed; no manual job or message was run. Main remains `f0367a0`, with its
+pre-existing local plan edits preserved; candidate code is published only on the
+review branch at `9d97c25`.
+
+The offline fix passed using explicit `tar --same-owner` extraction.
+All archived entries are owned by the current UID and use groups20/80, both of
+which this operator belongs to; no sudo or ownership weakening is needed.
+`test_gateway_recovery_archive.py` permanently covers alternate-group ownership,
+modes, absolute/relative links, committed WAL restoration and unchanged archive
+hash. The historical archive's 126,811 restored entries matched the original
+manifest, all 67 SQLite integrity checks passed, and its hash remained unchanged.
+The archive is 4,093,090,816 bytes; protected artifacts remain within the approved
+64 GiB budget. Nothing was deleted automatically.
+
+The copied OpenClaw2026.8.35 package then passed its own `database preflight` under
+both copied Node22.23.1 and Node24.21.0: schema15, `status: exact`,
+`requiresWrite: false`, zero issues. The disposable shared-database snapshot was
+consolidated through SQLite backup and `VACUUM INTO`, integrity-checked, and
+confirmed free of WAL/SHM/journal sidecars. The initial backup copies left a stale
+SHM file and were rejected rather than used for preflight. No live database or
+archive was rewritten. The isolated CLI used a clean HOME, denied network access,
+and a tested denial of production config reads; `OPENSSL_CONF=/dev/null` avoided
+Homebrew Node22 trying to read host OpenSSL settings. This is offline schema
+compatibility evidence, not a production TLS, messaging or gateway canary.
+
+Private receipts are in `~/Backups/openclaw/phase-a-20261011T203555Z/`:
+`offline-validation.json`, `runtime-restore-validation.json` and
+`recovery-status.json`. This successful historical restore drill still requires
+a **fresh stopped checkpoint** before another cutover; never rewind to this older
+state or credentials. No further production stop was made during the offline drill.
+
 ## Prepared source changes
 
 - The FDA app wrapper selects the absolute Node24 executable and Node24-first
@@ -159,7 +211,7 @@ stopped work stores and validated backup. Existing schedules and messaging may
 resume normally; no manual job rerun or resend is authorized. This replaces the
 strict no-replay startup hold for A and its Node22 rollback, not the other recovery,
 review or source-convergence gates. Runtime staging and the 64 GiB recovery budget
-remain approved. No service has been stopped at this evidence checkpoint.
+remain approved. The later attended attempt and recovery are recorded above.
 
 Keep this a single Node-only change: unchanged OpenClaw2026.8.35, plugins, auth
 authority, model defaults, household policy and schedules. No install/update,
@@ -280,9 +332,12 @@ checkpoint until its stopped-source, manifest and restore checks pass.
    `..` traversal, escaping hard links, devices or entries nested under symlinks.
    Absolute symlink targets may be preserved only as inert recorded metadata,
    never traversed during validation. Restore to a fresh private directory with
-   `/usr/bin/tar --mac-metadata --acls --xattrs -xpf ... -C <fresh-directory>`;
+   `/usr/bin/tar --same-owner --mac-metadata --acls --xattrs -xpf ... -C <fresh-directory>`;
    do not disable tar's path protections. Compare source/archive/restore manifests
    before opening any restored databases, including symlink targets and metadata.
+   Preflight all archived UIDs/GIDs against the operator's ownership/membership;
+   ordinary non-root extraction does not preserve group ownership even with `-p`.
+   Do not silently ignore a group mismatch or automatically escalate privileges.
 6. Keep the archive untouched. On the disposable restored copy only, check each
    required database's integrity and expected schema/role coverage; demonstrate
    that committed WAL content survives. Never use `immutable=1` to ignore WAL.
