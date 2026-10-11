@@ -57,8 +57,10 @@ state workers and unrelated npx/PinchTab consumers are not swept into this chang
   secret-provider fixture owned by root. A current-user-owned inert replacement
   restored the real ownership contract; scoped consent and supported
   `update repair --no-restart` then passed. Fresh config validation and the
-  post-upgrade plugin probes pass with no findings; both approved plugins load
-  at2026.10.1. This fixture correction is not a production permission weakening.
+  post-upgrade plugin probes pass with no findings. Codex loads at2026.10.1;
+  iMessage2026.10.1 remains intentionally disabled by the isolated channel config.
+  Its live loaded-path/FDA check is still required. This fixture correction is
+  not a production permission weakening.
 - The migration preserves 588 session nodes, 12,609 transcript events and
   conversation role coverage. Both migrated DB integrity checks pass. The actual
   tracked cron read-back parser verifies the original 16 definitions against the

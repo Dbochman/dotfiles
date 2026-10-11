@@ -5,10 +5,10 @@ Branch: `codex/openclaw-node24-phase-a`, based on `f0367a0`.
 Worktree: `/Users/dbochman/repos/dotfiles-openclaw-node24-phase-a`.
 
 The [reviewed upgrade plan](node24-openclaw-stable-upgrade.md) controls approvals,
-backup coverage, isolation and rollback. This document records the smaller first
-implementation slice. It is not permission to run the cutover. The live checkout
-remains on `main`; its existing uncommitted plan amendments are preserved. Do not
-merge this branch or enable auto-merge before the approved maintenance window:
+backup coverage, isolation and rollback. This document records the first
+implementation slice and its later accepted activation. The live checkout stays
+on `main`; the earlier plan amendments were preserved in committed history.
+Future target-only changes must not reach `main` before their approved window:
 the live app is symlinked into that checkout and `main` feeds automatic deployment.
 
 ## Accepted Phase A
