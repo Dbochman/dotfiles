@@ -23,6 +23,9 @@ class OpenTableReservationsTests(unittest.TestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.root = Path(self.tempdir.name)
         self.helper = self.root / "pinchtab-headless-instance"
+        self.refresher = self.root / "opentable-refresh-token.sh"
+        self.refresh_log = self.root / "refresh-calls"
+        self._write_executable(self.refresher, "#!/bin/sh\nexit 1\n")
         self.log = self.root / "calls.jsonl"
         self.poll_state = self.root / "poll-count"
         self.expected_account = self.root / "opentable_expected_account.sha256"
@@ -77,12 +80,13 @@ if mode == "transport-failure":
     print("RAW_ERROR_CANARY", file=sys.stderr)
     raise SystemExit(9)
 
-if mode == "loading-then-success":
+if mode in {"loading-then-success", "identity-then-success"}:
     state = pathlib.Path(os.environ["FAKE_POLL_STATE"])
     count = int(state.read_text() if state.exists() else "0")
     state.write_text(str(count + 1))
     if count == 0:
-        print(json.dumps({"result": json.dumps({"status": "loading"})}))
+        status = "loading" if mode == "loading-then-success" else "identity_unavailable"
+        print(json.dumps({"result": json.dumps({"status": status})}))
         raise SystemExit(0)
 
 def complete_payload(reservations, evidence="dashboard_state", **overrides):
@@ -192,7 +196,7 @@ payloads = {
         [], browser_identity_hash="0" * 64
     ),
 }
-payload = payloads["success"] if mode == "loading-then-success" else payloads[mode]
+payload = payloads["success"] if mode in {"loading-then-success", "identity-then-success"} else payloads[mode]
 print(json.dumps({"result": json.dumps(payload)}))
 ''',
         )
@@ -209,6 +213,8 @@ print(json.dumps({"result": json.dumps(payload)}))
             "FAKE_MODE": mode,
             "FAKE_POLL_STATE": str(self.poll_state),
             "OPENTABLE_PINCHTAB_INSTANCE_HELPER": str(self.helper),
+            "OPENTABLE_SESSION_REFRESH_HELPER": str(self.refresher),
+            "FAKE_REFRESH_LOG": str(self.refresh_log),
             "OPENTABLE_ACCOUNT_BINDING_FILE": str(self.account_binding),
             "OPENTABLE_EXPECTED_ACCOUNT_FILE": str(self.expected_account),
             "OPENTABLE_RESERVATIONS_POLL_SECONDS": "0",
@@ -317,6 +323,13 @@ print(json.dumps({"result": json.dumps(payload)}))
         self.assertNotIn("pinchtab eval", source)
         self.assertNotIn("pinchtab close", source)
 
+    def test_identity_hydration_is_polled_without_refreshing(self) -> None:
+        self.install_fake_refresher()
+        result = self.run_reader("identity-then-success")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.refresh_log.exists())
+        self.assertEqual(len([call for call in self.calls() if call["action"] == "eval"]), 2)
+
     def test_auth_context_and_shape_failures_never_become_empty_success(self) -> None:
         expected = {
             "authentication": "authentication_required",
@@ -331,7 +344,7 @@ print(json.dumps({"result": json.dumps(payload)}))
             "old-ready-without-proof": "reservations_incomplete",
             "empty-without-explicit-marker": "reservations_incomplete",
             "identity-unavailable": "account_identity_unverified",
-            "identity-mismatch": "account_identity_unverified",
+            "identity-mismatch": "session_refresh_failed",
             "identity-hash-mismatch": "account_identity_unverified",
         }
         for mode, error_code in expected.items():
@@ -355,6 +368,60 @@ print(json.dumps({"result": json.dumps(payload)}))
         self.assertEqual(self.output(result)["error_code"], "browser_read_failed")
         self.assertNotIn("RAW_SECRET_CANARY", result.stdout + result.stderr)
         self.assertNotIn("RAW_ERROR_CANARY", result.stdout + result.stderr)
+
+    def install_fake_refresher(self, *, update_binding: bool = True, change_account: bool = False) -> None:
+        self._write_executable(
+            self.refresher,
+            f'''#!/usr/bin/env python3
+import hashlib,json,os,pathlib,sys
+assert sys.argv[1:] == ["--persisted-session-only"]
+with pathlib.Path(os.environ["FAKE_REFRESH_LOG"]).open("a") as handle:
+    handle.write("refresh\\n")
+path = pathlib.Path(os.environ["OPENTABLE_ACCOUNT_BINDING_FILE"])
+binding = json.loads(path.read_text())
+if {update_binding!r}:
+    binding["token_sha256"] = hashlib.sha256(b"different-account-token-67890").hexdigest()
+if {change_account!r}:
+    binding["account_sha256"] = "0" * 64
+    pathlib.Path(os.environ["OPENTABLE_EXPECTED_ACCOUNT_FILE"]).write_text("0" * 64)
+path.write_text(json.dumps(binding))
+print("RAW_REFRESH_SECRET_CANARY")
+''',
+        )
+
+    def test_rotated_token_requires_one_refresh_and_fresh_exact_binding(self) -> None:
+        self.install_fake_refresher()
+        result = self.run_reader("identity-mismatch")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.output(result)["success"])
+        self.assertEqual(self.refresh_log.read_text(), "refresh\n")
+        self.assertEqual(len([call for call in self.calls() if call["action"] == "eval"]), 2)
+        self.assertNotIn("RAW_REFRESH_SECRET_CANARY", result.stdout + result.stderr)
+
+    def test_refresh_success_without_matching_binding_still_fails_closed(self) -> None:
+        self.install_fake_refresher(update_binding=False)
+        result = self.run_reader("identity-mismatch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.output(result)["error_code"], "account_identity_unverified")
+        self.assertEqual(self.refresh_log.read_text(), "refresh\n")
+
+    def test_account_mismatch_never_attempts_refresh(self) -> None:
+        self.install_fake_refresher()
+        result = self.run_reader("identity-hash-mismatch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.refresh_log.exists())
+
+    def test_refresh_cannot_change_expected_account(self) -> None:
+        self.install_fake_refresher(change_account=True)
+        result = self.run_reader("identity-mismatch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.output(result)["error_code"], "account_identity_unverified")
+
+    def test_missing_refresher_fails_closed(self) -> None:
+        self.refresher.unlink()
+        result = self.run_reader("identity-mismatch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.output(result)["error_code"], "session_refresh_failed")
 
     def test_helper_must_be_managed_regular_executable(self) -> None:
         target = self.root / "target-helper"

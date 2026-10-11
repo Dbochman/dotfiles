@@ -21,7 +21,7 @@ commands do not enforce the one-use approval binding below.
 opentable-reservations --json
 ```
 
-This read-only command uses the dedicated authenticated `opentable` PinchTab
+This reservation-read command uses the dedicated authenticated `opentable` PinchTab
 profile. It succeeds only when that browser token matches the protected
 expected-account binding and the page proves the entire upcoming list is
 loaded. Pagination, virtualization, opaque cards, count mismatches, login
@@ -29,7 +29,16 @@ overlays, and parsing uncertainty fail closed. A successful response contains
 only `provider`, `checked_at`, and normalized platform, restaurant, date, time,
 party-size, status, and optional-location facts; reservation IDs remain
 internal for duplicate detection. It never invokes `op`, exposes page text or
-URLs, or prints browser, identity, or authentication data.
+URLs, or prints browser, identity, or authentication data. If a browser restart
+rotates the token, it permits one persisted-session-only credential refresh
+after verifying the same protected account identity. The existing refresher
+validates the new token against the API and renews the protected binding; the
+reader then rechecks the page and exact binding. It never requests email OTP
+or accepts missing bindings, changed accounts, or incomplete lists. Local
+credential caches may change; reservations do not. PinchTab agent sessions
+cannot manage profiles: do not bypass a 403 by changing browser security or
+silently substituting operator credentials. Attended operator-helper recovery
+requires explicit authorization.
 
 ## Approval-gated Pinchtab booking
 

@@ -867,12 +867,14 @@ refresh_with_email_login() {
 }
 
 main() {
-  local scheduled=0 decision
+  local scheduled=0 persisted_only=0 decision
   if [[ "${1:-}" == "--scheduled" && $# -eq 1 ]]; then
     scheduled=1
     ATTEMPT_KIND="scheduled"
+  elif [[ "${1:-}" == "--persisted-session-only" && $# -eq 1 ]]; then
+    persisted_only=1
   elif [[ $# -ne 0 ]]; then
-    log "Usage: opentable-refresh-token.sh [--scheduled]"
+    log "Usage: opentable-refresh-token.sh [--scheduled | --persisted-session-only]"
     return 2
   fi
   prepare_runtime_dir || return 1
@@ -913,6 +915,10 @@ main() {
   if refresh_from_persisted_session; then
     finish_status success persisted_session completed || return 1
     return 0
+  fi
+  if [[ "$persisted_only" == "1" ]]; then
+    finish_status failed "$CURRENT_STAGE" "$FAILURE_CODE" || return 1
+    return 1
   fi
   if refresh_with_email_login; then
     finish_status success email_verification completed || return 1

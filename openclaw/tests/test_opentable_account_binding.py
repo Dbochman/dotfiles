@@ -163,6 +163,25 @@ printf 'ok\n'
         self.assertEqual(result.stdout, "ok\n")
         self.assertNotIn(token, result.stderr)
 
+    def test_persisted_only_mode_never_falls_back_to_email(self) -> None:
+        result = self.run_shell(
+            r'''
+acquire_pinchtab_instance() { :; }
+refresh_from_persisted_session() {
+  set_failure_context persisted_session persisted_session_unusable
+  return 1
+}
+refresh_with_email_login() { echo UNEXPECTED_EMAIL_LOGIN; exit 91; }
+if main --persisted-session-only; then exit 92; fi
+printf 'ok\n'
+'''
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ok\n")
+        status = json.loads((self.home / ".openclaw/run/opentable-refresh-status.json").read_text())
+        self.assertEqual(status["outcome"], "failed")
+        self.assertEqual(status["reason_code"], "persisted_session_unusable")
+
     def test_email_code_auto_submit_does_not_require_disappeared_button(self) -> None:
         token = "auto-submitted-browser-token-123456"
         result = self.run_shell(
