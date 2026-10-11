@@ -159,6 +159,24 @@ snapshot, not a continuously updated health report.
   The protected targeted recovery receipt is in the directory referenced by
   `/tmp/eversource-recovery-current`; the October 4 weekly failure receipt is
   intentionally unchanged. The next scheduled weekly run remains unverified.
+  **October 11 follow-up:** The 04:05 weekly run failed only for Eversource;
+  the other six sources imported successfully. The saved portal token had
+  expired, browser recovery was signed out, and automatic reauthentication
+  failed. Reauthentication also ignored the exported provider-only state and
+  used an older persistent profile. The financial repository now restores the
+  validated state before credentials, uses an empty isolated context when its
+  cookies have all expired, and rejects unsafe state. This is the live source
+  path used by the scheduler; the fix is committed in the financial repository
+  as `0296c03`. Regression and
+  safety coverage passes 235 tests. Dylan completed another isolated attended
+  login. Independent direct validation, Eversource-only contract-v2 scrape,
+  guarded current-run import, database history checks, and live dashboard
+  readback passed for 28 readings through October. No other source reran, no
+  service restarted, and no MFA/security settings changed. The durable receipt
+  is `~/.openclaw/financial-dashboard/eversource-recovery-status.json`; the
+  original weekly failure remains historical evidence. The restoration bug
+  is fixed, but it is not proven to be the sole cause of the login failure;
+  future unattended renewal remains unverified and may still need MFA.
 
 ## Household automation and follow-up verification
 
@@ -187,6 +205,32 @@ snapshot, not a continuously updated health report.
   a potentially message-producing run merely to make the dashboard green.
   **Progress:** Still awaiting the organic post-repair run. The 09:19 failure
   remains historical evidence; no heartbeat was forced or history cleared.
+
+## Restaurant access recovery — October 10 evening
+
+- Resy recovered through the existing cache-only reservation reader; its
+  normal credential refresh succeeded without 1Password. Authenticated profile
+  and upcoming-reservation reads passed, with no upcoming reservations.
+- OpenTable's initial agent-session 403 was PinchTab's expected admin-route
+  restriction, not proof of a production outage. Operator-assisted recovery
+  was separately approved. The cached API token was rejected, and a persisted
+  session refresh passed, but browser restarts exposed an exact-token binding
+  mismatch. Later sign-in was required; Dylan completed it in the dedicated
+  Mini browser through Screen Sharing from dylans-mac.
+- The changes permit one same-account persisted-session-only refresh before
+  a fresh exact-binding/list check. They never request email verification,
+  accept a different account, or treat an incomplete list as empty. Missing
+  identity receives bounded hydration polling. The patched headless reader
+  passed a live post-login read with a complete empty upcoming list.
+- Validation: 78 focused reader, refresh, browser-helper, booking, and Resy
+  tests passed; repository validation, syntax, and diff checks passed. No
+  reservations changed. Dylan approved a narrow three-file deployment exception:
+  refresh helper first, paired reader, then skill documentation. All three
+  deployed files are hash-verified. Two source cold-start reads and a deployed
+  cold-start read passed; all four restaurant skills remain gateway-eligible.
+  No gateway restart or cron change occurred. The fix is committed in dotfiles
+  as `d0755e7`; unrelated local edits are preserved. The protected temporary
+  rollback receipt is located by `/tmp/opentable-deploy-current`.
 
 ## Completion and safety
 

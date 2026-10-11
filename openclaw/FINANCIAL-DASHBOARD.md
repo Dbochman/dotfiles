@@ -231,6 +231,14 @@ uses the current exact sign-in control, and treats the exact MyAccount root as
 authenticated only after submission. Playwright-aware waits keep the callback
 moving; the public landing page is never accepted as an existing session.
 
+Eversource reauthentication restores the same validated provider-only storage
+state used by normal scraping, instead of silently using an older persistent
+profile. Expired-only cookies produce an empty isolated context; unsafe state
+blocks browser launch and credential submission. Successful attended scraping
+does not prove unattended renewal: Eversource may still require SMS MFA. Keep
+MFA enabled and record a provider-only recovery separately from the original
+weekly failure receipt until the next scheduled run is verified.
+
 The helper rejects a missing, symlinked, non-regular, non-owner, non-`0600`, malformed, partial, or extra-profile credential cache. Before that check, it reads the verified bounded canonical owner-only mode-`0600` repository `.env` through one file descriptor and retains only the exact `TESLA_EMAIL` assignment; missing, duplicate, malformed, oversized, symlinked, hardlinked, or insecure input fails preflight without starting source work. Every child receives only a closed runtime allowlist, and Python children additionally receive `PYTHON_DOTENV_DISABLED=1`. The Tesla identity reaches only the Tesla scrape process, and only one guarded re-authentication child receives `SCRAPER_USER` and `SCRAPER_PW`; provider entrypoints remove that pair before launching Playwright, Chromium, raw CDP, or another subprocess. The tracked helper is `~/dotfiles/openclaw/bin/weekly-financial-scrape.py` and is deployed mode `0755` to `~/.openclaw/bin/weekly-financial-scrape.py`; an exact-argv command cron pins `/opt/homebrew/bin/python3` and only that runtime copy. `--preflight` validates the Tesla identity source, exact version and seven-source capability manifest, provider-mode configuration, and credential-profile presence without starting PinchTab, a browser, normal scraper, or import.
 
 To roll out or rotate these pairs, add all ten corresponding
