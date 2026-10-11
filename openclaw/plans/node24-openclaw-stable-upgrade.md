@@ -30,7 +30,7 @@ Node 24 is the current **LTS**, not the newest Node. Current is 26.11.1, which i
 - No general dependency upgrades and no `brew upgrade`.
 - No upgrades to the Codex or Claude CLIs. No model, routing, or fallback changes.
 - No system redesign.
-- No change to `oauth-refresh.sh` or to unrelated LaunchAgents, which stay on Node 22.
+- No change to `oauth-refresh.sh` or unrelated consumers that do not execute the OpenClaw package; those stay on Node22. Helpers that invoke the shared OpenClaw CLI are part of the compatibility cohort, even when their parent service is not the gateway. Change only their required invocation/runtime contract, not household policy or schedules.
 - No machine-wide PATH rewrite or deletion of Node 18. This upgrade must nevertheless fix deterministic Node selection for the OpenClaw commands and deployment paths it owns (§3); general shell cleanup is a separate ownership audit.
 
 ---
@@ -70,16 +70,17 @@ Node 24 is the current **LTS**, not the newest Node. Current is 26.11.1, which i
 | File | Phase | Change |
 |---|---|---|
 | `openclaw/OpenClawGateway.app/Contents/MacOS/OpenClawGateway` | A | Change the absolute exec and PATH from `node@22` to `/opt/homebrew/opt/node@24/bin/node`. Verify the keg path at execution. |
-| `openclaw/bin/dotfiles-pull.command` (near line 1379, `GATEWAY_RUNTIME_PATH`) | A | Point at the `node@24` keg path. Keep it consistent with the wrapper. |
+| `openclaw/bin/dotfiles-pull.command` (near line 1379, `GATEWAY_RUNTIME_PATH`) and its deployed `~/.openclaw/bin/dotfiles-pull.command` copy | A | Point at the `node@24` keg path. Keep it consistent with the wrapper. Narrowly deploy and hash-verify the actual launchd-invoked copy during A; do not rely on a future self-update. Preserve the active-gateway skill gate when reusing its verification/receipt logic for narrow activation, including Node24-first child PATH; do not call the whole deployer. |
 | `openclaw/launchagents/ai.openclaw.gateway.plist` (recovery source) | A | Change the PATH entry from `node@22` to `node@24`. This stays a recovery reference and is **not** a restore target for the live plist. |
-| `openclaw/tests/test_deployment_contracts.py` (near line 588) | A | Update the gateway-specific PATH expectation and add tests for agreement among app wrapper, recovery plist and deployment PATH; retain Node 22 assertions for unrelated wrappers. Add fail-closed coverage for missing Node 24 and mismatched activation receipts. |
+| `openclaw/tests/test_deployment_contracts.py` (near line 588) | A | Update the gateway-specific PATH expectation and add tests for agreement among app wrapper, recovery plist and deployment PATH; retain Node 22 assertions for unrelated wrappers. Add fail-closed coverage for missing Node 24, mismatched activation receipts and unavailable/invalid/ineligible live skill results preventing receipt publication. |
+| `openclaw/sync-cron-jobs.sh`, `openclaw/bin/home-event-camera.py`, `openclaw/bin/home-event-delivery.py`, their focused tests, and any additional confirmed CLI invokers from §3 | Before B | Remove their explicit Node22 selection for shared OpenClaw CLI calls; use the reviewed Node24 invocation contract and verify actual child runtime selection with synthetic/no-delivery fixtures. Coordinate deployment and any necessary targeted reload before replacing the global package; do not alter policies, schedules or send messages. |
 | `openclaw/plugins/reachy-continuity/**` | B | Change only if import or compatibility checks fail. Use a separate commit for any port. |
 | `openclaw/LAUNCHAGENTS.md`, `openclaw/plans/dependency-maintenance.md` | Docs | Document planned vs actually activated runtime, rollback, and unchanged OAuth authority; do not claim rollout until verified. |
 | `Brewfile`, `zshrc`, other Node consumers | Audit only initially | Decide whether Node 24 needs a reproducible dependency declaration. Do not run `brew bundle` or change shared shell/service runtime selection as a shortcut. |
 
 **Explicitly unchanged:**
 - `openclaw/bin/oauth-refresh.sh` and `openclaw/tests/test_oauth_refresh.py`. Node 22 stays intentional; it is a separate enterprise-Claude credential authority.
-- Other LaunchAgents.
+- LaunchAgents outside the confirmed OpenClaw invocation cohort; do not change a service merely because its name contains OpenClaw.
 - Model and routing config.
 
 **Test matrix — required future checks, not recorded passes.** Use the selected absolute Python interpreter and Node-first PATH with synthetic fixtures. Record baseline results before implementation edits. Classify pre-existing failures separately; a failure in a changed contract still blocks that phase even if it predates this work.
@@ -92,6 +93,7 @@ Node 24 is the current **LTS**, not the newest Node. Current is 26.11.1, which i
 | `test_cron_sqlite_compat.py` | Required | Required under Node 24 | Required |
 | `test_morning_triage_handoff.py`, `test_cron_prompt_contracts.py`, `test_memory_bootstrap_contract.py` | Required | Required | Required |
 | `test-sync-cron-jobs.sh`, `test-imsg-bridge-ensure.sh` | Required (synthetic only) | Required | Required |
+| `test_home_event_camera.py`, `test_home_event_delivery.py`, plus focused tests for each confirmed CLI invoker | Record current child runtime selection | Required if its invocation changes in A | Required under the candidate package/runtime; mocked capture/inference/sending only |
 | `./sync.sh validate`; `bash -n` on changed shell; `plutil -lint` on changed plists; `py_compile`; `git diff --check` | Required | Required | Required |
 | `reachy-continuity`: `npm run verify` in isolated worktree | Existing locked SDK/runtime baseline | Existing locked SDK under Node 24 | Deliberately update candidate SDK dependency/lockfile in isolation, then verify against 2026.10.1 and test host registration |
 
@@ -109,18 +111,20 @@ All of these are requirements. Where a command form is shown, it is illustrative
    - Commit SHA of `main`.
    - Hash of the live generated plist.
    - `ProgramArguments`.
+   - The live plist's `KeepAlive` and `RunAtLoad` values, plus the job's loaded/enabled state. Both plist values were verified true during final review; recheck before the window.
    - The `launchctl print` state for the gateway and for `dotfiles-pull`.
    - The last-activated wrapper receipt.
    - Store this in the backup manifest (§4), not in the repo.
 2. **Inventory runtimes.**
    - Resolve `node`, `npm`, and `openclaw` on the relevant PATHs and inspect configured launch arguments plus the known `/opt/homebrew` and `/usr/local/bin` locations. Do not inventory the entire home directory or disk.
    - Identify consumers of those specific executables using narrowly selected process fields or executable mappings; do not expose secret-bearing argv/environment or use broad `pkill`.
+   - Build a bounded invocation inventory from tracked scripts/LaunchAgents/cron definitions and their named deployed counterparts: parent owner, shared OpenClaw entry point, effective child Node/PATH, deployment/reload needs and synthetic validation. Known Node22-pinned CLI invokers include `sync-cron-jobs.sh`, `home-event-camera.py` and `home-event-delivery.py`; a gateway PATH change does not override their own child environments. Trace indirect callers and distinguish an actual CLI invocation from a mere OpenClaw-named path. Every confirmed invoker must select a supported runtime before Phase B, or Phase B is blocked. No all-home/disk search and no real notification/camera/cron action for this audit.
    - Do **not** remove Node 18 or 22 until an ownership audit shows nothing depends on them.
 3. **npm identity.**
    - Determine which `node` the intended npm will run under.
    - Use the `node@24` keg's own npm or invoke npm with an explicit Node 24.
    - Confirm the global prefix/root and resolved OpenClaw entry point. Preserve `/opt/homebrew/lib/node_modules/openclaw` as the active install owner; use an explicit reviewed `--prefix /opt/homebrew` if required rather than changing global npm configuration. A keg's npm may default to a different prefix.
-   - Validate the exact OpenClaw commands used from interactive, noninteractive/SSH, deployment and gateway contexts. Each must deterministically select Node 24, not depend on `.zshrc` or a `/usr/bin/env node` that finds Node 18. Keep generic shell/global Node changes out of scope.
+   - Validate controlled deployment and gateway commands under Node24. For operator commands, including interactive and SSH terminals, use `/opt/homebrew/opt/node@24/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js <arguments>` with a command-scoped Node24-first PATH for child tools, after verifying that entry point against the active package. Until Node24 is staged, read-only baseline commands use the explicit Node22 equivalent; candidate checks wait for staging. Bare `openclaw` in an arbitrary shell is not a supported upgraded invocation until the separate shell audit. Do not rely on `.zshrc`, change global PATH, or add a shadowing shim as a shortcut.
 4. **Target pinning.**
    - Run `npm view openclaw@2026.10.1 version engines dist.integrity` and record the output.
    - Preserve the actual installed 2026.8.35 tree, dependencies and plugin builds in addition to registry integrity: reinstalling an old version may resolve different transitive dependencies or require unavailable network access.
@@ -133,6 +137,7 @@ All of these are requirements. Where a command form is shown, it is illustrative
    - Start with the installed CLI's supported preview: `openclaw update --channel stable --tag 2026.10.1 --dry-run --json`, only under the explicit runtime and reviewed environment. This command has not been run during planning.
    - Compare its admission result with [updating guidance](https://docs.openclaw.ai/install/updating). Dry-run is not proof of candidate rehearsal.
    - Prefer the supported, exact-target updater path when rehearsal verifies ownership, plugin convergence and migration fencing. Document the manual-install fallback only if that first hop refuses or cannot preserve this service's custom wrapper. Do not bypass safety refusals with guessed flags.
+   - Record the updater's own resolved package root, npm executable and effective prefix in preview/rehearsal, including child processes. Prove it targets `/opt/homebrew/lib/node_modules/openclaw` before production mutation; an operator's separate `npm --prefix` is not evidence about the updater's child. If ownership cannot be proved, stop for a supported correction or separately reviewed fallback, not post-hoc duplicate-install cleanup.
    - Preserve the exact target while explicitly moving `update.channel` from extended-stable to stable through the supported path. A direct npm install alone does not select the new update channel.
 7. **Migration obligations.**
    - Inspect state for the retired markers described in the updating docs: the pre-July layout and the same-file memory index.
@@ -203,6 +208,8 @@ This example verifies exact round-trip content, not just length. Numeric support
 **Consistency and restore drill.** Preliminary backup/rehearsal can be prepared ahead of the window, but the final rollback checkpoint must be consistent across all affected stores:
 1. Hold the named automatic deploy/update jobs and drain active gateway work; record prior loaded/enabled state. Verify no deployment process remains active.
 2. Through their actual owners, stop the gateway and any specifically identified writers to its migration scope. Do not stop household services just because their label contains OpenClaw. Failure to establish quiescence is a stop condition.
+   - For this launchd-managed gateway, use the supported stop from an independent operator terminal, verified to boot out `gui/<uid>/ai.openclaw.gateway`; the installed 2026.8.35 stop implementation already does this and checks port release. Verify the job is unloaded, the recorded gateway process has exited and port18789 is unbound. A signal or plain `launchctl stop` alone is insufficient with `KeepAlive` enabled. Keep it unloaded through checkpoint, mutation and startup preparation; recheck after updater/Doctor steps. Use this same hold for both phases and rollback.
+   - Before any production start, including Phase A and rollback, establish a release-supported no-replay/no-unapproved-send posture and review pending work. If this requires changing production jobs or delivery controls, include those exact temporary holds in the phase approval or defer. Preserve queued work and prior control states; restore them only after queue review and required canaries.
 3. Create and verify the supported snapshot/archive plus supplemental artifacts. For raw offline copies, capture complete SQLite/WAL sets before opening any copy; never mix file copies from different times or delete live WAL/SHM files. Supported snapshot archives intentionally omit sidecars and contain self-consistent database images instead.
 4. Validate checksums, database integrity and role/schema checks on staged copies; restore the archive to a fresh private directory and prove the old runtime/package can open that recovery copy without network/channel/scheduler activity. Preserve an untouched archive.
 5. Record coverage, size and exact restore procedure. Do not open a partial backup or declare readiness from `cp`/archive exit status alone.
@@ -234,10 +241,10 @@ This example verifies exact round-trip content, not just length. Numeric support
 4. Run 2026.8.35 under Node24 in the rehearsal (§4); complete offline checks, including native modules. Live authentication/FDA canaries are deferred until activation, not attempted from the credential-isolated rehearsal.
 5. Activation (in the window):
    - drain work, stop the gateway through its owner and take the verified pre-A checkpoint before changing the live wrapper;
-   - advance only the reviewed source and narrowly deploy the necessary runtime-contract files, accounting for the app symlink;
+   - require a clean live checkout and fast-forward it to the already-published reviewed commit; do not copy worktree files into that checkout. If local work or divergence prevents this, stop for reconciliation without stashing, discarding or overwriting it. Then narrowly deploy the necessary runtime-contract files, accounting for the app symlink;
    - preserve service environment → FDA app wrapper → absolute Node24 → exact OpenClaw entry-point ownership; don't assume `dist/index.js` remains valid after later package changes;
-   - reload via bootout/bootstrap only if the loaded plist changes; otherwise use the documented restart/start path. Confirm replacement PID, executable mapping and health with bounded waits.
-6. Publish the owner-only activation receipt atomically only after the replacement gateway passes health/runtime checks. The implementation must first define/test this narrow procedure; never pre-write a receipt merely to silence the deployer's restart check, or invoke the whole deployer solely to update it.
+   - after the §4 startup controls are established, bootstrap the verified live generated plist to restore the unloaded job, preserving its recorded enabled state and custom launch chain. Bootout is required for the maintenance hold even when the plist is unchanged; do not restrict it to plist edits. Confirm replacement PID, executable mapping and health with bounded waits.
+6. Publish the owner-only activation receipt atomically only after the replacement gateway passes health/runtime checks and the live `skills.status` gate in §7 canary8. Reuse the deployer's bounded verification and atomic mode-0600 receipt logic through a narrow tested path, without another restart or the deployer's unrelated actions. Required skills must be eligible and model-visible in the active gateway; an unavailable/invalid RPC or missing skill keeps the receipt unchanged and blocks acceptance. Never substitute a local-process skill report or pre-write a receipt merely to silence the restart check. The normal deployer checks live skills even when the wrapper hash matches; that later check does not replace activation-time verification.
 7. Run the Phase A canaries, then release `dotfiles-pull` back to its recorded state.
 
 **Phase A gate:** all required A checks pass, old OpenClaw remains at 2026.8.35, unrelated consumers still work on22, and the actual controlled CLI/service contexts select24. Agree a bounded soak and stop deadline before starting. Phase B requires a separate go/no-go; no automatic continuation just because A passed.
@@ -251,20 +258,22 @@ This example verifies exact round-trip content, not just length. Numeric support
 - Rehearsal of 2026.10.1 against copied state has passed, including the doctor/migration semantic diff.
 - `reachy-continuity` passes `npm run verify` against 2026.10.1 in isolation.
 - Any import port is committed separately and reviewed.
+- Every confirmed shared-CLI invoker from §3 is deployed and synthetically verified with supported Node24 selection, including helpers with their own child PATH. Any necessary targeted reload is named in the Phase B approval; background consumers that do not execute OpenClaw remain unchanged. Verify this cohort before replacing the global package, not only through later gateway canaries.
 
 **Steps**
 1. In the window: hold `dotfiles-pull`, stop the gateway, take the consistent backup (§4), and verify the manifest.
-2. Use the rehearsed exact-target updater from an independent operator terminal outside the gateway process tree. Request stable-channel intent and preserve the custom launch chain. If a manual fallback was separately justified in §3, install only `openclaw@2026.10.1` with the verified npm and explicit active prefix, then run supported Doctor/plugin convergence in the documented order. In either case:
+2. Use the rehearsed exact-target updater from an independent operator terminal outside the gateway process tree, with explicit Node24 invocation (§3), `--channel stable --tag 2026.10.1 --no-restart`. Request stable-channel intent and preserve the custom launch chain. Keep the gateway unloaded through step6; `--no-restart` suppresses the updater's normal restart, not other lifecycle or migration effects. If a manual fallback was separately justified in §3, install only `openclaw@2026.10.1` with the verified npm and explicit active prefix, then run supported Doctor/plugin convergence in the documented order without service startup. In either case:
    - do not invoke the retired weekly-upgrade helper, `npm update -g`, or an unversioned install;
    - validate npm lifecycle-script authorization (`--allow-scripts=openclaw` for the supported npm) without blanket script grants; record any required native-dependency build;
    - verify tarball integrity before install, then the installed version, entry point and expected file manifest;
    - ensure CLI and service resolve the same one active package owner; retain recovery copies without confusing them with active duplicate installs;
    - leave unrelated global packages, Codex/Claude versions and global npm settings unchanged.
+   - verify after installation and each subsequent mutating helper that the gateway remains unloaded with no gateway process or listener. An unexpected start is a stop condition: re-establish containment and assess state/queue effects before any continuation; do not treat a later successful stop as proof that nothing ran.
 3. Check the live generated plist against the recorded `ProgramArguments` and env wrapper. If the install regenerated it, follow the `openclaw-upgrade-plist-overwrite` skill. **Do not** copy the recovery plist over the live one.
 4. Run the target's Doctor/migrations only under the verified writer-quiescence and backup boundary. Record migration ownership/completion; require no unresolved mandatory migration or deferred publication before acceptance. Diff effective config/permissions semantically: necessary schema/key rewrites and the approved stable-channel change are allowed only when reviewed, while effective defaults, routing, fallback order, allowlists and recipients must remain unchanged. An unexpected policy change is a stop.
 5. Converge Codex and iMessage to the target's compatible release cohort and verify actually loaded paths/versions, not merely package presence. Do not assume the old 2026.8.35 pins remain loadable: current update guidance identifies pre-2026.9.7 Codex runtime builds as incompatible. Compare capability manifests before activation; obtain exact new consent if needed, never blanket-accept scopes. Verify any reviewed custom plugin port through host registration. Stop for attended auth/FDA recovery rather than substituting another account.
 6. Before startup, resolve scheduler catch-up behavior and pending deliveries with the release's supported controls. Establish the reviewed no-replay/no-unapproved-send startup posture; a different profile or a hopeful disabled-job flag is not enough. If this cannot be enforced without altering production jobs, obtain that narrow approval or defer.
-7. Start once, verify stable-channel intent, and run B canaries. Restore any temporarily held channel/scheduler controls to their exact baseline only after queue review; do not delete pending work or describe skipped work as completed. Release the deploy hold after the verified receipt is current.
+7. Start once, verify stable-channel intent, and run B canaries. Before releasing the deploy hold, feed the active gateway's `skills.status` response through the actual `openclaw_gateway_missing_skills_from_status` function from the reviewed `openclaw/lib/deployment.sh` used by the deployed pull job. Verify cron-sync's actual read-back parser/comparison against protected read-only candidate snapshots and synthetic fixtures as well; isolate that reader in a tested harness, never invoke the whole synchronizer or assume it has a safe dry-run flag. An incompatible response shape or comparison failure blocks release. Restore any temporarily held channel/scheduler controls to their exact baseline only after queue review; do not delete pending work or describe skipped work as completed. Release the deploy hold only after these checks and the verified receipt are current.
 
 ---
 
@@ -279,7 +288,7 @@ This example verifies exact round-trip content, not just length. Numeric support
 | 5 | Read-only iMessage DB access through the app wrapper (FDA retained); imsg bridge left untouched and still supervised | Required | Required |
 | 6 | Prior no-delivery read fixture: native Codex routing on Astra, no fallback triggered | Required | Required |
 | 7 | Compare production job IDs, payloads, schedules, ownership, enablement, tools and delivery routes; no production rerun/catch-up. After scoped approval, run one disabled future-scheduled synthetic fixture job manually, with read-only tools, no delivery and a fixed deadline; verify terminal receipt and remove only that test job. Listing alone is not scheduler validation. | Required | Required |
-| 8 | `reachy-continuity`, Codex and iMessage load with expected capabilities and actual paths/versions; use synthetic hook/method cases | Required | Required |
+| 8 | `reachy-continuity`, Codex and iMessage load with expected capabilities and actual paths/versions; use synthetic hook/method cases. The active gateway's authenticated `skills.status` RPC must also report `opentable`, `restaurant-book`, `restaurant-snipe` and `resy` eligible and model-visible, matching the deployer's required-skill set. Use bounded retries and fail closed on unavailable/invalid results; no local fallback. This skill gate must pass before any activation receipt, including rollback. | Required | Required |
 | 9 | Memory credential resolution/retrieval succeeds without private content in output; cron/usage dashboard read-only queries understand the new stores; report pre-existing health faults separately | Required | Required |
 | 10 | Exactly one real messaging round-trip, **only after explicit approval**, never retried automatically | optional | optional |
 
@@ -296,9 +305,9 @@ Never take these actions as part of canaries:
 
 **Phase A rollback**
 1. Keep/restore the deployment hold and stop the gateway before replacing any referenced executable or addon tree.
-2. Restore the exact pre-A wrapper, service contract and any staged addon changes. Restore the Node22 runtime/dependencies only if the manifest proves their identity; do not assume Homebrew preserved them.
-3. Start the old package on22, verify health and functionality, then publish the activation receipt. Revert only the runtime implementation commit(s) in Git without force-pushing or undoing unrelated work.
-4. Restore previously loaded jobs only after verification; otherwise keep the failed service contained and report the blocker.
+2. Restore the exact pre-A wrapper, service contract, deployed `~/.openclaw/bin/dotfiles-pull.command` copy and any staged addon changes. Hash-verify the deployed pull copy against the restored reviewed source before release. Restore the Node22 runtime/dependencies only if the manifest proves their identity; do not assume Homebrew preserved them.
+3. Start the old package on22 under the §4 startup controls, verify health and functionality including the live skill gate, then publish the activation receipt. Revert only the runtime implementation commit(s) in Git without force-pushing or undoing unrelated work.
+4. Restore previously loaded jobs only after verification. Keep `dotfiles-pull` held until the rollback source is published to its tracked `origin/main`, the live checkout is fast-forwarded to that reviewed rollback commit with `git status --porcelain` empty, and a read-only wrapper/receipt comparison predicts no reactivation. Emergency artifact restoration under the hold is not source convergence: reconcile any restored tracked files before fast-forward without losing unrelated work; no file-copy substitute, automatic stash/drop or destructive reset is allowed. Include any required rollback publication in the phase approval; if publishing or reconciliation is blocked, retain the deployment hold and report it rather than relying on an uncommitted restored wrapper. This source-convergence gate applies to Phase B rollback too, including target-only plugin/CLI-contract commits. Do not invoke the deployer to test the gate.
 
 The `node@24` keg can stay installed. Removing it is a later, separate decision.
 
@@ -339,17 +348,17 @@ A package downgrade alone cannot reverse a newer DB schema. **2026.8.35 must nev
 ## 10. Go/no-go acceptance and future approvals
 
 **Accepted when all of the following hold:**
-- The gateway runs `2026.10.1` on `node@24`, with a single global install whose pinned integrity matches.
+- The gateway runs `2026.10.1` on `node@24`, with one active global install. Downloaded tarballs pass their pinned registry integrity checks; the installed code/dependency tree matches the recorded manifest from the reviewed staged build, including authorized lifecycle/native-build outputs. Do not compare a tarball digest directly to a directory hash or create a post-install manifest and call that independent verification.
 - All required §7 canaries pass; any optional messaging test is explicitly recorded as approved/passed or not run.
 - No new relevant test failures remain; any baseline failures are documented with their impact on confidence, and none invalidate a changed contract.
 - Protected config fields are unchanged.
 - FDA and the imsg bridge are intact.
 - Finance and briefing jobs fire at their next scheduled times, observed and not forced.
-- `dotfiles-pull` is released with a matching receipt.
+- `dotfiles-pull` is released with a matching receipt and reviewed source convergence: the live checkout matches the approved published `origin/main` commit for the accepted or rolled-back cohort, `git status --porcelain` is empty, and the deployed pull copy matches the reviewed source. No pending source change would reactivate the rejected wrapper/plugin cohort; verify without running the full deployer. Preserve and reconcile unrelated local work rather than cleaning it to satisfy this gate.
 - The backup set and manifest are retained.
 
 **Execution approval boundaries**
-- Approve one scoped A package: reviewed side-by-side Node transaction, narrow deployment hold, backup/restore drill, runtime activation/restart, bounded synthetic checks and the predefined rollback. Agree stop/soak deadlines and operator availability first.
+- Approve one scoped A package: reviewed side-by-side Node transaction, narrow deployment hold, backup/restore drill, runtime activation/restart, bounded synthetic checks including the one no-delivery scheduler fixture, and the predefined rollback including its source publication. Agree stop/soak deadlines and operator availability first.
 - Approve B only after A acceptance: exact package/plugin cohort, verified migrations, narrowly scoped writer/channel/scheduler holds, synthetic checks, state-aware rollback and any explicitly named one-message test. No production-job reruns.
 - Pause for deviations: changed release target, required bridge, broader shared-library changes, new plugin/security consent, auth/FDA sign-in, or recovery beyond the approved recipe. A preapproved rollback need not wait for a fresh prompt during an outage.
 - Removal of Node18/22, old backups, unrelated upgrades or changes to household policy remains outside this plan.
@@ -379,6 +388,24 @@ Corrections to the Opus draft:
   delivery/dedupe reconciliation; preserved rotating auth authorities.
 - Replaced checkmark-looking test results with future requirements and grouped
   approvals by phase, including a preapproved bounded recovery recipe.
+
+Amendments following the first Fable 5.1 review and source cross-check:
+- Made the launchd maintenance hold explicit: supported stop/bootout, verified
+  quiescence and controlled bootstrap, including unchanged plists.
+- Required the Phase B updater's `--no-restart` and checks for unintended starts;
+  applied startup queue/replay containment to Phase A and rollback as well.
+- Specified absolute operator CLI invocation with a command-scoped child PATH,
+  rather than promising that arbitrary shells select Node24.
+- Preserved the active-gateway skill gate before receipt publication and required
+  fail-closed regression coverage, without running the whole deployer.
+- Separated tarball integrity from installed-tree/build-manifest acceptance.
+
+The second Fable review cleared those five topics. Subsequent source checks
+confirmed shared-CLI consumers with their own Node22 PATH, so their bounded
+inventory, invocation tests and coordinated deployment are now a Phase B gate.
+Rollback release now also requires convergence with the deployer's published
+source; updater-internal npm ownership must be proved before mutation. These
+are plan requirements, not claims that the runtime changes have been tested.
 
 **Still unresolved before execution:** exact Homebrew dependency/bottle transaction,
 candidate first-hop admission and migration obligations, custom-plugin behavior
