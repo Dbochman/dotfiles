@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import closing
 import os
 from pathlib import Path
 import sqlite3
@@ -7,6 +8,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bin"))
+from gateway_recovery_archive import sqlite_files_from_manifest
 
 
 @unittest.skipUnless(sys.platform == "darwin", "macOS recovery archive contract")
@@ -59,9 +63,20 @@ class GatewayRecoveryArchiveTests(unittest.TestCase):
                 self.assertEqual((copy / "payload").read_bytes(), payload.read_bytes())
                 self.assertEqual(os.readlink(copy / "absolute-link"), "/usr/bin/open")
                 self.assertEqual(os.readlink(copy / "relative-link"), "payload")
-                with sqlite3.connect(copy / "state.sqlite") as recovered_database:
+                manifest = {
+                    path.name: {"type": "file", "size": path.stat().st_size}
+                    for path in copy.iterdir() if path.is_file() and not path.is_symlink()
+                }
+                candidates = sqlite_files_from_manifest(copy, manifest)
+                self.assertEqual([relative for relative, path in candidates], ["state.sqlite"])
+                self.assertIn("state.sqlite-shm", manifest)
+                with closing(sqlite3.connect(copy / "state.sqlite")) as recovered_database:
                     self.assertEqual(recovered_database.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
                     self.assertEqual(recovered_database.execute("SELECT value FROM evidence").fetchall(), [("committed WAL",)])
+                self.assertFalse((copy / "state.sqlite-shm").exists())
+                for relative, path in candidates:
+                    with closing(sqlite3.connect(path)) as recovered_database:
+                        self.assertEqual(recovered_database.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
                 self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), archive_hash)
             finally:
                 database.close()
