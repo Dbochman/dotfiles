@@ -690,6 +690,18 @@ resident on another source wins the union, but without any positive the unknown
 fails closed rather than becoming absence.
 
 Crosstown uses exact site-private MACs with fresh inbound ARP reachability.
+Crosstown schema v1 binds one `{"kind":"mac","value":"..."}` per resident;
+schema v2 uses `{"kind":"mac","values":["...","..."]}` for one to eight
+owner-verified per-network addresses per resident. Either fresh address makes
+that resident present, without counting the resident twice. Addresses are
+case-normalized and must be globally unique; v2 also rejects zero and multicast
+addresses. Additional SSIDs expand the binding rather than replacing previously
+verified addresses. Neither config nor scanner changes grant deployment approval.
+The legacy comparison canary parses both schemas but requires exact address-set
+equality with its single-address environment baseline. A singleton v2 migration
+can pass; a multi-address expansion reports `binding_parity_failed`, not a schema
+error or a false parity pass. Expanded coverage needs separately approved,
+attended per-network evidence; the legacy canary cannot certify it.
 Names, hostnames, generic iPhone matches, and IP addresses are not
 strict-scanner fallbacks; missing, insecure, or malformed bindings fail the
 scan closed. Sanitized observations and downstream state expose only resident

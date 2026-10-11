@@ -143,7 +143,14 @@ Each shadow sample runs entirely on the Crosstown MacBook Pro:
   network identifiers. Require that snapshot to be no more than three minutes
   old so each sample stays aligned with a real scheduled tick.
 - Parse the legacy mode-`0600` environment file as bounded data, never source
-  it, and compare its two exact bindings with the strict JSON in memory.
+  it, and compare each resident's exact address set with the strict JSON in
+  memory. Both Crosstown JSON schemas are supported. Schema-v2 singleton sets
+  can match the legacy baseline; multiple addresses are valid config but fail
+  `binding_parity_failed`, even when they include the legacy address. Do not
+  substitute subset matching or update the legacy file to manufacture parity.
+  An expanded binding needs separately approved, attended per-network checks
+  and an exact-hash deployment approval; this legacy comparison alone cannot
+  authorize that expansion.
 - Fingerprint the protected canonical scan artifact before and after. Discard
   the sample if a scheduled production tick races or any file metadata changes.
 - Keep candidate bytes and captured child output only in bounded,

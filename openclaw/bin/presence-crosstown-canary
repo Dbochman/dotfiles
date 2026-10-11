@@ -576,24 +576,37 @@ def parse_env(raw):
         result[match.group(1)] = next(value for value in match.groups()[1:] if value is not None).lower()
     if set(result) != set(KEYS):
         raise ValueError()
-    return {person: result[key] for key, person in KEYS.items()}
+    return {person: {result[key]} for key, person in KEYS.items()}
 
 def parse_json_config(raw):
     value = json.loads(raw.decode("utf-8"), object_pairs_hook=no_duplicates)
     if (not exact(value, ("schema_version", "site", "people"))
-            or value["schema_version"] != 1 or value["site"] != "crosstown"
+            or isinstance(value["schema_version"], bool)
+            or value["schema_version"] not in (1, 2) or value["site"] != "crosstown"
             or not exact(value["people"], PEOPLE)):
         raise ValueError()
     result = {}
+    identities = set()
     for person in PEOPLE:
         binding = value["people"][person]
-        if (not exact(binding, ("kind", "value")) or binding["kind"] != "mac"
-                or not isinstance(binding["value"], str)
-                or re.fullmatch(MAC, binding["value"]) is None):
+        field = "value" if value["schema_version"] == 1 else "values"
+        if not exact(binding, ("kind", field)) or binding["kind"] != "mac":
             raise ValueError()
-        result[person] = binding["value"].lower()
-    if len(set(result.values())) != len(PEOPLE):
-        raise ValueError()
+        candidates = [binding[field]] if field == "value" else binding[field]
+        if not isinstance(candidates, list) or not 1 <= len(candidates) <= 8:
+            raise ValueError()
+        result[person] = set()
+        for candidate in candidates:
+            if not isinstance(candidate, str) or re.fullmatch(MAC, candidate) is None:
+                raise ValueError()
+            address = candidate.lower()
+            if address in identities:
+                raise ValueError()
+            if value["schema_version"] == 2 and (
+                    address == "00:00:00:00:00:00" or int(address[:2], 16) & 1):
+                raise ValueError()
+            identities.add(address)
+            result[person].add(address)
     return result
 
 def parse_legacy(raw):

@@ -233,12 +233,29 @@ try {
 
   if (expectedSite === "crosstown") {
     if (!hasExactKeys(config, ["schema_version", "site", "people"]) ||
-        config.schema_version !== 1 || config.site !== expectedSite) fail();
-    process.stdout.write(JSON.stringify(parseBindings(
-      config.people,
-      "mac",
-      /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/
-    )));
+        ![1, 2].includes(config.schema_version) || config.site !== expectedSite) fail();
+    const macPattern = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
+    if (config.schema_version === 1) {
+      process.stdout.write(JSON.stringify(parseBindings(config.people, "mac", macPattern)));
+    } else {
+      if (!hasExactKeys(config.people, expectedPeople)) fail();
+      const devices = [];
+      const identities = new Set();
+      for (const person of expectedPeople) {
+        const binding = config.people[person];
+        if (!hasExactKeys(binding, ["kind", "values"]) || binding.kind !== "mac" ||
+            !Array.isArray(binding.values) || binding.values.length < 1 || binding.values.length > 8) fail();
+        for (const candidate of binding.values) {
+          if (typeof candidate !== "string" || !macPattern.test(candidate)) fail();
+          const value = candidate.toLowerCase();
+          if (identities.has(value) || value === "00:00:00:00:00:00" ||
+              (Number.parseInt(value.slice(0, 2), 16) & 1) !== 0) fail();
+          identities.add(value);
+          devices.push({person, kind: "mac", value});
+        }
+      }
+      process.stdout.write(JSON.stringify(devices));
+    }
   } else if (config.schema_version === 1) {
     // Migration compatibility for the original controller-only Cabin binding
     // file. Schema v2 is required as soon as any mesh source is monitored.
@@ -601,7 +618,9 @@ for (const dev of devices) {
   if (dev.kind !== 'mac') fail('unexpected identity kind');
   const expectedMac = normalizeMac(dev.value);
   if (!expectedMac) fail('malformed configured link-layer address');
-  results[dev.person] = { present: activeRows.some(row => row.mac === expectedMac) };
+  results[dev.person] = {
+    present: results[dev.person]?.present === true || activeRows.some(row => row.mac === expectedMac)
+  };
 }
 
 console.log(JSON.stringify({

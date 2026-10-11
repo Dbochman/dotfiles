@@ -458,6 +458,84 @@ class RemoteProjectionTests(unittest.TestCase):
         self.assertFalse(result.stderr)
         self.assertFalse(marker.exists())
 
+    def write_v2_config(self, dylan=None, julia=None) -> None:
+        self.strict_json.write_text(json.dumps({
+            "schema_version": 2,
+            "site": "crosstown",
+            "people": {
+                "Dylan": {"kind": "mac", "values": [PRIVATE_MAC_1] if dylan is None else dylan},
+                "Julia": {"kind": "mac", "values": [PRIVATE_MAC_2] if julia is None else julia},
+            },
+        }), encoding="utf-8")
+
+    def test_v2_singletons_preserve_exact_legacy_parity(self) -> None:
+        self.write_v2_config()
+        result = self.run_projection()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["binding_parity"])
+        self.assertEqual(json.loads(result.stdout)["decision"], [True, False])
+        self.assertNotIn(PRIVATE_MAC_1, result.stdout)
+        self.assertNotIn(PRIVATE_MAC_2, result.stdout)
+
+    def test_v2_expansion_is_valid_but_not_legacy_binding_parity(self) -> None:
+        alternate = "02:ab:00:00:00:33"
+        for addresses in ([PRIVATE_MAC_1, alternate], [alternate, PRIVATE_MAC_1], [alternate]):
+            with self.subTest(addresses=addresses):
+                self.write_v2_config(dylan=addresses)
+                result = self.run_projection()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(json.loads(result.stdout)["binding_parity"])
+                for address in (*addresses, PRIVATE_MAC_2):
+                    self.assertNotIn(address, result.stdout + result.stderr)
+
+    def test_v2_case_normalization_preserves_parity(self) -> None:
+        address = "02:ab:cd:00:00:11"
+        self.legacy_env.write_text(
+            f"CROSSTOWN_DYLAN_MAC={address}\nCROSSTOWN_JULIA_MAC={PRIVATE_MAC_2}\n"
+        )
+        self.write_v2_config(dylan=[address.upper()])
+        result = self.run_projection()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["binding_parity"])
+
+    def test_v2_invalid_bindings_are_rejected_silently(self) -> None:
+        invalid = (
+            [], [PRIVATE_MAC_1, PRIVATE_MAC_1], [PRIVATE_MAC_2], [None],
+            ["not-a-mac"], ["00:00:00:00:00:00"], ["ff:ff:ff:ff:ff:ff"],
+            ["03:00:00:00:00:11"], ["02:ab:00:00:00:11", "02:AB:00:00:00:11"],
+            [f"02:00:00:00:01:{index:02x}" for index in range(9)], PRIVATE_MAC_1,
+        )
+        for addresses in invalid:
+            with self.subTest(addresses=addresses):
+                self.write_v2_config(dylan=addresses)
+                result = self.run_projection()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(result.stdout + result.stderr)
+
+    def test_v2_eight_addresses_are_valid_but_not_legacy_parity(self) -> None:
+        self.write_v2_config(dylan=[f"02:00:00:00:01:{index:02x}" for index in range(8)])
+        result = self.run_projection()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(json.loads(result.stdout)["binding_parity"])
+
+    def test_invalid_schema_or_binding_shape_is_rejected_silently(self) -> None:
+        for version in (True, 3, "2"):
+            with self.subTest(version=version):
+                self.write_v2_config()
+                config = json.loads(self.strict_json.read_text())
+                config["schema_version"] = version
+                self.strict_json.write_text(json.dumps(config))
+                result = self.run_projection()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(result.stdout + result.stderr)
+        self.write_v2_config()
+        config = json.loads(self.strict_json.read_text())
+        config["people"]["Dylan"]["value"] = PRIVATE_MAC_1
+        self.strict_json.write_text(json.dumps(config))
+        result = self.run_projection()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
