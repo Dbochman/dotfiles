@@ -251,7 +251,7 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         self.assertIn("24.21.0", arguments)
         self.assertEqual(arguments[arguments.index("--expected-node-sha256") + 1],
                          NODE_SHA256)
-        self.assertIn("2026.8.35", arguments)
+        self.assertIn("2026.10.1", arguments)
 
     def test_unhealthy_gateway_never_invokes_verifier(self):
         result = self.run_verifier_dispatch(health=False)

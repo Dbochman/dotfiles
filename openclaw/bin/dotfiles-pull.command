@@ -1591,7 +1591,7 @@ GATEWAY_ACTIVATION_ARGS=(
   --expected-wrapper-sha256 "$GATEWAY_WRAPPER_HASH"
   --expected-node-version 24.21.0
   --expected-node-sha256 "$GATEWAY_NODE_SHA256"
-  --expected-package-version 2026.8.35
+  --expected-package-version 2026.10.1
 )
 if [ "$GATEWAY_RESTART_REQUIRED" -ne 0 ]; then
   GATEWAY_ACTIVATION_ARGS+=(--record --previous-pid "${GATEWAY_PID_BEFORE:-0}")
