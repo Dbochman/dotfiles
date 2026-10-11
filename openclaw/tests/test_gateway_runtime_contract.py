@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 import plistlib
 import re
-import stat
 import subprocess
 import tempfile
 import unittest
@@ -89,11 +88,16 @@ class GatewayRuntimeContractTests(unittest.TestCase):
 
     def test_missing_node24_stops_wrapper_before_cache_and_logs(self):
         wrapper = self.wrapper_fixture()
+        log = self.home / ".openclaw/logs/gateway.log"
+        log.parent.mkdir()
+        contents = b"unchanged log\n" * 500000
+        log.write_bytes(contents)
         result = self.run_shell('/bin/bash "$1"', wrapper)
         self.assertEqual(result.returncode, 78, result.stderr)
         self.assertIn("Node24", result.stderr)
         self.assertFalse((self.home / "cache-read").exists())
-        self.assertFalse((self.home / ".openclaw/logs").exists())
+        self.assertEqual(log.read_bytes(), contents)
+        self.assertFalse(log.with_suffix(".log.tmp").exists())
 
     def test_nonexecutable_node24_is_not_used(self):
         wrapper = self.wrapper_fixture()
@@ -119,34 +123,34 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         )
         self.assertNotIn("synthetic-token", result.stdout + result.stderr)
 
-    def test_missing_node24_stops_deployer_before_git_or_writes(self):
+    def test_missing_node24_logs_and_stops_before_deployment(self):
         source = PULL.read_text()
-        guard = source[:source.index('LOG="$HOME/.openclaw/logs/dotfiles-pull.log"')]
+        guard = source[:source.index('REPO="$HOME/dotfiles"')]
         self.assertIn(NODE_DIRECTORY, guard)
         guard = guard.replace(NODE_DIRECTORY, str(self.node_directory))
         result = self.run_shell(guard + '\nprintf unsafe-continuation\n')
         self.assertEqual(result.returncode, 78, result.stderr)
         self.assertNotIn("unsafe-continuation", result.stdout)
         self.assertFalse(self.receipt.exists())
+        self.assertIn("Required Node24 runtime", (self.home / ".openclaw/logs/dotfiles-pull.log").read_text())
 
     def test_deployer_skill_rpc_uses_absolute_node24(self):
-        source = PULL.read_text()
-        block = source[
-            source.index("read_active_gateway_skills() {"):
-            source.index("GATEWAY_SKILLS_READY=0")
-        ]
-        self.assertIn(f"{NODE_DIRECTORY}/node {ENTRY}", block)
-        block = block.replace(NODE_DIRECTORY, str(self.node_directory))
-        block = block.replace(ENTRY, str(self.home / "index.js"))
         node = self.node_directory / "node"
-        node.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+        node.write_text(
+            '#!/bin/bash\n'
+            '[ "$OPENCLAW_GATEWAY_URL" = "ws://127.0.0.1:18789" ] || exit 41\n'
+            '[ "$OPENCLAW_GATEWAY_TOKEN" = "synthetic-secret" ] || exit 42\n'
+            '[ -z "${OTHER_CACHED_SECRET:-}" ] || exit 43\n'
+            'printf "%s\\n" "$@"\n'
+        )
         node.chmod(0o700)
         cache = self.home / "synthetic-cache"
-        cache.write_text('OPENCLAW_GATEWAY_TOKEN="synthetic-secret"\n')
+        cache.write_text('OPENCLAW_GATEWAY_TOKEN="synthetic-secret"\nOTHER_CACHED_SECRET="not-exported"\n')
         cache.chmod(0o600)
         result = self.run_shell(
-            'GATEWAY_SECRETS_CACHE="$1"\n' + block + '\nread_active_gateway_skills',
-            cache,
+            'source "$1"\nopenclaw_gateway_read_active_skills "$2" "$3" "$4"',
+            LIBRARY, cache, node, self.home / "index.js",
+            environment={**self.environment, "OPENCLAW_GATEWAY_URL": "ws://wrong.invalid"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
@@ -191,73 +195,57 @@ class GatewayRuntimeContractTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, expected)
 
-    def run_skill_gate(self, payload, *, health=True, rpc=True, changed=True):
+    def run_verifier_dispatch(self, *, status=0, health=True, changed=True):
         source = PULL.read_text()
         block = source[
-            source.index("GATEWAY_SKILLS_READY=0"):
+            source.index("GATEWAY_ACTIVATION_ARGS=("):
             source.index("# Finish deployment and self-update")
         ]
-        self.assertIn("/bin/sleep 1", block)
-        block = block.replace("/bin/sleep 1", ":")
-        response = self.home / "response.json"
-        response.write_text(json.dumps(payload))
-        self.receipt.write_text("previous-receipt\n")
-        self.receipt.chmod(0o600)
+        helper = self.home / "repo/openclaw/bin/gateway_activation.py"
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        helper.write_text(
+            "import json, pathlib, sys\n"
+            + "pathlib.Path.home().joinpath('invoked.json').write_text(json.dumps(sys.argv[1:]))\n"
+            + f"sys.exit({status})\n"
+        )
         script = '\n'.join((
-            'source "$1"',
-            'GATEWAY_WRAPPER_HASH_STATE="$2"',
+            'REPO="$HOME/repo"',
             'GATEWAY_WRAPPER_HASH="' + "a" * 64 + '"',
+            'GATEWAY_PID_BEFORE=123',
             'LOG="$HOME/test.log"',
-            'GATEWAY_REQUIRED_SKILLS=(opentable restaurant-book restaurant-snipe resy)',
             f'GATEWAY_READY={int(health)}',
             f'GATEWAY_RESTART_REQUIRED={int(changed)}',
             'DEPLOYMENT_SMOKE_FAILED=0',
-            'RESPONSE="$3"',
-            'read_active_gateway_skills() { /bin/cat "$RESPONSE"; return ' + str(0 if rpc else 1) + '; }',
             block,
             'printf "%s" "$DEPLOYMENT_SMOKE_FAILED"',
         ))
-        return self.run_shell(script, LIBRARY, self.receipt, response)
+        return self.run_shell(script)
 
-    def ready_skills(self):
-        return {
-            "skills": [
-                {"name": name, "eligible": True, "modelVisible": True}
-                for name in SKILLS
-            ]
-        }
-
-    def test_healthy_live_skill_gate_publishes_private_receipt(self):
-        result = self.run_skill_gate(self.ready_skills())
+    def test_changed_wrapper_delegates_recording_to_verifier(self):
+        result = self.run_verifier_dispatch()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "0")
-        self.assertEqual(self.receipt.read_text(), "a" * 64 + "\n")
-        self.assertEqual(stat.S_IMODE(self.receipt.stat().st_mode), 0o600)
-        self.assertEqual(list(self.state.glob(".gateway-wrapper.sha256.*")), [])
+        arguments = json.loads((self.home / "invoked.json").read_text())
+        self.assertIn("--record", arguments)
+        self.assertEqual(arguments[-2:], ["--previous-pid", "123"])
+        self.assertIn("24.21.0", arguments)
+        self.assertIn("2026.8.35", arguments)
 
-    def test_failed_health_rpc_or_skills_never_replace_receipt(self):
-        invisible = {
-            "skills": [
-                {"name": name, "eligible": True, "modelVisible": False}
-                for name in SKILLS
-            ]
-        }
-        cases = (
-            (self.ready_skills(), False, True), (self.ready_skills(), True, False),
-            ({}, True, True), ({"skills": []}, True, True), (invisible, True, True),
-        )
-        for payload, health, rpc in cases:
-            with self.subTest(payload=payload, health=health, rpc=rpc):
-                result = self.run_skill_gate(payload, health=health, rpc=rpc)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, "1")
-                self.assertEqual(self.receipt.read_text(), "previous-receipt\n")
-
-    def test_unchanged_wrapper_still_checks_live_skills(self):
-        result = self.run_skill_gate({}, changed=False)
-        self.assertEqual(result.returncode, 0, result.stderr)
+    def test_unhealthy_gateway_never_invokes_verifier(self):
+        result = self.run_verifier_dispatch(health=False)
         self.assertEqual(result.stdout, "1")
-        self.assertEqual(self.receipt.read_text(), "previous-receipt\n")
+        self.assertFalse((self.home / "invoked.json").exists())
+
+    def test_verifier_failure_blocks_deployment_acceptance(self):
+        result = self.run_verifier_dispatch(status=1)
+        self.assertEqual(result.stdout, "1")
+        self.assertFalse(self.receipt.exists())
+
+    def test_unchanged_wrapper_still_verifies_without_recording(self):
+        result = self.run_verifier_dispatch(changed=False)
+        self.assertEqual(result.stdout, "0")
+        arguments = json.loads((self.home / "invoked.json").read_text())
+        self.assertNotIn("--record", arguments)
 
 
 if __name__ == "__main__":

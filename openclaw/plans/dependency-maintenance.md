@@ -246,8 +246,8 @@ the live `2026.8.35`/Node `22.23.1` baseline remains unchanged. Use that plan's
 two-stage approval, backup/rehearsal, activation and rollback gates for the next
 upgrade, not the historical command outline below. The separate
 [Phase A draft implementation and cutover preparation](node24-phase-a-cutover.md)
-records candidate runtime edits, synthetic-test results, known baseline fixture
-failures and remaining gates. It includes a bounded CLI-consumer inventory for
+records candidate runtime edits, repaired deployment fixtures, the narrow
+activation verifier and remaining live-canary gates. It includes a bounded CLI-consumer inventory for
 the later package upgrade. A draft PR is not approval to merge, install Node,
 restart the gateway or advance to Phase B.
 

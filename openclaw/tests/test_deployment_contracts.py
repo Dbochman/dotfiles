@@ -96,6 +96,8 @@ REQUIRED_HELPERS = {
     "bin/presence-crosstown-canary": "presence canary helper\n",
     "bin/reolink-camera": "reolink camera wrapper\n",
     "bin/reolink-camera-enroll": "reolink enrollment helper\n",
+    "bin/desktop-compute": "desktop compute wrapper\n",
+    "bin/remote-splat": "remote splat wrapper\n",
     "bin/opentable-book": "opentable wrapper\n",
     "bin/opentable-reservations": "opentable reservations wrapper\n",
     "bin/restaurant-book": "restaurant coordinator wrapper\n",
@@ -119,6 +121,8 @@ STANDALONE_SKILL_WRAPPERS = {
     "pinchtab-headless-instance",
     "plant-tracker",
     "reolink-camera",
+    "desktop-compute",
+    "remote-splat",
     "restaurant-book",
     "restaurant-snipe",
     "resy-read",
@@ -483,10 +487,17 @@ class DeploymentContractTests(unittest.TestCase):
             path = openclaw_source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
+
         for relative, (_, contents) in REQUIRED_PROTECTED_FILES.items():
             path = openclaw_source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
+
+    def test_guarded_helper_fixture_covers_installer_sources(self) -> None:
+        source = INSTALLER.read_text().split("install_openclaw_guarded_helpers() {", 1)[1]
+        specs = source.split("local helper_specs=(", 1)[1].split("\n  )", 1)[0]
+        required = set(re.findall(r'^\s*"([^|]+)\|', specs, re.MULTILINE))
+        self.assertEqual(required, set(REQUIRED_HELPERS) | set(REQUIRED_PROTECTED_FILES))
 
     def test_fresh_install_copies_required_guarded_helpers(self) -> None:
         source = self.root / "openclaw-source"
@@ -617,12 +628,9 @@ class DeploymentContractTests(unittest.TestCase):
             command_check.stdout.splitlines(),
             [str(destination / "bin" / name) for name in GATEWAY_RESTAURANT_COMMANDS],
         )
-        self.assertIn(
-            "GATEWAY_REQUIRED_SKILLS=(opentable restaurant-book restaurant-snipe resy)",
-            pull_text,
-        )
-        self.assertIn("gateway call skills.status --json", pull_text)
-        self.assertIn("openclaw_gateway_missing_skills_from_status", pull_text)
+        self.assertIn("gateway_activation.py", pull_text)
+        self.assertIn("gateway call skills.status --json", DEPLOYMENT_LIB.read_text())
+        self.assertIn('export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"', DEPLOYMENT_LIB.read_text())
         self.assertIn("active restaurant skill catalog passed", pull_text)
         self.assertNotIn("openclaw skills check --json", pull_text)
         self.assertIn('if [ "$DEPLOYMENT_SMOKE_FAILED" -ne 0 ]', pull_text)
@@ -630,10 +638,7 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertIn("GATEWAY_ACTIVATED_HASH", pull_text)
         self.assertIn("GATEWAY_RESTART_REQUIRED=1", pull_text)
         self.assertIn("GATEWAY_PID_AFTER", pull_text)
-        self.assertIn(
-            'mv -f "$GATEWAY_HASH_STATE_TMP" "$GATEWAY_WRAPPER_HASH_STATE"',
-            pull_text,
-        )
+        self.assertIn('--record --previous-pid "${GATEWAY_PID_BEFORE:-0}"', pull_text)
         self.assertIn(
             '/bin/launchctl kickstart -k "$GATEWAY_DOMAIN/$GATEWAY_LABEL"', pull_text
         )
@@ -648,7 +653,7 @@ class DeploymentContractTests(unittest.TestCase):
 
         live_check_index = pull_text.index("# Query the active Gateway explicitly")
         activated_state_index = pull_text.index(
-            'mv -f "$GATEWAY_HASH_STATE_TMP" "$GATEWAY_WRAPPER_HASH_STATE"'
+            '"$REPO/openclaw/bin/gateway_activation.py"'
         )
         self.assertGreater(activated_state_index, live_check_index)
 

@@ -4,12 +4,16 @@
 # Skills are real copies (not symlinks) because OpenClaw v2026.3.7+ rejects
 # symlinks whose realPath resolves outside the configured rootDir.
 
+LOG="$HOME/.openclaw/logs/dotfiles-pull.log"
 if [[ ! -x /opt/homebrew/opt/node@24/bin/node ]]; then
-  echo "FATAL: Required Node24 runtime is unavailable; refusing deployment" >&2
+  FAILURE="FATAL: Required Node24 runtime is unavailable; refusing deployment"
+  echo "$FAILURE" >&2
+  if ! (umask 077; mkdir -p "${LOG%/*}" && printf '%s %s\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAILURE" >> "$LOG"); then
+    echo "FATAL: Could not persist deployment failure log" >&2
+  fi
   exit 78
 fi
 
-LOG="$HOME/.openclaw/logs/dotfiles-pull.log"
 REPO="$HOME/dotfiles"
 
 set -euo pipefail
@@ -1581,68 +1585,20 @@ fi
 # fall back to a local-process report, which does not prove that the service
 # inherited the deployed PATH. The RPC is evaluated by the active Gateway and
 # therefore exercises its own PATH-based `requires.bins` checks.
-GATEWAY_REQUIRED_SKILLS=(opentable restaurant-book restaurant-snipe resy)
-GATEWAY_SECRETS_CACHE="$HOME/.openclaw/.secrets-cache"
-
-read_active_gateway_skills() {
-  local cache_owner_mode
-
-  [ -f "$GATEWAY_SECRETS_CACHE" ] && [ ! -L "$GATEWAY_SECRETS_CACHE" ] || return 1
-  cache_owner_mode=$(/usr/bin/stat -f '%u %Lp' "$GATEWAY_SECRETS_CACHE" 2>/dev/null) || return 1
-  [ "$cache_owner_mode" = "$(/usr/bin/id -u) 600" ] || return 1
-
-  (
-    set +a
-    # The generated cache contains plain shell assignments. Export only the
-    # Gateway token to the read-only RPC child, not the other cached values.
-    # shellcheck disable=SC1090
-    if ! . "$GATEWAY_SECRETS_CACHE" >/dev/null 2>&1; then
-      exit 1
-    fi
-    [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || exit 1
-    export OPENCLAW_GATEWAY_TOKEN
-    /opt/homebrew/opt/node@24/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway call skills.status --json --timeout 5000
-  )
-}
-
-GATEWAY_SKILLS_READY=0
-GATEWAY_SKILLS_FAILURE="gateway RPC unavailable"
-if [ "$GATEWAY_READY" -eq 1 ]; then
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if GATEWAY_SKILLS_JSON=$(read_active_gateway_skills 2>/dev/null); then
-      if GATEWAY_MISSING_SKILLS=$(printf '%s' "$GATEWAY_SKILLS_JSON" \
-        | openclaw_gateway_missing_skills_from_status "${GATEWAY_REQUIRED_SKILLS[@]}"); then
-        if [ -z "$GATEWAY_MISSING_SKILLS" ]; then
-          GATEWAY_SKILLS_READY=1
-          break
-        fi
-        GATEWAY_SKILLS_FAILURE="not eligible/model-visible: $GATEWAY_MISSING_SKILLS"
-      else
-        GATEWAY_SKILLS_FAILURE="invalid skills.status response"
-      fi
-    fi
-    /bin/sleep 1
-  done
+GATEWAY_ACTIVATION_ARGS=(
+  --expected-wrapper-sha256 "$GATEWAY_WRAPPER_HASH"
+  --expected-node-version 24.21.0
+  --expected-package-version 2026.8.35
+)
+if [ "$GATEWAY_RESTART_REQUIRED" -ne 0 ]; then
+  GATEWAY_ACTIVATION_ARGS+=(--record --previous-pid "${GATEWAY_PID_BEFORE:-0}")
 fi
-
-if [ "$GATEWAY_SKILLS_READY" -eq 1 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) gateway: active restaurant skill catalog passed" >> "$LOG"
-  if [ "$GATEWAY_RESTART_REQUIRED" -ne 0 ]; then
-    GATEWAY_HASH_STATE_DIR=$(dirname "$GATEWAY_WRAPPER_HASH_STATE")
-    mkdir -p "$GATEWAY_HASH_STATE_DIR"
-    GATEWAY_HASH_STATE_TMP=$(mktemp "$GATEWAY_HASH_STATE_DIR/.gateway-wrapper.sha256.XXXXXX")
-    if printf '%s\n' "$GATEWAY_WRAPPER_HASH" > "$GATEWAY_HASH_STATE_TMP" \
-      && chmod 600 "$GATEWAY_HASH_STATE_TMP" \
-      && mv -f "$GATEWAY_HASH_STATE_TMP" "$GATEWAY_WRAPPER_HASH_STATE"; then
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) gateway: activated changed app wrapper after live skill verification" >> "$LOG"
-    else
-      rm -f "$GATEWAY_HASH_STATE_TMP"
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: gateway live skills passed but activated-wrapper state could not be recorded" >> "$LOG"
-      DEPLOYMENT_SMOKE_FAILED=1
-    fi
-  fi
+GATEWAY_ACTIVATION_RESULT='{"ok":false,"error":"replacement_not_healthy"}'
+if [ "$GATEWAY_READY" -eq 1 ] \
+    && GATEWAY_ACTIVATION_RESULT=$(/usr/bin/python3 "$REPO/openclaw/bin/gateway_activation.py" "${GATEWAY_ACTIVATION_ARGS[@]}" 2>&1); then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) gateway: active restaurant skill catalog passed; $GATEWAY_ACTIVATION_RESULT" >> "$LOG"
 else
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: active gateway restaurant skill catalog failed: $GATEWAY_SKILLS_FAILURE" >> "$LOG"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) WARN: gateway activation verification failed; $GATEWAY_ACTIVATION_RESULT" >> "$LOG"
   DEPLOYMENT_SMOKE_FAILED=1
 fi
 

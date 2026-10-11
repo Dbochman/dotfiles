@@ -75,6 +75,22 @@ print(",".join(name for name in required if not status.get(name, False)))
 ' "$@"
 }
 
+openclaw_gateway_read_active_skills() {
+  local cache="$1" node="$2" entry="$3" metadata
+  [ -f "$cache" ] && [ ! -L "$cache" ] || return 1
+  metadata=$(/usr/bin/stat -f '%u %Lp %l' "$cache" 2>/dev/null) || return 1
+  [ "$metadata" = "$(/usr/bin/id -u) 600 1" ] || return 1
+  (
+    set +a
+    . "$cache" >/dev/null 2>&1 || exit 1
+    [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || exit 1
+    export OPENCLAW_GATEWAY_TOKEN
+    export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"
+    export PATH="$HOME/.openclaw/bin:${node%/*}:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    exec "$node" "$entry" gateway call skills.status --json --timeout 5000
+  )
+}
+
 # Presence scanner deployment is a high-impact boundary. A candidate must
 # advertise the strict binding contract, hash cleanly, and match a site-local
 # owner-only approval containing the exact canaried source hash.
