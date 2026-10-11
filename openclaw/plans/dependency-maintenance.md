@@ -238,6 +238,14 @@ ssh dylans-mac-mini 'PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH;
 
 ### OpenClaw on Mini (Tier 3)
 
+**2026-10-11 upgrade planning:** the reviewed
+[Node 24 LTS + current stable OpenClaw implementation plan](node24-openclaw-stable-upgrade.md)
+targets Node `24.21.0` and OpenClaw `2026.10.1`, subject to execution-time
+version, dependency, migration and plugin checks. This is documentation only;
+the live `2026.8.35`/Node `22.23.1` baseline remains unchanged. Use that plan's
+two-stage approval, backup/rehearsal, activation and rollback gates for the next
+upgrade, not the historical command outline below.
+
 The 2026-10-09 maintenance target is pinned `2026.8.35` extended-stable,
 compatible with the installed Node `22.23.1`. Do not substitute the `latest`
 tag: September stable requires a newer Node runtime. Keep the unfinished
@@ -385,7 +393,13 @@ Protected rollout evidence is under
 `~/Backups/openclaw-native-rollout-VsXZnvc9/`. The routing fix is live; tracked
 configuration and regression coverage preserve the same Astra-only change.
 
-Follow the `openclaw-upgrade-plist-overwrite` skill. Outline:
+**Historical outline — superseded for the next upgrade.** Preserve this as
+history, not an executable runbook: its raw pairing-state output, temporary
+backup locations, floating package target and live-job smoke example are not
+the approved procedure. Follow the linked Node 24/stable plan and the current
+`openclaw-upgrade-plist-overwrite` launch-contract guidance instead.
+
+Historical outline:
 
 ```bash
 # 1. Backup all OpenClaw plists
