@@ -78,7 +78,7 @@ snapshot, not a continuously updated health report.
   displayed until its next normal scheduled refresh; no job was forced merely
   to clear that historical exit.
 
-- [ ] **Diagnose and repair the Claude OAuth refresher.** Its scheduled login
+- [x] **Diagnose and repair the Claude OAuth refresher.** Its scheduled login
   attempts repeatedly return HTTP 400. Establish whether credentials, refresh
   handling, or CLI compatibility are responsible before choosing recovery.
   Preserve credentials and model defaults; never print token values. Validate
@@ -96,8 +96,20 @@ snapshot, not a continuously updated health report.
   deployment or attended SSO/bootstrap will run during the movie; the pushed
   source is eligible for the next daily deployment but will fail closed until
   its dedicated login exists. No authentication change or browser launch was
-  performed. The next normal
-  snapshot must show real utilization before this item is complete.
+  performed during that preparation phase.
+  **Verified after the movie:** Wrapper `1802af0` is hash-verified live. The
+  first personal/Pro login was rejected without publishing its credentials;
+  personal CLI credentials remained unchanged. NVIDIA rejected the Mini's
+  browser, so Dylan completed the approved enterprise SSO using Prisma Access
+  Browser on `dylans-mac`, with loopback-only SSH forwards returning the callback
+  to the Mini. The saved identity matches the requested NVIDIA enterprise
+  account. A subsequent unattended refresh passed and atomically published the
+  private consumer cache. The usage API returned HTTP 200, and one bounded
+  usage snapshot is visible through the live dashboard API. This enterprise
+  response has null 5-hour/7-day quota windows; do not invent percentages or
+  treat their absence as failed authentication. Both temporary forwards and
+  the local handoff listener are closed. No model defaults, personal CLI
+  credentials, gateway services, or household controls were changed.
 
 - [ ] **Repair the failing Plaid component of daily finance refresh.** The
   October 10 run finished partial: Plaid failed twice; crypto succeeded.
@@ -120,6 +132,16 @@ snapshot, not a continuously updated health report.
   successful completion was recorded; Dylan deferred sign-ins until after the
   movie and the owned loopback listener was stopped. Create a fresh bounded
   Link session when he is ready, then verify account access and targeted sync.
+  **Verified after the movie:** Existing-Item account selection completed;
+  `NO_ACCOUNTS` cleared and one existing account is accessible. A bounded,
+  lock-protected Chase-only balance and incremental transaction sync passed:
+  50 additions and three provider-reported removals, with unchanged account
+  mapping and no other Item status changes. The source API matches current
+  reconciliation data, apart from its per-request timestamp. The protected
+  `~/.openclaw/financial-dashboard/chase-recovery-status.json` records targeted
+  success; the prior full daily-run receipt is deliberately unchanged. Keep
+  this item pending until the next normal 06:15 component run confirms recovery;
+  no other provider, full-batch refresh, or Forecast capture was forced.
 
 - [x] **Recover Eversource weekly scraping.** The latest inspected weekly
   receipt shows failed scraping and reauthentication, with import skipped;

@@ -84,6 +84,9 @@ enterprise `oauth-refresh.sh` helper. A healthy interactive Claude CLI login is
 not proof this separate chain works. After its attended `--login` bootstrap,
 verify an unattended refresh and non-null utilization from a subsequent normal
 snapshot; do not synthesize healthy utilization from successful login alone.
+An authenticated enterprise response may still have null 5-hour/7-day quota
+windows. Leave those percentages unavailable rather than displaying zero or
+diagnosing expired authentication solely from their absence.
 
 ### What It Shows
 
