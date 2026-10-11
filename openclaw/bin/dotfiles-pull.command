@@ -4,6 +4,11 @@
 # Skills are real copies (not symlinks) because OpenClaw v2026.3.7+ rejects
 # symlinks whose realPath resolves outside the configured rootDir.
 
+if [[ ! -x /opt/homebrew/opt/node@24/bin/node ]]; then
+  echo "FATAL: Required Node24 runtime is unavailable; refusing deployment" >&2
+  exit 78
+fi
+
 LOG="$HOME/.openclaw/logs/dotfiles-pull.log"
 REPO="$HOME/dotfiles"
 
@@ -1376,7 +1381,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) top-bin: linked $TOP_BIN_LINKED to $TOP_BIN
 # Smoke test under the final PATH exported by OpenClawGateway.app. Keep this
 # literal synchronized with the app wrapper: it is the last PATH authority in
 # both the generated service-env and recovery-plist launch chains.
-GATEWAY_RUNTIME_PATH="$HOME/.openclaw/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+GATEWAY_RUNTIME_PATH="$HOME/.openclaw/bin:/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="$GATEWAY_RUNTIME_PATH"
 SMOKE_FAIL=0
 DEPLOYMENT_SMOKE_FAILED=0
@@ -1596,7 +1601,7 @@ read_active_gateway_skills() {
     fi
     [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ] || exit 1
     export OPENCLAW_GATEWAY_TOKEN
-    /opt/homebrew/bin/openclaw gateway call skills.status --json --timeout 5000
+    /opt/homebrew/opt/node@24/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway call skills.status --json --timeout 5000
   )
 }
 
