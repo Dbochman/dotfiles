@@ -596,7 +596,7 @@ class DeploymentContractTests(unittest.TestCase):
         path_expression = app_match.group(1)
         self.assertEqual(path_expression, pull_match.group(1))
         self.assertTrue(path_expression.startswith("$HOME/.openclaw/bin:"))
-        self.assertIn("/opt/homebrew/opt/node@24/bin", path_expression)
+        self.assertIn("/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin", path_expression)
         self.assertNotIn("/opt/homebrew/opt/node@22/bin", path_expression)
         self.assertIn('export PATH="$GATEWAY_RUNTIME_PATH"', pull_text)
         self.assertNotIn('export PATH="$BIN_DST:', pull_text)

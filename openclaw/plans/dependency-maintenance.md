@@ -247,9 +247,16 @@ two-stage approval, backup/rehearsal, activation and rollback gates for the next
 upgrade, not the historical command outline below. The separate
 [Phase A draft implementation and cutover preparation](node24-phase-a-cutover.md)
 records candidate runtime edits, repaired deployment fixtures, the narrow
-activation verifier and remaining live-canary gates. It includes a bounded CLI-consumer inventory for
-the later package upgrade. A draft PR is not approval to merge, install Node,
-restart the gateway or advance to Phase B.
+activation verifier and remaining live-canary gates. The separately approved
+official Node24 runtime is now staged without changing Homebrew dependencies;
+production still uses Node22. The runbook includes the attended Node-only window
+proposal and a stopped symlink-preserving checkpoint alternative. The operator
+subsequently approved beginning A with normal recovery after verified drain and
+backup; no strict no-replay startup hold is promised. Both wrapper and deployer
+reject an unapproved runtime checksum before use. Other readiness gates remain.
+It also includes the bounded CLI-consumer inventory for the later
+package upgrade. A draft PR is not approval to merge, restart the gateway or
+advance to Phase B.
 
 The 2026-10-09 maintenance target is pinned `2026.8.35` extended-stable,
 compatible with the installed Node `22.23.1`. Do not substitute the `latest`

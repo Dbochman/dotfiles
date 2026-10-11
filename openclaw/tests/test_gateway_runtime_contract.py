@@ -13,7 +13,8 @@ WRAPPER = ROOT / "OpenClawGateway.app/Contents/MacOS/OpenClawGateway"
 PULL = ROOT / "bin/dotfiles-pull.command"
 LIBRARY = ROOT / "lib/deployment.sh"
 RECOVERY = ROOT / "launchagents/ai.openclaw.gateway.plist"
-NODE_DIRECTORY = "/opt/homebrew/opt/node@24/bin"
+NODE_DIRECTORY = "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin"
+NODE_SHA256 = "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b"
 ENTRY = "/opt/homebrew/lib/node_modules/openclaw/dist/index.js"
 SKILLS = ("opentable", "restaurant-book", "restaurant-snipe", "resy")
 
@@ -48,8 +49,8 @@ class GatewayRuntimeContractTests(unittest.TestCase):
     def wrapper_fixture(self):
         source = WRAPPER.read_text()
         self.assertIn(NODE_DIRECTORY, source)
-        source = source.replace("/Users/dbochman", str(self.home))
         source = source.replace(NODE_DIRECTORY, str(self.node_directory))
+        source = source.replace("/Users/dbochman", str(self.home))
         source = source.replace(ENTRY, str(self.home / "index.js"))
         wrapper = self.home / "gateway"
         wrapper.write_text(source)
@@ -78,6 +79,8 @@ class GatewayRuntimeContractTests(unittest.TestCase):
             wrapper_path.split(":")[:2], ["$HOME/.openclaw/bin", NODE_DIRECTORY]
         )
         self.assertNotIn("node@22", wrapper_path)
+        for source in (WRAPPER, PULL):
+            self.assertIn(f"readonly GATEWAY_NODE_SHA256={NODE_SHA256}", source.read_text())
         self.assertIn(
             f"exec {NODE_DIRECTORY}/node {ENTRY} gateway --port 18789",
             WRAPPER.read_text(),
@@ -111,6 +114,7 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         node = self.node_directory / "node"
         node.write_text('#!/bin/bash\nprintf "node24-fixture\\n"\nprintf "%s\\n" "$@"\n')
         node.chmod(0o700)
+        wrapper.write_text(wrapper.read_text().replace(NODE_SHA256, hashlib.sha256(node.read_bytes()).hexdigest()))
         shadow = self.home / ".openclaw/bin/node"
         shadow.parent.mkdir()
         shadow.write_text('#!/bin/bash\nprintf "wrong-node\\n"\nexit 99\n')
@@ -133,6 +137,21 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         self.assertNotIn("unsafe-continuation", result.stdout)
         self.assertFalse(self.receipt.exists())
         self.assertIn("Required Node24 runtime", (self.home / ".openclaw/logs/dotfiles-pull.log").read_text())
+
+    def test_unapproved_executable_stops_wrapper_and_deployer_before_use(self):
+        wrapper = self.wrapper_fixture()
+        node = self.node_directory / "node"
+        node.write_text('#!/bin/bash\nprintf executed > "$HOME/unapproved-executed"\n')
+        node.chmod(0o700)
+        result = self.run_shell('/bin/bash "$1"', wrapper)
+        self.assertEqual(result.returncode, 78)
+        self.assertFalse((self.home / "cache-read").exists())
+        guard = PULL.read_text().split('REPO="$HOME/dotfiles"', 1)[0]
+        guard = guard.replace(NODE_DIRECTORY, str(self.node_directory))
+        result = self.run_shell(guard + '\nprintf unsafe-continuation\n')
+        self.assertEqual(result.returncode, 78)
+        self.assertNotIn("unsafe-continuation", result.stdout)
+        self.assertFalse((self.home / "unapproved-executed").exists())
 
     def test_deployer_skill_rpc_uses_absolute_node24(self):
         node = self.node_directory / "node"
@@ -211,6 +230,7 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         script = '\n'.join((
             'REPO="$HOME/repo"',
             'GATEWAY_WRAPPER_HASH="' + "a" * 64 + '"',
+            f'GATEWAY_NODE_SHA256="{NODE_SHA256}"',
             'GATEWAY_PID_BEFORE=123',
             'LOG="$HOME/test.log"',
             f'GATEWAY_READY={int(health)}',
@@ -229,6 +249,8 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         self.assertIn("--record", arguments)
         self.assertEqual(arguments[-2:], ["--previous-pid", "123"])
         self.assertIn("24.21.0", arguments)
+        self.assertEqual(arguments[arguments.index("--expected-node-sha256") + 1],
+                         NODE_SHA256)
         self.assertIn("2026.8.35", arguments)
 
     def test_unhealthy_gateway_never_invokes_verifier(self):

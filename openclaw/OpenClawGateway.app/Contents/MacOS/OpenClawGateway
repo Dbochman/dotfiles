@@ -1,10 +1,12 @@
 #!/bin/bash
 
 export HOME="/Users/dbochman"
-export PATH="$HOME/.openclaw/bin:/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$HOME/.openclaw/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-if [[ ! -x /opt/homebrew/opt/node@24/bin/node ]]; then
-  echo "FATAL: Required Node24 runtime is unavailable; refusing fallback" >&2
+readonly GATEWAY_NODE_SHA256=e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b
+if [[ ! -x /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node ]] \
+  || [[ "$(/usr/bin/shasum -a 256 /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node 2>/dev/null | /usr/bin/awk '{print $1}')" != "$GATEWAY_NODE_SHA256" ]]; then
+  echo "FATAL: Required Node24 runtime is unavailable or unapproved; refusing fallback" >&2
   exit 78
 fi
 
@@ -41,4 +43,4 @@ if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   exit 1
 fi
 
-exec /opt/homebrew/opt/node@24/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789
+exec /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789

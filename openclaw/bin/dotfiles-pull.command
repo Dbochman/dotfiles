@@ -5,8 +5,10 @@
 # symlinks whose realPath resolves outside the configured rootDir.
 
 LOG="$HOME/.openclaw/logs/dotfiles-pull.log"
-if [[ ! -x /opt/homebrew/opt/node@24/bin/node ]]; then
-  FAILURE="FATAL: Required Node24 runtime is unavailable; refusing deployment"
+readonly GATEWAY_NODE_SHA256=e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b
+if [[ ! -x /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node ]] \
+  || [[ "$(/usr/bin/shasum -a 256 /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node 2>/dev/null | /usr/bin/awk '{print $1}')" != "$GATEWAY_NODE_SHA256" ]]; then
+  FAILURE="FATAL: Required Node24 runtime is unavailable or unapproved; refusing deployment"
   echo "$FAILURE" >&2
   if ! (umask 077; mkdir -p "${LOG%/*}" && printf '%s %s\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAILURE" >> "$LOG"); then
     echo "FATAL: Could not persist deployment failure log" >&2
@@ -1385,7 +1387,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) top-bin: linked $TOP_BIN_LINKED to $TOP_BIN
 # Smoke test under the final PATH exported by OpenClawGateway.app. Keep this
 # literal synchronized with the app wrapper: it is the last PATH authority in
 # both the generated service-env and recovery-plist launch chains.
-GATEWAY_RUNTIME_PATH="$HOME/.openclaw/bin:/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+GATEWAY_RUNTIME_PATH="$HOME/.openclaw/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PATH="$GATEWAY_RUNTIME_PATH"
 SMOKE_FAIL=0
 DEPLOYMENT_SMOKE_FAILED=0
@@ -1588,6 +1590,7 @@ fi
 GATEWAY_ACTIVATION_ARGS=(
   --expected-wrapper-sha256 "$GATEWAY_WRAPPER_HASH"
   --expected-node-version 24.21.0
+  --expected-node-sha256 "$GATEWAY_NODE_SHA256"
   --expected-package-version 2026.8.35
 )
 if [ "$GATEWAY_RESTART_REQUIRED" -ne 0 ]; then

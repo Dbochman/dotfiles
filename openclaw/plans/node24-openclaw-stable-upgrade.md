@@ -20,11 +20,11 @@
 |---|---|---|
 | OpenClaw | `2026.10.1` exact, pinned by version and integrity | [Release](https://github.com/openclaw/openclaw/releases/tag/v2026.10.1) and [npm metadata](https://registry.npmjs.org/openclaw/latest) agree on 2026-10-11 |
 | Target engines | `>=24.16.0 <25 \|\| >=26.1.0` | [Version-specific package metadata](https://registry.npmjs.org/openclaw/2026.10.1) |
-| Node | **24 LTS** (24.21.0 at planning) via Homebrew `node@24` (keg-only) | [Node releases](https://nodejs.org/en/about/previous-releases); [Homebrew metadata](https://formulae.brew.sh/api/formula/node@24.json). Verify a bottle for the Mini's actual macOS/architecture before installation. |
+| Node | **24.21.0**, official macOS ARM64 runtime at `~/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64` | Approved side-by-side alternative on 2026-10-11; official archive checksum verified. Homebrew preview would change dependencies also used by Node22, so no Homebrew transaction is allowed for A. See the [Phase A evidence and procedure](node24-phase-a-cutover.md). |
 
 Node 24 is the current **LTS**, not the newest Node. Current is 26.11.1, which is a supported release line, not a beta. [OpenClaw's runtime guide](https://docs.openclaw.ai/install/node) recommends 26 for performance but supports 24. We choose 24 because Node itself recommends LTS for production, and 24 satisfies **both** the installed package (`>=24.15.0 <25`) and the target. That overlap is what lets us change the runtime and the package in separate phases.
 
-**Re-resolution rule.** Re-check both the OpenClaw stable tag and the Node 24 formula before execution. A changed target needs a short version/engine/migration review and an updated pin; do not silently install a moving tag or formula revision. Record the exact Node bottle/runtime digest and package tarball integrity. Node 26 is a separately reviewed alternative, not an automatic fallback.
+**Re-resolution rule.** Re-check the exact Node runtime digest and installed package before A; re-check the OpenClaw stable tag before B. A changed target needs a short version/engine/migration review and an updated pin; do not silently install a moving tag or formula revision. Record the exact runtime digest and package tarball integrity. Node 26 is a separately reviewed alternative, not an automatic fallback.
 
 **Non-goals**
 - No general dependency upgrades and no `brew upgrade`.
@@ -48,8 +48,8 @@ Node 24 is the current **LTS**, not the newest Node. Current is 26.11.1, which i
 - Disk available is about 535 GiB. That is free space, not a backup budget.
 
 **Open questions (must be answered during preflight, not assumed)**
-1. Does Homebrew's `node@24` install pull in or upgrade shared dependencies (for example the SQLite or ICU formulae) that `node@22` also uses?
-2. Which SQLite does `node@24`'s `node:sqlite` actually load (bundled or shared), and does it meet the WAL-safety thresholds?
+1. Resolved for A: the Homebrew preview would upgrade shared Node22 dependencies. The operator approved the isolated official runtime instead; no Homebrew installation occurred.
+2. Resolved for the staged runtime: SQLite3.53.4 passed the installed package's safety gate and NUL round trips in isolation. Revalidate the exact runtime before activation.
 3. Does the installed 2026.8.35 updater admit 2026.10.1 directly? Per the [updating guide](https://docs.openclaw.ai/install/updating), the old updater may not, so a first hop may need an explicit supported path.
 4. Are any retired data or schema obligations still present? This covers the pre-July state that would need the 2026.9.5 bridge, and the retired same-file memory index that would need 2026.9.7. Assume neither until it is detected.
 5. Does `reachy-continuity` import any SDK module retired in 2026.10.1? See the [release notes](https://docs.openclaw.ai/releases/2026.10.1): `channel-lifecycle`, `channel-message`, `channel-reply-pipeline`, `config-runtime`, `infra-runtime`.
@@ -69,9 +69,9 @@ Node 24 is the current **LTS**, not the newest Node. Current is 26.11.1, which i
 
 | File | Phase | Change |
 |---|---|---|
-| `openclaw/OpenClawGateway.app/Contents/MacOS/OpenClawGateway` | A | Change the absolute exec and PATH from `node@22` to `/opt/homebrew/opt/node@24/bin/node`. Verify the keg path at execution. |
-| `openclaw/bin/dotfiles-pull.command` (near line 1379, `GATEWAY_RUNTIME_PATH`) and its deployed `~/.openclaw/bin/dotfiles-pull.command` copy | A | Point at the `node@24` keg path. Keep it consistent with the wrapper. Narrowly deploy and hash-verify the actual launchd-invoked copy during A; do not rely on a future self-update. Preserve the active-gateway skill gate when reusing its verification/receipt logic for narrow activation, including Node24-first child PATH; do not call the whole deployer. |
-| `openclaw/launchagents/ai.openclaw.gateway.plist` (recovery source) | A | Change the PATH entry from `node@22` to `node@24`. This stays a recovery reference and is **not** a restore target for the live plist. |
+| `openclaw/OpenClawGateway.app/Contents/MacOS/OpenClawGateway` | A | Change the absolute exec and PATH from `node@22` to `/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node`. Verify that versioned runtime and its digest at execution. |
+| `openclaw/bin/dotfiles-pull.command` (near line 1379, `GATEWAY_RUNTIME_PATH`) and its deployed `~/.openclaw/bin/dotfiles-pull.command` copy | A | Point at the same official runtime directory. Keep it consistent with the wrapper. Narrowly deploy and hash-verify the actual launchd-invoked copy during A; do not rely on a future self-update. Preserve the active-gateway skill gate when reusing its verification/receipt logic for narrow activation, including Node24-first child PATH; do not call the whole deployer. |
+| `openclaw/launchagents/ai.openclaw.gateway.plist` (recovery source) | A | Change the PATH entry from `node@22` to the versioned official runtime. This stays a recovery reference and is **not** a restore target for the live plist. |
 | `openclaw/bin/gateway_activation.py`, `openclaw/lib/deployment.sh` | A | Shared narrow verification: pinned process/runtime/package, generated launch contract, actual listener/executable, strict health and authoritative live skills; read-only by default, explicit locked atomic receipt recording, no hidden deployment/restart. Pin changes for B require separate review. |
 | `openclaw/tests/test_deployment_contracts.py`, `openclaw/tests/test_gateway_runtime_contract.py`, `openclaw/tests/test_gateway_activation.py` | A | Verify agreement among app wrapper, recovery plist and deployment PATH; retain Node22 assertions for unrelated wrappers. Cover missing Node24, mismatched receipts, unavailable/invalid/ineligible live skills and stale process/hash evidence preventing receipt publication. |
 | `openclaw/sync-cron-jobs.sh`, `openclaw/bin/home-event-camera.py`, `openclaw/bin/home-event-delivery.py`, their focused tests, and any additional confirmed CLI invokers from §3 | Before B | Remove their explicit Node22 selection for shared OpenClaw CLI calls; use the reviewed Node24 invocation contract and verify actual child runtime selection with synthetic/no-delivery fixtures. Coordinate deployment and any necessary targeted reload before replacing the global package; do not alter policies, schedules or send messages. |
@@ -124,9 +124,9 @@ All of these are requirements. Where a command form is shown, it is illustrative
    - Do **not** remove Node 18 or 22 until an ownership audit shows nothing depends on them.
 3. **npm identity.**
    - Determine which `node` the intended npm will run under.
-   - Use the `node@24` keg's own npm or invoke npm with an explicit Node 24.
-   - Confirm the global prefix/root and resolved OpenClaw entry point. Preserve `/opt/homebrew/lib/node_modules/openclaw` as the active install owner; use an explicit reviewed `--prefix /opt/homebrew` if required rather than changing global npm configuration. A keg's npm may default to a different prefix.
-   - Validate controlled deployment and gateway commands under Node24. For operator commands, including interactive and SSH terminals, use `/opt/homebrew/opt/node@24/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js <arguments>` with a command-scoped Node24-first PATH for child tools, after verifying that entry point against the active package. Until Node24 is staged, read-only baseline commands use the explicit Node22 equivalent; candidate checks wait for staging. Bare `openclaw` in an arbitrary shell is not a supported upgraded invocation until the separate shell audit. Do not rely on `.zshrc`, change global PATH, or add a shadowing shim as a shortcut.
+   - Use the versioned official runtime's own npm with an explicit Node24 and command-scoped child PATH.
+   - Confirm the global prefix/root and resolved OpenClaw entry point. Preserve `/opt/homebrew/lib/node_modules/openclaw` as the active install owner; use an explicit reviewed `--prefix /opt/homebrew` if required rather than changing global npm configuration. The isolated runtime's npm may default to a different prefix.
+   - Validate controlled deployment and gateway commands under Node24. For operator commands, including interactive and SSH terminals, use `/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js <arguments>` with a command-scoped Node24-first PATH for child tools, after verifying that entry point against the active package. Baseline commands use the explicit Node22 equivalent. Bare `openclaw` in an arbitrary shell is not a supported upgraded invocation until the separate shell audit. Do not rely on `.zshrc`, change global PATH, or add a shadowing shim as a shortcut.
 4. **Target pinning.**
    - Run `npm view openclaw@2026.10.1 version engines dist.integrity` and record the output.
    - Preserve the actual installed 2026.8.35 tree, dependencies and plugin builds in addition to registry integrity: reinstalling an old version may resolve different transitive dependencies or require unavailable network access.
@@ -161,10 +161,10 @@ All of these are requirements. Where a command form is shown, it is illustrative
 
     This is the before-image for the semantic diffs later. Never print secrets, tokens, or the raw `paired.json`.
 
-**Future diagnostic example** (in-memory only; not yet tested against the proposed Node 24 build):
+**Diagnostic example** (in-memory only; the packaged SQLite gate and additional NUL round trips passed against the staged official runtime; see the Phase A evidence):
 
 ```sh
-/opt/homebrew/opt/node@24/bin/node -e '
+/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node -e '
 const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(":memory:");
 const v = db.prepare("select sqlite_version() as v").get().v;
@@ -197,6 +197,16 @@ This example verifies exact round-trip content, not just length. Numeric support
 - Do not take an arbitrary whole-home archive.
 - Retention: keep until acceptance plus an agreed hold period. Never auto-delete older backups.
 - Write a manifest with `shasum -a 256` for every file.
+
+**2026-10-11 decision:** the operator approved `~/Backups/openclaw`, a total
+64 GiB budget including restore copies, retention until 30 days after acceptance,
+and no automatic deletion. The supported full archive failed on an existing
+absolute symlink; no verified full checkpoint exists. Do not alter live links to
+make it pass. Preparation of the [bounded attended procedure](node24-phase-a-cutover.md#attended-maintenance-proposal)
+is approved; the operator subsequently asked to begin and approved normal recovery
+after verified drain and backup for A. Other readiness gates still apply. Prefer a stopped, symlink-preserving
+checkpoint over another full live staging tree. This is a custom recovery set,
+not an archive supported by `openclaw backup restore`.
 
 **Recovery set (scoped and manifest-driven)**
 - OpenClaw configuration, shared and per-agent databases, sessions, channel/plugin state and configured workspace/agent roots, including roots outside `~/.openclaw`. Inventory paths without exposing private contents.
@@ -235,10 +245,19 @@ This example verifies exact round-trip content, not just length. Numeric support
 
 **Precondition:** §3 is complete with no stop conditions, and the operator has approved a Phase A window.
 
+**Approved A-only startup exception, 2026-10-11:** the operator approved normal
+built-in recovery after verified cooperative drain, stopped databases with no
+pending work, and validated backup. The installed package's recovery is always on;
+its two-minute suspension lease is not persistent across restart. Follow the
+[updated drain/startup gate](node24-phase-a-cutover.md#startup-gate-approved-normal-recovery-after-drain)
+for A and Node22 rollback instead of a strict no-replay startup hold. Existing
+messaging/schedules may resume, but no manual job reruns or resends are authorized.
+This does not approve B, skipping backup or ignoring surviving writers.
+
 1. In the separate worktree, run the current-runtime baseline and prepare Phase A source/test edits. After Node24 staging in step 2, run the candidate matrix. Review and commit without advancing the live checkout or publishing activation-triggering changes before the approved window.
-2. Install `node@24` with cleanup disabled, the auto-update guard on, and no `brew upgrade`. Afterward:
+2. Use the separately approved, checksum-verified official Node24 runtime; do not install the Homebrew alternative. Before activation:
    - confirm `node@22` still runs and its linked dependencies are unchanged;
-   - rerun the SQLite diagnostic against the installed keg.
+   - rerun the SQLite diagnostic against the exact staged runtime.
 3. Hold `dotfiles-pull`, verify no in-flight deployment, and record its prior state. Confirm the supported old-package/Node24 pairing in isolation. Native addons must load under Node24; if rebuilding them is required, rebuild a staged copy at the unchanged package version and include that tree in the reviewed activation/rollback set, not an in-place experiment on production.
 4. Run 2026.8.35 under Node24 in the rehearsal (§4); complete offline checks, including native modules. Live authentication/FDA canaries are deferred until activation, not attempted from the credential-isolated rehearsal.
 5. Activation (in the window):
@@ -311,7 +330,7 @@ Never take these actions as part of canaries:
 3. Start the old package on22 under the §4 startup controls, verify health and functionality including the live skill gate, then publish the activation receipt. Revert only the runtime implementation commit(s) in Git without force-pushing or undoing unrelated work.
 4. Restore previously loaded jobs only after verification. Keep `dotfiles-pull` held until the rollback source is published to its tracked `origin/main`, the live checkout is fast-forwarded to that reviewed rollback commit with `git status --porcelain` empty, and a read-only wrapper/receipt comparison predicts no reactivation. Emergency artifact restoration under the hold is not source convergence: reconcile any restored tracked files before fast-forward without losing unrelated work; no file-copy substitute, automatic stash/drop or destructive reset is allowed. Include any required rollback publication in the phase approval; if publishing or reconciliation is blocked, retain the deployment hold and report it rather than relying on an uncommitted restored wrapper. This source-convergence gate applies to Phase B rollback too, including target-only plugin/CLI-contract commits. Do not invoke the deployer to test the gate.
 
-The `node@24` keg can stay installed. Removing it is a later, separate decision.
+The isolated official Node24 runtime can stay installed. Removing it is a later, separate decision.
 
 **Phase B rollback before migration/state repair**
 1. Stop gateway/update processes through their owners and confirm no state writer remains.
@@ -350,7 +369,7 @@ A package downgrade alone cannot reverse a newer DB schema. **2026.8.35 must nev
 ## 10. Go/no-go acceptance and future approvals
 
 **Accepted when all of the following hold:**
-- The gateway runs `2026.10.1` on `node@24`, with one active global install. Downloaded tarballs pass their pinned registry integrity checks; the installed code/dependency tree matches the recorded manifest from the reviewed staged build, including authorized lifecycle/native-build outputs. Do not compare a tarball digest directly to a directory hash or create a post-install manifest and call that independent verification.
+- The gateway runs `2026.10.1` on the pinned official Node24 runtime, with one active global OpenClaw install. Downloaded tarballs pass their pinned registry integrity checks; the installed code/dependency tree matches the recorded manifest from the reviewed staged build, including authorized lifecycle/native-build outputs. Do not compare a tarball digest directly to a directory hash or create a post-install manifest and call that independent verification.
 - All required §7 canaries pass; any optional messaging test is explicitly recorded as approved/passed or not run.
 - No new relevant test failures remain; any baseline failures are documented with their impact on confidence, and none invalidate a changed contract.
 - Protected config fields are unchanged.
@@ -409,9 +428,12 @@ Rollback release now also requires convergence with the deployer's published
 source; updater-internal npm ownership must be proved before mutation. These
 are plan requirements, not claims that the runtime changes have been tested.
 
-**Still unresolved before execution:** exact Homebrew dependency/bottle transaction,
-candidate first-hop admission and migration obligations, custom-plugin behavior
-against the target SDK, implementation of isolation/hold/receipt controls, the
-reviewed startup catch-up posture, measured backup budget/restore duration and
-live auth/FDA canaries. Do not mark any of these complete because this document
-was merged.
+**Updated execution status, 2026-10-11:** the approved official runtime replaces
+Homebrew, isolated runtime/SQLite/native probes passed, the narrow receipt verifier
+is implemented, and the read-only Node22 live baseline passed. The [Phase A
+procedure](node24-phase-a-cutover.md#attended-maintenance-proposal) records the
+remaining startup-containment, writer/hold, complete checkpoint/restore, timing,
+review and candidate live-canary gates. Budget is approved; full restoration and
+its duration are not verified. Phase B admission/migrations and target SDK/plugin
+compatibility remain separate outstanding work. Document publication is not
+evidence of execution or permission to activate.

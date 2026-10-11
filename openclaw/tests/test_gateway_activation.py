@@ -110,11 +110,12 @@ class GatewayActivationTests(unittest.TestCase):
         cache.write_text('OPENCLAW_GATEWAY_TOKEN="synthetic-secret"\n')
         cache.chmod(0o600)
         self.digest = hashlib.sha256(self.paths.wrapper.read_bytes()).hexdigest()
+        self.node_digest = hashlib.sha256(self.paths.node(NODE_VERSION).read_bytes()).hexdigest()
         self.probe = FakeProbe(self.paths, self.arguments.copy())
 
     def verify(self, record=True, previous_pid=99, digest=None):
         return activation.verify(self.paths, self.probe, digest or self.digest,
-                                 NODE_VERSION, PACKAGE_VERSION, previous_pid, record)
+                                 NODE_VERSION, PACKAGE_VERSION, previous_pid, record, self.node_digest)
 
     def assert_blocked(self):
         with self.assertRaises((activation.VerificationError, OSError, ValueError)):
@@ -122,12 +123,42 @@ class GatewayActivationTests(unittest.TestCase):
         self.assertEqual(self.paths.receipt.read_text(), "previous\n")
         self.assertEqual(list(self.paths.receipt.parent.glob(".gateway-wrapper.sha256.*")), [])
 
+    def test_runtime_paths_separate_official_node24_and_homebrew_rollback(self):
+        self.assertEqual(
+            self.paths.node("24.21.0"),
+            self.home / ".local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node",
+        )
+        self.assertEqual(self.paths.node("22.23.1"), self.home / "brew/opt/node@22/bin/node")
+
     def test_read_only_default_preserves_receipt_and_creates_no_lock(self):
         before = self.paths.receipt.stat()
         result = self.verify(record=False, previous_pid=None)
         self.assertFalse(result["receiptRecorded"])
-        self.assertEqual(self.paths.receipt.stat(), before)
+        after = self.paths.receipt.stat()
+        for attribute in ("st_dev", "st_ino", "st_mode", "st_nlink", "st_uid", "st_gid",
+                          "st_size", "st_mtime_ns", "st_ctime_ns"):
+            self.assertEqual(getattr(after, attribute), getattr(before, attribute), attribute)
+        self.assertEqual(self.paths.receipt.read_text(), "previous\n")
         self.assertFalse((self.paths.receipt.parent / ".gateway-activation.lock").exists())
+
+    def test_missing_runtime_hash_refuses_all_probes(self):
+        with self.assertRaisesRegex(activation.VerificationError, "runtime_hash_required"):
+            activation.verify(self.paths, self.probe, self.digest, NODE_VERSION, PACKAGE_VERSION)
+        self.assertEqual(self.probe.calls, [])
+        self.assertEqual(self.paths.receipt.read_text(), "previous\n")
+
+    def test_same_version_replaced_runtime_is_rejected_before_execution(self):
+        self.paths.node(NODE_VERSION).write_text("different node with same version\n")
+        with self.assertRaisesRegex(activation.VerificationError, "runtime_hash_mismatch"):
+            self.verify()
+        self.assertEqual(self.probe.calls, [])
+        self.assertEqual(self.paths.receipt.read_text(), "previous\n")
+
+    def test_runtime_replacement_during_rpc_preserves_receipt(self):
+        self.probe.on_rpc = lambda: self.paths.node(NODE_VERSION).write_text("replaced during RPC\n")
+        with self.assertRaisesRegex(activation.VerificationError, "runtime_hash_mismatch"):
+            self.verify()
+        self.assertEqual(self.paths.receipt.read_text(), "previous\n")
 
     def test_verified_record_is_atomic_and_private(self):
         result = self.verify()
@@ -167,7 +198,8 @@ class GatewayActivationTests(unittest.TestCase):
         os.utime(node, (STAMP, STAMP))
         self.probe.version = version
         result = activation.verify(self.paths, self.probe, self.digest,
-                                   version, PACKAGE_VERSION, previous_pid=99, record=True)
+                                   version, PACKAGE_VERSION, previous_pid=99, record=True,
+                                   node_hash=hashlib.sha256(node.read_bytes()).hexdigest())
         self.assertTrue(result["receiptRecorded"])
         self.assertEqual(result["nodeVersion"], version)
 
@@ -317,7 +349,7 @@ class GatewayActivationTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--expected-wrapper-sha256", self.digest,
              "--expected-node-version", NODE_VERSION, "--expected-package-version",
-             PACKAGE_VERSION, "--health-passed"],
+             PACKAGE_VERSION, "--expected-node-sha256", self.node_digest, "--health-passed"],
             env={"HOME": str(self.home)}, capture_output=True, text=True, timeout=5,
         )
         self.assertEqual(result.returncode, 2)

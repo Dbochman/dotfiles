@@ -65,6 +65,8 @@ class Paths:
         return self.home / ".openclaw/state/gateway-wrapper.sha256"
 
     def node(self, version):
+        if version.split(".")[0] == "24":
+            return self.home / f".local/share/openclaw/runtimes/node-v{version}-darwin-arm64/bin/node"
         return self.prefix / f"opt/node@{version.split('.')[0]}/bin/node"
 
 
@@ -115,12 +117,10 @@ class SystemProbe:
                 raise VerificationError("probe_failed")
             return output
 
-    def snapshot(self, expected_hash, node_version, package_version, previous_pid):
+    def snapshot(self, expected_hash, node_version, package_version, previous_pid, node_hash):
         node = self.paths.node(node_version).resolve(strict=True)
         if not os.access(node, os.X_OK):
             raise VerificationError("runtime_not_executable")
-        if self.run([str(node), "--version"]).strip() != "v" + node_version:
-            raise VerificationError("runtime_version_mismatch")
         wrapper = self.paths.wrapper
         if self.paths.app.resolve(strict=True) != wrapper.resolve(strict=True):
             raise VerificationError("app_target_mismatch")
@@ -129,6 +129,10 @@ class SystemProbe:
         identities = tuple(fingerprint(path) for path in files)
         if identities[0][-1] != expected_hash:
             raise VerificationError("wrapper_hash_mismatch")
+        if identities[1][-1] != node_hash:
+            raise VerificationError("runtime_hash_mismatch")
+        if self.run([str(node), "--version"]).strip() != "v" + node_version:
+            raise VerificationError("runtime_version_mismatch")
         package = json.loads(self.paths.package.read_text())
         if not isinstance(package, dict) or package.get("version") != package_version:
             raise VerificationError("package_version_mismatch")
@@ -219,12 +223,15 @@ def receipt_lock(receipt):
         yield
 
 
-def verify(paths, probe, expected_hash, node_version, package_version, previous_pid=None, record=False):
+def verify(paths, probe, expected_hash, node_version, package_version, previous_pid=None, record=False, node_hash=None):
+    if not isinstance(node_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", node_hash):
+        raise VerificationError("runtime_hash_required")
+
     def check_and_record():
         old_receipt = receipt_snapshot(paths.receipt)
-        before = probe.snapshot(expected_hash, node_version, package_version, previous_pid)
+        before = probe.snapshot(expected_hash, node_version, package_version, previous_pid, node_hash)
         probe.check_health_and_skills(node_version)
-        after = probe.snapshot(expected_hash, node_version, package_version, previous_pid)
+        after = probe.snapshot(expected_hash, node_version, package_version, previous_pid, node_hash)
         if before != after or receipt_snapshot(paths.receipt) != old_receipt:
             raise VerificationError("activation_evidence_changed")
         if record:
@@ -234,7 +241,7 @@ def verify(paths, probe, expected_hash, node_version, package_version, previous_
                     output.write(expected_hash + "\n")
                     output.flush()
                     os.fsync(output.fileno())
-                if probe.snapshot(expected_hash, node_version, package_version, previous_pid) != after:
+                if probe.snapshot(expected_hash, node_version, package_version, previous_pid, node_hash) != after:
                     raise VerificationError("activation_evidence_changed")
                 if receipt_snapshot(paths.receipt) != old_receipt:
                     raise VerificationError("activation_evidence_changed")
@@ -244,6 +251,7 @@ def verify(paths, probe, expected_hash, node_version, package_version, previous_
                     os.unlink(temporary)
         return {"ok": True, "pid": after["pid"], "nodeVersion": node_version,
                 "packageVersion": package_version, "wrapperSha256": expected_hash,
+                "nodeSha256": node_hash,
                 "receiptRecorded": record}
 
     if record:
@@ -258,11 +266,13 @@ def main():
     parser = argparse.ArgumentParser(description="Verify an already-started gateway; never start/restart/deploy it.")
     parser.add_argument("--expected-wrapper-sha256", required=True)
     parser.add_argument("--expected-node-version", required=True)
+    parser.add_argument("--expected-node-sha256", required=True)
     parser.add_argument("--expected-package-version", required=True)
     parser.add_argument("--previous-pid", type=int)
     parser.add_argument("--record", action="store_true", help="Publish the receipt only after verification; requires an approved window.")
     arguments = parser.parse_args()
     if (not re.fullmatch(r"[0-9a-f]{64}", arguments.expected_wrapper_sha256)
+            or not re.fullmatch(r"[0-9a-f]{64}", arguments.expected_node_sha256)
             or not re.fullmatch(r"(?:22|24)\.\d+\.\d+", arguments.expected_node_version)
             or not re.fullmatch(r"\d{4}\.\d+\.\d+(?:-[\w.]+)?", arguments.expected_package_version)
             or (arguments.previous_pid is not None and arguments.previous_pid < 0)):
@@ -271,7 +281,7 @@ def main():
     try:
         result = verify(paths, SystemProbe(paths), arguments.expected_wrapper_sha256,
                         arguments.expected_node_version, arguments.expected_package_version,
-                        arguments.previous_pid, arguments.record)
+                        arguments.previous_pid, arguments.record, arguments.expected_node_sha256)
     except (VerificationError, OSError, ValueError, TypeError) as error:
         code = str(error) if isinstance(error, VerificationError) else "verification_unavailable"
         print(json.dumps({"ok": False, "error": code}), file=sys.stderr)
