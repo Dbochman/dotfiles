@@ -27,3 +27,19 @@ prefix_rule(pattern=["ssh", "desktop-compute"], decision="allow")
 prefix_rule(pattern=["cmux", "list-workspaces"], decision="allow")
 prefix_rule(pattern=["cmux", "list-log"], decision="allow")
 prefix_rule(pattern=["pinchtab", "session", "create"], decision="allow")
+prefix_rule(
+    pattern=["git", "diff", "--cached", "--check", "--"],
+    decision="allow",
+    justification="Allow staged whitespace checks with an explicit end of options; trailing arguments are paths.",
+    match=[
+        "git diff --cached --check --",
+        "git diff --cached --check -- README.md",
+        "git diff --cached --check -- --output=canary.txt",
+    ],
+    not_match=[
+        "git diff --cached --check",
+        "git diff --cached --check --output=canary.txt",
+        "git diff --cached --check --output canary.txt",
+        "git diff --cached --check --ext-diff --",
+    ],
+)

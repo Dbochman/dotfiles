@@ -23,6 +23,12 @@ git clone git@github.com:Dbochman/dotfiles.git ~/dotfiles
 - `bin/cmux-agent` - Run one-shot Codex workers in tracked cmux tabs with safe handoff and cleanup
 - `bin/cmux-orchestrator-doctor` - Diagnose and reconnect a stale managed-SSH orchestrator bridge without touching remote tmux
 
+The staged whitespace-check approval rule requires an explicit option terminator:
+`git diff --cached --check -- [paths...]`. It does not approve extra Git options
+such as `--output`. Its inline positive/negative regression examples run when
+Codex loads the rules; validate them locally with
+`codex execpolicy check --rules .codex/rules/default.rules -- git diff --cached --check --`.
+
 ### Claude Code
 - `.claude/CLAUDE.md` - Global instructions for all projects
 - `.claude/preferences.md` - User preferences and working style
