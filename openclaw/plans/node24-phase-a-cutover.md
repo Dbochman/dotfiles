@@ -1,6 +1,6 @@
 # Node24 Phase A: draft implementation and cutover preparation
 
-**Status:** DRAFT PR — NOT MERGE-READY OR DEPLOYED. Prepared 2026-10-11.
+**Status:** PHASE A ACCEPTED 2026-10-11; Phase B remains unactivated.
 Branch: `codex/openclaw-node24-phase-a`, based on `f0367a0`.
 Worktree: `/Users/dbochman/repos/dotfiles-openclaw-node24-phase-a`.
 
@@ -11,7 +11,31 @@ remains on `main`; its existing uncommitted plan amendments are preserved. Do no
 merge this branch or enable auto-merge before the approved maintenance window:
 the live app is symlinked into that checkout and `main` feeds automatic deployment.
 
-## Latest attempt: stopped before runtime mutation
+## Accepted Phase A
+
+The later attended cutover accepted official Node24.21.0 with the unchanged
+OpenClaw2026.8.35 package. Source and deployed wrapper/pull checks converged at
+`c8d1507`; the deployment LaunchAgent returned to its recorded loaded state.
+The fresh stopped checkpoint restored with all 126,811 manifest entries matching
+and 67 SQLite integrity checks passing. Both copied runtimes passed the old
+package's schema admission checks. The archive remains protected and unchanged.
+
+Live executable mapping, package/wrapper hashes, health, active required skills,
+iMessage bridge/FDA, memory embedding probe and usage dashboard checks passed.
+A disabled, future-scheduled no-delivery fixture completed and was removed;
+a separate read-only agent fixture explicitly confirmed the native Codex/Astra
+harness without fallback. The 16 production job definitions and effective config
+were preserved; no production job or message was manually rerun. An owner-only
+activation receipt was published through the tested verifier after acceptance.
+
+Acceptance began at 17:39 Eastern with a 30-minute observation window. Phase B
+preparation may proceed during that window, but package activation remains gated
+on the separate migration rehearsal, fresh checkpoint and compatibility checks.
+Node22 and the enterprise OAuth authority remain unchanged for rollback and
+unrelated consumers. Protected evidence is under
+`~/Backups/openclaw/phase-a-20261011T212300Z`; no private evidence belongs in Git.
+
+## Earlier attempt: stopped before runtime mutation
 
 The 2026-10-11 attended attempt drained successfully with no active work, unloaded
 the gateway, and verified both Codex provider children exited. The final checks

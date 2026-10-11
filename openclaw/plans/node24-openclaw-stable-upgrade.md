@@ -1,7 +1,7 @@
 # Node 24 LTS + OpenClaw 2026.10.1 Upgrade Plan (mac-mini)
 
 **Path:** `openclaw/plans/node24-openclaw-stable-upgrade.md`
-**Status:** REVIEWED PLAN — NOT IMPLEMENTED. Claude Opus 5.5 drafted the plan; Codex reviewed and revised it against the repository and installed CLI. No runtime upgrade, deployment, restart, or migration was performed.
+**Status:** PHASE A ACCEPTED; PHASE B IN PREPARATION. Claude Opus 5.5 drafted the plan; Codex reviewed and revised it against the repository and installed CLI. The separately verified Node24 cutover is recorded in [the execution record](node24-phase-a-cutover.md). OpenClaw2026.10.1 is not yet activated.
 **Draft provenance:** explicit `claude-opus-5-5`, high effort, one successful tool-disabled turn; returned model usage confirmed that exact model. A temporary isolated Claude Code 2.1.296 client was used; the installed client was not upgraded.
 **Date drafted:** 2026-10-11 (America/New_York). **Host:** `mac-mini`. **User:** `dbochman`. **Repo:** `/Users/dbochman/dotfiles`.
 **Source of truth:** the tracked `openclaw/` tree. Runtime `~/.openclaw` is separate deployed state. Future runtime changes use reviewed deployment or supported configuration/migration commands, not untracked ad hoc patches.
