@@ -8,6 +8,9 @@ Node24.21.0. The [reviewed plan](node24-openclaw-stable-upgrade.md) controls rol
 - Exact target: OpenClaw2026.10.1, official Codex2026.10.1 and iMessage2026.10.1.
 - Capability consent applies only to those two pinned plugins; preserve tool
   restrictions, model routing, accounts, household policy and delivery recipients.
+- Separately approved compatibility exception: add `openai/gpt-5.6-luna` alongside
+  the existing mini model entry and allowlist, retaining inherited settings.
+  Astra primary and Opus fallback stay unchanged; no other model-policy expansion.
 - Normal startup recovery follows verified drain, fresh stopped backup,
   migration checks and pending-work review. No manual production reruns/resends.
 - Briefly hold the long-running Nest activity and Cabin entry reviewers; retain
@@ -46,8 +49,28 @@ state workers and unrelated npx/PinchTab consumers are not swept into this chang
   tables. Disposable copies have inert credentials, relocated paths, disabled
   cron/channels, denied network/production files and denied service-control exec.
   Early isolated attempts exposed path/exec restrictions; they are not acceptance.
-- Full Doctor/plugin migration completion, updater ownership rehearsal, final
-  fresh checkpoint and live acceptance are still required before activation.
+- The updater's own resolver selects `/opt/homebrew/lib/node_modules/openclaw`,
+  npm11.17.0 and prefix `/opt/homebrew`, with explicit Node24 child runtime and
+  `--allow-scripts=openclaw`. The exact old-to-new isolated package swap and
+  candidate Doctor passed without service activation.
+- Copied-state first hop completed core/Doctor but correctly refused an inert
+  secret-provider fixture owned by root. A current-user-owned inert replacement
+  restored the real ownership contract; scoped consent and supported
+  `update repair --no-restart` then passed. Fresh config validation and the
+  post-upgrade plugin probes pass with no findings; both approved plugins load
+  at2026.10.1. This fixture correction is not a production permission weakening.
+- The migration preserves 588 session nodes, 12,609 transcript events and
+  conversation role coverage. Both migrated DB integrity checks pass. The actual
+  tracked cron read-back parser verifies the original 16 definitions against the
+  migrated DB and a baseline response fixture; live target RPC parity remains a
+  separate acceptance gate. Skill policy is unchanged in the updater rehearsal.
+- Rehearsal permits Unix IPC only inside its private root for the target's child
+  broker. Explicit probes still deny production config, launchctl and TCP access.
+  A separate exploratory standalone Doctor disabled unavailable skills only in
+  its disposable copy; do not transplant that config or run broad standalone
+  `doctor --fix` as a production canary.
+- Final fresh checkpoint, production convergence and live acceptance remain
+  required. No Phase B production mutation has occurred.
 
 Protected evidence lives under `~/Backups/openclaw/phase-b-preflight-20261011`.
 Do not commit copied config, databases, authentication material or private logs.
