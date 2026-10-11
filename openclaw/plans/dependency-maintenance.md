@@ -238,27 +238,19 @@ ssh dylans-mac-mini 'PATH=/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:$PATH;
 
 ### OpenClaw on Mini (Tier 3)
 
-**2026-10-11 upgrade planning:** the reviewed
+**2026-10-11 upgrade accepted:** the reviewed
 [Node 24 LTS + current stable OpenClaw implementation plan](node24-openclaw-stable-upgrade.md)
-targets Node `24.21.0` and OpenClaw `2026.10.1`, subject to execution-time
-version, dependency, migration and plugin checks. This is documentation only;
-the live `2026.8.35`/Node `22.23.1` baseline remains unchanged. Use that plan's
-two-stage approval, backup/rehearsal, activation and rollback gates for the next
-upgrade, not the historical command outline below. The separate
-[Phase A draft implementation and cutover preparation](node24-phase-a-cutover.md)
-records candidate runtime edits, repaired deployment fixtures, the narrow
-activation verifier and remaining live-canary gates. The separately approved
-official Node24 runtime is now staged without changing Homebrew dependencies;
-production still uses Node22. The runbook includes the attended Node-only window
-proposal and a stopped symlink-preserving checkpoint alternative. The operator
-subsequently approved beginning A with normal recovery after verified drain and
-backup; no strict no-replay startup hold is promised. Both wrapper and deployer
-reject an unapproved runtime checksum before use. Other readiness gates remain.
-It also includes the bounded CLI-consumer inventory for the later
-package upgrade. A draft PR is not approval to merge, restart the gateway or
-advance to Phase B.
+completed both separately approved phases. Production now uses the checksum-pinned
+official Node `24.21.0` runtime and OpenClaw `2026.10.1` stable, with matching
+Codex/iMessage plugins. The [Phase A record](node24-phase-a-cutover.md) and
+[Phase B record](node24-phase-b-cutover.md) document fresh restored checkpoints,
+runtime/SDK tests, migrations, live no-delivery canaries and restored services.
+Homebrew dependencies and unrelated Node22 consumers remain unchanged. Recovery
+sets remain protected under the approved64GiB budget for at least30 days after
+acceptance. Use the reviewed recovery gates, not a package-only downgrade: old
+OpenClaw must not open the migrated production databases.
 
-The 2026-10-09 maintenance target is pinned `2026.8.35` extended-stable,
+**Historical 2026-10-09 maintenance:** the target was pinned `2026.8.35` extended-stable,
 compatible with the installed Node `22.23.1`. Do not substitute the `latest`
 tag: September stable requires a newer Node runtime. Keep the unfinished
 Crosstown additive phone-binding changes out of this deployment.

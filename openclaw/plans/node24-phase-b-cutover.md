@@ -1,7 +1,73 @@
 # Phase B: OpenClaw stable cutover record
 
-Status: preparation only; production remains OpenClaw2026.8.35 on accepted
+Status: ACCEPTED 2026-10-11. Production runs OpenClaw2026.10.1 on official
 Node24.21.0. The [reviewed plan](node24-openclaw-stable-upgrade.md) controls rollout.
+
+## Accepted production cutover
+
+- Phase A completed its 30-minute soak before B. The gateway was drained and
+  unloaded; its process tree exited. Only the deployer and two approved camera
+  reviewers were held. The nine stopped-work counters were zero.
+- Fresh pre-B checkpoint: 126,808 exact manifest entries, 67 SQLite integrity
+  checks, and copied old-package preflight under both Node22 and Node24 passed.
+  Archive SHA256: `9bc572218de2fc0ab497470d9137f5c6e51163b3b1fbcf14f1aeb9f62076de3a`.
+  The first restored-copy verifier opened SQLite before finishing its header
+  inventory; SQLite removed a temporary SHM sidecar, interrupting verification.
+  An eager inventory fix and permanent regression passed. A new extraction of
+  the unchanged archive then passed exact manifest and integrity verification.
+- Source and the nine-file CLI cohort converged at `b3fca60` before package
+  mutation. The supported updater selected stable and installed exactly2026.10.1
+  with `--no-restart`; installation, atomic swap and Doctor all passed. A bounded
+  watcher verified the gateway stayed unloaded and port18789 remained unbound.
+- All 13,203 installed published regular files matched the integrity-verified
+  release. The sole absent archive file, `.openclaw-lifecycle-pending`, is
+  intentionally removed by the verified official postinstall lifecycle contract.
+  Dependency files are outside this published-file comparison.
+- Codex and iMessage actually loaded at2026.10.1, with exact approved manifests,
+  no compatibility findings, and no blanket capability approval. Fresh config
+  validation and all five post-upgrade plugin probes passed.
+- Shared schema20 and agent schema24 passed integrity checks. Against the fresh
+  pre-B checkpoint, 587 session nodes, 12,609 transcript events/identities and
+  17 conversations were preserved before startup. Protected config, skill policy,
+  credentials, launch files, Astra primary and Opus fallback remained unchanged;
+  only the documented schema rewrites and approved Luna compatibility addition
+  changed model/config structure. The old mini alias remains on its original model.
+- Fifteen original cron definitions were preserved exactly. The target retires
+  the old internal `skillCollectionReview` payload and recreates that one
+  system-owned monitor as an isolated, no-delivery agent turn. Its enablement,
+  weekly schedule and ownership were preserved; prompt/tools match the target's
+  published contract. After startup there are again16 jobs. The actual tracked
+  cron read-back parser passed against live RPC and SQLite, with this explicit
+  system-job migration accounted for; no operator-authored job changed.
+- One controlled bootstrap restored normal approved recovery. Executable mapping,
+  pinned package/runtime, generated launch chain, health, listener ownership and
+  the live required-skill gate passed before activation-receipt publication.
+- The disabled future synthetic cron ran once on Astra, read its fixture,
+  produced the expected terminal response without delivery, and was removed.
+  A separate no-delivery native canary confirmed Codex harness/Astra routing and
+  no tool failures. No production cron was manually rerun or message resent.
+- iMessage's native bridge/FDA probe passed without sending a message. Memory's
+  embedding probe and Node24's in-process SQLite probe passed. Reachy's target
+  SDK tests/build passed; its live gateway method rejected intentionally invalid
+  input before accessing the store, proving host registration without reading
+  private context or changing the capsule. Its existing operator-managed origin
+  warning remains, not a load failure.
+- The usage dashboard serves HTTP200 and its gateway-usage API responds; its
+  session cache rebuild is asynchronous. Both reviewers returned to their prior
+  running states, their queues were preserved, and the deployer returned loaded
+  but idle. Deployed cohort hashes match source. No unrelated service was restarted.
+- The prior Weekly Financial Data Scrape and Julia Flower Bloom Watch errors
+  have identical last-run timestamps/errors to the pre-B checkpoint. These are
+  separate maintenance issues, not new upgrade failures. No real messaging
+  round-trip or camera event was generated as a canary.
+
+Protected execution evidence: `~/Backups/openclaw/phase-b-20261011T2215Z`.
+The fresh pre-B archive is named `pre-a.tar` inside that distinct Phase B directory
+because the checkpoint helper was reused; it contains the pre-B state, not A's
+older checkpoint. Total measured backup usage was about46.3GiB, below the approved
+64GiB budget. Keep both phase recovery sets and Node22 until at least30 days after
+acceptance; do not automatically delete them or launch old code against migrated
+state. Acceptance covers these bounded checks, not a full future overnight cycle.
 
 ## Approved scope
 
@@ -71,8 +137,8 @@ state workers and unrelated npx/PinchTab consumers are not swept into this chang
   A separate exploratory standalone Doctor disabled unavailable skills only in
   its disposable copy; do not transplant that config or run broad standalone
   `doctor --fix` as a production canary.
-- Final fresh checkpoint, production convergence and live acceptance remain
-  required. No Phase B production mutation has occurred.
+- These preparation results preceded production mutation; the accepted execution
+  and its fresh checkpoint are recorded above.
 
 Protected evidence lives under `~/Backups/openclaw/phase-b-preflight-20261011`.
 Do not commit copied config, databases, authentication material or private logs.

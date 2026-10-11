@@ -1,6 +1,7 @@
 # Node24 Phase A: draft implementation and cutover preparation
 
-**Status:** PHASE A ACCEPTED 2026-10-11; Phase B remains unactivated.
+**Status:** PHASE A ACCEPTED 2026-10-11; the subsequent
+[Phase B upgrade](node24-phase-b-cutover.md) is also accepted.
 Branch: `codex/openclaw-node24-phase-a`, based on `f0367a0`.
 Worktree: `/Users/dbochman/repos/dotfiles-openclaw-node24-phase-a`.
 

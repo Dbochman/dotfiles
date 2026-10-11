@@ -1,7 +1,7 @@
 # Node 24 LTS + OpenClaw 2026.10.1 Upgrade Plan (mac-mini)
 
 **Path:** `openclaw/plans/node24-openclaw-stable-upgrade.md`
-**Status:** PHASE A ACCEPTED; PHASE B IN PREPARATION. Claude Opus 5.5 drafted the plan; Codex reviewed and revised it against the repository and installed CLI. The separately verified Node24 cutover is recorded in [the execution record](node24-phase-a-cutover.md). OpenClaw2026.10.1 is not yet activated.
+**Status:** BOTH PHASES ACCEPTED 2026-10-11. Production runs official Node24.21.0 and OpenClaw2026.10.1. Claude Opus 5.5 drafted the plan; Codex reviewed and revised it against the repository and installed CLI. See the separate [Node execution record](node24-phase-a-cutover.md) and [OpenClaw acceptance record](node24-phase-b-cutover.md) for actual results and remaining unrelated faults. Historical preparation observations below are not the current runtime inventory.
 **Draft provenance:** explicit `claude-opus-5-5`, high effort, one successful tool-disabled turn; returned model usage confirmed that exact model. A temporary isolated Claude Code 2.1.296 client was used; the installed client was not upgraded.
 **Date drafted:** 2026-10-11 (America/New_York). **Host:** `mac-mini`. **User:** `dbochman`. **Repo:** `/Users/dbochman/dotfiles`.
 **Source of truth:** the tracked `openclaw/` tree. Runtime `~/.openclaw` is separate deployed state. Future runtime changes use reviewed deployment or supported configuration/migration commands, not untracked ad hoc patches.
@@ -428,12 +428,10 @@ Rollback release now also requires convergence with the deployer's published
 source; updater-internal npm ownership must be proved before mutation. These
 are plan requirements, not claims that the runtime changes have been tested.
 
-**Updated execution status, 2026-10-11:** the approved official runtime replaces
-Homebrew, isolated runtime/SQLite/native probes passed, the narrow receipt verifier
-is implemented, and the read-only Node22 live baseline passed. The [Phase A
-procedure](node24-phase-a-cutover.md#attended-maintenance-proposal) records the
-remaining startup-containment, writer/hold, complete checkpoint/restore, timing,
-review and candidate live-canary gates. Budget is approved; full restoration and
-its duration are not verified. Phase B admission/migrations and target SDK/plugin
-compatibility remain separate outstanding work. Document publication is not
-evidence of execution or permission to activate.
+**Final execution status, 2026-10-11:** both approved phases passed their separate
+drain, stopped-checkpoint/restore, migration, activation and bounded live-canary
+gates. Official Node24.21.0 and OpenClaw2026.10.1 are active; Codex/iMessage match
+the target and the held services are restored. See the execution records for
+the reviewed system-cron migration, retained recovery sets, protected evidence
+and unchanged pre-existing cron faults. Future upgrades still require their own
+review and approval; this acceptance does not authorize another moving target.
