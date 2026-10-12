@@ -56,9 +56,10 @@ observation.
 
 ## October 4 phone replacement repair
 
-Dylan's new phone and Julia's inherited phone now have corrected protected
-Crosstown bindings on the MacBook Pro. Both use Fixed Private Wi-Fi Address on
-the main Crosstown network. Owner-attributed per-network identity and attended
+At the October 4 repair, Dylan's new phone and Julia's inherited phone received
+corrected protected Crosstown bindings on the MacBook Pro. Both then used Fixed
+Private Wi-Fi Address on the main Crosstown network. See the October 12 update
+below for the later observed settings and replacement bindings. Owner-attributed per-network identity and attended
 off/on observations established each binding; Julia's owner-confirmed current
 IP supported a targeted return check when inbound ARP evidence was intermittent.
 Three targeted observations verified her return. Cached ARP, hostnames, and
@@ -82,6 +83,52 @@ addresses remain on the owning host, not in these docs. See the
 [Cabin correction record](cabin-starlink-presence-enrollment.md#october-4-phone-replacement-repair)
 and [replacement procedure](../skills/presence/SKILL.md#phone-replacement-or-transfer).
 These checks establish the repair, not a new sleeping-phone or hour-long soak.
+
+## October 12 registration repair
+
+After Dylan, Julia, and the animals returned to Crosstown, canonical presence
+still assigned both residents to the Cabin. Fresh network observation found
+neither saved phone binding. Owner-attributed screenshots supplied in Dylan's
+authenticated iMessage DM showed different current addresses for both phones;
+both exact screenshot addresses independently had live inbound ARP reachability.
+The reason the registrations diverged was not established. Dylan's screenshot
+showed Private Wi-Fi Address **Off**, while Julia's showed **Fixed**. Neither
+setting was changed during this repair.
+
+Dylan approved pausing the affected services and repairing the registrations.
+He subsequently requested using the supplied images instead of an additional
+Wi-Fi toggle exercise. This repair used that owner attribution plus exact live
+reachability; no attended off/on cycle or sleeping-phone soak was performed.
+This is a record of the evidence and user-directed exception for this repair,
+not a blanket relaxation of the enrollment procedure or scanner activation gate.
+
+Only the two Crosstown bindings in the MacBook Pro's protected host-local
+configuration were changed. The prior config was backed up, the replacement
+was atomic, and strict validation passed. Scanner bytes were unchanged; Cabin
+bindings were not modified. Full addresses and protected configuration backups
+must remain out of Git.
+
+At `2026-10-12T22:04:13Z`, the strict Crosstown observer detected both residents;
+a fresh Cabin observation detected neither. At `2026-10-12T22:04:51Z`, normal
+scan publication and receipt updated canonical state to Crosstown **occupied**
+and Cabin **confirmed_vacant**, with both residents assigned to Crosstown.
+All seven previously loaded services were restored: the Crosstown publisher,
+Cabin scanner, presence receiver, vacancy actions, home-event camera worker,
+home-event action worker, and Nest activity reviewer. Pending old Crosstown
+camera evaluations cleared after the occupied state was restored. Existing
+historical unknown/failed records were retained.
+
+Eight Sleep readback verified both residents Home at Crosstown on their normal
+sides, Away at the Cabin, with Cabin thermal activity idle. The resumed action
+worker also recorded the feeding-schedule transfer to Crosstown. Separately,
+the normal Cabin vacancy routine failed eco verification for the Solarium and
+Bedroom thermostats; that failure was reported and was not repaired as part of
+phone registration work.
+
+Protected evidence, registration backup/update receipt, and restoration records
+are retained under `~/.openclaw/presence-phone-repair-crosstown-20261012/` on the
+relevant hosts; the Mini also holds `final-audit.json`. These are host-local
+operational records, not Git-tracked deployment artifacts.
 
 ## One-time updater bootstrap
 
