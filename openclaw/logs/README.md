@@ -46,6 +46,13 @@ Each service uses one of two patterns:
 | `dotfiles-pull.log` | `ai.openclaw.dotfiles-pull` | Daily dotfiles sync |
 | `home-state-snapshot.log` | `ai.openclaw.home-state-snapshot` | Daily home state snapshot (cat weights, sleep, doorbell) |
 
+Sampler health now includes `notifications.mode` and `notifications.reason`
+when the bounded notification evaluator runs. Collection may succeed while
+notification evaluation is unavailable; do not interpret collection `ok` as a
+message receipt. Private episode/decision state is under
+`~/.openclaw/airthings/notifications/`; no message targets or credentials are
+written to these logs. See `plans/cabin-air-quality-notifications.md`.
+
 The restaurant coordinator imports both provider modules in one Python
 process. Because the first root logging configuration wins, coordinator
 diagnostics can share one provider log; check both `resy.log` and

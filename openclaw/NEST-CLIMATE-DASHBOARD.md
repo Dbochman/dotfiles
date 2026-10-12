@@ -77,6 +77,13 @@ the daily history file.
 
 ### Current-state projection
 
+The dedicated five-minute Airthings sampler also evaluates the separate
+[Cabin ventilation policy](plans/cabin-air-quality-notifications.md) after a
+successful history append. That evaluator defaults to shadow and consumes the
+same sample; it does not issue another BLE read or modify HVAC state. It exposes
+safe notification mode/reason in sampler health independently of collection
+success. A generic humidity-only `Poor` dashboard badge is not a trigger.
+
 The history API retains the original full and Airthings-only records so charts
 keep their native sampling cadence. For cards and `/api/current`, the dashboard
 uses the latest non-sampler record as the complete HVAC/weather base and

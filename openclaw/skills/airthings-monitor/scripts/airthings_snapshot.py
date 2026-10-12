@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -191,7 +192,39 @@ def _command_path(env_name: str, default: Path) -> Path:
     return path
 
 
-def collect() -> tuple[str, str]:
+def notification_check(record: dict[str, Any]) -> dict[str, str]:
+    script = Path(os.environ.get("AIRTHINGS_NOTIFY_SCRIPT", str(Path.home() / ".openclaw/bin/airthings-notify.py")))
+    if not script.is_file():
+        return {"reason": "not_configured"}
+    if script.is_symlink():
+        return {"reason": "helper_unavailable"}
+    try:
+        process = subprocess.Popen(
+            ["/usr/bin/python3", str(script), "evaluate"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, start_new_session=True,
+        )
+        try:
+            stdout, _ = process.communicate(json.dumps(record), timeout=120)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+            return {"reason": "helper_timeout"}
+        if process.returncode != 0 or len(stdout) > 65536:
+            return {"reason": "helper_failed"}
+        value = json.loads(stdout)
+        allowed = {"disabled", "observing", "duplicate_or_old_sample", "quiet_hours", "no_confirmed_occupants", "episode_already_notified", "would_notify", "submitted", "delivery_unconfirmed", "input_or_delivery_unavailable", "delivery_recheck_suppressed"}
+        if not isinstance(value, dict) or value.get("reason") not in allowed or value.get("mode") not in ("off", "shadow", "live"):
+            return {"reason": "helper_failed"}
+        return {"mode": value["mode"], "reason": value["reason"]}
+    except (OSError, ValueError, TypeError):
+        return {"reason": "helper_failed"}
+
+
+def collect() -> tuple[str, str, dict[str, str]]:
     home = Path.home()
     airthings = _command_path(
         "AIRTHINGS_BIN", home / ".openclaw" / "bin" / "airthings"
@@ -258,7 +291,7 @@ def collect() -> tuple[str, str]:
         or outcome not in {"appended", "duplicate"}
     ):
         raise SnapshotError("history_append_failed")
-    return outcome, record["timestamp"]
+    return outcome, record["timestamp"], notification_check(record)
 
 
 def main() -> int:
@@ -271,13 +304,14 @@ def main() -> int:
     checked_at = _utc_now()
     try:
         previous_success = _load_last_success(status_path)
-        outcome, sample_timestamp = collect()
+        outcome, sample_timestamp, notifications = collect()
         health = {
             "ok": True,
             "checked_at": checked_at,
             "last_success_at": checked_at,
             "outcome": outcome,
             "sample_timestamp": sample_timestamp,
+            "notifications": notifications,
         }
         _write_status(status_path, health)
         print(json.dumps(health, separators=(",", ":"), sort_keys=True))

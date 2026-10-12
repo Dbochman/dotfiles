@@ -47,6 +47,10 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 - **Temperature chart** — line graph with room temps + setpoints + outdoor weather
 - **Humidity chart** — per-room humidity over time
 - **CO2 and VOC charts** — Cabin Living Room Wave Enhance trends in ppm and ppb
+- **Ventilation notifications** — the existing five-minute sampler evaluates a
+  separate shadow-first CO2/VOC policy; humidity-only poor quality never causes
+  a window-opening nudge. Its safe outcome is in sampler health, independent of
+  successful measurement collection. See [policy and rollout](plans/cabin-air-quality-notifications.md).
 - **HVAC Duty Cycle** — hourly Active % bar chart using real Mysa duty,
   Midea fan percentage while active, and binary activity for Nest/Cielo;
   Airthings is excluded

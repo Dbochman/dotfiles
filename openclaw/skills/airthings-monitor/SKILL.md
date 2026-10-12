@@ -34,6 +34,12 @@ plain suggestions such as ventilation when CO2 or VOC is elevated.
 
 ## Boundaries
 
+The separately approved Cabin ventilation policy is evaluated deterministically
+after the scheduled sampler, not by this skill. It starts in shadow mode and
+owns freshness, positive recipient presence, quiet hours, and once-per-episode
+iMessage delivery. Do not invoke its operator helper, change its mode or state,
+or independently send threshold alerts from a status request.
+
 - Read status only. Enrollment is an attended operator workflow and is not an
   ordinary skill action.
 - Do not invoke `airthings-history-import`; CSV backfill is an attended

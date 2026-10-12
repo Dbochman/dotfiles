@@ -12,6 +12,24 @@ snapshot, not a continuously updated health report.
 
 ## Dashboard and deployment
 
+### October 12 Cabin ventilation notifications
+
+- [x] Add a deterministic, shadow-first rule alongside the existing five-minute
+  Airthings sampler; gate CO2/VOC duration, fresh positive resident presence,
+  quiet hours, and per-episode deduplication. No humidity-only window alerts.
+- [x] Validate with 71 focused tests, then deploy only the helper, sampler, and
+  Airthings instructions. Sensor collection remains independent of messaging.
+- [x] Send the single explicitly approved Dylan test
+  `AIR-20261012T141319Z`; record transport submission and his receipt confirmation
+  separately, then enable live mode while preserving state. No automatic retry.
+- [x] Verify the next ordinary sample (10:15:52 Eastern) reports live mode and
+  successful collection; no automatic alert was generated during this check.
+- [ ] Observe the first naturally qualifying notification; do not synthesize
+  a poor-air event or run another test to satisfy this item.
+
+Full policy, storage, pause procedure, and acceptance criteria:
+[Cabin ventilation notifications](cabin-air-quality-notifications.md).
+
 ### October 12 cron outcome repairs
 
 - [x] **Repair the post-upgrade triage publication contract for both owners.**

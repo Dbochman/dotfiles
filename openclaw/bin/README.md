@@ -118,6 +118,7 @@ active post-deploy checks.
 | `airthings` | Read-only exact-device Wave Enhance wrapper. Uses a locked local BLE runtime, delegates fresh reads through the Bluetooth-authorized Homebrew `Python.app`, serializes connections, caches successful status for five minutes, and omits Bluetooth identifiers and serials from public output. |
 | `airthings-history-import` | Attended, dry-run-first Airthings dashboard CSV importer. Apply requires `AIRTHINGS_ALLOW_HISTORY_IMPORT=1` plus `--apply`; affected daily history files are backed up, merged idempotently, sorted, and written atomically. It is not an OpenClaw skill tool. |
 | `airthings-snapshot` | Non-model five-minute sampler wrapper. Reads only the exact enrolled Wave Enhance, appends one fresh Airthings-only climate row, and maintains protected status-only health. |
+| `airthings-notify.py` | Deterministic Cabin CO2/VOC ventilation policy invoked after sampler append. Defaults to shadow; uses fresh positive recipient presence, quiet hours, protected episode deduplication, and the existing strict iMessage sender. Operator-only initialization/status; never a model or skill action. |
 | `nest-history-append` | Shared private JSONL appender for the 5-minute Airthings and 30-minute merged climate jobs. It validates records, uses a common `flock`, and supports exact source/room/timestamp deduplication. |
 
 See [`../REOLINK-CAMERA.md`](../REOLINK-CAMERA.md) for the private runtime

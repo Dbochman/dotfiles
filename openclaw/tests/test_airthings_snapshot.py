@@ -82,7 +82,7 @@ class AirthingsSnapshotTests(unittest.TestCase):
         )
         self.airthings.chmod(self.airthings.stat().st_mode | stat.S_IXUSR)
 
-    def run_snapshot(self) -> subprocess.CompletedProcess[str]:
+    def run_snapshot(self, **environment) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["/usr/bin/python3", str(SNAPSHOT)],
             capture_output=True,
@@ -95,6 +95,7 @@ class AirthingsSnapshotTests(unittest.TestCase):
                 "NEST_HISTORY_APPEND_BIN": str(APPENDER),
                 "NEST_HISTORY_DIR": str(self.history),
                 "AIRTHINGS_SNAPSHOT_STATUS_FILE": str(self.status_file),
+                **environment,
             },
         )
 
@@ -143,6 +144,35 @@ class AirthingsSnapshotTests(unittest.TestCase):
         self.assertEqual(health["error"], "device_unavailable")
         self.assertNotIn("device_not_found", self.status_file.read_text())
         self.assertEqual(list(self.history.glob("*.jsonl")), [])
+
+    def test_notification_failure_does_not_break_collection_or_leak_output(self):
+        self.write_airthings(self.payload())
+        helper = self.root / "notify.py"
+        helper.write_text("import sys\nprint('private-output')\nsys.exit(1)\n")
+        result = self.run_snapshot(AIRTHINGS_NOTIFY_SCRIPT=str(helper))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["ok"])
+        self.assertEqual(json.loads(result.stdout)["notifications"], {"reason": "helper_failed"})
+        self.assertNotIn("private-output", result.stdout + result.stderr)
+        self.assertEqual(len(list(self.history.glob("*.jsonl"))), 1)
+
+    def test_notification_receives_only_the_successfully_appended_sample(self):
+        self.write_airthings(self.payload())
+        helper = self.root / "notify.py"
+        helper.write_text("import json,sys\nrecord=json.load(sys.stdin)\nassert record['history_origin']=='airthings_ble_sampler_v1'\nassert record['rooms'][0]['room']=='Living Room'\nprint(json.dumps({'mode':'shadow','reason':'observing','unexpected_private_field':'hidden'}))\n")
+        result = self.run_snapshot(AIRTHINGS_NOTIFY_SCRIPT=str(helper))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["notifications"], {"mode": "shadow", "reason": "observing"})
+        self.assertNotIn("hidden", result.stdout)
+
+    def test_failed_sensor_does_not_invoke_notification(self):
+        self.write_airthings(self.payload(online=False))
+        marker = self.root / "invoked"
+        helper = self.root / "notify.py"
+        helper.write_text(f"from pathlib import Path\nPath({str(marker)!r}).touch()\n")
+        result = self.run_snapshot(AIRTHINGS_NOTIFY_SCRIPT=str(helper))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":
