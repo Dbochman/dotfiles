@@ -3,6 +3,14 @@
 Reference for the canonical cron definitions in this repository and the live
 SQLite-backed scheduler on the Mac Mini.
 
+Both morning triage jobs classify already-captured Gmail `batchModify` output
+with `bin/gmail-batch-modify-result.py`. Exit zero with an empty response or
+`{}` is accepted, but success counters and dependent cleanup still require
+exact-ID label readback. Unexpected output, failed exit, and timeout remain
+unconfirmed; never replay a mutation to recover its response. This exception
+does not apply to reads or draft creation. October 12 repair does not replay
+that morning's skipped cleanup or replace its failed publication history.
+
 ## Editing & reading jobs
 
 ### State lives in SQLite now

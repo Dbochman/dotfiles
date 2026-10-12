@@ -4,6 +4,12 @@ Helper scripts deployed to `~/.openclaw/bin/` (and `~/bin/`) on the Mac Mini. Th
 
 ## Deployment
 
+`gmail-batch-modify-result.py` runs directly from this repository. It classifies
+captured stdout plus the actual exit code of an already completed Gmail
+`batchModify` call; it never calls Gmail. Empty successful responses require
+exact-message label readback, not another mutation. It is not a general JSON
+parser for reads or draft creation.
+
 Scripts in this directory are tracked in the dotfiles repo and deployed to Mini via `dotfiles-pull.command` (daily LaunchAgent) or manually via `scp`:
 
 ```bash

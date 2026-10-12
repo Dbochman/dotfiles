@@ -21,11 +21,14 @@ snapshot, not a continuously updated health report.
   live collectors import the patched source; no cleanup rerun, message resend,
   gateway restart, or historical handoff rewrite occurred. Next organic runs
   remain the end-to-end acceptance check.
-- [ ] **Handle empty successful Gmail mutation responses correctly.** Dylan's
+- [x] **Handle empty successful Gmail mutation responses correctly.** Dylan's
   triage classified five messages but its ad-hoc parser rejected empty success
   responses, so subsequent read-state/archive work was conservatively skipped.
   Add a bounded shared response contract and regressions for both owners;
   preserve readback verification and never retry ambiguous mailbox writes.
+  Added a pure captured-response classifier and both owners' prompt contract;
+  empty exit-zero responses still require exact-ID label readback. No mailbox
+  writes were replayed; next organic runs remain the behavior check.
 - [ ] **Expose triage outcome health separately from scheduler success.**
   Surface missing/invalid, partial, and healthy same-day handoffs without
   publishing mailbox contents or rewriting historical scheduler results.
