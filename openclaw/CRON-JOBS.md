@@ -3,6 +3,13 @@
 Reference for the canonical cron definitions in this repository and the live
 SQLite-backed scheduler on the Mac Mini.
 
+Julia's sleep input comes from the existing 06:50 LaunchAgent, not another
+cron/model call. It reads `~/.openclaw/8sleep-snapshots/julia.json`, validates
+private permissions, owner, wake-up date, and capture time, and reports missing
+data or collector failure explicitly. The collector uses the user-scoped
+Eight Sleep endpoint regardless of which Pod was used; no location routing
+or thermal controls change. Legacy `/tmp` snapshots are no longer produced.
+
 **Flower Watch hold (October 12):** `plant-watch-julia-blooms-2026` remains
 disabled in source and live state. Its referenced `plant-bloom-watch` skill and
 `scripts/bloom_state.py` are missing. Preserve history and the disabled state;

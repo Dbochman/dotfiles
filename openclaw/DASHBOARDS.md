@@ -4,6 +4,12 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 
 ## Quick Reference
 
+The existing Eight Sleep morning snapshot producer now reports failures with
+a nonzero exit rather than silently removing its output. Protected per-owner
+JSON distinguishes valid same-day data, no data, and unavailable. The usage
+dashboard's launchd exit remains historical until the next scheduled run;
+an attended direct validation does not overwrite launchd history.
+
 Usage dashboard (8551): morning triage rows show a dated handoff outcome
 separately from scheduler status. A scheduler `ok` does not establish mailbox
 cleanup success. Outcomes use the shared receipt validator, expose no message

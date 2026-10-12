@@ -4,6 +4,16 @@ Helper scripts deployed to `~/.openclaw/bin/` (and `~/bin/`) on the Mac Mini. Th
 
 ## Deployment
 
+`8sleep-snapshot.sh` delegates to `8sleep-snapshot.py` at the existing 06:50
+schedule. The collector reads only four Eight Sleep keys from the owner-owned
+0600 secrets cache (no shell evaluation or `op`), issues one bounded user/date
+sleep query per owner, and atomically publishes 0600 JSON in a 0700 directory
+at `~/.openclaw/8sleep-snapshots/`. Concurrent runs are locked. Missing data is
+distinct from API/credential failure; failures exit nonzero and never publish
+fresh success from old data. Logs contain only owner and status, not sleep
+metrics or API responses. Deploy both files together; Julia's briefing reads
+the new private JSON, while explicit legacy text overrides remain supported.
+
 The usage dashboard imports the adjacent `morning-triage.py` and
 `openclaw_cron_sqlite.py` for content-free outcome health. Keep this shared
 validator current when deploying the dashboard; it does not run email jobs.

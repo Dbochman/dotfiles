@@ -40,7 +40,7 @@ STATE_DB = Path(
 )
 CRON_STORE_KEY = str(Path.home() / ".openclaw/cron/jobs.json")
 SLEEP_SNAPSHOT = Path(
-    os.environ.get("JULIA_SLEEP_SNAPSHOT", "/tmp/8sleep-julia-latest.txt")
+    os.environ.get("JULIA_SLEEP_SNAPSHOT", str(Path.home() / ".openclaw/8sleep-snapshots/julia.json"))
 )
 TRIAGE_JOB_ID = "gws-julia-morning-triage-0001"
 TIME_ZONE = ZoneInfo("America/New_York")
@@ -476,6 +476,26 @@ def collect_post_triage_arrivals(
 
 
 def collect_sleep(today: datetime, *, snapshot_path: Path = SLEEP_SNAPSHOT) -> dict[str, object]:
+    if snapshot_path.suffix == ".json":
+        try:
+            payload = json.loads(triage._private_bytes(snapshot_path, 32768))
+            if not isinstance(payload, dict) or payload.get("schemaVersion") != 1 or payload.get("owner") != "julia":
+                raise ValueError("invalid_snapshot")
+            captured = datetime.fromisoformat(payload["capturedAt"])
+            if captured.tzinfo is None or captured.astimezone(TIME_ZONE).date() != today.date() or captured.timestamp() > today.timestamp() + 300 or payload.get("date") != today.date().isoformat():
+                return {"status": "unavailable", "reason": "stale"}
+            if payload.get("status") == "no_data":
+                return {"status": "unavailable", "reason": "no_sleep_data"}
+            if payload.get("status") != "ok":
+                reasons = {"credentials_unavailable", "timeout", "api_unavailable", "api_failed", "invalid_response", "stale_response", "incomplete_sleep_data", "oversized_response"}
+                reason = payload.get("reason")
+                return {"status": "unavailable", "reason": reason if reason in reasons else "collector_unavailable"}
+            raw = payload.get("text")
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError("empty_snapshot")
+            return {"status": "ok", "text": clean_text(raw, SLEEP_TEXT_LIMIT)}
+        except (OSError, ValueError, TypeError, KeyError):
+            return {"status": "unavailable", "reason": "invalid_snapshot"}
     try:
         raw = snapshot_path.read_text(encoding="utf-8")[:32768]
     except OSError:

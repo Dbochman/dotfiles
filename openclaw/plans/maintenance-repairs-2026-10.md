@@ -12,12 +12,12 @@ snapshot, not a continuously updated health report.
 
 ## Dashboard and deployment
 
-### October12 cron outcome repairs
+### October 12 cron outcome repairs
 
 - [x] **Repair the post-upgrade triage publication contract for both owners.**
   Applied the shared helper's receipt-backed active-run validation, retaining
   legacy task checks, exact job/store/receipt identity, freshness, completion
-  rejection, and the pre-publication recheck. All96 focused tests pass. Both
+  rejection, and the pre-publication recheck. All 96 focused tests pass. Both
   live collectors import the patched source; no cleanup rerun, message resend,
   gateway restart, or historical handoff rewrite occurred. Next organic runs
   remain the end-to-end acceptance check.
@@ -29,12 +29,17 @@ snapshot, not a continuously updated health report.
   Added a pure captured-response classifier and both owners' prompt contract;
   empty exit-zero responses still require exact-ID label readback. No mailbox
   writes were replayed; next organic runs remain the behavior check.
+  Both targeted live prompts were updated through the gateway and read back;
+  schedules, enabled state, delivery, and model settings were preserved.
 - [x] **Expose triage outcome health separately from scheduler success.**
   Surface missing/invalid, partial, and healthy same-day handoffs without
   publishing mailbox contents or rewriting historical scheduler results.
   The two triage rows now include a dated, content-free outcome from the same
   receipt validator used by briefings. Pending, unavailable, partial, and
   verified states remain distinct from the last scheduler exit status.
+  Deployed with hash verification and a usage-dashboard-only restart; the
+  loopback API correctly shows both historical scheduler successes alongside
+  today's invalid handoffs. No historical run or receipt was rewritten.
 - [x] **Reconcile Flower Watch's stopped state with deployment.** Source was
   enabled while the live job is disabled; repeated 8AM attempts report operator
   disablement. Establish the stop reason, preserve the existing live stop, and
@@ -44,10 +49,16 @@ snapshot, not a continuously updated health report.
   `plant-bloom-watch/scripts/bloom_state.py` is absent from the deployed skill
   and repository; repeated attempts cannot complete. Restoration requires a
   separately reviewed implementation and explicit re-enable, not a retry.
-- [ ] **Restore or explain Julia's missing sleep snapshot.** Inspect the
-  existing6:50AM producer and identity/freshness contract. Restore truthful,
+- [x] **Restore or explain Julia's missing sleep snapshot.** Inspect the
+  existing 6:50AM producer and identity/freshness contract. Restore truthful,
   private cached input without changing Pod controls or inventing sleep data.
-- [ ] **Observe Eversource's next unattended renewal.** Its October11 targeted
+  Reproduced missing Eight Sleep environment in the launchd-like environment;
+  the old wrapper silently suppressed that failure. Deployed cache-only,
+  bounded user/date queries and private atomic snapshots with explicit status.
+  A read-only validation under an empty launchd-like environment returned valid
+  current data for both owners; Julia's briefing reader accepts her snapshot.
+  Existing schedule is unchanged; no Pod controls, new jobs, or messages.
+- [ ] **Observe Eversource's next unattended renewal.** Its October 11 targeted
   recovery succeeded after the historical weekly failure. Do not rerun the
   full scrape or clear that evidence merely to make scheduler status green.
 

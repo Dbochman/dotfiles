@@ -567,7 +567,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 |-------|----------|---------|-------------|
 | `ai.openclaw.dotfiles-pull` | Daily 6:00 AM | `dotfiles-pull.command` | Pulls dotfiles, deploys skills/wrappers plus the protected restaurant scope registry, reconciles cron, and verifies required restaurant skills through the active gateway |
 | `ai.openclaw.crosstown-vacant-roomba` | Daily 6:00 AM | `crosstown-vacant-roomba.py` | Starts each safely idle Crosstown Roomba at most once per local day while canonical presence is freshly `confirmed_vacant`; recent Crosstown litter-box activity, a dashboard snooze, stale evidence, or uncertain robot state suppresses the run |
-| `ai.openclaw.8sleep-snapshot` | Daily 6:50 AM | `8sleep-snapshot.sh` | Pre-captures last-night summaries to `/tmp/8sleep-{dylan,julia}-latest.txt` before morning briefings |
+| `ai.openclaw.8sleep-snapshot` | Daily 6:50 AM | `8sleep-snapshot.sh` → `8sleep-snapshot.py` | Captures owner/date-verified summaries in private `~/.openclaw/8sleep-snapshots/{dylan,julia}.json`; no Pod controls |
 | `ai.openclaw.finance-refresh` | Daily 6:15 AM | `finance-refresh.py` | Sequential cache-only Plaid and crypto refresh with retries and combined health; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
