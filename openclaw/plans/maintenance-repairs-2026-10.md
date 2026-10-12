@@ -32,11 +32,15 @@ snapshot, not a continuously updated health report.
 - [ ] **Expose triage outcome health separately from scheduler success.**
   Surface missing/invalid, partial, and healthy same-day handoffs without
   publishing mailbox contents or rewriting historical scheduler results.
-- [ ] **Reconcile Flower Watch's stopped state with deployment.** Source is
+- [x] **Reconcile Flower Watch's stopped state with deployment.** Source was
   enabled while the live job is disabled; repeated 8AM attempts report operator
   disablement. Establish the stop reason, preserve the existing live stop, and
   prevent source deployment from silently re-enabling it. No camera or message
   canary is authorized by this maintenance task.
+  Source now preserves the live disabled state. The referenced
+  `plant-bloom-watch/scripts/bloom_state.py` is absent from the deployed skill
+  and repository; repeated attempts cannot complete. Restoration requires a
+  separately reviewed implementation and explicit re-enable, not a retry.
 - [ ] **Restore or explain Julia's missing sleep snapshot.** Inspect the
   existing6:50AM producer and identity/freshness contract. Restore truthful,
   private cached input without changing Pod controls or inventing sleep data.

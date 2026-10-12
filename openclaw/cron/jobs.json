@@ -206,7 +206,7 @@
       "id": "plant-watch-julia-blooms-2026",
       "agentId": "main",
       "name": "Julia Flower Bloom Watch",
-      "enabled": true,
+      "enabled": false,
       "createdAtMs": 1785368245000,
       "schedule": {
         "kind": "cron",

@@ -3,6 +3,11 @@
 Reference for the canonical cron definitions in this repository and the live
 SQLite-backed scheduler on the Mac Mini.
 
+**Flower Watch hold (October 12):** `plant-watch-julia-blooms-2026` remains
+disabled in source and live state. Its referenced `plant-bloom-watch` skill and
+`scripts/bloom_state.py` are missing. Preserve history and the disabled state;
+do not re-enable until the implementation is restored, reviewed, and approved.
+
 Both morning triage jobs classify already-captured Gmail `batchModify` output
 with `bin/gmail-batch-modify-result.py`. Exit zero with an empty response or
 `{}` is accepted, but success counters and dependent cleanup still require
