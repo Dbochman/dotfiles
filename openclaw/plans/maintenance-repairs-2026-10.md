@@ -29,9 +29,12 @@ snapshot, not a continuously updated health report.
   Added a pure captured-response classifier and both owners' prompt contract;
   empty exit-zero responses still require exact-ID label readback. No mailbox
   writes were replayed; next organic runs remain the behavior check.
-- [ ] **Expose triage outcome health separately from scheduler success.**
+- [x] **Expose triage outcome health separately from scheduler success.**
   Surface missing/invalid, partial, and healthy same-day handoffs without
   publishing mailbox contents or rewriting historical scheduler results.
+  The two triage rows now include a dated, content-free outcome from the same
+  receipt validator used by briefings. Pending, unavailable, partial, and
+  verified states remain distinct from the last scheduler exit status.
 - [x] **Reconcile Flower Watch's stopped state with deployment.** Source was
   enabled while the live job is disabled; repeated 8AM attempts report operator
   disablement. Establish the stop reason, preserve the existing live stop, and

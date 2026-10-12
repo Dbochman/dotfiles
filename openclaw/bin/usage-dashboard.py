@@ -8,6 +8,7 @@ Reads JSONL snapshots from ~/.openclaw/usage-history/YYYY-MM-DD.jsonl
 Intended for home-LAN and Tailscale-tailnet access; not public internet.
 """
 
+import importlib.util
 import json
 import math
 import os
@@ -28,6 +29,12 @@ from urllib.request import urlopen
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from openclaw_cron_sqlite import connect as connect_cron
+
+TRIAGE_SPEC = importlib.util.spec_from_file_location(
+    "usage_dashboard_triage", Path(__file__).with_name("morning-triage.py")
+)
+triage = importlib.util.module_from_spec(TRIAGE_SPEC)
+TRIAGE_SPEC.loader.exec_module(triage)
 
 HISTORY_DIR = os.path.expanduser("~/.openclaw/usage-history")
 PORT = 8551
@@ -1016,6 +1023,44 @@ def get_cron_job_names():
     except (OSError, sqlite3.Error):
         return {}
 
+def get_triage_outcome(job_id, now=None):
+    if job_id not in triage.OWNER_JOBS.values():
+        return None
+    now = now or datetime.now(triage.TIME_ZONE)
+    now = now.astimezone(triage.TIME_ZONE)
+    handoff, baseline = triage.load_triage_handoff(
+        now, db_path=Path(CRON_DB_PATH), job_id=job_id, store_key=CRON_STORE_KEY,
+    )
+    status, label = "unavailable", "Handoff unavailable"
+    if handoff.get("status") != "ok":
+        reason = handoff.get("reason")
+        if reason == "triage_run_in_progress":
+            status, label = "pending", "Triage running"
+        elif reason == "same_day_handoff_missing":
+            expected_hour = 7 if job_id == triage.OWNER_JOBS["julia"] else 8
+            if now.hour < expected_hour:
+                status, label = "pending", "Awaiting today's handoff"
+            else:
+                label = "Today's handoff missing"
+        elif reason == "invalid_handoff":
+            label = "Handoff invalid"
+        elif reason == "triage_run_failed":
+            label = "Triage failed"
+        elif reason == "database_unavailable":
+            label = "Handoff store unavailable"
+    elif (
+        handoff.get("handoffStatus") != "ok"
+        or handoff.get("cleanupVerified") is not True
+        or baseline is None
+        or handoff.get("errorCount", 0)
+        or handoff.get("outcomes", {}).get("status") != "ok"
+    ):
+        status, label = "partial", "Triage partial / review needed"
+    else:
+        status, label = "verified", "Triage handoff verified"
+    return {"status": status, "label": label, "date": now.date().isoformat()}
+
+
 def get_upcoming_cron_jobs():
     """Read the live SQLite cron store and return upcoming scheduled runs."""
     try:
@@ -1054,6 +1099,7 @@ def get_upcoming_cron_jobs():
             "last_status": last_status,
             "consecutive_errors": consecutive_errors or 0,
             "delete_after_run": bool(delete_after_run),
+            "triage_outcome": get_triage_outcome(job_id),
         })
     return jobs
 
@@ -2076,6 +2122,14 @@ function fmtDate(ms) {
   return dayStr + ' ' + d.toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
 }
 
+function triageOutcomeBadge(outcome) {
+  if (!outcome) return '';
+  const color = outcome.status === 'verified' ? C.green :
+    outcome.status === 'unavailable' ? C.red : C.amber;
+  return '<br><span style="color:' + color + ';font-size:0.75rem">' +
+    escapeHtml(outcome.label) + ' (' + escapeHtml(outcome.date) + ')</span>';
+}
+
 async function refreshUpcoming() {
   try {
     const r = await fetch('/api/cron');
@@ -2090,14 +2144,14 @@ async function refreshUpcoming() {
     el.innerHTML = jobs.map(j => {
       const lastBadge = !j.last_status ? '<span style="color:' + C.muted + '">-</span>' :
         j.last_status === 'ok' ? '<span class="badge badge-ok">ok</span>' :
-        '<span class="badge badge-err">' + j.last_status + (j.consecutive_errors > 1 ? ' (' + j.consecutive_errors + 'x)' : '') + '</span>';
+        '<span class="badge badge-err">' + escapeHtml(j.last_status) + (j.consecutive_errors > 1 ? ' (' + j.consecutive_errors + 'x)' : '') + '</span>';
       const typeLabel = j.delete_after_run ? '<span style="color:' + C.amber + '">one-shot</span>' : '<span style="color:' + C.muted + '">recurring</span>';
       const countdown = j.next_run_ms ? 'in ' + fmtRelativeTime(j.next_run_ms) : '-';
       const isOverdue = j.next_run_ms && j.next_run_ms < Date.now();
       return `<tr>
         <td style="font-weight:500">${escapeHtml(jobTitle(j))}</td>
         <td style="color:${isOverdue ? C.red : C.muted}">${countdown}<br><span style="font-size:0.7rem">${fmtDate(j.next_run_ms)}</span></td>
-        <td>${lastBadge}</td>
+        <td>${lastBadge}${triageOutcomeBadge(j.triage_outcome)}</td>
         <td>${typeLabel}</td>
       </tr>`;
     }).join('');

@@ -4,6 +4,13 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 
 ## Quick Reference
 
+Usage dashboard (8551): morning triage rows show a dated handoff outcome
+separately from scheduler status. A scheduler `ok` does not establish mailbox
+cleanup success. Outcomes use the shared receipt validator, expose no message
+metadata, and distinguish pending, invalid/missing, partial, and verified.
+Deploy `morning-triage.py` with `usage-dashboard.py` and its existing SQLite
+adapter; restart only the usage dashboard for this reporting change.
+
 | Port | Dashboard | URL | Data Refresh |
 |------|-----------|-----|-------------|
 | 8550 | [Nest Climate](#nest-climate-dashboard) | http://dylans-mac-mini:8550 | 5 min (UI/Airthings) · 30 min (HVAC) |

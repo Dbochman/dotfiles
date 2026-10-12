@@ -1,5 +1,9 @@
 # LaunchAgents
 
+October 12 usage-dashboard reporting repair requires only the
+`ai.openclaw.usage-dashboard` reload after deploying its shared triage validator.
+No gateway, Messages, or household service reload is needed.
+
 Reference for all LaunchAgents across machines. Plist source files live in two locations:
 
 - **OpenClaw agents** (`ai.openclaw.*` / `com.openclaw.*` prefix): [`openclaw/launchagents/`](launchagents/)

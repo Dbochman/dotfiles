@@ -285,6 +285,66 @@ assert.equal(escapeHtml(jobTitle({name: '<img onerror="bad">&'})), '&lt;img oner
         self.assertIn("cronNameMap = data.cron_names || {}", html)
 
 
+class TriageOutcomeTests(unittest.TestCase):
+    def outcome(self, handoff, baseline=None, hour=9, owner="julia"):
+        now = datetime(2026, 10, 12, hour, tzinfo=usage_dashboard.triage.TIME_ZONE)
+        with mock.patch.object(usage_dashboard.triage, "load_triage_handoff", return_value=(handoff, baseline)) as loader:
+            result = usage_dashboard.get_triage_outcome(usage_dashboard.triage.OWNER_JOBS[owner], now)
+        self.assertEqual(loader.call_args.kwargs["store_key"], usage_dashboard.CRON_STORE_KEY)
+        return result
+
+    def test_invalid_handoff_is_not_scheduler_success(self):
+        outcome = self.outcome({"status": "unavailable", "reason": "invalid_handoff"})
+        self.assertEqual(outcome, {"status": "unavailable", "label": "Handoff invalid", "date": "2026-10-12"})
+
+    def test_missing_handoff_pending_before_briefing_then_unavailable(self):
+        for owner, hour in (("julia", 7), ("dylan", 8)):
+            missing = {"status": "unavailable", "reason": "same_day_handoff_missing"}
+            self.assertEqual(self.outcome(missing, hour=hour - 1, owner=owner)["status"], "pending")
+            self.assertEqual(self.outcome(missing, hour=hour, owner=owner)["status"], "unavailable")
+
+    def test_partial_cleanup_review_and_unverified_baseline(self):
+        healthy = {"status": "ok", "handoffStatus": "ok", "cleanupVerified": True, "outcomes": {"status": "ok"}}
+        self.assertEqual(self.outcome(healthy, set())["status"], "verified")
+        self.assertEqual(self.outcome(healthy, None)["status"], "partial")
+        for patch in ({"handoffStatus": "partial"}, {"cleanupVerified": False}, {"outcomes": {"status": "unavailable"}}, {"errorCount": 1}):
+            self.assertEqual(self.outcome({**healthy, **patch}, set())["status"], "partial")
+
+    def test_no_mailbox_data_or_unknown_reasons_exposed(self):
+        outcome = self.outcome({"status": "unavailable", "reason": "private-message-id", "attention": [{"subject": "private-subject"}]})
+        self.assertNotIn("private", json.dumps(outcome))
+        self.assertEqual(set(outcome), {"status", "label", "date"})
+        self.assertIsNone(usage_dashboard.get_triage_outcome("unrelated-job"))
+
+    def test_scheduler_ok_is_preserved_alongside_invalid_handoff(self):
+        connection = mock.Mock()
+        connection.execute.return_value.fetchall.return_value = [
+            (usage_dashboard.triage.OWNER_JOBS["julia"], "Julia triage", "cron", "45 6 * * *", None, None, 1, "ok", 0, 0)
+        ]
+        with mock.patch.object(usage_dashboard, "connect_cron", return_value=connection), mock.patch.object(
+            usage_dashboard.triage, "load_triage_handoff", return_value=({"status": "unavailable", "reason": "invalid_handoff"}, None)
+        ):
+            job = usage_dashboard.get_upcoming_cron_jobs()[0]
+        self.assertEqual(job["last_status"], "ok")
+        self.assertEqual(job["triage_outcome"]["status"], "unavailable")
+
+    @unittest.skipUnless(shutil.which("node"), "Node required")
+    def test_badge_escapes_untrusted_labels(self):
+        html = usage_dashboard.DASHBOARD_HTML
+        helpers = html[html.index("function shortJobId("):html.index("function setImessageMetric(")]
+        badge = html[html.index("function triageOutcomeBadge("):html.index("async function refreshUpcoming(")]
+        script = "const C={green:'green',red:'red',amber:'amber'};\n" + helpers + badge + """
+const assert = require('node:assert/strict');
+assert.equal(triageOutcomeBadge(null), '');
+const output = triageOutcomeBadge({status:'unavailable', label:'<private>',date:'<date>'});
+assert(output.includes('color:red'));
+assert(output.includes('&lt;private&gt;'));
+assert(output.includes('&lt;date&gt;'));
+"""
+        result = usage_dashboard.subprocess.run(["node", "-e", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class IMessageResponseLatencyTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()

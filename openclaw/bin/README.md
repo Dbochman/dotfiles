@@ -4,6 +4,10 @@ Helper scripts deployed to `~/.openclaw/bin/` (and `~/bin/`) on the Mac Mini. Th
 
 ## Deployment
 
+The usage dashboard imports the adjacent `morning-triage.py` and
+`openclaw_cron_sqlite.py` for content-free outcome health. Keep this shared
+validator current when deploying the dashboard; it does not run email jobs.
+
 `gmail-batch-modify-result.py` runs directly from this repository. It classifies
 captured stdout plus the actual exit code of an already completed Gmail
 `batchModify` call; it never calls Gmail. Empty successful responses require
