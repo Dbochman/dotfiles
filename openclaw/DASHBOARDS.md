@@ -24,6 +24,7 @@ adapter; restart only the usage dashboard for this reporting change.
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · 15 min (Cabin Assistant) · event-driven (JSONL) |
 | 8554 | [Cat Care](#cat-care-dashboard) | http://dylans-mac-mini:8554 | 60s cache · Whisker/Petlibro/event bus on demand |
+| 8555 | [Cabin Magazine](#cabin-magazine) | http://dylans-mac-mini:8555 | Immediate SQLite reads · writes 500 ms after control changes |
 | 8558 | [Home Control Plane](#home-control-plane-dashboard) | http://dylans-mac-mini:8558 | 60s cache · 5 min background refresh |
 | 8585 | [Financial](#financial-dashboard) | http://dylans-mac-mini:8585 | Daily unified finance refresh at 06:15 + weekly scrapes · API on demand |
 | 8586 | [Forecast](#forecast-dashboard) | http://dylans-mac-mini:8586 | 5 min snapshot and market prices · crypto in 06:15 finance refresh · aggregate ledger capture at 07:35 |
@@ -381,6 +382,17 @@ with Petlibro feeders and fountains.
 
 ---
 
+## Cabin Magazine
+
+**Port 8555** · [Full spec](CABIN-MAGAZINE.md)
+
+Serves the eight-page Cabin issue to the home LAN and Tailscale tailnet. Plain
+checkboxes and observation fields use shared SQLite state so Julia can update
+the magazine from her phone; capture notes, prompts, and photos stay on the
+existing durable capture-spool path.
+
+---
+
 ## Financial Dashboard
 
 **Port 8585** · [Full spec](FINANCIAL-DASHBOARD.md)
@@ -697,6 +709,7 @@ curl -s http://dylans-mac-mini:8550/ | head -5   # Nest
 curl -s http://dylans-mac-mini:8551/ | head -5   # Usage
 curl -s http://dylans-mac-mini:8552/ | head -5   # Dog Walk
 curl -s http://dylans-mac-mini:8553/ | head -5   # Roomba
+curl -s http://dylans-mac-mini:8555/ | head -5   # Cabin Magazine
 curl -s http://dylans-mac-mini:8558/ | head -5   # Home Control Plane
 curl -s http://dylans-mac-mini:8585/ | head -5   # Financial
 curl -s http://dylans-mac-mini:8586/ | head -5   # Forecast
