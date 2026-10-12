@@ -49,6 +49,14 @@ snapshot, not a continuously updated health report.
   `plant-bloom-watch/scripts/bloom_state.py` is absent from the deployed skill
   and repository; repeated attempts cannot complete. Restoration requires a
   separately reviewed implementation and explicit re-enable, not a retry.
+  **Follow-up restoration:** Recovered both original files from the October 11
+  Phase B restored backup, verifying each against `source-manifest.json`.
+  The state helper is byte-identical to that backup; skill instructions change
+  only its managed deployment path and add an explicit completed-watch hold.
+  Tracked source now prevents loss of the workspace-only implementation.
+  Existing state has both alert flags true, so this was a completed watch,
+  not a reason to reset or resume it. Restore code, retain state and disabled
+  schedule, and require a separately approved policy for any new watch.
 - [x] **Restore or explain Julia's missing sleep snapshot.** Inspect the
   existing 6:50AM producer and identity/freshness contract. Restore truthful,
   private cached input without changing Pod controls or inventing sleep data.
