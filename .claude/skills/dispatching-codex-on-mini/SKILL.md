@@ -1,6 +1,6 @@
 ---
 name: dispatching-codex-on-mini
-description: Delegate multi-file or multi-repo implementation work to codex running on dylans-mac-mini via SSH. Covers the PATH wrapper needed because SSH non-interactive shells do not source nvm, the --add-dir trick for working across two repos in one session, a mandatory pre-flight checklist that prevents codex from stalling on a bad baseline, how to monitor progress without flooding the chat, and the resume-after-blocker recipe. Use when the user says "ask codex to...", "instruct codex to...", "delegate X to codex", "have codex implement...", or any similar request for autonomous implementation of a bounded engineering task.
+description: Delegate implementation work to codex running on dylans-mac-mini. Default is to paste the prompt into the long-running interactive codex in the `cabin-backend` tmux session (human-in-loop review). Headless `codex exec` is the fallback for autonomous ship-the-PR work. Covers the SSH PATH wrapper, the --add-dir trick for multi-repo headless runs, a mandatory pre-flight checklist that prevents codex from stalling on a bad baseline, monitoring without flooding the chat, and the resume-after-blocker recipe. Use when the user says "ask codex to...", "instruct codex to...", "delegate X to codex", "have codex implement...", or similar.
 ---
 
 # dispatching-codex-on-mini
@@ -38,9 +38,50 @@ Run every one of these before dispatching. Each item exists because a previous r
 
 If any item fails, FIX IT FIRST. Do not dispatch and hope.
 
-## The dispatch command
+## Default: dispatch to the `cabin-backend` tmux session
 
-Write the task to a local file, scp it, then launch nohup codex detached:
+Julia's preference: route delegated work to the interactive Codex running in the `cabin-backend` tmux session on the Mini. The user watches progress in the pane and can intervene mid-run. The interactive flow does NOT autonomously `git push` or `gh pr create` — Dylan reviews each step. Use this for most tasks.
+
+Before pasting the prompt, confirm:
+
+1. **Session exists and is idle.** `ssh dylans-mac-mini '/opt/homebrew/bin/tmux capture-pane -t cabin-backend -p -S -5 | tail -5'`. If the last lines show "Ask Codex to do anything" (or similar prompt-ready marker), the session is idle. If it shows an in-flight command, STOP and ask the user before interrupting.
+2. **Pane cwd matches the task** — the tmux header shows cwd. If the task touches dotfiles and the pane is in `~/repos/cabin`, pre-send `cd ~/dotfiles` via `tmux send-keys` before the prompt. The interactive codex can also cd itself if told to.
+
+Paste the prompt via `load-buffer` + `paste-buffer`, then press Enter. `send-keys` with the prompt inline is fragile for multi-line markdown (quoting hell).
+
+```bash
+scp task-prompt.md dylans-mac-mini:/tmp/codex-task.md
+
+ssh dylans-mac-mini '
+  TMUX=/opt/homebrew/bin/tmux
+  $TMUX load-buffer -b codex-task /tmp/codex-task.md
+  $TMUX paste-buffer -t cabin-backend -b codex-task -p
+  # Give Codex a beat to render the paste, then submit:
+  sleep 1
+  $TMUX send-keys -t cabin-backend Enter
+'
+```
+
+Watch progress by capturing the pane periodically or via the Monitor tool:
+
+```bash
+ssh dylans-mac-mini "/opt/homebrew/bin/tmux capture-pane -t cabin-backend -p -S -60 | tail -40"
+```
+
+For live streaming via Monitor, poll in a loop with a short interval (interactive codex updates smoothly, not line-at-a-time like `codex exec`):
+
+```bash
+prev=""
+while true; do
+  cur=$(ssh dylans-mac-mini "/opt/homebrew/bin/tmux capture-pane -t cabin-backend -p -S -8 | tail -8")
+  if [ "$cur" != "$prev" ]; then echo "---"; echo "$cur"; prev="$cur"; fi
+  sleep 15
+done
+```
+
+## Fallback: headless `codex exec`
+
+Use only when the user explicitly asks for autonomous shipping — a hands-off run that opens a draft PR without human review mid-stream. The dispatch is:
 
 ```bash
 scp task-prompt.md dylans-mac-mini:/tmp/codex-task.md
@@ -75,9 +116,11 @@ See `task-template.md` next to this file. Fill every section. Blank sections are
 
 Signal-based "done" criteria (section EXPECTED OUTCOME) and the AUTHORIZED SIDE-FIXES section are the two parts people under-fill the first time they use the template. Lean on them.
 
-## Monitoring
+## Monitoring (headless only)
 
-Use the Monitor tool with a filtered `tail -F`. Do not pipe the raw log — codex emits hundreds of lines per minute of context dumps.
+For the tmux-session default, use the pane-capture polling pattern above.
+
+For headless `codex exec`, use the Monitor tool with a filtered `tail -F`. Do not pipe the raw log — codex emits hundreds of lines per minute of context dumps.
 
 ```bash
 ssh dylans-mac-mini "tail -F /tmp/codex-task.log" 2>&1 \
@@ -105,11 +148,13 @@ If codex stops with blockers listed in `/tmp/codex-task.final`:
 
 ## Guardrails
 
+- **Default to the tmux session.** Headless `codex exec` only when the user explicitly asks for autonomous shipping. Interactive-first matches Julia's preference and surfaces drift earlier.
+- **Never interrupt a non-idle tmux pane.** Capture the last few lines first and confirm "Ask Codex to do anything" (or similar idle marker). If a task is in flight, stop and ask the user before pasting.
 - **Never dispatch before pre-flight passes.** Not even "quickly, just to see." Codex will stall or produce half-work.
 - **Never forbid push broadly without listing authorized side-fixes.** If the task might require fixing a bad baseline (test infra, lint config, missing file), say so in the prompt under AUTHORIZED SIDE-FIXES. The default should be "codex may make a single prep commit on the feature branch and note it in the PR body."
 - **Never ask codex to divine ordering.** If PR B depends on PR A, say so explicitly.
 - **Never set `--sandbox danger-full-access` without rereading the prompt.** That bypasses the sandbox entirely. Only use for tasks where you trust every line of the prompt.
-- **Capture the PR URLs from `-o` output**, not from the log tail. The log may truncate or be too noisy; the final file is the source of truth.
+- **Capture the PR URLs from `-o` output** (headless) or **from the tmux pane** (interactive) — not from the log tail. The log may truncate or be too noisy; the final file / pane is the source of truth.
 
 ## Related
 
