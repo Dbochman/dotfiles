@@ -7,7 +7,7 @@
   <string>ai.openclaw.cabin-magazine</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/bin/node</string>
+    <string>/opt/homebrew/opt/node@22/bin/node</string>
     <string>/Users/dbochman/Repos/cabin/scripts/serve.js</string>
     <string>--host=0.0.0.0</string>
     <string>--port=8555</string>
