@@ -12,6 +12,39 @@ snapshot, not a continuously updated health report.
 
 ## Dashboard and deployment
 
+### October12 cron outcome repairs
+
+- [x] **Repair the post-upgrade triage publication contract for both owners.**
+  Applied the shared helper's receipt-backed active-run validation, retaining
+  legacy task checks, exact job/store/receipt identity, freshness, completion
+  rejection, and the pre-publication recheck. All96 focused tests pass. Both
+  live collectors import the patched source; no cleanup rerun, message resend,
+  gateway restart, or historical handoff rewrite occurred. Next organic runs
+  remain the end-to-end acceptance check.
+- [ ] **Handle empty successful Gmail mutation responses correctly.** Dylan's
+  triage classified five messages but its ad-hoc parser rejected empty success
+  responses, so subsequent read-state/archive work was conservatively skipped.
+  Add a bounded shared response contract and regressions for both owners;
+  preserve readback verification and never retry ambiguous mailbox writes.
+- [ ] **Expose triage outcome health separately from scheduler success.**
+  Surface missing/invalid, partial, and healthy same-day handoffs without
+  publishing mailbox contents or rewriting historical scheduler results.
+- [ ] **Reconcile Flower Watch's stopped state with deployment.** Source is
+  enabled while the live job is disabled; repeated 8AM attempts report operator
+  disablement. Establish the stop reason, preserve the existing live stop, and
+  prevent source deployment from silently re-enabling it. No camera or message
+  canary is authorized by this maintenance task.
+- [ ] **Restore or explain Julia's missing sleep snapshot.** Inspect the
+  existing6:50AM producer and identity/freshness contract. Restore truthful,
+  private cached input without changing Pod controls or inventing sleep data.
+- [ ] **Observe Eversource's next unattended renewal.** Its October11 targeted
+  recovery succeeded after the historical weekly failure. Do not rerun the
+  full scrape or clear that evidence merely to make scheduler status green.
+
+The user authorized working through these repairs and separate commits/pushes.
+Live cron edits, new external calls, and scoped service reloads still require
+their stated approval boundaries; do not broaden household or mailbox policy.
+
 - [x] **Show descriptive cron titles throughout the usage dashboard.** All 15
   enabled jobs had names, but upcoming jobs rendered shortened IDs instead.
   Use live names for upcoming jobs and available history/chart mappings; retain

@@ -505,6 +505,23 @@ cannot replace it. These files contain sensitive mailbox metadata: keep them
 out of Git, general logs, and dashboard output. This mode makes no mailbox or
 other external-source calls.
 
+OpenClaw2026.10.1 records active execution in `cron_run_receipts` and the job's
+`state_json.runningReceiptId`; its `task_runs` history is written on completion.
+The publisher therefore requires the exact job/store's unique running receipt,
+matching receipt ID and start time in the enabled job's running state, no queued
+marker, a fresh same-day start, and no completed history for that or a newer run.
+It rechecks authority before publication. Any existing active task row must
+still match; older schemas without receipt-backed running state retain their
+required task-row checks. A receipt that is only queued, stale, mismatched, or
+finished cannot authorize publication.
+
+The October12 first overnight cycle exposed this lifecycle mismatch: both
+triage agents produced publication failures while scheduler status was `ok`.
+The upgrade canary had exercised cron execution, not this handoff publication
+path. Receipt-backed regression fixtures now cover both owners without Gmail
+calls. The fix does not republish completed runs, change their history, rerun
+cleanup, or resend briefings; the next organic handoffs still require validation.
+
 Only the small receipt is returned as the agent's final response:
 `handoffReceiptVersion`, `owner`, `jobId`, `storeKey`, `runAtMs`, `date`, and
 `sha256`. The reader first selects the latest run, requires scheduler success,

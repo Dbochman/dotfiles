@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from openclaw.tests import test_morning_triage_handoff as existing
 from openclaw_cron_sqlite import connect, is_system_job
@@ -62,6 +63,116 @@ class CompactCronStoreTests(unittest.TestCase):
 
     def test_finished_run_blocks_new_publication(self):
         self.finish({})
+        with self.assertRaisesRegex(ValueError, "active_triage_run_missing"):
+            self.fixture.publish()
+
+    def activate_receipt_backed_runs(self):
+        with sqlite3.connect(self.fixture.database) as database:
+            database.execute("DELETE FROM task_runs WHERE status='running'")
+            for owner, job_id in existing.triage.OWNER_JOBS.items():
+                database.execute(
+                    "UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningReceiptId', ?) WHERE job_id=?",
+                    (f"receipt-{owner}", job_id),
+                )
+
+    def test_receipt_backed_runs_publish_before_task_history_exists(self):
+        self.activate_receipt_backed_runs()
+        for owner in existing.triage.OWNER_JOBS:
+            with self.subTest(owner=owner):
+                receipt = self.fixture.publish(owner)
+                self.assertEqual(receipt["runAtMs"], self.fixture.started)
+                self.assertEqual(self.fixture.publish(owner), receipt)
+                self.finish(receipt, owner=owner)
+                result, unread = self.fixture.read(owner)
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(len(unread), 200)
+
+    def test_receipt_backed_runs_fail_closed_on_invalid_authority(self):
+        self.activate_receipt_backed_runs()
+        mutations = (
+            "DELETE FROM cron_jobs",
+            "UPDATE cron_jobs SET enabled=0",
+            "UPDATE cron_jobs SET state_json='{}'",
+            "UPDATE cron_jobs SET state_json=json_remove(state_json, '$.runningAtMs')",
+            "UPDATE cron_jobs SET state_json=json_remove(state_json, '$.runningReceiptId')",
+            "UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningReceiptId', NULL)",
+            "UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningReceiptId', '')",
+            "UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningReceiptId', 1)",
+            "UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningReceiptId', 'wrong')",
+            "UPDATE cron_jobs SET state_json=json_set(state_json, '$.queuedAtMs', 1)",
+            "DELETE FROM cron_run_receipts",
+            "INSERT INTO cron_run_receipts SELECT * FROM cron_run_receipts",
+            "UPDATE cron_run_receipts SET store_key='other'",
+            "UPDATE cron_run_receipts SET job_id='other'",
+            "UPDATE cron_run_receipts SET receipt_id='other'",
+            "UPDATE cron_run_receipts SET status='ok'",
+            "UPDATE cron_run_receipts SET finished_at_ms=1",
+            "UPDATE cron_run_receipts SET started_at_ms=started_at_ms-1",
+        )
+        original = self.fixture.database.read_bytes()
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.fixture.database.write_bytes(original)
+                with sqlite3.connect(self.fixture.database) as database:
+                    database.execute(mutation)
+                with self.assertRaisesRegex(ValueError, "active_triage_run_missing"):
+                    self.fixture.publish()
+                self.assertFalse(self.fixture.target().exists())
+
+    def test_receipt_backed_runs_reject_stale_or_future_start(self):
+        self.activate_receipt_backed_runs()
+        original = self.fixture.database.read_bytes()
+        for offset in (-86400000, -1200001, 3600000):
+            with self.subTest(offset=offset):
+                self.fixture.database.write_bytes(original)
+                started = self.fixture.started + offset
+                with sqlite3.connect(self.fixture.database) as database:
+                    database.execute("UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningAtMs', ?)", (started,))
+                    database.execute("UPDATE cron_run_receipts SET started_at_ms=?", (started,))
+                with self.assertRaisesRegex(ValueError, "active_triage_run_invalid"):
+                    self.fixture.publish()
+
+    def test_receipt_backed_run_cannot_publish_after_completion(self):
+        self.activate_receipt_backed_runs()
+        self.finish({})
+        with self.assertRaisesRegex(ValueError, "active_triage_run_missing"):
+            self.fixture.publish()
+
+    def test_receipt_backed_authority_is_rechecked_before_write(self):
+        self.activate_receipt_backed_runs()
+        check_active = existing.triage._active_run
+        calls = []
+
+        def finish_before_recheck(*args):
+            calls.append(True)
+            if len(calls) == 2:
+                with sqlite3.connect(self.fixture.database) as database:
+                    database.execute("UPDATE cron_run_receipts SET status='ok', finished_at_ms=started_at_ms+1")
+            return check_active(*args)
+
+        with mock.patch.object(existing.triage, "_active_run", side_effect=finish_before_recheck):
+            with self.assertRaisesRegex(ValueError, "active_triage_run_missing"):
+                self.fixture.publish()
+        self.assertFalse(self.fixture.target().exists())
+
+    def test_receipt_backed_running_job_blocks_older_success(self):
+        self.activate_receipt_backed_runs()
+        receipt = self.fixture.publish()
+        self.finish(receipt)
+        with sqlite3.connect(self.fixture.database) as database:
+            database.execute("UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningAtMs', ?)", (self.fixture.started + 1,))
+        result, baseline = self.fixture.read()
+        self.assertEqual(result["reason"], "triage_run_in_progress")
+        self.assertIsNone(baseline)
+
+    def test_receipt_backed_run_still_checks_existing_task_identity(self):
+        with sqlite3.connect(self.fixture.database) as database:
+            for owner, job_id in existing.triage.OWNER_JOBS.items():
+                database.execute(
+                    "UPDATE cron_jobs SET state_json=json_set(state_json, '$.runningReceiptId', ?) WHERE job_id=?",
+                    (f"receipt-{owner}", job_id),
+                )
+            database.execute("UPDATE task_runs SET run_id=run_id || ':wrong'")
         with self.assertRaisesRegex(ValueError, "active_triage_run_missing"):
             self.fixture.publish()
 

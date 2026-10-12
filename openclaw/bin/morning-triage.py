@@ -228,48 +228,67 @@ def _active_run(db_path: Path, store_key: str, job_id: str, today: datetime) -> 
     connection = connect_cron(db_path)
     try:
         connection.execute("BEGIN")
-        row = connection.execute(
-            "SELECT enabled, running_at_ms FROM cron_jobs WHERE store_key=? AND job_id=?",
-            (store_key, job_id),
-        ).fetchone()
         compact = "state_json" in {
             column[1] for column in connection.execute("PRAGMA main.table_info(cron_jobs)")
         }
+        job_columns = "enabled, running_at_ms" + (", state_json" if compact else "")
+        row = connection.execute(
+            f"SELECT {job_columns} FROM cron_jobs WHERE store_key=? AND job_id=?",
+            (store_key, job_id),
+        ).fetchone()
+        if row is None or row[0] != 1 or type(row[1]) is not int:
+            raise ValueError("active_triage_run_missing")
+        state = json.loads(row[2]) if compact else {}
+        if not isinstance(state, dict):
+            raise ValueError("active_triage_run_missing")
+        receipt_backed = "runningReceiptId" in state
+        if receipt_backed and (
+            not isinstance(state["runningReceiptId"], str)
+            or not state["runningReceiptId"].strip()
+            or state.get("queuedAtMs") is not None
+        ):
+            raise ValueError("active_triage_run_missing")
         task_columns = "started_at, run_id, ended_at" + (", detail_json" if compact else "")
         tasks = connection.execute(
             f"SELECT {task_columns} FROM task_runs "
             "WHERE runtime='cron' AND source_id=? AND status='running' LIMIT 2",
             (job_id,),
         ).fetchall()
-        if (
-            row is None or row[0] != 1 or type(row[1]) is not int
-            or len(tasks) != 1 or type(tasks[0][0]) is not int
-            or tasks[0][0] < row[1] or tasks[0][2] is not None
+        if len(tasks) > 1 or (not receipt_backed and not tasks):
+            raise ValueError("active_triage_run_missing")
+        if tasks and (
+            type(tasks[0][0]) is not int or tasks[0][0] < row[1]
+            or tasks[0][2] is not None
+            or (receipt_backed and tasks[0][0] != row[1])
         ):
             raise ValueError("active_triage_run_missing")
-        run_at_ms = tasks[0][0]
+        run_at_ms = row[1] if receipt_backed else tasks[0][0]
         expected_run_id = f"cron:{job_id}:{run_at_ms}"
         if compact:
-            detail = json.loads(tasks[0][3] or "null")
+            if tasks:
+                detail = json.loads(tasks[0][3] or "null")
+                if not isinstance(detail, dict) or detail.get("storeKey") != store_key:
+                    raise ValueError("active_triage_run_missing")
             receipts = connection.execute(
                 "SELECT receipt_id, request_run_id, started_at_ms, finished_at_ms "
                 "FROM cron_run_receipts WHERE store_key=? AND job_id=? "
                 "AND status='running' LIMIT 2", (store_key, job_id),
             ).fetchall()
             if (
-                not isinstance(detail, dict) or detail.get("storeKey") != store_key
-                or len(receipts) != 1 or receipts[0][2] != run_at_ms
+                len(receipts) != 1 or receipts[0][2] != run_at_ms
                 or receipts[0][3] is not None
                 or not isinstance(receipts[0][0], str) or not receipts[0][0].strip()
                 or (receipts[0][1] is not None and not isinstance(receipts[0][1], str))
             ):
                 raise ValueError("active_triage_run_missing")
             receipt_id = receipts[0][0].strip()
+            if receipt_backed and state["runningReceiptId"] != receipt_id:
+                raise ValueError("active_triage_run_missing")
             public_id = (receipts[0][1] or "").strip()
             expected_run_id += f":{receipt_id}"
             if public_id and public_id != receipt_id:
                 expected_run_id += f":{public_id}"
-        if tasks[0][1] != expected_run_id:
+        if tasks and tasks[0][1] != expected_run_id:
             raise ValueError("active_triage_run_missing")
         finished = connection.execute(
             "SELECT 1 FROM cron_run_logs WHERE store_key=? AND job_id=? AND run_at_ms>=? LIMIT 1",
