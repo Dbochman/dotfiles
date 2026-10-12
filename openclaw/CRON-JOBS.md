@@ -368,6 +368,16 @@ an `at` job's scheduled timestamp is a tombstone, so completed one-shots are
 not redeployed. All remaining booking one-shots also use `delivery.mode: none`
 and perform reservation plus calendar idempotency checks before acting.
 
+## Non-Cron Scheduled Downloads
+
+Deterministic download jobs that need no model turn remain calendar
+LaunchAgents rather than SQLite-backed OpenClaw cron jobs. Their canonical
+definitions and installation guidance live in [LAUNCHAGENTS.md](LAUNCHAGENTS.md).
+
+| Label | Schedule | Program | Description |
+|-------|----------|---------|-------------|
+| `ai.openclaw.icloud-shared-album-ingest` | Daily 9:15 AM local | `icloud-shared-album-ingest.py` | Polls configured public iCloud Shared Albums, downloads only unseen assets to local inboxes, records per-inbox GUID state, and exits without events or notifications. See [ICLOUD-SHARED-ALBUM-INGEST.md](ICLOUD-SHARED-ALBUM-INGEST.md). |
+
 ## Recurring Jobs
 
 | ID | Schedule | Payload | Delivery | Description |

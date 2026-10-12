@@ -572,6 +572,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | `ai.openclaw.finance-refresh` | Daily 6:15 AM | `finance-refresh.py` | Sequential cache-only Plaid and crypto refresh with retries and combined health; no `op` invocation |
 | `ai.openclaw.forecast-ledger-capture` | Daily 7:35 AM | `forecast-ledger-capture.py` | Aggregate post-sync Forecast observation; no `op` invocation |
 | `ai.openclaw.home-state-snapshot` | Daily 9:00 AM | `home-state-wrapper.sh` | Daily home state snapshot (cat weights, sleep scores, doorbell battery) |
+| `ai.openclaw.icloud-shared-album-ingest` | Daily 9:15 AM | `icloud-shared-album-ingest.py` | Downloads unseen assets from configured public iCloud Shared Albums into local inboxes with per-inbox GUID deduplication; no model, event, or notification path. See [ICLOUD-SHARED-ALBUM-INGEST.md](ICLOUD-SHARED-ALBUM-INGEST.md) |
 | `ai.openclaw.opentable-refresh` | Weekly Wed 4:00 AM + conditional 4:30 AM retry | `opentable-refresh-token.sh --scheduled` | Refreshes the OpenTable CLI token in a managed headless PinchTab instance, binds the exact browser token to the protected expected-account hash, and uses GWS email 2FA only when the persisted account identity cannot be proven. A safe owner-only status limits recovery to two attempts in six hours and gives the weekly report an exact failure stage. Uses the cache-only secret environment and does not touch visible browser tabs. |
 
 ## Mac Mini — Event-Driven (WatchPaths)
