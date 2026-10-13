@@ -166,10 +166,15 @@ def extract_token(url: str) -> str | None:
     parsed = urlparse(url)
     path_parts = [unquote(part) for part in parsed.path.split("/") if part]
     token = None
-    if "photos" in path_parts:
-        index = path_parts.index("photos")
-        if index + 1 < len(path_parts):
-            token = path_parts[index + 1]
+    # share.icloud.com/photos/<token> and photos.icloud.com/shared/album/<token>
+    # both put the token immediately after a known key. "album" catches the
+    # newer /shared/album/<token> shape Apple generates for Shared Albums today.
+    for key in ("photos", "album"):
+        if key in path_parts:
+            index = path_parts.index(key)
+            if index + 1 < len(path_parts):
+                token = path_parts[index + 1]
+                break
     if not token and parsed.fragment:
         token = unquote(parsed.fragment).strip("/").split("/")[-1]
     if token and re.fullmatch(r"[0-9A-Za-z;_-]{3,256}", token):
