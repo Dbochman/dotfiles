@@ -46,6 +46,7 @@ Each service uses one of two patterns:
 | `forecast-ledger-capture.log` / `.err.log` | `ai.openclaw.forecast-ledger-capture` | Daily aggregate Forecast observation capture; status metadata is stored beside the local ledger |
 | `dotfiles-pull.log` | `ai.openclaw.dotfiles-pull` | Daily dotfiles sync |
 | `home-state-snapshot.log` | `ai.openclaw.home-state-snapshot` | Daily home state snapshot (cat weights, sleep, doorbell) |
+| `icloud-shared-album-ingest.log` / `.err.log` | `ai.openclaw.icloud-shared-album-ingest` | Daily public iCloud Shared Album polling, GUID deduplication, and local inbox downloads; signed URLs and response bodies are never logged |
 
 Sampler health now includes `notifications.mode` and `notifications.reason`
 when the bounded notification evaluator runs. Collection may succeed while

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.icloud-shared-album-ingest</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>/Users/dbochman/.openclaw/bin/icloud-shared-album-ingest.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/dbochman/.openclaw/logs/icloud-shared-album-ingest.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/dbochman/.openclaw/logs/icloud-shared-album-ingest.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/dbochman</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
