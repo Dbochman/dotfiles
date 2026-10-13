@@ -36,7 +36,7 @@ ICLOUD_HEADERS = {
     "Referer": "https://www.icloud.com/sharedalbum/",
     "User-Agent": USER_AGENT,
 }
-ALLOWED_SHARE_HOSTS = {"share.icloud.com", "www.icloud.com", "icloud.com"}
+ALLOWED_SHARE_HOSTS = {"share.icloud.com", "www.icloud.com", "icloud.com", "photos.icloud.com"}
 CONTENT_TYPE_EXTENSIONS = {
     "image/avif": ".avif",
     "image/gif": ".gif",
