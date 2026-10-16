@@ -24,8 +24,10 @@ snapshot, not a continuously updated health report.
   separately, then enable live mode while preserving state. No automatic retry.
 - [x] Verify the next ordinary sample (10:15:52 Eastern) reports live mode and
   successful collection; no automatic alert was generated during this check.
-- [ ] Observe the first naturally qualifying notification; do not synthesize
-  a poor-air event or run another test to satisfy this item.
+- [x] Dylan confirmed October 16 that the organic Cabin CO2 notification worked;
+  no synthetic poor-air event or extra test was needed.
+- [ ] Observe the newly requested paired recovery text after both readings stay
+  good for 15 minutes; no historical recovery replay or extra test message.
 
 Full policy, storage, pause procedure, and acceptance criteria:
 [Cabin ventilation notifications](cabin-air-quality-notifications.md).

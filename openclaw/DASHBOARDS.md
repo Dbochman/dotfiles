@@ -50,7 +50,9 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 - **CO2 and VOC charts** — Cabin Living Room Wave Enhance trends in ppm and ppb
 - **Ventilation notifications** — the existing five-minute sampler evaluates a
   separate shadow-first CO2/VOC policy; humidity-only poor quality never causes
-  a window-opening nudge. Its safe outcome is in sampler health, independent of
+  a window-opening nudge. A paired follow-up uses 15 minutes of good CO2/VOC
+  readings and only initial-alert recipients still at the Cabin. Its safe
+  outcome is in sampler health, independent of
   successful measurement collection. See [policy and rollout](plans/cabin-air-quality-notifications.md).
 - **HVAC Duty Cycle** — hourly Active % bar chart using real Mysa duty,
   Midea fan percentage while active, and binary activity for Nest/Cielo;

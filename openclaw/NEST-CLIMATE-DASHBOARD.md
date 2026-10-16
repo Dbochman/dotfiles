@@ -81,8 +81,12 @@ The dedicated five-minute Airthings sampler also evaluates the separate
 [Cabin ventilation policy](plans/cabin-air-quality-notifications.md) after a
 successful history append. That evaluator defaults to shadow and consumes the
 same sample; it does not issue another BLE read or modify HVAC state. It exposes
-safe notification mode/reason in sampler health independently of collection
-success. A generic humidity-only `Poor` dashboard badge is not a trigger.
+safe notification mode/reason and qualifying kind (`elevated`/`recovery`) in
+sampler health independently of collection success. A generic humidity-only
+`Poor` dashboard badge is not a trigger.
+The recovery follow-up requires 15 minutes of good CO2 and VOC readings, and
+fresh presence for recipients of the initial alert; suppressed recoveries are
+not queued for later delivery.
 
 The history API retains the original full and Airthings-only records so charts
 keep their native sampling cadence. For cards and `/api/current`, the dashboard

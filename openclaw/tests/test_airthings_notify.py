@@ -43,6 +43,11 @@ class NotificationTests(unittest.TestCase):
     def state(self):
         return notify.read_json(self.root / "state.json")
 
+    def recover(self, start=15):
+        for minute in range(start, start + 16, 5):
+            decision = self.evaluate(minute, co2=700, voc=200)
+        return decision
+
     def test_shadow_is_default_and_has_no_credentials_or_delivery(self):
         decision = self.qualify()
         self.assertEqual(decision["reason"], "would_notify")
@@ -183,12 +188,238 @@ class NotificationTests(unittest.TestCase):
             self.evaluate(minute, co2=800, voc=1500)
         self.assertIsNotNone(self.state()["episode"])
         for minute in (30, 35, 40):
-            self.evaluate(minute, co2=800, voc=300)
+            self.evaluate(minute, co2=700, voc=200)
             self.assertIsNotNone(self.state()["episode"])
-        self.evaluate(45, co2=800, voc=300)
+        self.evaluate(45, co2=700, voc=200)
         self.assertIsNone(self.state()["episode"])
         for minute in (50, 55, 60):self.evaluate(minute)
+        self.assertEqual(self.sender.call_count, 6)
+
+    def test_paired_recovery_is_conditional_and_once_only(self):
+        self.configure("live")
+        self.qualify()
+        decision = self.recover()
+        self.assertEqual(decision["kind"], "recovery")
+        self.assertEqual(decision["submitted"], ["dylan", "julia"])
+        message = self.sender.call_args.args[1]
+        self.assertIn("CO₂ and VOC readings", message)
+        self.assertIn("15 minutes", message)
+        self.assertIn("If you're done cooking", message)
+        self.assertIn("probably close the windows", message)
+        self.assertNotIn("safe", message)
+        self.evaluate(30, co2=700, voc=200)
+        self.evaluate(35, co2=700, voc=200)
         self.assertEqual(self.sender.call_count, 4)
+        self.assertEqual(self.state()["recovery"]["notified"], {"dylan": "submitted", "julia": "submitted"})
+
+    def test_good_air_without_an_alert_never_sends_recovery(self):
+        self.configure("live")
+        self.recover(0)
+        self.sender.assert_not_called()
+        self.presence.assert_not_called()
+        self.assertIsNone(self.state()["recovery"])
+
+    def test_recovery_excludes_new_arrivals_and_departed_recipients(self):
+        self.configure("live")
+        self.presence.return_value = ["dylan"]
+        self.qualify()
+        self.presence.return_value = ["julia"]
+        self.assertEqual(self.recover()["submitted"], [])
+        self.presence.return_value = ["dylan", "julia"]
+        self.evaluate(35, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 1)
+
+    def test_only_confirmed_initial_submissions_get_recovery(self):
+        self.configure("live")
+        self.sender.side_effect = [None, TimeoutError()]
+        self.qualify()
+        self.sender.side_effect = None
+        self.assertEqual(self.recover()["submitted"], ["dylan"])
+        self.assertEqual(self.sender.call_count, 3)
+
+    def test_reserved_initial_alert_does_not_get_recovery(self):
+        self.configure("live")
+        self.sender.side_effect = KeyboardInterrupt()
+        self.evaluate(0)
+        self.evaluate(5)
+        with self.assertRaises(KeyboardInterrupt):
+            self.evaluate(10)
+        self.sender.side_effect = None
+        self.assertEqual(self.recover()["submitted"], [])
+        self.assertEqual(self.sender.call_count, 1)
+
+    def test_shadow_recovery_never_loads_credentials(self):
+        self.qualify()
+        self.assertEqual(self.recover()["wouldNotify"], ["dylan", "julia"])
+        self.credentials.assert_not_called()
+        self.sender.assert_not_called()
+
+    def test_shadow_initial_alert_cannot_authorize_live_recovery(self):
+        self.qualify()
+        self.configure("live")
+        self.assertEqual(self.recover()["submitted"], [])
+        self.sender.assert_not_called()
+        self.credentials.assert_not_called()
+
+    def test_recovery_requires_strict_good_bands_for_both_metrics(self):
+        self.configure("live")
+        self.qualify()
+        for minute in range(15, 35, 5):
+            self.evaluate(minute, co2=800, voc=200)
+        for minute in range(35, 55, 5):
+            self.evaluate(minute, co2=700, voc=250)
+        self.assertIsNotNone(self.state()["episode"])
+        self.assertEqual(self.sender.call_count, 2)
+        self.assertEqual(self.recover(55)["submitted"], ["dylan", "julia"])
+
+    def test_recovery_gap_and_duplicate_cannot_complete_timer(self):
+        self.configure("live")
+        self.qualify()
+        self.evaluate(15, co2=700, voc=200)
+        self.evaluate(20, co2=700, voc=200)
+        self.evaluate(25, record=self.record(20, co2=700, voc=200))
+        self.evaluate(30, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 2)
+        self.assertEqual(self.recover(35)["submitted"], [])
+        self.assertEqual(self.sender.call_count, 4)
+
+    def test_stale_sample_resets_good_evidence_not_initial_receipts(self):
+        self.configure("live")
+        self.qualify()
+        self.evaluate(15, co2=700, voc=200)
+        self.evaluate(20, record=self.record(0, co2=700, voc=200))
+        for minute in (25, 30, 35):
+            self.evaluate(minute, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 2)
+        self.assertEqual(self.evaluate(40, co2=700, voc=200)["submitted"], ["dylan", "julia"])
+
+    def test_quiet_recovery_is_not_deferred_to_morning(self):
+        self.now = datetime(2026, 10, 13, 1, 40, tzinfo=timezone.utc)
+        self.configure("live")
+        self.qualify()
+        self.assertEqual(self.recover()["reason"], "quiet_hours")
+        self.evaluate(620, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 2)
+
+    def test_unknown_presence_at_recovery_does_not_queue_a_retry(self):
+        self.configure("live")
+        self.qualify()
+        self.presence.side_effect = notify.NotifyError("stale")
+        self.assertEqual(self.recover()["reason"], "input_or_delivery_unavailable")
+        self.presence.side_effect = None
+        self.evaluate(35, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 2)
+
+    def test_recovery_rechecks_departure_and_disabled_mode(self):
+        self.configure("live")
+        self.qualify()
+        for minute in (15, 20, 25):
+            self.evaluate(minute, co2=700, voc=200)
+        self.presence.side_effect = [["dylan", "julia"], [], []]
+        self.assertEqual(self.evaluate(30, co2=700, voc=200)["reason"], "delivery_recheck_suppressed")
+        self.assertEqual(self.sender.call_count, 2)
+        self.presence.side_effect = None
+        for minute in (35, 40, 45):
+            self.evaluate(minute)
+        def disable():
+            self.configure("off")
+            return {"dylan": "chat_id:1", "julia": "chat_id:2"}, {}
+        self.credentials.side_effect = disable
+        self.assertEqual(self.recover(50)["reason"], "delivery_recheck_suppressed")
+        self.assertEqual(self.sender.call_count, 4)
+
+    def test_ambiguous_recovery_is_not_retried(self):
+        self.configure("live")
+        self.qualify()
+        self.sender.side_effect = TimeoutError()
+        self.assertEqual(self.recover()["unconfirmed"], ["dylan", "julia"])
+        self.sender.side_effect = None
+        self.evaluate(35, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 4)
+        self.assertEqual(self.state()["recovery"]["notified"], {"dylan": "unconfirmed", "julia": "unconfirmed"})
+
+    def test_recovery_reservation_survives_crash_without_replay(self):
+        self.configure("live")
+        self.qualify()
+        def crashed(*args):
+            self.assertEqual(self.state()["recovery"]["notified"], {"dylan": "reserved"})
+            self.assertIsNone(self.state()["episode"])
+            raise KeyboardInterrupt()
+        self.sender.side_effect = crashed
+        with self.assertRaises(KeyboardInterrupt):
+            self.recover()
+        self.sender.side_effect = None
+        self.evaluate(35, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 3)
+        for minute in (40, 45, 50):
+            self.evaluate(minute)
+        self.assertEqual(self.sender.call_count, 5)
+
+    def test_legacy_migration_preserves_alerts_but_resets_old_good_timer(self):
+        self.configure("live")
+        self.qualify()
+        legacy = self.state()
+        legacy.pop("recovery")
+        legacy["schema"] = 1
+        legacy["recoverySince"] = notify.stamp(self.now)
+        notify.atomic_json(self.root / "state.json", legacy)
+        self.evaluate(15, co2=700, voc=200)
+        self.assertEqual(self.state()["schema"], 2)
+        self.assertEqual(self.state()["notified"], legacy["notified"])
+        self.assertEqual(self.state()["episode"], legacy["episode"])
+        self.assertIsNone(self.state()["recovery"])
+        self.assertEqual(self.sender.call_count, 2)
+        self.assertEqual(self.state()["recoverySince"], self.record(15)["timestamp"])
+        self.assertEqual(self.recover(20)["submitted"], [])
+        self.assertEqual(self.sender.call_count, 4)
+
+    def test_closed_legacy_episode_does_not_generate_historical_recovery(self):
+        legacy = notify.initial_state()
+        legacy.pop("recovery")
+        legacy["schema"] = 1
+        notify.atomic_json(self.root / "state.json", legacy)
+        self.configure("live")
+        self.recover(0)
+        self.sender.assert_not_called()
+
+    def test_invalid_recovery_receipts_fail_closed(self):
+        self.configure("live")
+        self.qualify()
+        self.recover()
+        baseline = self.state()
+        for patch in ({"recipients": ["guest"]}, {"shadowed": ["guest"]}, {"notified": {"dylan": "unknown"}}, {"sampleAt": self.record(40)["timestamp"]}, {"extra": True}, {"recipients": []}):
+            value = {**baseline, "recovery": {**baseline["recovery"], **patch}}
+            with self.assertRaises(notify.NotifyError):
+                notify.validate_state(value)
+
+    def test_invalid_legacy_shape_is_not_migrated(self):
+        legacy = notify.initial_state()
+        legacy["schema"] = 1
+        with self.assertRaises(notify.NotifyError):
+            notify.validate_state(legacy)
+        legacy.pop("recovery")
+        legacy["recoverySince"] = "invalid"
+        with self.assertRaises(notify.NotifyError):
+            notify.validate_state(legacy)
+
+    def test_recovery_reaches_only_initial_recipients_still_present(self):
+        self.configure("live")
+        self.qualify()
+        self.presence.return_value = ["julia"]
+        self.assertEqual(self.recover()["submitted"], ["julia"])
+        self.assertEqual(self.sender.call_count, 3)
+        self.assertEqual(self.sender.call_args.args[0], "chat_id:2")
+
+    def test_good_timer_restarts_when_either_metric_leaves_good_band(self):
+        self.configure("live")
+        self.qualify()
+        self.evaluate(15, co2=700, voc=200)
+        self.evaluate(20, co2=700, voc=200)
+        self.evaluate(25, co2=700, voc=300)
+        for minute in (30, 35, 40):
+            self.evaluate(minute, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 2)
+        self.assertEqual(self.evaluate(45, co2=700, voc=200)["submitted"], ["dylan", "julia"])
 
     def test_gap_or_stale_sample_never_erases_delivery_history(self):
         self.configure("live")

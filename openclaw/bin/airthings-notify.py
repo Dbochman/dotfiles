@@ -27,6 +27,7 @@ ZONE = ZoneInfo("America/New_York")
 ORIGIN = "airthings_ble_sampler_v1"
 PEOPLE = {"dylan": "Dylan", "julia": "Julia"}
 THRESHOLDS = {"co2": (1000, 600), "voc": (2000, 900)}
+GOOD_LIMITS = {"co2": 800, "voc": 250}
 GAP_SECONDS = 450
 RECOVERY_SECONDS = 900
 TARGET = re.compile(r"^[1-9][0-9]{0,17}$")
@@ -132,12 +133,16 @@ def locked(root):
 
 
 def initial_state():
-    return {"schema": 1, "lastSampleAt": None, "co2Since": None, "vocSince": None,
-            "recoverySince": None, "episode": None, "notified": {}, "shadowed": [], "lastDecision": None}
+    return {"schema": 2, "lastSampleAt": None, "co2Since": None, "vocSince": None,
+            "recoverySince": None, "episode": None, "notified": {}, "shadowed": [], "lastDecision": None,
+            "recovery": None}
 
 
 def validate_state(value):
-    if set(value) != set(initial_state()) or type(value["schema"]) is not int or value["schema"] != 1:
+    legacy = type(value.get("schema")) is int and value["schema"] == 1 and set(value) == set(initial_state()) - {"recovery"}
+    if legacy:
+        value = {**value, "schema": 2, "recovery": None}
+    if set(value) != set(initial_state()) or type(value["schema"]) is not int or value["schema"] != 2:
         raise NotifyError("invalid_state")
     for key in ("lastSampleAt", "co2Since", "vocSince", "recoverySince", "episode"):
         if value[key] is not None:
@@ -154,6 +159,23 @@ def validate_state(value):
         raise NotifyError("invalid_state")
     if value["lastDecision"] is not None and not isinstance(value["lastDecision"], dict):
         raise NotifyError("invalid_state")
+    recovery = value["recovery"]
+    if recovery is not None:
+        if not isinstance(recovery, dict) or set(recovery) != {"episode", "sampleAt", "recipients", "shadowRecipients", "notified", "shadowed"}:
+            raise NotifyError("invalid_recovery")
+        if value["lastSampleAt"] is None or not timestamp(recovery["episode"]) <= timestamp(recovery["sampleAt"]) <= timestamp(value["lastSampleAt"]):
+            raise NotifyError("invalid_recovery")
+        for key in ("recipients", "shadowRecipients", "shadowed"):
+            people = recovery[key]
+            if not isinstance(people, list) or any(person not in PEOPLE for person in people) or len(people) != len(set(people)):
+                raise NotifyError("invalid_recovery")
+        receipts = recovery["notified"]
+        if not isinstance(receipts, dict) or set(receipts) - set(recovery["recipients"]) or any(item not in ("reserved", "submitted", "unconfirmed") for item in receipts.values()):
+            raise NotifyError("invalid_recovery")
+        if set(recovery["recipients"]) - set(recovery["shadowRecipients"]) or set(recovery["shadowed"]) - set(recovery["shadowRecipients"]):
+            raise NotifyError("invalid_recovery")
+    if legacy:
+        value["recoverySince"] = None
     return value
 
 
@@ -229,9 +251,15 @@ def advance(state, sample):
         state[key] = (state[key] or sample["timestamp"]) if sample[metric] >= threshold else None
         if state[key] and (observed - timestamp(state[key])).total_seconds() >= duration:
             triggers.append(metric)
-    if sample["co2"] < 900 and sample["voc"] < 1500:
+    if all(sample[metric] < limit for metric, limit in GOOD_LIMITS.items()):
         state["recoverySince"] = state["recoverySince"] or sample["timestamp"]
-        if (observed - timestamp(state["recoverySince"])).total_seconds() >= RECOVERY_SECONDS:
+        if state["episode"] is not None and (observed - timestamp(state["recoverySince"])).total_seconds() >= RECOVERY_SECONDS:
+            recipients = [owner for owner, status in state["notified"].items() if status == "submitted"]
+            state["recovery"] = {
+                "episode": state["episode"], "sampleAt": sample["timestamp"],
+                "recipients": recipients, "shadowRecipients": sorted(set(recipients) | set(state["shadowed"])),
+                "notified": {}, "shadowed": [],
+            }
             state.update(episode=None, notified={}, shadowed=[])
     else:
         state["recoverySince"] = None
@@ -250,6 +278,14 @@ def render_message(sample, triggers):
     if "voc" in triggers:
         message += "Check for nearby sources such as cleaning products or cooking. "
     return message + "Consider opening a window briefly if weather and outdoor air quality permit."
+
+
+def render_recovery_message(sample):
+    return (
+        "Cabin living-room CO₂ and VOC readings have stayed in their good ranges "
+        f"for 15 minutes (CO₂ {round(sample['co2'])} ppm; VOCs {round(sample['voc'])} ppb). "
+        "If you're done cooking and don't need more ventilation, you can probably close the windows."
+    )
 
 
 def credentials(cache=CACHE):
@@ -301,20 +337,27 @@ def evaluate(root, record, now, presence_reader=occupants, credential_reader=cre
             try:
                 sample = sample_from(record, now)
                 state, triggers, changed = advance(state, sample)
+                recovery = state["recovery"]
+                recovered = changed and recovery is not None and recovery["sampleAt"] == sample["timestamp"]
                 decision["sampleAt"] = sample["timestamp"]
                 decision["reason"] = "observing" if changed else "duplicate_or_old_sample"
-                if changed and triggers:
+                if changed and (triggers or recovered):
                     decision["triggers"] = triggers
+                    decision["kind"] = "recovery" if recovered else "elevated"
                     if not 8 <= now.astimezone(ZONE).hour < 22:
                         decision["reason"] = "quiet_hours"
                     else:
                         recipients = presence_reader(now)
                         if not isinstance(recipients, list) or any(owner not in PEOPLE for owner in recipients) or len(set(recipients)) != len(recipients):
                             raise NotifyError("presence_unavailable")
+                        ledger = recovery if recovered else state
+                        if recovered:
+                            eligible = recovery["shadowRecipients"] if mode == "shadow" else recovery["recipients"]
+                            recipients = [owner for owner in recipients if owner in eligible]
                         decision["reason"] = "no_confirmed_occupants" if not recipients else "episode_already_notified"
-                        pending = [owner for owner in recipients if owner not in (state["shadowed"] if mode == "shadow" else state["notified"])]
+                        pending = [owner for owner in recipients if owner not in (ledger["shadowed"] if mode == "shadow" else ledger["notified"])]
                         if pending and mode == "shadow":
-                            state["shadowed"].extend(pending)
+                            ledger["shadowed"].extend(pending)
                             decision.update(reason="would_notify", wouldNotify=pending)
                         elif pending:
                             routes, authentication = credential_reader()
@@ -323,16 +366,17 @@ def evaluate(root, record, now, presence_reader=occupants, credential_reader=cre
                                 if mode_from(root) != "live" or not 8 <= checked.astimezone(ZONE).hour < 22 or not fresh(sample["timestamp"], checked, 600) or owner not in presence_reader(checked):
                                     decision["reason"] = "delivery_recheck_suppressed"
                                     continue
-                                state["notified"][owner] = "reserved"
+                                ledger["notified"][owner] = "reserved"
                                 state["lastDecision"] = {**decision, "reason": "delivery_reserved"}
                                 atomic_json(root / "state.json", state)
                                 try:
-                                    sender(routes[owner], render_message(sample, triggers), authentication)
+                                    message = render_recovery_message(sample) if recovered else render_message(sample, triggers)
+                                    sender(routes[owner], message, authentication)
                                 except Exception:
-                                    state["notified"][owner] = "unconfirmed"
+                                    ledger["notified"][owner] = "unconfirmed"
                                     decision["unconfirmed"].append(owner)
                                 else:
-                                    state["notified"][owner] = "submitted"
+                                    ledger["notified"][owner] = "submitted"
                                     decision["submitted"].append(owner)
                                 decision["reason"] = "delivery_unconfirmed" if decision["unconfirmed"] else "submitted"
                                 state["lastDecision"] = decision

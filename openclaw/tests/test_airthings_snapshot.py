@@ -174,6 +174,22 @@ class AirthingsSnapshotTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(marker.exists())
 
+    def test_notification_health_exposes_only_allowlisted_kind(self):
+        for kind in ("recovery", "elevated", "private-value"):
+            with self.subTest(kind=kind):
+                self.write_airthings(self.payload())
+                helper = self.root / "notify.py"
+                helper.write_text(f"import json\nprint(json.dumps({{'mode':'shadow','reason':'would_notify','kind':{kind!r}}}))\n")
+                result = self.run_snapshot(AIRTHINGS_NOTIFY_SCRIPT=str(helper))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {"mode": "shadow", "reason": "would_notify"}
+                if kind in ("recovery", "elevated"):
+                    expected["kind"] = kind
+                self.assertEqual(json.loads(result.stdout)["notifications"], expected)
+                self.assertNotIn("private-value", result.stdout)
+                for daily in self.history.glob("*.jsonl"):
+                    daily.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()

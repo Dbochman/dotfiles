@@ -219,7 +219,10 @@ def notification_check(record: dict[str, Any]) -> dict[str, str]:
         allowed = {"disabled", "observing", "duplicate_or_old_sample", "quiet_hours", "no_confirmed_occupants", "episode_already_notified", "would_notify", "submitted", "delivery_unconfirmed", "input_or_delivery_unavailable", "delivery_recheck_suppressed"}
         if not isinstance(value, dict) or value.get("reason") not in allowed or value.get("mode") not in ("off", "shadow", "live"):
             return {"reason": "helper_failed"}
-        return {"mode": value["mode"], "reason": value["reason"]}
+        health = {"mode": value["mode"], "reason": value["reason"]}
+        if value.get("kind") in ("elevated", "recovery"):
+            health["kind"] = value["kind"]
+        return health
     except (OSError, ValueError, TypeError):
         return {"reason": "helper_failed"}
 
