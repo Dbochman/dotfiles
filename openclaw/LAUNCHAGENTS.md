@@ -32,6 +32,29 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 | `ai.openclaw.reachy-gateway-upstream` | `ssh -L` | Crosstown MBP loopback 28789 | Carries the Mac mini's loopback-only gateway to the always-on Crosstown MBP without exposing it on Tailscale or the LAN |
 | `ai.openclaw.reachy-gateway-relay` | `ssh -R` | Reachy loopback 18789 | Runs on the Crosstown MBP and publishes its private upstream gateway hop only on Reachy's loopback interface |
 
+### Cabin Magazine Login Persistence
+
+`ai.openclaw.cabin-magazine` must have an installed copy at
+`~/Library/LaunchAgents/ai.openclaw.cabin-magazine.plist` on the Mac Mini.
+Loading the tracked plist directly from `openclaw/launchagents/` supervises the
+current process but does not install it in the normal login startup directory.
+`RunAtLoad` and `KeepAlive` start and supervise the service after `dbochman`
+logs into the GUI session; this is not a system daemon running before login.
+
+The October 16 persistence repair installs an identical copy of the existing
+definition without bootout, bootstrap, kickstart, or a process restart. The
+currently loaded job may still report the repository path until the next login.
+Keep the existing Node 22 path, working directory, port 8555, and runtime state
+unchanged. The `cabin-serve` tmux preview on port 4173 is separate and is not
+required for Julia's magazine. Future plist changes need an attended deployment;
+updating the repository alone does not refresh this installed copy.
+
+After the planned reboot and GUI login, check `launchctl print
+gui/$(id -u)/ai.openclaw.cabin-magazine` for a running job loaded from the
+installed path, and `curl -fsS http://127.0.0.1:8555/api/health` for healthy
+service. Verify a magazine page without writing checklist or capture data.
+See [Cabin Magazine](CABIN-MAGAZINE.md) for state and recovery paths.
+
 ### Nest Event Listener and Cabin Reviewer
 
 `ai.openclaw.nest-event-listener` is a Mac Mini service with one pull

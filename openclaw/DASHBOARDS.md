@@ -393,6 +393,15 @@ checkboxes and observation fields use shared SQLite state so Julia can update
 the magazine from her phone; capture notes, prompts, and photos stay on the
 existing durable capture-spool path.
 
+The Mac Mini's persistent startup definition is
+`~/Library/LaunchAgents/ai.openclaw.cabin-magazine.plist`, copied from the tracked
+LaunchAgent. It starts after `dbochman` logs into the GUI session, not merely
+when the machine powers on. The October 16 persistence repair installs that
+copy without restarting the current server or changing magazine data. Port
+4173's `cabin-serve` tmux preview is independent; Julia's port 8555 service does
+not depend on that terminal. After reboot/login, verify `/api/health` and a
+magazine page; actual post-reboot recovery remains to be checked.
+
 ---
 
 ## Financial Dashboard

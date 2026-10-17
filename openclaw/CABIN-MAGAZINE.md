@@ -46,7 +46,7 @@ remain on the separate `/api/inputs` spool path.
 The LaunchAgent runs:
 
 ```text
-/usr/local/bin/node /Users/dbochman/Repos/cabin/scripts/serve.js --host=0.0.0.0 --port=8555
+/opt/homebrew/opt/node@22/bin/node /Users/dbochman/Repos/cabin/scripts/serve.js --host=0.0.0.0 --port=8555
 ```
 
 The all-interface bind makes the service reachable over the LAN and Tailscale;
@@ -62,6 +62,7 @@ the Mini remains behind NAT with no public port forwarding.
 | State database | `~/.openclaw/cabin-magazine/state.sqlite` |
 | Capture runtime | `/Users/dbochman/Repos/cabin/data/` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.cabin-magazine.plist` |
+| Installed login LaunchAgent | `~/Library/LaunchAgents/ai.openclaw.cabin-magazine.plist` |
 | Logs | `~/.openclaw/logs/cabin-magazine.{log,err.log}` |
 
 ## Verification
@@ -74,3 +75,13 @@ curl -fsS http://dylans-mac-mini.tail3e55f9.ts.net:8555/vol-1-no-02-draft-v2/
 
 Installing or reloading the LaunchAgent is an attended deployment step and is
 not performed merely by updating this repository.
+
+The October 16 persistence repair installs an identical source copy in the
+Mini's user LaunchAgents directory without restarting the already-loaded job.
+Loading the repository plist directly is not a substitute for installing it
+there. `RunAtLoad` and `KeepAlive` apply after `dbochman` logs into the GUI;
+the service is not available before that login. The current job can retain its
+repository load path until logout/reboot. On the next login, verify its installed
+load path, running state, health endpoint, and a magazine page. The development
+preview in tmux (`cabin-serve`, loopback port 4173) is not needed for production.
+Do not start another server on port 8555 or rerun ingest/build to test startup.
