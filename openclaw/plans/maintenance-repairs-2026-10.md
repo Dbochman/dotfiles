@@ -1,6 +1,6 @@
 # October 2026 OpenClaw repair checklist
 
-**Status:** Dashboard and reporting repairs deployed; attended recovery and verification remain open.
+**Status:** Post-update ingestion, automation OAuth, and deployment restored; financial scheduled verification remains open.
 **Evidence dates:** October 10 initial review; October 17 post-update follow-up, Eastern time.
 **Host:** Mac Mini.
 
@@ -83,6 +83,24 @@ attended account-recovery boundaries, and existing household/message policies.
   paths, preserve the 06:15 source-refresh → 07:35 capture order, and verify the
   next normal capture and weekly run. Do not rerun the full scrape, alter financial
   data, or clear historical errors merely to make scheduler status green.
+  **Reconciled October 17; scheduled acceptance still pending:** The last weekly
+  receipt is October 11 at 04:08 Eastern, with only Eversource failing; the other
+  six sources imported successfully. Its later 07:00 Eastern targeted recovery
+  receipt reports verified success, preserved history, and dashboard read-back.
+  The deployed scraper still matches that receipt's source hash and includes
+  financial-repository fix `0296c03`. Unattended renewal remains explicitly
+  unverified; four historical scheduler errors are not four new failures today.
+  Today's 06:15 source refresh completed successfully at 06:15:40 Eastern.
+  The 07:35 ledger attempt failed without a corresponding Forecast POST request;
+  the current Forecast process started at 08:23:11 Eastern and now returns HTTP
+  200/healthy with both task inputs available. This is consistent with service
+  availability around restart, but the wrapper did not retain the exception
+  needed to establish the exact historical cause. The latest ledger observation
+  is October 16; today's missing observation has not been backfilled or relabeled.
+  No new persistent fault was confirmed, so no financial code, data, credentials,
+  or historical run receipts were changed. Next acceptance: October 18 weekly
+  scrape at 04:05, source refresh at 06:15, and ledger capture at 07:35 Eastern.
+  Keep this item open until those ordinary runs supply fresh evidence.
 
 ## Dashboard and deployment
 
