@@ -12,11 +12,18 @@ require an Apple ID.
 
 ## What It Does
 
-- Resolves the public token from each configured
-  `https://share.icloud.com/photos/<token>` URL.
-- Reads album metadata through Apple's unauthenticated `webstream` endpoint,
-  following the partition redirect when Apple supplies one.
-- Requests short-lived download URLs in batches of at most 25 asset GUIDs.
+- Resolves the public token from configured legacy
+  `https://share.icloud.com/photos/<token>` URLs and current
+  `https://photos.icloud.com/shared/album/<token>` URLs.
+- Reads legacy album metadata through Apple's unauthenticated `webstream`
+  endpoint, following the partition redirect when Apple supplies one.
+- Resolves current album metadata through Apple's unauthenticated CloudKit
+  public-share endpoint, follows continuation markers, and chooses each
+  asset's original resource.
+- Renews the temporary CloudKit resource URLs when a long original-quality
+  ingest outlives their validity window, without redownloading completed GUIDs.
+- Requests legacy short-lived download URLs in batches of at most 25 asset
+  GUIDs; current CloudKit resource URLs arrive with the metadata response.
 - Chooses the largest advertised derivative and writes it atomically as
   `<creationDateIsoCompact>-<assetGuid>.<ext>`.
 - Records each completed GUID in a hidden JSON state file in the inbox. A
@@ -50,9 +57,9 @@ Add one object per public album:
 when omitted, the default is
 `~/Pictures/openclaw-icloud-inbox/<slug-of-token>`.
 
-The public-website toggle is the entire authentication boundary. Do not add an
-Apple ID, OAuth token, Photos library access, browser profile, or other signed-in
-iCloud path to this service.
+The public-website toggle is the entire authentication boundary. The config is
+kept owner-only (`0600`). Do not add an Apple ID, OAuth token, Photos library
+access, browser profile, or other signed-in iCloud path to this service.
 
 ## State and Idempotency
 
@@ -82,12 +89,14 @@ when another ingest is active, so a manual run cannot race the daily job.
 Log lines use UTC timestamps and grep-friendly fields:
 
 ```text
-2026-10-12T13:15:00Z level=info album=xxxxx event=album_complete discovered=12 downloaded=2 recovered=0 failed=0
+2026-10-12T13:15:00Z level=info album=album-0123456789ab event=album_complete discovered=12 downloaded=2 recovered=0 failed=0
 ```
 
 An empty config logs `no albums configured` and exits 0. Album metadata,
 download, config, or state failures log a bounded reason and make the overall
-run exit nonzero. Full signed URLs and response bodies are never logged.
+run exit nonzero. Album log IDs are one-way hashes of share tokens. Full share
+tokens, temporary CloudKit tokens, signed URLs, and response bodies are never
+logged.
 
 ## Verification
 

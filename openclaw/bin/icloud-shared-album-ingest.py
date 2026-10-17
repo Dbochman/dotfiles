@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import mimetypes
 import os
@@ -17,7 +18,7 @@ import tempfile
 import time
 from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -26,8 +27,11 @@ STATE_FILENAME = ".icloud-shared-album-ingest.state.json"
 HTTP_TIMEOUT_SECONDS = 20
 HTTP_ATTEMPTS = 2
 ASSET_BATCH_SIZE = 25
+CLOUDKIT_QUERY_RESULTS_LIMIT = 200
+CLOUDKIT_MAX_PAGES = 1000
+CLOUDKIT_URL_REFRESH_LIMIT = 10
 BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-USER_AGENT = "openclaw-icloud-shared-album-ingest/1.0"
+USER_AGENT = "openclaw-icloud-shared-album-ingest/2.0"
 ICLOUD_HEADERS = {
     "Accept": "*/*",
     "Cache-Control": "no-cache",
@@ -36,6 +40,11 @@ ICLOUD_HEADERS = {
     "Referer": "https://www.icloud.com/sharedalbum/",
     "User-Agent": USER_AGENT,
 }
+CLOUDKIT_RESOLVE_URL = (
+    "https://ckdatabasews.icloud.com/database/1/com.apple.photos.cloud/"
+    "production/public/records/resolve"
+)
+CLOUDKIT_DATABASE_PATH = "/database/1/com.apple.photos.cloud/production/shared/records/query"
 ALLOWED_SHARE_HOSTS = {"share.icloud.com", "www.icloud.com", "icloud.com", "photos.icloud.com"}
 CONTENT_TYPE_EXTENSIONS = {
     "image/avif": ".avif",
@@ -48,6 +57,24 @@ CONTENT_TYPE_EXTENSIONS = {
     "image/webp": ".webp",
     "video/mp4": ".mp4",
     "video/quicktime": ".mov",
+}
+MEDIA_ASSET_TYPE_EXTENSIONS = {
+    "com.adobe.raw-image": ".dng",
+    "com.apple.quicktime-movie": ".mov",
+    "public.avif": ".avif",
+    "public.heic": ".heic",
+    "public.heif": ".heif",
+    "public.jpeg": ".jpg",
+    "public.movie": ".mov",
+    "public.mpeg-4": ".mp4",
+    "public.png": ".png",
+    "public.tiff": ".tiff",
+}
+CLOUDKIT_REFRESHABLE_DOWNLOAD_ERRORS = {
+    "asset_download_http_401",
+    "asset_download_http_403",
+    "asset_download_http_404",
+    "asset_download_http_410",
 }
 
 
@@ -69,6 +96,15 @@ class PendingAsset:
     checksum: str
     stem: str
     media_asset_type: str
+    download_url: str | None = None
+
+
+@dataclass(frozen=True)
+class CloudKitShare:
+    partition_url: str
+    auth_token: str
+    sharing_key: str
+    zone_id: Mapping[str, object]
 
 
 def utc_now() -> datetime:
@@ -145,11 +181,17 @@ def http_request(
     raise IngestError(f"{operation}_{classify_http_error(last_error or OSError())}")
 
 
-def post_json(url: str, payload: Mapping[str, object], album: str, operation: str) -> tuple[HttpResponse, dict]:
+def post_json(
+    url: str,
+    payload: Mapping[str, object],
+    album: str,
+    operation: str,
+    headers: Mapping[str, str] = ICLOUD_HEADERS,
+) -> tuple[HttpResponse, dict]:
     request = Request(
         url,
         data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
-        headers=ICLOUD_HEADERS,
+        headers=dict(headers),
         method="POST",
     )
     response = http_request(request, album, operation, allowed_statuses=(330,))
@@ -203,10 +245,20 @@ def slugify_token(token: str) -> str:
     return slug or "album"
 
 
+def album_log_id(token: str) -> str:
+    return f"album-{hashlib.sha256(token.encode('utf-8')).hexdigest()[:12]}"
+
+
 def validate_share_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "https" or (parsed.hostname or "").lower() not in ALLOWED_SHARE_HOSTS:
         raise IngestError("invalid_public_share_url")
+
+
+def is_cloudkit_share_url(url: str) -> bool:
+    parsed = urlparse(url)
+    path_parts = [unquote(part) for part in parsed.path.split("/") if part]
+    return (parsed.hostname or "").lower() == "photos.icloud.com" and path_parts[:2] == ["shared", "album"]
 
 
 def resolve_token(share_url: str, album: str) -> str:
@@ -258,6 +310,225 @@ def redirected_host(response: HttpResponse, payload: Mapping[str, object]) -> st
 
 def api_url(host: str, token: str, endpoint: str) -> str:
     return f"https://{host}/{token}/sharedstreams/{endpoint}"
+
+
+def cloudkit_headers(share_url: str) -> dict[str, str]:
+    return {
+        "Accept": "*/*",
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/plain",
+        "Origin": "https://photos.icloud.com",
+        "Referer": share_url,
+        "User-Agent": USER_AGENT,
+    }
+
+
+def cloudkit_share(share_url: str, token: str, album: str) -> CloudKitShare:
+    query = urlencode(
+        {
+            "remapEnums": "true",
+            "getCurrentSyncToken": "true",
+            "sharing_url_key": token,
+        }
+    )
+    response, payload = post_json(
+        f"{CLOUDKIT_RESOLVE_URL}?{query}",
+        {"shortGUIDs": [{"value": token}]},
+        album,
+        "cloudkit_resolve",
+        cloudkit_headers(share_url),
+    )
+    results = payload.get("results")
+    if response.status != 200 or not isinstance(results, list) or len(results) != 1:
+        raise IngestError("cloudkit_resolve_invalid")
+    result = results[0]
+    if not isinstance(result, dict):
+        raise IngestError("cloudkit_resolve_invalid")
+
+    anonymous = result.get("anonymousPublicAccess")
+    share = result.get("share")
+    zone_id = result.get("zoneID")
+    if not isinstance(anonymous, dict) or not isinstance(share, dict) or not isinstance(zone_id, dict):
+        raise IngestError("cloudkit_resolve_invalid")
+    stable_url = share.get("stableUrl")
+    if not isinstance(stable_url, dict):
+        raise IngestError("cloudkit_resolve_invalid")
+
+    partition_url = anonymous.get("databasePartition")
+    auth_token = anonymous.get("token")
+    sharing_key = stable_url.get("encryptedPublicSharingKey")
+    if not all(isinstance(value, str) and value for value in (partition_url, auth_token, sharing_key)):
+        raise IngestError("cloudkit_resolve_invalid")
+    parsed_partition = urlparse(str(partition_url))
+    partition_host = (parsed_partition.hostname or "").lower()
+    if (
+        parsed_partition.scheme != "https"
+        or parsed_partition.path not in {"", "/"}
+        or not re.fullmatch(r"(?:p[0-9]+-)?ckdatabasews\.icloud\.com", partition_host)
+    ):
+        raise IngestError("cloudkit_partition_invalid")
+    for key in ("ownerRecordName", "zoneName", "zoneType"):
+        if not isinstance(zone_id.get(key), str) or not zone_id[key]:
+            raise IngestError("cloudkit_zone_invalid")
+    return CloudKitShare(
+        partition_url=str(partition_url).rstrip("/"),
+        auth_token=str(auth_token),
+        sharing_key=str(sharing_key),
+        zone_id=dict(zone_id),
+    )
+
+
+def cloudkit_query_url(context: CloudKitShare) -> str:
+    query = urlencode(
+        {
+            "remapEnums": "true",
+            "getCurrentSyncToken": "true",
+            "publicAccessAuthToken": context.auth_token,
+            "sharing_url_key": context.sharing_key,
+        }
+    )
+    return f"{context.partition_url}{CLOUDKIT_DATABASE_PATH}?{query}"
+
+
+def cloudkit_field(fields: Mapping[str, object], name: str) -> object:
+    field = fields.get(name)
+    return field.get("value") if isinstance(field, dict) else None
+
+
+def cloudkit_timestamp(value: object) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise IngestError("asset_creation_date_missing")
+    timestamp = float(value)
+    if timestamp > 10_000_000_000:
+        timestamp /= 1000
+    try:
+        parsed = datetime.fromtimestamp(timestamp, timezone.utc)
+    except (OSError, OverflowError, ValueError) as error:
+        raise IngestError("asset_creation_date_invalid") from error
+    return parsed.strftime("%Y%m%dT%H%M%SZ")
+
+
+def cloudkit_resource(fields: Mapping[str, object]) -> Mapping[str, object]:
+    candidates: list[tuple[int, Mapping[str, object]]] = []
+    for name, field in fields.items():
+        if not isinstance(field, dict) or field.get("type") != "ASSETID":
+            continue
+        value = field.get("value")
+        if not isinstance(value, dict) or not isinstance(value.get("downloadURL"), str):
+            continue
+        preference = 2 if name == "resOriginalRes" else 1
+        candidates.append((preference, value))
+    if not candidates:
+        raise IngestError("asset_derivative_missing")
+    return max(candidates, key=lambda candidate: (candidate[0], read_int(candidate[1].get("size"))))[1]
+
+
+def cloudkit_pending_asset(asset: Mapping[str, object], master: Mapping[str, object]) -> PendingAsset:
+    guid_value = asset.get("recordName")
+    guid = safe_guid(guid_value)
+    asset_fields = asset.get("fields")
+    master_fields = master.get("fields")
+    if not isinstance(asset_fields, dict) or not isinstance(master_fields, dict):
+        raise IngestError("asset_metadata_invalid")
+    resource = cloudkit_resource(master_fields)
+    download_url = resource.get("downloadURL")
+    parsed_url = urlparse(download_url) if isinstance(download_url, str) else None
+    hostname = (parsed_url.hostname or "").lower() if parsed_url else ""
+    if not parsed_url or parsed_url.scheme != "https" or not (
+        hostname == "icloud-content.com" or hostname.endswith(".icloud-content.com")
+    ):
+        raise IngestError("asset_download_url_invalid")
+    checksum = resource.get("fileChecksum") or resource.get("referenceChecksum")
+    if not isinstance(checksum, str) or not checksum:
+        raise IngestError("asset_checksum_missing")
+    creation_date = cloudkit_field(asset_fields, "assetDate")
+    if creation_date is None:
+        creation_date = cloudkit_field(master_fields, "originalCreationDate")
+    media_asset_type = cloudkit_field(master_fields, "itemType")
+    return PendingAsset(
+        guid=str(guid_value),
+        checksum=checksum,
+        stem=f"{cloudkit_timestamp(creation_date)}-{guid}",
+        media_asset_type=str(media_asset_type or "image"),
+        download_url=str(download_url),
+    )
+
+
+def fetch_cloudkit_assets(
+    share_url: str,
+    token: str,
+    album: str,
+) -> tuple[list[PendingAsset], int, int]:
+    context = cloudkit_share(share_url, token, album)
+    query_url = cloudkit_query_url(context)
+    base_payload: dict[str, object] = {
+        "query": {
+            "recordType": "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted",
+            "filterBy": [
+                {
+                    "fieldName": "direction",
+                    "comparator": "EQUALS",
+                    "fieldValue": {"value": "DESCENDING", "type": "STRING"},
+                }
+            ],
+        },
+        "zoneID": context.zone_id,
+        "resultsLimit": CLOUDKIT_QUERY_RESULTS_LIMIT,
+    }
+    masters: dict[str, Mapping[str, object]] = {}
+    assets: list[Mapping[str, object]] = []
+    marker: str | None = None
+    seen_markers: set[str] = set()
+    for page in range(1, CLOUDKIT_MAX_PAGES + 1):
+        request_payload = dict(base_payload)
+        if marker:
+            request_payload["continuationMarker"] = marker
+        response, payload = post_json(
+            query_url,
+            request_payload,
+            album,
+            "cloudkit_query",
+            cloudkit_headers(share_url),
+        )
+        records = payload.get("records")
+        if response.status != 200 or not isinstance(records, list):
+            raise IngestError("cloudkit_query_invalid")
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            record_name = record.get("recordName")
+            if record.get("recordType") == "CPLMaster" and isinstance(record_name, str):
+                masters[record_name] = record
+            elif record.get("recordType") == "CPLAsset":
+                assets.append(record)
+        next_marker = payload.get("continuationMarker")
+        log("info", album, "cloudkit_page", page=page, records=len(records), more=bool(next_marker))
+        if next_marker is None:
+            break
+        if not isinstance(next_marker, str) or not next_marker or next_marker in seen_markers:
+            raise IngestError("cloudkit_continuation_invalid")
+        seen_markers.add(next_marker)
+        marker = next_marker
+    else:
+        raise IngestError("cloudkit_page_limit")
+
+    pending: list[PendingAsset] = []
+    failures = 0
+    for asset in assets:
+        asset_fields = asset.get("fields")
+        master_ref = cloudkit_field(asset_fields, "masterRef") if isinstance(asset_fields, dict) else None
+        master_name = master_ref.get("recordName") if isinstance(master_ref, dict) else None
+        master = masters.get(master_name) if isinstance(master_name, str) else None
+        if master is None:
+            failures += 1
+            log("error", album, "asset_skipped", reason="cloudkit_master_missing")
+            continue
+        try:
+            pending.append(cloudkit_pending_asset(asset, master))
+        except IngestError as error:
+            failures += 1
+            log("error", album, "asset_skipped", reason=str(error))
+    return pending, len(assets), failures
 
 
 def fetch_webstream(token: str, album: str) -> tuple[str, dict]:
@@ -429,6 +700,9 @@ def extension_for(content_type: str | None, media_asset_type: str) -> str:
     normalized = (content_type or "").split(";", 1)[0].strip().lower()
     if normalized in CONTENT_TYPE_EXTENSIONS:
         return CONTENT_TYPE_EXTENSIONS[normalized]
+    media_extension = MEDIA_ASSET_TYPE_EXTENSIONS.get(media_asset_type.lower())
+    if media_extension:
+        return media_extension
     guessed = mimetypes.guess_extension(normalized) if normalized else None
     if guessed:
         return ".jpg" if guessed in {".jpe", ".jpeg"} else guessed
@@ -467,6 +741,8 @@ def download_asset(url: str, inbox: Path, asset: PendingAsset, album: str) -> Pa
                 temporary_path.unlink()
             except FileNotFoundError:
                 pass
+            if isinstance(error, HTTPError) and error.code in {401, 403, 404, 410}:
+                break
             if attempt < HTTP_ATTEMPTS:
                 log(
                     "warning",
@@ -500,8 +776,9 @@ def ingest_album(album_config: Mapping[str, object], initial_slug: str) -> bool:
     share_url = album_config.get("url")
     if not isinstance(share_url, str) or not share_url.strip():
         raise IngestError("album_url_missing")
-    token = resolve_token(share_url.strip(), initial_slug)
-    slug = slugify_token(token)
+    share_url = share_url.strip()
+    token = resolve_token(share_url, initial_slug)
+    slug = album_log_id(token)
     inbox = album_inbox(album_config, token)
     inbox.mkdir(parents=True, exist_ok=True, mode=0o755)
     state_path = inbox / STATE_FILENAME
@@ -509,25 +786,32 @@ def ingest_album(album_config: Mapping[str, object], initial_slug: str) -> bool:
     state = load_state(state_path)
     assets_state = state["assets"]
 
-    host, stream = fetch_webstream(token, slug)
-    photos = stream.get("photos", [])
-    pending: list[PendingAsset] = []
+    host: str | None = None
+    candidates: list[PendingAsset] = []
+    discovered = 0
     failures = 0
+    if is_cloudkit_share_url(share_url):
+        candidates, discovered, failures = fetch_cloudkit_assets(share_url, token, slug)
+    else:
+        host, stream = fetch_webstream(token, slug)
+        photos = stream.get("photos", [])
+        discovered = len(photos)
+        for photo in photos:
+            if not isinstance(photo, dict):
+                failures += 1
+                log("error", slug, "asset_skipped", reason="asset_metadata_invalid")
+                continue
+            try:
+                candidates.append(pending_asset(photo))
+            except IngestError as error:
+                failures += 1
+                log("error", slug, "asset_skipped", reason=str(error))
+
+    pending: list[PendingAsset] = []
     recovered = 0
 
-    for photo in photos:
-        if not isinstance(photo, dict):
-            failures += 1
-            log("error", slug, "asset_skipped", reason="asset_metadata_invalid")
-            continue
-        guid_value = photo.get("photoGuid") or photo.get("assetGuid")
-        if isinstance(guid_value, str) and guid_value in assets_state:
-            continue
-        try:
-            asset = pending_asset(photo)
-        except IngestError as error:
-            failures += 1
-            log("error", slug, "asset_skipped", reason=str(error))
+    for asset in candidates:
+        if asset.guid in assets_state:
             continue
         existing = existing_download(inbox, asset.stem)
         if existing:
@@ -538,22 +822,72 @@ def ingest_album(album_config: Mapping[str, object], initial_slug: str) -> bool:
             continue
         pending.append(asset)
 
-    signed_urls = fetch_asset_urls(host, token, pending, slug) if pending else {}
+    cloudkit_mode = is_cloudkit_share_url(share_url)
+    if cloudkit_mode:
+        signed_urls = {asset.guid: asset.download_url for asset in pending if asset.download_url}
+    else:
+        signed_urls = fetch_asset_urls(host, token, pending, slug) if pending and host else {}
     downloaded = 0
-    for asset in pending:
-        signed_url = signed_urls.get(asset.checksum)
-        if not signed_url:
+    cloudkit_refreshes = 0
+    for index, asset in enumerate(pending):
+        destination: Path | None = None
+        failure_reason = "signed_url_missing"
+        while True:
+            signed_url = signed_urls.get(asset.guid if cloudkit_mode else asset.checksum)
+            if signed_url:
+                try:
+                    destination = download_asset(signed_url, inbox, asset, slug)
+                    break
+                except (IngestError, OSError) as error:
+                    failure_reason = str(error) if isinstance(error, IngestError) else "state_write_failed"
+            if (
+                not cloudkit_mode
+                or failure_reason not in CLOUDKIT_REFRESHABLE_DOWNLOAD_ERRORS
+                or cloudkit_refreshes >= CLOUDKIT_URL_REFRESH_LIMIT
+            ):
+                break
+            try:
+                refreshed_assets, _, refresh_failures = fetch_cloudkit_assets(share_url, token, slug)
+            except (IngestError, OSError) as error:
+                failure_reason = str(error) if isinstance(error, IngestError) else "cloudkit_refresh_failed"
+                break
+            if refresh_failures:
+                failure_reason = "cloudkit_refresh_invalid"
+                break
+            refreshed_urls = {
+                refreshed.guid: refreshed.download_url
+                for refreshed in refreshed_assets
+                if refreshed.download_url
+            }
+            signed_urls.update(
+                {
+                    remaining.guid: refreshed_urls[remaining.guid]
+                    for remaining in pending[index:]
+                    if remaining.guid in refreshed_urls
+                }
+            )
+            cloudkit_refreshes += 1
+            log(
+                "info",
+                slug,
+                "cloudkit_urls_refreshed",
+                refresh=cloudkit_refreshes,
+                remaining=len(pending) - index,
+            )
+            if asset.guid not in signed_urls:
+                failure_reason = "signed_url_missing"
+                break
+
+        if destination is None:
             failures += 1
-            log("error", slug, "asset_failed", guid=asset.guid, reason="signed_url_missing")
+            log("error", slug, "asset_failed", guid=asset.guid, reason=failure_reason)
             continue
         try:
-            destination = download_asset(signed_url, inbox, asset, slug)
             assets_state[asset.guid] = {"downloadedAt": iso_now(), "filename": destination.name}
             atomic_write_json(state_path, state)
-        except (IngestError, OSError) as error:
+        except OSError:
             failures += 1
-            reason = str(error) if isinstance(error, IngestError) else "state_write_failed"
-            log("error", slug, "asset_failed", guid=asset.guid, reason=reason)
+            log("error", slug, "asset_failed", guid=asset.guid, reason="state_write_failed")
             continue
         downloaded += 1
         log("info", slug, "asset_downloaded", guid=asset.guid, filename=destination.name)
@@ -564,7 +898,7 @@ def ingest_album(album_config: Mapping[str, object], initial_slug: str) -> bool:
         "info" if failures == 0 else "error",
         slug,
         "album_complete",
-        discovered=len(photos),
+        discovered=discovered,
         downloaded=downloaded,
         recovered=recovered,
         failed=failures,
@@ -576,6 +910,8 @@ def load_config(config_path: Path) -> dict:
     if not config_path.exists():
         atomic_write_json(config_path, {"albums": []})
         log("info", "-", "config_created", path=config_path)
+    else:
+        os.chmod(config_path, 0o600)
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -613,7 +949,9 @@ def run(config_path: Path) -> int:
             if isinstance(album_config, dict):
                 configured_url = album_config.get("url")
                 if isinstance(configured_url, str):
-                    initial_slug = slugify_token(extract_token(configured_url) or initial_slug)
+                    configured_token = extract_token(configured_url)
+                    if configured_token:
+                        initial_slug = album_log_id(configured_token)
             else:
                 album_config = {}
             try:
