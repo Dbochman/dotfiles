@@ -378,6 +378,16 @@ definitions and installation guidance live in [LAUNCHAGENTS.md](LAUNCHAGENTS.md)
 |-------|----------|---------|-------------|
 | `ai.openclaw.icloud-shared-album-ingest` | Daily 9:15 AM local | `icloud-shared-album-ingest.py` | Polls configured public iCloud Shared Albums, downloads only unseen assets to local inboxes, records per-inbox GUID state, and exits without events or notifications. See [ICLOUD-SHARED-ALBUM-INGEST.md](ICLOUD-SHARED-ALBUM-INGEST.md). |
 
+## Model-assisted local catalog jobs
+
+These remain LaunchAgents rather than OpenClaw cron turns because a bounded
+local wrapper owns reconciliation, strict output validation, retries, and
+private state. Only the image-description substep invokes a configured model.
+
+| Label | Schedule | Program | Description |
+|-------|----------|---------|-------------|
+| `ai.openclaw.cabin-photo-catalog` | Daily 10:15 AM local | `cabin-photo-catalog.py` | Reconciles the Cabin Shared Album after download, inherits decisive human-curated matches, quarantines ambiguity, and tags only new post-cutoff derivatives for the private magazine producer catalog. See [CABIN-PHOTO-CATALOG.md](CABIN-PHOTO-CATALOG.md). |
+
 ## Recurring Jobs
 
 | ID | Schedule | Payload | Delivery | Description |
