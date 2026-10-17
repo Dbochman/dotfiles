@@ -117,11 +117,21 @@ active post-deploy checks.
 
 | Script | Description |
 |--------|-------------|
-| `airthings` | Read-only exact-device Wave Enhance wrapper. Uses a locked local BLE runtime, delegates fresh reads through the Bluetooth-authorized Homebrew `Python.app`, serializes connections, caches successful status for five minutes, and omits Bluetooth identifiers and serials from public output. |
+| `airthings` | Read-only exact-device Wave Enhance wrapper. Uses a locked local BLE runtime, delegates fresh reads through the dedicated Bluetooth-authorized `Airthings Reader.app`, serializes connections, caches successful status for five minutes, and omits Bluetooth identifiers and serials from public output. |
 | `airthings-history-import` | Attended, dry-run-first Airthings dashboard CSV importer. Apply requires `AIRTHINGS_ALLOW_HISTORY_IMPORT=1` plus `--apply`; affected daily history files are backed up, merged idempotently, sorted, and written atomically. It is not an OpenClaw skill tool. |
 | `airthings-snapshot` | Non-model five-minute sampler wrapper. Reads only the exact enrolled Wave Enhance, appends one fresh Airthings-only climate row, and maintains protected status-only health. |
 | `airthings-notify.py` | Deterministic Cabin CO2/VOC ventilation policy invoked after sampler append. Pairs elevated alerts with a sustained-good follow-up for initial recipients still present. Defaults to shadow; uses fresh positive presence, quiet hours, protected episode/recovery deduplication, and the existing strict iMessage sender. Operator-only initialization/status; never a model or skill action. |
 | `nest-history-append` | Shared private JSONL appender for the 5-minute Airthings and 30-minute merged climate jobs. It validates records, uses a common `flock`, and supports exact source/room/timestamp deduplication. |
+
+The installer and managed pull build `~/.openclaw/apps/Airthings Reader.app`
+from Homebrew's Python executable plus the tracked Bluetooth usage declaration.
+The bundle has its own `ai.openclaw.airthings-reader` identity and must receive
+an attended Bluetooth approval on first use (and potentially after a Python
+upgrade). Unchanged installations retain the signed bundle. Homebrew files are
+never patched; replaced reader bundles remain recoverable beside the app.
+No macOS device pairing or Airthings account reset is required. On macOS 27,
+the generic Python app returned empty scans even with permission enabled, while
+the explicitly declared and authorized reader successfully read the sensor.
 
 See [`../REOLINK-CAMERA.md`](../REOLINK-CAMERA.md) for the private runtime
 contract, attended rollout, optional macOS Client role, verification, and V2
@@ -202,7 +212,7 @@ qmd mcp                                       # start MCP server for AI agents
 | Script | Description |
 |--------|-------------|
 | `mysa-status.py` | Queries Mysa baseboard heater API for device status (temp, setpoint, mode). Outputs JSON. Uses Cognito auth cached at `~/.config/mysotherm`; an optional cached `Mysa` vault credential renews expired sessions automatically, or run `mysa --login` interactively. |
-| `airthings` | Reads the exact Cabin Living Room Wave Enhance over local BLE for CO2, VOC, temperature, humidity, pressure, noise, light, and battery data. No cloud account is used; unattended reads refresh through the authorized Homebrew `Python.app` identity. |
+| `airthings` | Reads the exact Cabin Living Room Wave Enhance over local BLE for CO2, VOC, temperature, humidity, pressure, noise, light, and battery data. No cloud account is used; unattended reads refresh through the authorized `Airthings Reader.app` identity. |
 | `airthings-history-import` | Imports UTC Airthings dashboard CSV history into the same Airthings room series without duplicating timestamps. This is an attended operator tool, not a scheduled or model-invocable command. |
 | `airthings-snapshot` | Scheduled local-only collector for the exact Airthings binding. It does not call Nest, weather, HVAC providers, or the home-event bus. |
 | `nest-history-append` | Serializes all ordinary climate JSONL writes and rejects unsafe history paths. The attended Airthings importer takes the same lock while merging a backfill. |

@@ -88,6 +88,7 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.nest-dashboard.plist` |
 | Data | `~/.openclaw/nest-history/YYYY-MM-DD.jsonl` |
 | Airthings sampler health | `~/.openclaw/airthings/snapshot-status.json` |
+| Airthings Bluetooth reader | `~/.openclaw/apps/Airthings Reader.app` (attended macOS Bluetooth approval on first use) |
 | Presence | `~/.openclaw/presence/state.json` + `history/` |
 | Logs | `~/.openclaw/logs/nest-dashboard.{log,err.log}` |
 

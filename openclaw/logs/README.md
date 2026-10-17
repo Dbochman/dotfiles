@@ -35,7 +35,7 @@ Each service uses one of two patterns:
 | `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh plus one conditional retry; stdout and stderr share this file. Credential-free outcome metadata is stored owner-only at `~/.openclaw/run/opentable-refresh-status.json` for retry control and weekly health reporting. |
 | `~/Library/Logs/openclaw/gateway.log` | `ai.openclaw.gateway` | Current generated-service gateway output; the tracked recovery plist instead uses `~/.openclaw/logs/gateway.{log,err.log}` |
 | `nest-cron.log` | `ai.openclaw.nest-snapshot` | Merged climate and Airthings air-quality snapshot cron; BLE failures use safe categories only |
-| `airthings-snapshot.err.log` | `ai.openclaw.airthings-snapshot` | Safe failures from the five-minute local BLE sampler; protected current health is stored at `~/.openclaw/airthings/snapshot-status.json` |
+| `airthings-snapshot.err.log` | `ai.openclaw.airthings-snapshot` | Safe failures from the five-minute local BLE sampler; protected current health is stored at `~/.openclaw/airthings/snapshot-status.json`. Fresh reads use the separately authorized `Airthings Reader.app`; verify its Bluetooth grant when background reads fail. |
 | `nest-dashboard.log` / `.err.log` | `ai.openclaw.nest-dashboard` | Nest dashboard HTTP server |
 | `usage-dashboard.log` / `.err.log` | `ai.openclaw.usage-dashboard` | Usage dashboard HTTP server |
 | `usage-snapshot.log` / `.err.log` | `ai.openclaw.usage-snapshot` | Usage metrics snapshot |

@@ -468,7 +468,11 @@ if ! UV_PROJECT_ENVIRONMENT="$AIRTHINGS_VENV_DIR" \
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings: FATAL locked runtime sync failed" >> "$LOG"
   exit 1
 fi
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings: locked runtime ready" >> "$LOG"
+if ! /bin/bash "$AIRTHINGS_SKILL_DIR/scripts/install_macos_reader.sh" "$HOME/.openclaw" >> "$LOG" 2>&1; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings: FATAL reader app installation failed" >> "$LOG"
+  exit 1
+fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings: locked runtime and reader app ready" >> "$LOG"
 
 # Deploy CLI wrappers and scripts to ~/.openclaw/bin/
 BIN_SRC="$REPO/openclaw/bin"

@@ -10,7 +10,7 @@ metadata: {"openclaw":{"emoji":"🌿","requires":{"bins":["airthings"]}}}
 Use the read-only `airthings` CLI. It talks directly to the enrolled Wave
 Enhance over Bluetooth and does not use an Airthings account or cloud API.
 Status is cache-first; when a fresh read is required, the wrapper delegates it
-through the macOS-authorized Homebrew `Python.app` identity and returns the
+through the macOS-authorized `Airthings Reader.app` identity and returns the
 updated protected cache.
 
 ```bash

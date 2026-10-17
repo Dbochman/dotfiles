@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>ai.openclaw.airthings-reader</string>
+<key>CFBundleName</key><string>Airthings Reader</string>
+<key>CFBundleDisplayName</key><string>Airthings Reader</string>
+<key>CFBundleExecutable</key><string>Airthings Reader</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>LSUIElement</key><true/>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Read your enrolled Airthings Wave Enhance air-quality sensor over Bluetooth.</string>
+<key>NSBluetoothPeripheralUsageDescription</key><string>Read your enrolled Airthings Wave Enhance air-quality sensor over Bluetooth.</string>
+</dict></plist>

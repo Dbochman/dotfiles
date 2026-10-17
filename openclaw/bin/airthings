@@ -5,7 +5,7 @@ set -euo pipefail
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 RUNTIME="${AIRTHINGS_RUNTIME:-$OPENCLAW_HOME/venvs/airthings-monitor/bin/python}"
 SCRIPT="${AIRTHINGS_SCRIPT:-$OPENCLAW_HOME/skills/airthings-monitor/scripts/airthings.py}"
-PYTHON_APP="${AIRTHINGS_PYTHON_APP:-/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Resources/Python.app}"
+PYTHON_APP="${AIRTHINGS_PYTHON_APP:-$OPENCLAW_HOME/apps/Airthings Reader.app}"
 OPEN_BIN="${AIRTHINGS_OPEN_BIN:-/usr/bin/open}"
 
 if [[ ! -x "$RUNTIME" ]]; then
@@ -34,12 +34,12 @@ refresh_via_authorized_app() {
   done
   refresh_args+=(--refresh --json)
 
-  PYTHONPATH="$site_packages${PYTHONPATH:+:$PYTHONPATH}" \
-    "$OPEN_BIN" -g -W -n "$PYTHON_APP" --args \
+  "$OPEN_BIN" -g -W -n --env "PYTHONPATH=$site_packages${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON_APP" --args \
       "$SCRIPT" "${refresh_args[@]}" >/dev/null 2>&1
 }
 
-# A GUI-launched Python.app has its own macOS Bluetooth privacy grant. Shells,
+# The dedicated reader app has its own macOS Bluetooth privacy grant. Shells,
 # LaunchAgents, and the OpenClaw gateway do not inherit Terminal's grant, so a
 # stale or explicitly refreshed status read is delegated through LaunchServices.
 # The app updates the protected cache; this wrapper then renders that cache in

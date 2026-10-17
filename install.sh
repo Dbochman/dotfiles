@@ -957,6 +957,7 @@ install_openclaw_airthings_runtime() {
 
   if [[ "$DRY_RUN" = true ]]; then
     log "  [dry-run] Would sync locked Airthings runtime: $venv_dir"
+    log "  [dry-run] Would install the Bluetooth-authorized Airthings Reader app"
     return 0
   fi
   if [[ ! -f "$skill_dir/pyproject.toml" || -L "$skill_dir/pyproject.toml" \
@@ -975,6 +976,11 @@ install_openclaw_airthings_runtime() {
   if ! UV_PROJECT_ENVIRONMENT="$venv_dir" UV_PYTHON="$python_bin" \
       "$uv_bin" sync --frozen --no-dev --project "$skill_dir"; then
     log_error "Could not sync locked Airthings runtime"
+    EXIT_CODE=1
+    return 1
+  fi
+  if ! /bin/bash "$skill_dir/scripts/install_macos_reader.sh" "$openclaw_home"; then
+    log_error "Could not install Airthings Reader; Bluetooth approval is required on first use"
     EXIT_CODE=1
     return 1
   fi

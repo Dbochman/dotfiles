@@ -83,7 +83,13 @@ printf '%s\\n' "$*" > "$FAKE_OPEN_ARGS"
         launch_args = self.open_args.read_text(encoding="utf-8")
         self.assertIn("-g -W -n", launch_args)
         self.assertIn(str(self.python_app), launch_args)
+        self.assertIn(f"--env PYTHONPATH={self.site_packages}", launch_args)
         self.assertIn("--refresh --json", launch_args)
+
+    def test_default_reader_is_the_dedicated_app(self) -> None:
+        source = WRAPPER.read_text(encoding="utf-8")
+        self.assertIn('$OPENCLAW_HOME/apps/Airthings Reader.app', source)
+        self.assertNotIn('/Resources/Python.app', source)
 
     def test_fresh_status_does_not_launch_python_app(self) -> None:
         self.refreshed.touch()
