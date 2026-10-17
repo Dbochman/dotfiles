@@ -135,7 +135,7 @@ if daily.get("state", {}).get("lastStatus") != "ok":
 PY
 
 # SQLite-backed deployments must reconcile scheduling state through the live
-# gateway before doctor normalizes the staged legacy file. Use a fake openclaw
+# gateway without invoking doctor or staging a legacy file. Use a fake openclaw
 # binary so this test never contacts the real gateway.
 mkdir -p "$TEST_HOME/fake-bin" "$TEST_HOME/.openclaw/state"
 OPENCLAW_CALL_LOG="$TEST_HOME/openclaw.calls"
@@ -255,7 +255,7 @@ write_fake_openclaw() {
   printf '%s\n' \
     '#!/bin/bash' \
     'printf "%s\n" "$*" >> "$OPENCLAW_CALL_LOG"' \
-    'if [ "$1" = "doctor" ]; then printf "%s\n" "$PATH" > "$OPENCLAW_DOCTOR_PATH_LOG"; fi' \
+    'if [ "$1" = "doctor" ]; then echo "Gateway owns state; maintenance forbidden" >&2; exit 78; fi' \
     'exec python3 "$FAKE_OPENCLAW_DRIVER" "$@"' \
     > "$TEST_HOME/fake-bin/openclaw"
   chmod +x "$TEST_HOME/fake-bin/openclaw"
@@ -379,6 +379,16 @@ if grep -q 'cron.update' "$OPENCLAW_CALL_LOG"; then
   exit 1
 fi
 
+# An obsolete bridge is not executable state on a migrated installation.
+# It must neither be parsed nor replaced by routine deployment.
+printf '%s\n' 'obsolete bridge: deliberately not JSON' > "$TEST_HOME/.openclaw/cron/jobs.json"
+deploy
+if [ "$(cat "$TEST_HOME/.openclaw/cron/jobs.json")" != 'obsolete bridge: deliberately not JSON' ]; then
+  echo "SQLite deployment rewrote the obsolete legacy bridge" >&2
+  exit 1
+fi
+rm "$TEST_HOME/.openclaw/cron/jobs.json"
+
 HOME="$TEST_HOME" python3 <<'PY'
 import os
 import sqlite3
@@ -412,13 +422,10 @@ PY
 
 : > "$OPENCLAW_CALL_LOG"
 deploy
-case "$(cat "$OPENCLAW_DOCTOR_PATH_LOG")" in
-  "$TEST_HOME/.openclaw/bin:$TEST_NODE24_BIN:$TEST_HOME/fake-bin:"*) ;;
-  *)
-    echo "cron doctor did not inherit the managed OpenClaw and Node 22 paths" >&2
-    exit 1
-    ;;
-esac
+if [ -e "$TEST_HOME/.openclaw/cron/jobs.json" ] || grep -q '^doctor ' "$OPENCLAW_CALL_LOG"; then
+  echo "SQLite deployment staged a legacy bridge or invoked maintenance" >&2
+  exit 1
+fi
 EXPECTED_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"schedule":{"kind":"at","at":"2030-01-01T00:00:00.000Z"}}}'
 if ! grep -Fxq "$EXPECTED_UPDATE" "$OPENCLAW_CALL_LOG"; then
   echo "stale SQLite next_run_at_ms did not produce the expected cron.update" >&2
@@ -426,8 +433,8 @@ if ! grep -Fxq "$EXPECTED_UPDATE" "$OPENCLAW_CALL_LOG"; then
   exit 1
 fi
 if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_UPDATE" ] || \
-   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
-  echo "cron.update did not run before doctor normalization" >&2
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^cron list '; then
+  echo "cron.update did not run before parity read-back" >&2
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
 fi
@@ -453,8 +460,8 @@ PY
 : > "$OPENCLAW_CALL_LOG"
 deploy
 if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_UPDATE" ] || \
-   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
-  echo "changed SQLite schedule did not run cron.update before doctor" >&2
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^cron list '; then
+  echo "changed SQLite schedule did not run cron.update before read-back" >&2
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
 fi
@@ -489,19 +496,19 @@ PY
 deploy
 EXPECTED_PAYLOAD_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"payload":{"kind":"agentTurn","message":"test"}}}'
 if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_PAYLOAD_UPDATE" ] || \
-   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
-  echo "payload drift did not run the smallest cron.update before doctor" >&2
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^cron list '; then
+  echo "payload drift did not run the smallest cron.update before read-back" >&2
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
 fi
 HOME="$TEST_HOME" python3 <<'PY'
 import json
 import os
+import sqlite3
 
-path = os.path.expanduser("~/.openclaw/cron/jobs.json")
-with open(path) as jobs_file:
-    job = json.load(jobs_file)["jobs"][0]
-state = job.get("state", {})
+path = os.path.expanduser("~/.openclaw/state/openclaw.sqlite")
+with sqlite3.connect(path) as conn:
+    state = json.loads(conn.execute("SELECT state_json FROM cron_jobs WHERE job_id = 'future'").fetchone()[0])
 if state.get("nextRunAtMs") != 1893452400000:
     raise SystemExit("payload-only drift discarded the retry backoff")
 if state.get("lastRunAtMs") != 1893456000000:
@@ -541,8 +548,8 @@ PY
 deploy
 EXPECTED_DEFINITION_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"name":"Future one-shot","enabled":true,"deleteAfterRun":true,"sessionTarget":"isolated","wakeMode":"next-heartbeat","payload":{"kind":"agentTurn","message":"test"},"delivery":{"mode":"none"}}}'
 if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_DEFINITION_UPDATE" ] || \
-   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
-  echo "canonical definition drift did not run the expected cron.update before doctor" >&2
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^cron list '; then
+  echo "canonical definition drift did not run the expected cron.update before read-back" >&2
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
 fi
@@ -593,7 +600,7 @@ PY
 deploy
 EXPECTED_DELIVERY_UPDATE='gateway call cron.update --json --timeout 30000 --params {"id":"future","patch":{"delivery":{"mode":"none","channel":null,"to":null,"threadId":null,"accountId":null,"completionDestination":null,"failureDestination":null,"bestEffort":false}}}'
 if [ "$(sed -n '1p' "$OPENCLAW_CALL_LOG")" != "$EXPECTED_DELIVERY_UPDATE" ] || \
-   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^doctor '; then
+   ! sed -n '2p' "$OPENCLAW_CALL_LOG" | grep -q '^cron list '; then
   echo "stale delivery fields did not produce the exact clearing cron.update" >&2
   cat "$OPENCLAW_CALL_LOG" >&2
   exit 1
@@ -618,17 +625,15 @@ if state.get("lastRunAtMs") != 1893456000000:
     raise SystemExit("delivery-only drift discarded last-run state")
 PY
 
-# A failed SQLite migration/normalization must fail the deployment. Returning
-# success here would let callers report a rollout even though SQLite could
-# still contain stale or missing cron definitions.
+# An unavailable Gateway read-back must fail even when no updates are needed.
 printf '%s\n' \
   '#!/bin/bash' \
   'printf "%s\n" "$*" >> "$OPENCLAW_CALL_LOG"' \
-  'if [ "$1" = "doctor" ]; then echo "doctor failed" >&2; exit 1; fi' \
+  'if [ "$1" = "cron" ]; then echo "gateway read-back failed" >&2; exit 1; fi' \
   > "$TEST_HOME/fake-bin/openclaw"
 chmod +x "$TEST_HOME/fake-bin/openclaw"
 if deploy 2>/dev/null; then
-  echo "cron deployment reported success after OpenClaw doctor failed" >&2
+  echo "cron deployment reported success after Gateway read-back failed" >&2
   exit 1
 fi
 write_fake_openclaw

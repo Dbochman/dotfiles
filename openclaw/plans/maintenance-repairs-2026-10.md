@@ -53,12 +53,28 @@ attended account-recovery boundaries, and existing household/message policies.
   Both owned SSH forwards and the handoff listener are closed. Personal login
   and model defaults were not changed. Source rollback:
   `~/Backups/oauth-refresh-20261017.p3fhyswz`.
-- [ ] **3. Unblock automatic dotfiles deployment.** The October 17 run stopped
+- [x] **3. Unblock automatic dotfiles deployment.** The October 17 run stopped
   during Crosstown protocol synchronization because Roomba credential files were
   reported missing or insecure. Check the exact remote paths and ownership/mode
   contract without logging credentials or weakening validation. Preserve the
   existing cron-reconciliation safeguards and verify the next normal deployment
   completes; a successful Git pull alone is insufficient.
+  **Restored October 17:** Remote credential metadata and the exact preflight now
+  pass without changing files or permissions. A normal retry exposed two cron
+  compatibility faults: routine `doctor --fix` cannot acquire maintenance
+  ownership while the Gateway runs, and the system-owned skill review's migrated
+  agent-turn format was rejected as an extra job. Removed routine doctor/legacy
+  bridge staging for SQLite-backed deployments and recognized only the migrated
+  review's full ownership/no-delivery contract. Fake cron-sync regressions,
+  27 deployment tests, and 18 SQLite compatibility tests pass. Live cron sync
+  verifies exact parity for all 16 jobs with zero definition updates; Gateway
+  and job state are preserved. The full normal deployment completed at 18:27 UTC,
+  including self-update, wrapper smoke tests, and the active skill catalog.
+  Gateway PID 9227 remained unchanged. The failed retry's temporary JSON bridge
+  was moved into the private rollback directory, not imported or deleted;
+  SQLite remains authoritative. The next organic 06:00 run is still a follow-up
+  observation, not a reason to rewrite the scheduler's historical exit status.
+  Private rollback: `~/Backups/deployment-recovery-20261017.3ytm_4c9`.
 - [ ] **4. Repair or reconcile scheduled financial-job failures.** Today's
   07:35 Forecast ledger capture reported `forecast_ledger_api_unavailable`;
   the Forecast health endpoint subsequently recovered. The weekly scraper also

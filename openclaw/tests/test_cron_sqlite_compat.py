@@ -246,6 +246,17 @@ class CompactCronStoreTests(unittest.TestCase):
         self.assertFalse(is_system_job({**job, "payload": {"kind": "agentTurn"}}))
         self.assertFalse(is_system_job({"name": "heartbeat-main"}))
 
+    def test_migrated_skill_review_requires_full_system_contract(self):
+        job = {"agentId": "main", "declarationKey": "skill-collection-review:main",
+               "name": "skill-collection-review-main", "sessionTarget": "isolated",
+               "payload": {"kind": "agentTurn"}, "delivery": {"mode": "none"}}
+        self.assertTrue(is_system_job(job))
+        for change in ({"agentId": "other"}, {"declarationKey": None},
+                       {"name": "ordinary-review"}, {"sessionTarget": "main"},
+                       {"delivery": {"mode": "announce"}}):
+            with self.subTest(change=change):
+                self.assertFalse(is_system_job({**job, **change}))
+
     def test_sync_preserves_system_jobs_and_completed_tombstones(self):
         home = self.fixture.home
         live = Path(self.fixture.store)
@@ -256,9 +267,10 @@ class CompactCronStoreTests(unittest.TestCase):
         cache.write_text("DYLAN_EMAIL=dylan@example.invalid\nJULIA_EMAIL=julia@example.invalid\nHOUSEHOLD_CHAT_ID=3\nJULIA_CHAT_ID=1\nDYLAN_CHAT_ID=2\n")
         cache.chmod(0o600)
         self.finish({})
-        system = {"id": "managed-heartbeat", "agentId": "main", "declarationKey": "heartbeat:main",
-                  "enabled": True, "schedule": {"kind": "every", "everyMs": 43200000},
-                  "payload": {"kind": "heartbeat"}}
+        system = {"id": "managed-review", "agentId": "main", "declarationKey": "skill-collection-review:main",
+                  "name": "skill-collection-review-main", "sessionTarget": "isolated",
+                  "enabled": True, "schedule": {"kind": "every", "everyMs": 604800000},
+                  "payload": {"kind": "agentTurn"}, "delivery": {"mode": "none"}}
         with sqlite3.connect(self.fixture.database) as database:
             database.execute("ALTER TABLE cron_jobs ADD COLUMN sort_order INTEGER DEFAULT 0")
             database.execute("ALTER TABLE cron_jobs ADD COLUMN updated_at INTEGER DEFAULT 0")
@@ -274,7 +286,7 @@ class CompactCronStoreTests(unittest.TestCase):
         binaries.mkdir()
         fake = binaries / "openclaw"
         fake.write_text("#!/usr/bin/python3\nimport json,os,sqlite3,sys\n"
-                        "if sys.argv[1]=='doctor': sys.exit(0)\n"
+                        "if sys.argv[1]=='doctor': sys.exit(78)\n"
                         "if sys.argv[1:3]!=['cron','list']: sys.exit(99)\n"
                         "with sqlite3.connect(os.environ['SQLITE_DB']) as db:\n"
                         "    jobs=[json.loads(row[0]) for row in db.execute('SELECT job_json FROM cron_jobs')]\n"
@@ -286,9 +298,12 @@ class CompactCronStoreTests(unittest.TestCase):
         script = Path(__file__).resolve().parents[1] / "sync-cron-jobs.sh"
         deployed = subprocess.run(["bash", str(script), "deploy"], env=environment, capture_output=True, text=True)
         self.assertEqual(deployed.returncode, 0, deployed.stdout + deployed.stderr)
-        staged = json.loads(live.read_text())["jobs"]
-        self.assertIn(system, staged)
-        self.assertNotIn("once", {job["id"] for job in staged})
+        self.assertFalse(live.exists(), "SQLite deployment must not recreate the legacy bridge")
+        with sqlite3.connect(self.fixture.database) as database:
+            deployed_jobs = [json.loads(row[0]) for row in database.execute("SELECT job_json FROM cron_jobs")]
+        self.assertIn(system, deployed_jobs)
+        self.assertNotIn("once", {job["id"] for job in deployed_jobs})
+        self.assertIn("completed one-shots skipped: 1", deployed.stdout)
         saved = subprocess.run(["bash", str(script), "save"], env=environment, capture_output=True, text=True)
         self.assertEqual(saved.returncode, 0, saved.stdout + saved.stderr)
         self.assertEqual({job["id"] for job in json.loads(canonical.read_text())["jobs"]}, set(existing.triage.OWNER_JOBS.values()))

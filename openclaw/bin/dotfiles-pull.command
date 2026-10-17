@@ -339,7 +339,7 @@ PRESENCE_FINALIZE
                "$MBP_HOST" \
                'for p in "$HOME/.openclaw/rest980/env-10max" "$HOME/.openclaw/rest980/env-j5"; do [ -f "$p" ] && [ ! -L "$p" ] && [ "$(stat -f "%u %Lp" "$p")" = "$(id -u) 600" ] || exit 1; done' \
                >/dev/null 2>&1; then
-        MBP_SYNC_ERR="Roomba credential files missing or insecure"
+        MBP_SYNC_ERR="Roomba credential preflight failed (SSH failure or missing/insecure files)"
         MBP_SYNC_LEVEL="WARN"
         MBP_PROTOCOL_SYNC_FAILED=1
         continue

@@ -11,7 +11,21 @@ def is_system_job(job):
         return False
     for prefix, expected in (("heartbeat:", "heartbeat"), ("skill-collection-review:", "skillCollectionReview")):
         if declaration.startswith(prefix):
-            return kind == expected and declaration[len(prefix):] == job.get("agentId")
+            owner = declaration[len(prefix):]
+            if not owner or owner != job.get("agentId"):
+                return False
+            if kind == expected:
+                return True
+            # OpenClaw 2026.10 migrated its built-in review to an isolated,
+            # no-delivery agent turn. Require the full ownership contract;
+            # a similarly named ordinary job must not become system-owned.
+            return (
+                prefix == "skill-collection-review:"
+                and kind == "agentTurn"
+                and job.get("name") == "skill-collection-review-" + owner
+                and job.get("sessionTarget") == "isolated"
+                and job.get("delivery", {}).get("mode") == "none"
+            )
     return (
         declaration == "memory-core:memory-dreaming-promotion"
         and kind == "agentTurn" and job.get("name") == "Memory Dreaming Promotion"

@@ -187,7 +187,8 @@ PY
     ;;
 
   deploy)
-    # Stage definitions for the SQLite migration bridge, preserving safe state.
+    # Reconcile registered SQLite definitions through the gateway. Only a
+    # legacy installation without SQLite uses the JSON deployment path.
     [ -f "$DOTFILES_JOBS" ] || { echo "Error: $DOTFILES_JOBS not found" >&2; exit 1; }
     if ! source_openclaw_secrets; then
       echo "Error: protected identities are not ready; live cron definitions were not deployed" >&2
@@ -463,7 +464,7 @@ def scheduled_at_ms(schedule):
         return None
 
 
-if os.path.exists(live_path):
+if not os.path.isfile(sqlite_path) and os.path.exists(live_path):
     with open(live_path) as f:
         live_data = json.load(f)
     for job in live_data.get('jobs', []):
@@ -566,13 +567,21 @@ with open(os.environ['CRON_UPDATE_PLAN'], 'w') as update_file:
             params['id'] + '\t' + json.dumps(params, separators=(',', ':')) + '\n'
         )
 
-# Doctor may archive the legacy bridge after importing it. Keep an owner-only
-# expected-definition snapshot for the mandatory post-deploy parity read-back.
+# Keep a private expected-definition snapshot for mandatory parity read-back.
 with open(os.environ['CRON_EXPECTED_SNAPSHOT'], 'w') as expected_file:
     json.dump(new_defs, expected_file, separators=(',', ':'))
     expected_file.write('\n')
     expected_file.flush()
     os.fsync(expected_file.fileno())
+
+if os.path.isfile(sqlite_path):
+    print(
+        f'Planned {len(new_defs["jobs"])} SQLite-backed jobs; '
+        f'gateway reconciliations: {len(cron_updates)}; '
+        f'completed one-shots skipped: {len(completed_ids)}; '
+        'legacy bridge untouched; no maintenance required'
+    )
+    raise SystemExit(0)
 
 # Atomic write: write to sibling tmp, fsync, rename. os.replace is a directory
 # entry swap and doesn't need extra filesystem space, so tight-disk conditions
@@ -624,25 +633,10 @@ PY
         exit 1
       }
       source_openclaw_secrets
-      # Doctor evaluates every skill requirement and persists enabled=false for
-      # unavailable skills. Scope the gateway's managed-wrapper path to this
-      # broad repair subprocess so cron migration cannot disable otherwise
-      # healthy skills, without changing command resolution for the rest of
-      # reconciliation.
-      if DOCTOR_OUT=$(PATH="$HOME/.openclaw/bin:$PATH" \
-        openclaw doctor --fix --non-interactive --yes 2>&1); then
-        if printf '%s\n' "$DOCTOR_OUT" | grep -q "Cron store migrated"; then
-          echo "Normalized cron store through OpenClaw doctor (SQLite)"
-        else
-          echo "OpenClaw doctor completed; SQLite cron store already normalized"
-        fi
-      else
-        echo "Error: OpenClaw doctor could not normalize cron store:" >&2
-        printf '%s\n' "$DOCTOR_OUT" >&2
-        exit 1
-      fi
-
-      # Exit status alone cannot prove that a gateway update or doctor import
+      # Maintenance/doctor is an attended migration, not a normal deployment
+      # step: the running Gateway owns SQLite. Never stop it or import a stale
+      # JSON bridge merely to reconcile existing definitions.
+      # Exit status alone cannot prove that a gateway update
       # changed the executable store. Read both SQLite and the active Gateway
       # back and compare their exact ID sets and every canonical definition
       # field before reporting a successful deployment.

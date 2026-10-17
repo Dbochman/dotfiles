@@ -56,9 +56,15 @@ shortcut.
 
 The repository remains the durable definition record, but SQLite changes how
 deployment works. `sync-cron-jobs.sh deploy` filters completed
-`deleteAfterRun` jobs using the version-aware history reader, stages the remaining definitions,
-reconciles changed existing definitions through the live gateway, then
-normalizes existing storage through `openclaw doctor`. In a SQLite-backed
+`deleteAfterRun` jobs using the version-aware history reader and reconciles
+changed existing definitions through the live gateway. SQLite-backed deployments
+neither stage a legacy JSON bridge nor run `openclaw doctor`; maintenance needs
+exclusive state ownership and is reserved for attended migrations. Only legacy
+installations without SQLite write the JSON store. The system-owned skill
+review's migrated isolated `agentTurn`
+format is preserved only when its declaration, owner, name, session target,
+and no-delivery contract match. Ordinary extra jobs still fail exact parity.
+In a SQLite-backed
 installation, new jobs must first be registered through `openclaw cron add`
 or the Gateway `cron.add` API. Record the returned ID in the canonical
 definition and any handoff consumers. For a staged rollout, create disabled,
@@ -69,7 +75,7 @@ Only drifted fields are patched, so payload
 or delivery edits preserve runtime state and retry backoff while schedule or
 enabled edits recalculate `nextRunAtMs`. The daily deployment runs at 6 AM; a
 manual `dotfiles-pull.command` deploys immediately. Deployment returns nonzero
-when protected identities are unavailable or SQLite normalization fails; a
+when protected identities are unavailable or gateway reconciliation fails; a
 caller must never report those cases as a successful rollout. It also reads
 SQLite and the active Gateway back after reconciliation and requires both live
 ID sets to match the deployable canonical set plus preserved system-owned jobs exactly, then verifies every
