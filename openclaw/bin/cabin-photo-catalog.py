@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any, Mapping, Sequence
 
 
@@ -930,13 +931,38 @@ def summarize(catalog: Mapping[str, Any]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def summarize_backlog(catalog: Mapping[str, Any], counts: Mapping[str, int]) -> dict[str, int]:
+    retryable_tag_errors = 0
+    exhausted_tag_errors = 0
+    for record in catalog["assets"].values():
+        if not isinstance(record, dict) or record.get("status") != "tag_error":
+            continue
+        if int(record.get("tagAttempts", 0)) < 3:
+            retryable_tag_errors += 1
+        else:
+            exhausted_tag_errors += 1
+    pending_tags = counts.get("pending_tag", 0)
+    review_items = sum(counts.get(status, 0) for status in ("review_match", "review_tag", "review_unmatched"))
+    unclassified_items = sum(counts.get(status, 0) for status in ("invalid", "unknown", "unsupported"))
+    total = pending_tags + retryable_tag_errors + exhausted_tag_errors + review_items + unclassified_items
+    return {
+        "exhaustedTagErrors": exhausted_tag_errors,
+        "pendingTags": pending_tags,
+        "retryableTagErrors": retryable_tag_errors,
+        "reviewItems": review_items,
+        "total": total,
+        "unclassifiedItems": unclassified_items,
+    }
+
+
 def run_catalog(
     config: Config,
     *,
     reconcile_only: bool = False,
     retag_low_confidence: bool = False,
     tag_limit: int | None = None,
-) -> tuple[dict[str, int], int, int, int]:
+) -> dict[str, Any]:
+    started_at = time.monotonic()
     ensure_private_directory(config.catalog_path.parent)
     ensure_private_directory(config.preview_dir)
     ensure_private_directory(config.status_path.parent)
@@ -955,7 +981,9 @@ def run_catalog(
     if not vocabulary:
         raise CatalogError("tag_vocabulary_empty")
     catalog = load_catalog(config.catalog_path)
+    known_asset_ids = set(catalog["assets"])
     prepare_assets(config, catalog, icloud_state)
+    new_assets = len(set(catalog["assets"]) - known_asset_ids)
     legacy_fingerprints = prepare_legacy_fingerprints(config, catalog, photos)
     apply_reconciliation(
         config,
@@ -974,26 +1002,26 @@ def run_catalog(
         )
     producer_count = write_producer_catalog(config, manifest, catalog)
     counts = summarize(catalog)
-    catalog["lastRun"] = {
-        "at": iso_now(),
+    backlog = summarize_backlog(catalog, counts)
+    updated_at = iso_now()
+    report = {
+        "schemaVersion": SCHEMA_VERSION,
+        "updatedAt": updated_at,
+        "health": "attention" if backlog["total"] else "ok",
+        "backlog": backlog,
         "counts": counts,
+        "durationSeconds": round(time.monotonic() - started_at, 3),
         "failed": failed,
+        "newAssets": new_assets,
         "producerPhotos": producer_count,
+        "reconcileOnly": reconcile_only,
+        "tagLimit": 0 if reconcile_only else (tag_limit if tag_limit is not None else config.tag_batch_limit),
         "tagged": tagged,
     }
+    catalog["lastRun"] = {key: value for key, value in report.items() if key != "schemaVersion"}
     atomic_write_json(config.catalog_path, catalog)
-    atomic_write_json(
-        config.status_path,
-        {
-            "schemaVersion": SCHEMA_VERSION,
-            "updatedAt": iso_now(),
-            "counts": counts,
-            "failed": failed,
-            "producerPhotos": producer_count,
-            "tagged": tagged,
-        },
-    )
-    return counts, tagged, failed, producer_count
+    atomic_write_json(config.status_path, report)
+    return report
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -1060,21 +1088,37 @@ def main(argv: Sequence[str] | None = None) -> int:
                 record.pop("manualDecision", None)
                 record.pop("manualDecisionAt", None)
             atomic_write_json(config.catalog_path, catalog)
-        counts, tagged, failed, producer_count = run_catalog(
+        report = run_catalog(
             config,
             reconcile_only=args.reconcile_only,
             retag_low_confidence=args.retag_low_confidence,
             tag_limit=args.tag_limit,
         )
+    backlog = report["backlog"]
+    if report["health"] != "ok":
+        log(
+            "warning",
+            "catalog_attention_required",
+            backlog=backlog["total"],
+            exhausted_tag_errors=backlog["exhaustedTagErrors"],
+            pending_tags=backlog["pendingTags"],
+            retryable_tag_errors=backlog["retryableTagErrors"],
+            review_items=backlog["reviewItems"],
+            unclassified_items=backlog["unclassifiedItems"],
+        )
     log(
         "info",
         "catalog_complete",
-        tagged=tagged,
-        failed=failed,
-        producer_photos=producer_count,
-        statuses=json.dumps(counts, separators=(",", ":"), sort_keys=True),
+        health=report["health"],
+        new_assets=report["newAssets"],
+        tagged=report["tagged"],
+        failed=report["failed"],
+        backlog=backlog["total"],
+        duration_seconds=report["durationSeconds"],
+        producer_photos=report["producerPhotos"],
+        statuses=json.dumps(report["counts"], separators=(",", ":"), sort_keys=True),
     )
-    return 1 if failed else 0
+    return 1 if report["failed"] else 0
 
 
 if __name__ == "__main__":

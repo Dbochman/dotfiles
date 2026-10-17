@@ -75,7 +75,7 @@ repository are separate systems:
   "statusPath": "~/.openclaw/cabin-photo-catalog/status.json",
   "model": "codex/gpt-5.6-sol",
   "tagAfter": "2026-09-25",
-  "tagBatchLimit": 30
+  "tagBatchLimit": 50
 }
 ```
 
@@ -118,6 +118,16 @@ Read content-free health:
 ```bash
 ~/.openclaw/bin/cabin-photo-catalog.py --status
 ```
+
+The owner-only status includes the run duration, newly discovered and tagged
+counts, effective tag limit, producer count, and a structured backlog split
+across pending, retryable, exhausted, review, and unclassified items. Healthy
+runs report `health: "ok"`. A run with remaining work reports
+`health: "attention"` and emits a content-free `catalog_attention_required`
+log event; it does not expose filenames, captions, tags, people, pets, or
+locations. The routine limit is 50 model calls per run so a normal burst like
+the 31-photo follow-up batch drains in one pass without making an accidental
+large import unbounded.
 
 ## Verification
 

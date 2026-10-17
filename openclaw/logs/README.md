@@ -47,7 +47,7 @@ Each service uses one of two patterns:
 | `dotfiles-pull.log` | `ai.openclaw.dotfiles-pull` | Daily dotfiles sync |
 | `home-state-snapshot.log` | `ai.openclaw.home-state-snapshot` | Daily home state snapshot (cat weights, sleep, doorbell) |
 | `icloud-shared-album-ingest.log` / `.err.log` | `ai.openclaw.icloud-shared-album-ingest` | Daily public iCloud Shared Album polling, GUID deduplication, and local inbox downloads; signed URLs and response bodies are never logged |
-| `cabin-photo-catalog.log` / `.err.log` | `ai.openclaw.cabin-photo-catalog` | Daily post-ingest visual reconciliation and bounded tagging; contains only hashed asset IDs, safe failure categories, confidence labels, and aggregate counts |
+| `cabin-photo-catalog.log` / `.err.log` | `ai.openclaw.cabin-photo-catalog` | Daily post-ingest visual reconciliation and bounded tagging; contains only hashed asset IDs, safe failure categories, confidence labels, aggregate counts, duration, and content-free health/backlog events |
 
 Sampler health includes `notifications.mode` and `notifications.reason`
 when the bounded notification evaluator runs, plus the allowlisted

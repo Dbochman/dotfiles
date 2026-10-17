@@ -74,7 +74,7 @@ class ReconciliationTests(unittest.TestCase):
             status_path=Path('/tmp/status.json'),
             model='codex/test-model',
             tag_after='2026-09-25',
-            tag_batch_limit=30,
+            tag_batch_limit=50,
         )
         state = {
             'assets': {
@@ -159,6 +159,46 @@ class TagValidationTests(unittest.TestCase):
             self.assertEqual(value["caption"], self.valid_value()["caption"])
 
 
+class HealthReportingTests(unittest.TestCase):
+    def test_backlog_separates_retryable_exhausted_review_and_unclassified_items(self):
+        state = {
+            "assets": {
+                "pending": {"status": "pending_tag"},
+                "retryable": {"status": "tag_error", "tagAttempts": 1},
+                "exhausted": {"status": "tag_error", "tagAttempts": 3},
+                "review": {"status": "review_tag"},
+                "unsupported": {"status": "unsupported"},
+                "known-duplicate": {"status": "duplicate_cluster"},
+                "ready": {"status": "auto_tagged"},
+            }
+        }
+        backlog = catalog.summarize_backlog(state, catalog.summarize(state))
+        self.assertEqual(
+            backlog,
+            {
+                "exhaustedTagErrors": 1,
+                "pendingTags": 1,
+                "retryableTagErrors": 1,
+                "reviewItems": 1,
+                "total": 5,
+                "unclassifiedItems": 1,
+            },
+        )
+
+    def test_resolved_and_intentional_exclusions_are_not_backlog(self):
+        state = {
+            "assets": {
+                "ready": {"status": "auto_tagged"},
+                "curated": {"status": "curated_match"},
+                "duplicate": {"status": "duplicate_cluster"},
+                "skipped": {"status": "skipped_editorial"},
+                "video": {"status": "skipped_video"},
+            }
+        }
+        backlog = catalog.summarize_backlog(state, catalog.summarize(state))
+        self.assertEqual(backlog["total"], 0)
+
+
 class ConfigTests(unittest.TestCase):
     def test_config_must_be_owner_only_and_exact(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -174,12 +214,12 @@ class ConfigTests(unittest.TestCase):
                 "statusPath": str(root / "status.json"),
                 "model": "codex/test-model",
                 "tagAfter": "2026-09-25",
-                "tagBatchLimit": 30,
+                "tagBatchLimit": 50,
             }
             path.write_text(json.dumps(payload), encoding="utf-8")
             os.chmod(path, 0o600)
             parsed = catalog.load_config(path)
-            self.assertEqual(parsed.tag_batch_limit, 30)
+            self.assertEqual(parsed.tag_batch_limit, 50)
             os.chmod(path, 0o644)
             with self.assertRaisesRegex(catalog.CatalogError, "config_permissions_invalid"):
                 catalog.load_config(path)

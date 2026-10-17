@@ -386,7 +386,7 @@ private state. Only the image-description substep invokes a configured model.
 
 | Label | Schedule | Program | Description |
 |-------|----------|---------|-------------|
-| `ai.openclaw.cabin-photo-catalog` | Daily 10:15 AM local | `cabin-photo-catalog.py` | Reconciles the Cabin Shared Album after download, inherits decisive human-curated matches, quarantines ambiguity, and tags only new post-cutoff derivatives for the private magazine producer catalog. See [CABIN-PHOTO-CATALOG.md](CABIN-PHOTO-CATALOG.md). |
+| `ai.openclaw.cabin-photo-catalog` | Daily 10:15 AM local | `cabin-photo-catalog.py` | Reconciles the Cabin Shared Album after download, inherits decisive human-curated matches, quarantines ambiguity, tags up to 50 new post-cutoff derivatives, and records content-free delta, duration, health, and backlog status for the private magazine producer catalog. See [CABIN-PHOTO-CATALOG.md](CABIN-PHOTO-CATALOG.md). |
 
 ## Recurring Jobs
 
