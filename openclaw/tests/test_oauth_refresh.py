@@ -13,7 +13,10 @@ FAKE_CLAUDE = '''#!/usr/bin/python3
 import json, os, pathlib, sys, time
 directory = pathlib.Path(os.environ["CLAUDE_CONFIG_DIR"])
 assert str(directory).endswith("/.openclaw/claude-automation")
-assert "/usr/bin" not in os.environ["PATH"].split(":")
+assert "/usr/bin" in os.environ["PATH"].split(":")
+assert os.environ["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == str(directory)
+assert not os.environ.get("CLAUDE_CODE_OAUTH_CLIENT_ID")
+assert not os.environ.get("ANTHROPIC_BASE_URL")
 assert "/opt/homebrew/opt/node@22/bin" in os.environ["PATH"]
 assert not os.environ.get("ANTHROPIC_API_KEY")
 assert not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
@@ -34,7 +37,28 @@ if mode == "expired": data["claudeAiOauth"]["expiresAt"] = 1
 if mode == "wrong-account": data["claudeAiOauth"]["subscriptionType"] = "pro"
 if mode == "nan": data["claudeAiOauth"]["expiresAt"] = float("nan")
 path = directory / ".credentials.json"
+if mode == "keychain": path = directory / "fake-keychain.json"
 path.write_text(json.dumps(data));path.chmod(0o600)
+'''
+
+FAKE_SECURITY = '''#!/usr/bin/python3
+import hashlib, os, pathlib, pwd, sys
+directory = pathlib.Path.home() / ".openclaw" / "claude-automation"
+service = "Claude Code-credentials-" + hashlib.sha256(str(directory).encode()).hexdigest()[:8]
+assert sys.argv[1:] == ["find-generic-password", "-a", pwd.getpwuid(os.getuid()).pw_name, "-s", service, "-w"]
+mode = os.environ.get("FAKE_SECURITY_MODE", "normal")
+if mode == "locked":
+    print("private-token-must-not-escape", file=sys.stderr)
+    sys.exit(36)
+if mode == "malformed":
+    print("private-token-must-not-escape")
+    sys.exit(0)
+if mode == "oversized":
+    print("x" * 65537)
+    sys.exit(0)
+path = directory / "fake-keychain.json"
+if not path.exists(): sys.exit(44)
+print(path.read_text())
 '''
 
 
@@ -56,6 +80,9 @@ class OAuthRefreshTests(unittest.TestCase):
         self.fake = self.home / "fake-claude"
         self.fake.write_text(FAKE_CLAUDE)
         self.fake.chmod(0o700)
+        self.security = self.home / "fake-security"
+        self.security.write_text(FAKE_SECURITY)
+        self.security.chmod(0o700)
 
     def seed(self, fresh=False):
         path = self.directory / ".credentials.json"
@@ -67,9 +94,14 @@ class OAuthRefreshTests(unittest.TestCase):
         path.chmod(0o600)
         return path
 
-    def run_script(self, mode="success", login=False):
+    def run_script(self, mode="success", login=False, security_mode="normal"):
         environment = os.environ.copy()
         environment.update(HOME=str(self.home), OPENCLAW_CLAUDE_BIN=str(self.fake),
+                           OPENCLAW_SECURITY_BIN=str(self.security),
+                           FAKE_SECURITY_MODE=security_mode,
+                           CLAUDE_SECURESTORAGE_CONFIG_DIR="/unrelated/personal",
+                           CLAUDE_CODE_OAUTH_CLIENT_ID="ignored-client",
+                           ANTHROPIC_BASE_URL="https://untrusted.invalid",
                            FAKE_MODE=mode, ANTHROPIC_API_KEY="ignored-secret",
                            CLAUDE_CODE_OAUTH_TOKEN="ignored-secret",
                            CLAUDE_CODE_OAUTH_REFRESH_TOKEN="ignored-secret")
@@ -89,7 +121,35 @@ class OAuthRefreshTests(unittest.TestCase):
     def test_attended_enterprise_login_does_not_reuse_inherited_refresh_token(self):
         result = self.run_script(login=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(os.readlink(self.directory / "browser-bin" / "open"), "/usr/bin/open")
+        self.assertFalse((self.directory / "browser-bin").exists())
+
+    def test_keychain_login_then_unattended_refresh_without_file_credentials(self):
+        self.assertEqual(self.run_script(mode="keychain", login=True).returncode, 0)
+        self.assertFalse((self.directory / ".credentials.json").exists())
+        keychain = self.directory / "fake-keychain.json"
+        data = json.loads(keychain.read_text())
+        data["claudeAiOauth"]["refreshToken"] = "old-refresh"
+        keychain.write_text(json.dumps(data))
+        result = self.run_script(mode="keychain")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(self.cache.read_text())["claudeAiOauth"]["refreshToken"], "new-refresh")
+
+    def test_locked_or_malformed_keychain_never_falls_back_to_file(self):
+        self.seed()
+        for mode in ("locked", "malformed", "oversized"):
+            with self.subTest(mode=mode):
+                self.assertNotEqual(self.run_script(security_mode=mode).returncode, 0)
+                self.assertFalse((self.directory / "invoked").exists())
+                self.assertEqual(self.cache.read_text(), "previous-good-cache")
+
+    def test_wrong_account_in_keychain_is_rejected_without_file_fallback(self):
+        path = self.seed()
+        data = json.loads(path.read_text())
+        data["claudeAiOauth"]["subscriptionType"] = "pro"
+        (self.directory / "fake-keychain.json").write_text(json.dumps(data))
+        self.assertNotEqual(self.run_script().returncode, 0)
+        self.assertFalse((self.directory / "invoked").exists())
+        self.assertEqual(self.cache.read_text(), "previous-good-cache")
 
     def test_missing_isolated_credentials_never_fall_back_to_personal_or_cache(self):
         result = self.run_script()

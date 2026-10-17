@@ -32,12 +32,27 @@ attended account-recovery boundaries, and existing household/message policies.
   is freshly written; no synthetic event was introduced. Separate camera health
   remains degraded and is not represented as repaired. Private pre-cleanup
   database and source rollback: `~/Backups/home-events-retention-20261017.rv9KLm`.
-- [ ] **2. Restore unattended Claude automation authentication.** The isolated
+- [x] **2. Restore unattended Claude automation authentication.** The isolated
   enterprise refresher is again failing login and timing out. Keep this separate
   from the working personal Claude CLI login and the earlier successful recovery
   below. Determine the current failure before attended sign-in if needed; verify
   normal refresh and private consumer-cache publication without copying personal
   refresh credentials or changing model defaults.
+  **Restored October 17:** Browser authorization succeeded but the
+  CLI could not save credentials. Installed CLI 2.1.287's strict Keychain read
+  treats the wrapper's deliberately missing `security` command as failure, not
+  as permission to use its old file fallback. Deployed a scoped wrapper repair
+  pinning both config/storage paths, permitting the native Keychain command,
+  reading only the automation-specific service, and allowing file fallback only
+  on item-not-found. All 13 fake-only tests pass, including locked/malformed
+  Keychain rejection and personal-storage override isolation. Fresh attended
+  enterprise login and a subsequent unattended refresh both passed, publishing
+  the owner-only mode-0600 cache. The usage API returned HTTP 200; a bounded
+  normal snapshot is visible through the dashboard with non-null utilization
+  at 18:15:55 UTC. Enterprise quota windows remain null, not invented values.
+  Both owned SSH forwards and the handoff listener are closed. Personal login
+  and model defaults were not changed. Source rollback:
+  `~/Backups/oauth-refresh-20261017.p3fhyswz`.
 - [ ] **3. Unblock automatic dotfiles deployment.** The October 17 run stopped
   during Crosstown protocol synchronization because Roomba credential files were
   reported missing or insecure. Check the exact remote paths and ownership/mode

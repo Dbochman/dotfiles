@@ -2,15 +2,18 @@
 set -euo pipefail
 exec /usr/bin/python3 - "$@" <<'PYTHON'
 import fcntl
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import pwd
 import stat
 import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 
 
 def private_directory(path):
@@ -20,13 +23,9 @@ def private_directory(path):
         raise ValueError("unsafe automation directory")
 
 
-def read_credentials(path, fresh=False):
-    if not path.exists() and not path.is_symlink():
-        raise ValueError("isolated credentials missing; run oauth-refresh.sh --login")
-    metadata = path.lstat()
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_size > 65536:
-        raise ValueError("unsafe credential file")
-    data = json.loads(path.read_text())
+def validate_credentials(data, fresh=False):
+    if not isinstance(data, dict) or not isinstance(data.get("claudeAiOauth"), dict):
+        raise ValueError("invalid credential structure")
     oauth = data["claudeAiOauth"]
     if oauth.get("subscriptionType") != "enterprise":
         raise ValueError("enterprise login required")
@@ -42,12 +41,42 @@ def read_credentials(path, fresh=False):
     return data
 
 
+def read_credentials(path, fresh=False):
+    if not path.exists() and not path.is_symlink():
+        raise ValueError("isolated credentials missing; run oauth-refresh.sh --login")
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600 or metadata.st_size > 65536:
+        raise ValueError("unsafe credential file")
+    return validate_credentials(json.loads(path.read_text()), fresh=fresh)
+
+
+def read_isolated_credentials(directory, account, fresh=False, missing_ok=False):
+    # Match Claude Code's config-scoped service; never query its personal entry.
+    suffix = hashlib.sha256(str(directory).encode()).hexdigest()[:8]
+    service = "Claude Code-credentials-" + suffix
+    result = subprocess.run(
+        [os.environ.get("OPENCLAW_SECURITY_BIN", "/usr/bin/security"),
+         "find-generic-password", "-a", account, "-s", service, "-w"],
+        capture_output=True, timeout=8,
+    )
+    if result.returncode == 0:
+        if len(result.stdout) > 65536:
+            raise ValueError("oversized isolated credentials")
+        return validate_credentials(json.loads(result.stdout), fresh=fresh)
+    if result.returncode != 44:  # errSecItemNotFound; every other failure is closed.
+        raise ValueError("isolated Keychain unavailable; no credential fallback attempted")
+    path = directory / ".credentials.json"
+    if missing_ok and not path.exists() and not path.is_symlink():
+        return None
+    return read_credentials(path, fresh=fresh)
+
+
 def main():
     if sys.argv[1:] not in ([], ["--login"]):
         raise ValueError("usage: oauth-refresh.sh [--login]")
     attended = sys.argv[1:] == ["--login"]
     root = Path.home() / ".openclaw"
-    directory = root / "claude-automation"
+    directory = Path(unicodedata.normalize("NFC", str(root / "claude-automation")))
     private_directory(root)
     private_directory(directory)
     credentials = directory / ".credentials.json"
@@ -58,26 +87,21 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("automation login or refresh already running") from None
-        before = None
+        account = pwd.getpwuid(os.getuid()).pw_name
+        if not account or any(not (character.isascii() and (character.isalnum() or character in "._-")) for character in account):
+            raise ValueError("unsupported Keychain account name")
         if credentials.exists() or credentials.is_symlink():
             read_credentials(credentials)
-            before = credentials.read_bytes()
+        before = read_isolated_credentials(directory, account, missing_ok=attended)
         environment = os.environ.copy()
-        for key in ("CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"):
+        for key in ("CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_CLIENT_ID", "CLAUDE_CODE_API_BASE_URL", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"):
             environment.pop(key, None)
         environment["CLAUDE_CONFIG_DIR"] = str(directory)
-        environment["PATH"] = "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/bin"
-        if attended:
-            browser_bin = directory / "browser-bin"
-            private_directory(browser_bin)
-            opener = browser_bin / "open"
-            if not opener.is_symlink():
-                opener.symlink_to("/usr/bin/open")
-            if os.readlink(opener) != "/usr/bin/open":
-                raise ValueError("unexpected browser opener")
-            environment["PATH"] = str(browser_bin) + ":" + environment["PATH"]
-        else:
-            oauth = read_credentials(credentials)["claudeAiOauth"]
+        environment["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = str(directory)
+        environment["USER"] = account
+        environment["PATH"] = "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        if not attended:
+            oauth = before["claudeAiOauth"]
             environment["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"] = oauth["refreshToken"]
             environment["CLAUDE_CODE_OAUTH_SCOPES"] = " ".join(oauth["scopes"])
         command = [os.environ.get("OPENCLAW_CLAUDE_BIN", "/opt/homebrew/bin/claude"), "auth", "login"]
@@ -87,9 +111,9 @@ def main():
             result = subprocess.run(command, env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=900 if attended else 120)
         if result.returncode:
             raise ValueError("Claude login failed; attended enterprise sign-in may be required")
-        data = read_credentials(credentials, fresh=True)
-        if before is not None and credentials.read_bytes() == before:
-            raise ValueError("credential file was not refreshed")
+        data = read_isolated_credentials(directory, account, fresh=True)
+        if before is not None and data == before:
+            raise ValueError("isolated credentials were not refreshed")
         if cache.is_symlink() or (cache.exists() and not cache.is_file()):
             raise ValueError("unsafe cache destination")
         temporary = None
