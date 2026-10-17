@@ -2031,6 +2031,73 @@ class ConsumerAndQueryTests(HomeEventTestCase):
 
 
 class RetentionAndCliTests(HomeEventTestCase):
+    def test_prune_preserves_events_referenced_by_every_action_state(self) -> None:
+        states = ("pending", "claimed", "complete", "cancelled", "outcome_unknown")
+        old = "2026-05-01T00:00:00Z"
+        for state in states:
+            self.enqueue(ring_payload(source_event_id=f"action-retention-{state}"))
+        self.ingest()
+        with self.connection() as connection:
+            event_ids = [row[0] for row in connection.execute("SELECT id FROM events ORDER BY id")]
+            for event_id, state in zip(event_ids, states):
+                connection.execute(
+                    """
+                    INSERT INTO action_reservations(
+                        reservation_uid, trigger_event_id, site, target_alias,
+                        action, vacancy_cycle_id, trigger_state_hash,
+                        reserved_state_hash, policy_hash, status, reserved_at, expires_at
+                    ) VALUES (?, ?, 'crosstown', 'fixture', 'fixture', 'cycle',
+                              'trigger', 'reserved', 'policy', ?, ?, ?)
+                    """,
+                    (f"retention-{state}", event_id, state, old, old),
+                )
+            connection.execute("UPDATE events SET created_at = ?", (old,))
+            connection.execute("UPDATE producer_inbox SET received_at = ?", (old,))
+            connection.execute("UPDATE consumer_deliveries SET status='acknowledged', updated_at=?", (old,))
+        self.assertFalse(self.store.prune_if_due(checkpoint=False))
+        deleted = self.store.prune(checkpoint=False)
+        self.assertEqual(deleted["events"], 0)
+        self.assertEqual(deleted["producer_inbox"], 0)
+        with self.connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM action_reservations").fetchone()[0], len(states))
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0], len(states))
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+    def test_prune_preserves_pending_and_recent_camera_event_references(self) -> None:
+        old = "2026-05-01T00:00:00Z"
+        cases = (("pending", old), ("complete", NOW), ("failed", NOW), ("complete", old))
+        for index in range(len(cases)):
+            self.enqueue(ring_payload(source_event_id=f"camera-retention-{index}"))
+        self.ingest()
+        with self.connection() as connection:
+            event_ids = [row[0] for row in connection.execute("SELECT id FROM events ORDER BY id")]
+            for index, (event_id, (state, updated_at)) in enumerate(zip(event_ids, cases)):
+                cursor = connection.execute(
+                    """
+                    INSERT INTO camera_evaluations(
+                        evaluation_uid, site, camera_alias, state, trigger_at,
+                        due_30_at, due_60_at, snapshot_30_result, snapshot_60_result,
+                        created_at, updated_at
+                    ) VALUES (?, 'crosstown', 'Living Room Wired', ?, ?, ?, ?,
+                              'pending', 'pending', ?, ?)
+                    """,
+                    (f"camera-retention-{index}", state, old, old, old, old, updated_at),
+                )
+                connection.execute(
+                    "INSERT INTO camera_evaluation_events VALUES (?, ?, 'trigger', ?)",
+                    (cursor.lastrowid, event_id, old),
+                )
+            connection.execute("UPDATE events SET created_at = ?", (old,))
+            connection.execute("UPDATE producer_inbox SET received_at = ?", (old,))
+            connection.execute("UPDATE consumer_deliveries SET status='acknowledged', updated_at=?", (old,))
+        due = home_events.EventStore(self.paths, clock=lambda: "2026-07-13T15:00:00Z")
+        self.assertTrue(due.prune_if_due(checkpoint=False))
+        with self.connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0], 3)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM producer_inbox").fetchone()[0], 3)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM camera_evaluations").fetchone()[0], 3)
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
     def test_automatic_prune_is_daily_restart_durable_and_internal(self) -> None:
         self.ingest()
         self.ingest()

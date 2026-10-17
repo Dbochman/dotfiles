@@ -1,7 +1,7 @@
 # October 2026 OpenClaw repair checklist
 
 **Status:** Dashboard and reporting repairs deployed; attended recovery and verification remain open.
-**Evidence date:** October 10, 2026, Eastern time.
+**Evidence dates:** October 10 initial review; October 17 post-update follow-up, Eastern time.
 **Host:** Mac Mini.
 
 Track the repairs identified during the usage-dashboard review. Start with
@@ -9,6 +9,49 @@ descriptive cron labels, trustworthy health reporting, and deployment
 reconciliation; then address authentication, financial refresh, and device
 failures. Recheck live evidence before acting: these observations are a dated
 snapshot, not a continuously updated health report.
+
+## October 17 post-update priorities
+
+Authorized by Dylan for sequential repair, verification, commit, and push.
+These are observed failures, not confirmed consequences of the OS update.
+Earlier recovery records remain historical evidence. Preserve scoped deployment,
+attended account-recovery boundaries, and existing household/message policies.
+
+- [x] **1. Repair home-event ingestion.** The read-only audit found repeated
+  `component=ingest status=1` / `internal_error` failures and an aging degraded
+  status projection. Diagnose the underlying exception without exposing event
+  contents; preserve queued events and deduplication state. Verify the fix with
+  regression tests, a fresh status projection, and successful organic ingestion.
+  **Restored October 17:** Daily retention omitted camera-evaluation and action
+  reservation references when expiring old events, causing SQLite foreign-key
+  errors. Reproduced on a private database copy and with failing regressions;
+  all 206 home-event tests now pass. Deployed only the bus implementation,
+  without restarting services. Ordinary scheduled ingest polls now exit zero;
+  retention ran once and expired 1,094 unreferenced old events under the existing
+  policy. Queued work and retained references remain intact. The status projection
+  is freshly written; no synthetic event was introduced. Separate camera health
+  remains degraded and is not represented as repaired. Private pre-cleanup
+  database and source rollback: `~/Backups/home-events-retention-20261017.rv9KLm`.
+- [ ] **2. Restore unattended Claude automation authentication.** The isolated
+  enterprise refresher is again failing login and timing out. Keep this separate
+  from the working personal Claude CLI login and the earlier successful recovery
+  below. Determine the current failure before attended sign-in if needed; verify
+  normal refresh and private consumer-cache publication without copying personal
+  refresh credentials or changing model defaults.
+- [ ] **3. Unblock automatic dotfiles deployment.** The October 17 run stopped
+  during Crosstown protocol synchronization because Roomba credential files were
+  reported missing or insecure. Check the exact remote paths and ownership/mode
+  contract without logging credentials or weakening validation. Preserve the
+  existing cron-reconciliation safeguards and verify the next normal deployment
+  completes; a successful Git pull alone is insufficient.
+- [ ] **4. Repair or reconcile scheduled financial-job failures.** Today's
+  07:35 Forecast ledger capture reported `forecast_ledger_api_unavailable`;
+  the Forecast health endpoint subsequently recovered. The weekly scraper also
+  shows four consecutive errors. Inspect dated, content-free receipts to separate
+  current faults from already-recovered provider failures. Repair only affected
+  paths, preserve the 06:15 source-refresh → 07:35 capture order, and verify the
+  next normal capture and weekly run. Do not rerun the full scrape, alter financial
+  data, or clear historical errors merely to make scheduler status green.
 
 ## Dashboard and deployment
 

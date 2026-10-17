@@ -3950,6 +3950,14 @@ class EventStore:
                     SELECT 1 FROM incident_events ie
                     WHERE ie.event_id = events.id
                   )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM camera_evaluation_events ce
+                    WHERE ce.event_id = events.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM action_reservations ar
+                    WHERE ar.trigger_event_id = events.id
+                  )
                 """,
                 (accepted_cutoff,),
             )

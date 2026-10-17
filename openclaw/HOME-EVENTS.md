@@ -504,8 +504,12 @@ outside this rollout.
 SQLite is authoritative. `status.json` is a privacy-safe operational
 projection and must not be used as an acknowledgement boundary. Accepted
 metadata is retained for 30 days and dead-letter metadata for 90 days; pending
-or leased work is never pruned. The five-second ingester checks a durable
-SQLite maintenance marker and normally runs automatic retention at most once
+or leased work is never pruned. Retained camera evaluations and action
+reservations also retain their triggering/context events and producer
+receipts. Action evidence is not discarded to satisfy event retention; completed
+camera work follows its existing retention before unreferenced events can expire.
+The five-second ingester checks a durable SQLite maintenance marker and
+normally runs automatic retention at most once
 every 24 hours; a missing, invalid, or future marker triggers one immediate
 repair prune. Process restarts do not reset the gate. An explicit
 `home-eventctl prune` remains a forced maintenance operation and checkpoints
