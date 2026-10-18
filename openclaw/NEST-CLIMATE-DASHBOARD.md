@@ -243,6 +243,17 @@ For time ranges > 7 days (168 hours), snapshots are downsampled to ~1 per hour. 
 7. **CO2 and VOC Charts** — Independent Wave Enhance line charts in ppm and ppb
 8. **HVAC Duty Cycle Chart** — Bar chart (hourly averages); read-only Airthings rows are excluded
 
+### Stored Cabin air conditioners
+
+The two Cabin Midea units (`Air Conditioner` and `Lil Air Conditioner`) are in
+winter storage and hidden from current cards and all chart series by default.
+Use **Show stored Cabin ACs** beside Setpoints to reveal their cards and history;
+the toggle remembers the choice in that browser. Use it again when the units
+return in spring, or remove the exact-device storage rule in `isStoredAC` to
+restore the default for everyone. There is no calendar-based automatic return.
+This is display-only: collection, APIs, and history are unchanged. Nest HVAC,
+Crosstown Cielo mini-splits, Mysa heaters, and Airthings remain visible.
+
 ### Color Scheme
 
 Cabin rooms use a **cool** palette; Crosstown rooms use a **warm** palette. Outside temps use light variants.

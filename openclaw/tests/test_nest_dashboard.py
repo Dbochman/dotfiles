@@ -3,6 +3,8 @@
 import copy
 import importlib.util
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -275,6 +277,91 @@ class PresenceHtmlContractTests(unittest.TestCase):
         self.assertIn("Number.isFinite(Date.parse(p.timestamp))", overlay)
         self.assertIn("p[loc] && typeof p[loc] === 'object'", overlay)
         self.assertLess(overlay.index(".filter(p =>"), overlay.index(".sort("))
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is required for UI behavior tests")
+class StoredAirConditionerTests(unittest.TestCase):
+    def run_ui(self, assertions, saved=None, storage_blocked=False):
+        script = nest_dashboard.DASHBOARD_HTML.split("<script>", 1)[1].split("</script>", 1)[0]
+        script = script.split("// Initial load + auto-refresh", 1)[0]
+        bootstrap = r"""
+const assert = require('node:assert/strict');
+const nodes = {};
+const document = {
+  documentElement: {},
+  getElementById(id) {
+    return nodes[id] ||= {innerHTML: '', textContent: '', attrs: {}, handlers: {},
+      classList: {toggle() {}, add() {}, remove() {}},
+      setAttribute(key, value) {this.attrs[key] = value;},
+      addEventListener(key, fn) {this.handlers[key] = fn;}};
+  },
+  querySelectorAll() {return [];}
+};
+const getComputedStyle = () => ({getPropertyValue: () => ''});
+const localStorage = {
+  getItem() {if (storageBlocked) throw Error('blocked'); return saved;},
+  setItem(key, value) {if (storageBlocked) throw Error('blocked'); saved = value;}
+};
+"""
+        result = subprocess.run(
+            [shutil.which("node"), "-"],
+            input=(f"let saved = {json.dumps(saved)}; const storageBlocked = {json.dumps(storage_blocked)};\n"
+                   + bootstrap + script + assertions),
+            text=True, capture_output=True, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_only_stored_cabin_units_are_hidden_from_cards_and_charts(self):
+        self.run_ui(r"""
+const rooms = [
+  {room: 'Air Conditioner', source: 'midea'},
+  {room: 'Philly Lil Air Conditioner', source: 'midea'},
+  {room: 'Solarium', source: 'nest'},
+  {room: '19Crosstown Living Room', source: 'cielo'},
+  {room: '19Crosstown Cat Room', source: 'mysa'},
+  {room: 'Living Room', source: 'airthings'},
+  {room: 'New unit', source: 'midea'},
+];
+const snapshot = {timestamp: '2026-10-18T12:00:00Z', rooms};
+const original = JSON.stringify(snapshot);
+assert.equal(showStoredACs, false);
+assert.equal(filterRooms(rooms).length, 5);
+computeDisplayCollisions([snapshot]);
+renderLocationGroups(snapshot, null);
+assert.ok(!nodes.locationGroups.innerHTML.includes('Air Conditioner'));
+assert.ok(nodes.locationGroups.innerHTML.includes('Solarium'));
+assert.ok(!Object.keys(buildTimeSeries([snapshot])).some(n => n.includes('Air Conditioner')));
+assert.ok(!Object.keys(computeHvacDuty([snapshot])).some(n => n.includes('Air Conditioner')));
+currentStructure = '19Crosstown';
+assert.equal(filterRooms(rooms).length, 2);
+currentStructure = 'Philly';
+assert.equal(filterRooms(rooms).length, 3);
+let refreshCount = 0;
+refresh = () => {refreshCount++;};
+nodes.storedAcToggle.handlers.click();
+assert.equal(saved, 'true');
+assert.equal(nodes.storedAcToggle.attrs['aria-pressed'], 'true');
+assert.equal(filterRooms(rooms).length, 5);
+renderLocationGroups(snapshot, null);
+assert.ok(nodes.locationGroups.innerHTML.includes('Air Conditioner'));
+assert.ok(Object.keys(buildTimeSeries([snapshot])).some(n => n.includes('Air Conditioner')));
+assert.ok(Object.keys(computeHvacDuty([snapshot])).some(n => n.includes('Air Conditioner')));
+nodes.storedAcToggle.handlers.click();
+assert.equal(saved, 'false');
+assert.equal(nodes.storedAcToggle.attrs['aria-pressed'], 'false');
+assert.equal(refreshCount, 2);
+assert.equal(JSON.stringify(snapshot), original);
+""")
+
+    def test_saved_preference_and_unavailable_storage(self):
+        self.run_ui("assert.equal(showStoredACs, true);", saved="true")
+        self.run_ui(r"""
+assert.equal(showStoredACs, false);
+refresh = () => {};
+nodes.storedAcToggle.handlers.click();
+assert.equal(showStoredACs, true);
+assert.equal(nodes.storedAcToggle.attrs['aria-pressed'], 'true');
+""", storage_blocked=True)
 
 
 class ClimateSourceHtmlContractTests(unittest.TestCase):

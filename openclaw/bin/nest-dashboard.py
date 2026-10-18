@@ -474,6 +474,7 @@ canvas { width: 100% !important; }
   </div>
   <div class="controls" id="toggleControls">
     <button id="setpointToggle">Setpoints</button>
+    <button id="storedAcToggle" aria-pressed="false" title="The two Cabin ACs are stored for winter. Show their cards and history when needed.">Show stored Cabin ACs</button>
   </div>
 </div>
 <div class="presence-legend" id="presenceLegend">
@@ -649,10 +650,19 @@ function roomLocationLabel(roomName) {
   return 'Cabin';
 }
 
+// Presentation preference only: retain collection and historical API data.
+let showStoredACs = false;
+try { showStoredACs = localStorage.getItem('climate.showStoredCabinACs') === 'true'; } catch {}
+
+function isStoredAC(room) {
+  return room.source === 'midea' && roomStructure(room.room) === 'Philly'
+    && ['Air Conditioner', 'Lil Air Conditioner'].includes(stripPrefix(room.room));
+}
+
 function filterRooms(rooms) {
   if (!rooms) return [];
-  if (currentStructure === 'all') return rooms;
-  return rooms.filter(r => roomStructure(r.room) === currentStructure);
+  return rooms.filter(r => (showStoredACs || !isStoredAC(r))
+    && (currentStructure === 'all' || roomStructure(r.room) === currentStructure));
 }
 
 function displayName(roomName) {
@@ -848,7 +858,7 @@ function renderLocationGroups(snapshot, presenceState) {
     html += '</div>';
 
     // Device cards — sorted for Crosstown
-    let rooms = (snapshot.rooms || []).filter(r => roomStructure(r.room) === struct.key);
+    let rooms = filterRooms(snapshot.rooms || []).filter(r => roomStructure(r.room) === struct.key);
     if (struct.key === '19Crosstown') {
       rooms = rooms.slice().sort((a, b) => {
         const an = displayName(a.room), bn = displayName(b.room);
@@ -1392,6 +1402,21 @@ document.getElementById('setpointToggle').addEventListener('click', e => {
   e.target.classList.toggle('active', showSetpoints);
   refresh();
 });
+
+// Remember the display choice on this browser, including across refreshes.
+const storedAcToggle = document.getElementById('storedAcToggle');
+function updateStoredAcToggle() {
+  storedAcToggle.classList.toggle('active', showStoredACs);
+  storedAcToggle.setAttribute('aria-pressed', String(showStoredACs));
+  storedAcToggle.textContent = showStoredACs ? 'Hide stored Cabin ACs' : 'Show stored Cabin ACs';
+}
+storedAcToggle.addEventListener('click', () => {
+  showStoredACs = !showStoredACs;
+  try { localStorage.setItem('climate.showStoredCabinACs', String(showStoredACs)); } catch {}
+  updateStoredAcToggle();
+  refresh();
+});
+updateStoredAcToggle();
 
 // Initial load + auto-refresh every 5 minutes
 refresh();
