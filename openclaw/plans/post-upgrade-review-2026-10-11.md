@@ -55,23 +55,45 @@ unverified package install.
 The private, owner-only register is on the Mini at
 `~/Backups/openclaw-cleanup-20261011/INDEX.txt`, alongside JSON/CSV inventory and
 validation receipts. Keep those inventories, authentication artifacts, raw logs,
-and backup contents out of Git. Original paths were retained to avoid breaking
-recovery manifests or absolute references. Nothing was moved or deleted.
+and backup contents out of Git. Held backups remain at their original paths to
+avoid breaking recovery manifests or absolute references.
+
+**Reconciled October 17:** The subsequently approved October 11 cleanup removed
+all 15 catalogued staging/review candidates after fresh identity, process,
+open-file, reference, Git, and retained recovery-archive checks. The private
+`cleanup-execution-20261011.json` records the operations; all 15 paths were
+confirmed absent again on October 17. Their prior allocated footprint was
+597,602,304 bytes (about570MiB); actual reclaimed APFS space was not measured.
+The original JSON/CSV inventory is a historical baseline, not a pending deletion
+queue. No held backups, active runtimes, authentication stores, or running
+services were removed by that batch.
 
 | Classification | Measured size | Disposition |
 | --- | --- | --- |
 | October11 recovery/preflight sets | 46.33GiB | Retain; no automatic deletion |
 | Older upgrade/rollout sets | 18.08GiB | Coverage review hold |
-| Disposable staging/review candidates | About570MiB | Fresh reference/process checks and exact-path approval required |
+| Completed staging/review cleanup (15 entries) | About570MiB before removal | Removed October11 with approval; absence rechecked October17 |
 | Previous Claude CLI package archive | About72MiB | Separate recovery hold |
 
-November11 is the common **review date**, not a deletion deadline or scheduled
-cleanup. Keep current recovery sets at least30 days after acceptance. The older
-2026.8.35 full-state archive is not proven redundant: newer scoped gateway
-checkpoints deliberately exclude unrelated household/financial state and older
+Sizes above are the October11 inventory measurements, not a fresh disk-usage
+survey. The merged review worktree was removed through Git without force; its
+branch was retained. Only the catalogued missing-worktree registration was
+pruned.
+
+November11 is the common **review date** for the October11 recovery sets, not a
+deletion deadline or scheduled cleanup. Keep those recovery sets at least30 days
+after acceptance. The older 2026.8.35 full-state archive is not proven redundant:
+newer scoped gateway checkpoints deliberately exclude unrelated
+household/financial state and older
 backups. Map that coverage before considering its removal. Active runtimes,
 plugin generations, credentials, locks, and unrelated backups remain protected.
-The merged review worktree is only a candidate, not approved for removal.
+Any further cleanup requires fresh checks and exact-path approval.
+
+The October17 home-event, OAuth, and deployment repair backups are separate from
+this inventory. Retain them while scheduled verification finishes; see the
+[maintenance repair record](maintenance-repairs-2026-10.md) for their rollback
+locations and acceptance status. Recent temporary diagnostics have not been
+approved for removal.
 
 ## Remaining checks
 
@@ -79,11 +101,22 @@ The merged review worktree is only a candidate, not approved for removal.
   confirm durable cache publication without exposing credentials.
 - [ ] Perform an attended real iMessage round trip. Healthy native components
   and a responding dashboard do not establish delivery latency.
+- [x] Repair BoA logout-page handling and authenticated-session recognition on
+  October18 (`1089aa0` in dotfiles; `6aa0ec9` in financial-dashboard). Complete
+  attended BoA-only scrape/import recovery and a subsequent normal direct-HTTP
+  scrape/import; confirm the protected weekly status is healthy for all seven
+  sources, with the other six source results preserved rather than rerun.
+- [ ] Observe the next scheduled weekly financial scrape; attended recovery does
+  not establish scheduled-run acceptance or reset the scheduler's failure history.
 - [ ] Observe the next normal overnight cron cycle; keep the pre-existing
-  financial scrape and flower-watch failures separate from upgrade acceptance.
+  flower-watch failure and financial scheduled-run verification separate from
+  upgrade acceptance.
 - [ ] Resolve Reachy's installation provenance through its supported workflow.
-- [ ] Review cleanup candidates and backup coverage on or after November11;
-  obtain exact-path approval before deletion. No automatic cleanup is scheduled.
+- [x] Complete the approved October11 staging/review cleanup; reconcile its
+  execution receipt and recheck all 15 paths on October17.
+- [ ] Review retained October11 backups and replacement coverage on or after
+  November11; obtain exact-path approval before deletion. No automatic cleanup
+  is scheduled.
 
 The post-upgrade audits did not restart the gateway or alter model defaults,
 household policies, cron schedules, or production delivery.
