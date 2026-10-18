@@ -1265,6 +1265,8 @@ def _boa_tab_url_reusable(url):
         and parsed.username is None
         and parsed.password is None
         and port in (None, 443)
+        # A secure-host logout promotion is not a usable sign-in/account tab.
+        and parsed.path.rstrip("/") != "/secure-offers-saso"
     )
 
 

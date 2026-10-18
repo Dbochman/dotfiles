@@ -1429,6 +1429,24 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             ],
         )
 
+    def test_secure_logout_offer_opens_one_sign_in_tab_without_reusing_logout(self):
+        for suffix in ("", "/", "/?campaign=example"):
+            with self.subTest(suffix=suffix), patch.object(
+                weekly_financial_scrape, "_run_captured", side_effect=[
+                    weekly_financial_scrape.CommandResult(0, stdout=json.dumps([
+                        {"url": "https://secure.bankofamerica.com/secure-offers-saso" + suffix}
+                    ])),
+                    weekly_financial_scrape.CommandResult(0, stdout="tab-created\n"),
+                ]
+            ) as run:
+                result = weekly_financial_scrape.ensure_boa_tab("inst_123abc", self.BASE_ENV)
+            self.assertEqual(result, "opened")
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[1].args[0], [
+                str(weekly_financial_scrape.PINCHTAB_INSTANCE_HELPER),
+                "open", "inst_123abc", self.BOA_SIGN_ON_URL,
+            ])
+
     def test_wrong_host_tabs_are_never_reused_for_boa(self):
         hostile_urls = (
             "https://secure.bankofamerica.com.evil.invalid/login",

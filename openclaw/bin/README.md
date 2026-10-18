@@ -90,6 +90,14 @@ active post-deploy checks.
 | `forecast-crypto-sync.py` | — | Cache-only Coinbase/Etherscan holdings component used by the unified finance refresh; preserves the last known-good holdings cache and writes protected component status. |
 | `forecast-ledger-capture.py` | — | Daily post-sync Forecast wrapper. Calls only the loopback aggregate-observation endpoint, retries short service outages, and writes status-only metadata to `~/.openclaw/forecast-dashboard/forecast-ledger-capture-status.json`; never calls `op` or reads Plaid data directly. |
 
+BoA weekly recovery recognizes the secure-host logout promotion as signed out,
+leaves that tab intact, and seeds one fixed sign-in tab if needed. It still
+requires a fresh `not_authenticated` probe before its single credential attempt;
+an explicit logout during that attempt fails closed as `login_rejected`.
+The paired financial-dashboard scraper recognizes the current `/accounts-home/`
+landing through visible signed-in controls, not the route alone. Deploy both
+repositories together; see [BoA operations](../FINANCIAL-DASHBOARD.md).
+
 ### Nest Integration
 
 | Script | Description |

@@ -301,6 +301,19 @@ The notifier reads Dylan's chat ID either from the one scoped environment value 
 5. **Auth verification.** The BoA sign-in URL can render either the account dashboard or the login form, and the title can remain "Accounts Overview" after sign-out. The scraper reads the tab URL live, checks visible login controls before using the title heuristic, and permits positive authentication/account API calls only on the exact HTTPS `secure` host. An exact `www` public landing with no auth or form signals reports `signed_out_landing`, which can trigger secure-tab bootstrap but never credential submission itself. A JSON API response alone is not proof that the live tab remains authenticated.
 6. **Session safety.** Do not call `page.goto`, close the browser context, or kill Pinchtab Chrome after a fresh login. BoA session cookies are process-bound even though the captured cookie store can outlive Chrome for a limited time.
 
+The secure-host `/secure-offers-saso/` logout promotion is an exception to
+secure-tab reuse. A visible “You're now logged out” heading on that route
+reports `signed_out_landing`; the route itself is never positive auth evidence,
+even with a stale account-page title. Bootstrap leaves the old tab intact and
+opens one fixed sign-in tab when no usable secure tab exists. CDP attachment
+prefers other secure tabs over the logout promotion. A logout observed during
+the single credential attempt terminates as `login_rejected`, without another
+submission or cookie replacement. Challenge and host checks still take priority.
+The current `/accounts-home/` landing also requires visible logout, Accounts,
+and profile-settings controls on the exact secure HTTPS host; its route alone
+does not establish authentication. This supports BoA's current UI without
+depending on legacy account-page title wording.
+
 The regular cron must never run generic `--re-auth` for BoA. It uses the
 separate `--boa-re-auth` command only after the normal scrape failed and
 `--verify-auth` reports the single exact status `not_authenticated`. The
