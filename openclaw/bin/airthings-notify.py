@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import argparse
 import copy
 import fcntl
+import hashlib
 import importlib.util
 import json
 import math
@@ -133,16 +134,60 @@ def locked(root):
 
 
 def initial_state():
-    return {"schema": 2, "lastSampleAt": None, "co2Since": None, "vocSince": None,
+    return {"schema": 3, "lastSampleAt": None, "co2Since": None, "vocSince": None,
             "recoverySince": None, "episode": None, "notified": {}, "shadowed": [], "lastDecision": None,
-            "recovery": None}
+            "recovery": None, "episodeTriggers": [], "attempts": {}}
+
+
+def valid_triggers(value, allow_empty=False):
+    return (isinstance(value, list) and all(isinstance(item, str) and item in THRESHOLDS for item in value)
+            and len(value) == len(set(value)) and (allow_empty or bool(value)))
+
+
+def validate_attempts(ledger):
+    attempts = ledger["attempts"]
+    if not isinstance(attempts, dict) or set(attempts) - set(ledger["notified"]):
+        raise NotifyError("invalid_attempts")
+    for attempt in attempts.values():
+        if not isinstance(attempt, dict) or set(attempt) != {"at", "sample", "triggers", "routeHash"}:
+            raise NotifyError("invalid_attempts")
+        if not isinstance(attempt["routeHash"], str) or not re.fullmatch(r"[a-f0-9]{64}", attempt["routeHash"]):
+            raise NotifyError("invalid_attempts")
+        timestamp(attempt["at"])
+        sample = attempt["sample"]
+        if not isinstance(sample, dict) or set(sample) != {"timestamp", "co2", "voc"}:
+            raise NotifyError("invalid_attempts")
+        timestamp(sample["timestamp"])
+        if not fresh(sample["timestamp"], timestamp(attempt["at"]), 600):
+            raise NotifyError("invalid_attempts")
+        if not valid_triggers(attempt["triggers"]) or any(
+            type(sample[key]) not in (int, float) or not math.isfinite(sample[key])
+            or not 0 <= sample[key] <= 100000 for key in THRESHOLDS
+        ):
+            raise NotifyError("invalid_attempts")
 
 
 def validate_state(value):
-    legacy = type(value.get("schema")) is int and value["schema"] == 1 and set(value) == set(initial_state()) - {"recovery"}
+    old_keys = set(initial_state()) - {"episodeTriggers", "attempts"}
+    legacy = type(value.get("schema")) is int and value["schema"] in (1, 2)
     if legacy:
-        value = {**value, "schema": 2, "recovery": None}
-    if set(value) != set(initial_state()) or type(value["schema"]) is not int or value["schema"] != 2:
+        expected = old_keys - {"recovery"} if value["schema"] == 1 else old_keys
+        if set(value) != expected:
+            raise NotifyError("invalid_state")
+        value = copy.deepcopy(value)
+        value.setdefault("recovery", None)
+        # Old state did not retain episode triggers. Never infer CO2-only from
+        # just the latest sample; an attended migration can use exact history.
+        value.update(schema=3, episodeTriggers=sorted(THRESHOLDS) if value["episode"] else [], attempts={})
+        if value["recovery"] is not None:
+            if set(value["recovery"]) != {"episode", "sampleAt", "recipients", "shadowRecipients", "notified", "shadowed"}:
+                raise NotifyError("invalid_recovery")
+            value["recovery"].update(triggers=sorted(THRESHOLDS), attempts={})
+    if set(value) != set(initial_state()) or type(value["schema"]) is not int or value["schema"] != 3:
+        raise NotifyError("invalid_state")
+    if not valid_triggers(value["episodeTriggers"], allow_empty=value["episode"] is None):
+        raise NotifyError("invalid_state")
+    if value["episode"] is None and value["episodeTriggers"]:
         raise NotifyError("invalid_state")
     for key in ("lastSampleAt", "co2Since", "vocSince", "recoverySince", "episode"):
         if value[key] is not None:
@@ -157,11 +202,14 @@ def validate_state(value):
         raise NotifyError("invalid_state")
     if value["episode"] is None and (notified or shadowed):
         raise NotifyError("invalid_state")
+    validate_attempts(value)
     if value["lastDecision"] is not None and not isinstance(value["lastDecision"], dict):
         raise NotifyError("invalid_state")
     recovery = value["recovery"]
     if recovery is not None:
-        if not isinstance(recovery, dict) or set(recovery) != {"episode", "sampleAt", "recipients", "shadowRecipients", "notified", "shadowed"}:
+        if not isinstance(recovery, dict) or set(recovery) != {"episode", "sampleAt", "recipients", "shadowRecipients", "notified", "shadowed", "triggers", "attempts"}:
+            raise NotifyError("invalid_recovery")
+        if not valid_triggers(recovery["triggers"]):
             raise NotifyError("invalid_recovery")
         if value["lastSampleAt"] is None or not timestamp(recovery["episode"]) <= timestamp(recovery["sampleAt"]) <= timestamp(value["lastSampleAt"]):
             raise NotifyError("invalid_recovery")
@@ -174,6 +222,7 @@ def validate_state(value):
             raise NotifyError("invalid_recovery")
         if set(recovery["recipients"]) - set(recovery["shadowRecipients"]) or set(recovery["shadowed"]) - set(recovery["shadowRecipients"]):
             raise NotifyError("invalid_recovery")
+        validate_attempts(recovery)
     if legacy:
         value["recoverySince"] = None
     return value
@@ -251,20 +300,27 @@ def advance(state, sample):
         state[key] = (state[key] or sample["timestamp"]) if sample[metric] >= threshold else None
         if state[key] and (observed - timestamp(state[key])).total_seconds() >= duration:
             triggers.append(metric)
-    if all(sample[metric] < limit for metric, limit in GOOD_LIMITS.items()):
+    if triggers and state["episode"] is None:
+        state["episode"] = sample["timestamp"]
+    expanded = sorted(set(state["episodeTriggers"]) | set(triggers))
+    if expanded != state["episodeTriggers"]:
+        state["recoverySince"] = None
+    state["episodeTriggers"] = expanded
+    if state["episode"] is not None and all(
+        sample[metric] < GOOD_LIMITS[metric] for metric in state["episodeTriggers"]
+    ):
         state["recoverySince"] = state["recoverySince"] or sample["timestamp"]
         if state["episode"] is not None and (observed - timestamp(state["recoverySince"])).total_seconds() >= RECOVERY_SECONDS:
             recipients = [owner for owner, status in state["notified"].items() if status == "submitted"]
             state["recovery"] = {
                 "episode": state["episode"], "sampleAt": sample["timestamp"],
                 "recipients": recipients, "shadowRecipients": sorted(set(recipients) | set(state["shadowed"])),
-                "notified": {}, "shadowed": [],
+                "notified": {}, "shadowed": [], "attempts": {},
+                "triggers": state["episodeTriggers"],
             }
-            state.update(episode=None, notified={}, shadowed=[])
+            state.update(episode=None, episodeTriggers=[], notified={}, shadowed=[], attempts={}, recoverySince=None)
     else:
         state["recoverySince"] = None
-    if triggers and state["episode"] is None:
-        state["episode"] = sample["timestamp"]
     return state, triggers, True
 
 
@@ -280,12 +336,16 @@ def render_message(sample, triggers):
     return message + "Consider opening a window briefly if weather and outdoor air quality permit."
 
 
-def render_recovery_message(sample):
-    return (
-        "Cabin living-room CO₂ and VOC readings have stayed in their good ranges "
+def render_recovery_message(sample, triggers):
+    subject = "CO₂ and VOC readings" if len(triggers) == 2 else ("CO₂ readings" if "co2" in triggers else "VOC readings")
+    message = (
+        f"Cabin living-room {subject} have stayed in their good ranges "
         f"for 15 minutes (CO₂ {round(sample['co2'])} ppm; VOCs {round(sample['voc'])} ppb). "
-        "If you're done cooking and don't need more ventilation, you can probably close the windows."
     )
+    if all(sample[key] < limit for key, limit in GOOD_LIMITS.items()):
+        return message + "If you're done cooking and don't need more ventilation, you can probably close the windows."
+    other = "VOCs" if "co2" in triggers else "CO₂"
+    return message + f"This resolves the original alert, but {other} remain above their good range; it is not an all-clear to stop ventilating."
 
 
 def credentials(cache=CACHE):
@@ -309,10 +369,52 @@ def credentials(cache=CACHE):
     return routes, {key: value for key, value in values.items() if key.startswith("OPENCLAW_GATEWAY_")}
 
 
-def existing_sender(target, message, authentication):
+def transport_module():
     spec = importlib.util.spec_from_file_location("airthings_imessage_transport", Path(__file__).with_name("home-event-delivery.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def existing_receipt(target, message, attempted_at):
+    module = transport_module()
+    return module.reconcile_local_imessage(module.DEFAULT_MESSAGES_DB, target, message, attempted_at)
+
+
+def route_hash(target):
+    return hashlib.sha256(target.encode("utf-8")).hexdigest()
+
+
+def reconcile_attempts(state, now, credential_reader, receipt_reader):
+    """Read exact local receipts, never resend or replay a recovery decision."""
+    candidates = []
+    for ledger, recovered in ((state, False), (state.get("recovery"), True)):
+        if ledger is None:
+            continue
+        for owner, attempt in ledger["attempts"].items():
+            age = (now - timestamp(attempt["at"])).total_seconds()
+            if ledger["notified"].get(owner) in ("reserved", "unconfirmed") and 0 <= age <= 7 * 86400:
+                candidates.append((ledger, recovered, owner, attempt))
+    if not candidates:
+        return
+    try:
+        routes, _ = credential_reader()
+    except Exception:
+        return
+    for ledger, recovered, owner, attempt in candidates:
+        render = render_recovery_message if recovered else render_message
+        try:
+            if route_hash(routes[owner]) != attempt["routeHash"]:
+                continue
+            receipt = receipt_reader(routes[owner], render(attempt["sample"], attempt["triggers"]), timestamp(attempt["at"]))
+        except Exception:
+            continue
+        if receipt == "delivered":
+            ledger["notified"][owner] = "submitted"
+
+
+def existing_sender(target, message, authentication):
+    module = transport_module()
     keys = ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD")
     previous = {key: os.environ.get(key) for key in keys}
     try:
@@ -327,7 +429,7 @@ def existing_sender(target, message, authentication):
                 os.environ[key] = previous[key]
 
 
-def evaluate(root, record, now, presence_reader=occupants, credential_reader=credentials, sender=existing_sender):
+def evaluate(root, record, now, presence_reader=occupants, credential_reader=credentials, sender=existing_sender, receipt_reader=existing_receipt):
     started = time.monotonic()
     with locked(root):
         mode = mode_from(root)
@@ -336,6 +438,8 @@ def evaluate(root, record, now, presence_reader=occupants, credential_reader=cre
         if mode != "off":
             try:
                 sample = sample_from(record, now)
+                if mode == "live":
+                    reconcile_attempts(state, now, credential_reader, receipt_reader)
                 state, triggers, changed = advance(state, sample)
                 recovery = state["recovery"]
                 recovered = changed and recovery is not None and recovery["sampleAt"] == sample["timestamp"]
@@ -367,14 +471,27 @@ def evaluate(root, record, now, presence_reader=occupants, credential_reader=cre
                                     decision["reason"] = "delivery_recheck_suppressed"
                                     continue
                                 ledger["notified"][owner] = "reserved"
+                                message_triggers = recovery["triggers"] if recovered else triggers
+                                ledger["attempts"][owner] = {
+                                    "at": stamp(checked), "sample": sample, "triggers": message_triggers,
+                                    "routeHash": route_hash(routes[owner]),
+                                }
                                 state["lastDecision"] = {**decision, "reason": "delivery_reserved"}
                                 atomic_json(root / "state.json", state)
+                                message = render_recovery_message(sample, message_triggers) if recovered else render_message(sample, triggers)
                                 try:
-                                    message = render_recovery_message(sample) if recovered else render_message(sample, triggers)
                                     sender(routes[owner], message, authentication)
                                 except Exception:
                                     ledger["notified"][owner] = "unconfirmed"
-                                    decision["unconfirmed"].append(owner)
+                                    try:
+                                        receipt = receipt_reader(routes[owner], message, checked)
+                                    except Exception:
+                                        receipt = "unavailable"
+                                    if receipt == "delivered":
+                                        ledger["notified"][owner] = "submitted"
+                                        decision["submitted"].append(owner)
+                                    else:
+                                        decision["unconfirmed"].append(owner)
                                 else:
                                     ledger["notified"][owner] = "submitted"
                                     decision["submitted"].append(owner)

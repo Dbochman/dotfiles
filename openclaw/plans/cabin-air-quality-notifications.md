@@ -24,6 +24,22 @@ no message sent. The sampler retained its five-minute schedule and exited zero;
 the climate current-state API returned HTTP 200 and valid JSON. No restart,
 extra sensor read, or historical replay occurred.
 
+**October 18 receipt/recovery repair:** The October 17 initial texts were locally
+delivered but recorded as unconfirmed after ambiguous CLI outcomes. Schema 3
+adds exact local receipt reconciliation without resends and tracks qualifying
+episode pollutants. The deployed helper and the shared receipt matcher passed
+115 focused tests. Under the notification lock, retained an owner-only schema-2
+backup and confirmed each existing initial message against its exact recipient,
+text, and bounded attempt window before correcting the two receipt entries.
+Scoped sampler history established that only CO2 qualified in the active
+episode; its trigger set was migrated accordingly and its good timer reset.
+Live mode, sampler schedule, and sensor state were preserved. No test message,
+historical recovery replay, extra sensor read, or service restart was performed.
+The next ordinary 09:56:47 Eastern sample verified live schema-3 processing,
+successful collection, both preserved confirmed receipts, and
+`episode_already_notified`. CO2 remained elevated, so no recovery timer or
+follow-up was started. The climate current-state API returned HTTP 200.
+
 ## Scope and rollout
 
 Owner-approved October 12, 2026: implement an occupant-specific ventilation
@@ -42,8 +58,11 @@ API, HVAC action, or window control is added.
 - Samples must be no more than 10 minutes old, at most 60 seconds future,
   strictly increasing and no more than 7.5 minutes apart. Duplicates and older
   observations never advance timers. Gaps restart evidence, not delivery flags.
-- Recover and rearm only after both CO2 below 800 ppm and VOC below 250 ppb
-  persist for 15 minutes with continuous fresh samples. These match the sensor's
+- Recover and rearm after the pollutants that qualified during the episode
+  remain in their good bands for 15 minutes with continuous fresh samples:
+  CO2 below 800 ppm and/or VOC below 250 ppb. A CO2-only episode does not wait
+  for untriggered VOCs (and vice versa). If another pollutant qualifies before
+  recovery, add it to the episode and restart the good timer. These match the sensor's
   good bands; they are not medical limits or a substitute for smoke/CO alarms.
 - Deliver 08:00–22:00 America/New_York. Reevaluate fresh conditions after quiet
   hours; do not queue a stale alert for the morning.
@@ -54,8 +73,8 @@ API, HVAC action, or window control is added.
 - At most one combined alert per resident per episode. A newly arrived resident
   can receive one while someone already alerted is not notified again.
 - At recovery, send at most one follow-up only to recipients whose initial alert
-  has a validated transport submission and who still pass fresh Cabin presence.
-  Reserved, unconfirmed, or shadow-only initial deliveries cannot authorize a
+  has a validated transport submission or an exact local delivered receipt and
+  who still pass fresh Cabin presence. Unreconciled reserved/unconfirmed or shadow-only initial deliveries cannot authorize a
   live recovery text. The same quiet hours and immediate delivery rechecks apply.
 - Recovery is evaluated only on the new sample that completes the good interval.
   If quiet hours, absent/unknown presence, or unavailable delivery suppress it,
@@ -65,11 +84,12 @@ API, HVAC action, or window control is added.
 - Explain the triggering measurement and suggest opening a window briefly
   **if weather and outdoor air quality permit**. For VOCs, also suggest checking
   nearby sources. Do not claim the automation checked outdoor air or weather.
-- Recovery text: “Cabin living-room CO₂ and VOC readings have stayed in their
-  good ranges for 15 minutes (CO₂ [reading] ppm; VOCs [reading] ppb). If you're
-  done cooking and don't need more ventilation, you can probably close the
-  windows.” This does not establish whether cooking has stopped, windows are
-  open, or other unmeasured pollutants are safe.
+- Recovery text names only the episode's recovered pollutants and includes
+  current CO2/VOC measurements. Conditional close-window advice is included only
+  when both current measurements are good. Otherwise it explicitly notes the
+  other pollutant is above its good band and this is not an all-clear to stop
+  ventilating. It does not establish whether cooking has stopped, windows are
+  open, or unmeasured pollutants are safe.
 
 ## Implementation and failure boundaries
 
@@ -86,11 +106,14 @@ Private runtime: `~/.openclaw/airthings/notifications/` (0700), with 0600
 overwrite an existing runtime. Missing, corrupt, unsafe, or unsupported state
 fails closed rather than losing deduplication history.
 
-State schema 2 retains one most-recent recovery receipt, separately from the
-active elevated episode. Exact schema-1 state migrates while preserving original
-alert receipts and resetting its recovery timer: evidence accumulated under the
-old, looser rearm bands cannot qualify. Already closed episodes are not rebuilt
-or replayed. Configuration remains schema 1. Deploy under the notification lock,
+State schema 3 retains the active episode's qualifying pollutants, the most
+recent recovery, and bounded per-recipient attempt evidence (timestamp, sample,
+template triggers, and a recipient-route hash; no credentials, chat IDs, or
+arbitrary message text). A changed recipient route cannot confirm an old attempt.
+Exact schemas 1 and 2 migrate while preserving original receipts and resetting
+the recovery timer. Unknown legacy episode triggers conservatively require both
+pollutants unless an attended migration establishes them from scoped history.
+Already closed episodes are not rebuilt or replayed. Configuration remains schema 1. Deploy under the notification lock,
 preserve an owner-only pre-migration state copy, and verify the next ordinary
 sample without forcing a BLE read or evaluating historical records.
 
@@ -105,10 +128,16 @@ gateway authentication from the existing owner-only cache. No shell evaluation,
 `home-event-delivery.py`'s sender and receipt validator without creating bus
 events or modifying the security incident policy/database.
 
-Reserve each recipient durably before sending, then record `submitted` only
-after the existing transport validates its machine receipt. Exceptions or
-timeouts become `unconfirmed`; an interrupted process may leave `reserved`.
-Neither can be retried automatically within that episode. A valid transport
+Reserve each recipient and exact attempt evidence durably before sending, then
+record `submitted` after the transport validates its machine receipt. On a send
+exception, also check the local Messages database read-only for exactly one
+delivered outgoing iMessage matching the recipient, generated text, and bounded
+attempt window. A timeout alone is not evidence that the message was lost.
+Unresolved attempts remain `unconfirmed`; a crash may leave `reserved`. Subsequent
+fresh live samples reconcile these receipts for up to seven days, without
+resending. Missing, ambiguous, pending, failed, or unavailable evidence cannot
+promote a receipt. Shadow/off mode does no reconciliation. A late recovery
+receipt never replays a skipped follow-up or changes who was eligible. A valid transport
 receipt is not proof the recipient read or received the message. Recheck mode,
 quiet hours, sample freshness, and recipient presence immediately before send.
 

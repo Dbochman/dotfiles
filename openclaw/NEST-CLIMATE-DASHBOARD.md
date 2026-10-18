@@ -84,7 +84,8 @@ same sample; it does not issue another BLE read or modify HVAC state. It exposes
 safe notification mode/reason and qualifying kind (`elevated`/`recovery`) in
 sampler health independently of collection success. A generic humidity-only
 `Poor` dashboard badge is not a trigger.
-The recovery follow-up requires 15 minutes of good CO2 and VOC readings, and
+The recovery follow-up requires 15 minutes of good readings for the pollutants
+that qualified during the episode (CO2-only alerts do not wait for VOCs), and
 fresh presence for recipients of the initial alert; suppressed recoveries are
 not queued for later delivery.
 

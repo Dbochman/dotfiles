@@ -53,8 +53,9 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 - **CO2 and VOC charts** — Cabin Living Room Wave Enhance trends in ppm and ppb
 - **Ventilation notifications** — the existing five-minute sampler evaluates a
   separate shadow-first CO2/VOC policy; humidity-only poor quality never causes
-  a window-opening nudge. A paired follow-up uses 15 minutes of good CO2/VOC
-  readings and only initial-alert recipients still at the Cabin. Its safe
+  a window-opening nudge. A paired follow-up uses 15 minutes of good readings
+  for the episode's qualifying pollutants, so CO2-only alerts do not wait for VOCs.
+  Only initial-alert recipients still at the Cabin are eligible. Its safe
   outcome is in sampler health, independent of
   successful measurement collection. See [policy and rollout](plans/cabin-air-quality-notifications.md).
 - **HVAC Duty Cycle** — hourly Active % bar chart using real Mysa duty,

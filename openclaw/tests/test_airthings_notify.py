@@ -25,6 +25,7 @@ class NotificationTests(unittest.TestCase):
         self.sender = mock.Mock()
         self.presence = mock.Mock(return_value=["dylan", "julia"])
         self.credentials = mock.Mock(return_value=({"dylan": "chat_id:1", "julia": "chat_id:2"}, {}))
+        self.receipt = mock.Mock(return_value="not_found")
 
     def configure(self, mode):
         notify.atomic_json(self.root / "config.json", {"schema": 1, "mode": mode})
@@ -33,7 +34,7 @@ class NotificationTests(unittest.TestCase):
         return {"timestamp": notify.stamp(self.now + timedelta(minutes=minute)), "history_origin": notify.ORIGIN, "rooms": [{"source": "airthings", "history_origin": notify.ORIGIN, "structure": "Philly", "room": "Living Room", "connectivity": "ONLINE", "error": None, "co2_ppm": co2, "voc_ppb": voc, "humidity": 10, "air_quality": {"overall": "poor"}}]}
 
     def evaluate(self, minute=0, co2=1200, voc=300, record=None):
-        return notify.evaluate(self.root, record or self.record(minute, co2, voc), self.now + timedelta(minutes=minute), self.presence, self.credentials, self.sender)
+        return notify.evaluate(self.root, record or self.record(minute, co2, voc), self.now + timedelta(minutes=minute), self.presence, self.credentials, self.sender, self.receipt)
 
     def qualify(self, **kwargs):
         self.evaluate(0, **kwargs)
@@ -132,6 +133,126 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(self.evaluate(15)["reason"], "episode_already_notified")
         self.assertEqual(self.sender.call_count, 1)
 
+    def test_timeout_with_exact_delivered_receipt_is_confirmed_without_resend(self):
+        self.configure("live")
+        self.sender.side_effect = TimeoutError("private exception")
+        self.receipt.return_value = "delivered"
+        self.assertEqual(self.qualify()["submitted"], ["dylan", "julia"])
+        self.assertEqual(self.sender.call_count, 2)
+        for call in self.receipt.call_args_list:
+            self.assertIn(call.args[0], ("chat_id:1", "chat_id:2"))
+            self.assertEqual(call.args[1], notify.render_message(
+                {"co2": 1200, "voc": 300}, ["co2"]))
+        self.evaluate(15)
+        self.assertEqual(self.sender.call_count, 2)
+
+    def test_late_receipt_confirms_initial_alert_before_recovery_without_resend(self):
+        self.configure("live")
+        self.sender.side_effect = TimeoutError()
+        self.qualify()
+        self.assertEqual(self.state()["notified"]["dylan"], "unconfirmed")
+        self.sender.side_effect = None
+        self.receipt.return_value = "delivered"
+        self.evaluate(15, co2=700, voc=400)
+        self.assertEqual(self.state()["notified"], {"dylan": "submitted", "julia": "submitted"})
+        self.assertEqual(self.sender.call_count, 2)
+        for minute in (20, 25, 30):
+            decision = self.evaluate(minute, co2=700, voc=400)
+        self.assertEqual(decision["submitted"], ["dylan", "julia"])
+        self.assertEqual(self.sender.call_count, 4)
+
+    def test_crash_reservation_can_be_confirmed_but_never_resent(self):
+        self.configure("live")
+        self.presence.return_value = ["dylan"]
+        self.sender.side_effect = KeyboardInterrupt()
+        self.evaluate(0)
+        self.evaluate(5)
+        with self.assertRaises(KeyboardInterrupt):self.evaluate(10)
+        self.assertIn("dylan", self.state()["attempts"])
+        self.receipt.return_value = "delivered"
+        self.sender.side_effect = None
+        self.evaluate(15)
+        self.assertEqual(self.state()["notified"]["dylan"], "submitted")
+        self.assertEqual(self.sender.call_count, 1)
+
+    def test_receipt_unavailable_pending_failed_or_ambiguous_never_confirms(self):
+        self.configure("live")
+        self.sender.side_effect = TimeoutError()
+        self.qualify()
+        for minute, result in enumerate(("pending", "failed", "ambiguous", "unavailable"), start=3):
+            self.receipt.return_value = result
+            self.evaluate(minute * 5)
+            self.assertEqual(self.state()["notified"]["dylan"], "unconfirmed")
+        self.receipt.side_effect = OSError("private")
+        self.evaluate(35)
+        self.assertEqual(self.sender.call_count, 2)
+        self.assertNotIn("private", json.dumps(self.state()))
+
+    def test_reconciliation_does_not_send_a_missed_recovery(self):
+        self.configure("live")
+        self.sender.side_effect = TimeoutError()
+        self.qualify()
+        self.sender.side_effect = None
+        self.recover()
+        self.receipt.return_value = "delivered"
+        self.evaluate(35, co2=700, voc=200)
+        self.assertEqual(self.sender.call_count, 2)
+
+    def test_recovery_receipt_can_be_confirmed_on_later_sample(self):
+        self.configure("live")
+        self.qualify()
+        self.sender.side_effect = TimeoutError()
+        self.recover()
+        self.receipt.return_value = "delivered"
+        self.evaluate(35, co2=700, voc=200)
+        self.assertEqual(self.state()["recovery"]["notified"], {"dylan": "submitted", "julia": "submitted"})
+        self.assertEqual(self.sender.call_count, 4)
+
+    def test_shadow_never_reconciles_ambiguous_live_attempts(self):
+        self.configure("live")
+        self.sender.side_effect = TimeoutError()
+        self.qualify()
+        self.configure("shadow")
+        self.receipt.reset_mock()
+        self.credentials.reset_mock()
+        self.evaluate(15)
+        self.receipt.assert_not_called()
+        self.credentials.assert_not_called()
+
+    def test_receipt_reconciliation_expires_without_resending(self):
+        self.configure("live")
+        self.sender.side_effect = TimeoutError()
+        self.qualify()
+        self.receipt.reset_mock()
+        self.credentials.reset_mock()
+        self.evaluate(8 * 24 * 60)
+        self.receipt.assert_not_called()
+        self.credentials.assert_not_called()
+        self.assertEqual(self.sender.call_count, 2)
+
+    def test_receipt_adapter_uses_exact_read_only_matcher(self):
+        transport = mock.Mock()
+        transport.reconcile_local_imessage.return_value = "delivered"
+        with mock.patch.object(notify, "transport_module", return_value=transport):
+            result = notify.existing_receipt("chat_id:1", "fixed message", self.now)
+        self.assertEqual(result, "delivered")
+        transport.reconcile_local_imessage.assert_called_once_with(
+            transport.DEFAULT_MESSAGES_DB, "chat_id:1", "fixed message", self.now)
+        transport.send_message.assert_not_called()
+
+    def test_changed_recipient_route_cannot_confirm_an_old_attempt(self):
+        self.configure("live")
+        self.presence.return_value = ["dylan"]
+        self.sender.side_effect = TimeoutError()
+        self.qualify()
+        self.receipt.reset_mock()
+        self.receipt.return_value = "delivered"
+        self.credentials.return_value = ({"dylan": "chat_id:3", "julia": "chat_id:2"}, {})
+        self.evaluate(15)
+        self.receipt.assert_not_called()
+        self.assertEqual(self.state()["notified"]["dylan"], "unconfirmed")
+        self.assertEqual(self.sender.call_count, 1)
+
     def test_each_new_occupant_can_receive_once_without_resending_to_other(self):
         self.configure("live")
         self.presence.return_value = ["julia"]
@@ -181,7 +302,7 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(self.qualify()["reason"], "quiet_hours")
         self.assertEqual(self.evaluate(15)["reason"], "would_notify")
 
-    def test_recovery_requires_both_metrics_low_for_fifteen_minutes(self):
+    def test_recovery_requires_triggered_metric_low_for_fifteen_minutes(self):
         self.configure("live")
         self.qualify()
         for minute in (15, 20, 25):
@@ -202,7 +323,8 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(decision["kind"], "recovery")
         self.assertEqual(decision["submitted"], ["dylan", "julia"])
         message = self.sender.call_args.args[1]
-        self.assertIn("CO₂ and VOC readings", message)
+        self.assertIn("CO₂ readings", message)
+        self.assertNotIn("CO₂ and VOC readings", message)
         self.assertIn("15 minutes", message)
         self.assertIn("If you're done cooking", message)
         self.assertIn("probably close the windows", message)
@@ -218,6 +340,55 @@ class NotificationTests(unittest.TestCase):
         self.sender.assert_not_called()
         self.presence.assert_not_called()
         self.assertIsNone(self.state()["recovery"])
+
+    def test_co2_recovery_does_not_wait_for_untriggered_vocs_or_claim_all_clear(self):
+        self.configure("live")
+        self.qualify()
+        for minute in (15, 20, 25, 30):
+            decision = self.evaluate(minute, co2=700, voc=700)
+        self.assertEqual(decision["kind"], "recovery")
+        self.assertEqual(decision["submitted"], ["dylan", "julia"])
+        self.assertEqual(self.state()["recovery"]["triggers"], ["co2"])
+        message = self.sender.call_args.args[1]
+        self.assertIn("CO₂ readings", message)
+        self.assertIn("VOCs remain above", message)
+        self.assertNotIn("close the windows", message)
+
+    def test_new_voc_trigger_joins_episode_and_blocks_premature_combined_recovery(self):
+        self.configure("live")
+        self.qualify()
+        for minute in (15, 20, 25, 30):
+            self.evaluate(minute, co2=700, voc=2200)
+        self.assertEqual(self.state()["episodeTriggers"], ["co2", "voc"])
+        self.assertIsNone(self.state()["recoverySince"])
+        for minute in (35, 40, 45, 50):
+            self.evaluate(minute, co2=700, voc=300)
+        self.assertIsNotNone(self.state()["episode"])
+        self.assertEqual(self.recover(55)["submitted"], ["dylan", "julia"])
+        self.assertIn("CO₂ and VOC readings", self.sender.call_args.args[1])
+
+    def test_schema_two_migration_is_conservative_and_preserves_receipts(self):
+        self.configure("live")
+        self.qualify()
+        legacy = self.state()
+        legacy.pop("episodeTriggers")
+        legacy.pop("attempts")
+        legacy["schema"] = 2
+        migrated = notify.validate_state(legacy)
+        self.assertEqual(migrated["episodeTriggers"], ["co2", "voc"])
+        self.assertEqual(migrated["notified"], legacy["notified"])
+        self.assertIsNone(migrated["recoverySince"])
+
+    def test_malformed_trigger_and_attempt_metadata_fail_closed(self):
+        self.configure("live")
+        self.qualify()
+        for triggers in ([], ["other"], ["co2", "co2"], [{}]):
+            value = self.state()
+            value["episodeTriggers"] = triggers
+            with self.assertRaises(notify.NotifyError):notify.validate_state(value)
+        value = self.state()
+        value["attempts"]["dylan"]["sample"]["co2"] = float("nan")
+        with self.assertRaises(notify.NotifyError):notify.validate_state(value)
 
     def test_recovery_excludes_new_arrivals_and_departed_recipients(self):
         self.configure("live")
@@ -261,16 +432,16 @@ class NotificationTests(unittest.TestCase):
         self.sender.assert_not_called()
         self.credentials.assert_not_called()
 
-    def test_recovery_requires_strict_good_bands_for_both_metrics(self):
+    def test_voc_episode_requires_strict_voc_recovery_band(self):
         self.configure("live")
-        self.qualify()
-        for minute in range(15, 35, 5):
-            self.evaluate(minute, co2=800, voc=200)
-        for minute in range(35, 55, 5):
+        for minute in (0, 5, 10, 15):
+            self.evaluate(minute, co2=700, voc=2500)
+        for minute in range(20, 40, 5):
             self.evaluate(minute, co2=700, voc=250)
         self.assertIsNotNone(self.state()["episode"])
         self.assertEqual(self.sender.call_count, 2)
-        self.assertEqual(self.recover(55)["submitted"], ["dylan", "julia"])
+        self.assertEqual(self.recover(40)["submitted"], ["dylan", "julia"])
+        self.assertIn("VOC readings", self.sender.call_args.args[1])
 
     def test_recovery_gap_and_duplicate_cannot_complete_timer(self):
         self.configure("live")
@@ -360,11 +531,13 @@ class NotificationTests(unittest.TestCase):
         self.qualify()
         legacy = self.state()
         legacy.pop("recovery")
+        legacy.pop("episodeTriggers")
+        legacy.pop("attempts")
         legacy["schema"] = 1
         legacy["recoverySince"] = notify.stamp(self.now)
         notify.atomic_json(self.root / "state.json", legacy)
         self.evaluate(15, co2=700, voc=200)
-        self.assertEqual(self.state()["schema"], 2)
+        self.assertEqual(self.state()["schema"], 3)
         self.assertEqual(self.state()["notified"], legacy["notified"])
         self.assertEqual(self.state()["episode"], legacy["episode"])
         self.assertIsNone(self.state()["recovery"])
@@ -376,6 +549,8 @@ class NotificationTests(unittest.TestCase):
     def test_closed_legacy_episode_does_not_generate_historical_recovery(self):
         legacy = notify.initial_state()
         legacy.pop("recovery")
+        legacy.pop("episodeTriggers")
+        legacy.pop("attempts")
         legacy["schema"] = 1
         notify.atomic_json(self.root / "state.json", legacy)
         self.configure("live")
@@ -410,12 +585,12 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(self.sender.call_count, 3)
         self.assertEqual(self.sender.call_args.args[0], "chat_id:2")
 
-    def test_good_timer_restarts_when_either_metric_leaves_good_band(self):
+    def test_good_timer_restarts_when_triggered_metric_leaves_good_band(self):
         self.configure("live")
         self.qualify()
         self.evaluate(15, co2=700, voc=200)
         self.evaluate(20, co2=700, voc=200)
-        self.evaluate(25, co2=700, voc=300)
+        self.evaluate(25, co2=800, voc=200)
         for minute in (30, 35, 40):
             self.evaluate(minute, co2=700, voc=200)
         self.assertEqual(self.sender.call_count, 2)
