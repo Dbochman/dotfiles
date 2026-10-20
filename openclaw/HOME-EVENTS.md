@@ -91,6 +91,15 @@ pause, clears the obsolete `site_not_confirmed_vacant` warning, and exposes
 person's arrival or issue a feeder command. Normal paired litter evidence and
 the other home's later vacancy are still required before automatic restore.
 
+An existing, verified automation-owned pause also survives a later independently
+validated vacancy cycle. Reconciliation keeps the original ownership cycle,
+requires the origin still paused and the destination online with active meals,
+and clears only the obsolete mismatch warning. It issues no feeder command.
+A newer reservation recognizes this as `already_satisfied`, not a manual pause.
+An enabled origin under an old ownership cycle still fails closed; manual
+pauses and uncertain attempts are never adopted or replayed. The selected
+policy's normal return evidence remains required before resuming an owned pause.
+
 Safe status projection schema 10 separates overall health from core ingestion
 health. `bus_health` retains the durable ingestion status; `health` is degraded
 when that status, any observed source, camera evaluation, or delivery is
@@ -437,6 +446,14 @@ the other provider's successful evidence. Ring stills use the exact safe-bound
 camera and a forced provider snapshot no more than five seconds old, with a
 15-second server wait; the legacy timestamp-poll endpoint is not used. Every
 image is deleted immediately.
+
+Mixed target errors retain bounded provider/stage codes in the existing
+evaluation and health fields (for example,
+`ring_capture_failed__nest_analysis_timeout`) instead of discarding both causes
+under a generic unavailable label. This changes diagnostics only: no retry,
+model change, capture authorization, or notification-policy change. Historical
+generic errors remain historical; a successful attended diagnostic does not
+rewrite them or clear the scheduled worker's health.
 
 Rollback is always the first operator action:
 
@@ -951,6 +968,71 @@ loaded jobs are preserved until the attended migration has completed.
 This subsystem is local automation and does **not** require an OpenClaw gateway
 restart. Restart or kickstart only the affected producer/ingester job during an
 attended rollout.
+
+## October 20 camera and arrival-latency review
+
+An explicitly approved, non-publishing Crosstown diagnostic captured Ring
+`front_door` in 6.7 seconds and Nest `Living Room Wired` in 9.9 seconds.
+The production analysis path passed in 20.9 and 19.8 seconds respectively;
+both ephemeral images were deleted immediately. A synthetic-image check also
+passed. This establishes current capture/analysis availability, not the cause
+of the October 19 mixed failures or immunity to intermittent analysis timeouts.
+No historical camera result or health field was rewritten; scheduled recovery
+remains to be observed. Mixed-error diagnostics now preserve provider/stage.
+
+Presence schedules changed from 15 minutes to 2 minutes at Crosstown and
+5 minutes at Cabin. The existing 60-second receiver fallback remains intact.
+The climate UI polls cached presence every minute without rebuilding charts.
+The approved scanner hashes, protected identities, installed publication flag,
+sticky assignments, and vacancy/action policies were preserved.
+
+The historical review found an uncertain September 16 Crosstown
+`daily_automations` attempt (`automation_binding_missing`). That target is no
+longer in the active action policy; no pending action or owned Hue suspension
+remains. Its outcome must remain unknown, not be replayed or reclassified from
+present-day state. The initial access-attention check found three unreviewed cumulative
+expiries; only two detailed expired incidents remain in retained history
+(October 4 and October 15). Later lock events do not prove what happened in the
+older gaps. At Dylan's subsequent explicit request, the three pending access
+expiries were marked reviewed on October 20; all incidents and outcomes were
+preserved, no lock command was issued, and attention became zero.
+
+A separate feeder warning surfaced during review: the Cabin managed
+pause reported `vacancy_cycle_mismatch`, while a newer reservation reported
+`already_satisfied_manual`. A regression reproduced loss of correct ownership
+classification after a new vacancy cycle. The reconciliation fix preserves the
+original owned pause and validates both current feeder states; it neither adopts
+a manual pause nor rewrites the original cycle or historical reservation.
+Readback before deployment confirmed Cabin paused and Crosstown enabled with two
+active meals. Future-return, manual-pause, re-enabled-origin, unavailable-
+destination, and uncertain-attempt cases remain covered by tests.
+The scheduled worker reconciled successfully at `2026-10-20T14:40:12Z` with
+zero device changes and no deferred work. Readback confirmed both schedules
+unchanged, the original ownership cycle preserved, and feeder attention cleared.
+The previous reservation remains historical, including its original
+`already_satisfied_manual` outcome. All 208 event-bus tests and 19 climate
+dashboard tests passed.
+
+Acceptance checks:
+
+```bash
+python3 -W ignore::ResourceWarning -m unittest discover -s openclaw/tests -p 'test_home_event_*.py'
+python3 -m unittest discover -s openclaw/tests -p 'test_nest_dashboard.py'
+python3 -m py_compile openclaw/bin/home-event-camera.py openclaw/bin/home_event_action.py openclaw/bin/nest-dashboard.py
+plutil -lint openclaw/launchagents/com.openclaw.presence-cabin.plist openclaw/launchagents/com.openclaw.presence-crosstown.plist
+```
+
+Runtime verification included installed/source hash agreement, both loaded scan
+intervals, subsequent scheduled scan receipt and canonical evaluation, the served
+dashboard refresh code, zero consumer backlog, and the feeder worker's normal
+readback-only reconciliation. An actual future arrival and a policy-eligible
+scheduled camera evaluation remain organic follow-ups; no event or relocation
+was fabricated to force either check.
+
+Scoped source/plist rollback on the Mini:
+`~/Backups/home-events-arrival-20261020.iZaa66/`.
+Crosstown plist rollback on the MacBook Pro:
+`~/.openclaw/presence-cadence-rollback-20261020.TjHlnU/`.
 
 ## Rollback and recovery
 

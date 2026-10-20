@@ -318,7 +318,8 @@ affect vacancy presentation.
 | Charts | Chart.js 4.x | CDN |
 | Time axis | Luxon 3.x + chartjs-adapter-luxon | CDN |
 | Styling | Dark-first CSS, `prefers-color-scheme` for light mode | Embedded |
-| Refresh | `setInterval(refresh, 5 * 60 * 1000)` | Embedded |
+| Climate refresh | `setInterval(refresh, 5 * 60 * 1000)` | Embedded |
+| Presence-card refresh | `setInterval(refreshPresence, 60 * 1000)`; cached API only, no scan or chart rebuild | Embedded |
 
 ---
 

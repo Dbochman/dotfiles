@@ -5,7 +5,7 @@ Automated energy-saving actions triggered when a house becomes vacant, reversed 
 ## How It Works
 
 ```
-Presence Detection (every 15 min)
+Presence Detection (Crosstown every 2 min; Cabin every 5 min)
         ↓
   state.json updated
         ↓ (WatchPaths)

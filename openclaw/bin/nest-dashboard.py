@@ -530,6 +530,9 @@ let tempChart, humidChart, co2Chart, vocChart, hvacChart;
 let currentHours = 24;
 let currentStructure = 'all';
 let currentPresence = []; // presence history for overlay
+let currentSnapshot = null;
+let currentPresenceState = null;
+let presenceRequest = 0;
 let showSetpoints = false;
 
 // Presentation is driven only by the canonical vacancy-state enum. Never
@@ -1218,6 +1221,18 @@ function createBarChart(ctx, datasets) {
   });
 }
 
+async function refreshPresence() {
+  const request = ++presenceRequest;
+  try {
+    const response = await fetch('/api/presence', {cache: 'no-store'});
+    if (!response.ok) return;
+    const state = await response.json();
+    if (request !== presenceRequest || !currentSnapshot) return;
+    currentPresenceState = state;
+    renderLocationGroups(currentSnapshot, state);
+  } catch {} // Keep the last successful cards when the endpoint is unavailable.
+}
+
 async function refresh() {
   const data = await fetchData(currentHours);
   const snaps = data.snapshots || [];
@@ -1227,19 +1242,14 @@ async function refresh() {
   // Pre-compute which room short names collide across structures
   computeDisplayCollisions(snaps);
 
-  // Fetch presence state and render combined location groups
-  let presState = null;
-  try {
-    const presResp = await fetch('/api/presence');
-    presState = await presResp.json();
-  } catch {}
+  currentSnapshot = current;
+  // Render climate updates even if presence is temporarily unavailable.
+  if (current) renderLocationGroups(current, currentPresenceState);
+  await refreshPresence();
 
   // Presence legend: show when a specific structure is selected and we have presence data
   const legend = document.getElementById('presenceLegend');
   legend.classList.toggle('visible', currentStructure !== 'all' && currentPresence.length > 0);
-
-  // Render location groups (presence + device cards)
-  if (current) renderLocationGroups(current, presState);
 
   if (typeof Chart === 'undefined') return; // CDN unreachable
 
@@ -1421,6 +1431,8 @@ updateStoredAcToggle();
 // Initial load + auto-refresh every 5 minutes
 refresh();
 setInterval(refresh, 5 * 60 * 1000);
+// Presence cards are cheap to refresh; do not rebuild climate charts each minute.
+setInterval(refreshPresence, 60 * 1000);
 </script>
 </body>
 </html>

@@ -1433,7 +1433,13 @@ def _transfer_feeding_schedule(
         ) from exc
     existing = state["sites"].get(origin_site)
     if not origin_observed["scheduleEnabled"]:
-        if existing is not None and existing["cycle_id"] == cycle_id:
+        if existing is not None:
+            # The cycle identifies the original ownership, not a lease that
+            # expires when fresh vacancy is re-confirmed. Do not rebase it or
+            # mislabel an existing owned pause as manual. Unsettled ownership
+            # still cannot qualify under a different cycle.
+            if existing["cycle_id"] != cycle_id and existing["phase"] != "suspended":
+                raise ActionError("feeder_outcome_unknown")
             existing["phase"] = "suspended"
             existing["updated_at"] = clock()
             existing["last_error"] = None
@@ -1664,7 +1670,22 @@ def _reconcile_feeder_suspensions(
                         clock=clock,
                     )
                     if evidence["cycle_id"] != record["cycle_id"]:
-                        raise ActionError("vacancy_cycle_mismatch")
+                        # Preserve the original pause's provenance across a
+                        # new, independently validated vacancy cycle. This is
+                        # readback-only: old ownership never authorizes turning
+                        # an enabled feeder off under a different cycle.
+                        if observed["scheduleEnabled"]:
+                            raise ActionError("vacancy_cycle_mismatch")
+                        destination = OTHER_SITE[site]
+                        destination_state = _petlibro_schedule_state(
+                            petlibro_bin, FEEDER_SELECTORS[destination], destination,
+                            now=parse_time(clock(), "clock_invalid"),
+                        )
+                        if (
+                            not destination_state["scheduleEnabled"]
+                            or destination_state["enabledMealCount"] < 1
+                        ):
+                            raise ActionError("destination_schedule_unavailable")
                     if observed["scheduleEnabled"]:
                         destination = OTHER_SITE[site]
                         destination_state = _petlibro_schedule_state(
@@ -1694,10 +1715,19 @@ def _reconcile_feeder_suspensions(
                     if (
                         record["last_error"] is not None
                         or record["occupancy_context"] != "origin_vacant"
+                        or (
+                            state["latest"] is not None
+                            and state["latest"]["site"] == site
+                            and state["latest"]["outcome"] == "already_satisfied_manual"
+                        )
                     ):
                         record["last_error"] = None
                         record["occupancy_context"] = "origin_vacant"
                         record["updated_at"] = clock()
+                        state["latest"] = {
+                            "site": site, "outcome": "suspended",
+                            "at": record["updated_at"],
+                        }
                         _write_feeder_suspensions(root, state)
                     continue
                 if (

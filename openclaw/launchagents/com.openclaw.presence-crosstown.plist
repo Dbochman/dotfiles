@@ -18,7 +18,7 @@
         <string>/Users/dbochman</string>
     </dict>
     <key>StartInterval</key>
-    <integer>900</integer>
+    <integer>120</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>

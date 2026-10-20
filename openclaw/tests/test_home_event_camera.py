@@ -63,6 +63,37 @@ class FakeCommands:
 
 
 class HomeEventCameraTests(unittest.TestCase):
+    def test_mixed_failures_preserve_provider_and_stage(self):
+        self.assertEqual(
+            camera.combine_target_errors([
+                "ring_capture_command_failed",
+                "nest_analysis_command_failed_timeout",
+            ]),
+            "ring_capture_failed__nest_analysis_timeout",
+        )
+        self.assertEqual(
+            camera.combine_target_errors([
+                "ring_analysis_command_failed_timeout",
+                "nest_analysis_command_failed_timeout",
+            ]),
+            "ring_analysis_timeout__nest_analysis_timeout",
+        )
+        self.assertIsNone(camera.combine_target_errors([]))
+        self.assertEqual(
+            camera.combine_target_errors(["ring_capture_command_failed"] * 2),
+            "ring_capture_command_failed",
+        )
+
+    def test_multi_camera_diagnostics_remain_bounded_and_sanitized(self):
+        code = camera.combine_target_errors([
+            "ring_capture_command_failed",
+            "ring_analysis_command_failed_timeout",
+            "nest_private_provider_detail",
+        ])
+        self.assertEqual(code, "ring_multiple_failures__nest_failed")
+        self.assertRegex(code, camera.SAFE_CODE_RE)
+        self.assertLessEqual(len(code), 64)
+
     def test_inference_environment_prefers_approved_node24(self):
         self.assertEqual(
             camera.CameraCommands._environment()["PATH"].split(":", 1)[0],
@@ -291,6 +322,19 @@ class HomeEventCameraTests(unittest.TestCase):
         self.assertEqual(
             self.row(row_id)["error_code"], "nest_capture_command_failed"
         )
+
+    def test_both_provider_failures_survive_in_durable_evaluation(self) -> None:
+        row_id = self.insert_evaluation()
+        commands = FakeCommands(failures={
+            ("ring", "cabin", "front_door"), ("nest", "cabin", "Kitchen")
+        })
+        self.worker(commands).run_once()
+        self.assertEqual(
+            self.row(row_id)["error_code"],
+            "ring_capture_failed__nest_capture_failed",
+        )
+        self.assertEqual(self.store.status_snapshot()["camera"]["health"], "degraded")
+        self.assertEqual(list(self.paths.camera_images.iterdir()), [])
 
     def test_real_commands_dispatch_ring_only_through_safe_binding(self) -> None:
         commands = camera.CameraCommands()

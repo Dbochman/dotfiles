@@ -77,7 +77,7 @@ active post-deploy checks.
 
 | Script | Port | Description |
 |--------|------|-------------|
-| `nest-dashboard.py` | 8550 | Home climate dashboard — Chart.js UI over JSONL history. Serves thermostat/AC temperatures, Wave Enhance CO2/VOC data, humidity, weather, and presence over the home LAN and Tailscale tailnet. |
+| `nest-dashboard.py` | 8550 | Home climate dashboard — Chart.js UI over JSONL history. Serves thermostat/AC temperatures, Wave Enhance CO2/VOC data, humidity, weather, and presence over the home LAN and Tailscale tailnet. Presence cards poll the cached API every minute independently of five-minute chart refreshes. |
 | `usage-dashboard.py` | 8551 | OpenClaw usage dashboard — token consumption, utilization, agent activity, named cron jobs, and native iMessage health over LAN/Tailscale. Separates component readiness from recent inbound evidence and log activity from execution; interval deadlines remain unknown without scheduler evidence. Reports metadata-only message timing without a new daemon or recovery actions. |
 | `dog-walk-dashboard.py` | 8552 | Dog walk history, Fi route maps, coverage/heatmaps, and return-signal telemetry over the home LAN and Tailscale tailnet. |
 | `roomba-dashboard.py` | 8553 | Crosstown/Cabin Roomba status, command, snooze, and run-history dashboard. |
@@ -165,7 +165,7 @@ boundaries.
 | `presence-local-event-adapter.py` | Disabled-by-default shadow adapter for per-residence network arrivals, inferred departures, and household excursion intervals. It consumes only sanitized exact-binding booleans and cannot change canonical presence or physical state. |
 | `vacancy-action-journal.py` | Protected observation-only source journal for actions already owned by `vacancy-actions.sh`. It validates exact canonical-presence causality, records bounded allowlisted outcomes, recovers stale attempts as unknown without retry, and reconciles a marker-backed re-confirmed vacancy by advancing only its evidence cycle. It cannot publish, control a device, change presence, capture media, or send a message. |
 | `whisker-event-adapter.py` | Disabled-by-default future-only Litter-Robot observer for the two exact site bindings. It silently baselines provider history, requires continuous paired coverage, publishes only normalized cat-presence classifications, and retains no serials, weights, pet identities, or raw activity. |
-| `home_event_action.py` | Exact policy-owned Hue and Petlibro worker. Approved household-relocation feeding follows fresh confirmed vacancy with both residents at the destination; it verifies destination meals before origin-off. Legacy litter gating remains compatible. `set-feeder-mode` holds both directions without changing devices; `return-feeder-to-automation` explicitly adopts a manual pause with cycle-pinned receipts. |
+| `home_event_action.py` | Exact policy-owned Hue and Petlibro worker. Approved household-relocation feeding follows fresh confirmed vacancy with both residents at the destination; it verifies destination meals before origin-off. Re-confirmed vacancy preserves an existing verified pause's original ownership cycle without a device command or manual-pause adoption. Legacy litter gating remains compatible. `set-feeder-mode` holds both directions without changing devices; `return-feeder-to-automation` explicitly adopts a manual pause with cycle-pinned receipts. |
 
 See [`../HOME-EVENTS.md`](../HOME-EVENTS.md) for the protected runtime,
 producer contracts, shadow rollout, and rollback procedure. The subsystem does

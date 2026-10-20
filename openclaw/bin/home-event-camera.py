@@ -71,6 +71,38 @@ class CameraError(Exception):
         self.code = code
 
 
+def combine_target_errors(errors: list[str]) -> str | None:
+    """Keep bounded provider/stage diagnostics when multiple targets fail."""
+    unique = set(errors)
+    if not unique:
+        return None
+    if len(unique) == 1:
+        return unique.pop()
+    stages = {
+        "capture_command_failed": "capture_failed",
+        "capture_command_failed_timeout": "capture_timeout",
+        "capture_command_failed_unavailable": "capture_unavailable",
+        "analysis_command_failed": "analysis_failed",
+        "analysis_command_failed_timeout": "analysis_timeout",
+        "analysis_command_failed_unavailable": "analysis_unavailable",
+        "analysis_envelope_invalid": "analysis_invalid",
+        "analysis_text_invalid": "analysis_invalid",
+        "analysis_decision_invalid": "analysis_invalid",
+        "captured_image_invalid": "image_invalid",
+        "image_cleanup_failed": "cleanup_failed",
+    }
+    parts = []
+    for provider in ("ring", "nest"):
+        failures = {
+            stages.get(error.removeprefix(provider + "_"), "failed")
+            for error in unique if error.startswith(provider + "_")
+        }
+        if failures:
+            stage = next(iter(failures)) if len(failures) == 1 else "multiple_failures"
+            parts.append(f"{provider}_{stage}")
+    return "__".join(parts) if parts else "camera_targets_unavailable"
+
+
 @dataclasses.dataclass(frozen=True)
 class VisionDecision:
     person_visible: bool
@@ -710,17 +742,7 @@ class CameraWorker:
             combined = "failed"
         else:
             combined = "uncertain"
-        error_code = None
-        if errors:
-            unique_errors = set(errors)
-            if len(unique_errors) == 1:
-                error_code = unique_errors.pop()
-            else:
-                error_code = (
-                    "camera_targets_unavailable"
-                    if combined == "failed"
-                    else "camera_targets_partial"
-                )
+        error_code = combine_target_errors(errors)
         return self._record_slot(claim, combined, error_code)
 
     def run_once(self) -> Mapping[str, Any]:

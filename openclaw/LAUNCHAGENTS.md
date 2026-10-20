@@ -377,7 +377,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.home-event-action` | 30s | `home-event-action-wrapper.sh` | Processes exact policy-owned Hue and separately gated Petlibro schedule actions with fresh evidence and device readback; restores only owned state. It never invokes the operator-only audited `return-feeder-to-automation` command or automatically adopts a manual pause. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `ai.openclaw.airthings-snapshot` | 5min + login | `airthings-snapshot` | Reads the exact Cabin Living Room Wave Enhance over local BLE, appends one Airthings-only row, then evaluates the separately gated ventilation notifier and paired sustained-good follow-up; notification failures do not invalidate successful sensor collection |
-| `com.openclaw.presence-cabin` | 15min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources) |
+| `com.openclaw.presence-cabin` | 5min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources); scanner bytes and identity policy unchanged |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects local Codex CLI daily usage into an atomic mode-`0600` dashboard source |
 | `ai.openclaw.nest-snapshot` | 30min | Inline bash | Merged Nest/Cielo/Mysa/Midea/Airthings climate and air-quality snapshot to JSONL through the shared locked history writer; stale Airthings reads refresh through the dedicated Bluetooth-authorized `Airthings Reader.app` identity (shows `-` PID — normal, runs and exits) |
@@ -616,7 +616,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `com.openclaw.presence-crosstown` | 15min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale. **Must NOT be loaded on Mini** — the script ARP-scans `192.168.165.x`, which the Mini isn't on, so the scan returns nothing and Tailscale `file cp` to self fails. A misplaced copy ran on Mini until 2026-05-10. |
+| `com.openclaw.presence-crosstown` | 2min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale. **Must NOT be loaded on Mini** — the script ARP-scans `192.168.165.x`, which the Mini isn't on, so the scan returns nothing and Tailscale `file cp` to self fails. A misplaced copy ran on Mini until 2026-05-10. |
 
 The Crosstown source plist is deployed as a regular file on the MacBook rather
 than shared live with the Mini checkout. After changing it, copy the source,

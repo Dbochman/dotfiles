@@ -33,6 +33,20 @@ ACTION_LABEL = "ai.openclaw.home-event-action"
 
 
 class HomeEventDeploymentTests(unittest.TestCase):
+    def test_presence_cadence_keeps_existing_scanner_and_receiver_contracts(self):
+        for site, interval in (("cabin", 300), ("crosstown", 120)):
+            with self.subTest(site=site):
+                path = OPENCLAW / "launchagents" / f"com.openclaw.presence-{site}.plist"
+                payload = plistlib.loads(path.read_bytes())
+                self.assertEqual(payload["StartInterval"], interval)
+                self.assertEqual(payload["ProgramArguments"][-1], site)
+                self.assertTrue(payload["ProgramArguments"][1].endswith("/presence-detect.sh"))
+        receiver = plistlib.loads(
+            (OPENCLAW / "launchagents" / "com.openclaw.presence-receive.plist").read_bytes()
+        )
+        self.assertEqual(receiver["StartInterval"], 60)
+        self.assertIn("WatchPaths", receiver)
+
     def test_ring_ingress_and_dog_walk_policy_have_distinct_service_contracts(self) -> None:
         ring_path = OPENCLAW / "launchagents" / "ai.openclaw.ring-event-listener.plist"
         dog_path = OPENCLAW / "launchagents" / "ai.openclaw.dog-walk-automation.plist"

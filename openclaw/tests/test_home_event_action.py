@@ -355,6 +355,105 @@ class HomeEventActionTests(unittest.TestCase):
         self.assertEqual(self.run_worker()["mode"], "idle")
         self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
 
+    def advance_cabin_vacancy_cycle(self) -> None:
+        state = json.loads(self.state_path.read_text())
+        state["cabin"]["stateChangedAt"] = "2026-08-22T14:50:00Z"
+        self.update_canonical(state)
+        self.private_json(self.journal / "cycles/cabin.json", {
+            "schema_version": 1, "site": "cabin",
+            "state_changed_at": state["cabin"]["stateChangedAt"],
+            "cycle_id": "cycle_" + "b" * 32,
+        })
+
+    def test_owned_pause_survives_reconfirmed_vacancy_without_rebasing_or_commands(self):
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        self.run_worker()
+        owned = actions._load_feeder_suspensions(self.root)
+        original_cycle = owned["sites"]["cabin"]["cycle_id"]
+        owned["sites"]["cabin"]["last_error"] = "vacancy_cycle_mismatch"
+        owned["latest"] = {"site": "cabin", "outcome": "already_satisfied_manual", "at": NOW}
+        actions._write_feeder_suspensions(self.root, owned)
+        self.advance_cabin_vacancy_cycle()
+
+        result = self.run_worker()
+        current = actions._load_feeder_suspensions(self.root)
+        self.assertEqual(result["feeder_reconcile"]["mode"], "verified")
+        self.assertIsNone(current["sites"]["cabin"]["last_error"])
+        self.assertEqual(current["sites"]["cabin"]["cycle_id"], original_cycle)
+        self.assertEqual(current["latest"]["outcome"], "suspended")
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 1)
+        result = self.run_worker()
+        self.assertEqual(result["reason_code"], "already_satisfied")
+        self.assertFalse(result["command_attempted"])
+        self.assertEqual(
+            actions._load_feeder_suspensions(self.root)["sites"]["cabin"]["cycle_id"],
+            original_cycle,
+        )
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+
+        # The original ownership still supports a later policy-proven return.
+        state = json.loads(self.state_path.read_text())
+        state["cabin"]["occupancy"] = "occupied"
+        state["people"] = {name: {"location": "cabin"} for name in ("Dylan", "Julia")}
+        state["crosstown"]["occupancy"] = "confirmed_vacant"
+        state["crosstown"]["stateChangedAt"] = "2026-08-22T14:55:00Z"
+        self.update_canonical(state)
+        self.private_json(self.journal / "cycles/crosstown.json", {
+            "schema_version": 1, "site": "crosstown",
+            "state_changed_at": state["crosstown"]["stateChangedAt"],
+            "cycle_id": "cycle_" + "c" * 32,
+        })
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 1)
+        self.run_worker()
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), [
+            "cabin-feeder off", "cabin-feeder on", "crosstown-feeder off",
+        ])
+
+    def test_uncertain_old_pause_is_not_reclassified_on_new_cycle(self):
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        self.run_worker()
+        owned = actions._load_feeder_suspensions(self.root)
+        owned["sites"]["cabin"]["phase"] = "restoring"
+        owned["sites"]["cabin"]["last_error"] = "feeder_outcome_unknown"
+        actions._write_feeder_suspensions(self.root, owned)
+        self.advance_cabin_vacancy_cycle()
+        result = self.run_worker()
+        current = actions._load_feeder_suspensions(self.root)["sites"]["cabin"]
+        self.assertEqual(result["feeder_reconcile"]["mode"], "deferred")
+        self.assertEqual(current["phase"], "restoring")
+        self.assertEqual(current["last_error"], "feeder_outcome_unknown")
+        self.assertEqual(current["cycle_id"], owned["sites"]["cabin"]["cycle_id"])
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+
+    def test_old_owned_cycle_cannot_disable_a_reenabled_feeder(self):
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        self.run_worker()
+        self.advance_cabin_vacancy_cycle()
+        devices = json.loads(self.petlibro_state.read_text())
+        devices["cabin-feeder"]["enabled"] = True
+        self.petlibro_state.write_text(json.dumps(devices))
+        self.run_worker()
+        owned = actions._load_feeder_suspensions(self.root)
+        self.assertEqual(owned["sites"]["cabin"]["last_error"], "vacancy_cycle_mismatch")
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+
+    def test_old_owned_pause_requires_enabled_destination_before_clearing_attention(self):
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        self.run_worker()
+        self.advance_cabin_vacancy_cycle()
+        devices = json.loads(self.petlibro_state.read_text())
+        devices["crosstown-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(devices))
+        self.run_worker()
+        owned = actions._load_feeder_suspensions(self.root)
+        self.assertEqual(owned["sites"]["cabin"]["last_error"], "destination_schedule_unavailable")
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+
     def test_relocation_requires_both_people_fresh_sites_and_exact_cycle(self) -> None:
         self.configure_relocation()
         original = json.loads(self.state_path.read_text())

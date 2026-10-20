@@ -18,7 +18,7 @@ Each service uses one of two patterns:
 
 | Log file | Service | Description |
 |----------|---------|-------------|
-| `presence-detect.log` | `com.openclaw.presence-cabin` / `presence-crosstown` / `presence-receive` | Presence scan, receive, and evaluation summaries |
+| `presence-detect.log` | `com.openclaw.presence-cabin` / `presence-crosstown` / `presence-receive` | Presence scan, receive, and evaluation summaries; Cabin scans every 5 minutes, Crosstown every 2 minutes, receiver WatchPaths plus 60-second fallback |
 | `vacancy-actions.log` | `com.openclaw.vacancy-actions` | Vacancy trigger actions (lights, thermostat, 8sleep, Roombas) |
 | `opentable.log` | OpenTable CLI | Safe request-path, status, and failure diagnostics; never provider tokens or raw responses |
 | `resy.log` | Resy CLI | Safe request-path, status, and failure diagnostics; never provider tokens or raw responses |

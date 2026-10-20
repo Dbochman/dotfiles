@@ -248,6 +248,11 @@ class CurrentSnapshotMergeTests(unittest.TestCase):
 
 
 class PresenceHtmlContractTests(unittest.TestCase):
+    def test_presence_refresh_is_faster_than_climate_refresh(self):
+        html = nest_dashboard.DASHBOARD_HTML
+        self.assertIn("setInterval(refreshPresence, 60 * 1000)", html)
+        self.assertIn("setInterval(refresh, 5 * 60 * 1000)", html)
+
     def test_uses_canonical_vacancy_states_without_partial_state(self):
         html = nest_dashboard.DASHBOARD_HTML
 
@@ -281,6 +286,38 @@ class PresenceHtmlContractTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("node"), "Node is required for UI behavior tests")
 class StoredAirConditionerTests(unittest.TestCase):
+    def test_presence_refresh_only_updates_cards_and_rejects_late_responses(self):
+        self.run_ui(r"""
+(async () => {
+  currentSnapshot = {rooms: []};
+  const renders = [];
+  renderLocationGroups = (snapshot, state) => renders.push({snapshot, state});
+  const pending = [];
+  globalThis.fetch = (url, options) => {
+    assert.equal(url, '/api/presence');
+    assert.equal(options.cache, 'no-store');
+    return new Promise(resolve => pending.push(resolve));
+  };
+  const first = refreshPresence();
+  const second = refreshPresence();
+  const latest = {crosstown: {occupancy: 'occupied'}};
+  pending[1]({ok: true, json: async () => latest});
+  await second;
+  pending[0]({ok: true, json: async () => ({crosstown: {occupancy: 'confirmed_vacant'}})});
+  await first;
+  assert.equal(renders.length, 1);
+  assert.equal(renders[0].snapshot, currentSnapshot);
+  assert.equal(currentPresenceState, latest);
+  globalThis.fetch = async () => {throw Error('offline');};
+  await refreshPresence();
+  assert.equal(renders.length, 1);
+  assert.equal(currentPresenceState, latest);
+  globalThis.fetch = async () => ({ok: false});
+  await refreshPresence();
+  assert.equal(renders.length, 1);
+})().catch(error => {console.error(error); process.exitCode = 1;});
+""")
+
     def run_ui(self, assertions, saved=None, storage_blocked=False):
         script = nest_dashboard.DASHBOARD_HTML.split("<script>", 1)[1].split("</script>", 1)[0]
         script = script.split("// Initial load + auto-refresh", 1)[0]
@@ -383,7 +420,8 @@ class ClimateSourceHtmlContractTests(unittest.TestCase):
         self.assertIn('canvas id="vocChart"', html)
         self.assertIn("r.source !== 'airthings'", html)
         self.assertIn("const current = data.current ||", html)
-        self.assertIn("renderLocationGroups(current, presState)", html)
+        self.assertIn("renderLocationGroups(current, currentPresenceState)", html)
+        self.assertIn("renderLocationGroups(currentSnapshot, state)", html)
 
     def test_midea_cards_include_power_and_preserve_unknown_values(self):
         html = nest_dashboard.DASHBOARD_HTML

@@ -15,7 +15,7 @@ WatchPaths automation can react to those writes.
 
 ## Quick Check
 
-Read the cached state (updated every 15 min, no scan needed):
+Read the cached state (Crosstown scans every 2 minutes; Cabin every 5 minutes):
 
 ```bash
 cat ~/.openclaw/presence/state.json
@@ -111,7 +111,7 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 ┌───────────────────────┐            ┌──────────────────────────┐
 │ com.openclaw.          │            │ com.openclaw.             │
 │   presence-crosstown   │            │   presence-cabin          │
-│ Every 15 min:          │            │ Every 15 min:             │
+│ Every 2 min:           │            │ Every 5 min:              │
 │   ARP scan 192.168.165 │            │   Starlink gRPC API       │
 │   Write crosstown-     │──tailscale │   Write cabin-scan.json   │
 │     scan.json          │──named cp─▶│ ~/Downloads/              │
@@ -131,13 +131,18 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 
 | Agent | Host | Schedule | Purpose |
 |-------|------|----------|---------|
-| `com.openclaw.presence-cabin` | Mac Mini | Every 15 min | Scan cabin WiFi, evaluate |
-| `com.openclaw.presence-crosstown` | MacBook Pro | Every 15 min | Scan Crosstown LAN, push to Mac Mini |
+| `com.openclaw.presence-cabin` | Mac Mini | Every 5 min | Scan cabin WiFi, evaluate |
+| `com.openclaw.presence-crosstown` | MacBook Pro | Every 2 min | Scan Crosstown LAN, push to Mac Mini |
 | `com.openclaw.presence-receive` | Mac Mini | WatchPaths on `~/Downloads` + every 60s | Ingest named Crosstown Taildrop state |
 
 The receiver remains a short-lived, idempotent job. Its 60-second fallback
 drains named scans even when a filesystem notification is missed; an empty
 inbox is a no-op. Do not remove this timer in favor of WatchPaths alone.
+The shorter scan intervals reduce arrival latency and give a missed phone
+another scheduled opportunity without changing approved scanner bytes,
+bindings, sticky occupancy, or the 30-minute freshness limit. They are not a
+guarantee of detecting a sleeping phone on every scan. The climate dashboard
+polls cached presence every minute independently of its five-minute charts.
 The September 26 repair found a fresh MacBook Pro scan but stale canonical
 state on the Mini, ten unprocessed named Taildrop files, and no receiver run
 after a successful independent transfer. A manual drain succeeded. The
