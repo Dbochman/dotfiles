@@ -199,7 +199,8 @@ public TLS handshakes, not account requests or the applications' normal entry
 points. No vendor app, VPN, managed security control, or shared service was
 updated, re-signed, restarted, or reconfigured during this sweep.
 
-The table counts **accepted compromised-chain canaries**, out of twelve. Both
+The baseline table below predates the approved vendor-update pass documented
+later in this file. It counts **accepted compromised-chain canaries**, out of twelve. Both
 normal controls passed for every conclusive row. A CA-file test proves the
 bundle's trust behavior under the test interpreter, not the entire application.
 Electron Node tests do not cover Chromium, custom TLS clients, or cached state.
@@ -262,6 +263,69 @@ Important qualifications and follow-ups:
   quitting active apps, removing anything, or changing managed software.
 - No evidence of exploitation was sought or established by these TLS checks.
   They establish reachable trust weaknesses, not a compromise investigation.
+
+### Approved vendor-update pass — 2026-10-20
+
+- Owner approved upgrading the second EchoNest installation and updating then
+  retesting the affected MacBook apps, with settings preserved and removals
+  excluded. None of the target apps were running at the initial process check.
+- **EchoNest on dylans-mac is now 0.7.0.** Transferred the exact signed Mini build
+  (archive SHA-256 `f5554706c2746203810af528ccddbda5464481c1b73649fca2ecf6b43784fa48`),
+  verified the staged signature/version, preserved 0.2.1 at
+  `/Users/dylanbochman/Backups/echonest-tls-20261020.4pYwF9/EchoNest Sync.app`,
+  and swapped the app without touching configuration or Keychain. Installed
+  signature and version checks pass. Its embedded CA file matches the tested
+  Mini build byte-for-byte (SHA-256
+  `50f79f98dac192b20dbf73f35c56f0b0c557ab267ff5199d1117cc1180b70785`).
+  The frozen self-test rejects twelve endpoints and accepts both controls, but
+  the remote network interception caveat still applies: independent evidence
+  comes from the identical Mini build and bundle. GUI/playback were not tested;
+  the app was left stopped. The retained rollback app is vulnerable; do not run.
+- **Kap:** vendor releases and Homebrew still list 3.6.0, the installed version.
+  No newer vendor artifact was found; it remains unchanged and unresolved.
+  Source: https://github.com/wulkano/Kap/releases
+
+Seven MacBook apps were updated from official vendor artifacts referenced by
+Homebrew metadata, without adopting the existing installations into Homebrew
+or changing CLI links. Each archive matched its SHA-256; the app identifier and
+Developer ID team matched the previous installation; deep strict code-signature
+verification and Gatekeeper assessment passed before replacement. Signatures
+were checked again after installation. No vendor bundle was modified or re-signed.
+
+| MacBook app | Installed update | Retest after update |
+| --- | --- | --- |
+| Cursor | 2.4.23 → 3.26.13 | Electron 42.10.0 / Node 24.18.1 and separate Node helper each still accept six direct chains |
+| GitHub Desktop | 3.4.2 → 3.6.7 | Electron 42.0.1 / Node 24.15.0 still accepts six direct chains |
+| Notion | 3.1.0 → 7.40.0 | Electron 44.9.1 disables RunAsNode; trust remains unverified, not cleared |
+| Linear | 1.22.1 → 1.32.4 | Electron 41.3.0 disables RunAsNode; trust remains unverified, not cleared |
+| CurseForge | 1.257.1-0 → 1.324.0-41180 | Electron 42.11.4 / Node 24.19.0 still accepts six direct chains |
+| PyCharm | 2024.1.4 → 2026.2.3 | Actual bundled JetBrains Java 25.0.4 SSLSocket client still accepts all twelve chains |
+| Inkscape | 1.2.2 → 1.4.4 | Main certifi bundle still accepts six direct chains; pip-vendored bundle still accepts all twelve |
+
+Both normal controls passed in every completed retest. Unchanged Kap's
+credential-free Node diagnostic still accepted all twelve with the expected
+eMudhra issuers, providing a contemporaneous network baseline on the MacBook.
+No normal GUI app was launched; existing settings, sessions, plugins, accounts,
+and Keychain entries were left untouched. GUI behavior, project compatibility,
+and any first-launch migration remain untested. All audit-owned disk images
+were detached, and the target GUI apps remain stopped.
+
+Rollback app bundles are retained under these MacBook directories (do not run
+the old vulnerable versions):
+
+- `/Users/dbochman/Backups/vendor-tls-20261020.mdiw9fyd/` — Cursor, Notion,
+  Linear, CurseForge, PyCharm.
+- `/Users/dbochman/Backups/vendor-tls-20261020.f1o5li5p/` — GitHub Desktop,
+  Inkscape.
+
+**Status: vendor updates completed, incident remediation not complete.** Do not
+equate the new version numbers, valid signatures, or disabled test mode with
+trust remediation. Next work requires application-scoped trust configuration
+where supported and/or verified vendor fixes. No global launch environment,
+Java trust store, browser settings, managed security controls, or signed vendor
+bundle was changed to force a pass. Reolink and the separate ChatGPT helper
+findings from the previous sweep remain open and were outside this approved
+MacBook vendor-update batch. No apps or user data were removed.
 
 ## Audit commands
 
