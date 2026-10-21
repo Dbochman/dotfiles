@@ -489,6 +489,182 @@ other application installation or separate Codex CLI/app was removed.
   unvalidated, and previously untestable apps remain unverified; this is not a
   whole-host trust clearance.
 
+### Remaining-gap action and browser gate — late 2026-10-20
+
+This supersedes the earlier pending Inkscape decision and narrows, rather than
+erases, the native-networking and existing-Go caveats.
+
+**Three more MacBook apps retired with explicit owner approval:**
+
+| Crosstown MacBook app | Evidence and disposition | Recoverable Trash location |
+| --- | --- | --- |
+| Inkscape 1.4.4 | Public CA bundles had accepted affected chains. Standalone Python was killed by an AMFI launch-constraint violation under SSH, despite valid signatures. Two isolated native extension attempts crashed before producing a trust result; no runtime mitigation was validated. Retired, not patched or cleared. | `/Users/dbochman/.Trash/vendor-tls-retired-20261020.gj6jwQ/Inkscape.app` |
+| Figma 116.14.9 / Electron 25.8.1 / Node 18.15.0 | Paused native startup exported 140 bundled roots; those roots accepted all 12 canaries and both controls on the Mini. Old Node lacks the default-root introspection API, so this is bundled-root evidence, not proof every app request uses that store. | `/Users/dbochman/.Trash/vendor-tls-retired-20261020.9s8avE/Figma.app` |
+| Granola 7.41.2 / Electron 39.2.7 / Node 22.21.1 | Paused native startup stripped `NODE_OPTIONS`; its 146 default roots accepted six direct chains, rejected six cross-signed chains, and accepted both controls when tested on the Mini. The CA environment override was ineffective for GUI defaults. | `/Users/dbochman/.Trash/vendor-tls-retired-20261020.SO7sE7/Granola.app` |
+
+All three were stopped, unregistered by exact installed path, and moved without
+changing signed contents. Original paths are absent; strict deep signatures
+still pass in Trash and no matching installed-app processes remain. Settings,
+documents, account state and credentials were preserved. Approximately 1.35 GiB
+was moved, not permanently deleted. Do not launch the retained binaries. Only
+the Crosstown installations were approved for these retirements; Granola on
+dylans-mac was not removed. Audit-created Inkscape processes were terminated
+after their failed probes; no unrelated app or security service was stopped.
+
+**Native Apple trust:** an ephemeral URLSession/SecTrust diagnostic, with no
+shared cookies, credentials or cache and cancellation before HTTP requests,
+rejected all 12 affected chains with `errSecCertificateRevoked` (`-67820`) on
+both the Mini and Crosstown MacBook. Both normal controls passed on each host,
+and the expected affected intermediate identities were present. On dylans-mac,
+controls passed but canaries returned `-25318` with no evaluable issuer chain:
+**inconclusive**, consistent with the earlier network-interception limitation.
+Managed network/security controls were not changed. This verifies the tested
+Apple trust path, not apps using custom anchors, Rust/Node stores, or custom
+certificate callbacks.
+
+**Installed Go clients:** fresh credential-free invocations on the Mini of
+GitHub CLI (built Go 1.26.1), PinchTab 0.11.0 (Go 1.26.2), and goplaces (Go
+1.26.4) each rejected all 12 with explicit x509 certificate-revoked errors and
+received HTTP responses from github.com/pypi.org. Only isolated empty config
+and non-secret placeholder auth strings were used. No rebuild was needed to
+obtain those results; [Go's macOS verifier uses system APIs](https://pkg.go.dev/crypto/x509#Certificate.Verify).
+No compiler update is counted as a binary repair. Mini `op` (Go 1.25.7), `spogo`
+(Go 1.24.0), the Tailscale app/daemon, other-host clients and custom-root paths
+remain unverified by these probes. They were not driven through real account
+sessions or retired merely because their build metadata is older. Shared
+PinchTab and Tailscale daemons were not restarted.
+
+**Browser startup gap reproduced and acquisition gate implemented:** an
+audit-owned warmed Chrome 155.0.8059.85 rejected all 12 and passed both controls
+through browser-protocol diagnostics. A newly started audit profile accepted
+six direct chains while rejecting six cross-signed chains; both controls
+passed. The new headless acquisition gate refused to return that instance and
+stopped it. Three bounded public-test readiness attempts also remained blocked.
+The earlier readiness hypothesis is now supported by a reproduced cold/warm
+difference, but its exact component-update cause is not asserted.
+
+`pinchtab-headless-instance acquire` now requires all 12 rejections plus two
+controls in a disposable context before returning an instance ID. It disables
+page scripts/cache in its diagnostic tabs, uses no account state, has no pass
+cache, and never treats page text, DNS/timeout/expiry errors, missing evidence or
+missing tooling as success. Failed acquisition stops only a newly created
+instance, never an existing shared instance. Paired helpers, deployment ordering,
+and fail-closed regression tests are tracked; see
+[the operational contract](../bin/README.md#headless-browser-trust-gate).
+
+The paired helpers and acquisition wrapper were deployed on the Mini without
+restarting the shared daemon or running an authenticated workflow. Source and
+deployed copies match. The installed Homebrew-symlink entry point passed on the
+audit profile; a restarted warm profile initially rejected acquisition's first
+test batch, then passed after the bounded readiness retry. The earlier cold
+profile remained blocked through all three attempts. All audit-owned instances
+were stopped afterward. The prior wrapper is retained at
+`/Users/dbochman/Backups/browser-trust-gate-20261020.DmVnoQ/pinchtab-headless-instance`;
+restoring it would remove the gate and is not a routine workaround.
+
+Verification: four Node gate tests, eight PinchTab Python tests, 27 deployment
+contract tests and 103 weekly-finance tests passed, alongside Python compilation,
+shell syntax checks, diff whitespace checks and `sync.sh validate`.
+`install.sh --dry-run` exited 2 because of pre-existing protected conflicts at
+the gateway plist and deployed dog-walk/presence skills. Those were not
+overwritten; no broad installer or shared-service restart was performed.
+
+The PinchTab skill required a dedicated session; restricted sessions could not
+access the needed instance endpoints. The owner explicitly approved using the
+existing local operator connection for audit-owned instances only. No session
+policy or daemon permissions were changed, and no shared profile was tested.
+
+**Still not cleared:** applications disabling both RunAsNode and Node inspection
+(including the checked 1Password, Claude, Slack, Discord, Linear and Notion
+builds) remain unverified, not confirmed vulnerable. The browser gate covers
+caller work through the managed helper, not startup background traffic, Cielo's
+separate lifecycle, direct browser launches, or vendor app networking. Future
+work must use supported vendor diagnostics/updates or a specifically approved
+retirement/containment decision; no global environment trick, fuse change,
+ad-hoc re-signing, or managed VPN bypass was deployed.
+
+### Windows desktop follow-up — late 2026-10-20
+
+The owner authorized remediation of the Windows desktops, then explicitly
+approved a process-only PowerShell execution-policy override and retirement
+of CurseForge while preserving mods/data. No persistent execution policy,
+antivirus setting, firewall rule, shared service or browser profile was changed.
+
+`DESKTOP-R9JS0OK` is the reachable RTX 5090 Windows 11 Home desktop (build
+26300), administered through the existing `desktop-compute` WSL bridge.
+`DESKTOP-4G2S6KQ` is offline at the cabin; the owner cannot wake it currently.
+The cabin desktop remains pending, not cleared.
+
+| Tested path on the reachable desktop | Before | After / disposition |
+| --- | --- | --- |
+| Ubuntu 26.04 Python default trust | Six direct chains accepted; six cross-signs rejected; two controls passed | All 12 rejected and two controls passed after the CA package upgrade |
+| WSL curl and distro certifi | Separate trust consumers checked after repair | All 12 rejected and two controls passed for each |
+| Windows curl / Schannel | All 12 explicitly revoked, two controls passed | No native-store repair needed for this tested path |
+| Native .NET SslStream | All 12 explicitly distrusted/revoked, two controls passed, with online revocation both off and on | Observed affected issuer identities; no HTTP/account requests |
+| Fresh Chrome 155.0.8059.86 | Six direct accepted, six cross-signs rejected, two controls passed through repeated checks | All 12 rejected and two controls passed on first attempt and repeat after explicit local distrust |
+| Fresh Edge 155.0.4283.62 | All 12 accepted, two controls passed through repeated checks | All 12 rejected and two controls passed on first attempt and repeat after explicit local distrust |
+| CurseForge 1.324.0-41180 bundled Node | Electron 42.11.4 / Node 24.19.0 accepted six direct chains; rejected six cross-signs; two controls passed | Retired with explicit owner approval; no claim that the GUI was repaired |
+
+**WSL repair:** upgraded only Ubuntu `ca-certificates`
+`20260601~26.04.1 -> 20260816ubuntu0.26.04.1` using the configured signed APT
+repository and documented trusted WSL maintenance path. The dry run selected
+one package; 69 other upgrades were left untouched. No distro restart or
+service restart was performed. Distro certifi reports version 2026.01.04 but
+uses `/etc/ssl/certs/ca-certificates.crt`; its actual bundle passed. No separate
+certifi package upgrade was needed for that tested interpreter.
+
+**Browser mitigation:** added all 16 published compromised intermediate
+certificates to `CurrentUser/Disallowed` for Owner, including the four
+code-signing certificates. This does not remove broader root CAs. All DER
+SHA-256 hashes were matched against Mozilla's incident description/comment 2
+before mutation. The tracked helper is
+`openclaw/desktop-compute/block-emudhra-intermediates.ps1`; it validates the
+entire set before writing, defaults to read-only, preserves existing entries,
+requires a new receipt and verifies read-back. Reapplication reported all 16
+already present. Seven Windows-native validation/guard checks passed.
+Code-signing entries were read back; no malicious executable was run as a test.
+
+Chrome and Edge were vendor-signature checked and started headlessly with
+fresh audit-only user-data directories. The existing
+`pinchtab-browser-trust.cjs` inspected TLS results through local CDP, with
+page scripts disabled and no verification bypass. A dedicated PinchTab session
+was created, but the Windows/WSL boundary required running the diagnostic on
+Windows rather than attaching the Mini's browser daemon. The signed CurseForge
+binary's enabled RunAsNode fuse supplied the temporary diagnostic host without
+loading app/account code; it was retired afterward. The first wrapper attempt
+returned before its Windows GUI-subsystem helper finished; it was inconclusive.
+Explicit process waiting fixed the harness before the reported before/after
+measurements. All audit browser processes were stopped; user browsers were not.
+
+Deployed helper, public inventory, native diagnostic, tests and trust receipts:
+`C:\Users\Owner\AppData\Local\OpenClaw\Security\emudhra-20261020`.
+Audit-only browser diagnostics and profiles:
+`C:\Users\Owner\AppData\Local\Temp\emudhra-audit.kb2Wmp`.
+The persistent execution-policy scopes remained Undefined after diagnostics.
+
+**CurseForge retirement:** stopped only processes from its exact installation,
+removed its startup value, two shortcuts, URL protocol and uninstall entry
+after backing up their registrations, and moved the application into
+`C:\Users\Owner\AppData\Local\OpenClaw\Security\emudhra-20261020\retired-CurseForge-20261021T033814Z`.
+Five executables were hash-verified and renamed with `.disabled` extensions.
+Signed bytes were preserved; these are unrepaired recovery copies and must not
+be re-enabled without a verified repair. A transient file lock interrupted the
+first move; the remaining installation files were moved without overwriting
+recovery files and verified before the empty source directories were removed.
+Mods, game installations, settings and account data outside the application
+installation were untouched. No space reclamation or permanent application
+deletion is claimed.
+
+**Remaining limits:** local distrust is scoped to Owner, not every Windows
+account/service. Independent application trust stores remain separate. Discord
+1.0.9264 disables RunAsNode and Node inspection; no fuse was changed and no GUI
+account session was instrumented. Firefox 158.0, Edge WebView2, Steam/Epic and
+the installed Codex package are not independently cleared by the native or
+fresh-Chrome/Edge checks. Existing user browser connections/profiles were not
+inspected or restarted; fresh processes were verified. The offline cabin
+desktop needs the same host-specific audit when available. These findings do
+not establish prior interception or a whole-machine security clearance.
+
 ## Audit commands
 
 Run these on each host. The output of each should be diffed against
