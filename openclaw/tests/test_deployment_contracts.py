@@ -168,6 +168,84 @@ class DeploymentContractTests(unittest.TestCase):
         end = text.index(f"\n{marker}\n", start)
         return text[start:end] + "\n"
 
+    def gateway_launch_fixture(self, *, shell: bool = True) -> dict:
+        home = Path.home()
+        arguments = [
+            str(home / ".openclaw/service-env/ai.openclaw.gateway-env-wrapper.sh"),
+            str(home / ".openclaw/service-env/ai.openclaw.gateway.env"),
+            str(home / "Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway"),
+            "gateway", "--port", "18789",
+        ]
+        return {
+            "Label": "ai.openclaw.gateway",
+            "ProgramArguments": (["/bin/sh"] if shell else []) + arguments,
+        }
+
+    def test_generated_gateway_preserved_even_with_force(self) -> None:
+        destination = self.root / "gateway.plist"
+        for shell in (False, True):
+            for force in ("false", "true"):
+                with self.subTest(shell=shell, force=force):
+                    original = plistlib.dumps(self.gateway_launch_fixture(shell=shell))
+                    destination.write_bytes(original)
+                    before = destination.stat()
+                    result = self.run_bash(
+                        'source "$1"\nFORCE=' + force + '\n'
+                        'link_file() { echo unexpected-replacement >&2; return 99; }\n'
+                        'install_openclaw_gateway_plist "$2" "$3"',
+                        INSTALLER, GATEWAY_RECOVERY_PLIST, destination,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn("unexpected-replacement", result.stderr)
+                    self.assertFalse(destination.is_symlink())
+                    self.assertEqual(destination.read_bytes(), original)
+                    self.assertEqual(destination.stat().st_ino, before.st_ino)
+                    self.assertEqual(destination.stat().st_mtime_ns, before.st_mtime_ns)
+
+    def test_generated_gateway_rejects_unexpected_launch_chains(self) -> None:
+        fixtures = []
+        for index in range(7):
+            fixture = self.gateway_launch_fixture()
+            fixture["ProgramArguments"][index] = "/unexpected"
+            fixtures.append((f"argument-{index}", fixture))
+        for name in ("label", "program", "extra", "missing", "no-arguments"):
+            fixture = self.gateway_launch_fixture()
+            if name == "label":
+                fixture["Label"] = "other.service"
+            elif name == "program":
+                fixture["Program"] = "/bin/echo"
+            elif name == "extra":
+                fixture["ProgramArguments"].append("--unexpected")
+            elif name == "missing":
+                fixture["ProgramArguments"].pop()
+            else:
+                del fixture["ProgramArguments"]
+            fixtures.append((name, fixture))
+        destination = self.root / "gateway.plist"
+        for name, fixture in fixtures:
+            with self.subTest(name=name):
+                destination.write_bytes(plistlib.dumps(fixture))
+                result = self.run_bash(
+                    'source "$1"\nis_generated_openclaw_gateway_plist "$2"',
+                    INSTALLER, destination,
+                )
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_generated_gateway_rejects_symlinks_and_malformed_plists(self) -> None:
+        target = self.root / "target.plist"
+        target.write_bytes(plistlib.dumps(self.gateway_launch_fixture()))
+        symlink = self.root / "symlink.plist"
+        symlink.symlink_to(target)
+        malformed = self.root / "malformed.plist"
+        malformed.write_text("not a plist\n")
+        for path in (symlink, malformed, self.root / "missing.plist"):
+            with self.subTest(path=path.name):
+                result = self.run_bash(
+                    'source "$1"\nis_generated_openclaw_gateway_plist "$2"',
+                    INSTALLER, path,
+                )
+                self.assertNotEqual(result.returncode, 0)
+
     def test_cron_sync_failure_is_logged_before_pull_exits(self) -> None:
         text = DOTFILES_PULL.read_text(encoding="utf-8")
         block = text.split("# Deploy updated cron job definitions (preserves runtime state)\n", 1)[1].split("# Self-update:", 1)[0]

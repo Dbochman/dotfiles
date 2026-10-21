@@ -743,11 +743,37 @@ is_generated_openclaw_gateway_plist() {
   local path="$1"
   [[ -f "$path" && ! -L "$path" ]] || return 1
 
-  local label program
+  local label program argument index
+  local wrapper="$HOME/.openclaw/service-env/ai.openclaw.gateway-env-wrapper.sh"
+  local expected=(
+    "$wrapper"
+    "$HOME/.openclaw/service-env/ai.openclaw.gateway.env"
+    "$HOME/Applications/OpenClawGateway.app/Contents/MacOS/OpenClawGateway"
+    "gateway" "--port" "18789"
+  )
   label=$(/usr/libexec/PlistBuddy -c 'Print :Label' "$path" 2>/dev/null) || return 1
   program=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$path" 2>/dev/null) || return 1
   [[ "$label" = "ai.openclaw.gateway" ]] || return 1
-  [[ "$program" = "$HOME/.openclaw/service-env/ai.openclaw.gateway-env-wrapper.sh" ]]
+
+  # Recognize both generated forms, not arbitrary shell commands or wrappers.
+  # A separate Program key would override the executable in ProgramArguments.
+  if /usr/libexec/PlistBuddy -c 'Print :Program' "$path" &>/dev/null; then
+    return 1
+  fi
+  case "$program" in
+    /bin/sh) expected=("/bin/sh" "${expected[@]}") ;;
+    "$wrapper") ;;
+    *) return 1 ;;
+  esac
+  for index in "${!expected[@]}"; do
+    argument=$(/usr/libexec/PlistBuddy -c "Print :ProgramArguments:$index" "$path" 2>/dev/null) || return 1
+    [[ "$argument" = "${expected[$index]}" ]] || return 1
+  done
+  # Extra arguments are not part of the generated launch contract.
+  if /usr/libexec/PlistBuddy -c "Print :ProgramArguments:${#expected[@]}" "$path" &>/dev/null; then
+    return 1
+  fi
+  return 0
 }
 
 install_openclaw_gateway_plist() {
