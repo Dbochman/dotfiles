@@ -48,6 +48,9 @@ class GatewayRuntimeContractTests(unittest.TestCase):
 
     def wrapper_fixture(self):
         source = WRAPPER.read_text()
+        bundle = self.home / "cert.pem"
+        bundle.write_text("synthetic bundle\n")
+        source = source.replace("/opt/homebrew/etc/ca-certificates/cert.pem", str(bundle))
         self.assertIn(NODE_DIRECTORY, source)
         source = source.replace(NODE_DIRECTORY, str(self.node_directory))
         source = source.replace("/Users/dbochman", str(self.home))
@@ -101,6 +104,29 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         self.assertFalse((self.home / "cache-read").exists())
         self.assertEqual(log.read_bytes(), contents)
         self.assertFalse(log.with_suffix(".log.tmp").exists())
+
+    def test_missing_ca_bundle_stops_before_credentials(self):
+        wrapper = self.wrapper_fixture()
+        node = self.node_directory / "node"
+        node.write_text("#!/bin/bash\nexit 0\n")
+        node.chmod(0o700)
+        wrapper.write_text(wrapper.read_text().replace(NODE_SHA256, hashlib.sha256(node.read_bytes()).hexdigest()))
+        (self.home / "cert.pem").unlink()
+        result = self.run_shell('/bin/bash "$1"', wrapper)
+        self.assertEqual(result.returncode, 78)
+        self.assertIn("TLS CA bundle", result.stderr)
+        self.assertFalse((self.home / "cache-read").exists())
+
+    def test_gateway_selects_maintained_roots_without_extra_roots(self):
+        wrapper = self.wrapper_fixture()
+        node = self.node_directory / "node"
+        node.write_text('#!/bin/bash\nprintf "%s\\n" "$NODE_OPTIONS" "$SSL_CERT_FILE" "$CURL_CA_BUNDLE" "${NODE_EXTRA_CA_CERTS-unset}" "${NODE_USE_SYSTEM_CA-unset}"\n')
+        node.chmod(0o700)
+        wrapper.write_text(wrapper.read_text().replace(NODE_SHA256, hashlib.sha256(node.read_bytes()).hexdigest()))
+        environment = dict(self.environment, NODE_EXTRA_CA_CERTS="unapproved.pem", NODE_USE_SYSTEM_CA="1")
+        result = self.run_shell('/bin/bash "$1"', wrapper, environment=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["--use-openssl-ca", str(self.home / "cert.pem"), str(self.home / "cert.pem"), "unset", "unset"])
 
     def test_nonexecutable_node24_is_not_used(self):
         wrapper = self.wrapper_fixture()

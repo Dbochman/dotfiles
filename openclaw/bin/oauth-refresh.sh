@@ -100,6 +100,10 @@ def main():
         environment["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = str(directory)
         environment["USER"] = account
         environment["PATH"] = "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        environment["SSL_CERT_FILE"] = "/opt/homebrew/etc/ca-certificates/cert.pem"
+        environment["NODE_OPTIONS"] = "--use-openssl-ca"
+        environment.pop("NODE_EXTRA_CA_CERTS", None)
+        environment.pop("NODE_USE_SYSTEM_CA", None)
         if not attended:
             oauth = before["claudeAiOauth"]
             environment["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"] = oauth["refreshToken"]

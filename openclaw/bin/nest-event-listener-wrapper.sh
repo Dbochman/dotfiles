@@ -197,6 +197,8 @@ run_service() {
   /usr/bin/env -i \
     HOME="$HOME" \
     PATH="/usr/bin:/bin" \
+    SSL_CERT_FILE="/opt/homebrew/etc/ca-certificates/cert.pem" \
+    GRPC_DEFAULT_SSL_ROOTS_FILE_PATH="/opt/homebrew/etc/ca-certificates/cert.pem" \
     GOOGLE_APPLICATION_CREDENTIALS="$CREDENTIAL_FILE" \
     NEST_EVENT_CONFIG="$CONFIG_FILE" \
     NEST_EVENT_STATE_DIR="$STATE_DIR" \
@@ -263,6 +265,8 @@ esac
 exec /usr/bin/env -i \
   HOME="$HOME" \
   PATH="/usr/bin:/bin" \
+  SSL_CERT_FILE="/opt/homebrew/etc/ca-certificates/cert.pem" \
+  GRPC_DEFAULT_SSL_ROOTS_FILE_PATH="/opt/homebrew/etc/ca-certificates/cert.pem" \
   GOOGLE_APPLICATION_CREDENTIALS="$CREDENTIAL_FILE" \
   NEST_EVENT_CONFIG="$CONFIG_FILE" \
   NEST_EVENT_STATE_DIR="$STATE_DIR" \

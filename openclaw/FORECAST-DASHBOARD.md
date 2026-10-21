@@ -472,6 +472,12 @@ The forecast dashboard does not intentionally use `eval` or `new Function` in re
 
 ## Security Notes
 
+The 2026-10-20 TLS remediation updated certifi in the separate crypto-sync venv
+to 2026.10.19 and refreshed the Mini's maintained CA bundles. This did not run
+source refreshes or ledger captures, change schedules, or change the baseline
+contract. Recheck the crypto interpreter's default and certifi trust after
+rebuilding it; see [the incident record](plans/dependency-maintenance.md#emudhra-tls-incident-response--2026-10-20).
+
 - Home-LAN and Tailscale-tailnet access are the intended exposure model; public-internet forwarding is not
 - The dashboard contains sensitive planning assumptions, household balances, allocation targets, and compensation-related planning inputs
 - Do not expose `source-documents/`, raw research exports, PDFs, or other repo contents through the forecast server

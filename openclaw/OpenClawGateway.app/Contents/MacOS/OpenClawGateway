@@ -10,6 +10,15 @@ if [[ ! -x /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-a
   exit 78
 fi
 
+# Node's bundled roots do not receive browser revocation updates. Use the
+# maintained Homebrew bundle (eMudhra incident, 2026-10-20), without adding the
+# vulnerable bundled roots back via --use-system-ca or NODE_EXTRA_CA_CERTS.
+readonly GATEWAY_CA_BUNDLE=/opt/homebrew/etc/ca-certificates/cert.pem
+if [[ ! -s "$GATEWAY_CA_BUNDLE" || ! -r "$GATEWAY_CA_BUNDLE" ]]; then
+  echo "FATAL: Required TLS CA bundle is unavailable" >&2
+  exit 78
+fi
+
 CACHE="$HOME/.openclaw/.secrets-cache"
 
 # Source secrets from cache file (KEY=VALUE format, one per line).
@@ -43,4 +52,8 @@ if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
   exit 1
 fi
 
+export SSL_CERT_FILE="$GATEWAY_CA_BUNDLE"
+export CURL_CA_BUNDLE="$GATEWAY_CA_BUNDLE"
+export NODE_OPTIONS=--use-openssl-ca
+unset NODE_EXTRA_CA_CERTS NODE_USE_SYSTEM_CA
 exec /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789

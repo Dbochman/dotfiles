@@ -11,6 +11,17 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 
 ## Mac Mini — Long-Running Services (KeepAlive)
 
+TLS maintenance (2026-10-20): the gateway FDA wrapper now selects the maintained
+Homebrew CA file and clears conflicting inherited Node trust flags; Nest's
+clean environment also selects that file for gRPC. Long-running clients may
+cache TLS contexts, so package updates alone are insufficient. Use the gateway's
+cooperative drain and activation verifier for its restart, and verify the exact
+dependent services afterward. Finance's SIGTERM handler now delegates shutdown
+to another thread to avoid a serving-loop deadlock. See
+[the incident record](plans/dependency-maintenance.md#emudhra-tls-incident-response--2026-10-20)
+for deployed versions, backups, verification, and remaining limits. No schedules
+or LaunchAgent plists changed during this remediation.
+
 | Label | Program | Port | Description |
 |-------|---------|------|-------------|
 | `ai.openclaw.gateway` | `OpenClawGateway.app` wrapper | — | OpenClaw gateway (core agent runtime, SQLite cron scheduler, native `imsg` channel) |

@@ -380,6 +380,11 @@ def fetch_gateway_usage():
     # Build env with secrets
     env = os.environ.copy()
     env["PATH"] = "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:" + env.get("PATH", "")
+    env["SSL_CERT_FILE"] = "/opt/homebrew/etc/ca-certificates/cert.pem"
+    env["CURL_CA_BUNDLE"] = env["SSL_CERT_FILE"]
+    env["NODE_OPTIONS"] = "--use-openssl-ca"
+    env.pop("NODE_EXTRA_CA_CERTS", None)
+    env.pop("NODE_USE_SYSTEM_CA", None)
     if os.path.exists(SECRETS_CACHE):
         try:
             for line in open(SECRETS_CACHE):

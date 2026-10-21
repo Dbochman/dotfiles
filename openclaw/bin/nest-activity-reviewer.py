@@ -839,6 +839,9 @@ class ProcessCommands:
             "PATH": RUNTIME_PATH,
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
+            "SSL_CERT_FILE": "/opt/homebrew/etc/ca-certificates/cert.pem",
+            "CURL_CA_BUNDLE": "/opt/homebrew/etc/ca-certificates/cert.pem",
+            "NODE_OPTIONS": "--use-openssl-ca",
         }
 
     @staticmethod

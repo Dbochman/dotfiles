@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+# Apple curl/Python do not share Safari's emergency revocation protection.
+export SSL_CERT_FILE=/opt/homebrew/etc/ca-certificates/cert.pem
+export CURL_CA_BUNDLE="$SSL_CERT_FILE"
+
 # LaunchAgent-safe credential sources. API credentials come from the protected
 # OpenClaw cache; only a real interactive terminal may fall back to exact-field
 # `op read` calls supplied through OP_REF_NEST_* environment variables.

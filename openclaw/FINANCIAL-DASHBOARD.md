@@ -491,6 +491,14 @@ finance help                      Show help
 
 ## Update Workflow
 
+TLS remediation (2026-10-20): finance requires `certifi>=2026.10.19`; test the
+actual venv with `~/dotfiles/openclaw/bin/tls-revocation-probe.py --certifi` after
+dependency rebuilds. See [the incident record](plans/dependency-maintenance.md#emudhra-tls-incident-response--2026-10-20).
+SIGTERM/SIGINT now requests server shutdown from a separate thread, avoiding
+`HTTPServer.shutdown()` deadlocking its own serving loop. Verify both process
+replacement and `/api/forecast-baseline` recovery; do not run a scrape or source
+sync just to validate certificate maintenance.
+
 **Dashboard code changes:**
 ```bash
 ssh dylans-mac-mini 'git -C "$HOME/repos/financial-dashboard" pull --ff-only'

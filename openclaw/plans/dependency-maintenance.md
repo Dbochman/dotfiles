@@ -1,6 +1,6 @@
 # Dependency maintenance plan (Mini + Crosstown MBP)
 
-**Status:** Active reference. Last audited 2026-04-29.
+**Status:** Active reference. Last general audit 2026-04-29; targeted TLS incident response 2026-10-20.
 **Owner:** Dylan
 **Hosts in scope:** `dylans-mac-mini` (gateway, all cron jobs, briefings),
 `dylans-macbook-pro` (Crosstown presence scanner).
@@ -15,6 +15,115 @@ run our home automation. Use it when:
 The goal is to keep dependencies fresh enough that security CVEs and
 bug fixes flow through, while protecting load-bearing integrations
 from breaking changes that need careful migration.
+
+## eMudhra TLS incident response — 2026-10-20
+
+This is client trust remediation, not evidence that a host was breached. Browser
+revocation updates do not repair every independent Python/Node/curl CA bundle.
+Sources: [researcher canaries](https://emudhra.we-have-a-problem.com/),
+[certifi 2026.10.19](https://github.com/certifi/python-certifi/releases/tag/2026.10.19),
+[Node's merged fix](https://github.com/nodejs/node/pull/66871), and
+[Cloudflare's response](https://blog.cloudflare.com/emudhra-certificate-compromise/).
+A merged Node patch is not proof that our installed runtime contains it.
+
+### Applied and verified
+
+- **Mini:** Homebrew `ca-certificates` 2026-10-20, `certifi` 2026.10.19,
+  `uv` 0.13.4, and Go 1.27.3. No broad Python/OpenSSL/Node upgrades. Updated
+  certifi only in Apple Python's user site and the finance, crypto, Nest events,
+  Ring, Mysa, Roomba, and litter-robot environments. Finance now declares
+  `certifi>=2026.10.19`. The existing uv package-age cutoff was retained; only
+  certifi received an explicit `--exclude-newer-package` exception.
+- The Mini's Homebrew CA post-install failed under brew and initially left the
+  effective bundle stale. Running the installed upstream `libexec/post-install`
+  helper directly with its packaged source and effective destination succeeded.
+  Do not infer protection from a successful package upgrade alone.
+- The operator replaced the Mini's root-owned `/private/etc/ssl/cert.pem` with
+  the verified Homebrew bundle using `install -o root -g wheel -m 0644`.
+  The files match. No Keychain trust settings were modified.
+- Gateway remains on pinned official Node 24.21.0 / OpenClaw 2026.10.1.
+  Its FDA wrapper requires `/opt/homebrew/etc/ca-certificates/cert.pem`, sets
+  `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, and `NODE_OPTIONS=--use-openssl-ca`, and
+  unsets `NODE_EXTRA_CA_CERTS` **and** `NODE_USE_SYSTEM_CA` after cache loading.
+  The generated service environment sets both; leaving the latter enabled
+  caused conflicting Node flags during the first restart. Both are now cleared
+  in the tracked wrapper, without editing the generated environment file.
+- Clean-environment camera, delivery, and reviewer subprocesses explicitly keep
+  the same TLS settings. Usage/OAuth helpers clear inherited alternate CA flags.
+  Both tracked Nest CLI copies set the maintained curl/OpenSSL bundle. Both
+  Nest listener wrapper branches set `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH` as well
+  as `SSL_CERT_FILE`; gRPC's independent roots must not be overlooked.
+- Gateway was drained, restarted, and accepted by `gateway_activation.py` with
+  live health, runtime, listener, required-skill, and wrapper checks. Activation
+  receipt was recorded; the daily dotfiles deployer was restored. Nest, Ring,
+  reviewers, and usage services were restarted to discard cached TLS contexts.
+  Finance restart exposed a signal-handler deadlock; its separate repository
+  now requests `HTTPServer.shutdown()` from another thread, with a data-free
+  regression test. Its loopback baseline endpoint recovered with HTTP 200.
+- **Crosstown MBP:** refreshed stale Homebrew metadata (including Homebrew's
+  managed portable Ruby), then upgraded only `ca-certificates` from 2026-03-19
+  to 2026-10-20. Backed up and replaced its root-owned Apple PEM bundle using
+  available noninteractive sudo. Apple Python 3.9.6 and Homebrew Node 25.9.0
+  now reject all 12 canaries and accept both normal controls. Presence remained
+  healthy; scanner configuration and schedules were not changed.
+- **dylans-mac:** owner accepted the Xcode license; Homebrew then upgraded only
+  `ca-certificates` from 2026-08-13 to 2026-10-20. Apple Python 3.9.6,
+  Homebrew Python 3.14.7, and Homebrew Node 26.7.0 reject all 12 canaries and
+  accept both controls. Its existing Apple PEM bundle already passed; no sudo
+  replacement was needed. Homebrew Python had no importable certifi package.
+
+Owner-only rollback material (old bundles/packages/wrappers; not an instruction
+to restore vulnerable trust):
+
+- Mini: `/Users/dbochman/Backups/emudhra-mini-20261020.RNcs0y`
+- Crosstown: `/Users/dbochman/Backups/emudhra-20261020.6b1Q4V`
+- dylans-mac: `/Users/dylanbochman/Backups/emudhra-20261020.0ljTuR`
+
+### Repeatable verification and remaining scope
+
+Run the new credential-free probe with the application's actual interpreter:
+
+```bash
+/usr/bin/python3 ~/dotfiles/openclaw/bin/tls-revocation-probe.py
+~/repos/financial-dashboard/venv/bin/python3 ~/dotfiles/openclaw/bin/tls-revocation-probe.py --certifi
+```
+
+It checks all 12 DV/OV/EV, G3B/G3C, direct/cross-signed canaries and two normal
+controls. Exit 0 means expected trust rejection plus successful controls;
+1 means a compromised issuer was accepted; 2 means inconclusive. Timeouts,
+expiry, hostname failures, and a changed successful canary are not protection.
+It sends no HTTP requests, credentials, events, or messages. Mini Apple Python
+and finance certifi passed the full probe; maintained CA and mitigated Node 24
+`https`/`fetch` also passed all 12. Other updated Mini Python environments passed
+both chain-route samples plus a normal control. Ordinary API TLS handshakes
+passed without authenticating or running financial jobs.
+
+- Recheck after macOS updates: they may overwrite `/private/etc/ssl/cert.pem`.
+  Keep the maintained Homebrew and environment-specific certifi stores current.
+- A fresh process passing does not prove an already-running app discarded its
+  cached roots. Relaunch interactive apps when convenient. Homebrew Node passed
+  with its default trust on these hosts; standalone official Node 24 remains
+  exposed without the wrapper settings. Do not remove the mitigation merely
+  because a Node version command or browser test succeeds.
+- Go toolchain updates do **not** rebuild existing Go binaries. The installed
+  PinchTab binary was built with Go 1.26.2; vendor/binary and isolated browser
+  verification remain separate follow-ups. Electron/native/Rust applications,
+  additional project venvs, employer-managed Macs, phones, and IoT firmware were
+  not comprehensively audited.
+- Home event bus core remained healthy. Overall health still lists the existing
+  camera degradation and a Ring publisher warning after restart. Ring started
+  and heartbeated without recent TLS errors; historical failed/quarantined
+  counters remain preserved. Await a real post-restart publication before
+  claiming complete Ring recovery; do not fabricate events or reset counters.
+- Website ingress checks passed: main/www/API and Cloudflare preview use Google
+  Trust Services; Netlify editor uses DigiCert. No affected leaf issuer was seen.
+  Cloudflare reports provider-side mitigation, but this does not independently
+  verify our Worker outbound connections. Website CI still uses official Node
+  24 and JavaScript actions with independent trust. A separate, reviewed CI
+  hardening change must protect outbound requests **before credential-bearing
+  checkout/actions**, not merely set an extra CA file after setup-node. Machine
+  fixes are being committed separately from the website CI/post PR; no website
+  deployment or workflow dispatch was performed during this host remediation.
 
 ## Audit commands
 

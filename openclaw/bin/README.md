@@ -43,6 +43,19 @@ active post-deploy checks.
 
 ### Gateway & Maintenance
 
+TLS incident procedures and host-specific verification are recorded in
+[`dependency-maintenance.md`](../plans/dependency-maintenance.md#emudhra-tls-incident-response--2026-10-20).
+Run `python3 openclaw/bin/tls-revocation-probe.py` from the checkout with the
+actual application interpreter (`--certifi` for its separate Requests bundle).
+The probe performs credential-free TLS handshakes only; exit 0/1/2 means
+expected rejection / confirmed acceptance / inconclusive. It is an operator
+diagnostic, not a scheduled job or a blanket browser/app attestation.
+
+The gateway and Node-based clean-environment helpers select the maintained
+Homebrew bundle using `SSL_CERT_FILE` and `NODE_OPTIONS=--use-openssl-ca`.
+Do not reintroduce `NODE_USE_SYSTEM_CA` or `NODE_EXTRA_CA_CERTS`. Curl helpers
+also set `CURL_CA_BUNDLE`; Nest gRPC sets `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH`.
+
 | Script | Location on Mini | Description |
 |--------|-----------------|-------------|
 | `openclaw-refresh-secrets` | `~/bin/` | Attended exact-field refresh of `~/.openclaw/.secrets-cache` plus the optional complete dedicated finance cache; run with `--interactive` after key rotation, never from launchd/cron. |

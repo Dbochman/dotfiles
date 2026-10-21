@@ -777,6 +777,10 @@ class PresenceContractTests(ActivityReviewerTestCase):
 class ProcessCommandSafetyTests(ActivityReviewerTestCase):
     def test_subprocess_environment_prefers_versioned_node_runtime(self) -> None:
         environment = review.ProcessCommands(self.settings)._environment()
+        self.assertEqual(environment["NODE_OPTIONS"], "--use-openssl-ca")
+        self.assertEqual(environment["SSL_CERT_FILE"], "/opt/homebrew/etc/ca-certificates/cert.pem")
+        self.assertEqual(environment["CURL_CA_BUNDLE"], environment["SSL_CERT_FILE"])
+        self.assertNotIn("NODE_EXTRA_CA_CERTS", environment)
         self.assertEqual(environment["PATH"], review.RUNTIME_PATH)
         self.assertEqual(
             environment["PATH"].split(":", 1)[0],

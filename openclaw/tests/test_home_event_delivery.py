@@ -377,6 +377,11 @@ class HomeEventDeliveryTests(unittest.TestCase):
 
         with mock.patch.object(delivery.subprocess, "run", return_value=result) as run:
             delivery.send_message(self.TARGET, "fixed message")
+        environment = run.call_args.kwargs["env"]
+        self.assertEqual(environment["NODE_OPTIONS"], "--use-openssl-ca")
+        self.assertEqual(environment["SSL_CERT_FILE"], "/opt/homebrew/etc/ca-certificates/cert.pem")
+        self.assertEqual(environment["CURL_CA_BUNDLE"], environment["SSL_CERT_FILE"])
+        self.assertNotIn("NODE_EXTRA_CA_CERTS", environment)
         self.assertEqual(
             run.call_args.kwargs["env"]["PATH"].split(":", 1)[0],
             "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin",

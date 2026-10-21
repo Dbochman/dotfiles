@@ -290,6 +290,9 @@ def send_message(target: str, message: str) -> None:
         "HOME": str(Path.home()),
         "PATH": "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/usr/bin:/bin",
         "LANG": "en_US.UTF-8",
+        "SSL_CERT_FILE": "/opt/homebrew/etc/ca-certificates/cert.pem",
+        "CURL_CA_BUNDLE": "/opt/homebrew/etc/ca-certificates/cert.pem",
+        "NODE_OPTIONS": "--use-openssl-ca",
     }
     for key in ("OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"):
         value = os.environ.get(key, "")
