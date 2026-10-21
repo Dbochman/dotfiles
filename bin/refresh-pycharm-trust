@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Refresh only PyCharm's external public CA store. No bundle/config edits.
+set -euo pipefail
+umask 077
+
+repo_dir=$(cd "$(dirname "$0")/.." && pwd)
+java=/Applications/PyCharm.app/Contents/jbr/Contents/Home/bin/java
+ca_file=/opt/homebrew/etc/ca-certificates/cert.pem
+trust_dir="${HOME:?}/.local/share/app-trust/pycharm"
+test -x "$java"
+test -r "$ca_file"
+test ! -L "$trust_dir"
+mkdir -p "$trust_dir"
+chmod 700 "$trust_dir"
+# Keep each attempted generation for diagnosis; never overwrite a good store
+# before BOTH normal controls and all incident canaries pass. No cleanup globs.
+stage=$(mktemp -d "$trust_dir/refresh.XXXXXX")
+cp "$ca_file" "$stage/source.pem"
+env -i PATH=/usr/bin:/bin "$java" \
+  "$repo_dir/lib/pycharm-trust/BuildPublicTrustStore.java" \
+  "$stage/source.pem" "$stage/public-ca.p12"
+env -i PATH=/usr/bin:/bin "$java" \
+  "-Djavax.net.ssl.trustStore=$stage/public-ca.p12" \
+  -Djavax.net.ssl.trustStoreType=PKCS12 \
+  -Djavax.net.ssl.trustStorePassword=public-ca-only \
+  "$repo_dir/lib/pycharm-trust/TlsProbe.java" | tee "$stage/verification.txt"
+# Prevent replacing a managed symlink or unexpected destination.
+test ! -L "$trust_dir/public-ca.p12"
+if test -e "$trust_dir/public-ca.p12"; then
+  test -f "$trust_dir/public-ca.p12"
+  cp -p "$trust_dir/public-ca.p12" "$stage/previous-public-ca.p12"
+fi
+shasum -a 256 "$stage/source.pem" "$stage/public-ca.p12"
+mv "$stage/public-ca.p12" "$trust_dir/public-ca.p12"
+printf 'Installed tested public trust store: %s\n' "$trust_dir/public-ca.p12"
+printf 'Restart PyCharm after refreshing; already-created TLS contexts may be cached.\n'

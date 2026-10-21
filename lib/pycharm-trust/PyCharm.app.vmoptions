@@ -1,0 +1,7 @@
+# Application-scoped external public trust store; vendor bundle stays signed.
+# Existing user heap preference retained from PyCharm2024.1.
+-Xmx4096m
+-Djavax.net.ssl.trustStore=/Users/dbochman/.local/share/app-trust/pycharm/public-ca.p12
+-Djavax.net.ssl.trustStoreType=PKCS12
+# Public-CA integrity password, not an account credential or private-key secret.
+-Djavax.net.ssl.trustStorePassword=public-ca-only

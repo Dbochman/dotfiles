@@ -318,7 +318,7 @@ the old vulnerable versions):
 - `/Users/dbochman/Backups/vendor-tls-20261020.f1o5li5p/` — GitHub Desktop,
   Inkscape.
 
-**Status: vendor updates completed, incident remediation not complete.** Do not
+**Status after vendor-update pass: incident remediation not complete.** Do not
 equate the new version numbers, valid signatures, or disabled test mode with
 trust remediation. Next work requires application-scoped trust configuration
 where supported and/or verified vendor fixes. No global launch environment,
@@ -326,6 +326,168 @@ Java trust store, browser settings, managed security controls, or signed vendor
 bundle was changed to force a pass. Reolink and the separate ChatGPT helper
 findings from the previous sweep remain open and were outside this approved
 MacBook vendor-update batch. No apps or user data were removed.
+
+### Approved application retirement — 2026-10-20
+
+Owner subsequently approved retiring Kap on the Crosstown MacBook and the
+Reolink desktop apps on the Mini and dylans-mac, preserving settings. This
+supersedes the open retirement decisions for those three installations above;
+it does not clear the other bundled-runtime findings.
+
+- Verified exact bundle identifiers and versions before moving: Kap 3.6.0
+  (`com.wulkano.kap`) and Reolink 8.21.12 (`com.reolink.app`). None were running;
+  no matching loaded launch services or references in the checked user/system
+  LaunchAgent and LaunchDaemon files were found.
+- Unregistered the three installed paths with LaunchServices and moved only
+  the app bundles into unique owner-only Trash directories. Verified installed
+  paths are absent, retired bundles are present, and no matching app processes
+  remain. Strict deep code-signature verification passed for all three retired
+  bundles. No vendor bundle contents were edited or re-signed.
+- Recoverable locations (vulnerable binaries; do not restore or launch):
+  - Mini: `/Users/dbochman/.Trash/vendor-tls-retired-20261020.dsVlmA/Reolink.app`
+    (419 MiB).
+  - Crosstown MacBook:
+    `/Users/dbochman/.Trash/vendor-tls-retired-20261020.HyCGEF/Kap.app`
+    (324 MiB).
+  - dylans-mac:
+    `/Users/dylanbochman/.Trash/vendor-tls-retired-20261020.rM2cPM/Reolink.app`
+    (419 MiB).
+- Application settings, accounts, Keychain entries, recordings, and other user
+  data were left untouched. No permanent deletion or disk-space reclamation
+  is claimed; the bundles remain recoverable until their Trash copies are
+  permanently removed.
+- Reolink camera automation remains separate: the tracked helper connects to
+  the local Home Hub using pinned TLS, not the desktop application. Its code,
+  configuration, and services were not changed or restarted. No live camera
+  request or capture was performed for this retirement.
+- GitHub Desktop, CurseForge, Cursor, PyCharm, Inkscape, ChatGPT helpers, and
+  unverified applications remain separate follow-ups. No global trust setting,
+  outbound firewall, managed security control, or application-specific trust
+  override was deployed in this retirement step.
+
+### PyCharm mitigation, further retirement, and launch-path verification — 2026-10-20
+
+Owner approved deploying the PyCharm mitigation, retiring GitHub Desktop and
+CurseForge on the Crosstown MacBook, and then investigating Cursor/ChatGPT's
+actual application launch paths. This section supersedes their pending actions
+above; it is not a blanket clearance of every application.
+
+**PyCharm default JVM trust mitigated on the Crosstown MacBook:**
+
+- Installed `/Applications/PyCharm.app.vmoptions` beside the signed bundle.
+  The native launcher selects this supported adjacent options file without
+  environment overrides. It preserves the existing 4 GiB heap preference and
+  sets the three JSSE trust-store properties. No `.app` contents were changed.
+- Installed a PKCS12 public trust store at
+  `/Users/dbochman/.local/share/app-trust/pycharm/public-ca.p12`, built from the
+  repaired Homebrew PEM bundle (188 CA certificates). Its fixed password is
+  public integrity metadata, not a credential. Source PEM SHA-256:
+  `f356a97fb33148de963979b5b164c0b8de13c5bfe0ffe913ef68208d6364a419`.
+- Added tracked `bin/refresh-pycharm-trust` and `lib/pycharm-trust/`, and deployed
+  the refresh command/sources under `~/.local/lib/app-trust/` on the MacBook.
+  The command builds and tests a candidate before atomic replacement, retaining
+  prior public stores. Refresh after CA updates and restart PyCharm; no scheduled
+  job was installed. See `lib/pycharm-trust/README.md` for scope and maintenance.
+- Standalone bundled Java and a **native-launch JVM diagnostic** both rejected
+  all twelve incident canaries and accepted github.com/pypi.org. The latter
+  used a temporary external premain probe, confirmed the native launcher loaded
+  the deployed options/store, then exited before IDE account/project/plugin
+  initialization. The first native run had one DNS failure and correctly exited
+  inconclusive; a fresh complete rerun passed. No diagnostic agent is configured
+  in the permanent options file. Strict deep vendor-signature verification passes.
+- The old `PyCharm2024.1` configuration is unchanged; no new `PyCharm2026.2`
+  configuration was pre-created, so first-launch migration remains available.
+  No legacy custom `ssl/cacerts` store or explicit automatic-certificate-accept
+  setting was found in the checked legacy settings. Keep automatic acceptance
+  disabled and recheck after migration. This validates default JVM trust, not
+  JCEF, plugin-defined TLS, subprocesses or manually accepted certificates.
+
+**GitHub Desktop and CurseForge retired on the Crosstown MacBook:**
+
+- GitHub Desktop 3.6.7 (`com.github.GitHubClient`) moved to
+  `/Users/dbochman/.Trash/vendor-tls-retired-20261020.Wxpzkl/GitHub Desktop.app`
+  (approximately 1.0 GiB).
+- CurseForge 1.324.0-41180 (`com.overwolf.curseforge`) moved to
+  `/Users/dbochman/.Trash/vendor-tls-retired-20261020.a19Gcz/CurseForge.app`
+  (604 MiB).
+- Both were stopped and had no matching loaded launch services or references
+  in the checked LaunchAgent/LaunchDaemon files. Unregistered their installed
+  paths with LaunchServices. Verified installed paths absent, no matching app
+  processes, and strict deep signatures intact at the retired locations.
+- Settings, credentials, repositories, game/mod data and prior rollback copies
+  were not touched. Trash bundles remain recoverable and vulnerable; do not
+  restore or launch them. No disk-space reclamation is claimed.
+
+**Cursor and ChatGPT: helper-only override is not a GUI mitigation.**
+
+Launched the actual signed application executables with an isolated profile
+argument, `NODE_OPTIONS=--use-openssl-ca`, and the repaired `SSL_CERT_FILE`.
+Used an ephemeral loopback inspector to pause at the initial script breakpoint;
+never sent `Debugger.resume`. Inspected only runtime versions, these two
+environment variables and public default CA certificates, then terminated each
+audit-owned process before vendor application JavaScript proceeded. No account,
+project, user extension or normal application workflow was exercised.
+
+| Application / host | GUI Node runtime | Effective default roots | Launch result |
+| --- | --- | --- | --- |
+| Cursor 3.26.13 / Crosstown MacBook | 24.18.1, Electron 42.10.0 | 120, matching bundled count | `NODE_OPTIONS` emptied; repaired `SSL_CERT_FILE` present but not selected |
+| ChatGPT 26.721.30844 / Mini | 24.14.0, packaged runtime reports 150.0.7871.128 | 144, matching bundled count | Same |
+| ChatGPT 26.908.70816 / dylans-mac | 24.19.0, packaged runtime reports 152.0.7977.83 | 120, matching bundled count | Same |
+
+Exported only those public root sets and tested each on the Mini: **six direct
+compromised chains accepted, six cross-signed chains rejected, both normal
+controls passed**. Testing the public export on the Mini avoids mistaking
+dylans-mac's intercepted canary responses for client distrust. This proves
+continued trust in the GUI Node defaults, not that every application request
+uses those defaults. The separate Node helper runtimes can differ from GUI
+Node (notably ChatGPT on dylans-mac).
+
+No ineffective global environment change or helper-only launcher was deployed.
+No fuses, signed bundles, VPN or managed security controls were changed. At the
+end of this verification phase, Cursor and both ChatGPT desktop installations
+needed a verified vendor repair or an owner decision on retirement versus
+enforced outbound containment; the approved retirement is recorded below. Inkscape's
+mitigation remains unvalidated. Apps whose runtime tests are disabled remain
+**unverified**, not newly confirmed vulnerable. Whole-app trust clearance is
+not claimed for any of these unresolved cases.
+
+### Approved Cursor and ChatGPT retirement — 2026-10-20
+
+Owner approved retirement after the GUI launch-path findings above. Scope was
+Cursor on the Crosstown MacBook and ChatGPT on the Mini and dylans-mac; no
+other application installation or separate Codex CLI/app was removed.
+
+| Host | Retired app | Recoverable Trash location |
+| --- | --- | --- |
+| Crosstown MacBook | Cursor 3.26.13 (approximately 1.0 GiB) | `/Users/dbochman/.Trash/vendor-tls-retired-20261020.LtyZMC/Cursor.app` |
+| Mini | ChatGPT 26.721.30844 (approximately 1.3 GiB) | `/Users/dbochman/.Trash/vendor-tls-retired-20261020.U00qxz/ChatGPT.app` |
+| dylans-mac | ChatGPT 26.908.70816 (approximately 1.3 GiB) | `/Users/dylanbochman/.Trash/vendor-tls-retired-20261020.mWvf2l/ChatGPT.app` |
+
+- Confirmed versions, paths and bundle identifiers before moving. The ChatGPT
+  bundles identify as `com.openai.codex`; targets were resolved by their exact
+  `/Applications/ChatGPT.app` paths, not by an identifier-wide removal.
+- All three were stopped. No relevant launch-service registrations or matching
+  app-path references were found in the checked LaunchAgent/LaunchDaemon files;
+  the Mini's tracked `bin`, OpenClaw wrappers and LaunchAgents also had no exact
+  target-path references. Apple's unrelated CursorUIViewService was untouched.
+- Unregistered each installed path with LaunchServices and moved only its
+  signed app bundle to the listed owner-only Trash directory. Verified the
+  original installed paths are absent, Trash bundles present, no matching app
+  processes remain, and strict deep signature verification passes for all three.
+- Settings, account state, credentials, extensions, projects and other user data
+  were not removed or inspected. Existing rollback backups were preserved.
+  Retained app binaries remain vulnerable: do not restore or launch them.
+  Nothing was permanently deleted and disk-space reclamation is not claimed.
+- **Non-security cleanup remaining:** the MacBook's root-owned
+  `/usr/local/bin/cursor` symlink still points to
+  `/Applications/Cursor.app/Contents/Resources/app/bin/code`. Its parent is not
+  writable without administrator access. Left the now-dangling shortcut in
+  place; it cannot launch the retired app. No sudo access or permission change
+  was attempted.
+- This closes the retirement decisions for these three specific installations.
+  PyCharm's deployed default-JVM mitigation is unchanged. Inkscape remains
+  unvalidated, and previously untestable apps remain unverified; this is not a
+  whole-host trust clearance.
 
 ## Audit commands
 
