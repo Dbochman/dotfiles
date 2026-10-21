@@ -106,8 +106,9 @@ passed without authenticating or running financial jobs.
   exposed without the wrapper settings. Do not remove the mitigation merely
   because a Node version command or browser test succeeds.
 - Go toolchain updates do **not** rebuild existing Go binaries. The installed
-  PinchTab binary was built with Go 1.26.2; vendor/binary and isolated browser
-  verification remain separate follow-ups. Electron/native/Rust applications,
+  PinchTab binary was built with Go 1.26.2. The follow-up below tests its actual
+  macOS client separately from Chrome; a compiler update is still not a binary
+  rebuild. Electron/native/Rust applications,
   additional project venvs, employer-managed Macs, phones, and IoT firmware were
   not comprehensively audited.
 - Home event bus core remained healthy. Overall health still lists the existing
@@ -124,6 +125,143 @@ passed without authenticating or running financial jobs.
   checkout/actions**, not merely set an extra CA file after setup-node. Machine
   fixes are being committed separately from the website CI/post PR; no website
   deployment or workflow dispatch was performed during this host remediation.
+
+### Application follow-up — evening of 2026-10-20
+
+- **Website:** PR #338 merged as `effaa165` after the owner approved two narrow
+  dependency patches (Vite 7.3.7, follow-redirects 1.16.1). Hosted audit, TLS
+  canaries, lint, typechecks, all 301 tests, full build, browser checks, and review
+  passed. Production serves the retitled incident post. This supersedes the
+  earlier paragraph's pending-CI status; no audit gate was bypassed.
+- **Existing Go clients on the Mini:** fresh invocations of the installed
+  PinchTab 0.11.0 (Go 1.26.2) and GitHub CLI (Go 1.26.1) reject all 12 canaries
+  with explicit macOS certificate-revoked errors. Both receive HTTP responses
+  from normal controls. Tests used isolated empty configuration and deliberately
+  non-secret placeholder auth strings, never real application credentials.
+  This establishes observed default-client behavior on this host, not a Go
+  rebuild, an audit of every custom-root path, or retirement of a daemon's
+  cached state. The shared PinchTab daemon was not restarted or upgraded.
+- **Isolated Chrome:** a fresh, unauthenticated PinchTab profile initially
+  displayed a successful connection to a compromised-chain canary. Later the
+  same browser rejected all 12 through trusted browser-protocol errors
+  (`ERR_CERT_REVOKED` / `ERR_CERT_AUTHORITY_INVALID`) and loaded both controls.
+  Its public CertificateRevocation and PKIMetadata components appeared after
+  startup. This is consistent with a component-update readiness gap; it is not
+  proof that every persistent automation profile is protected. Next: reproduce
+  the cold-start case and add a fail-closed, browser-level trust check before
+  credential-bearing work. Do not use web page text or a successful navigation
+  command alone as evidence of rejection. No shared profile, TLS setting, or
+  daemon permission was changed; only the audit-owned instance was stopped.
+- **EchoNest Sync:** the installed 0.2.1 application's private certifi bundle
+  accepted six direct-chain canaries (the six cross-signed paths already failed).
+  Owner approved upgrading to 0.7.0. Rebuilt in an isolated environment with
+  Homebrew Python 3.14.3 and certifi 2026.10.19, then installed the signed app.
+  Both staged and installed executables pass `--tls-self-test`: all 12 canaries
+  rejected and both controls accepted, with `frozen=true`. Strict deep signature
+  verification and the 0.7.0 bundle-version check pass. User configuration was
+  not touched. GUI/playback and Keychain access were not exercised; the app was
+  not running before maintenance and was left stopped.
+- EchoNest source branch `fix/sync-packaged-tls-trust` adds a certifi floor,
+  offline packaging preflight (including the copied macOS CA file), accurate
+  bundle version metadata, isolated build-output options, and a credential-free
+  packaged self-test that runs before app/config/keyring imports. All 85 client
+  tests pass (plus 12 subtests). Committed and pushed as `a52b23c` on
+  `fix/sync-packaged-tls-trust`; the working tree is clean. No PR, release tag,
+  or server deployment was created. Local installed-app signature and TLS
+  self-tests were rerun successfully after the push; hosted CI was not verified.
+  The unaffected ECC C3 root was restored upstream in certifi 2026.10.19; the
+  packaging guard deliberately follows certifi's exclusions rather than
+  blindly copying Homebrew's broader temporary policy.
+- **NiceNode retired with owner approval:** its Electron 27.1.3 / Node 18.17.1
+  TLS client accepted all 12 canaries, but the app, node clients, and dedicated
+  VM were inactive. Removed `nicenode-machine` using Podman's machine removal
+  command (including its image, configuration, dedicated SSH keys, and connection
+  registrations). Permanently deleted approximately 949 GiB of Nethermind and
+  Lodestar chain databases. Moved the app and remaining application state,
+  caches, preferences, and saved state to
+  `~/.Trash/NiceNode-retired-20261020.AvZi0o` (446 MiB, including retained keystore
+  files whose contents were not inspected). Those trashed files remain
+  recoverable until Trash is emptied; do not launch the retired app. Verified no
+  registered Podman machines/connections or matching processes remain. Podman
+  itself was preserved; filesystem available space increased by about 956 GiB.
+- Still open: browser startup gating, application-specific native/Rust trust
+  (including vendor-managed networking), the bundled-client findings below,
+  and any needed rebuilt Go binaries. Fresh-client success is not blanket
+  certification of a whole app or host.
+
+EchoNest rollback artifact (vulnerable old app; preserve, do not launch):
+`/Users/dbochman/Backups/echonest-tls-20261020.jFKtuo/EchoNest Sync.app`.
+
+### Bundled-runtime sweep — 2026-10-20
+
+All three Macs were reached. Tests used fresh credential-free processes and
+public TLS handshakes, not account requests or the applications' normal entry
+points. No vendor app, VPN, managed security control, or shared service was
+updated, re-signed, restarted, or reconfigured during this sweep.
+
+The table counts **accepted compromised-chain canaries**, out of twelve. Both
+normal controls passed for every conclusive row. A CA-file test proves the
+bundle's trust behavior under the test interpreter, not the entire application.
+Electron Node tests do not cover Chromium, custom TLS clients, or cached state.
+
+| Host | App / tested component | Accepted | Evidence |
+| --- | --- | --- | --- |
+| Mini | Reolink 8.21.12, Electron 20.3.0 / Node 16.15.0 | 12 | Actual standalone bundled Node TLS client |
+| Mini | Reolink's `Resources/app/cacert.pem` | 12 | Explicit public CA-file test |
+| Mini | ChatGPT 26.721.30844, `cua_node` Node 24.14.0 | 6 | Actual helper; cross-signed six rejected |
+| Crosstown MacBook | CurseForge 1.257.1-0, Electron 28.3.2 / Node 18.18.2 | 12 | Actual bundled Node TLS client |
+| Crosstown MacBook | Cursor 2.4.23, Electron 39.2.7 / Node 22.21.1 | 6 | Actual bundled Node TLS client |
+| Crosstown MacBook | Cursor's separate helper Node 22.21.1 | 6 | Actual helper, independent of Electron |
+| Crosstown MacBook | GitHub Desktop 3.4.2, Electron 30.0.8 / Node 20.11.1 | 12 | Actual bundled Node TLS client |
+| Crosstown MacBook | Kap 3.6.0, Electron 13.6.9 / Node 14.16.0 | 12 | Actual bundled Node TLS client |
+| Crosstown MacBook | Linear 1.22.1, Electron 26.2.4 / Node 18.16.1 | 12 | Actual bundled Node TLS client |
+| Crosstown MacBook | Notion 3.1.0, Electron 28.0.0 / Node 18.18.2 | 12 | Actual bundled Node TLS client |
+| Crosstown MacBook | PyCharm 2024.1.4, JetBrains Java 17.0.11 | 12 | Actual bundled Java SSLSocket client, HTTPS hostname checks enabled |
+| Crosstown MacBook | Inkscape 1.2.2, both certifi and pip-vendored CA files | 12 each | Explicit public CA-file tests |
+| dylans-mac | EchoNest Sync 0.2.1 CA file | 6 | Public CA file copied to Mini and tested there |
+| dylans-mac | Reolink 8.21.12 CA file | 12 | Public CA file copied to Mini and tested there |
+| dylans-mac | ChatGPT 26.908.70816, Node 24.20.0 exported built-in roots | 6 | Exported public roots tested on Mini; not an actual-runtime result |
+
+Important qualifications and follow-ups:
+
+- **Network interception on dylans-mac:** direct probes of its newer
+  CurseForge, Cursor, Orca, Reolink, ChatGPT helper, Apple Python, and old
+  EchoNest CA file rejected all twelve endpoints, but this does **not** certify
+  those runtimes. Inspection of the public leaf certificate for the direct DV
+  G3B canary showed `NetAlerts Services`, not the expected eMudhra issuer;
+  github.com retained a normal public issuer. Treat direct incident tests on
+  this network as inconclusive until the expected chain can be established.
+  No proxy/VPN/security control was bypassed or changed. Public CA-file exports
+  above independently establish remaining trust paths without moving account
+  data or app configuration. Even the old Reolink runtime appeared to pass
+  remotely while that same version on the Mini accepted every chain.
+- **Controlled mitigation experiment only:** on the Mini, the ChatGPT helper
+  and Reolink Node client rejected all twelve and accepted both controls when
+  launched solely for the test with `NODE_OPTIONS=--use-openssl-ca` and
+  `SSL_CERT_FILE=/opt/homebrew/etc/ca-certificates/cert.pem`. No persistent
+  setting was applied. This does not repair GUI launches, explicitly selected
+  private CA files, or other networking paths. Do not label these apps fixed.
+- **Vendor update is not automatically a fix:** Reolink's official download
+  page still lists the installed macOS version 8.21.12 (July 23, 2026). Prefer
+  keeping it closed pending an owner decision to retire it or a verified vendor
+  repair; do not replace files inside its signed bundle.
+  Source: https://reolink.com/software-and-manual/
+- **Testability limits:** inspected Electron fuse metadata before invoking
+  Node mode. 1Password, Claude, Slack, Discord, Figma, Granola, and some newer
+  apps disable `RunAsNode`; they remain unverified, not passed. Did not flip
+  fuses or use their normal account-bearing launch paths. Old 1Clipboard has
+  no recognized fuse wire and was skipped. The Cluely standalone probe timed
+  out; only its identified audit-owned process was terminated. Native/Rust
+  clients and normal browser paths still need app-specific evidence.
+  Method: https://www.electronjs.org/docs/latest/tutorial/fuses
+- **Priority next actions:** deploy the already-tested EchoNest 0.7.0 repair
+  to dylans-mac after confirming the owner wants its second installation
+  upgraded; select update-versus-retirement for the old MacBook apps; then
+  retest actual vendor builds. Separately resolve Reolink and the ChatGPT Node
+  helper trust paths. Preserve configurations and obtain approval before
+  quitting active apps, removing anything, or changing managed software.
+- No evidence of exploitation was sought or established by these TLS checks.
+  They establish reachable trust weaknesses, not a compromise investigation.
 
 ## Audit commands
 
