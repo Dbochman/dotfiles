@@ -4,6 +4,8 @@ set -euo pipefail
 
 PINCHTAB="${PINCHTAB_BIN:-/opt/homebrew/bin/pinchtab}"
 PROFILE="${PINCHTAB_PROFILE:-default}"
+HELPER_DIR="$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parent)' "${BASH_SOURCE[0]}")"
+TRUST_NODE="${PINCHTAB_TRUST_NODE:-$HOME/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node}"
 
 usage() {
   cat <<'EOF'
@@ -22,6 +24,8 @@ Usage:
 acquire prints: INSTANCE_ID<TAB>STARTED
 STARTED is 1 only when this invocation created the instance.
 Missing named profiles are created through the local PinchTab API.
+acquire fails closed unless the browser rejects all incident canaries and
+accepts both ordinary controls in an ephemeral, credential-free context.
 Tab operations are sent directly to the acquired instance's loopback server.
 EOF
 }
@@ -278,7 +282,28 @@ except Exception:
   fi
 
   wait_until_running "$instance_id"
+  if ! verify_browser_trust "$instance_id"; then
+    # Do not leave a newly created instance running after failed acquisition.
+    # Existing/shared instances are never stopped by this failure path.
+    if [[ "$started" == 1 ]]; then
+      "$PINCHTAB" instance stop "$instance_id" >/dev/null 2>&1 || true
+    fi
+    echo "PinchTab acquisition blocked: browser trust is unverified" >&2
+    return 1
+  fi
   printf '%s\t%s\n' "$instance_id" "$started"
+}
+
+verify_browser_trust() {
+  local instance_id="$1"
+  local port=""
+  local endpoint=""
+  endpoint=$(instance_endpoint "$instance_id") || return 1
+  # Initialize only the acquired browser, without navigating an account page.
+  "$PINCHTAB" --server "$endpoint" health >/dev/null 2>&1 || return 1
+  port=$("$PINCHTAB" instances --json | python3 "$HELPER_DIR/pinchtab-browser-trust-port.py" "$instance_id") || return 1
+  [[ -x "$TRUST_NODE" ]] || return 1
+  "$TRUST_NODE" "$HELPER_DIR/pinchtab-browser-trust.cjs" "$port" >/dev/null
 }
 
 open_tab() {

@@ -8,6 +8,12 @@ Python HTTP server serving the Financial Advisor forecast dashboard, preset redi
 
 ## System Overview
 
+The weekly financial browser-recovery path now uses the managed helper's
+[browser trust gate](bin/README.md#headless-browser-trust-gate). A blocked
+acquisition preserves upstream data; it is not evidence of a fresh scrape.
+Forecast APIs, cache-only refresh, and 07:35 ledger capture are unchanged and
+must continue honoring upstream freshness/coverage status.
+
 The forecast dashboard is the planning surface that sits next to the financial dashboard on `8585`. It keeps the full interactive reallocation model in the Financial Advisor repo, layers in live household facts and mutable checklist state from local runtime storage, and starts eligible scenarios from the latest reconciled source baseline.
 
 Primary URLs:

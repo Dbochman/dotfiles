@@ -63,7 +63,8 @@ also set `CURL_CA_BUNDLE`; Nest gRPC sets `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH`.
 | `ola-webhook-bridge.py` | `~/.openclaw/bin/` | Loopback-only Ola callback boundary. Verifies the raw-body HMAC, discards the external envelope, and forwards one fixed content-free wake to OpenClaw with a separate private hook token. |
 | `ola-webhook-bridge-wrapper.sh` | `~/.openclaw/bin/` | Cache-only LaunchAgent wrapper for the Ola bridge; enforces protected-cache ownership, exports only the two required credentials into a clean environment, and never invokes `op`. |
 | `openai-memory-key` | `~/.openclaw/bin/` | Exec secret-provider adapter for memory embeddings. Emits only the existing gateway-exported `OPENAI_API_KEY`, admitted by the provider's exact `passEnv` list; no auth-database lookup or login-token reuse. Never log or invoke its secret output directly for diagnostics. |
-| `pinchtab-headless-instance` | `~/.openclaw/bin/` | Acquires, inventories, scopes, and releases managed headless PinchTab instances without navigating a visible browser. |
+| `pinchtab-headless-instance` | `~/.openclaw/bin/` | Acquires, inventories, scopes, and releases managed headless PinchTab instances. Acquisition requires the browser-level trust gate below; it never navigates a visible browser. |
+| `pinchtab-browser-trust.cjs`, `pinchtab-browser-trust-port.py` | `~/.openclaw/bin/` | Paired acquisition dependencies: resolve the selected instance's CDP port and check Chromium trust in an ephemeral context with no account state. |
 | `cielo-auth.py` | `~/.openclaw/bin/` | Canonical Cielo `/web/token/refresh/1` client. Serializes rotating-token use, atomically replaces the protected config, and emits only safe operational metadata. |
 | `cielo-reauth` | `~/.openclaw/bin/` | Capture-first attended Cielo recovery. Owns one visible dedicated-profile instance, requires a refresh token from that exact login, proves one API rotation plus status, and cleans up only its own state. |
 | `presence-cabin-enroll` | `~/.openclaw/bin/` | Attended, operator-only Starlink identity enrollment and verification helper. It has no LaunchAgent or agent route, keeps raw IDs in owner-only staging, requires downstream jobs unloaded, and activates the protected Cabin binding only after the documented evidence gate. |
@@ -227,6 +228,37 @@ qmd search "cart URL"                         # BM25 keyword search
 qmd update --pull                             # re-index after dotfiles pull
 qmd mcp                                       # start MCP server for AI agents
 ```
+
+### Headless browser trust gate
+
+`pinchtab-headless-instance acquire PROFILE` now checks the acquired Chromium
+process before returning its instance ID. The paired `pinchtab-browser-trust-port.py`
+reads only its managed-instance configuration, validates the bridge-port match,
+and resolves the loopback debugging port. `pinchtab-browser-trust.cjs` uses the
+pinned Node 24 runtime and built-in WebSocket support; no npm package is needed.
+The wrapper resolves its own real path so Homebrew symlinks work too.
+
+The gate creates a disposable browser context, disables page JavaScript and
+cache use in four diagnostic tabs, and requires all 12 incident canaries to
+fail with Chromium `ERR_CERT_REVOKED`/`ERR_CERT_AUTHORITY_INVALID` plus successful
+TLS responses from github.com and pypi.org. It does not read account pages,
+cookies, credentials, or shared tabs. Page text, DNS failure, expiry, timeout,
+redirects, missing controls, and unavailable tooling never count as clearance.
+Up to three public-test attempts allow a short startup-readiness window, with
+a 20-second absolute gate deadline. Failure emits safe counts, returns no
+instance ID, and stops only an instance created by that acquisition. Existing
+instances are left running; this is not an outbound firewall.
+
+Deploy both dependencies before the wrapper. `dotfiles-pull.command` handles
+that ordering. If the gate fails, inspect the exact browser's component-update
+readiness and rerun acquisition; do not bypass the gate or add certificate-error
+exceptions. Canary availability is deliberately an operational dependency.
+
+Scope: this gates new **caller work through this helper**, not browser background
+traffic during startup, direct CDP/PinchTab launches, Cielo's separate lifecycle,
+native apps, or unrelated TLS implementations. There is no persisted pass cache
+and no blanket browser/host clearance. A browser restart after acquisition
+requires reacquisition. The diagnostic does not repair the browser's CA data.
 
 ### Device Monitoring
 

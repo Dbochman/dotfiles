@@ -811,6 +811,8 @@ install_openclaw_guarded_helpers() {
     "bin/midea-ac|bin/midea-ac|755|Midea local AC wrapper"
     "bin/midea-ac-enroll|bin/midea-ac-enroll|755|Midea attended enrollment helper"
     "bin/nest-history-append|bin/nest-history-append|755|shared climate history appender"
+    "bin/pinchtab-browser-trust.cjs|bin/pinchtab-browser-trust.cjs|644|Chromium trust gate"
+    "bin/pinchtab-browser-trust-port.py|bin/pinchtab-browser-trust-port.py|644|managed browser trust port resolver"
     "bin/pinchtab-headless-instance|bin/pinchtab-headless-instance|755|managed PinchTab instance helper"
     "bin/plant-tracker|bin/plant-tracker|755|private plant tracker wrapper"
     "bin/presence-cabin-enroll|bin/presence-cabin-enroll|755|Cabin Starlink presence enrollment helper"

@@ -4,6 +4,11 @@ All dashboards run on Mac Mini (`dylans-mac-mini`) as KeepAlive LaunchAgents. Th
 
 ## Quick Reference
 
+Weekly finance browser recovery now fails closed on the managed helper's
+[browser trust gate](bin/README.md#headless-browser-trust-gate). Existing data
+is preserved when acquisition is blocked; that does not make it fresh. The
+06:15 cache-only finance refresh and 07:35 forecast ledger ordering are unchanged.
+
 The existing Eight Sleep morning snapshot producer now reports failures with
 a nonzero exit rather than silently removing its output. Protected per-owner
 JSON distinguishes valid same-day data, no data, and unavailable. The usage

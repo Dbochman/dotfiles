@@ -10,6 +10,14 @@ Python HTTP server (threaded) serving 6 HTML dashboard pages with 33 JSON API en
 
 ## Plaid Sync Error Reporting
 
+Weekly browser recovery now inherits the managed headless helper's
+[browser trust gate](bin/README.md#headless-browser-trust-gate). Acquisition
+fails closed before caller navigation if public TLS checks fail or are
+inconclusive. This is reported through the existing profile-preflight failure
+path; prior financial data is preserved. HTTP-first scraping, daily cache-only
+Plaid refresh, and their schedules are unchanged. No credential-bearing scrape
+was run to validate this security change.
+
 Daily sync records a bounded Plaid error code (for example `NO_ACCOUNTS`), HTTP
 status fallback, or exception class instead of a truncated raw SDK exception.
 This keeps response headers and request identifiers out of new error records

@@ -554,7 +554,12 @@ grocery automation, and weekly finance automation acquire isolated tabs
 through `~/.openclaw/bin/pinchtab-headless-instance`. OpenTable uses the
 `opentable` profile, grocery uses `grocery`, and finance uses `finance`. The
 helper refuses to navigate a visible PinchTab instance and stops only instances
-that it created. OpenTable's 4:00 AM refresh records a credential-free,
+that it created. Acquisition also requires a credential-free, browser-protocol
+trust gate: 12 affected chains rejected and two ordinary controls accepted,
+with bounded readiness retries. Failure returns no instance and preserves
+existing/shared browsers; see [bin/README.md](bin/README.md#headless-browser-trust-gate).
+This does not gate browser startup background traffic or Cielo's separate path.
+OpenTable's 4:00 AM refresh records a credential-free,
 owner-only status under `~/.openclaw/run/`; a failed first attempt receives one
 bounded retry at 4:30 AM, while a recent success makes that second slot a no-op.
 Cielo does not use this helper: its fallback owns a separate
