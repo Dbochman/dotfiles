@@ -60,8 +60,63 @@ discovery. Do not treat a missing component or metadata-only result as clearance
 It separates running executable evidence, installed package metadata,
 source-declared/locked dependencies, provider-managed gaps and unknown bundled
 versions. The report is inventory evidence, not a CVE assessment. Reconcile
-dated operator follow-ups before reusing a survey scope. Neither helper is
-scheduled or connected to morning briefings yet.
+dated operator follow-ups before reusing a survey scope. Neither survey helper
+is scheduled. The advisory collector below consumes its dated private output.
+
+`security-advisory-collector.py` is a Mini-only, notification-only daily review.
+The attended-installed `com.dylanbochman.security-advisories` LaunchAgent runs
+at 07:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.
+It reads pwn.watch's complete JSON incident index in bounded discovery batches,
+matches against a minimized inventory with high-reasoning, tool-free local
+OpenClaw inference (`openai/gpt-5.6-sol`), then fetches up to three approved
+publisher pages for each of up to twelve pending matches per run. This uses
+existing configured model access; it does not install dependencies or grant
+the model shell, browser, messaging or remediation tools. Only product/version,
+evidence type, running/source-only state and asset labels enter model inputs;
+private source paths, IPs, accounts and freeform survey notes are excluded.
+
+Publisher domains are code-reviewed, redirects/proxies are disabled, private
+DNS answers are rejected, HTTPS uses the maintained CA file, and responses are
+size/time limited. Source material is untrusted data. Assessment references must
+use fetched URLs and exact supporting excerpts. These checks establish citation
+provenance, **not infallible model reasoning or proven exploitability**. No usable
+primary evidence means unknown. Source-only dependencies, old observations,
+unknown bundled versions and provider-owned infrastructure never become a fleet
+clearance. Adding a publisher requires review; an unsupported publisher stays
+unknown rather than broadening network access from feed instructions.
+
+Private atomic state is in `~/.local/state/security-advisories/` (0700/0600).
+The lock excludes concurrent collections; the overall budget is 30 minutes.
+Failed collection preserves the prior cache and separately updates health.
+Per-advisory failures retain old findings and count toward backlog. Unchanged
+inputs are reverified after seven days (unknowns after 24 hours); changed feed/inventory inputs are queued
+again. Discovery omission never resolves a prior finding. Backlog is oldest-check
+first with twelve reviews/run; model selection is advisory, not completeness proof.
+The existing GitHub runner readiness watch remains separate and authoritative
+for its deployment gate.
+
+The morning helper reads this cache only, including when mail is unavailable.
+`dylan-morning-briefing-data.py --security-status` inspects just that section,
+without Gmail, Calendar, network, model calls or delivery. Cache older than 30
+hours is stale; inventory older than seven days explicitly needs an attended
+refresh. The current plist names the October 22 inventory: after a new scoped
+survey, update that exact argument and reload only this LaunchAgent. Do not
+redate old observations or treat a successful advisory poll as a fleet resurvey.
+
+New/materially revised assessments remain eligible for 48 hours (tolerating a
+missed briefing); stable unresolved findings are consolidated into a count.
+This is not a confirmed-delivery ledger. Reading the cache never marks anything
+delivered. Five cached changes maximum plus additional-change/backlog counts
+bound the briefing input; its prompt prioritizes at most three. Neither the
+collector nor the briefing patches, retires, restarts, merges or sends test alerts.
+
+Scoped deployment: install the collector as 0644 in `~/.local/libexec/`, keep
+the tracked morning helper and cron prompt together, create its 0700 state
+directory before loading the plist, and update **only** the existing Dylan
+briefing message via `openclaw cron edit`. Preserve schedule/model/delivery and
+verify live message equality. Do not use a wholesale cron sync or gateway
+restart. To pause collection, boot out only
+`gui/$(id -u)/com.dylanbochman.security-advisories`; preserve its private state.
 
 `github-runner-readiness.py` is an attended-install, Mini-only seven-day watch
 for website PR #339. Its separate installed copy is

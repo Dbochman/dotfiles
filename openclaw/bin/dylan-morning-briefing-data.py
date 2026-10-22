@@ -28,6 +28,19 @@ assert TRIAGE_SPEC and TRIAGE_SPEC.loader
 triage = importlib.util.module_from_spec(TRIAGE_SPEC)
 TRIAGE_SPEC.loader.exec_module(triage)
 
+
+def security_summary(now=None):
+    """Optional cache integration must not break calendar/mail collection."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "security_advisory_cache", Path(__file__).with_name("security-advisory-collector.py")
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.briefing_summary(now=now)
+    except Exception:
+        return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False}
+
 ACCOUNT = os.environ.get("DYLAN_EMAIL", "")
 STATE_DB = Path(os.environ.get("OPENCLAW_STATE_DB", str(Path.home() / ".openclaw/state/openclaw.sqlite")))
 CRON_STORE_KEY = str(Path.home() / ".openclaw/cron/jobs.json")
@@ -450,6 +463,7 @@ def collect_data(
         return {
             "schemaVersion": 1,
             "date": local_now.date().isoformat(),
+            "security": security_summary(local_now),
             "triage": {"status": "unavailable", "reason": "missing_account"},
             "postTriage": {"status": "skipped", "reason": "triage_unavailable"},
             "calendar": {"status": "unavailable", "reason": "missing_account"},
@@ -469,6 +483,7 @@ def collect_data(
     return {
         "schemaVersion": 1,
         "date": local_now.date().isoformat(),
+        "security": security_summary(local_now),
         "triage": handoff,
         "calendar": collect_calendar(
             deadline=deadline, clock=clock, runner=runner, sleeper=sleeper
@@ -488,7 +503,11 @@ def main(argv=None) -> int:
     mode.add_argument("--validate-handoff", type=Path)
     mode.add_argument("--publish-handoff", type=Path)
     mode.add_argument("--triage-status", action="store_true")
+    mode.add_argument("--security-status", action="store_true")
     args = parser.parse_args(argv)
+    if args.security_status:
+        print(json.dumps(security_summary()))
+        return 0
     if args.publish_handoff:
         try:
             receipt = triage.publish_handoff_file(
@@ -525,6 +544,7 @@ def main(argv=None) -> int:
         payload = {
             "schemaVersion": 1,
             "date": datetime.now(TIME_ZONE).date().isoformat(),
+            "security": security_summary(),
             "triage": {"status": "unavailable", "reason": "internal_error"},
             "postTriage": {"status": "skipped", "reason": "triage_unavailable"},
             "calendar": {"status": "unavailable", "reason": "internal_error"},

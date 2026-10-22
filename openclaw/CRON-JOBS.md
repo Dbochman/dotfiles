@@ -643,6 +643,18 @@ semantics. Delivery success alone is not evidence of a complete briefing.
 
 ### Dylan morning briefing data path
 
+The helper also adds an optional `security` section from the private advisory
+cache. Its separate Mini LaunchAgent collects at 07:15 local time; the briefing
+does no advisory fetching or inference. The existing 08:00 schedule, mail and
+calendar contracts remain unchanged. New/material changes stay eligible for
+48 hours; unchanged unresolved items become a count. Missing/stale cache,
+verification backlog and inventory older than seven days remain explicit.
+Model assessments are evidence-qualified notifications, not remediation or
+fleet clearance. No cache read is a delivery receipt. Use the helper's
+`--security-status` mode to verify integration without running mail/calendar
+collection or sending a briefing. Deploy only this job's message through the
+supported cron edit API; preserve all other fields and jobs.
+
 The approved `b7119197-b8e5-4f7d-9af2-edd268637cc8` job runs silently at 7:40 AM ET
 with a 900-second budget, leaving five minutes before the existing 8 AM
 read-only briefing. It mirrors Julia's reviewed policy: classify unread mail,

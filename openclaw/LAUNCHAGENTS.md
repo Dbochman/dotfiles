@@ -1,5 +1,18 @@
 # LaunchAgents
 
+### Daily security advisory cache (October 22, 2026)
+
+`com.dylanbochman.security-advisories` is attended-installed on the Mini only.
+It runs at 07:15 Mini local time (America/New_York), using Homebrew Python and
+`~/.local/libexec/security-advisory-collector.py`. The dated inventory argument
+must be updated after an attended resurvey; it does not silently refresh hosts.
+State/logs are private under `~/.local/state/security-advisories/`. The process
+is locked, bounded to 30 minutes and has no direct notification/remediation path.
+Dylan's existing 08:00 briefing reads its cached result. No gateway restart,
+finance/forecast timing change, or other LaunchAgent reload is required.
+See [the collector contract](bin/README.md#gateway--maintenance) for verification,
+backlog, freshness and delivery limitations. Run `--status` for a cache-only check.
+
 ### Temporary runner readiness watch (October 21, 2026)
 
 `com.dylanbochman.github-runner-readiness` is Mini-only, attended-installed and

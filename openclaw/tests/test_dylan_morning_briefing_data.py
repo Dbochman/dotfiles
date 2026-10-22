@@ -60,6 +60,24 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
         self.assertEqual(result["triage"]["reason"], "missing_account")
         self.assertEqual(result["postTriage"]["status"], "skipped")
 
+    def test_security_cache_survives_missing_mail_account(self) -> None:
+        briefing.ACCOUNT = ""
+        cached = {"status": "partial", "clearance": False, "changes": []}
+        with mock.patch.object(briefing, "security_summary", return_value=cached), mock.patch.object(
+            briefing, "run_command", side_effect=AssertionError("no external commands")
+        ):
+            result = briefing.collect_data()
+        self.assertEqual(result["security"], cached)
+        self.assertEqual(result["inbox"]["status"], "unavailable")
+
+    def test_security_prompt_preserves_single_command_and_read_only_contract(self) -> None:
+        jobs = json.loads((SCRIPT.parents[1] / "cron/jobs.json").read_text())["jobs"]
+        job = next(j for j in jobs if j["id"] == "gws-dylan-morning-briefing-0001")
+        prompt = job["payload"]["message"]
+        self.assertIn("SECURITY WATCH (cached, notification-only)", prompt)
+        self.assertIn("never fetch advisories or run another command", prompt)
+        self.assertEqual(job["schedule"]["expr"], "0 8 * * *")
+
     def seed_handoff(self, payload, *, job_id=None, day=13):
         with sqlite3.connect(briefing.STATE_DB) as connection:
             connection.execute("""CREATE TABLE IF NOT EXISTS cron_run_logs (
