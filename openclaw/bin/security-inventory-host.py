@@ -113,6 +113,7 @@ def processes(mac):
     if result["status"] != "observed":
         return result
     selected = []
+    candidates = []
     for line in result["text"].splitlines():
         parts = line.strip().split(None, 1)
         if len(parts) != 2:
@@ -122,6 +123,11 @@ def processes(mac):
         if not (re.match(r"^(node|python|openclaw|caddy|redis|postgres|nginx|php|docker|tailscale|pinchtab|codex|claude|ollama)", name)
                 or (mac and ".app/Contents/" in executable)):
             continue
+        priority = 0 if re.match(r"^(node|openclaw)", name) else 2 if ".app/Contents/" in executable else 1
+        candidates.append((priority, pid, executable))
+    # Numerous Electron helpers must not consume the cap before standalone Node.
+    for _, pid, executable in sorted(candidates, key=lambda row: row[0])[:160]:
+        name = Path(executable).name.lower()
         row = {"pid": int(pid), "executable": executable, "evidence": "process_comm_not_argv"}
         if mac and re.match(r"^(node|openclaw|python)", name):
             mapped = command(["/usr/sbin/lsof", "-a", "-p", pid, "-d", "txt", "-Fn"], timeout=4)
@@ -134,9 +140,8 @@ def processes(mac):
             except OSError:
                 row["mapping_status"] = "unavailable"
         selected.append(row)
-        if len(selected) >= 160:
-            break
-    return {"status": "observed", "processes": selected, "coverage": "selected_runtime_and_app_names_max_160"}
+    return {"status": "observed", "processes": selected, "truncated": len(candidates) > 160,
+            "coverage": "node_first_selected_runtime_and_app_names_max_160"}
 
 
 def main():
@@ -165,8 +170,10 @@ def main():
     report["node_binaries"] = []
     for path in sorted(set(bins)):
         if path.is_file():
+            executable = os.access(path, os.X_OK)
             report["node_binaries"].append({"path": str(path), "resolved": str(path.resolve()),
-                                            "version": command([str(path), "--version"], timeout=5),
+                                            "executable": executable,
+                                            "version": command([str(path), "--version"], timeout=5) if executable else {"status": "disabled_non_executable"},
                                             "evidence": "version_probe_not_network_clearance"})
     manifests = []
     for root in [Path("/opt/homebrew/lib/node_modules"), Path("/usr/local/lib/node_modules"), home / ".openclaw/rest980"]:

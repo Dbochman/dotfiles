@@ -8,7 +8,7 @@
         <string>/opt/homebrew/bin/python3</string>
         <string>/Users/dbochman/.local/libexec/security-advisory-collector.py</string>
         <string>--inventory</string>
-        <string>/Users/dbochman/.local/state/security-inventory/2026-10-22/inventory.json</string>
+        <string>/Users/dbochman/.local/state/security-inventory/2026-10-22-node-remediation/inventory.json</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>15</integer></dict>

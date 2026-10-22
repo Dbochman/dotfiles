@@ -53,6 +53,11 @@ It never captures process arguments/environment, imports application packages,
 reads secrets/databases/profiles, probes vulnerabilities or changes services.
 It is deliberately partial: no recursive home inventory or automatic remote
 discovery. Do not treat a missing component or metadata-only result as clearance.
+Standalone Node processes are prioritized before application helpers within the
+160-process cap; truncation is explicitly reported.
+Non-executable Node files are recorded as disabled without attempting to run
+them. A mapped Node executable removed from disk remains a running/unknown
+observation until the process exits; uninstalling does not hide a live process.
 
 `security-inventory-report.py <private-survey-directory>` combines explicit
 `scope.json` asset metadata and host snapshots into private `inventory.json` and
@@ -95,8 +100,9 @@ The lock excludes concurrent collections; the overall budget is 30 minutes.
 Failed collection preserves the prior cache and separately updates health.
 Per-advisory failures retain old findings and count toward backlog. Unchanged
 inputs are reverified after seven days (unknowns after 24 hours); changed feed/inventory inputs are queued
-again. Discovery omission never resolves a prior finding. Backlog is oldest-check
-first with twelve reviews/run; model selection is advisory, not completeness proof.
+again. Discovery omission never resolves a prior finding. Changed/expired
+affected or possibly-affected findings are reconciled first, then backlog is
+oldest-check first, with twelve reviews/run. Model selection is advisory, not completeness proof.
 The existing GitHub runner readiness watch remains separate and authoritative
 for its deployment gate.
 

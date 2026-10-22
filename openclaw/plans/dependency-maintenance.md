@@ -18,6 +18,51 @@ from breaking changes that need careful migration.
 
 ## Node security rollout — 2026-10-21 (deployed, with explicit gaps)
 
+### October 22 advisory follow-up: standalone runtimes
+
+The inventory-backed advisory review found leftovers outside the already-patched
+automation services. The attended follow-up:
+
+- Removed Homebrew Node 22.23.1 from the Mini, 25.9.0 from Crosstown MBP, and
+  26.7.0 from dylans-mac. Homebrew reported no installed dependents and also
+  autoremoved dependencies it classified as unused. Global npm application
+  installs and user/project data were not deleted. Reinstallation is possible
+  through Homebrew, but do not restore an affected release.
+- Retained but disabled execution of the Mini's root-owned `/usr/local/bin/node`
+  18.16.0 (owner ran the sudo chmod) and the standalone 24.21.0 rollback binary.
+  Both are mode 0644, not runnable rollback options. Recovery archives remain
+  untouched; disabling/removing disk files does not repair an existing process.
+- Added the shared tracked `node-runtime.zsh` selector. New interactive, login,
+  and noninteractive shells select 24.22.1 on Mini/MBP and 26.12.1 on dylans-mac.
+  Mini `.zprofile`/`.zshenv` source the checkout; remote startup files source its
+  scoped deployed copy at `~/.local/libexec/node-runtime.zsh`. Original Python,
+  NVM and Homebrew setup is preserved. When provisioning/rebuilding a host, put
+  this source line **after** its existing PATH setup in `.zprofile` and `.zshenv`;
+  `zshrc` sources the same selector after Homebrew. No full dotfiles install or
+  remote checkout fast-forward was performed.
+- Stopped the detached Crosstown Codex app-server (no active TCP clients or
+  child work) and dylans-mac's Codex terminal after verifying its latest task
+  completed October 18 and its session transcript was saved. The Mini's remaining
+  old launcher belongs to this very remediation conversation: checkpoint first,
+  then retire it with an identity-checked one-shot helper and resurvey the Mini.
+  Until that receipt confirms process exit, this is **pending**, not clearance.
+- Gateway health and magazine API health pass. Home dashboard/finance respond
+  200; Forecast redirects to its existing UI. Both Crosstown bridge listeners
+  still respond with their expected authentication requirement, and their PIDs
+  remain mapped to patched 24.22.1. Robot MQTT connectivity is not retested or
+  declared repaired. New Codex version smoke checks pass on both remote Macs.
+
+Private refreshed evidence is under
+`~/.local/state/security-inventory/2026-10-22-node-remediation/`; the advisory
+LaunchAgent points there. Original survey evidence is retained. A removed but
+still-mapped Node binary remains a running/unknown inventory observation, while
+a disabled, unmapped binary is explicitly non-executable. The final one-shot
+receipt lives under `~/.local/state/node-security-20261022/`; it must be checked
+after resuming. The notification-only collector prioritizes rechecking changed
+actionable findings before its discovery backlog and never closes an advisory
+just because a repair command exited zero. Application-bundled, offline Windows
+and provider-owned runtimes still require their separate evidence.
+
 ### Attended activation result (October 21 evening)
 
 - Published runtime commits `cdf0b26`, `d64e458`, `a5470c4` to main and

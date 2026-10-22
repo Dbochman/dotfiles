@@ -49,8 +49,15 @@ def build(directory):
         mapped = {p for proc in procs for p in proc.get("mapped_executables", [])}
         mapped.update(proc["mapped_executable"] for proc in procs if proc.get("mapped_executable"))
         for binary in host.get("node_binaries", []):
+            state = "running" if binary["resolved"] in mapped else "installed_not_observed_running"
+            if binary.get("executable") is False and state != "running":
+                state = "disabled_non_executable"
             add(aid, "Node.js", binary["version"].get("text"), binary["resolved"], "binary_version_probe",
-                observed, "running" if binary["resolved"] in mapped else "installed_not_observed_running")
+                observed, state)
+        known_nodes = {b["resolved"] for b in host.get("node_binaries", [])}
+        for path in sorted(mapped - known_nodes):
+            if Path(path).name == "node":
+                add(aid, "Node.js", None, path, "mapped_executable_missing_on_disk", observed, "running")
         for app in host.get("apps", {}).get("applications", []):
             app_path = app.get("path", "")
             running = bool(app_path) and any(proc["executable"].startswith(app_path + "/") for proc in procs)

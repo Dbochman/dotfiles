@@ -49,6 +49,14 @@ class SurveyTests(unittest.TestCase):
         self.assertEqual(len(value["processes"]), 1)
         self.assertNotIn("args", value["processes"][0])
 
+    def test_node_cannot_be_hidden_by_application_helper_cap(self):
+        listing = '\n'.join(f'{i} /Applications/App.app/Contents/Helper' for i in range(1, 201)) + '\n999 node'
+        with patch.object(survey, 'command', return_value={'status': 'observed', 'text': listing}):
+            value = survey.processes(True)
+        self.assertEqual(value['processes'][0]['pid'], 999)
+        self.assertEqual(len(value['processes']), 160)
+        self.assertTrue(value['truncated'])
+
 
 if __name__ == "__main__":
     unittest.main()

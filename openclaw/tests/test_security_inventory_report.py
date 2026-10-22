@@ -55,6 +55,24 @@ class ReportTests(unittest.TestCase):
         self.assertIsNone(node["version"])
         self.assertEqual(node["state"], "unknown")
 
+    def test_disabled_binary_is_not_an_unknown_executable(self):
+        host = self.host()
+        host["node_binaries"] = [{"resolved": "/old/node", "executable": False,
+                                  "version": {"status": "disabled_non_executable"}}]
+        with tempfile.TemporaryDirectory() as directory:
+            value = report.build(self.fixture(directory, host))
+        self.assertEqual(next(c for c in value["components"] if c["product"] == "Node.js")["state"], "disabled_non_executable")
+
+    def test_removed_binary_does_not_hide_still_running_process(self):
+        host = self.host()
+        host["processes"]["processes"] = [{"executable": "node", "mapped_executables": ["/removed/node"]}]
+        with tempfile.TemporaryDirectory() as directory:
+            value = report.build(self.fixture(directory, host))
+        node = next(c for c in value["components"] if c["product"] == "Node.js")
+        self.assertEqual(node["state"], "running")
+        self.assertEqual(node["evidence"], "mapped_executable_missing_on_disk")
+        self.assertIsNone(node["version"])
+
     def test_linux_release_and_kernel_distinct(self):
         host = self.host()
         host.update(os="Linux", kernel="6.12", os_release={"PRETTY_NAME": "Debian", "VERSION_ID": "13"})

@@ -126,9 +126,10 @@ class AdvisoryTests(unittest.TestCase):
 
     def test_redirect_revalidates_target_before_request(self):
         from email.message import Message
+        from io import BytesIO
         headers = Message()
         headers['Location'] = 'https://127.0.0.1/secrets'
-        error = mod.urllib.error.HTTPError('https://nodejs.org/a', 301, 'redirect', headers, None)
+        error = mod.urllib.error.HTTPError('https://nodejs.org/a', 301, 'redirect', headers, BytesIO())
         from unittest.mock import Mock
         opener = Mock()
         opener.open.side_effect = error
@@ -188,6 +189,26 @@ class AdvisoryTests(unittest.TestCase):
         second = self.collect(first, fetcher=fetch, reviewer=review)
         self.assertEqual(len(second["findings"]), 13)
         self.assertEqual(second["backlog"], 0)
+
+    def test_changed_actionable_finding_precedes_unreviewed_backlog(self):
+        first = self.collect()
+        incidents = [{"slug": f"new-{n}", "title": "New advisory"} for n in range(12)]
+        incidents.append({**self.incident, "summary": "updated evidence"})
+        reviewed = []
+        def fetch(url, hosts):
+            if url.endswith("incidents.json"):
+                return json.dumps({"generatedAt": self.stamp, "incidents": incidents})
+            if url.endswith(".json"):
+                return json.dumps({"sources": [{"url": self.url}]})
+            return self.text
+        def review(prompt, data):
+            if prompt == mod.SELECT:
+                return {"matches": [{"slug": i["slug"], "products": ["Node.js"], "unknown_assets": []}
+                                    for i in data["advisories"]]}
+            reviewed.append(data["advisory"]["slug"])
+            return self.review(prompt, data)
+        self.collect(first, fetcher=fetch, reviewer=review)
+        self.assertEqual(reviewed[0], "node-test")
 
 
 if __name__ == "__main__":

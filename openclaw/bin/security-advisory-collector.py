@@ -298,7 +298,10 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         interval = 24 if old.get("status") == "unknown" else 168
         if old.get("input_hash") != key or age_hours(old.get("checked_at", "2000-01-01T00:00:00Z")) > interval:
             pending.append((slug, match, key))
-    pending.sort(key=lambda item: findings.get(item[0], {}).get("checked_at", ""))
+    # Reconcile known actionable findings first after attended remediation.
+    pending.sort(key=lambda item: (
+        findings.get(item[0], {}).get("status") not in {"affected", "possibly_affected"},
+        findings.get(item[0], {}).get("checked_at", "")))
     errors = 0
     progress(phase="verification", pending=len(pending), checked=0)
     for checked, (slug, match, key) in enumerate(pending[:12], 1):
