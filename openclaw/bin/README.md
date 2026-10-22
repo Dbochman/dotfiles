@@ -97,6 +97,18 @@ original GhostAction research are explicitly reviewed publishers too.
 
 Private atomic state is in `~/.local/state/security-advisories/` (0700/0600).
 The lock excludes concurrent collections; the overall budget is 30 minutes.
+Discovery supplies explicit observed-product and unverified-asset allowlists;
+its product/ecosystem/state/asset table omits versions and evidence strings to
+stay within the input budget. Primary-source verification still receives the
+full version and evidence rows for each match.
+unverified product hints must be represented by their asset IDs, not invented
+observed components. Each complete batch is strictly validated before acceptance.
+Invalid JSON or selection structure/names gets one corrective retry of that batch,
+within the same deadline. Nothing is silently dropped or guessed; a second invalid
+response fails collection and preserves the prior cache. Transport failures are
+not retried here. Progress exposes only attempt counts and fixed rejection codes,
+never rejected model output. The daily LaunchAgent has no KeepAlive retry loop;
+attended runs should also be one-shot, not submitted as continuously restarting jobs.
 Inspect live operational progress without network/model calls:
 `python3 ~/.local/libexec/security-advisory-collector.py --progress`.
 This reports discovery batches, source-fetch/model-review stages, attempted reviews

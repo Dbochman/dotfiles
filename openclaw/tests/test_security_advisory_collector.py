@@ -114,6 +114,96 @@ class AdvisoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_selection"):
             self.collect(reviewer=lambda *_: {"matches": [{"slug": "node-test", "products": [], "unknown_assets": ["invented"]}]})
 
+    def test_discovery_retry_is_bounded_and_exposes_only_reason(self):
+        calls, events = [], []
+        def review(prompt, data):
+            calls.append(data.copy())
+            return {"matches": [{"slug": "node-test", "products": ["private-invalid-name"],
+                                 "unknown_assets": []}]}
+        with self.assertRaisesRegex(ValueError, "invalid_selection_products"):
+            mod.collect(self.inventory, {}, fetcher=self.fetch, reviewer=review,
+                        now=self.stamp, progress=lambda **v: events.append(v))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]["retry_reason"], "invalid_selection_products")
+        self.assertEqual(events[-1]["attempt"], 2)
+        self.assertNotIn("private-invalid-name", json.dumps(events))
+        self.assertNotIn("private-invalid-name", json.dumps(calls))
+
+    def test_discovery_recovers_with_explicit_namespaces(self):
+        calls = []
+        def review(prompt, data):
+            if prompt == mod.SELECT:
+                calls.append(data.copy())
+                self.assertEqual(data["allowed_products"], ["Node.js"])
+                self.assertEqual(data["allowed_unknown_assets"], ["offline"])
+                self.assertEqual(data["inventory"]["columns"], ["product", "ecosystem", "state", "asset_ids"])
+                # Windows is an unverified product hint, NOT an observed product.
+                return {"matches": [{"slug": "node-test",
+                    "products": ["Windows"] if len(calls) == 1 else [],
+                    "unknown_assets": ["offline"]}]}
+            value = self.review(prompt, data)
+            value["asset_ids"] = ["offline"]
+            return value
+        result = self.collect(reviewer=review)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["findings"]["node-test"]["asset_ids"], ["offline"])
+
+    def test_discovery_compaction_keeps_full_verification_evidence(self):
+        def review(prompt, data):
+            if prompt == mod.SELECT:
+                self.assertNotIn("1.2.3", json.dumps(data["inventory"]))
+            else:
+                self.assertEqual(data["components"][0][1], "1.2.3")
+                self.assertEqual(data["components"][0][4], "binary_version_probe")
+            return self.review(prompt, data)
+        self.assertEqual(self.collect(reviewer=review)["matches"], 1)
+
+    def test_selection_rejects_malformed_and_out_of_scope_values(self):
+        good = {"slug": "node-test", "products": ["Node.js"], "unknown_assets": []}
+        for value in (None, [], {}, {"matches": {}}, {"matches": [None]},
+                      {"matches": [{**good, "products": "Node.js"}]},
+                      {"matches": [{**good, "unknown_assets": [{}]}]},
+                      {"matches": [{**good, "slug": "outside-batch"}]},
+                      {"matches": [good, good]}):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "invalid_selection_"):
+                mod.validate_selection(value, {"node-test"}, {"Node.js"}, {"offline"})
+
+    def test_selection_transport_failure_and_deadline_do_not_retry(self):
+        for error in (ValueError("model_failed"), mod.CollectionDeadline("collection_deadline")):
+            calls = []
+            def fail(*_):
+                calls.append(1)
+                raise error
+            with self.assertRaises(type(error)):
+                self.collect(reviewer=fail)
+            self.assertEqual(len(calls), 1)
+
+    def test_selection_json_failure_gets_one_retry(self):
+        calls = []
+        def review(prompt, data):
+            if prompt == mod.SELECT:
+                calls.append(1)
+                if len(calls) == 1:
+                    raise json.JSONDecodeError("bad", "", 0)
+            return self.review(prompt, data)
+        self.assertEqual(self.collect(reviewer=review)["matches"], 1)
+        self.assertEqual(len(calls), 2)
+
+    def test_failed_discovery_preserves_cache_on_disk(self):
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            state.chmod(0o700)
+            mod.write_private(state / "cache.json", self.collect())
+            mod.write_private(state / "inventory.json", self.inventory)
+            before = (state / "cache.json").read_bytes()
+            with patch.object(sys, "argv", ["collector", "--state-dir", str(state),
+                                            "--inventory", str(state / "inventory.json")]), patch.object(
+                    mod, "collect", side_effect=ValueError("invalid_selection_products")):
+                self.assertEqual(mod.main(), 1)
+            self.assertEqual((state / "cache.json").read_bytes(), before)
+            self.assertEqual(mod.read_private(state / "health.json")["status"], "failed")
+
     def test_false_citation_rejected(self):
         value = self.review(mod.VERIFY, {})
         value["evidence"][0]["quote"] = "Invented"

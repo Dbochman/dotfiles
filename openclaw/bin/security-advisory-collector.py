@@ -219,6 +219,65 @@ and unknown assets. Do not equate product presence with exploitability or omissi
 Return {"matches":[{"slug":"exact feed slug","products":["exact inventory product"],
 "unknown_assets":["exact unverified asset id"]}]}. Include potential and uncertain matches.
 No commands or remediation. Only return matches using supplied product/asset names."""
+
+
+def validate_selection(value, slugs, products, unknown):
+    """Validate the entire batch before accepting anything; never drop bad rows."""
+    if not isinstance(value, dict) or not isinstance(value.get("matches"), list):
+        raise ValueError("invalid_selection_shape")
+    matches = {}
+    for match in value["matches"]:
+        if not isinstance(match, dict):
+            raise ValueError("invalid_selection_shape")
+        slug = match.get("slug")
+        if not isinstance(slug, str) or slug not in slugs:
+            raise ValueError("invalid_selection_slug")
+        for field, allowed in (("products", products), ("unknown_assets", unknown)):
+            names = match.get(field)
+            if not isinstance(names, list) or any(not isinstance(n, str) for n in names):
+                raise ValueError("invalid_selection_shape")
+            if not set(names) <= allowed:
+                raise ValueError("invalid_selection_" + field)
+        if slug in matches:
+            raise ValueError("invalid_selection_duplicate")
+        matches[slug] = {"slug": slug, "products": sorted(set(match["products"])),
+                         "unknown_assets": sorted(set(match["unknown_assets"]))}
+    return {slug: match for slug, match in matches.items()
+            if match["products"] or match["unknown_assets"]}
+
+
+def select_batch(compact, advisories, products, unknown, reviewer, progress):
+    # Unverified product hints are not observed components. Spell out the two
+    # namespaces rather than making the model infer this from the compact table.
+    groups = {}
+    for product, version, ecosystem, state, evidence, assets in compact["components"]:
+        groups.setdefault((product, ecosystem, state), set()).update(assets)
+    # Discovery asks only what is plausibly relevant. Versions and evidence
+    # remain in the full inventory passed to primary-source verification.
+    discovery = {"columns": ["product", "ecosystem", "state", "asset_ids"],
+                 "components": [list(key) + [sorted(assets)] for key, assets in groups.items()],
+                 "unverified": compact["unverified"]}
+    data = {"inventory": discovery, "advisories": advisories,
+            "allowed_products": sorted(products), "allowed_unknown_assets": sorted(unknown),
+            "selection_rules": "products must come from allowed_products only; for a product "
+            "hint present only in inventory.unverified, use its allowed_unknown_assets id "
+            "and an empty products list. Use only slugs in this advisory batch."}
+    slugs = {i["slug"] for i in advisories}
+    for attempt in range(1, 3):
+        progress(step="model", attempt=attempt, attempt_limit=2,
+                 **({"retry_reason": data["retry_reason"]} if "retry_reason" in data else {}))
+        try:
+            return validate_selection(reviewer(SELECT, data), slugs, products, unknown)
+        except ValueError as exc:
+            # Retry schema/selection failures once, not transport failures or
+            # arbitrary exceptions. Never echo rejected model output to logs.
+            reason = "invalid_selection_json" if isinstance(exc, json.JSONDecodeError) else str(exc)
+            if not reason.startswith("invalid_selection_") or attempt == 2:
+                raise
+            data["retry_reason"] = reason
+            data["retry_instruction"] = "Regenerate the complete batch using the exact allowed names."
+
+
 VERIFY = """Assess this advisory against the supplied inventory and fetched primary evidence.
 Feed claims are discovery hints, NOT verified facts. Check publisher authority and evidence relevance.
 Source-only lockfiles are NOT deployed runtimes; installed is NOT running; metadata cannot prove
@@ -281,16 +340,11 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
     values = list(incidents.values())
     progress(phase="discovery", advisories=len(values), screened=0)
     for start in range(0, len(values), 50):
-        progress(phase="discovery", step="model", advisories=len(values), screened=start,
-                 batch=start // 50 + 1, batches=(len(values) + 49) // 50)
-        selected = reviewer(SELECT, {"inventory": compact, "advisories": values[start:start + 50]})
-        batch = {i["slug"] for i in values[start:start + 50]}
-        for match in selected["matches"]:
-            if (match["slug"] not in batch or not set(match["products"]) <= all_products
-                    or not set(match["unknown_assets"]) <= unknown):
-                raise ValueError("invalid_selection")
-            if match["products"] or match["unknown_assets"]:
-                matches[match["slug"]] = match
+        def selection_progress(**fields):
+            progress(phase="discovery", advisories=len(values), screened=start,
+                     batch=start // 50 + 1, batches=(len(values) + 49) // 50, **fields)
+        matches.update(select_batch(compact, values[start:start + 50], all_products,
+                                    unknown, reviewer, selection_progress))
         progress(phase="discovery", advisories=len(values), screened=min(start + 50, len(values)))
     findings = dict(previous.get("findings", {}))
     pending = []
@@ -399,7 +453,8 @@ def progress_summary(state=STATE, now=None):
         health = read_private(state / "health.json")
         fields = ("status", "phase", "step", "started_at", "checked_at", "advisories",
                   "screened", "batch", "batches", "pending", "checked", "review_limit",
-                  "errors", "backlog", "error_type", "error_code")
+                  "errors", "backlog", "error_type", "error_code",
+                  "attempt", "attempt_limit", "retry_reason")
         result = {k: health[k] for k in fields if k in health}
         result["seconds_since_update"] = max(0, round(age_hours(health["checked_at"], now) * 3600))
         if health.get("started_at"):
