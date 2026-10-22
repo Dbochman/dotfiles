@@ -15,6 +15,7 @@ import socket
 import ssl
 import subprocess
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -33,6 +34,8 @@ PUBLISHERS = {
     "vercel.com", "nextjs.org", "vite.dev", "www.netlify.com",
     "blog.cloudflare.com", "developers.cloudflare.com", "www.jetbrains.com",
     "www.litellm.ai", "docs.litellm.ai", "pypi.org", "www.npmjs.com",
+    "cveawg.mitre.org", "lore.kernel.org", "git.kernel.org", "cdn.kernel.org",
+    "blog.gitguardian.com",
 }
 FIELDS = ("slug", "title", "product", "cveIds", "affectedVersions", "fixedVersions",
           "severity", "status", "updatedAt", "summary")
@@ -99,19 +102,40 @@ def validate_url(url, hosts):
 
 
 def fetch(url, hosts):
-    validate_url(url, hosts)
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}), NoRedirect(),
         urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=CA)))
-    req = urllib.request.Request(url, headers={"User-Agent": "PersonalSecurityReview/1.0",
-                                               "Accept-Encoding": "identity"})
-    with opener.open(req, timeout=15) as response:
-        if response.headers.get_content_type() not in ("application/json", "text/html", "text/plain"):
-            raise ValueError("unsupported_source_type")
-        raw = response.read(1_000_001)
-        if len(raw) > 1_000_000:
-            raise ValueError("source_too_large")
-        return raw.decode("utf-8", errors="replace")
+    for hop in range(4):
+        validate_url(url, hosts)
+        req = urllib.request.Request(url, headers={"User-Agent": "PersonalSecurityReview/1.0",
+                                                   "Accept-Encoding": "identity"})
+        try:
+            response = opener.open(req, timeout=15)
+        except urllib.error.HTTPError as exc:
+            location = exc.headers.get("Location")
+            exc.close()
+            if exc.code not in (301, 302, 303, 307, 308) or not location or hop == 3:
+                raise
+            url = urllib.parse.urljoin(url, location)
+            continue
+        with response:
+            if response.headers.get_content_type() not in ("application/json", "text/html", "text/plain"):
+                raise ValueError("unsupported_source_type")
+            raw = response.read(1_000_001)
+            if len(raw) > 1_000_000:
+                raise ValueError("source_too_large")
+            return raw.decode("utf-8", errors="replace")
+
+
+def source_urls(detail, incident):
+    # Some incident cards link only journalism. A fixed CVE Program endpoint
+    # supplies the assigning CNA's record without trusting feed-provided hosts.
+    cves = [c for c in incident.get("cveIds") or [] if re.fullmatch(r"CVE-\d{4}-\d{4,10}", c)]
+    records = [f"https://cveawg.mitre.org/api/cve/{c}" for c in cves[:2]]
+    linked = [s["url"] for s in detail.get("sources", [])
+              if urllib.parse.urlsplit(s.get("url", "")).hostname in PUBLISHERS]
+    # Reserve one slot for CNA evidence, prioritizing the incident's publisher.
+    return list(dict.fromkeys(linked[:2] + records + linked[2:]))[:3]
 
 
 class PageText(HTMLParser):
@@ -283,9 +307,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         sources = {}
         try:
             detail = json.loads(fetcher(f"https://pwn.watch/i/{slug}.json", {"pwn.watch"}))
-            approved = [s["url"] for s in detail.get("sources", [])
-                        if urllib.parse.urlsplit(s.get("url", "")).hostname in PUBLISHERS]
-            for url in list(dict.fromkeys(approved))[:3]:
+            for url in source_urls(detail, incidents[slug]):
                 try:
                     sources[url] = page_text(fetcher(url, PUBLISHERS))
                 except (OSError, ValueError):

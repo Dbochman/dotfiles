@@ -75,8 +75,9 @@ the model shell, browser, messaging or remediation tools. Only product/version,
 evidence type, running/source-only state and asset labels enter model inputs;
 private source paths, IPs, accounts and freeform survey notes are excluded.
 
-Publisher domains are code-reviewed, redirects/proxies are disabled, private
-DNS answers are rejected, HTTPS uses the maintained CA file, and responses are
+Publisher domains are code-reviewed, proxies/automatic redirects are disabled,
+and at most three redirects are followed after revalidating every destination
+against the same exact-domain/HTTPS/public-DNS rules. Responses are
 size/time limited. Source material is untrusted data. Assessment references must
 use fetched URLs and exact supporting excerpts. These checks establish citation
 provenance, **not infallible model reasoning or proven exploitability**. No usable
@@ -84,6 +85,10 @@ primary evidence means unknown. Source-only dependencies, old observations,
 unknown bundled versions and provider-owned infrastructure never become a fleet
 clearance. Adding a publisher requires review; an unsupported publisher stays
 unknown rather than broadening network access from feed instructions.
+When cards link only news coverage, a fixed CVE Program API endpoint supplies
+the assigning CNA's record for up to two syntactically valid CVE IDs, within
+the same three-source budget. Kernel-maintainer archives and GitGuardian's
+original GhostAction research are explicitly reviewed publishers too.
 
 Private atomic state is in `~/.local/state/security-advisories/` (0700/0600).
 The lock excludes concurrent collections; the overall budget is 30 minutes.

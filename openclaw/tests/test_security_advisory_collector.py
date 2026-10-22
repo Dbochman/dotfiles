@@ -116,6 +116,30 @@ class AdvisoryTests(unittest.TestCase):
                 mod.validate_url("https://nodejs.org/a", mod.PUBLISHERS)
         self.assertIsNone(mod.NoRedirect().redirect_request(None, None, None, None, None))
 
+    def test_primary_cna_fallback_has_fixed_host_and_budget(self):
+        incident = {"cveIds": ["CVE-2026-12345", "https://evil.invalid", "CVE-2026-54321"]}
+        urls = mod.source_urls({"sources": [{"url": "https://evil.invalid/news"}]}, incident)
+        self.assertEqual(urls, ["https://cveawg.mitre.org/api/cve/CVE-2026-12345",
+                                "https://cveawg.mitre.org/api/cve/CVE-2026-54321"])
+        detail = {"sources": [{"url": f"https://nodejs.org/{i}"} for i in range(10)]}
+        self.assertEqual(len(mod.source_urls(detail, incident)), 3)
+
+    def test_redirect_revalidates_target_before_request(self):
+        from email.message import Message
+        headers = Message()
+        headers['Location'] = 'https://127.0.0.1/secrets'
+        error = mod.urllib.error.HTTPError('https://nodejs.org/a', 301, 'redirect', headers, None)
+        from unittest.mock import Mock
+        opener = Mock()
+        opener.open.side_effect = error
+        addresses = [(0, 0, 0, '', ('8.8.8.8', 443))]
+        with patch.object(mod.urllib.request, 'build_opener', return_value=opener), patch.object(
+            mod.socket, 'getaddrinfo', return_value=addresses
+        ):
+            with self.assertRaisesRegex(ValueError, 'unapproved_source'):
+                mod.fetch('https://nodejs.org/a', mod.PUBLISHERS)
+        self.assertEqual(opener.open.call_count, 1)
+
     def test_cache_only_summary_staleness_and_repeated_read(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
