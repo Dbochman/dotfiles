@@ -4,7 +4,7 @@
 # Run once after installing qmd: npm install -g @tobilu/qmd
 set -euo pipefail
 
-export PATH="/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/bin:/bin:$PATH"
+export PATH="/opt/homebrew/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin:/usr/bin:/bin:$PATH"
 
 if ! command -v qmd &>/dev/null; then
   echo "qmd not found. Install with: npm install -g @tobilu/qmd"

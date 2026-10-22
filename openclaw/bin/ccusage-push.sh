@@ -37,7 +37,7 @@ DESTINATION_NAME="ccusage-codex-${MACHINE}.json"
 # Find npx — prefer the managed Node 22 keg used by the rest of the tooling.
 NPX="${CCUSAGE_NPX:-}"
 if [[ -z "$NPX" ]]; then
-  for p in /opt/homebrew/opt/node@22/bin/npx /opt/homebrew/bin/npx /usr/local/bin/npx; do
+  for p in /Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin/npx /opt/homebrew/bin/npx /usr/local/bin/npx; do
     [[ -x "$p" ]] && NPX="$p" && break
   done
 fi

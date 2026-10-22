@@ -12,7 +12,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin</string>
+        <string>/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin:/usr/local/bin:/usr/sbin:/usr/bin:/bin</string>
         <key>HOME</key>
         <string>/Users/dbochman</string>
         <key>HOME_EVENTS_RING_ENABLED</key>

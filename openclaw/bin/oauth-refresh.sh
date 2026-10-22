@@ -99,7 +99,7 @@ def main():
         environment["CLAUDE_CONFIG_DIR"] = str(directory)
         environment["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = str(directory)
         environment["USER"] = account
-        environment["PATH"] = "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        environment["PATH"] = "/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         environment["SSL_CERT_FILE"] = "/opt/homebrew/etc/ca-certificates/cert.pem"
         environment["NODE_OPTIONS"] = "--use-openssl-ca"
         environment.pop("NODE_EXTRA_CA_CERTS", None)

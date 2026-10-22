@@ -30,7 +30,7 @@ SIPS_BIN = Path("/usr/bin/sips")
 MDLS_BIN = Path("/usr/bin/mdls")
 RUNTIME_PATH = (
     "/Users/dbochman/.local/share/openclaw/runtimes/"
-    "node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    "node-v24.22.1-darwin-arm64/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 )
 STILL_EXTENSIONS = frozenset({".avif", ".dng", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".tiff", ".webp"})
 VIDEO_EXTENSIONS = frozenset({".mov", ".mp4"})

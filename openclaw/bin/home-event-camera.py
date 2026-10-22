@@ -167,7 +167,7 @@ class CameraCommands:
     def _environment() -> Mapping[str, str]:
         result = {
             "HOME": str(Path.home()),
-            "PATH": "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/usr/bin:/bin",
+            "PATH": "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin:/opt/homebrew/bin:/usr/bin:/bin",
             "LANG": "en_US.UTF-8",
             "SSL_CERT_FILE": "/opt/homebrew/etc/ca-certificates/cert.pem",
             "CURL_CA_BUNDLE": "/opt/homebrew/etc/ca-certificates/cert.pem",

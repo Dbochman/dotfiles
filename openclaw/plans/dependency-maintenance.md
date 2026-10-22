@@ -16,6 +16,71 @@ The goal is to keep dependencies fresh enough that security CVEs and
 bug fixes flow through, while protecting load-bearing integrations
 from breaking changes that need careful migration.
 
+## Node security rollout — 2026-10-21 (staged; activation pending)
+
+The [October security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)
+fixes CVE-2026-111497 (Brotli decoder out-of-bounds write / RCE), TLS hostname
+validation flaws and other issues. Supported patched targets: 22.23.4, 24.22.1,
+26.12.1. Node 25 is EOL. Trust-store fixes alone do not repair the decoder.
+No exploit was run and this work does not establish compromise.
+
+Official macOS ARM64 archives downloaded over verified TLS and compared against
+Node's release SHASUMS256.txt:
+
+| Target | Archive SHA-256 |
+| --- | --- |
+| 22.23.4 | `c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428` |
+| 24.22.1 | `89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7` |
+| 26.12.1 | `1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8` |
+
+These are HTTPS checksum checks, not independent release-signature verification.
+Node 24's extracted executable SHA-256 is
+`6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329`.
+
+- **Mini:** 22.23.4 and 24.22.1 staged side by side in
+  `~/.local/share/openclaw/runtimes/`. Gateway remains running 24.21.0,
+  OpenClaw 2026.10.1; the existing live activation verifier passes. Source pins,
+  checksums, helper PATHs and LaunchAgents are prepared in the isolated
+  `fix/node-october-security` worktree. No live wrapper change or restart yet.
+  Preserve the maintained CA bundle and OpenSSL-CA settings.
+- **Crosstown MBP:** 24.22.1 staged and Express/dorita980 module loading passes.
+  Both bridges still run Homebrew 25.9.0. Prepared wrappers require the exact
+  patched runtime/hash and cannot fall back to EOL Node. Deploy only after the
+  runtime exists; verify each replacement PID and read-only `/ping` response.
+- **dylans-mac:** active standalone Node is 26.7.0; Homebrew reports 26.12.0,
+  which is insufficient. Official 26.12.1 is staged and its version verified
+  under `~/.local/share/openclaw/runtimes/`; staging is separate from switching
+  consumers. No claim that existing processes have been patched.
+- **Windows:** installed OpenAI.Codex 26.1016.6573.0 still has active managed
+  Node 24.19.0 and 24.21.0 binaries. Use vendor update channels; do not overwrite
+  content-addressed runtimes or signed package contents. Runtime verification
+  after a vendor update remains open. The offline cabin desktop is unverified.
+- **Vendor applications:** 1Password's October 20 stable release notes do not
+  establish a fix for the new Node advisory. Do not equate latest application
+  version, Electron version, or unchanged Brotli version text with a backport.
+- **Website:** separate feature branch pins builds/.nvmrc/Netlify to24.22.1 and
+  adds an offline pre-checkout check of the actual Runner.Worker-owned action
+  Node24. A lagging GitHub runner fails closed; no runner executable replacement.
+  Hosted CI and provider-managed Vercel/Netlify execution remain unverified.
+
+Local checks: 46 gateway, 30 deployment, 13 OAuth, 16 camera, 21 delivery,
+38 usage, 37 Nest reviewer, 3 browser-trust, 61 Reolink, 31 Ring/home-event and
+18 cron SQLite Python tests passed; synthetic cron-sync shell tests also pass.
+Magazine:
+51/52 pass on22.23.4; the catalog-tag fixture failure also occurs on old22.23.1.
+Its existing issue/content changes are outside this rollout and preserved.
+Website: 301 unit tests, typecheck, lint, preview build, hard bundle budgets,
+11 bootstrap tests and generated-workflow drift check pass; blog style score100.
+The existing soft content-chunk budget remains exceeded.
+
+Activation remains a distinct step: publish the reviewed source, hold the narrow
+deployer, cooperatively drain the gateway, preserve the original generated
+shell-prefixed launch chain and recovery artifacts, activate without changing
+the OpenClaw package or rewinding state, then run the live activation/health/skill
+checks before releasing the hold. Restart long-running helper owners only after
+their work is idle; no test messages, robot missions, or production cron reruns.
+Old runtime directories remain rollback-only until ownership is audited.
+
 ## eMudhra TLS incident response — 2026-10-20
 
 This is client trust remediation, not evidence that a host was breached. Browser

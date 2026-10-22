@@ -17,7 +17,7 @@ assert "/usr/bin" in os.environ["PATH"].split(":")
 assert os.environ["CLAUDE_SECURESTORAGE_CONFIG_DIR"] == str(directory)
 assert not os.environ.get("CLAUDE_CODE_OAUTH_CLIENT_ID")
 assert not os.environ.get("ANTHROPIC_BASE_URL")
-assert "/opt/homebrew/opt/node@22/bin" in os.environ["PATH"]
+assert "/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin" in os.environ["PATH"]
 assert not os.environ.get("ANTHROPIC_API_KEY")
 assert not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
 mode = os.environ.get("FAKE_MODE", "success")

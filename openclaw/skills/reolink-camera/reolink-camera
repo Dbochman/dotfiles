@@ -105,7 +105,7 @@ OPENCLAW_BINARY = Path("/opt/homebrew/bin/openclaw")
 IMSG_BINARY = Path("/opt/homebrew/bin/imsg")
 IMSG_RPC_REQUEST_ID = "reolink-camera-share"
 RUNTIME_PATH = (
-    "/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:"
+    "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin:/opt/homebrew/bin:"
     "/usr/local/bin:/usr/bin:/bin"
 )
 VISION_MODEL = "codex/gpt-5.6-sol"

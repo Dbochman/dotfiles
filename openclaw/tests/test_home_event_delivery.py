@@ -384,7 +384,7 @@ class HomeEventDeliveryTests(unittest.TestCase):
         self.assertNotIn("NODE_EXTRA_CA_CERTS", environment)
         self.assertEqual(
             run.call_args.kwargs["env"]["PATH"].split(":", 1)[0],
-            "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin",
+            "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin",
         )
 
     def test_shadow_worker_is_inert_without_target(self) -> None:

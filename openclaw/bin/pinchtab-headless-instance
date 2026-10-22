@@ -5,7 +5,7 @@ set -euo pipefail
 PINCHTAB="${PINCHTAB_BIN:-/opt/homebrew/bin/pinchtab}"
 PROFILE="${PINCHTAB_PROFILE:-default}"
 HELPER_DIR="$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parent)' "${BASH_SOURCE[0]}")"
-TRUST_NODE="${PINCHTAB_TRUST_NODE:-$HOME/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node}"
+TRUST_NODE="${PINCHTAB_TRUST_NODE:-$HOME/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node}"
 
 usage() {
   cat <<'EOF'

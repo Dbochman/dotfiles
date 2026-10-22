@@ -85,7 +85,7 @@ NEST_BIN = Path("/opt/homebrew/bin/nest")
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
 IMSG_BIN = Path("/opt/homebrew/bin/imsg")
 RUNTIME_PATH = (
-    "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:"
+    "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin:/opt/homebrew/bin:"
     "/usr/local/bin:/usr/bin:/bin"
 )
 MODEL = "codex/gpt-5.6-sol"

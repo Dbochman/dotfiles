@@ -15,8 +15,8 @@ fi
 # issuing a device command if authentication is actually unavailable.
 "$AUTH_HELPER" refresh --quiet >/dev/null 2>&1 || true
 
-if [ -x /opt/homebrew/opt/node@22/bin/node ]; then
-  NODE=/opt/homebrew/opt/node@22/bin/node
+if [ -x /Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin/node ]; then
+  NODE=/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin/node
 elif [ -x /opt/homebrew/bin/node ]; then
   NODE=/opt/homebrew/bin/node
 else

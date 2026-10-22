@@ -264,7 +264,7 @@ RING_HOME_EVENT_STATUS = Path(
 )
 
 OPENCLAW_CLI = "/opt/homebrew/bin/openclaw"
-OPENCLAW_NODE_BIN = "/opt/homebrew/opt/node@22/bin"
+OPENCLAW_NODE_BIN = "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin"
 IMESSAGE_SEND_TIMEOUT_SECONDS = 20
 IMSG_MAX_MESSAGE_BYTES = 4096
 _dylan_chat_id = os.environ.get("DYLAN_CHAT_ID", "").strip()

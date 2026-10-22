@@ -13,8 +13,8 @@ WRAPPER = ROOT / "OpenClawGateway.app/Contents/MacOS/OpenClawGateway"
 PULL = ROOT / "bin/dotfiles-pull.command"
 LIBRARY = ROOT / "lib/deployment.sh"
 RECOVERY = ROOT / "launchagents/ai.openclaw.gateway.plist"
-NODE_DIRECTORY = "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin"
-NODE_SHA256 = "e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b"
+NODE_DIRECTORY = "/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin"
+NODE_SHA256 = "6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329"
 ENTRY = "/opt/homebrew/lib/node_modules/openclaw/dist/index.js"
 SKILLS = ("opentable", "restaurant-book", "restaurant-snipe", "resy")
 
@@ -89,7 +89,7 @@ class GatewayRuntimeContractTests(unittest.TestCase):
             WRAPPER.read_text(),
         )
         self.assertIn(
-            "/opt/homebrew/opt/node@22/bin", (ROOT / "bin/oauth-refresh.sh").read_text()
+            "/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin", (ROOT / "bin/oauth-refresh.sh").read_text()
         )
 
     def test_missing_node24_stops_wrapper_before_cache_and_logs(self):
@@ -274,7 +274,7 @@ class GatewayRuntimeContractTests(unittest.TestCase):
         arguments = json.loads((self.home / "invoked.json").read_text())
         self.assertIn("--record", arguments)
         self.assertEqual(arguments[-2:], ["--previous-pid", "123"])
-        self.assertIn("24.21.0", arguments)
+        self.assertIn("24.22.1", arguments)
         self.assertEqual(arguments[arguments.index("--expected-node-sha256") + 1],
                          NODE_SHA256)
         self.assertIn("2026.10.1", arguments)

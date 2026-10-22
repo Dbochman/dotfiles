@@ -18,7 +18,7 @@ SPEC = importlib.util.spec_from_file_location("gateway_activation", SCRIPT)
 activation = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = activation
 SPEC.loader.exec_module(activation)
-NODE_VERSION = "24.21.0"
+NODE_VERSION = "24.22.1"
 PACKAGE_VERSION = "2026.8.35"
 STAMP = 1700000000
 
@@ -125,8 +125,8 @@ class GatewayActivationTests(unittest.TestCase):
 
     def test_runtime_paths_separate_official_node24_and_homebrew_rollback(self):
         self.assertEqual(
-            self.paths.node("24.21.0"),
-            self.home / ".local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node",
+            self.paths.node("24.22.1"),
+            self.home / ".local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node",
         )
         self.assertEqual(self.paths.node("22.23.1"), self.home / "brew/opt/node@22/bin/node")
 

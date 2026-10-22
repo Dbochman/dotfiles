@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-PATH="/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
+PATH="/opt/homebrew/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin:/usr/local/bin:/usr/bin:/bin"
 TOKEN_CACHE="$HOME/.cache/openclaw-gateway/opentable_auth_token"
 BINDING_FILE="$HOME/.cache/openclaw-gateway/opentable_account_binding.json"
 EXPECTED_ACCOUNT_FILE="$HOME/.cache/openclaw-gateway/opentable_expected_account.sha256"

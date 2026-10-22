@@ -5,7 +5,10 @@ wrapper around the rest980 Express app at `~/.openclaw/rest980-app/`, scoped
 to one Roomba via a private env file.
 
 ## Tracked here
-- `start-10max.sh`, `start-j5.sh` — launchd entrypoints, autodetect node path
+- `start-10max.sh`, `start-j5.sh` — launchd entrypoints, checksum-pinned official
+  Node 24.22.1 under `~/.local/share/openclaw/runtimes/`. No PATH fallback to
+  the previously selected, EOL Homebrew Node 25. Stage and verify this runtime
+  on the MBP before deploying the wrappers; restart and check both bridge PIDs.
 - `roomba-cmd.js` — direct dorita980 wrapper for ad-hoc CLI use
 - Plists live in `openclaw/launchagents/com.openclaw.rest980-{10max,j5}.plist`
 

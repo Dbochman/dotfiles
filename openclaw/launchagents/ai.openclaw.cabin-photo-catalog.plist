@@ -25,7 +25,7 @@
         <key>HOME</key>
         <string>/Users/dbochman</string>
         <key>PATH</key>
-        <string>/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
     <key>ProcessType</key>
     <string>Background</string>

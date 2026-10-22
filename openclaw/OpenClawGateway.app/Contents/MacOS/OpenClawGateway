@@ -1,11 +1,11 @@
 #!/bin/bash
 
 export HOME="/Users/dbochman"
-export PATH="$HOME/.openclaw/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$HOME/.openclaw/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-readonly GATEWAY_NODE_SHA256=e4b5a3af0e05c75de2eae013904145f40fe7fc2a6e6f17510128bf45cca4e79b
-if [[ ! -x /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node ]] \
-  || [[ "$(/usr/bin/shasum -a 256 /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node 2>/dev/null | /usr/bin/awk '{print $1}')" != "$GATEWAY_NODE_SHA256" ]]; then
+readonly GATEWAY_NODE_SHA256=6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329
+if [[ ! -x /Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node ]] \
+  || [[ "$(/usr/bin/shasum -a 256 /Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node 2>/dev/null | /usr/bin/awk '{print $1}')" != "$GATEWAY_NODE_SHA256" ]]; then
   echo "FATAL: Required Node24 runtime is unavailable or unapproved; refusing fallback" >&2
   exit 78
 fi
@@ -56,4 +56,4 @@ export SSL_CERT_FILE="$GATEWAY_CA_BUNDLE"
 export CURL_CA_BUNDLE="$GATEWAY_CA_BUNDLE"
 export NODE_OPTIONS=--use-openssl-ca
 unset NODE_EXTRA_CA_CERTS NODE_USE_SYSTEM_CA
-exec /Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789
+exec /Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/index.js gateway --port 18789

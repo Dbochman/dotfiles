@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-export PATH="/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/opt/homebrew/opt/node@22/bin:/usr/local/bin:/usr/bin:/bin"
+export PATH="/Users/dbochman/.openclaw/bin:/opt/homebrew/bin:/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin:/usr/local/bin:/usr/bin:/bin"
 export HOME="/Users/dbochman"
 
 # Source secrets for API auth

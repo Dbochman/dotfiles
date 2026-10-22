@@ -14,7 +14,7 @@ set -euo pipefail
 
 export PYTHONPATH="$(cd "$(dirname "$0")/bin" && pwd)${PYTHONPATH:+:$PYTHONPATH}"
 
-NODE24_BIN="${OPENCLAW_NODE24_BIN:-/Users/dbochman/.local/share/openclaw/runtimes/node-v24.21.0-darwin-arm64/bin}"
+NODE24_BIN="${OPENCLAW_NODE24_BIN:-/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin}"
 if [ -x "$NODE24_BIN/node" ]; then
   PATH="$NODE24_BIN:$PATH"
   export PATH
