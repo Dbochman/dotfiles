@@ -19,7 +19,7 @@ owns the OpenClaw plugin, skills, relay services, and operating policy.
 | Delegation | Exact OpenClaw session `agent:main:reachy`, pinned to `openai/gpt-5.4-mini` |
 | Continuity | `reachy-continuity` gateway plugin, exact Reachy/iMessage sessions only |
 | Wake word | Disabled; microphone mute is the conversation gate |
-| Live status | ClawBody ready, direct voice owns the robot, microphone unmuted at volume 100 |
+| Historical live status (August 27) | ClawBody ready, direct voice owns the robot, microphone unmuted at volume 100; not a current health assertion |
 
 The OpenClaw global model remains `openai/gpt-5.6-sol`; the smaller Reachy
 delegation model is scoped only to `agent:main:reachy`.
@@ -315,6 +315,78 @@ and SSH recovery procedure.
 | Reachy Mini Control | Pollen Robotics notarized application; not repository-managed | MBP `/Applications/Reachy Mini Control.app` (installed, normally closed) |
 
 ## Verification
+
+### Backend readiness and wake-to-start (October 22, 2026)
+
+The installed daemon 1.9.0 robot backend initialized its API status with
+`ready=false` and `last_alive=null`, but never copied the live readiness event
+or heartbeat into that object. Its real startup readiness gate succeeded and
+the motor loop ran near 50 Hz without errors. Those two API fields were stale,
+not proof of motor failure.
+
+The narrow deployed fix is tracked in
+[`reachy/patches/backend-status-1.9.0.patch`](reachy/patches/backend-status-1.9.0.patch).
+It copies `self.ready.is_set()` and `self.last_alive` in `get_status()`, retaining
+the existing error, motor-mode, and control-loop fields. The original installed
+file is preserved beside `daemon/backend/robot/backend.py` as
+`backend.py.pre-readiness-20261022`. This is an installed-package patch, not a
+vendor release: a daemon update may replace it. Review the new source before
+reapplying; do not automatically patch or downgrade an updated package.
+
+For the matching unpatched source only, copy the tracked patch to a temporary
+directory on Reachy, change into the `reachy_mini` package directory above, and
+first run `patch --dry-run --batch --forward --fuzz=0 -p1 < /path/to/patch`.
+Apply only after a clean dry run, with a uniquely named backup; run the checks
+below before an attended daemon restart. Do not restart while another app owns
+the robot. Shutdown can move it to its sleep pose. An already applied patch
+must not be force-applied a second time.
+
+Hardware-free regression checks against the installed source:
+
+```bash
+/venvs/mini_daemon/bin/python verify_daemon_status.py \
+  /venvs/mini_daemon/lib/python3.12/site-packages/reachy_mini
+```
+
+Copy the tracked [`reachy/verify_daemon_status.py`](reachy/verify_daemon_status.py)
+to a temporary directory on Reachy first. It extracts only selected functions;
+it does not import the hardware stack, start apps, access the microphone, or
+move the robot. Six checks cover initial readiness, live heartbeat updates,
+readiness clearing, preserved error/mode/stats, waiting for wake with a one-shot
+launch, and contained launch failures. Two status tests failed before the fix;
+all six passed afterward.
+
+Live verification after one attended daemon restart: API `ready=true`, heartbeat
+age 0.06 seconds, approximately 49.6 Hz, and no daemon/backend/control-loop errors.
+Before the owner's antenna gesture there was no running app, as expected. After
+the owner confirmed wake, ClawBody's control socket became available and returned
+`status=success`, `control=ready`, `control_owner=direct_voice`, microphone unmuted
+at volume 100. Allow app initialization to finish: the app manager reported a
+running process before the control socket was ready. A subsequent daemon sample
+still showed readiness and a fresh heartbeat with no errors. No remote motion,
+speech, camera capture, or microphone-setting command was used for verification.
+End-to-end voice response and MQTT were not tested. After verification, the owner
+requested mute for a meeting; `reachyctl mute` confirmed `microphone_muted=true`
+and volume 0. Do not unmute or restart the app merely to repeat health checks.
+
+The wireless launcher uses `--no-wake-up-on-start`. ClawBody is configured as
+the startup app, but the app starts on first wake, not merely on daemon boot.
+An idle antenna-touch watcher can also start it, without evicting another
+managed app: it detects either antenna displaced at least 0.25 radians (about
+14 degrees) from its resting reference. Gently move and release; never force
+an antenna against resistance. This is distinct from ClawBody's both-antenna
+unmute gesture. Therefore `current-app-status=null` and a missing ClawBody control
+socket immediately after boot can be expected. Distinguish daemon readiness
+from app readiness; never force `ready=true` to hide failures. Check a fresh
+heartbeat, daemon/backend errors, control-loop statistics, and app status.
+
+For attended verification, confirm clear space and expect movement, a wake
+sound, and possible microphone/voice operation. Check these read-only endpoints
+on Reachy's loopback before and after the owner's normal wake gesture:
+`/api/daemon/status`, `/api/apps/current-app-status`, and
+`/api/apps/startup-app`; then check `reachyctl status`. Do not capture room
+audio, images, or conversation logs for this check. A successful wake/app check
+does not by itself clear MQTT or end-to-end voice/gateway health.
 
 Check both persistent MBP legs:
 

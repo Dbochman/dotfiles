@@ -32,9 +32,10 @@ from breaking changes that need careful migration.
 - Reboot verified: running `6.18.50+rpt-rpi-v8`, above the Linux CNA's 6.18.22
   floor for CVE-2026-31431 and 6.18.38 floor for CVE-2026-53362. Package audit
   is clean; SSH, Bluetooth and the robot daemon are active. No exploit probe.
-  Daemon API reports running version 1.9.0 with no error. Its backend-ready flag
-  remains false, also observed before reboot; robot readiness/MQTT is not cleared.
-  No robot motion/audio command was sent. Old recovery kernels are not approved
+  Daemon API reported running version 1.9.0 with no error but a false backend-ready
+  flag, also observed before reboot. The later attended readiness repair below
+  supersedes that status observation; MQTT is still not cleared.
+  No robot motion/audio command was sent during kernel remediation. Old recovery kernels are not approved
   secure rollback targets.
 - Fresh read-only host observations and the attended receipt are protected at
   `~/.local/state/security-inventory/2026-10-22-post-remediation.WysmH5/`.
@@ -58,6 +59,23 @@ from breaking changes that need careful migration.
 Primary version evidence: [Apple CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-65400),
 [Copy Fail CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-31431),
 [IPv6 CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-53362).
+
+### October 22 attended Reachy readiness follow-up
+
+- Identified a reporting defect in installed daemon 1.9.0: its internal readiness
+  event and heartbeat were live, but the API status retained initialization values.
+  Applied a narrow two-line patch with an original-file backup; six hardware-free
+  checks pass (two reproduced the defect before patching).
+- One attended daemon restart loaded the fix. Live API readiness is true, heartbeat
+  age is below 0.1 seconds, motor loop approximately 49.6 Hz, and reported errors zero.
+- Preserved wake-to-start policy. ClawBody was absent before wake; the owner then
+  triggered the antenna gesture and confirmed the robot awake. Its control socket
+  became ready with direct-voice ownership and microphone unmuted at volume 100.
+  Process-running status preceded socket readiness during initialization.
+- See [Reachy runbook](../REACHY.md#backend-readiness-and-wake-to-start-october-22-2026)
+  for tracked patch, verification, backup, and update caveats. This repairs daemon
+  telemetry and verifies the attended app-start path, not end-to-end voice, MQTT,
+  or blanket robot security. A vendor update may replace the local package patch.
 
 ### October 22 fleet follow-up (in progress)
 
