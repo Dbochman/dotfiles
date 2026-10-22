@@ -77,7 +77,192 @@ Primary version evidence: [Apple CNA record](https://cveawg.mitre.org/api/cve/CV
   telemetry and verifies the attended app-start path, not end-to-end voice, MQTT,
   or blanket robot security. A vendor update may replace the local package patch.
 
-### October 22 fleet follow-up (in progress)
+### October 22 attended advisory review — after Reachy readiness repair
+
+Reachy fix/tests/runbook committed and pushed as `b6488af`; all six checks passed
+again without starting apps or moving the robot. Reachy was left muted.
+
+Reviewed the 41 published assessments: 34 unknown, four not applicable, and
+three potentially affected entries based on pre-remediation observations. These
+are **published-cache counts**, not new live exposure findings. The current
+inventory contains the repaired Mac/Reachy versions and the Windows survey.
+The collector rescreened changed inputs, then reached its daily three-pass cap
+at 21:20 UTC: discovery paused at 501/720 with its checkpoint preserved. Its
+published backlog remains 171; the next scheduled window can resume. This
+attended review does not overwrite its cache/checkpoints, reset the
+three-pass allowance, or claim the remaining automated assessment complete.
+
+#### Evidence reconciled
+
+| Finding | Attended disposition and limit |
+| --- | --- |
+| Reachy CVE-2026-31431 and CVE-2026-53362 | Running 6.18.50 exceeds the Linux CNA's 6.18.22 / 6.18.38 fixed floors. Today's kernel installation/reboot addresses both old-version alerts; no further robot restart required. |
+| Mac Screen Sharing CVE-2026-65400 | All three October 22 Mac observations now show 27.0.1, beyond Apple's fixed 27 release. No Screen Sharing configuration or firewall change needed for this version finding. |
+| Apple CVE-2025-43510 / CVE-2025-43520 / CVE-2025-31277 | Retrieved the missing Apple CNA records. macOS fixes are 26.1 for the first two and 15.6 for the third; all three current Mac OS observations are beyond those floors. This closes the missing macOS-version evidence, not every application WebKit copy. |
+| Apple CoreGraphics CVE-2026-86950 | Apple CNA supplies macOS fixed versions 15.8.1 / 26.7.1; observed 27.0.1 is outside those stated affected ranges. No additional OS update indicated by this record. |
+| Reachy Linux CVE-2025-39964 | Linux CNA marks 6.17 and later unaffected; current 6.18.50 is beyond that boundary. EchoNest's later distro-specific verification is recorded below. |
+| Main Windows Defender CVE-2026-33825 / CVE-2026-41091 / CVE-2026-45498 | Recorded platform 4.18.26090.9 and engine 1.1.26090.9 exceed the respective Microsoft fixed floors 4.18.26030.3011, 1.1.26040.8, and 4.18.26040.7. This adds the previously missing third-CVE evidence. Cabin Windows remains offline/unverified. |
+| Main Windows Shell CVE-2026-96951 | Recorded 26H2 build 10.0.26300.9711 equals Microsoft's exact fixed boundary for that release. The advisory's separate Outlook.com product is not an attestation about this desktop. Cabin remains unknown. |
+| Other Windows IKE/AFD/Shell/Update Stack/task-host entries | Fetched Microsoft CNA records for CVE-2026-33824, CVE-2026-68820, CVE-2026-32202, CVE-2026-81963, and CVE-2025-60710. Their listed 24H2/25H2 ranges do not establish a 26H2-specific patch mapping; do not mechanically compare different Windows release branches to clear them. Prior successful update scan is useful but not a substitute for the missing mapping. |
+| PAN-OS CVE-2026-0322 on dylans-mac | Vendor scope is PA/VM firewalls and Panorama, not the inventoried GlobalProtect client or Prisma browser. No Mac client patch justified by this match. The prior PAN-OS 0257/0300 and GitLab not-applicable findings remain narrowly scoped, not network-wide clearance. |
+
+Primary records for the version comparisons:
+[Linux 31431](https://cveawg.mitre.org/api/cve/CVE-2026-31431),
+[Linux 53362](https://cveawg.mitre.org/api/cve/CVE-2026-53362),
+[Linux 39964](https://cveawg.mitre.org/api/cve/CVE-2025-39964),
+[Apple Screen Sharing](https://cveawg.mitre.org/api/cve/CVE-2026-65400),
+[Apple 43510](https://cveawg.mitre.org/api/cve/CVE-2025-43510),
+[Apple 43520](https://cveawg.mitre.org/api/cve/CVE-2025-43520),
+[Apple 31277](https://cveawg.mitre.org/api/cve/CVE-2025-31277),
+[Apple CoreGraphics](https://cveawg.mitre.org/api/cve/CVE-2026-86950),
+[Defender 33825](https://cveawg.mitre.org/api/cve/CVE-2026-33825),
+[Defender 41091](https://cveawg.mitre.org/api/cve/CVE-2026-41091),
+[Defender 45498](https://cveawg.mitre.org/api/cve/CVE-2026-45498),
+[Windows Shell](https://cveawg.mitre.org/api/cve/CVE-2026-96951),
+[PAN-OS vendor scope](https://security.paloaltonetworks.com/CVE-2026-0322).
+
+#### Source-only, historical, and provider gaps retained
+
+- **Website supply chain:** current locks contain `@tanstack/query-core` 5.90.20
+  and `@tanstack/react-query` 5.90.21, not packages in the vendor's affected
+  Router/Start list. `keyv` is 4.5.4, not the malicious 6.0.0. No current source
+  match to those exact payloads; this does not prove historical install safety
+  or clear all packages in the broader campaigns. Sources:
+  [TanStack advisory](https://github.com/TanStack/router/security/advisories/GHSA-g7cv-rxg3-hmpx),
+  [keyv malware record](https://github.com/advisories/GHSA-3p9h-f68w-m6fx).
+- **Trivy/Checkmarx and GhostAction:** no Trivy/Checkmarx references found in
+  current website workflows or local all-ref workflow history. Direct actions
+  are hash-pinned in the inspected security branch. This is not account-wide,
+  transitive-action, historical execution, or credential-theft clearance.
+  [Trivy vendor advisory](https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23)
+  confirms the actual compromised release/action scope. No workflow was enabled,
+  dispatched, or changed; runner containment and PR #339 remain in force.
+- **Next.js / React Server Components:** current website and kanban locks have
+  no `next` or `react-server-dom-*` package. Worker `sharp` 0.33.5 / 0.34.5 entries
+  are development dependencies, not evidence of a deployed Next.js SVG endpoint.
+  They are below the Next.js advisory's sharp workaround floor, so this is not
+  blanket sharp clearance. Legacy Vercel's last recorded deployment uses Next.js
+  14.1.0; its current runtime and vulnerable endpoints remain unverified. The
+  owner approved retirement once account access and the exact target are verified.
+  [Next.js publisher guidance](https://nextjs.org/blog/nextjs-security-update-october-14-2026).
+- **Nx Console:** vendor identifies malicious extension 18.95.0, not Cursor
+  itself. Once dylans-mac was reachable, readable Cursor extension manifests
+  contained no Nx Console/nrwl matches; the VS Code extension directory was
+  absent. Narrow checks found none of the vendor's kitty script, LaunchAgent,
+  update-state file, or temporary kitty-path indicators. This is current-state
+  evidence, not historical compromise clearance; no credentials or conversations
+  were inspected.
+  [Nx vendor advisory](https://github.com/nrwl/nx-console/security/advisories/GHSA-c9j4-9m59-847w).
+- **Chrome family:** fetched missing Chrome CNA ranges, including 87491
+  (153.0.8010.36), 85046 (152.0.7977.82), and 11645 (149.0.7827.103). Observed
+  Chrome app metadata 155/156 and Canary bundle 158 exceed those and the earlier
+  CSS/Skia/Dawn/V8 floors. On-host reconciliation confirms installed Canary
+  158.0.8117.0, not running; the Homebrew 151 receipt is stale and should not
+  drive a downgrade. Do not extrapolate
+  Chrome version fixes to Electron, Edge, Prisma, or Playwright without their
+  own embedded-build/backport evidence. No browser launch/profile access occurred.
+- **Node and eMudhra:** preserve the documented standalone-runtime repairs and
+  application-specific trust tests/retirements, but not blanket provider or
+  bundled-runtime clearance. Owner's keep-running decision for Windows Codex is
+  unchanged. No signed application content or running session was modified.
+- **Linux ZDI / PwnEscape / HTTP/3 QPACK:** retain unknown where a primary patch
+  mapping, relevant loaded component, or host/microVM configuration is missing.
+  EchoNest's fresh host and Caddy evidence is recorded below; it closes specific
+  version gaps, not every Linux/HTTP/3 advisory. Reachy's kernel version alone
+  does not clear unrelated unknown advisories.
+- **Bank-agent policy story:** not a verified software vulnerability or authority
+  to inspect accounts, change banking automation, or bypass bank controls. Keep
+  separate from confirmed CVE remediation pending relevant first-party guidance.
+- **Unobserved assets:** cabin Windows, legacy hosting, provider-managed runtime
+  details, and IoT firmware gaps remain. No new confirmed actionable exposure
+  was established in this attended review; this is not a compromise assessment.
+
+#### New discovery lead: GoDaddy certificate revocations
+
+The active checkpoint surfaced the October GoDaddy/Starfield subscriber-certificate
+incident. [GoDaddy's incident report](https://bugzilla.mozilla.org/show_bug.cgi?id=2082703)
+describes certificate-profile nonconformance and revocation, not the eMudhra
+private-key incident. Do not remove GoDaddy roots merely because a CA package
+matched discovery. At 20:47 UTC, verified TLS connections showed:
+
+- `dylanbochman.com` and `www.dylanbochman.com`: Google Trust Services WE1.
+- `dbochman.github.io`: Let's Encrypt YR1.
+- `echone.st`: Let's Encrypt YE1.
+
+None of these observed leaf issuers is GoDaddy/Starfield; no certificate
+replacement indicated for these four endpoints. Hostname/chain validation was
+enabled. This was not an OCSP/CRL audit, origin-certificate inspection behind
+proxies, all-region check, or account-wide domain inventory.
+
+#### October 22 verified hosting access and vendor candidates
+
+- **EchoNest access restored:** owner approved the Tailscale SSH check. Read-only
+  inspection through dylans-mac succeeded with strict host-key checking; no
+  host-key bypass, credential copying, or persistent SSH configuration change.
+  The public SSH route still timed out from the Mini.
+- **EchoNest kernel before reboot:** Ubuntu 22.04.5, running `5.15.0-187-generic`, package
+  `5.15.0-187.197`. Ubuntu's Jammy fixes for
+  [CVE-2026-31431](https://ubuntu.com/security/CVE-2026-31431) and
+  [CVE-2025-39964](https://ubuntu.com/security/CVE-2025-39964) are
+  `5.15.0-179.189` and `5.15.0-164.174`; the running package exceeds both.
+  Ubuntu marks Jammy's generic linux package not affected by
+  [CVE-2026-53362](https://ubuntu.com/security/CVE-2026-53362).
+  These distro backport mappings supersede missing-kernel evidence for these
+  three findings only. No exploit test or blanket host clearance.
+- **Approved reboot completed — 23:20 UTC:** owner approved the coordinated
+  EchoNest reboot. Preflight verified clean package audit, sufficient disk space,
+  enabled Caddy/Docker/Tailscale services, and GRUB's default selection of the
+  installed `5.15.0-198.208` kernel and initrd. Created a fresh Redis snapshot and
+  copied it to root-only `/var/backups/echonest-pre-reboot-20261022.6rfDso/dump.rdb`
+  (9,182,561 bytes, mode 0600); no data contents or credentials were printed.
+  After reboot, the boot ID changed and the running kernel is
+  `5.15.0-198-generic`. By 23:21:47 UTC all three services were active, no systemd
+  units were failed, and the reboot-required marker was absent. All three
+  containers recovered automatically with zero restart-loop counts; app/Redis
+  were healthy and the player stayed running. Authenticated Redis ping passed,
+  loading was complete, and its last snapshot status was `ok`. Origin and public
+  `/health` returned `status: ok`; public login and main JavaScript returned 200.
+  Brief connection refusal/502 responses were observed during boot. No package
+  installation, image rebuild, or application configuration change was made.
+  OAuth login, music playback, and desktop-client reconnection were not tested.
+- **Observed origin runtimes:** Caddy 2.11.4, built with Go 1.26.3 and embedded
+  quic-go 0.59.1 / qpack 0.6.0; Docker CE 29.7.2; Redis server 7.4.7; app Python
+  3.11.14. Selected app package metadata: requests 2.34.2, urllib3 2.8.0,
+  redis client 8.1.0, pip 24.0, setuptools 79.0.1. Runtime inspection did not
+  expose environment values or application data. Embedded quic-go meets the publisher's fixed
+  versions for [header expansion](https://github.com/quic-go/quic-go/security/advisories/GHSA-g754-hx8w-x2g6)
+  (0.57.0) and [trailer expansion](https://github.com/quic-go/quic-go/security/advisories/GHSA-vvgj-x9jq-8cj9)
+  (0.59.1). After the approved reboot, the running Caddy executable's SHA-256
+  matched `/usr/bin/caddy`, closing the on-disk-versus-running binary gap. This
+  does not clear newer QPACK reports or all vulnerabilities in the Go runtime.
+- **Legacy Vercel retirement approved, not executed:** the public
+  `nextjs-boilerplate-mu-two-37.vercel.app` alias returns HTTP 200. GitHub's last
+  recorded production deployment for `Dbochman/nextjs-boilerplate` is February
+  20, 2024, commit `8ac70026a03bcc89f28b9ca9171dd83b8d45397d`; that lock records
+  Next.js 14.1.0 / React 18.2.0. Historical source is not proof of today's live
+  runtime. Preserve the GitHub repository and unrelated website projects.
+  A dedicated PinchTab session was created, but creating its isolated browser
+  was denied by session policy. No bypass or shared-profile reuse; Vercel login
+  and dashboard confirmation of the exact project/aliases remain required.
+- **Vendor candidates inspected, not installed:** official downloads yielded
+  Cursor 3.24.18 / Electron 42.10.0 and Slack 4.52.182 / Electron 44.9.1. Both
+  signed bundles passed strict deep signature verification from read-only disk
+  images; neither app was launched. Electron's release metadata maps these to
+  Node 24.18.1 and 24.22.0, respectively, below the recorded 24.22.1 floor.
+  No vendor backport proof was established, so these updates alone are not a
+  confirmed Node remediation. Slack's release notes recommend its security
+  update, but any installation/restart still needs coordination. Downloads
+  remain under `/tmp/vendor-runtime-review.szeEF7/`; both audit-owned volumes
+  were ejected. Sources: [Cursor downloads](https://cursor.com/download),
+  [Slack release notes](https://slack.com/release-notes/mac),
+  [Electron release metadata](https://releases.electronjs.org/releases.json).
+
+These additional observations are recorded here, not manually promoted into the
+collector's published assessment cache. Its daily cap and preserved checkpoint
+remain unchanged. Reachy remains muted; accepted Windows runtime risk and the
+offline cabin desktop remain separate outstanding items.
+
+### October 22 fleet follow-up (historical progress; superseded above where noted)
 
 - The Mini retirement receipt confirms both old conversation processes exited
   and four standalone runtime observations met the patched floors. This
