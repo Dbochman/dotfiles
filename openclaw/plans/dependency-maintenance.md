@@ -16,7 +16,65 @@ The goal is to keep dependencies fresh enough that security CVEs and
 bug fixes flow through, while protecting load-bearing integrations
 from breaking changes that need careful migration.
 
-## Node security rollout — 2026-10-21 (staged; activation pending)
+## Node security rollout — 2026-10-21 (deployed, with explicit gaps)
+
+### Attended activation result (October 21 evening)
+
+- Published runtime commits `cdf0b26`, `d64e458`, `a5470c4` to main and
+  narrowly deployed the Mini's affected helpers/LaunchAgents. Preserved local
+  `CCUSAGE_LOCAL_DIR` and `HOME_EVENTS_RING_ENABLED` overrides; no broad installer,
+  cron sync, credential rotation, household-policy change or state rewind.
+- Gateway drained with zero active work. The stopped recovery archive restored
+  with 68,470 manifest entries matching and 18 databases passing integrity checks;
+  all stopped-work counters were zero. Protected recovery set:
+  `~/Backups/openclaw/node-security-20261022T0025Z`, about 2.2 GB archive plus restore.
+  Scope is core state/agents, service definitions/helpers and unchanged gateway
+  package/runtime—not a full-machine backup. Existing archives retained.
+- Gateway PID 6434 maps to official 24.22.1; OpenClaw stays 2026.10.1. The generated
+  live plist hash is unchanged. Health and authenticated required-skill checks
+  pass, activation receipt recorded, deployer hold released. The first launch
+  occurred in the wrapper-write second and failed the strict age check; a native
+  graceful restart preserving the definition established fresh process evidence.
+- Magazine PID 6285 maps to 22.23.4 and `/api/health` returns `ok:true`. Usage/home
+  dashboard HTTP endpoints respond 200; usage service API passes. Restarted the
+  affected persistent dashboard/reviewer owners. Ring/dog-walk owners reloaded
+  only after verifying no active walk or return monitoring; local settings kept.
+  Bounded camera/delivery helpers consume their new files on the next interval.
+- Patched 24.22.1 with maintained CA settings rejects all 12 eMudhra chains and
+  accepts both controls through both `https` and `fetch` (28 checks). No TLS
+  verification bypass or exploit payload used.
+- Crosstown bridges map to 24.22.1; authenticated `/api/info/version` confirms it
+  for both services. Remote Roomba and August CLIs now explicitly choose that
+  runtime. New Mini shells select 24.22.1; the MBP's existing user-local bin PATH
+  selects a new `~/.local/bin/node` symlink to the verified runtime. Homebrew
+  binaries remain untouched; the MBP's much older source checkout was not broadly
+  fast-forwarded. Existing Codex-owned Node 22/25 processes still need session
+  restart; changing a shell does not replace an already-running executable.
+- **Robot connectivity is not cleared:** mission-status requests still time out.
+  A temporary observer on an existing bridge's TLS sockets reported
+  `EHOSTUNREACH` without logging credentials or changing TLS policy. It was removed
+  and the tracked wrapper restored. Subsequent TCP reachability varied by robot;
+  do not call listener/auth-version success proof of robot MQTT health. No robot
+  mission/control command was sent and no TLS policy weakened to reconnect.
+- **Third Mac:** patched 26.12.1 staged, then `dylans-mac` became unreachable.
+  Existing 26.7.0 process/default selection has not been replaced. Wake/finish
+  request sent to the owner.
+- **Website:** [PR #339](https://github.com/Dbochman/personal-website/pull/339)
+  is pushed, not merged. Hosted CI proved the runner-owned action Node is 24.21.0;
+  the first guard correctly blocked it before checkout. All 13 repository-owned
+  Actions workflows are temporarily `disabled_manually` to also contain main's
+  unguarded scheduled jobs. Prior states are recorded in the protected recovery
+  directory's `website-workflow-hold.json`. Static production remains online;
+  analytics/review/build/deploy freshness is paused. Re-enable only after the
+  guarded workflow and patched runner are verified. GitHub-managed Dependabot
+  and external Cloudflare/Netlify/Vercel execution are outside that workflow hold.
+- **Vendor gap:** Windows Codex managed Node 24.19/24.21, 1Password's bundled
+  runtime and other provider-managed execution still require vendor evidence
+  and launched-process verification. No signed/vendor-managed binary was patched
+  in place. Offline devices remain unverified.
+
+The preparation inventory below records the pre-activation state, not the current
+running Mini/MBP service versions.
 
 The [October security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases)
 fixes CVE-2026-111497 (Brotli decoder out-of-bounds write / RCE), TLS hostname
@@ -73,7 +131,7 @@ Website: 301 unit tests, typecheck, lint, preview build, hard bundle budgets,
 11 bootstrap tests and generated-workflow drift check pass; blog style score100.
 The existing soft content-chunk budget remains exceeded.
 
-Activation remains a distinct step: publish the reviewed source, hold the narrow
+Activation procedure used: publish the reviewed source, hold the narrow
 deployer, cooperatively drain the gateway, preserve the original generated
 shell-prefixed launch chain and recovery artifacts, activate without changing
 the OpenClaw package or rewinding state, then run the live activation/health/skill

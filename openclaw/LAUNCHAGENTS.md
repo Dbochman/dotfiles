@@ -11,6 +11,15 @@ Reference for all LaunchAgents across machines. Plist source files live in two l
 
 ## Mac Mini — Long-Running Services (KeepAlive)
 
+Node security activation (2026-10-21): the gateway and managed Node helpers now
+use the verified official 24.22.1 runtime; the magazine uses 22.23.4. These are
+side-by-side user-owned installations, not replacements for Homebrew binaries.
+The generated gateway launch chain was preserved and its live activation
+verified. Persistent affected owners were reloaded; updating a plist or PATH
+alone is not evidence that an existing process has switched. See the
+[activation record](plans/dependency-maintenance.md#node-security-rollout--2026-10-21-deployed-with-explicit-gaps)
+for evidence, recovery scope, and outstanding remote/vendor gaps.
+
 TLS maintenance (2026-10-20): the gateway FDA wrapper now selects the maintained
 Homebrew CA file and clears conflicting inherited Node trust flags; Nest's
 clean environment also selects that file for gRPC. Long-running clients may
@@ -55,8 +64,10 @@ logs into the GUI session; this is not a system daemon running before login.
 The October 16 persistence repair installs an identical copy of the existing
 definition without bootout, bootstrap, kickstart, or a process restart. The
 currently loaded job may still report the repository path until the next login.
-Keep the existing Node 22 path, working directory, port 8555, and runtime state
-unchanged. The `cabin-serve` tmux preview on port 4173 is separate and is not
+The October 21 security activation subsequently changed the Node 22 path to the
+verified official 22.23.4 runtime and reloaded the installed agent. The working
+directory, port 8555, and runtime state remain unchanged. The `cabin-serve` tmux
+preview on port 4173 is separate and is not
 required for Julia's magazine. Future plist changes need an attended deployment;
 updating the repository alone does not refresh this installed copy.
 
