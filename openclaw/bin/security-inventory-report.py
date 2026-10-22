@@ -52,12 +52,22 @@ def build(directory):
             state = "running" if binary["resolved"] in mapped else "installed_not_observed_running"
             if binary.get("executable") is False and state != "running":
                 state = "disabled_non_executable"
-            add(aid, "Node.js", binary["version"].get("text"), binary["resolved"], "binary_version_probe",
+            add(aid, "Node.js", binary["version"].get("text"), binary["resolved"], binary.get("evidence", "binary_version_probe"),
                 observed, state)
         known_nodes = {b["resolved"] for b in host.get("node_binaries", [])}
         for path in sorted(mapped - known_nodes):
             if Path(path).name == "node":
                 add(aid, "Node.js", None, path, "mapped_executable_missing_on_disk", observed, "running")
+        windows = host.get("windows", {})
+        defender = windows.get("defender", {})
+        if defender.get("status") == "observed":
+            for key, product in (("platform", "Microsoft Defender Antimalware Platform"),
+                                 ("engine", "Microsoft Malware Protection Engine")):
+                add(aid, product, defender.get(key), "Windows Defender", "get_mp_computer_status",
+                    observed, "observed_configuration")
+        for app in windows.get("apps", []) + windows.get("browsers", []):
+            add(aid, app["name"], app.get("version"), "Windows application", app["evidence"],
+                observed, "installed_not_observed_running")
         for app in host.get("apps", {}).get("applications", []):
             app_path = app.get("path", "")
             running = bool(app_path) and any(proc["executable"].startswith(app_path + "/") for proc in procs)

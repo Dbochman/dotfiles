@@ -85,6 +85,27 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report.canonical("Foo_Bar.BAZ", "pypi"), "foo-bar-baz")
         self.assertEqual(report.canonical("@scope/foo.bar", "npm"), "@scope/foo.bar")
 
+    def test_windows_build_defender_and_node_evidence(self):
+        host = self.host()
+        node = r"C:\Vendor\node.exe"
+        host.update(os="Windows", os_release={"PRETTY_NAME": "Microsoft Windows 11 Home",
+                    "VERSION_ID": "10.0.26300.9711"}, windows={"defender": {
+                    "status": "observed", "platform": "4.18.26090.9", "engine": "1.1.26090.9"},
+                    "apps": [{"name": "OpenAI.Codex", "version": "26.1016", "evidence": "appx_package_metadata"}],
+                    "browsers": []})
+        host["processes"]["processes"] = [{"executable": node, "mapped_executables": [node]}]
+        host["node_binaries"] = [{"resolved": node, "version": {"text": "24.19.0"},
+                                   "evidence": "running_path_file_version_not_memory_probe"}]
+        with tempfile.TemporaryDirectory() as directory:
+            value = report.build(self.fixture(directory, host))
+        rows = {row["product"]: row for row in value["components"]}
+        self.assertEqual(rows["Microsoft Windows 11 Home"]["version"], "10.0.26300.9711")
+        self.assertEqual(rows["Microsoft Malware Protection Engine"]["version"], "1.1.26090.9")
+        self.assertEqual(rows["Node.js"]["state"], "running")
+        self.assertEqual(rows["Node.js"]["evidence"], "running_path_file_version_not_memory_probe")
+        self.assertEqual(rows["OpenAI.Codex"]["state"], "installed_not_observed_running")
+        self.assertFalse(value["vulnerability_clearance"])
+
 
 if __name__ == "__main__":
     unittest.main()

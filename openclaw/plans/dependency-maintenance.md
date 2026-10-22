@@ -18,6 +18,67 @@ from breaking changes that need careful migration.
 
 ## Node security rollout — 2026-10-21 (deployed, with explicit gaps)
 
+### October 22 fleet follow-up (in progress)
+
+- The Mini retirement receipt confirms both old conversation processes exited
+  and four standalone runtime observations met the patched floors. This
+  supersedes the earlier pending Mini session retirement below, not the
+  application-bundled/provider gaps.
+- Windows main is reachable through the trusted WSL maintenance bridge. A
+  Windows-native survey observed Windows 11 Home 26H2, build 26300.9711,
+  Defender platform 4.18.26090.9 / engine 1.1.26090.9, enabled antivirus and
+  real-time protection, and no CBS reboot-pending flag. An attended Windows
+  Update scan succeeded with no pending software updates. Defender versions
+  exceed the respective CNA thresholds for CVE-2026-33825 and CVE-2026-41091;
+  this is not clearance for all Windows findings or the offline cabin desktop.
+- Windows OpenAI.Codex 26.1016.8120.0 still has four active managed Node helpers
+  reporting file versions 24.19.0 / 24.21.0. The Store offered no newer package.
+  **Owner explicitly chose to keep it running and document the gap.** No app
+  restart, session termination, signed-content replacement, or security-policy
+  change was performed. OpenAI's supported update channel, not a replacement
+  of its cached runtime binaries, remains the repair path. This is an accepted
+  unresolved gap, not a mitigation or security clearance. Recheck vendor updates
+  and verify the actual helper versions against the patched Node 24.22.1 floor
+  after an owner-coordinated update; an app restart alone does not close it.
+- Retired the remaining inactive CurseForge 1.321.1-39714 installation on
+  dylans-mac under the existing retirement decision. No launch-definition
+  references were found. Unregistered its exact installed path and moved its
+  approximately 604 MB signed app bundle to owner-only recoverable Trash at
+  `~/.Trash/retired-CurseForge-20261022.Dwf1xl/CurseForge.app`. Strict deep
+  signatures passed before and after; mods, settings and user data untouched.
+  Retained binaries are not safe to relaunch; no disk reclamation is claimed.
+- Reachy is reachable through Crosstown MBP, not the Mini's direct subnet path.
+  Its running kernel is 6.12.62+rpt-rpi-v8. Refreshed signed APT metadata offers
+  Raspberry Pi 6.18.50-1+rpt1. A no-removal dry run selected 5 upgrades and 12
+  new kernel/header/support packages, leaving 313 unrelated upgrades alone.
+  Downloaded 80.5 MB; installation would add about 137 MB. **Downloaded only:**
+  install/reboot and post-boot robot checks await confirmation that the owner's
+  Crosstown macOS update has finished. No robot motion/audio command was sent.
+- The current advisory inventory is
+  `~/.local/state/security-inventory/2026-10-22-fleet-followup/`, retaining older
+  snapshots and observation times. Windows metadata and refreshed dylans-mac
+  evidence are included; the Windows snapshot does not inventory WSL. Original
+  surveys remain intact. This inventory does not override the owner's accepted
+  Windows runtime gap or automatically close any advisory.
+- The additional advisory run starting at 16:12 UTC screened 585 advisories
+  and completed 10 verification reviews before the overall collection deadline.
+  It failed without publishing those partial results; the previous completed
+  cache remains available with its 29-item verification backlog and a latest-run
+  failure warning. That run used the earlier inventory, not the expanded Windows
+  survey. Resumable discovery/verification is a follow-up before claiming the
+  larger feed can reliably complete within the current time budget.
+- GitHub runner source metadata identifies a patched release candidate, but
+  attended hosted validation has not produced new runtime evidence. The guarded
+  rerun remained queued; cancellation returned an inconsistent completed-run
+  response while the read API still reported queued. Restored PR Checks to
+  disabled; no other held workflow was enabled and no merge was performed.
+
+Sources: [Microsoft Defender platform CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-33825),
+[engine CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-41091),
+[Raspberry Pi maintainer's Copy Fail fix confirmation](https://github.com/raspberrypi/linux/issues/7346),
+[IPv6 issue](https://security-tracker.debian.org/tracker/CVE-2026-53362),
+[OpenAI Windows deployment/update channels](https://learn.chatgpt.com/docs/enterprise/windows-deployment).
+
 ### October 22 advisory follow-up: standalone runtimes
 
 The inventory-backed advisory review found leftovers outside the already-patched

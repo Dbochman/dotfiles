@@ -68,6 +68,17 @@ versions. The report is inventory evidence, not a CVE assessment. Reconcile
 dated operator follow-ups before reusing a survey scope. Neither survey helper
 is scheduled. The advisory collector below consumes its dated private output.
 
+`security-inventory-windows.ps1` is an attended, read-only Windows-native survey.
+It emits schema-1 JSON for the report normalizer: exact OS build, Defender
+platform/engine, recent hotfix metadata, selected app/browser versions, and active
+Node executable paths/file versions. It does not read process arguments, account
+state or credentials, scan user files, install updates, or restart applications.
+Treat its output as private (0700 directory / 0600 file on the Mini). Register
+the snapshot in the private scope's `hosts` list, preserve older timestamps,
+and remove only that host's obsolete unreachable entry. WSL and offline hosts
+remain separate gaps. File versions are not proof of in-memory contents,
+backports, application launch paths or exploitability.
+
 `security-advisory-collector.py` is a Mini-only, notification-only daily review.
 The attended-installed `com.dylanbochman.security-advisories` LaunchAgent runs
 at 07:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.
