@@ -15,6 +15,7 @@ import socket
 import ssl
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -43,6 +44,10 @@ FIELDS = ("slug", "title", "product", "cveIds", "affectedVersions", "fixedVersio
 
 class CollectionDeadline(Exception):
     """Not a fetch timeout: escapes per-advisory retry handling."""
+
+
+class CollectionPaused(Exception):
+    """Discovery checkpoint saved; leave the published cache unchanged."""
 
 
 def now_iso():
@@ -179,8 +184,22 @@ def infer(instructions, data):
     try:
         out, _ = process.communicate(timeout=240)
     except BaseException:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.communicate()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        # A detached descendant may still hold a pipe open after the group dies.
+        # Never turn a collection deadline into unbounded shutdown waiting, or
+        # replace the original deadline with a caught per-advisory timeout.
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.stdout.close()
+            process.stderr.close()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
         raise
     if process.returncode or len(out) > 1_000_000:
         raise ValueError("model_failed")
@@ -318,7 +337,8 @@ def validate_assessment(value, assets, sources):
     return result
 
 
-def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progress=lambda **_: None):
+def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progress=lambda **_: None,
+            checkpoint=None, save_checkpoint=lambda _: None, should_pause=lambda: False):
     stamp = now or now_iso()
     if inventory.get("schema_version") != 1:
         raise ValueError("inventory_schema")
@@ -333,36 +353,87 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
                  if not i.get("isExample") and re.fullmatch(r"[a-z0-9-]{1,160}", i["slug"])}
     if not incidents or len(incidents) > 1000:
         raise ValueError("feed_size")
-    # Batch discovery so growth cannot silently truncate the advisory universe.
+    # Checkpoints are internal work, never briefing input. Invalidate on review
+    # policy changes; per-incident hashes permit feed growth/reordering without
+    # redoing unchanged work. Negative selections also expire after 24 hours.
+    contract = digest([1, MODEL, SELECT, VERIFY])
+    saved = checkpoint or {}
+    if saved.get("schema_version") != 1 or saved.get("contract") != contract:
+        saved = {}
+    work = {"schema_version": 1, "contract": contract, "discovery": {}, "findings": {}}
+    inventory_hash = digest(compact)
+    # Every component observation matters, not just the oldest fleet timestamp.
+    # Regenerating the report alone must not refresh old evidence or force work.
+    review_inventory_hash = digest([inventory_hash, observed_at,
+                                   [c.get("observed_at") for c in inventory["components"]]])
     matches = {}
     all_products = {c["product"] for c in inventory["components"]}
     unknown = {a["id"] for a in inventory.get("unverified_assets", [])}
     values = list(incidents.values())
-    progress(phase="discovery", advisories=len(values), screened=0)
-    for start in range(0, len(values), 50):
+    remaining = []
+    for incident in values:
+        slug = incident["slug"]
+        entry = saved.get("discovery", {}).get(slug, {})
+        key = digest([inventory_hash, incident])
+        if entry.get("input_hash") == key and age_hours(entry["checked_at"]) <= 24:
+            selection = validate_selection({"matches": [entry["match"]] if entry["match"] else []},
+                                           {slug}, all_products, unknown)
+            matches.update(selection)
+            work["discovery"][slug] = entry
+        else:
+            remaining.append(incident)
+    reused = len(work["discovery"])
+    progress(phase="discovery", advisories=len(values), screened=reused, reused=reused)
+    for start in range(0, len(remaining), 50):
+        if should_pause():
+            raise CollectionPaused("discovery_budget_exhausted")
         def selection_progress(**fields):
-            progress(phase="discovery", advisories=len(values), screened=start,
-                     batch=start // 50 + 1, batches=(len(values) + 49) // 50, **fields)
-        matches.update(select_batch(compact, values[start:start + 50], all_products,
-                                    unknown, reviewer, selection_progress))
-        progress(phase="discovery", advisories=len(values), screened=min(start + 50, len(values)))
+            progress(phase="discovery", advisories=len(values), screened=reused + start,
+                     reused=reused, batch=start // 50 + 1,
+                     batches=(len(remaining) + 49) // 50, **fields)
+        batch = remaining[start:start + 50]
+        selected = select_batch(compact, batch, all_products, unknown, reviewer, selection_progress)
+        matches.update(selected)
+        for incident in batch:
+            slug = incident["slug"]
+            work["discovery"][slug] = {"input_hash": digest([inventory_hash, incident]),
+                                        "checked_at": now_iso(), "match": selected.get(slug)}
+        # Keep compatible verified work until the verification reconciliation
+        # below. A discovery interruption must not erase prior verified progress.
+        save_checkpoint({**work, "findings": saved.get("findings", {})})
+        progress(phase="discovery", advisories=len(values), screened=len(work["discovery"]), reused=reused)
     findings = dict(previous.get("findings", {}))
     pending = []
-    inventory_hash = digest(compact)
+    resumed_reviews = 0
     for slug, match in matches.items():
-        key = digest([incidents[slug], inventory_hash, match])
+        key = digest([contract, incidents[slug], review_inventory_hash, match])
+        resumed = saved.get("findings", {}).get(slug, {})
+        if (resumed.get("input_hash") == key
+                and age_hours(resumed["checked_at"]) <= (24 if resumed.get("status") == "unknown" else 168)
+                and resumed["checked_at"] > findings.get(slug, {}).get("checked_at", "")):
+            findings[slug] = resumed
+            resumed_reviews += 1
         old = findings.get(slug, {})
         interval = 24 if old.get("status") == "unknown" else 168
         if old.get("input_hash") != key or age_hours(old.get("checked_at", "2000-01-01T00:00:00Z")) > interval:
             pending.append((slug, match, key))
+        else:
+            work["findings"][slug] = old
+    save_checkpoint(work)
     # Reconcile known actionable findings first after attended remediation.
     pending.sort(key=lambda item: (
         findings.get(item[0], {}).get("status") not in {"affected", "possibly_affected"},
         findings.get(item[0], {}).get("checked_at", "")))
     errors = 0
+    attempted = 0
+    budget_exhausted = False
     progress(phase="verification", step="queued", pending=len(pending), checked=0,
-             review_limit=min(12, len(pending)), errors=0)
+             review_limit=min(12, len(pending)), errors=0, resumed_reviews=resumed_reviews)
     for checked, (slug, match, key) in enumerate(pending[:12], 1):
+        if should_pause():
+            budget_exhausted = True
+            break
+        attempted += 1
         rows = [c for c in compact["components"] if c[0] in match["products"]]
         assets = set(match["unknown_assets"]) | {a for row in rows for a in row[-1]}
         sources = {}
@@ -395,19 +466,24 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
                                 ("cveIds", "affectedVersions", "fixedVersions", "severity")}])
             old = findings.get(slug, {})
             result.update(slug=slug, title=incidents[slug]["title"], input_hash=key,
-                          material_hash=material, checked_at=stamp,
+                          material_hash=material, checked_at=now_iso(),
                           change_kind="changed" if old else "new",
                           changed_at=old.get("changed_at", stamp) if old.get("material_hash") == material else stamp)
             findings[slug] = result
+            work["findings"][slug] = result
         except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
             errors += 1
             # Previous findings remain; failed work stays pending on next run.
+        # Disk failures must escape rather than masquerading as review failures.
+        save_checkpoint(work)
         progress(phase="verification", step="review_finished", pending=len(pending),
                  checked=checked, review_limit=min(12, len(pending)), errors=errors)
     return {"schema_version": 1, "generated_at": stamp, "inventory_at": observed_at,
             "inventory_coverage": "partial", "clearance": False, "delivery_confirmed": False,
             "model": MODEL, "feed_at": index["generatedAt"], "advisories_screened": len(incidents),
-            "matches": len(matches), "backlog": max(0, len(pending) - 12) + errors,
+            "matches": len(matches), "backlog": len(pending) - attempted + errors,
+            "discovery_reused": reused, "resumed_reviews": resumed_reviews,
+            "budget_exhausted": budget_exhausted,
             "verification_errors": errors, "unknown_assets": len(unknown), "findings": findings}
 
 
@@ -426,7 +502,11 @@ def briefing_summary(state=STATE, now=None):
             warnings.append("advisory_cache_stale")
         if inventory_stale:
             warnings.append("inventory_refresh_needed")
-        if health.get("status") != "ok":
+        if health.get("status") == "paused":
+            warnings.append("collection_paused")
+        elif health.get("status") == "running":
+            warnings.append("collection_in_progress")
+        elif health.get("status") != "ok":
             warnings.append("latest_collection_failed")
         if cache["backlog"]:
             warnings.append("verification_backlog")
@@ -454,7 +534,8 @@ def progress_summary(state=STATE, now=None):
         fields = ("status", "phase", "step", "started_at", "checked_at", "advisories",
                   "screened", "batch", "batches", "pending", "checked", "review_limit",
                   "errors", "backlog", "error_type", "error_code",
-                  "attempt", "attempt_limit", "retry_reason")
+                  "attempt", "attempt_limit", "retry_reason", "reused", "resumed_reviews",
+                  "budget_exhausted", "discovery_reused")
         result = {k: health[k] for k in fields if k in health}
         result["seconds_since_update"] = max(0, round(age_hours(health["checked_at"], now) * 3600))
         if health.get("started_at"):
@@ -500,6 +581,9 @@ def main():
             print('{"status":"already_running"}')
             return 0
         started_at = now_iso()
+        # Leave time for an in-flight 240s inference and bounded source fetches.
+        # SIGALRM remains the hard fail-safe; checkpoints survive it as well.
+        soft_deadline = time.monotonic() + 1440
         latest_progress = {}
         try:
             def deadline_expired(*_):
@@ -512,15 +596,26 @@ def main():
                 previous = read_private(args.state_dir / "cache.json")
             except FileNotFoundError:
                 previous = {}
+            try:
+                checkpoint = read_private(args.state_dir / "checkpoint.json")
+            except FileNotFoundError:
+                checkpoint = {}
             def report_progress(**values):
                 latest_progress.clear()
                 latest_progress.update(values)
                 write_private(args.state_dir / "health.json", {
                     "status": "running", "started_at": started_at, "checked_at": now_iso(), **values})
                 print(json.dumps(values), flush=True)
-            result = collect(read_private(args.inventory), previous, progress=report_progress)
+            result = collect(read_private(args.inventory), previous, progress=report_progress,
+                             checkpoint=checkpoint,
+                             save_checkpoint=lambda work: write_private(args.state_dir / "checkpoint.json", work),
+                             should_pause=lambda: time.monotonic() >= soft_deadline)
             write_private(args.state_dir / "cache.json", result)
-            health = {"status": "ok", "checked_at": now_iso(), "backlog": result["backlog"]}
+            health = {"status": "ok", "checked_at": now_iso(), "backlog": result["backlog"],
+                      **{k: result[k] for k in ("discovery_reused", "resumed_reviews", "budget_exhausted")}}
+        except CollectionPaused:
+            health = {"status": "paused", "checked_at": now_iso(),
+                      "error_code": "discovery_budget_exhausted"}
         except Exception as exc:
             health = {"status": "failed", "checked_at": now_iso(), "error_type": type(exc).__name__}
             if re.fullmatch(r"[a-z_]{1,80}", str(exc)):
@@ -530,7 +625,7 @@ def main():
         health = {**latest_progress, **health, "started_at": started_at}
         write_private(args.state_dir / "health.json", health)
         print(json.dumps(health))
-        return 0 if health["status"] == "ok" else 1
+        return 0 if health["status"] in {"ok", "paused"} else 1
 
 
 if __name__ == "__main__":

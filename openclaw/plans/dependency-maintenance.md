@@ -65,8 +65,17 @@ from breaking changes that need careful migration.
   It failed without publishing those partial results; the previous completed
   cache remains available with its 29-item verification backlog and a latest-run
   failure warning. That run used the earlier inventory, not the expanded Windows
-  survey. Resumable discovery/verification is a follow-up before claiming the
-  larger feed can reliably complete within the current time budget.
+  survey. The resumability repair now checkpoints validated batches and successful
+  reviews separately from the published cache, invalidates changed/expired work,
+  and stops starting new work at 24 minutes within the unchanged 30-minute hard
+  limit. Deployed the repair and passed 81 security/briefing tests. A controlled
+  live interruption after the first 50 advisories left the published cache
+  byte-for-byte unchanged and a 0600 checkpoint intact. The LaunchAgent restart
+  at 17:25 UTC reused all 50 decisions against the now-717-advisory feed, and is
+  continuing the remaining discovery. The exercise also exposed slow model-pipe
+  cleanup; that cleanup now has bounded waits and retains the original deadline
+  exception. The 07:15 schedule and no-KeepAlive contract are unchanged. Full-feed
+  completion remains a live verification item rather than a claimed result.
 - GitHub runner source metadata identifies a patched release candidate, but
   attended hosted validation has not produced new runtime evidence. The guarded
   rerun remained queued; cancellation returned an inconsistent completed-run

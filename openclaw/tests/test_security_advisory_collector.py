@@ -1,5 +1,6 @@
 """Offline security collector contract tests; no model, network, or delivery."""
 import importlib.util
+import copy
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -343,6 +344,224 @@ class AdvisoryTests(unittest.TestCase):
             return self.review(prompt, data)
         self.collect(first, fetcher=fetch, reviewer=review)
         self.assertEqual(reviewed[0], "node-test")
+
+    def resume_fixture(self, count):
+        incidents = [{**self.incident, "slug": f"node-test-{n}"} for n in range(count)]
+        calls, checkpoints = [], []
+        def fetch(url, hosts):
+            if url.endswith("incidents.json"):
+                return json.dumps({"generatedAt": self.stamp, "incidents": incidents})
+            if url.endswith(".json"):
+                return json.dumps({"sources": [{"url": self.url}]})
+            return self.text
+        def review(prompt, data):
+            calls.append((prompt, copy.deepcopy(data)))
+            if prompt == mod.SELECT:
+                return {"matches": [{"slug": i["slug"], "products": ["Node.js"], "unknown_assets": []}
+                                    for i in data["advisories"]]}
+            return self.review(prompt, data)
+        def run(previous=None, **kwargs):
+            return mod.collect(self.inventory, previous or {}, fetcher=fetch, now=self.stamp,
+                               reviewer=kwargs.pop("reviewer", review),
+                               save_checkpoint=lambda v: checkpoints.append(copy.deepcopy(v)), **kwargs)
+        return incidents, calls, checkpoints, review, run
+
+    def test_discovery_resume_survives_feed_reorder_and_growth(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(51)
+        with self.assertRaises(mod.CollectionPaused):
+            run(should_pause=lambda: bool(checkpoints))
+        self.assertEqual(len(checkpoints[-1]["discovery"]), 50)
+        incidents.reverse()
+        incidents.append({**self.incident, "slug": "new-advisory"})
+        calls.clear()
+        result = run(checkpoint=checkpoints[-1])
+        selected = [data for prompt, data in calls if prompt == mod.SELECT]
+        self.assertEqual(len(selected), 1)
+        self.assertEqual({a["slug"] for a in selected[0]["advisories"]}, {"node-test-50", "new-advisory"})
+        self.assertEqual(result["discovery_reused"], 50)
+        self.assertEqual(result["advisories_screened"], 52)
+        self.assertEqual(result["backlog"], 40)
+
+    def test_hard_deadline_resumes_successful_reviews(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(3)
+        def interrupt(prompt, data):
+            if prompt == mod.VERIFY and len([c for c in calls if c[0] == mod.VERIFY]) == 1:
+                raise mod.CollectionDeadline("collection_deadline")
+            return review(prompt, data)
+        with self.assertRaises(mod.CollectionDeadline):
+            run(reviewer=interrupt)
+        self.assertEqual(len(checkpoints[-1]["findings"]), 1)
+        calls.clear()
+        result = run(checkpoint=checkpoints[-1])
+        self.assertFalse(any(prompt == mod.SELECT for prompt, _ in calls))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["resumed_reviews"], 1)
+        self.assertEqual(result["backlog"], 0)
+        self.assertEqual(len(result["findings"]), 3)
+
+    def test_changed_incident_invalidates_only_its_selection_and_review(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(2)
+        first = run()
+        incidents[0]["summary"] = "Changed advisory"
+        calls.clear()
+        result = run(first, checkpoint=checkpoints[-1])
+        self.assertEqual(result["discovery_reused"], 1)
+        self.assertEqual([p for p, _ in calls], [mod.SELECT, mod.VERIFY])
+        self.assertEqual(calls[0][1]["advisories"][0]["slug"], "node-test-0")
+
+    def test_inventory_and_policy_changes_invalidate_checkpoint(self):
+        for change in ("inventory", "policy"):
+            with self.subTest(change=change):
+                incidents, calls, checkpoints, review, run = self.resume_fixture(1)
+                run()
+                checkpoint = checkpoints[-1]
+                if change == "inventory":
+                    self.inventory["components"][0]["version"] = "2.0.0"
+                else:
+                    checkpoint["contract"] = "old-contract"
+                calls.clear()
+                result = run(checkpoint=checkpoint)
+                self.assertEqual(result["discovery_reused"], 0)
+                self.assertEqual(result["resumed_reviews"], 0)
+                self.assertEqual([p for p, _ in calls], [mod.SELECT, mod.VERIFY])
+
+    def test_new_observation_requires_review_even_for_same_version(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(1)
+        self.inventory["components"][0]["observed_at"] = (self.now - timedelta(days=2)).isoformat()
+        first = run()
+        self.inventory["components"][0]["observed_at"] = self.stamp
+        calls.clear()
+        result = run(first, checkpoint=checkpoints[-1])
+        self.assertEqual(result["discovery_reused"], 1)
+        self.assertEqual([p for p, _ in calls], [mod.VERIFY])
+
+    def test_non_oldest_observation_also_invalidates_review(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(1)
+        self.inventory["components"][0]["observed_at"] = (self.now - timedelta(days=3)).isoformat()
+        self.inventory["components"].append({**self.inventory["components"][0],
+            "product": "Other", "observed_at": (self.now - timedelta(days=2)).isoformat()})
+        first = run()
+        self.inventory["components"][1]["observed_at"] = self.stamp
+        calls.clear()
+        result = run(first, checkpoint=checkpoints[-1])
+        self.assertEqual(result["inventory_at"], first["inventory_at"])
+        self.assertEqual([p for p, _ in calls], [mod.VERIFY])
+
+    def test_prior_verified_work_survives_interruption_during_new_discovery(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(1)
+        run()
+        saved = checkpoints[-1]
+        incidents.extend({**self.incident, "slug": f"new-{i}"} for i in range(51))
+        def interrupt(prompt, data):
+            if prompt == mod.SELECT and len(data["advisories"]) == 1:
+                raise mod.CollectionDeadline("collection_deadline")
+            return review(prompt, data)
+        with self.assertRaises(mod.CollectionDeadline):
+            run(checkpoint=saved, reviewer=interrupt)
+        self.assertEqual(checkpoints[-1]["findings"], saved["findings"])
+        calls.clear()
+        result = run(checkpoint=checkpoints[-1])
+        self.assertEqual(result["resumed_reviews"], 1)
+        self.assertNotIn("node-test-0", [data["advisory"]["slug"] for prompt, data in calls if prompt == mod.VERIFY])
+
+    def test_expired_checkpoint_review_is_not_reused(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(1)
+        run()
+        saved = checkpoints[-1]
+        saved["findings"]["node-test-0"]["checked_at"] = (self.now - timedelta(days=8)).isoformat()
+        calls.clear()
+        result = run(checkpoint=saved)
+        self.assertEqual(result["resumed_reviews"], 0)
+        self.assertEqual([p for p, _ in calls], [mod.VERIFY])
+
+    def test_expired_negative_discovery_is_rechecked(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(1)
+        run(reviewer=lambda *_: {"matches": []})
+        checkpoint = checkpoints[-1]
+        calls.clear()
+        self.assertEqual(run(checkpoint=checkpoint)["matches"], 0)
+        self.assertEqual(calls, [])
+        checkpoint["discovery"]["node-test-0"]["checked_at"] = (self.now - timedelta(hours=25)).isoformat()
+        self.assertEqual(run(checkpoint=checkpoint)["matches"], 1)
+        self.assertEqual([p for p, _ in calls], [mod.SELECT, mod.VERIFY])
+
+    def test_invalid_batch_never_checkpointed(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(51)
+        def invalid(prompt, data):
+            if len(data["advisories"]) == 1:
+                return {"matches": [{"slug": "outside", "products": [], "unknown_assets": []}]}
+            return review(prompt, data)
+        with self.assertRaisesRegex(ValueError, "invalid_selection_slug"):
+            run(reviewer=invalid)
+        self.assertEqual(len(checkpoints), 1)
+        self.assertEqual(len(checkpoints[-1]["discovery"]), 50)
+
+    def test_soft_verification_stop_reports_remaining_backlog(self):
+        incidents, calls, checkpoints, review, run = self.resume_fixture(3)
+        first = run(should_pause=lambda: bool(checkpoints and checkpoints[-1]["findings"]))
+        self.assertTrue(first["budget_exhausted"])
+        self.assertEqual(first["backlog"], 2)
+        calls.clear()
+        second = run(first, checkpoint=checkpoints[-1])
+        self.assertEqual(second["backlog"], 0)
+        self.assertEqual([p for p, _ in calls], [mod.VERIFY, mod.VERIFY])
+
+    def test_checkpoint_write_failure_is_not_a_review_failure(self):
+        with self.assertRaises(OSError):
+            mod.collect(self.inventory, {}, fetcher=self.fetch, reviewer=self.review,
+                        save_checkpoint=lambda _: (_ for _ in ()).throw(OSError("disk_full")))
+
+    def test_main_pause_keeps_published_cache_and_exposes_pause_warning(self):
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            state.chmod(0o700)
+            mod.write_private(state / "cache.json", self.collect())
+            mod.write_private(state / "inventory.json", self.inventory)
+            before = (state / "cache.json").read_bytes()
+            original = mod.collect
+            def paused(inventory, previous, **kwargs):
+                self.assertEqual(kwargs["checkpoint"], {})
+                # Complete one batch, then pause before the second.
+                incidents = [{**self.incident, "slug": f"n-{i}"} for i in range(51)]
+                def fetch(*_):
+                    return json.dumps({"generatedAt": self.stamp, "incidents": incidents})
+                kwargs["should_pause"] = lambda: (state / "checkpoint.json").exists()
+                return original(inventory, previous, fetcher=fetch,
+                                reviewer=lambda *_: {"matches": []}, **kwargs)
+            with patch.object(sys, "argv", ["collector", "--state-dir", str(state),
+                                            "--inventory", str(state / "inventory.json")]), patch.object(
+                    mod, "collect", side_effect=paused):
+                self.assertEqual(mod.main(), 0)
+            self.assertEqual((state / "cache.json").read_bytes(), before)
+            self.assertEqual((state / "checkpoint.json").stat().st_mode & 0o777, 0o600)
+            self.assertEqual(len(mod.read_private(state / "checkpoint.json")["discovery"]), 50)
+            self.assertIn("collection_paused", mod.briefing_summary(state)["warnings"])
+
+    def test_running_collection_is_not_reported_as_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            mod.write_private(state / "cache.json", self.collect())
+            mod.write_private(state / "health.json", {"status": "running"})
+            warnings = mod.briefing_summary(state)["warnings"]
+            self.assertIn("collection_in_progress", warnings)
+            self.assertNotIn("latest_collection_failed", warnings)
+
+    def test_model_cleanup_is_bounded_and_preserves_original_deadline(self):
+        from unittest.mock import Mock
+        process = Mock(pid=123)
+        process.communicate.side_effect = [mod.CollectionDeadline("collection_deadline"),
+                                          mod.subprocess.TimeoutExpired("model", 5)]
+        process.wait.side_effect = mod.subprocess.TimeoutExpired("model", 5)
+        with patch.object(mod.subprocess, "Popen", return_value=process), patch.object(
+                mod.os, "killpg") as kill:
+            with self.assertRaises(mod.CollectionDeadline):
+                mod.infer("test", {})
+        kill.assert_called_once_with(123, mod.signal.SIGKILL)
+        self.assertEqual([c.kwargs["timeout"] for c in process.communicate.call_args_list], [240, 5])
+        process.wait.assert_called_once_with(timeout=5)
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
 
 
 if __name__ == "__main__":

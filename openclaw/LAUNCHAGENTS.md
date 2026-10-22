@@ -8,6 +8,11 @@ It runs at 07:15 Mini local time (America/New_York), using Homebrew Python and
 must be updated after an attended resurvey; it does not silently refresh hosts.
 State/logs are private under `~/.local/state/security-advisories/`. The process
 is locked, bounded to 30 minutes and has no direct notification/remediation path.
+Private checkpoints retain validated discovery batches and successful reviews
+across interruptions. At 24 minutes it stops starting new work; incomplete
+discovery reports paused without replacing the published cache. The next daily
+or attended invocation resumes compatible work; there is no KeepAlive retry loop
+or added schedule. The briefing reads only the published cache, never checkpoints.
 Dylan's existing 08:00 briefing reads its cached result. No gateway restart,
 finance/forecast timing change, or other LaunchAgent reload is required.
 See [the collector contract](bin/README.md#gateway--maintenance) for verification,

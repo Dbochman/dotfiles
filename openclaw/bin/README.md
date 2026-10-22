@@ -108,11 +108,30 @@ original GhostAction research are explicitly reviewed publishers too.
 
 Private atomic state is in `~/.local/state/security-advisories/` (0700/0600).
 The lock excludes concurrent collections; the overall budget is 30 minutes.
+Completed discovery batches and successful verification results are atomically
+saved to a separate private `checkpoint.json`. The briefing never reads this
+working file. Each run fetches and validates the current feed; it reuses individual
+discovery decisions (including nonmatches) only for unchanged inventory/advisory
+inputs, within 24 hours. Feed growth or reordering does not discard compatible
+work. Model/prompt contract changes invalidate checkpoints; when changing other
+review semantics, bump the internal contract version too. Verified findings are
+reused only for matching inputs/observation dates within their normal review TTL.
+No raw publisher pages or model responses are checkpointed.
+
+After 24 minutes, no new discovery batch or advisory review starts. Incomplete
+discovery exits cleanly with `status=paused` and `collection_paused` in the briefing,
+preserving the last published cache. After full discovery, a time-limited review
+pass may publish validated findings with an explicit remaining backlog. The hard
+30-minute deadline still reports failure; completed checkpoint work survives for
+the next daily or attended one-shot run. An in-flight unit may need to be repeated.
+Model-process cleanup is also time-bounded, including when a detached descendant
+holds a pipe open; cleanup must not swallow the original collection deadline.
+No automatic restart or new schedule is added, and the twelve-review cap remains.
 Discovery supplies explicit observed-product and unverified-asset allowlists;
 its product/ecosystem/state/asset table omits versions and evidence strings to
 stay within the input budget. Primary-source verification still receives the
 full version and evidence rows for each match.
-unverified product hints must be represented by their asset IDs, not invented
+Unverified product hints must be represented by their asset IDs, not invented
 observed components. Each complete batch is strictly validated before acceptance.
 Invalid JSON or selection structure/names gets one corrective retry of that batch,
 within the same deadline. Nothing is silently dropped or guessed; a second invalid
@@ -124,6 +143,8 @@ Inspect live operational progress without network/model calls:
 `python3 ~/.local/libexec/security-advisory-collector.py --progress`.
 This reports discovery batches, source-fetch/model-review stages, attempted reviews
 (out of at most twelve), errors, elapsed time and remaining 30-minute deadline budget.
+It also reports reused discovery counts, resumed reviews at reconciliation, and
+whether a completed pass stopped starting work at its soft time budget.
 `seconds_since_update` measures the last stage transition, not a heartbeat or proof
 of a stall; `liveness_verified` is false. A model call can take up to four minutes.
 The deadline is a timeout budget, not an ETA. No advisory content, asset identifiers,
