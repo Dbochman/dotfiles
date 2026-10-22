@@ -76,6 +76,18 @@ from breaking changes that need careful migration.
   cleanup; that cleanup now has bounded waits and retains the original deadline
   exception. The 07:15 schedule and no-KeepAlive contract are unchanged. Full-feed
   completion remains a live verification item rather than a claimed result.
+- Subsequent discovery reached 639/719 before a model-call timeout. Owner then
+  authorized collector maintenance and capped unattended continuation. Discovery
+  batches are now 20 instead of 50, with a two-attempt maximum for model timeouts
+  (shared with discovery schema correction). The daily job uses a persisted
+  three-pass allowance per local 07:15 window and 60-second backoff; it stops on
+  no progress, non-timeout failures, operator stop, or cap. Each pass retains the
+  30-minute deadline and twelve-review maximum. Deployed only this collector and
+  its LaunchAgent; retained the 639-decision checkpoint and prior published cache.
+  All 96 security/briefing tests pass. The live continuation supervisor started
+  at 20:02 UTC with allowance 1/3 and reused 617 still-valid discovery decisions;
+  the refreshed feed contains 719 advisories, leaving 102 to screen at startup.
+  Remaining discovery and primary-source verification are not yet claimed complete.
 - GitHub runner source metadata identifies a patched release candidate, but
   attended hosted validation has not produced new runtime evidence. The guarded
   rerun remained queued; cancellation returned an inconsistent completed-run

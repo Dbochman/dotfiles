@@ -367,20 +367,20 @@ class AdvisoryTests(unittest.TestCase):
         return incidents, calls, checkpoints, review, run
 
     def test_discovery_resume_survives_feed_reorder_and_growth(self):
-        incidents, calls, checkpoints, review, run = self.resume_fixture(51)
+        incidents, calls, checkpoints, review, run = self.resume_fixture(21)
         with self.assertRaises(mod.CollectionPaused):
             run(should_pause=lambda: bool(checkpoints))
-        self.assertEqual(len(checkpoints[-1]["discovery"]), 50)
+        self.assertEqual(len(checkpoints[-1]["discovery"]), 20)
         incidents.reverse()
         incidents.append({**self.incident, "slug": "new-advisory"})
         calls.clear()
         result = run(checkpoint=checkpoints[-1])
         selected = [data for prompt, data in calls if prompt == mod.SELECT]
         self.assertEqual(len(selected), 1)
-        self.assertEqual({a["slug"] for a in selected[0]["advisories"]}, {"node-test-50", "new-advisory"})
-        self.assertEqual(result["discovery_reused"], 50)
-        self.assertEqual(result["advisories_screened"], 52)
-        self.assertEqual(result["backlog"], 40)
+        self.assertEqual({a["slug"] for a in selected[0]["advisories"]}, {"node-test-20", "new-advisory"})
+        self.assertEqual(result["discovery_reused"], 20)
+        self.assertEqual(result["advisories_screened"], 22)
+        self.assertEqual(result["backlog"], 10)
 
     def test_hard_deadline_resumes_successful_reviews(self):
         incidents, calls, checkpoints, review, run = self.resume_fixture(3)
@@ -451,7 +451,7 @@ class AdvisoryTests(unittest.TestCase):
         incidents, calls, checkpoints, review, run = self.resume_fixture(1)
         run()
         saved = checkpoints[-1]
-        incidents.extend({**self.incident, "slug": f"new-{i}"} for i in range(51))
+        incidents.extend({**self.incident, "slug": f"new-{i}"} for i in range(21))
         def interrupt(prompt, data):
             if prompt == mod.SELECT and len(data["advisories"]) == 1:
                 raise mod.CollectionDeadline("collection_deadline")
@@ -486,7 +486,7 @@ class AdvisoryTests(unittest.TestCase):
         self.assertEqual([p for p, _ in calls], [mod.SELECT, mod.VERIFY])
 
     def test_invalid_batch_never_checkpointed(self):
-        incidents, calls, checkpoints, review, run = self.resume_fixture(51)
+        incidents, calls, checkpoints, review, run = self.resume_fixture(21)
         def invalid(prompt, data):
             if len(data["advisories"]) == 1:
                 return {"matches": [{"slug": "outside", "products": [], "unknown_assets": []}]}
@@ -494,7 +494,7 @@ class AdvisoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_selection_slug"):
             run(reviewer=invalid)
         self.assertEqual(len(checkpoints), 1)
-        self.assertEqual(len(checkpoints[-1]["discovery"]), 50)
+        self.assertEqual(len(checkpoints[-1]["discovery"]), 20)
 
     def test_soft_verification_stop_reports_remaining_backlog(self):
         incidents, calls, checkpoints, review, run = self.resume_fixture(3)
@@ -523,7 +523,7 @@ class AdvisoryTests(unittest.TestCase):
             def paused(inventory, previous, **kwargs):
                 self.assertEqual(kwargs["checkpoint"], {})
                 # Complete one batch, then pause before the second.
-                incidents = [{**self.incident, "slug": f"n-{i}"} for i in range(51)]
+                incidents = [{**self.incident, "slug": f"n-{i}"} for i in range(21)]
                 def fetch(*_):
                     return json.dumps({"generatedAt": self.stamp, "incidents": incidents})
                 kwargs["should_pause"] = lambda: (state / "checkpoint.json").exists()
@@ -535,7 +535,7 @@ class AdvisoryTests(unittest.TestCase):
                 self.assertEqual(mod.main(), 0)
             self.assertEqual((state / "cache.json").read_bytes(), before)
             self.assertEqual((state / "checkpoint.json").stat().st_mode & 0o777, 0o600)
-            self.assertEqual(len(mod.read_private(state / "checkpoint.json")["discovery"]), 50)
+            self.assertEqual(len(mod.read_private(state / "checkpoint.json")["discovery"]), 20)
             self.assertIn("collection_paused", mod.briefing_summary(state)["warnings"])
 
     def test_running_collection_is_not_reported_as_failure(self):
@@ -562,6 +562,170 @@ class AdvisoryTests(unittest.TestCase):
         process.wait.assert_called_once_with(timeout=5)
         process.stdout.close.assert_called_once()
         process.stderr.close.assert_called_once()
+
+    def test_discovery_timeout_retries_once_and_recovers(self):
+        calls, events = [], []
+        def review(prompt, data):
+            if prompt == mod.SELECT:
+                calls.append(1)
+                if len(calls) == 1:
+                    raise mod.subprocess.TimeoutExpired("private prompt", 240)
+            return self.review(prompt, data)
+        result = mod.collect(self.inventory, {}, fetcher=self.fetch, reviewer=review,
+                             progress=lambda **v: events.append(v))
+        self.assertEqual(result["matches"], 1)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("model_timeout", json.dumps(events))
+        self.assertNotIn("private prompt", json.dumps(events))
+
+    def test_discovery_timeout_and_schema_error_share_two_attempt_budget(self):
+        calls = []
+        def fail(*_):
+            calls.append(1)
+            if len(calls) == 1:
+                raise mod.subprocess.TimeoutExpired("model", 240)
+            raise ValueError("invalid_selection_shape")
+        with self.assertRaises(ValueError):
+            self.collect(reviewer=fail)
+        self.assertEqual(len(calls), 2)
+
+    def test_discovery_repeated_timeout_has_only_two_attempts(self):
+        from unittest.mock import Mock
+        review = Mock(side_effect=mod.subprocess.TimeoutExpired("model", 240))
+        with self.assertRaises(mod.subprocess.TimeoutExpired):
+            self.collect(reviewer=review)
+        self.assertEqual(review.call_count, 2)
+
+    def test_verification_timeout_retry_cap_and_deadline_escape(self):
+        from unittest.mock import Mock
+        timeout = mod.subprocess.TimeoutExpired("model", 240)
+        review = Mock(side_effect=[timeout, {"ok": True}])
+        self.assertEqual(mod.review_with_timeout_retry(review, {}, lambda **_: None), {"ok": True})
+        review = Mock(side_effect=timeout)
+        with self.assertRaises(mod.subprocess.TimeoutExpired):
+            mod.review_with_timeout_retry(review, {}, lambda **_: None)
+        self.assertEqual(review.call_count, 2)
+        for error in (mod.CollectionDeadline(), mod.CollectionStopped(), ValueError("invalid")):
+            review = Mock(side_effect=error)
+            with self.assertRaises(type(error)):
+                mod.review_with_timeout_retry(review, {}, lambda **_: None)
+            self.assertEqual(review.call_count, 1)
+
+
+class ContinuationTests(unittest.TestCase):
+    def setUp(self):
+        from types import SimpleNamespace
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.state = Path(self.directory.name)
+        self.args = SimpleNamespace(state_dir=self.state, inventory=self.state / "inventory.json")
+        self.now = datetime(2026, 10, 22, 15, tzinfo=timezone.utc)
+        self.calls = []
+
+    def run_pass(self, health=None, advance=True):
+        def run(_):
+            self.calls.append(1)
+            mod.write_private(self.state / "health.json", {
+                "started_at": str(len(self.calls)), "status": "ok", "backlog": 10, **(health or {})})
+            if advance:
+                mod.write_private(self.state / "checkpoint.json", {"progress": len(self.calls)})
+            return 0
+        return run
+
+    def continue_run(self, **kwargs):
+        return mod.continue_collection(self.args, sleeper=lambda _: None, now=self.now, **kwargs)
+
+    def ledger(self):
+        return mod.read_private(self.state / "continuation.json")
+
+    def test_cap_is_durable_and_restart_does_not_reset(self):
+        self.assertEqual(self.continue_run(run=self.run_pass()), 0)
+        self.assertEqual(len(self.calls), 3)
+        self.assertEqual(self.ledger()["status"], "capped")
+        self.assertEqual(self.continue_run(run=self.run_pass()), 0)
+        self.assertEqual(len(self.calls), 3)
+        self.assertEqual((self.state / "continuation.json").stat().st_mode & 0o777, 0o600)
+
+    def test_complete_and_failure_and_no_progress_stop(self):
+        for health, advance, status in (({"backlog": 0}, True, "complete"),
+                ({"status": "failed", "error_type": "ValueError"}, True, "blocked"),
+                ({"status": "paused"}, False, "stalled")):
+            with self.subTest(status=status):
+                self.calls.clear()
+                mod.write_private(self.state / "continuation.json", {})
+                mod.write_private(self.state / "health.json", {})
+                self.continue_run(run=self.run_pass(health, advance))
+                self.assertEqual(len(self.calls), 1)
+                self.assertEqual(self.ledger()["status"], status)
+
+    def test_timeout_after_progress_continues_but_operator_stop_does_not(self):
+        self.continue_run(run=self.run_pass({"status": "failed", "error_type": "TimeoutExpired"}))
+        self.assertEqual(len(self.calls), 3)
+        self.assertFalse(mod.pending_work({"status": "failed", "error_type": "CollectionStopped"}))
+
+    def test_restart_after_crash_consumes_prior_reservation(self):
+        mod.write_private(self.state / "continuation.json", {
+            "window": "2026-10-22", "passes_used": 2, "pass_limit": 3, "status": "running"})
+        self.continue_run(run=self.run_pass())
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.ledger()["passes_used"], 3)
+
+    def test_new_window_resets_budget(self):
+        self.continue_run(run=self.run_pass())
+        self.now += timedelta(days=1)
+        self.continue_run(run=self.run_pass())
+        self.assertEqual(len(self.calls), 6)
+        self.assertEqual(mod.continuation_window(self.now.replace(hour=7, minute=14)), "2026-10-22")
+        self.assertEqual(mod.continuation_window(self.now.replace(hour=7, minute=15)), "2026-10-23")
+
+    def test_stop_during_backoff_is_not_retried(self):
+        def stop(_):
+            raise mod.CollectionStopped()
+        mod.continue_collection(self.args, run=self.run_pass(), sleeper=stop, now=self.now)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.ledger()["status"], "stopped")
+
+    def test_backoff_and_cache_preservation(self):
+        mod.write_private(self.state / "cache.json", {"sentinel": "published"})
+        before = (self.state / "cache.json").read_bytes()
+        sleeps = []
+        mod.continue_collection(self.args, run=self.run_pass(), sleeper=sleeps.append, now=self.now)
+        self.assertEqual(sleeps, [60, 60])
+        self.assertEqual((self.state / "cache.json").read_bytes(), before)
+
+    def test_concurrent_supervisor_does_not_reserve_another_pass(self):
+        with (self.state / "continuation.lock").open("a") as lock:
+            mod.fcntl.flock(lock, mod.fcntl.LOCK_EX | mod.fcntl.LOCK_NB)
+            self.assertEqual(self.continue_run(run=self.run_pass()), 0)
+            self.assertEqual(self.calls, [])
+            self.assertFalse((self.state / "continuation.json").exists())
+
+    def test_busy_or_abnormal_worker_does_not_loop(self):
+        self.assertEqual(self.continue_run(run=lambda _: 0), 1)
+        self.assertEqual(self.ledger()["status"], "blocked")
+        self.assertEqual(self.ledger()["passes_used"], 1)
+
+    def test_child_is_one_shot_with_bounded_wait(self):
+        from unittest.mock import Mock
+        process = Mock()
+        process.wait.return_value = 0
+        with patch.object(mod.subprocess, "Popen", return_value=process) as popen:
+            mod.invoke_pass(self.args)
+        self.assertNotIn("--continue-pending", popen.call_args.args[0])
+        process.wait.assert_called_once_with(timeout=1830)
+
+    def test_progress_reports_continuation_without_private_extra_fields(self):
+        self.continue_run(run=self.run_pass())
+        health = mod.read_private(self.state / "health.json")
+        health.update(started_at=datetime.now(timezone.utc).isoformat(), checked_at=datetime.now(timezone.utc).isoformat())
+        mod.write_private(self.state / "health.json", health)
+        ledger = self.ledger()
+        ledger["private"] = "secret"
+        mod.write_private(self.state / "continuation.json", ledger)
+        result = mod.progress_summary(self.state)
+        self.assertEqual(result["continuation"]["status"], "capped")
+        self.assertEqual(result["continuation"]["passes_used"], 3)
+        self.assertNotIn("secret", json.dumps(result))
 
 
 if __name__ == "__main__":

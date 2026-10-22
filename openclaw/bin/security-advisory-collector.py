@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Notification-only advisory review; private cache, no host changes or delivery."""
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 from html.parser import HTMLParser
@@ -14,6 +14,7 @@ import signal
 import socket
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -22,6 +23,8 @@ import urllib.request
 
 STATE = Path.home() / ".local/state/security-advisories"
 MODEL = "openai/gpt-5.6-sol"
+DISCOVERY_BATCH_SIZE = 20
+PASS_LIMIT = 3
 RUNTIME = Path.home() / ".local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin"
 CA = "/opt/homebrew/etc/ca-certificates/cert.pem"
 # Deliberately reviewed publishers, not a feed-controlled trust list.
@@ -48,6 +51,10 @@ class CollectionDeadline(Exception):
 
 class CollectionPaused(Exception):
     """Discovery checkpoint saved; leave the published cache unchanged."""
+
+
+class CollectionStopped(Exception):
+    """Operator termination is not eligible for automatic continuation."""
 
 
 def now_iso():
@@ -287,14 +294,29 @@ def select_batch(compact, advisories, products, unknown, reviewer, progress):
                  **({"retry_reason": data["retry_reason"]} if "retry_reason" in data else {}))
         try:
             return validate_selection(reviewer(SELECT, data), slugs, products, unknown)
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                raise
+            data["retry_reason"] = "model_timeout"
         except ValueError as exc:
-            # Retry schema/selection failures once, not transport failures or
-            # arbitrary exceptions. Never echo rejected model output to logs.
+            # Schema correction and timeout retry share a two-attempt ceiling.
+            # Other transport failures are not retried. Never echo raw output.
             reason = "invalid_selection_json" if isinstance(exc, json.JSONDecodeError) else str(exc)
             if not reason.startswith("invalid_selection_") or attempt == 2:
                 raise
             data["retry_reason"] = reason
             data["retry_instruction"] = "Regenerate the complete batch using the exact allowed names."
+
+
+def review_with_timeout_retry(reviewer, data, progress):
+    for attempt in range(1, 3):
+        progress(attempt=attempt, attempt_limit=2,
+                 **({"retry_reason": "model_timeout"} if attempt == 2 else {}))
+        try:
+            return reviewer(VERIFY, data)
+        except subprocess.TimeoutExpired:
+            if attempt == 2:
+                raise
 
 
 VERIFY = """Assess this advisory against the supplied inventory and fetched primary evidence.
@@ -384,14 +406,14 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
             remaining.append(incident)
     reused = len(work["discovery"])
     progress(phase="discovery", advisories=len(values), screened=reused, reused=reused)
-    for start in range(0, len(remaining), 50):
+    for start in range(0, len(remaining), DISCOVERY_BATCH_SIZE):
         if should_pause():
             raise CollectionPaused("discovery_budget_exhausted")
         def selection_progress(**fields):
             progress(phase="discovery", advisories=len(values), screened=reused + start,
-                     reused=reused, batch=start // 50 + 1,
-                     batches=(len(remaining) + 49) // 50, **fields)
-        batch = remaining[start:start + 50]
+                     reused=reused, batch=start // DISCOVERY_BATCH_SIZE + 1,
+                     batches=(len(remaining) + DISCOVERY_BATCH_SIZE - 1) // DISCOVERY_BATCH_SIZE, **fields)
+        batch = remaining[start:start + DISCOVERY_BATCH_SIZE]
         selected = select_batch(compact, batch, all_products, unknown, reviewer, selection_progress)
         matches.update(selected)
         for incident in batch:
@@ -447,13 +469,14 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
                 except (OSError, ValueError):
                     continue
             if sources:
-                progress(phase="verification", step="model", pending=len(pending),
-                         checked=checked - 1, review_limit=min(12, len(pending)), errors=errors)
-                result = validate_assessment(reviewer(VERIFY, {
+                def review_progress(**fields):
+                    progress(phase="verification", step="model", pending=len(pending),
+                             checked=checked - 1, review_limit=min(12, len(pending)), errors=errors, **fields)
+                result = validate_assessment(review_with_timeout_retry(reviewer, {
                     "advisory": incidents[slug], "inventory_columns": compact["columns"],
                     "components": rows, "unknown_assets": match["unknown_assets"],
                     "oldest_observation_at": observed_at, "primary_sources": sources,
-                }), assets, sources)
+                }, review_progress), assets, sources)
             else:
                 result = {"status": "unknown", "asset_ids": sorted(assets),
                           "summary": "Potential inventory match; primary-source verification unavailable.",
@@ -510,6 +533,10 @@ def briefing_summary(state=STATE, now=None):
             warnings.append("latest_collection_failed")
         if cache["backlog"]:
             warnings.append("verification_backlog")
+        continuation = optional_private(state / "continuation.json")
+        continuation_status = continuation.get("status")
+        if continuation_status in {"capped", "stalled", "blocked", "stopped"}:
+            warnings.append("continuation_" + continuation_status)
         changes = [f for f in cache["findings"].values() if age_hours(f["changed_at"], now) < 48
                    and not (f["status"] == "not_applicable" and f.get("change_kind") == "new")]
         rank = {"affected": 0, "possibly_affected": 1, "unknown": 2, "not_applicable": 3}
@@ -519,6 +546,8 @@ def briefing_summary(state=STATE, now=None):
                 "generatedAt": cache["generated_at"], "inventoryAt": cache["inventory_at"],
                 "coverage": "partial", "clearance": False, "warnings": warnings,
                 "backlog": cache["backlog"], "unknownAssets": cache["unknown_assets"],
+                "continuation": {k: continuation[k] for k in
+                    ("status", "passes_used", "pass_limit", "next_pass_at") if k in continuation},
                 "changes": [{k: f[k] for k in fields} for f in changes[:5]],
                 "additionalChanges": max(0, len(changes) - 5),
                 "unresolved": sum(f["status"] != "not_applicable" for f in cache["findings"].values()),
@@ -548,15 +577,125 @@ def progress_summary(state=STATE, now=None):
         if health.get("phase") == "verification" and "pending" in health:
             result.setdefault("review_limit", min(12, health["pending"]))
         result["liveness_verified"] = False
+        continuation = optional_private(state / "continuation.json")
+        if continuation:
+            result["continuation"] = {k: continuation[k] for k in
+                ("window", "status", "passes_used", "pass_limit", "next_pass_at") if k in continuation}
         return result
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "unavailable", "reason": "security_progress_unavailable"}
+
+
+def optional_private(path):
+    try:
+        return read_private(path)
+    except FileNotFoundError:
+        return {}
+
+
+def continuation_window(now=None):
+    local = now or datetime.now().astimezone()
+    day = local.date()
+    if (local.hour, local.minute) < (7, 15):
+        day -= timedelta(days=1)
+    return day.isoformat()
+
+
+def pending_work(health):
+    return (health.get("status") == "paused"
+            or (health.get("status") == "ok" and health.get("backlog", 0) > 0)
+            or (health.get("status") == "failed"
+                and health.get("error_type") in {"TimeoutExpired", "CollectionDeadline"}))
+
+
+def invoke_pass(args):
+    process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
+                                "--inventory", str(args.inventory), "--state-dir", str(args.state_dir)])
+    try:
+        return process.wait(timeout=1830)
+    except BaseException:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        raise
+
+
+def continue_collection(args, run=invoke_pass, sleeper=time.sleep, now=None):
+    """At most three durable pass reservations per local 07:15 window.
+
+    No KeepAlive/relaunch loop. The worker retains its independent collection
+    lock and deadline. Failed/unfinished work never becomes a briefing cache.
+    """
+    path = args.state_dir / "continuation.json"
+    with (args.state_dir / "continuation.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return 0
+        window = continuation_window(now)
+        ledger = optional_private(path)
+        if ledger.get("window") != window:
+            ledger = {"window": window, "passes_used": 0, "pass_limit": PASS_LIMIT}
+        if (type(ledger.get("passes_used")) is not int or not 0 <= ledger["passes_used"] <= PASS_LIMIT
+                or ledger.get("pass_limit") != PASS_LIMIT):
+            raise ValueError("invalid_continuation_ledger")
+        if ledger.get("status") in {"complete", "blocked", "stalled", "stopped", "capped"}:
+            return 0
+        def save(status):
+            ledger.update(status=status, checked_at=now_iso())
+            write_private(path, ledger)
+        prior_handler = signal.getsignal(signal.SIGTERM)
+        def stop(*_):
+            raise CollectionStopped("collection_stopped")
+        signal.signal(signal.SIGTERM, stop)
+        try:
+            while ledger["passes_used"] < PASS_LIMIT:
+                # Never reset the allowance during an invocation crossing 07:15.
+                before = digest(optional_private(args.state_dir / "checkpoint.json"))
+                old_start = optional_private(args.state_dir / "health.json").get("started_at")
+                ledger["passes_used"] += 1
+                ledger.pop("next_pass_at", None)
+                save("running")  # Reserve before work; crashes consume a slot.
+                run(args)
+                health = optional_private(args.state_dir / "health.json")
+                if health.get("started_at") == old_start or health.get("status") == "running":
+                    save("blocked")  # Busy worker or abnormal exit; do not retry blindly.
+                    return 1
+                if not pending_work(health):
+                    save("complete" if health.get("status") == "ok" else "blocked")
+                    return 0 if health.get("status") == "ok" else 1
+                if digest(optional_private(args.state_dir / "checkpoint.json")) == before:
+                    save("stalled")
+                    return 1
+                if ledger["passes_used"] == PASS_LIMIT:
+                    break
+                ledger["next_pass_at"] = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                save("waiting")
+                sleeper(60)
+            save("capped")
+            return 0
+        except CollectionStopped:
+            save("stopped")
+            return 1
+        except Exception:
+            save("blocked")
+            raise
+        finally:
+            signal.signal(signal.SIGTERM, prior_handler)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--state-dir", type=Path, default=STATE)
+    parser.add_argument("--continue-pending", action="store_true",
+                        help="Run up to three checkpointed passes per local 07:15 window")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--status", action="store_true")
     mode.add_argument("--progress", action="store_true", help="Read private collection progress; no network or model calls")
@@ -574,6 +713,8 @@ def main():
     info = args.state_dir.stat()
     if info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError("unsafe_state_directory")
+    if args.continue_pending:
+        return continue_collection(args)
     with (args.state_dir / "collector.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -588,8 +729,10 @@ def main():
         try:
             def deadline_expired(*_):
                 raise CollectionDeadline("collection_deadline")
+            def stopped(*_):
+                raise CollectionStopped("collection_stopped")
             signal.signal(signal.SIGALRM, deadline_expired)
-            signal.signal(signal.SIGTERM, deadline_expired)
+            signal.signal(signal.SIGTERM, stopped)
             signal.alarm(1800)
             write_private(args.state_dir / "health.json", {"status": "running", "started_at": started_at, "checked_at": now_iso()})
             try:

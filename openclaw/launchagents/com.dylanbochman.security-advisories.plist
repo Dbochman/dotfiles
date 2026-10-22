@@ -9,6 +9,7 @@
         <string>/Users/dbochman/.local/libexec/security-advisory-collector.py</string>
         <string>--inventory</string>
         <string>/Users/dbochman/.local/state/security-inventory/2026-10-22-fleet-followup/inventory.json</string>
+        <string>--continue-pending</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>15</integer></dict>

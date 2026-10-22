@@ -7,14 +7,19 @@ It runs at 07:15 Mini local time (America/New_York), using Homebrew Python and
 `~/.local/libexec/security-advisory-collector.py`. The dated inventory argument
 must be updated after an attended resurvey; it does not silently refresh hosts.
 State/logs are private under `~/.local/state/security-advisories/`. The process
-is locked, bounded to 30 minutes and has no direct notification/remediation path.
+is locked, bounded to 30 minutes per pass and has no direct notification/remediation path.
 Private checkpoints retain validated discovery batches and successful reviews
 across interruptions. At 24 minutes it stops starting new work; incomplete
-discovery reports paused without replacing the published cache. The next daily
-or attended invocation resumes compatible work; there is no KeepAlive retry loop
-or added schedule. The briefing reads only the published cache, never checkpoints.
+discovery reports paused without replacing the published cache. With the deployed
+`--continue-pending` flag, at most three passes run per local 07:15 window, with
+60-second gaps, a persisted allowance, and stops on no progress or non-timeout
+failure. There is no KeepAlive retry loop or added schedule. Each pass still has
+a twelve-review cap; discovery uses 20-item batches and retries a model timeout
+once. Operator termination stops continuation. The briefing reads only the
+published cache, never checkpoints, and reports continuation caps/stalls.
 Dylan's existing 08:00 briefing reads its cached result. No gateway restart,
-finance/forecast timing change, or other LaunchAgent reload is required.
+finance/forecast timing change, or other LaunchAgent reload is required. Only
+this LaunchAgent needs reloading when its continuation arguments change.
 See [the collector contract](bin/README.md#gateway--maintenance) for verification,
 backlog, freshness and delivery limitations. Run `--status` for a cache-only check.
 

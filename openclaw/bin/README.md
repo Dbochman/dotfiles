@@ -107,7 +107,7 @@ the same three-source budget. Kernel-maintainer archives and GitGuardian's
 original GhostAction research are explicitly reviewed publishers too.
 
 Private atomic state is in `~/.local/state/security-advisories/` (0700/0600).
-The lock excludes concurrent collections; the overall budget is 30 minutes.
+The worker lock excludes concurrent collections; each pass is limited to 30 minutes.
 Completed discovery batches and successful verification results are atomically
 saved to a separate private `checkpoint.json`. The briefing never reads this
 working file. Each run fetches and validates the current feed; it reuses individual
@@ -126,19 +126,42 @@ pass may publish validated findings with an explicit remaining backlog. The hard
 the next daily or attended one-shot run. An in-flight unit may need to be repeated.
 Model-process cleanup is also time-bounded, including when a detached descendant
 holds a pipe open; cleanup must not swallow the original collection deadline.
-No automatic restart or new schedule is added, and the twelve-review cap remains.
+The twelve-review cap remains per pass. The daily LaunchAgent now supplies
+`--continue-pending`: a locked supervisor runs at most three passes per local
+07:15-to-07:15 window, with 60 seconds between passes. That permits at most 36
+advisory reviews (each with at most two model attempts) and roughly 92 minutes
+of collection/backoff plus bounded cleanup
+per window. `continuation.json` reserves each pass before starting it, so crashes
+and restarts do not reset the allowance. The next daily window resets the budget;
+there is no KeepAlive or extra scheduled trigger. Ordinary manual invocations
+without this flag remain one-shot and are not automatic continuation.
+
+Continuation requires a saved checkpoint change and unfinished work: paused
+discovery, a verification backlog, or a model/collection timeout. Completion,
+no saved progress, schema/transport/storage failures, operator termination, or
+the three-pass cap stops the supervisor. Stopped/blocked/capped cycles remain
+stopped for that window even after a restart; inspect rather than clearing their
+ledger to evade the cap. The published cache and checkpoint are never deleted.
+Progress and the briefing expose continuation status/counts; no new notification
+delivery or host remediation is performed. The supervisor may still be working
+at briefing time, when the briefing uses the last published cache and backlog.
 Discovery supplies explicit observed-product and unverified-asset allowlists;
 its product/ecosystem/state/asset table omits versions and evidence strings to
 stay within the input budget. Primary-source verification still receives the
 full version and evidence rows for each match.
 Unverified product hints must be represented by their asset IDs, not invented
-observed components. Each complete batch is strictly validated before acceptance.
+observed components. Batches contain at most 20 advisories (previously 50).
+Each complete batch is strictly validated before acceptance.
 Invalid JSON or selection structure/names gets one corrective retry of that batch,
 within the same deadline. Nothing is silently dropped or guessed; a second invalid
-response fails collection and preserves the prior cache. Transport failures are
+response fails collection and preserves the prior cache. Model-call timeouts get
+one retry in discovery and verification; discovery correction and timeout retries
+share a two-attempt ceiling, not nested retry budgets. The 30-minute hard deadline
+and operator stop are never retried within a pass. Other transport failures are
 not retried here. Progress exposes only attempt counts and fixed rejection codes,
 never rejected model output. The daily LaunchAgent has no KeepAlive retry loop;
-attended runs should also be one-shot, not submitted as continuously restarting jobs.
+attended runs must use one-shot mode or the same capped continuation flag, not
+an external continuously restarting job.
 Inspect live operational progress without network/model calls:
 `python3 ~/.local/libexec/security-advisory-collector.py --progress`.
 This reports discovery batches, source-fetch/model-review stages, attempted reviews
