@@ -5,8 +5,16 @@ fi
 alias python=/usr/bin/python3
 export PATH="$HOME/.local/bin:$PATH"
 
-# Prefer Homebrew's keg-only Node 22 for CLIs with `env node` shebangs.
-export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+# Prefer the staged security-patched runtime for new interactive CLI sessions.
+# Existing processes retain their original executable until restarted.
+if [[ -x "$HOME/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node" ]]; then
+  export PATH="$HOME/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin:$PATH"
+elif [[ -x "$HOME/.local/share/openclaw/runtimes/node-v26.12.1-darwin-arm64/bin/node" ]]; then
+  export PATH="$HOME/.local/share/openclaw/runtimes/node-v26.12.1-darwin-arm64/bin:$PATH"
+else
+  # Hosts outside the attended rollout retain their existing setup, not clearance.
+  export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+fi
 
 # 1Password SSH Agent
 export SSH_AUTH_SOCK=~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock

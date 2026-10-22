@@ -6,7 +6,7 @@ umask 077
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MACBOOK="dylans-macbook-pro"
-NODE="/opt/homebrew/bin/node"
+NODE="/Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node"
 CMD_SCRIPT='${HOME}/.openclaw/august/august-cmd.js'
 SSH_BIN="${AUGUST_SSH_BIN:-ssh}"
 SSH_KEY="${AUGUST_SSH_KEY:-$HOME/.ssh/id_mini_to_mbp}"
