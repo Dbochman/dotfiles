@@ -43,6 +43,26 @@ active post-deploy checks.
 
 ### Gateway & Maintenance
 
+`security-inventory-host.py` is an attended, read-only survey collector. Invoke
+with `python3 -I -S`; it prints metadata only, so redirect output into an
+owner-only survey directory. It reads top-level application bundles, Homebrew
+versions, selected runtime process names/executable mappings, known Node paths,
+installed global npm manifests, explicitly scoped Python environments, Go build
+metadata for named clients, managed LaunchAgent definitions and TCP listeners.
+It never captures process arguments/environment, imports application packages,
+reads secrets/databases/profiles, probes vulnerabilities or changes services.
+It is deliberately partial: no recursive home inventory or automatic remote
+discovery. Do not treat a missing component or metadata-only result as clearance.
+
+`security-inventory-report.py <private-survey-directory>` combines explicit
+`scope.json` asset metadata and host snapshots into private `inventory.json` and
+`coverage-report.txt`. Keep scope, raw results and generated reports out of Git.
+It separates running executable evidence, installed package metadata,
+source-declared/locked dependencies, provider-managed gaps and unknown bundled
+versions. The report is inventory evidence, not a CVE assessment. Reconcile
+dated operator follow-ups before reusing a survey scope. Neither helper is
+scheduled or connected to morning briefings yet.
+
 `github-runner-readiness.py` is an attended-install, Mini-only seven-day watch
 for website PR #339. Its separate installed copy is
 `~/.local/libexec/github-runner-readiness.py`, not an OpenClaw job. Each hourly
