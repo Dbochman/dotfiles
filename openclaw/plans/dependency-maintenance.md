@@ -18,6 +18,47 @@ from breaking changes that need careful migration.
 
 ## Node security rollout — 2026-10-21 (deployed, with explicit gaps)
 
+### October 22 attended remediation — 20:19 UTC
+
+- Maintenance commit `51fa19c` is pushed; 96 security/briefing tests pass.
+- Owner confirmed Crosstown's macOS update was finished and explicitly approved
+  Reachy's installation/reboot. Live Crosstown evidence is macOS 27.0.1, build
+  26A434, beyond Apple's CVE-2026-65400 fixed release 27. This supersedes its
+  old-version observation, not a blanket network/service clearance.
+- Installed the staged signed Raspberry Pi kernel/header/support packages at
+  `1:6.18.50-1+rpt1` using the reviewed no-removal/no-download plan. Preserved
+  boot files under root-only `/var/backups/reachy-kernel-20261022/firmware` and
+  retained the old kernel for recovery. No broad upgrade or autoremove.
+- Reboot verified: running `6.18.50+rpt-rpi-v8`, above the Linux CNA's 6.18.22
+  floor for CVE-2026-31431 and 6.18.38 floor for CVE-2026-53362. Package audit
+  is clean; SSH, Bluetooth and the robot daemon are active. No exploit probe.
+  Daemon API reports running version 1.9.0 with no error. Its backend-ready flag
+  remains false, also observed before reboot; robot readiness/MQTT is not cleared.
+  No robot motion/audio command was sent. Old recovery kernels are not approved
+  secure rollback targets.
+- Fresh read-only host observations and the attended receipt are protected at
+  `~/.local/state/security-inventory/2026-10-22-post-remediation.WysmH5/`.
+  The canonical fleet-followup inventory now references new, timestamped host
+  snapshots while retaining its originals. Regenerated its report atomically;
+  subsequent automatic passes will read the repaired versions. The current pass
+  started before these repairs; its old-snapshot findings require reconciliation,
+  not manual cache erasure. Changed inventory intentionally invalidates matching
+  checkpoint inputs, so reassessment may extend beyond today's capped passes.
+- The first maintained pass published at 20:27 UTC: 719 screened, 180 potential
+  matches, ten review attempts, nine published assessments, one failed review
+  retained in backlog, and 171 pending. Attended review of the new results found
+  zero confirmed affected assessments, two possibly affected old-snapshot
+  findings (Crosstown macOS and Reachy's Copy Fail kernel), six unknowns, and
+  one not applicable. The other Reachy kernel finding retained its prior result.
+  Known version findings are addressed above; no speculative patch/retirement
+  was made for source-only/provider/derivative-browser unknowns. Windows Codex's
+  accepted keep-running gap is unchanged. Automatic continuation remains capped;
+  the full assessment/backlog is not complete and no fleet clearance is claimed.
+
+Primary version evidence: [Apple CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-65400),
+[Copy Fail CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-31431),
+[IPv6 CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-53362).
+
 ### October 22 fleet follow-up (in progress)
 
 - The Mini retirement receipt confirms both old conversation processes exited
@@ -88,11 +129,11 @@ from breaking changes that need careful migration.
   at 20:02 UTC with allowance 1/3 and reused 617 still-valid discovery decisions;
   the refreshed feed contains 719 advisories, leaving 102 to screen at startup.
   Remaining discovery and primary-source verification are not yet claimed complete.
-- GitHub runner source metadata identifies a patched release candidate, but
-  attended hosted validation has not produced new runtime evidence. The guarded
-  rerun remained queued; cancellation returned an inconsistent completed-run
-  response while the read API still reported queued. Restored PR Checks to
-  disabled; no other held workflow was enabled and no merge was performed.
+- GitHub runner source metadata identifies a patched release candidate. A fresh
+  attended run `39840596528` on PR #339's latest head at 19:29 UTC observed hosted
+  runner 2.338.0 with action Node 24.21.0; the guard blocked checkout. PR Checks
+  was disabled again, other workflow holds were preserved, and no merge occurred.
+  Published release-source metadata does not establish hosted rollout completion.
 
 Sources: [Microsoft Defender platform CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-33825),
 [engine CNA record](https://cveawg.mitre.org/api/cve/CVE-2026-41091),
