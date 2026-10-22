@@ -1,5 +1,16 @@
 # LaunchAgents
 
+### Temporary runner readiness watch (October 21, 2026)
+
+`com.dylanbochman.github-runner-readiness` is Mini-only, attended-installed and
+independent of the paused website Actions workflows. It runs hourly for at most
+seven days using Homebrew Python and the maintained CA file. The helper lives in
+`~/.local/libexec/`, with private status/logs in
+`~/.local/state/github-runner-readiness/`. It reports candidates and failures on
+website PR #339; it cannot merge or enable workflows. No gateway reload is needed.
+See [the helper contract](bin/README.md#gateway--maintenance) for expiry,
+notification evidence and exact retirement command.
+
 October 12 usage-dashboard reporting repair requires only the
 `ai.openclaw.usage-dashboard` reload after deploying its shared triage validator.
 No gateway, Messages, or household service reload is needed.

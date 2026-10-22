@@ -43,6 +43,27 @@ active post-deploy checks.
 
 ### Gateway & Maintenance
 
+`github-runner-readiness.py` is an attended-install, Mini-only seven-day watch
+for website PR #339. Its separate installed copy is
+`~/.local/libexec/github-runner-readiness.py`, not an OpenClaw job. Each hourly
+poll reads public GitHub release metadata through the maintained CA bundle and
+checks the release's immutable source commit for Node 24 >= 24.22.1. It never
+executes downloaded code, enables CI, changes protection, merges, or deploys.
+Source evidence produces only a validation candidate, not runner clearance.
+
+Protected state and bounded logs live in `~/.local/state/github-runner-readiness/`.
+Use `python3 ~/.local/libexec/github-runner-readiness.py --status` for a no-network
+status read. A private lock serializes polls; atomic state preserves the original
+seven-day deadline. Polling stops on a candidate, closed PR or expiry. One PR
+comment each announces startup, candidate, three consecutive failures or expiry,
+using existing `gh` authentication without printing credentials. Ambiguous send
+outcomes are reconciled against comment markers; terminal notification retries
+stop after one day. GitHub comment acceptance is not proof of email delivery.
+The LaunchAgent remains loaded but terminal invocations perform no network work
+after notification handling. Unload this exact label when retiring the watch:
+`launchctl bootout gui/$(id -u)/com.dylanbochman.github-runner-readiness`.
+Do not erase its state to silently restart or extend the watch.
+
 TLS incident procedures and host-specific verification are recorded in
 [`dependency-maintenance.md`](../plans/dependency-maintenance.md#emudhra-tls-incident-response--2026-10-20).
 Run `python3 openclaw/bin/tls-revocation-probe.py` from the checkout with the
