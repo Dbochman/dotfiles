@@ -266,6 +266,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
     age_hours(inventory["generated_at"])
     compact = compact_inventory(inventory)
     observed_at = inventory_timestamp(inventory)
+    progress(phase="feed", step="fetching")
     index = json.loads(fetcher("https://pwn.watch/incidents.json", {"pwn.watch"}))
     if age_hours(index["generatedAt"]) > 48:
         raise ValueError("stale_feed")
@@ -280,6 +281,8 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
     values = list(incidents.values())
     progress(phase="discovery", advisories=len(values), screened=0)
     for start in range(0, len(values), 50):
+        progress(phase="discovery", step="model", advisories=len(values), screened=start,
+                 batch=start // 50 + 1, batches=(len(values) + 49) // 50)
         selected = reviewer(SELECT, {"inventory": compact, "advisories": values[start:start + 50]})
         batch = {i["slug"] for i in values[start:start + 50]}
         for match in selected["matches"]:
@@ -303,11 +306,14 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         findings.get(item[0], {}).get("status") not in {"affected", "possibly_affected"},
         findings.get(item[0], {}).get("checked_at", "")))
     errors = 0
-    progress(phase="verification", pending=len(pending), checked=0)
+    progress(phase="verification", step="queued", pending=len(pending), checked=0,
+             review_limit=min(12, len(pending)), errors=0)
     for checked, (slug, match, key) in enumerate(pending[:12], 1):
         rows = [c for c in compact["components"] if c[0] in match["products"]]
         assets = set(match["unknown_assets"]) | {a for row in rows for a in row[-1]}
         sources = {}
+        progress(phase="verification", step="sources", pending=len(pending),
+                 checked=checked - 1, review_limit=min(12, len(pending)), errors=errors)
         try:
             detail = json.loads(fetcher(f"https://pwn.watch/i/{slug}.json", {"pwn.watch"}))
             for url in source_urls(detail, incidents[slug]):
@@ -316,6 +322,8 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
                 except (OSError, ValueError):
                     continue
             if sources:
+                progress(phase="verification", step="model", pending=len(pending),
+                         checked=checked - 1, review_limit=min(12, len(pending)), errors=errors)
                 result = validate_assessment(reviewer(VERIFY, {
                     "advisory": incidents[slug], "inventory_columns": compact["columns"],
                     "components": rows, "unknown_assets": match["unknown_assets"],
@@ -340,7 +348,8 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
             errors += 1
             # Previous findings remain; failed work stays pending on next run.
-        progress(phase="verification", pending=len(pending), checked=checked)
+        progress(phase="verification", step="review_finished", pending=len(pending),
+                 checked=checked, review_limit=min(12, len(pending)), errors=errors)
     return {"schema_version": 1, "generated_at": stamp, "inventory_at": observed_at,
             "inventory_coverage": "partial", "clearance": False, "delivery_confirmed": False,
             "model": MODEL, "feed_at": index["generatedAt"], "advisories_screened": len(incidents),
@@ -384,12 +393,41 @@ def briefing_summary(state=STATE, now=None):
         return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False}
 
 
+def progress_summary(state=STATE, now=None):
+    """Read operational metadata only; age is not proof that work is stalled."""
+    try:
+        health = read_private(state / "health.json")
+        fields = ("status", "phase", "step", "started_at", "checked_at", "advisories",
+                  "screened", "batch", "batches", "pending", "checked", "review_limit",
+                  "errors", "backlog", "error_type", "error_code")
+        result = {k: health[k] for k in fields if k in health}
+        result["seconds_since_update"] = max(0, round(age_hours(health["checked_at"], now) * 3600))
+        if health.get("started_at"):
+            end = now if health.get("status") == "running" else datetime.fromisoformat(
+                health["checked_at"].replace("Z", "+00:00"))
+            elapsed = max(0, round(age_hours(health["started_at"], end) * 3600))
+            result["elapsed_seconds"] = elapsed
+            if health.get("status") == "running":
+                result["deadline_remaining_seconds"] = max(0, 1800 - elapsed)
+        if health.get("phase") == "verification" and "pending" in health:
+            result.setdefault("review_limit", min(12, health["pending"]))
+        result["liveness_verified"] = False
+        return result
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"status": "unavailable", "reason": "security_progress_unavailable"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--state-dir", type=Path, default=STATE)
-    parser.add_argument("--status", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--status", action="store_true")
+    mode.add_argument("--progress", action="store_true", help="Read private collection progress; no network or model calls")
     args = parser.parse_args()
+    if args.progress:
+        print(json.dumps(progress_summary(args.state_dir)))
+        return 0
     if args.status:
         print(json.dumps(briefing_summary(args.state_dir)))
         return 0
@@ -406,20 +444,24 @@ def main():
         except BlockingIOError:
             print('{"status":"already_running"}')
             return 0
+        started_at = now_iso()
+        latest_progress = {}
         try:
             def deadline_expired(*_):
                 raise CollectionDeadline("collection_deadline")
             signal.signal(signal.SIGALRM, deadline_expired)
             signal.signal(signal.SIGTERM, deadline_expired)
             signal.alarm(1800)
-            write_private(args.state_dir / "health.json", {"status": "running", "checked_at": now_iso()})
+            write_private(args.state_dir / "health.json", {"status": "running", "started_at": started_at, "checked_at": now_iso()})
             try:
                 previous = read_private(args.state_dir / "cache.json")
             except FileNotFoundError:
                 previous = {}
             def report_progress(**values):
+                latest_progress.clear()
+                latest_progress.update(values)
                 write_private(args.state_dir / "health.json", {
-                    "status": "running", "checked_at": now_iso(), **values})
+                    "status": "running", "started_at": started_at, "checked_at": now_iso(), **values})
                 print(json.dumps(values), flush=True)
             result = collect(read_private(args.inventory), previous, progress=report_progress)
             write_private(args.state_dir / "cache.json", result)
@@ -430,6 +472,7 @@ def main():
                 health["error_code"] = str(exc)
         finally:
             signal.alarm(0)
+        health = {**latest_progress, **health, "started_at": started_at}
         write_private(args.state_dir / "health.json", health)
         print(json.dumps(health))
         return 0 if health["status"] == "ok" else 1

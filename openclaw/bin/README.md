@@ -97,6 +97,16 @@ original GhostAction research are explicitly reviewed publishers too.
 
 Private atomic state is in `~/.local/state/security-advisories/` (0700/0600).
 The lock excludes concurrent collections; the overall budget is 30 minutes.
+Inspect live operational progress without network/model calls:
+`python3 ~/.local/libexec/security-advisory-collector.py --progress`.
+This reports discovery batches, source-fetch/model-review stages, attempted reviews
+(out of at most twelve), errors, elapsed time and remaining 30-minute deadline budget.
+`seconds_since_update` measures the last stage transition, not a heartbeat or proof
+of a stall; `liveness_verified` is false. A model call can take up to four minutes.
+The deadline is a timeout budget, not an ETA. No advisory content, asset identifiers,
+paths or model output enters progress. Older running collectors expose their existing
+phase/counters but lack start timing and finer stages until the next invocation.
+`--status` remains the cache-only briefing view. Neither command starts collection.
 Failed collection preserves the prior cache and separately updates health.
 Per-advisory failures retain old findings and count toward backlog. Unchanged
 inputs are reverified after seven days (unknowns after 24 hours); changed feed/inventory inputs are queued

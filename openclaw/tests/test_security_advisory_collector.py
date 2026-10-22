@@ -43,6 +43,50 @@ class AdvisoryTests(unittest.TestCase):
         return mod.collect(self.inventory, previous or {}, fetcher=kwargs.get("fetcher", self.fetch),
                            reviewer=kwargs.get("reviewer", self.review), now=self.stamp)
 
+    def test_progress_stages_and_privacy(self):
+        events = []
+        mod.collect(self.inventory, {}, fetcher=self.fetch, reviewer=self.review,
+                    now=self.stamp, progress=lambda **v: events.append(v))
+        self.assertIn(("feed", "fetching"), [(e["phase"], e.get("step")) for e in events])
+        self.assertIn(("verification", "model"), [(e["phase"], e.get("step")) for e in events])
+        self.assertEqual(events[-1]["checked"], 1)
+        self.assertEqual(events[-1]["review_limit"], 1)
+        self.assertEqual(events[-1]["errors"], 0)
+        for secret in ("node-test", "mini", "secret", self.url):
+            self.assertNotIn(secret, json.dumps(events))
+
+    def test_progress_counts_failed_attempts(self):
+        events = []
+        def fail(prompt, data):
+            if prompt == mod.VERIFY:
+                raise ValueError("model_failed")
+            return self.review(prompt, data)
+        result = mod.collect(self.inventory, {}, fetcher=self.fetch, reviewer=fail,
+                             now=self.stamp, progress=lambda **v: events.append(v))
+        self.assertEqual(events[-1]["errors"], 1)
+        self.assertEqual(events[-1]["checked"], 1)
+        self.assertEqual(result["backlog"], 1)
+
+    def test_progress_summary_legacy_and_timing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            health = {"status": "running", "phase": "verification", "pending": 41,
+                      "checked": 2, "checked_at": self.stamp, "private": "secret"}
+            mod.write_private(state / "health.json", health)
+            result = mod.progress_summary(state, self.now)
+            self.assertEqual(result["review_limit"], 12)
+            self.assertNotIn("elapsed_seconds", result)
+            self.assertNotIn("private", result)
+            health["started_at"] = (self.now - timedelta(seconds=100)).isoformat()
+            mod.write_private(state / "health.json", health)
+            result = mod.progress_summary(state, self.now)
+            self.assertEqual(result["elapsed_seconds"], 100)
+            self.assertEqual(result["deadline_remaining_seconds"], 1700)
+            self.assertFalse(result["liveness_verified"])
+            health["status"] = "failed"
+            mod.write_private(state / "health.json", health)
+            self.assertNotIn("deadline_remaining_seconds", mod.progress_summary(state, self.now))
+
     def test_verified_match_and_dedup(self):
         first = self.collect()
         second = self.collect(first)
