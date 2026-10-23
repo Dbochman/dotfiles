@@ -300,6 +300,112 @@ class AdvisoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mod.age_hours((self.now + timedelta(days=2)).isoformat())
 
+    def resolution(self, finding):
+        return {"slug": finding["slug"], "finding_hash": mod.digest(finding),
+                "asset_ids": finding["asset_ids"], "verified_at": self.stamp,
+                "reason": "Attended update and version verification passed.",
+                "evidence": ["plans/dependency-maintenance.md", self.url]}
+
+    def resolution_cache(self):
+        with patch.object(mod, "now_iso", return_value=self.stamp):
+            return self.collect()
+
+    def seed_summary(self, state, cache):
+        mod.write_private(state / "cache.json", cache)
+        mod.write_private(state / "health.json", {"status": "ok"})
+
+    def test_resolved_and_not_applicable_never_enter_briefing_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            finding = cache["findings"]["node-test"]
+            for kind in ("new", "changed"):
+                other = dict(finding, slug=kind, status="not_applicable", change_kind=kind)
+                cache["findings"][kind] = other
+            unknown = dict(finding, slug="unknown", status="unknown")
+            cache["findings"]["unknown"] = unknown
+            cache["backlog"] = 17
+            self.seed_summary(state, cache)
+            mod.write_private(state / "resolutions.json", {
+                "schema_version": 1, "resolutions": [self.resolution(finding)]})
+            before = {p.name: p.read_bytes() for p in state.iterdir()}
+            with patch.object(mod, "fetch", side_effect=AssertionError("network")), patch.object(
+                    mod, "infer", side_effect=AssertionError("model")):
+                result = mod.briefing_summary(state, self.now)
+            self.assertEqual(result["unresolved"], 1)
+            self.assertEqual([f["status"] for f in result["changes"]], ["unknown"])
+            self.assertEqual(result["additionalChanges"], 0)
+            self.assertEqual(result["backlog"], 17)
+            self.assertIn("verification_backlog", result["warnings"])
+            self.assertFalse(result["clearance"])
+            self.assertEqual(before, {p.name: p.read_bytes() for p in state.iterdir()})
+
+    def test_resolution_cannot_hide_changed_assessment_or_asset_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            original = self.resolution_cache()
+            receipt = self.resolution(original["findings"]["node-test"])
+            mod.write_private(state / "resolutions.json", {"schema_version": 1, "resolutions": [receipt]})
+            for field, value in (("input_hash", "new-inventory"), ("asset_ids", ["mini", "offline"]),
+                                 ("status", "possibly_affected"), ("summary", "New evidence"),
+                                 ("checked_at", (self.now + timedelta(minutes=1)).isoformat())):
+                with self.subTest(field=field):
+                    cache = copy.deepcopy(original)
+                    cache["findings"]["node-test"][field] = value
+                    self.seed_summary(state, cache)
+                    self.assertEqual(mod.briefing_summary(state, self.now)["unresolved"], 1)
+
+    def test_resolution_expiry_reopens_and_warns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            self.seed_summary(state, cache)
+            mod.write_private(state / "resolutions.json", {
+                "schema_version": 1, "resolutions": [self.resolution(cache["findings"]["node-test"])]})
+            result = mod.briefing_summary(state, self.now + timedelta(days=8))
+            self.assertEqual(result["unresolved"], 1)
+            self.assertIn("resolution_review_needed", result["warnings"])
+            self.assertEqual(result["status"], "stale")
+
+    def test_invalid_or_unsafe_resolutions_preserve_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            self.seed_summary(state, cache)
+            valid = self.resolution(cache["findings"]["node-test"])
+            invalid = [None, {}, {"schema_version": 1, "resolutions": [valid, valid]}]
+            for field, value in (("evidence", []), ("asset_ids", "mini"),
+                                 ("verified_at", (self.now + timedelta(minutes=1)).isoformat()),
+                                 ("reason", ""), ("finding_hash", "bad")):
+                invalid.append({"schema_version": 1, "resolutions": [dict(valid, **{field: value})]})
+            for document in invalid:
+                mod.write_private(state / "resolutions.json", document)
+                result = mod.briefing_summary(state, self.now)
+                self.assertEqual(result["unresolved"], 1)
+                self.assertIn("resolution_evidence_unavailable", result["warnings"])
+            mod.write_private(state / "resolutions.json", {"schema_version": 1, "resolutions": [valid]})
+            (state / "resolutions.json").chmod(0o644)
+            self.assertIn("resolution_evidence_unavailable", mod.briefing_summary(state, self.now)["warnings"])
+
+    def test_attended_import_validates_snapshot_and_preserves_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            self.seed_summary(state, cache)
+            before = (state / "cache.json").read_bytes()
+            receipt = self.resolution(cache["findings"]["node-test"])
+            source = state / "attended.json"
+            mod.write_private(source, {"schema_version": 1, "resolutions": [receipt]})
+            self.assertEqual(mod.record_resolutions(source, state, self.now)["resolutions"], 1)
+            ledger = (state / "resolutions.json").read_bytes()
+            for field, value in (("finding_hash", "0" * 64), ("asset_ids", ["offline"]),
+                                 ("verified_at", (self.now - timedelta(minutes=1)).isoformat())):
+                mod.write_private(source, {"schema_version": 1, "resolutions": [dict(receipt, **{field: value})]})
+                with self.assertRaisesRegex(ValueError, "resolution_snapshot_mismatch"):
+                    mod.record_resolutions(source, state, self.now)
+                self.assertEqual(ledger, (state / "resolutions.json").read_bytes())
+            self.assertEqual(before, (state / "cache.json").read_bytes())
+
     def test_old_feed_fails_not_empty_success(self):
         self.stamp = (self.now - timedelta(days=4)).isoformat()
         with self.assertRaisesRegex(ValueError, "stale_feed"):

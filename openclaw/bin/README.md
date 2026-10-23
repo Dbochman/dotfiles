@@ -191,12 +191,35 @@ refresh. The current plist names the October 22 inventory: after a new scoped
 survey, update that exact argument and reload only this LaunchAgent. Do not
 redate old observations or treat a successful advisory poll as a fleet resurvey.
 
-New/materially revised assessments remain eligible for 48 hours (tolerating a
-missed briefing); stable unresolved findings are consolidated into a count.
+Only outstanding assessments enter the briefing. `not_applicable` findings are
+excluded even when newly changed; completed maintenance is not a daily recap.
+New/materially revised outstanding assessments remain eligible for 48 hours
+(tolerating a missed briefing); stable unresolved findings are consolidated into a count.
 This is not a confirmed-delivery ledger. Reading the cache never marks anything
 delivered. Five cached changes maximum plus additional-change/backlog counts
 bound the briefing input; its prompt prioritizes at most three. Neither the
 collector nor the briefing patches, retires, restarts, merges or sends test alerts.
+
+Attended verification can reconcile a stale finding before the collector finishes:
+`security-advisory-collector.py --record-resolutions /absolute/private/receipt.json`.
+This explicit local import never invokes collection, a model, or delivery. The
+receipt must be owner-owned mode 0600 JSON with `schema_version: 1` and a
+`resolutions` list. Each entry needs `slug`, `finding_hash` (the helper's `digest`
+of the complete cached finding), the exact complete `asset_ids`, timezone-aware
+`verified_at`, a concrete `reason`, and nonempty `evidence` references to the
+attended checks and publisher guidance. Do not resolve a multi-asset finding when
+only one asset is cleared, or use an accepted risk as proof of resolution.
+
+The importer verifies each snapshot under the collector lock, then atomically
+merges an owner-only `resolutions.json` ledger. It does not edit assessment
+history, checkpoints, health, backlog, or continuation allowances. The briefing
+omits an exact resolved snapshot from changes and outstanding counts; it does
+not emit a completed-work recap. Any changed finding (including new inventory,
+assets, or reassessment timestamp) invalidates that receipt; it is not a permanent
+slug mute. Receipts expire after seven days. Invalid/unreadable evidence fails
+open to displaying the findings with a warning, not silent suppression. Unknown
+findings, coverage warnings, and the collector's actual verification backlog
+remain visible. The collector never generates or imports these attended receipts.
 
 Scoped deployment: install the collector as 0644 in `~/.local/libexec/`, keep
 the tracked morning helper and cron prompt together, create its 0700 state

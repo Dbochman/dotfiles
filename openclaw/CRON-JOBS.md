@@ -706,6 +706,16 @@ section can still be delivered.
 The collector has a 150-second global deadline, while the agent turn has a
 240-second timeout so partial data can still be composed before cron aborts.
 
+The optional `security` section is cache-only and outstanding-only. The helper
+filters `not_applicable` findings and exact cached snapshots reconciled by
+attended-resolution receipts before ranking changes or counting unresolved work.
+It does not supply completed-maintenance recaps. Unknowns and collection/coverage
+warnings remain visible; a partial-host resolution cannot hide a multi-host
+finding. Receipt invalidation, expiry, and import are documented in
+`bin/README.md`. This is a helper-level filter, not a prompt-only request to
+ignore stale alerts; no Gmail/Calendar collection or briefing delivery is needed
+to verify it with `--security-status`.
+
 The September 26 rollout exposed a legacy-import/live-scheduler mismatch:
 doctor recorded a 14-job SQLite import, but the active Gateway retained 13
 jobs and Dylan's new triage job was absent by briefing time. The old intended

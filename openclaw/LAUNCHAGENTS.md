@@ -20,6 +20,11 @@ published cache, never checkpoints, and reports continuation caps/stalls.
 Dylan's existing 08:00 briefing reads its cached result. No gateway restart,
 finance/forecast timing change, or other LaunchAgent reload is required. Only
 this LaunchAgent needs reloading when its continuation arguments change.
+The briefing now shows outstanding findings only, excluding `not_applicable`
+and exact snapshots covered by private attended-resolution receipts. Receipt
+validation never changes the collector's cache, backlog or daily pass allowance;
+new assessments invalidate old receipts. See the collector contract below for
+the explicit import and seven-day expiry. No completed-maintenance recap is sent.
 See [the collector contract](bin/README.md#gateway--maintenance) for verification,
 backlog, freshness and delivery limitations. Run `--status` for a cache-only check.
 

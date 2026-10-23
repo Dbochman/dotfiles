@@ -510,6 +510,83 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
             "verification_errors": errors, "unknown_assets": len(unknown), "findings": findings}
 
 
+def validate_resolutions(document, now=None):
+    """Attended evidence only; never produced by discovery or model review."""
+    if (not isinstance(document, dict) or document.get("schema_version") != 1
+            or not isinstance(document.get("resolutions"), list)):
+        raise ValueError("invalid_resolutions")
+    seen = set()
+    for item in document["resolutions"]:
+        if (not isinstance(item, dict)
+                or not isinstance(item.get("slug"), str) or not item["slug"]
+                or item["slug"] in seen
+                or not isinstance(item.get("finding_hash"), str)
+                or not re.fullmatch(r"[a-f0-9]{64}", item["finding_hash"])
+                or not isinstance(item.get("asset_ids"), list) or not item["asset_ids"]
+                or any(not isinstance(a, str) or not a for a in item["asset_ids"])
+                or len(set(item["asset_ids"])) != len(item["asset_ids"])
+                or not isinstance(item.get("reason"), str) or not item["reason"].strip()
+                or not isinstance(item.get("evidence"), list) or not item["evidence"]
+                or any(not isinstance(e, str) or not e.strip() for e in item["evidence"])
+                or not isinstance(item.get("verified_at"), str)
+                or age_hours(item["verified_at"], now) < 0):
+            raise ValueError("invalid_resolutions")
+        seen.add(item["slug"])
+    return document["resolutions"]
+
+
+def resolution_matches(item, finding, now=None):
+    return (item["finding_hash"] == digest(finding)
+            and sorted(item["asset_ids"]) == sorted(finding["asset_ids"])
+            and age_hours(item["verified_at"], now) <= age_hours(finding["checked_at"], now))
+
+
+def load_resolutions(state, now=None):
+    try:
+        document = read_private(state / "resolutions.json")
+    except FileNotFoundError:
+        return []
+    return validate_resolutions(document, now)
+
+
+def record_resolutions(source, state=STATE, now=None):
+    """Explicit attended import; leave cache, checkpoints and delivery untouched."""
+    incoming = validate_resolutions(read_private(source), now)
+    with (state / "collector.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        cache = read_private(state / "cache.json")
+        previous = load_resolutions(state, now)
+        for item in incoming:
+            finding = cache["findings"].get(item["slug"])
+            if (not finding or not resolution_matches(item, finding, now)
+                    or age_hours(item["verified_at"], now) > 168):
+                raise ValueError("resolution_snapshot_mismatch")
+        merged = {item["slug"]: item for item in previous}
+        merged.update({item["slug"]: item for item in incoming})
+        write_private(state / "resolutions.json",
+                      {"schema_version": 1, "resolutions": list(merged.values())})
+    return {"status": "recorded", "resolutions": len(incoming)}
+
+
+def outstanding_findings(cache, state, now=None):
+    findings = [f for f in cache["findings"].values() if f["status"] != "not_applicable"]
+    try:
+        resolutions = load_resolutions(state, now)
+    except (OSError, ValueError, KeyError, TypeError):
+        # A broken evidence ledger must never silently suppress outstanding work.
+        return findings, ["resolution_evidence_unavailable"]
+    by_slug = {item["slug"]: item for item in resolutions}
+    outstanding, warnings = [], []
+    for finding in findings:
+        item = by_slug.get(finding["slug"])
+        if item and resolution_matches(item, finding, now):
+            if age_hours(item["verified_at"], now) <= 168:
+                continue
+            warnings = ["resolution_review_needed"]
+        outstanding.append(finding)
+    return outstanding, warnings
+
+
 def briefing_summary(state=STATE, now=None):
     """Bounded cache-only read; never network, infer, mark delivered, or write."""
     try:
@@ -537,8 +614,9 @@ def briefing_summary(state=STATE, now=None):
         continuation_status = continuation.get("status")
         if continuation_status in {"capped", "stalled", "blocked", "stopped"}:
             warnings.append("continuation_" + continuation_status)
-        changes = [f for f in cache["findings"].values() if age_hours(f["changed_at"], now) < 48
-                   and not (f["status"] == "not_applicable" and f.get("change_kind") == "new")]
+        outstanding, resolution_warnings = outstanding_findings(cache, state, now)
+        warnings.extend(resolution_warnings)
+        changes = [f for f in outstanding if age_hours(f["changed_at"], now) < 48]
         rank = {"affected": 0, "possibly_affected": 1, "unknown": 2, "not_applicable": 3}
         changes.sort(key=lambda f: (rank[f["status"]], f["slug"]))
         fields = ("title", "status", "asset_ids", "summary", "action", "evidence", "changed_at", "checked_at")
@@ -550,7 +628,7 @@ def briefing_summary(state=STATE, now=None):
                     ("status", "passes_used", "pass_limit", "next_pass_at") if k in continuation},
                 "changes": [{k: f[k] for k in fields} for f in changes[:5]],
                 "additionalChanges": max(0, len(changes) - 5),
-                "unresolved": sum(f["status"] != "not_applicable" for f in cache["findings"].values()),
+                "unresolved": len(outstanding),
                 "deliveryConfirmed": False}
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False}
@@ -699,6 +777,8 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--status", action="store_true")
     mode.add_argument("--progress", action="store_true", help="Read private collection progress; no network or model calls")
+    mode.add_argument("--record-resolutions", type=Path,
+                      help="Import private, attended evidence for exact cached findings; no collection")
     args = parser.parse_args()
     if args.progress:
         print(json.dumps(progress_summary(args.state_dir)))
@@ -706,13 +786,16 @@ def main():
     if args.status:
         print(json.dumps(briefing_summary(args.state_dir)))
         return 0
-    if not args.inventory:
+    if not args.inventory and not args.record_resolutions:
         parser.error("--inventory is required for collection")
     os.umask(0o077)
     args.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     info = args.state_dir.stat()
     if info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError("unsafe_state_directory")
+    if args.record_resolutions:
+        print(json.dumps(record_resolutions(args.record_resolutions, args.state_dir)))
+        return 0
     if args.continue_pending:
         return continue_collection(args)
     with (args.state_dir / "collector.lock").open("a") as lock:
