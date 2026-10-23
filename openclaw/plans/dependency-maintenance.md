@@ -50,8 +50,11 @@ flag newer Electron 42 applications.
 
 - Owner approved PinchTab consolidation, installed Chrome for website tooling,
   and retirement of obsolete downloads after verifying consumers. The Mini
-  website work is on `fix/system-chrome-browser-tooling`, based on the existing
-  held Node-security branch, not published or deployed to the website.
+  website work is pushed as `6ca87327` on `fix/system-chrome-browser-tooling`,
+  based on the existing held Node-security branch, not merged or deployed to
+  the website. Narrow laptop commits are preserved on separate rollout branches:
+  `83825db` (`rollout/system-chrome-crosstown-20261022`) and `9fb896b`
+  (`rollout/system-chrome-dylans-mac-20261022`). Unrelated laptop work is untouched.
 - Local and CI E2E/prerender now explicitly use `channel: 'chrome'` with isolated
   profiles. Prerender owns a loopback Vite preview server on an allocated port;
   removed its broad `pkill` cleanup. Playwright client update is scoped to
@@ -99,6 +102,58 @@ flag newer Electron 42 applications.
 - Next: investigate the fresh-profile certificate rejection failure, then prove
   an isolated provider adapter before changing financial production defaults.
   Runtime consolidation does not remediate Chromium embedded in desktop apps.
+
+### Isolated PinchTab diagnosis — October 22, 20:26–20:30 ET
+
+The preceding migration and outstanding-only briefing work is committed/pushed
+in dotfiles `1bca174` and `aa312f7`. Revalidation passed 109 targeted Python
+tests and four Node browser-gate tests. Repository-owned website Actions remain
+disabled under the existing runner hold; no merge or production publish occurred.
+
+Reused only the explicitly authorized, credential-free
+`browser-consolidation-audit-20261022` profile through the local operator
+connection. No session permission, shared profile, financial state, browser
+launch flags, or global security setting was changed.
+
+1. Chrome 155.0.8059.86 again accepted all six direct incident chains and
+   rejected all six cross-signed chains, with both ordinary controls passing.
+2. Its own `chrome://components` page reported **CRLSet 0.0.0.0**. The audit
+   profile had no downloaded CRLSet. This is missing revocation data despite
+   an updated Chrome executable, not an authentication failure.
+3. Left this account-free audit instance running outside normal acquisition
+   solely for diagnosis. Chrome automatically installed **CRLSet 10853**;
+   its component file timestamp is 20:27:23 ET (instance start 20:26:13).
+   The later manual CRLSet-only update request found 10853 already installed
+   and returned up-to-date; the manual click did not cause the initial install.
+4. The unchanged verifier then rejected **all 12 chains**, with both controls
+   passing, on its first attempt. No error was reclassified or ignored.
+5. Stopped only that audit instance and restarted the same profile through the
+   normal acquisition wrapper. Its first probe still showed 6 accepted / 6
+   rejected while data loaded; a bounded retry passed and acquisition returned
+   successfully. Released that task-owned instance; no matching instance remains.
+
+**Diagnosis:** revocation-data initialization is slower than the current fresh-
+profile acquisition window. The wrapper correctly fails closed, but stopping
+a new browser after that short window can prevent it from completing initial
+component download. A warmed profile survives restart and passes the existing
+gate after its short loading delay. The CRLSet observation and before/after
+checks support this explanation; they do not establish every component's timing
+or clear other browser profiles, applications, or CVEs.
+
+**Proposed fix, not implemented:** separate bounded, credential-free profile
+preparation from normal acquisition. Let an explicitly owned new profile obtain
+Chrome's signed component updates, keep account navigation unavailable, require
+the same 12 rejections plus two controls, and stop on a firm deadline or error.
+Retain the per-acquisition test even for prepared profiles. Do not make arbitrary
+sleep, CRLSet version alone, a cached pass, manual certificate copying, or relaxed
+TLS verification sufficient for clearance. Financial migration remains paused
+pending that preparation workflow and provider-contract tests.
+
+Chrome documents [CRLSets as its emergency revocation mechanism](https://www.chromium.org/Home/chromium-security/crlsets/)
+and [component updates as asynchronous startup work](https://github.com/chromium/chromium/blob/main/components/component_updater/README.md).
+Local diagnostic source is retained at
+`/tmp/browser-consolidation.wrt2Pz/inspect-components.cjs`; it targets only the
+audit loopback endpoint, reads public component metadata, and closes its own tab.
 
 Primary references: [Google fixed release](https://chromereleases.googleblog.com/2026/06/stable-channel-update-for-desktop_0153744567.html),
 [Electron 42.4.0](https://github.com/electron/electron/releases/tag/v42.4.0),
