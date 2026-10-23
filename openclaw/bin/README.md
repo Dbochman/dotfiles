@@ -456,10 +456,31 @@ a 20-second absolute gate deadline. Failure emits safe counts, returns no
 instance ID, and stops only an instance created by that acquisition. Existing
 instances are left running; this is not an outbound firewall.
 
-Deploy both dependencies before the wrapper. `dotfiles-pull.command` handles
+Deploy the paired trust-port, trust-probe, and preparation helpers before the
+wrapper. `dotfiles-pull.command` handles
 that ordering. If the gate fails, inspect the exact browser's component-update
 readiness and rerun acquisition; do not bypass the gate or add certificate-error
 exceptions. Canary availability is deliberately an operational dependency.
+
+For first-time profiles, an attended operator can run
+`pinchtab-headless-instance prepare NEW_PROFILE [--timeout SECONDS]`. The paired
+`pinchtab-browser-prepare.py` allows 60–600 seconds (default 600), followed by up
+to 30 seconds for cleanup. Chrome can download its normal component updates
+while the helper repeats the unchanged trust gate. Only known certificate
+acceptances retry; inconclusive probes or failed controls abort. Existing
+profiles are rejected, and the helper requires a healthy daemon without
+restarting it. It never silently removes a restricted `PINCHTAB_SESSION`;
+operator use must be explicitly authorized for the dedicated new profile.
+
+Preparation navigates only the public diagnostic hosts, adds those hosts as
+instance-scoped allowed domains, and stops its owned instance before reporting
+success. These domains are not an outbound firewall. No credentials or account
+pages are used, and no trust exception, copied CA data, or cached clearance is
+created. The retained profile keeps Chrome's downloaded components; on failure
+it is **not cleared for use**. Cleanup failures are errors, not successful
+preparation. After success, use ordinary `acquire NEW_PROFILE` before account
+work: acquisition still rechecks the actual browser process after every start.
+Preparation is not automatically added to scheduled financial jobs.
 
 Scope: this gates new **caller work through this helper**, not browser background
 traffic during startup, direct CDP/PinchTab launches, Cielo's separate lifecycle,

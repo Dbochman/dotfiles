@@ -554,6 +554,7 @@ WRAPPER_DEPLOYED=0
 # Install trust-check dependencies before the acquisition wrapper can use them.
 atomic_install_managed_file "$BIN_SRC/pinchtab-browser-trust.cjs" "$BIN_DST/pinchtab-browser-trust.cjs" 644
 atomic_install_managed_file "$BIN_SRC/pinchtab-browser-trust-port.py" "$BIN_DST/pinchtab-browser-trust-port.py" 644
+atomic_install_managed_file "$BIN_SRC/pinchtab-browser-prepare.py" "$BIN_DST/pinchtab-browser-prepare.py" 644
 DEPLOYED_WRAPPERS=""
 HOME_EVENT_INGEST_CHANGED=0
 HOME_EVENT_CORRELATOR_CHANGED=0

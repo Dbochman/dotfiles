@@ -140,14 +140,53 @@ gate after its short loading delay. The CRLSet observation and before/after
 checks support this explanation; they do not establish every component's timing
 or clear other browser profiles, applications, or CVEs.
 
-**Proposed fix, not implemented:** separate bounded, credential-free profile
+**Fix (implemented below):** separate bounded, credential-free profile
 preparation from normal acquisition. Let an explicitly owned new profile obtain
 Chrome's signed component updates, keep account navigation unavailable, require
 the same 12 rejections plus two controls, and stop on a firm deadline or error.
 Retain the per-acquisition test even for prepared profiles. Do not make arbitrary
 sleep, CRLSet version alone, a cached pass, manual certificate copying, or relaxed
 TLS verification sufficient for clearance. Financial migration remains paused
-pending that preparation workflow and provider-contract tests.
+pending provider-contract tests and an explicitly approved account-profile cutover.
+
+### Bounded profile preparation — October 22, 20:41 ET
+
+Implemented `pinchtab-headless-instance prepare NEW_PROFILE` with its paired
+`pinchtab-browser-prepare.py`, deployment ordering, and lifecycle tests. This is
+an attended, explicitly authorized operator workflow, not a permission fallback
+for restricted agent sessions. It rejects existing profiles, requires the shared
+daemon already healthy, and starts only its own new credential-free profile.
+It uses Chrome's normal component updater with a 600-second maximum preparation
+budget and up to 30 additional seconds for verified cleanup. Only known canary
+acceptances retry; errors, inconclusive probes, failed controls, or a deadline
+abort without clearance. Success requires the unchanged 12-canary/two-control
+gate and stopping the owned instance. Ordinary acquisition still checks again;
+there is no persisted clearance or automatic account navigation.
+
+Live verification used two fresh dedicated audit profiles:
+
+- `browser-preparation-audit-20261022-v1`: two not-ready reports, then a probe
+  error. Preparation failed closed and stopped its instance. Downloaded CRLSet
+  data was present afterward, but that alone does **not** clear this profile.
+- `browser-preparation-audit-20261022-v2`: two not-ready reports, then all 12
+  rejections and both controls passed at 83 seconds. Preparation returned only
+  after stopping the instance. Confirmed no active instances for either profile.
+- Restarted v2 through the deployed Homebrew-symlinked acquisition wrapper:
+  its first probe saw six accepted chains while revocation data loaded, then
+  the unchanged bounded retry passed. Released the owned instance and verified
+  no audit instances remained. The installed preparation entrypoint also rejected
+  reuse of this existing profile without starting anything.
+
+The Mini's helper and wrapper were narrowly deployed; paired existing gate
+dependencies matched source. No shared service restart, global security-setting
+change, financial login, or financial browser-cache retirement was performed.
+The first live test also exposed the valid empty/default PinchTab server-port
+configuration; the helper now handles it with regression coverage.
+
+Verification: 53 targeted Python tests, four Node gate tests, Python compilation,
+shell syntax, whitespace checks, and `sync.sh validate` passed. Installer dry run
+selected the new helper and wrapper but exited 2 on the pre-existing staged
+Amazon-skill conflict, which was left untouched; no broad installer was run.
 
 Chrome documents [CRLSets as its emergency revocation mechanism](https://www.chromium.org/Home/chromium-security/crlsets/)
 and [component updates as asynchronous startup work](https://github.com/chromium/chromium/blob/main/components/component_updater/README.md).

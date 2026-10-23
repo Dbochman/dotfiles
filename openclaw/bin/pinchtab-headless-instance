@@ -10,6 +10,7 @@ TRUST_NODE="${PINCHTAB_TRUST_NODE:-$HOME/.local/share/openclaw/runtimes/node-v24
 usage() {
   cat <<'EOF'
 Usage:
+  pinchtab-headless-instance prepare NEW_PROFILE [--timeout SECONDS]
   pinchtab-headless-instance acquire [profile]
   pinchtab-headless-instance tabs INSTANCE_ID
   pinchtab-headless-instance open INSTANCE_ID URL
@@ -27,6 +28,8 @@ Missing named profiles are created through the local PinchTab API.
 acquire fails closed unless the browser rejects all incident canaries and
 accepts both ordinary controls in an ephemeral, credential-free context.
 Tab operations are sent directly to the acquired instance's loopback server.
+prepare is attended, new-profile-only, and stops its instance even on success.
+It waits up to 10 minutes for the same trust check; acquire still rechecks.
 EOF
 }
 
@@ -412,6 +415,10 @@ release() {
 
 action="${1:-}"
 case "$action" in
+  prepare)
+    shift
+    exec python3 "$HELPER_DIR/pinchtab-browser-prepare.py" "$@"
+    ;;
   acquire)
     shift
     [[ $# -le 1 ]] || { usage >&2; exit 2; }

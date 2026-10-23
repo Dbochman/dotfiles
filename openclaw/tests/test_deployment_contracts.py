@@ -92,6 +92,7 @@ REQUIRED_HELPERS = {
     "bin/pinchtab-headless-instance": "pinchtab helper\n",
     "bin/pinchtab-browser-trust.cjs": "browser trust gate\n",
     "bin/pinchtab-browser-trust-port.py": "browser trust port resolver\n",
+    "bin/pinchtab-browser-prepare.py": "new browser profile preparation\n",
     "bin/plant-tracker": "plant tracker wrapper\n",
     "bin/presence-cabin-enroll": "presence enrollment helper\n",
     "bin/presence-cabin-mesh-enroll": "presence mesh enrollment helper\n",
@@ -604,7 +605,7 @@ class DeploymentContractTests(unittest.TestCase):
         for relative, contents in REQUIRED_HELPERS.items():
             deployed = destination / relative
             self.assertEqual(deployed.read_text(encoding="utf-8"), contents)
-            mode = 0o644 if relative.startswith("bin/pinchtab-browser-trust") else 0o755
+            mode = 0o644 if relative.startswith("bin/pinchtab-browser-") else 0o755
             self.assertEqual(stat.S_IMODE(deployed.stat().st_mode), mode)
         for _, (destination_relative, contents) in REQUIRED_PROTECTED_FILES.items():
             deployed = destination / destination_relative
