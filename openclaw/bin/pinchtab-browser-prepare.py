@@ -161,6 +161,7 @@ def prepare(name, backend, timeout=600, clock=time.monotonic, sleep=time.sleep):
         start_attempted = True
         backend.start(name)
         attempt = 0
+        deadline_retries = 0
         while clock() < deadline - 30:
             rows = backend.instances(profile_id)
             if len(rows) != 1 or rows[0].get("mode") != "headless" or rows[0].get("attached"):
@@ -171,9 +172,20 @@ def prepare(name, backend, timeout=600, clock=time.monotonic, sleep=time.sleep):
             if rows[0].get("status") != "running":
                 raise PreparationError("preparation_instance_unavailable")
             attempt += 1
-            passed = backend.probe(rows[0], timeout=22)
-            print(json.dumps({"phase": "prepare", "attempt": attempt, "trust_verified": passed,
-                              "elapsed_seconds": round(clock() - started)}), file=sys.stderr, flush=True)
+            retry_reason = None
+            try:
+                passed = backend.probe(rows[0], timeout=22)
+            except PreparationError as exc:
+                if str(exc) != "trust_probe_deadline_exceeded" or deadline_retries >= 1:
+                    raise
+                deadline_retries += 1
+                passed = False
+                retry_reason = "probe_deadline"
+            progress = {"phase": "prepare", "attempt": attempt, "trust_verified": passed,
+                        "elapsed_seconds": round(clock() - started)}
+            if retry_reason:
+                progress["retry_reason"] = retry_reason
+            print(json.dumps(progress), file=sys.stderr, flush=True)
             if passed:
                 break
             sleep(min(15, max(0, deadline - clock() - 30)))

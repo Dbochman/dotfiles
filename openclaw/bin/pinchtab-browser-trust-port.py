@@ -7,9 +7,11 @@ import re
 import sys
 
 
-def resolve(instance, config, config_root):
-    if instance.get("status") != "running" or instance.get("mode") != "headless" or instance.get("attached"):
-        raise ValueError("Expected a managed running headless instance")
+def resolve(instance, config, config_root, *, mode="headless"):
+    if mode not in ("headless", "headed"):
+        raise ValueError("Invalid expected instance mode")
+    if instance.get("status") != "running" or instance.get("mode") != mode or instance.get("attached"):
+        raise ValueError("Expected an exact-mode managed running instance")
     profile_id = instance.get("profileId", "")
     if not re.fullmatch(r"prof_[a-zA-Z0-9_-]+", profile_id):
         raise ValueError("Invalid managed profile identity")

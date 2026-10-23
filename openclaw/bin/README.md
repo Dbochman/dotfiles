@@ -466,8 +466,10 @@ For first-time profiles, an attended operator can run
 `pinchtab-headless-instance prepare NEW_PROFILE [--timeout SECONDS]`. The paired
 `pinchtab-browser-prepare.py` allows 60–600 seconds (default 600), followed by up
 to 30 seconds for cleanup. Chrome can download its normal component updates
-while the helper repeats the unchanged trust gate. Only known certificate
-acceptances retry; inconclusive probes or failed controls abort. Existing
+while the helper repeats the unchanged trust gate. Known certificate
+acceptances retry; one whole-probe deadline may also retry within the same
+overall budget, always requiring a complete fresh pass. A second probe deadline,
+other inconclusive probes, or failed controls abort. Existing
 profiles are rejected, and the helper requires a healthy daemon without
 restarting it. It never silently removes a restricted `PINCHTAB_SESSION`;
 operator use must be explicitly authorized for the dedicated new profile.

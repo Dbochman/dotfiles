@@ -157,9 +157,11 @@ an attended, explicitly authorized operator workflow, not a permission fallback
 for restricted agent sessions. It rejects existing profiles, requires the shared
 daemon already healthy, and starts only its own new credential-free profile.
 It uses Chrome's normal component updater with a 600-second maximum preparation
-budget and up to 30 additional seconds for verified cleanup. Only known canary
-acceptances retry; errors, inconclusive probes, failed controls, or a deadline
-abort without clearance. Success requires the unchanged 12-canary/two-control
+budget and up to 30 additional seconds for verified cleanup. Known canary
+acceptances retry; after provider-rollout tests exposed transient whole-probe
+timeouts, one such timeout may retry within that same budget. A second probe
+timeout, other errors/inconclusive probes, failed controls, or the overall
+deadline abort without clearance. Success requires the unchanged 12-canary/two-control
 gate and stopping the owned instance. Ordinary acquisition still checks again;
 there is no persisted clearance or automatic account navigation.
 
@@ -187,6 +189,37 @@ Verification: 53 targeted Python tests, four Node gate tests, Python compilation
 shell syntax, whitespace checks, and `sync.sh validate` passed. Installer dry run
 selected the new helper and wrapper but exited 2 on the pre-existing staged
 Amazon-skill conflict, which was left untouched; no broad installer was run.
+
+### First financial-provider migration — October 22
+
+Committed/pushed the original preparation fix as `5d7077c`. Provider rollout
+exposed intermittent whole-probe timeouts: preparation now permits one bounded
+retry for that specific failure, still requiring a fresh complete pass; a second
+timeout or other inconclusive result aborts. New BWSC profiles failed closed
+without receiving credentials. Subsequent normal acquisition of
+`finance-bwsc-v3` passed the unchanged gate. Added explicit headed-mode port
+resolution for attended validation; ordinary acquisition remains headless-only.
+
+The installed Playwright 1.60 client works with PinchTab Chrome when using
+`connect_over_cdp(no_defaults=True)` and a separate ephemeral context. A
+credential-free fixture passed input, network response, and storage-export
+contracts. New financial `financial_browser.py` enforces provider profile
+binding, a provider lock, trust-before-state injection, sanitized child
+environment, no default-context access, and owned-instance cleanup.
+
+BWSC's old saved state was expired in both HTTP and PinchTab. With owner approval,
+an isolated headed browser passed the gate, then the owner signed in over VNC.
+The resulting protected state passed HTTP and PinchTab validation with exact
+payload parity. Promoted BWSC's headless recovery/renewal backend and refreshed
+canonical session state with a protected backup (see FINANCIAL-DASHBOARD.md).
+No passwords were submitted by the agent, no financial data was imported, and
+no full weekly scrape was run. Other provider migrations and headed/manual
+compatibility paths remain; Chromium revision 1223 is still required.
+
+Verification: 344 financial tests plus 15 subtests, 56 dotfiles tests, Python
+compilation, and whitespace checks passed. The new retry and headed resolver
+were narrowly deployed with backups under
+`/tmp/pinchtab-preparation-retry.piHJWT/`; no shared daemon was restarted.
 
 Chrome documents [CRLSets as its emergency revocation mechanism](https://www.chromium.org/Home/chromium-security/crlsets/)
 and [component updates as asynchronous startup work](https://github.com/chromium/chromium/blob/main/components/component_updater/README.md).

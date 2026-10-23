@@ -35,6 +35,16 @@ class BrowserTrustTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 port.resolve(self.instance, self.config, self.root)
 
+    def test_attended_headed_resolution_requires_explicit_exact_mode(self):
+        headed = {**self.instance, 'mode': 'headed'}
+        self.assertEqual(port.resolve(headed, self.config, self.root, mode='headed'), 19869)
+        with self.assertRaises(ValueError):
+            port.resolve(headed, self.config, self.root)
+        with self.assertRaises(ValueError):
+            port.resolve(self.instance, self.config, self.root, mode='headed')
+        with self.assertRaises(ValueError):
+            port.resolve(headed, self.config, self.root, mode='anything')
+
     def test_acquire_gate_and_new_instance_cleanup(self):
         config_file = self.root / 'config.json'
         config_file.write_text(json.dumps(self.config))

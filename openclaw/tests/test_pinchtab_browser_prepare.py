@@ -177,10 +177,25 @@ class PreparationTests(unittest.TestCase):
             with self.assertRaisesRegex(mod.PreparationError, "deadline"):
                 backend.run(["pinchtab", "health"])
 
-    def test_probe_deadline_is_distinct_and_never_retryable(self):
+    def test_probe_deadline_is_distinct_and_never_clearance(self):
         result = subprocess.CompletedProcess([], 2, "", "Browser trust check deadline exceeded")
         with self.assertRaisesRegex(mod.PreparationError, "trust_probe_deadline_exceeded"):
             mod.gate_state(result)
+
+    def test_single_probe_deadline_retries_but_requires_complete_fresh_pass(self):
+        backend = FakeBackend((mod.PreparationError("trust_probe_deadline_exceeded"), True))
+        result = self.run_prepare(backend, timeout=120)
+        self.assertEqual(result["status"], "prepared")
+        self.assertEqual(backend.events.count("probe"), 2)
+        self.assertEqual(backend.events[-1], "stop")
+
+    def test_second_probe_deadline_aborts_and_cleans_up(self):
+        backend = FakeBackend((mod.PreparationError("trust_probe_deadline_exceeded"),
+                               mod.PreparationError("trust_probe_deadline_exceeded"), True))
+        with self.assertRaisesRegex(mod.PreparationError, "trust_probe_deadline_exceeded"):
+            self.run_prepare(backend, timeout=120)
+        self.assertEqual(backend.events.count("probe"), 2)
+        self.assertEqual(backend.events[-1], "stop")
 
     def test_cleanup_stops_exact_owned_instance_and_checks_it_is_gone(self):
         backend = object.__new__(mod.Backend)

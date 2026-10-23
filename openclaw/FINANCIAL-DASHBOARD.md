@@ -215,6 +215,28 @@ unwraps no more than two JSON-string layers and still requires a strict JWT;
 browser authentication requires a fresh exact-portal token rather than a title
 alone.
 
+### PinchTab consolidation status (October 22)
+
+BWSC now uses `financial_browser.py` for headless browser recovery and guarded
+renewal; HTTP remains the preferred path and contract v2 is unchanged. The
+dedicated `finance-bwsc-v3` profile is trust-checked on every acquisition before
+validated session state enters an ephemeral Playwright context. The client uses
+`no_defaults=True`, does not alter shared/default browser contexts, and disables
+downloads for this API-only provider. Per-provider locking serializes ownership;
+cleanup closes its context and stops/verifies only an instance it started.
+`FINANCE_BWSC_BROWSER=playwright` is an attended rollback, never an automatic
+fallback; the weekly wrapper does not forward that override.
+
+Both paths initially found expired saved state. The owner completed VNC login
+in a separately trust-checked headed browser's ephemeral context. The fresh
+session passed HTTP and PinchTab read-only validation with **exact payload
+parity**, then replaced canonical session state with a mode-0600 backup under
+`~/Backups/finance-bwsc-pinchtab-20261022-99mrk62a/`. No agent submitted credentials,
+and no financial artifact/import or full weekly rerun was required. Future
+unattended login is not proven by this attended test. Other providers and BWSC's
+headed/manual compatibility paths still use existing browser tooling; retain
+finance-owned Chromium revision 1223 until those consumers are migrated.
+
 ### How guarded browser self-heal works
 
 The wrapper recognizes only these exact full lines from failed normal scrapes:
