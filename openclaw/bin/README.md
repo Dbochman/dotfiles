@@ -203,7 +203,8 @@ collector nor the briefing patches, retires, restarts, merges or sends test aler
 Attended verification can reconcile a stale finding before the collector finishes:
 `security-advisory-collector.py --record-resolutions /absolute/private/receipt.json`.
 This explicit local import never invokes collection, a model, or delivery. The
-receipt must be owner-owned mode 0600 JSON with `schema_version: 1` and a
+receipt must be owner-owned mode 0600 JSON with `schema_version: 1` for full
+resolutions (version 2 for partial scope reconciliation, below) and a
 `resolutions` list. Each entry needs `slug`, `finding_hash` (the helper's `digest`
 of the complete cached finding), the exact complete `asset_ids`, timezone-aware
 `verified_at`, a concrete `reason`, and nonempty `evidence` references to the
@@ -220,6 +221,25 @@ slug mute. Receipts expire after seven days. Invalid/unreadable evidence fails
 open to displaying the findings with a warning, not silent suppression. Unknown
 findings, coverage warnings, and the collector's actual verification backlog
 remain visible. The collector never generates or imports these attended receipts.
+
+For completed work inside a still-open multi-runtime finding, use a version-2
+receipt with an additional `remaining` object containing exactly `summary` and
+`action` (nonempty strings, at most 2,000 characters each). The importer still
+requires the exact entire finding hash and asset set. The briefing replaces only
+those two prose fields: status, assets, primary evidence, assessment/change dates,
+unresolved counts and backlog are preserved. Write remaining-work prose only,
+not a maintenance recap. Expired or changed snapshots restore the original
+finding with a review warning. An empty/null `remaining` cannot become a full
+resolution. Mixed ledgers are written as version 2 so older readers reject them
+and show findings with a warning instead of treating partial work as clearance.
+
+Attended inventory records marked `retired_from_active_cache` or
+`retired_from_application_path` remain in the private audit trail but are excluded
+from active-runtime matching. Other unknown, disabled, offline and source-only
+observations retain their original semantics. Playwright protocol-client presence
+does not prove a downloaded browser exists. Update only verified component facts
+and preserve older unrelated observation dates; changing inventory invalidates
+matching checkpoints naturally, without resetting or deleting them.
 
 Scoped deployment: install the collector as 0644 in `~/.local/libexec/`, keep
 the tracked morning helper and cron prompt together, create its 0700 state

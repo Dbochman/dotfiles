@@ -716,6 +716,12 @@ finding. Receipt invalidation, expiry, and import are documented in
 ignore stale alerts; no Gmail/Calendar collection or briefing delivery is needed
 to verify it with `--security-status`.
 
+Version-2 partial reconciliation receipts narrow a still-open finding's summary
+and next action to remaining work. They do not suppress the finding, change its
+status/assets/dates, or lower unresolved/backlog counts. This keeps completed
+browser retirements out of action requests without clearing unrelated bundled
+runtimes. Older readers reject version 2 with an evidence warning, not clearance.
+
 The September 26 rollout exposed a legacy-import/live-scheduler mismatch:
 doctor recorded a 14-job SQLite import, but the active Gateway retained 13
 jobs and Dylan's new triage job was absent by briefing time. The old intended

@@ -262,6 +262,34 @@ No full weekly scrape, artifact/database import, schedule change, or shared
 service restart was performed. Future unattended re-authentication remains
 unproven; the attended runs establish session reuse and browser/data compatibility.
 
+### Briefing evidence reconciliation — October 22 evening
+
+Rechecked absence of the Mini's full/headless 1208 and 1223 downloads, Crosstown's
+1200 downloads and 1Clipboard application, and dylans-mac's 1208 downloads.
+Updated only seven existing inventory component observations (retired 1Clipboard
+and embedded metadata, finance's retained Playwright protocol client, and the
+three website source-lockfile packages), plus eight explicit retired-download
+records. Website versions remain source-only evidence, not deployment clearance.
+Unrelated host/component dates and the fleet's oldest observation are unchanged.
+The scheduled collector retains its existing inventory path; retired records
+remain auditable but no longer enter active-runtime matching.
+
+Recorded five snapshot-bound **partial** reconciliation receipts for the cached
+browser findings. Their briefing prose now requests only remaining desktop-app
+and vendor-browser checks. Status, asset sets, primary evidence and original
+assessment/change dates are preserved: all 30 outstanding assessments remain
+unknown and the 171-advisory backlog is unchanged. No whole finding was closed,
+model assessment overwritten, checkpoint/cap reset, or briefing sent. Tomorrow's
+08:00 cache-only preview was verified; the next collection uses corrected inputs.
+
+Private before-images and attended evidence are in
+`~/.local/state/security-inventory/2026-10-22-fleet-followup/browser-reconciliation-0j9rw9h3/`.
+The collector was narrowly redeployed with backup
+`/tmp/security-reconciliation-deploy.CFgDW1/`; no LaunchAgent/gateway restart,
+schedule, credential, or mailbox changes. 99 targeted tests plus 27 subtests,
+compilation and whitespace checks passed. Receipt schema v2 makes legacy readers
+fail open to displaying findings rather than mistake partial work for clearance.
+
 Chrome documents [CRLSets as its emergency revocation mechanism](https://www.chromium.org/Home/chromium-security/crlsets/)
 and [component updates as asynchronous startup work](https://github.com/chromium/chromium/blob/main/components/component_updater/README.md).
 Local diagnostic source is retained at

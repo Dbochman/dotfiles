@@ -56,6 +56,18 @@ class AdvisoryTests(unittest.TestCase):
         for secret in ("node-test", "mini", "secret", self.url):
             self.assertNotIn(secret, json.dumps(events))
 
+    def test_attended_retirements_are_not_active_matching_inputs(self):
+        inventory = copy.deepcopy(self.inventory)
+        for state in ('retired_from_active_cache','retired_from_application_path'):
+            inventory['components'].append({**inventory['components'][0],
+                'product':'Retired browser', 'state':state})
+        inventory['components'].append({**inventory['components'][0],
+            'product':'Unverified app', 'state':'unknown'})
+        compact = mod.compact_inventory(inventory)
+        self.assertEqual({row[0] for row in compact['components']}, {'Node.js','Unverified app'})
+        self.assertEqual(compact['unverified'], [{'id':'offline','products':['Windows']}])
+        self.assertEqual(len(inventory['components']),4)
+
     def test_progress_counts_failed_attempts(self):
         events = []
         def fail(prompt, data):
@@ -354,6 +366,60 @@ class AdvisoryTests(unittest.TestCase):
                     cache["findings"]["node-test"][field] = value
                     self.seed_summary(state, cache)
                     self.assertEqual(mod.briefing_summary(state, self.now)["unresolved"], 1)
+
+    def test_partial_receipt_narrows_prose_without_closing_or_redating(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            finding = cache['findings']['node-test']
+            remaining = {'summary': 'Other bundled runtimes remain unverified.',
+                         'action': 'Verify the remaining application runtimes.'}
+            receipt = {**self.resolution(finding), 'remaining': remaining}
+            self.seed_summary(state, cache)
+            source = state/'attended.json'
+            mod.write_private(source, {'schema_version':2, 'resolutions':[receipt]})
+            mod.record_resolutions(source, state, self.now)
+            self.assertEqual(mod.read_private(state/'resolutions.json')['schema_version'],2)
+            with self.assertRaises(ValueError):
+                mod.validate_resolutions({'schema_version':1,'resolutions':[receipt]},self.now)
+            before = {p.name:p.read_bytes() for p in state.iterdir()}
+            with patch.object(mod, 'fetch', side_effect=AssertionError('network')), patch.object(
+                    mod, 'infer', side_effect=AssertionError('model')):
+                result = mod.briefing_summary(state, self.now)
+            self.assertEqual(result['unresolved'], 1)
+            self.assertFalse(result['clearance'])
+            change, = result['changes']
+            for field in ('status','asset_ids','evidence','checked_at','changed_at'):
+                self.assertEqual(change[field], finding[field])
+            self.assertEqual(change['summary'], remaining['summary'])
+            self.assertEqual(change['action'], remaining['action'])
+            self.assertEqual(before, {p.name:p.read_bytes() for p in state.iterdir()})
+
+    def test_partial_receipt_rejects_empty_or_status_changing_payload(self):
+        finding = self.resolution_cache()['findings']['node-test']
+        for remaining in (None, {}, {'summary':'', 'action':'Review'},
+                          {'summary':'Open', 'action':'Review', 'status':'not_applicable'},
+                          {'summary':'Open', 'action':'x'*2001}):
+            with self.subTest(remaining=remaining), self.assertRaises(ValueError):
+                mod.validate_resolutions({'schema_version':2, 'resolutions':[
+                    {**self.resolution(finding), 'remaining':remaining}]}, self.now)
+
+    def test_changed_or_expired_partial_receipt_restores_original_with_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            finding = cache['findings']['node-test']
+            receipt = {**self.resolution(finding), 'remaining':{
+                'summary':'Remaining scope.', 'action':'Review remaining scope.'}}
+            mod.write_private(state/'resolutions.json', {'schema_version':2, 'resolutions':[receipt]})
+            for changed, now in ((False,self.now+timedelta(days=8)), (True,self.now)):
+                current = copy.deepcopy(cache)
+                if changed:
+                    current['findings']['node-test']['input_hash'] = 'changed-inventory'
+                self.seed_summary(state,current)
+                outstanding, warnings = mod.outstanding_findings(current,state,now)
+                self.assertEqual(outstanding,[current['findings']['node-test']])
+                self.assertIn('resolution_review_needed',warnings)
 
     def test_resolution_expiry_reopens_and_warns(self):
         with tempfile.TemporaryDirectory() as directory:

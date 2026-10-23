@@ -222,6 +222,11 @@ def compact_inventory(inventory):
     # No source paths, IPs, usernames, account identifiers, or freeform notes.
     groups = {}
     for c in inventory["components"]:
+        # Attended retirement records stay in the inventory audit trail, not
+        # the active-runtime match input. Omission still cannot resolve an
+        # existing finding; full/partial receipts govern briefing reconciliation.
+        if c.get("state") in {"retired_from_active_cache", "retired_from_application_path"}:
+            continue
         key = (c["product"], c.get("version"), c["ecosystem"], c["state"], c["evidence"])
         groups.setdefault(key, set()).add(c["asset_id"])
     return {"columns": ["product", "version", "ecosystem", "state", "evidence", "asset_ids"],
@@ -389,7 +394,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
     review_inventory_hash = digest([inventory_hash, observed_at,
                                    [c.get("observed_at") for c in inventory["components"]]])
     matches = {}
-    all_products = {c["product"] for c in inventory["components"]}
+    all_products = {row[0] for row in compact["components"]}
     unknown = {a["id"] for a in inventory.get("unverified_assets", [])}
     values = list(incidents.values())
     remaining = []
@@ -512,7 +517,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
 
 def validate_resolutions(document, now=None):
     """Attended evidence only; never produced by discovery or model review."""
-    if (not isinstance(document, dict) or document.get("schema_version") != 1
+    if (not isinstance(document, dict) or document.get("schema_version") not in (1, 2)
             or not isinstance(document.get("resolutions"), list)):
         raise ValueError("invalid_resolutions")
     seen = set()
@@ -532,6 +537,16 @@ def validate_resolutions(document, now=None):
                 or age_hours(item["verified_at"], now) < 0):
             raise ValueError("invalid_resolutions")
         seen.add(item["slug"])
+        # Partial reconciliation may narrow prose, never status, assets or
+        # outstanding counts. An explicit null/empty object is invalid, not
+        # a full-resolution receipt.
+        if "remaining" in item:
+            remaining = item["remaining"]
+            if (document["schema_version"] != 2 or not isinstance(remaining, dict)
+                    or set(remaining) != {"summary", "action"}
+                    or any(not isinstance(v, str) or not v.strip() or len(v) > 2000
+                           for v in remaining.values())):
+                raise ValueError("invalid_partial_resolution")
     return document["resolutions"]
 
 
@@ -563,8 +578,11 @@ def record_resolutions(source, state=STATE, now=None):
                 raise ValueError("resolution_snapshot_mismatch")
         merged = {item["slug"]: item for item in previous}
         merged.update({item["slug"]: item for item in incoming})
+        # Older readers reject v2 and display findings with an evidence warning;
+        # they must never mistake a partial receipt for full resolution.
+        version = 2 if any("remaining" in item for item in merged.values()) else 1
         write_private(state / "resolutions.json",
-                      {"schema_version": 1, "resolutions": list(merged.values())})
+                      {"schema_version": version, "resolutions": list(merged.values())})
     return {"status": "recorded", "resolutions": len(incoming)}
 
 
@@ -581,7 +599,11 @@ def outstanding_findings(cache, state, now=None):
         item = by_slug.get(finding["slug"])
         if item and resolution_matches(item, finding, now):
             if age_hours(item["verified_at"], now) <= 168:
+                if "remaining" in item:
+                    outstanding.append({**finding, **item["remaining"]})
                 continue
+            warnings = ["resolution_review_needed"]
+        elif item and "remaining" in item:
             warnings = ["resolution_review_needed"]
         outstanding.append(finding)
     return outstanding, warnings
