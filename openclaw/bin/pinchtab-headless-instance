@@ -11,7 +11,7 @@ usage() {
   cat <<'EOF'
 Usage:
   pinchtab-headless-instance prepare NEW_PROFILE [--timeout SECONDS]
-  pinchtab-headless-instance acquire [profile]
+  pinchtab-headless-instance acquire [profile] [--trust-timeout SECONDS]
   pinchtab-headless-instance tabs INSTANCE_ID
   pinchtab-headless-instance open INSTANCE_ID URL
   pinchtab-headless-instance navigate INSTANCE_ID TAB_ID URL
@@ -30,6 +30,8 @@ accepts both ordinary controls in an ephemeral, credential-free context.
 Tab operations are sent directly to the acquired instance's loopback server.
 prepare is attended, new-profile-only, and stops its instance even on success.
 It waits up to 10 minutes for the same trust check; acquire still rechecks.
+acquire --trust-timeout (60–120) permits bounded credential-free startup waiting.
+Without that explicit option, the existing 20-second trust check is unchanged.
 EOF
 }
 
@@ -246,6 +248,7 @@ run_instance_cli() {
 
 acquire() {
   local profile="${1:-$PROFILE}"
+  local trust_timeout="${2:-}"
   local instance_id=""
   local mode=""
   local status=""
@@ -285,7 +288,7 @@ except Exception:
   fi
 
   wait_until_running "$instance_id"
-  if ! verify_browser_trust "$instance_id"; then
+  if ! verify_browser_trust "$instance_id" "$trust_timeout"; then
     # Do not leave a newly created instance running after failed acquisition.
     # Existing/shared instances are never stopped by this failure path.
     if [[ "$started" == 1 ]]; then
@@ -299,11 +302,16 @@ except Exception:
 
 verify_browser_trust() {
   local instance_id="$1"
+  local trust_timeout="${2:-}"
   local port=""
   local endpoint=""
   endpoint=$(instance_endpoint "$instance_id") || return 1
   # Initialize only the acquired browser, without navigating an account page.
   "$PINCHTAB" --server "$endpoint" health >/dev/null 2>&1 || return 1
+  if [[ -n "$trust_timeout" ]]; then
+    python3 "$HELPER_DIR/pinchtab-browser-prepare.py" --verify-instance "$instance_id" --timeout "$trust_timeout" >/dev/null
+    return $?
+  fi
   port=$("$PINCHTAB" instances --json | python3 "$HELPER_DIR/pinchtab-browser-trust-port.py" "$instance_id") || return 1
   [[ -x "$TRUST_NODE" ]] || return 1
   "$TRUST_NODE" "$HELPER_DIR/pinchtab-browser-trust.cjs" "$port" >/dev/null
@@ -421,8 +429,14 @@ case "$action" in
     ;;
   acquire)
     shift
-    [[ $# -le 1 ]] || { usage >&2; exit 2; }
-    acquire "${1:-$PROFILE}"
+    if [[ $# -eq 3 && "$2" == "--trust-timeout" && "$3" =~ ^(6[0-9]|[7-9][0-9]|1[01][0-9]|120)$ ]]; then
+      acquire "$1" "$3"
+    elif [[ $# -le 1 ]]; then
+      acquire "${1:-$PROFILE}"
+    else
+      usage >&2
+      exit 2
+    fi
     ;;
   tabs)
     shift

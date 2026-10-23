@@ -484,6 +484,20 @@ preparation. After success, use ordinary `acquire NEW_PROFILE` before account
 work: acquisition still rechecks the actual browser process after every start.
 Preparation is not automatically added to scheduled financial jobs.
 
+Finance's prepared profiles use the explicit
+`acquire PROFILE --trust-timeout 120` option (allowed range 60–120 seconds).
+Cold-start validation showed that even a previously prepared profile can need
+longer than 20 seconds before revocation data takes effect. This option calls
+the preparation helper's **verification-only** mode for the exact running
+headless instance: no profile creation, account navigation, or lifecycle
+changes. It checks stable instance/profile identity each time, retries known
+not-ready results and at most one whole-probe timeout, and requires a complete
+fresh gate pass. Other uncertainty or deadline exhaustion fails closed. The
+acquisition wrapper retains ownership and stops only newly started instances
+on failure; the finance client verifies cleanup after use. No session state is
+injected during this wait. Ordinary acquisition without this option retains
+its existing 20-second gate and other consumers are unchanged.
+
 Scope: this gates new **caller work through this helper**, not browser background
 traffic during startup, direct CDP/PinchTab launches, Cielo's separate lifecycle,
 native apps, or unrelated TLS implementations. There is no persisted pass cache

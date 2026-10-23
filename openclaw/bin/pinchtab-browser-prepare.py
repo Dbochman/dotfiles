@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Attended, new-profile-only preparation; never returns a usable instance."""
+"""New-profile preparation or bounded trust verification of an exact instance."""
 import argparse
 import importlib.util
 import json
@@ -198,11 +198,48 @@ def prepare(name, backend, timeout=600, clock=time.monotonic, sleep=time.sleep):
             "requires_acquisition_check": True}
 
 
+def verify_existing(instance_id, backend, timeout=120, clock=time.monotonic, sleep=time.sleep):
+    """Wait without creating, navigating account tabs, or stopping any instance.
+
+    Lifecycle ownership remains with acquire. No clearance is cached; only a
+    complete fresh probe passes, and unknown/inconclusive results fail closed.
+    """
+    if not re.fullmatch(r"inst_[a-zA-Z0-9_-]+", instance_id) or not 60 <= timeout <= 120:
+        raise PreparationError("invalid_verification_options")
+    deadline = clock() + timeout
+    backend.deadline = deadline
+    profile_id = None
+    deadline_retries = 0
+    while clock() < deadline - 25:
+        rows = [r for r in backend.cli_json("instances", "--json") if r.get("id") == instance_id]
+        if len(rows) != 1:
+            raise PreparationError("verification_instance_unavailable")
+        row = rows[0]
+        if (row.get("mode") != "headless" or row.get("status") != "running" or row.get("attached")
+                or not re.fullmatch(r"prof_[a-zA-Z0-9_-]+", row.get("profileId", ""))):
+            raise PreparationError("unexpected_verification_instance")
+        if profile_id is not None and row["profileId"] != profile_id:
+            raise PreparationError("verification_identity_changed")
+        profile_id = row["profileId"]
+        try:
+            if backend.probe(row, timeout=22):
+                return
+        except PreparationError as exc:
+            if str(exc) != "trust_probe_deadline_exceeded" or deadline_retries >= 1:
+                raise
+            deadline_retries += 1
+        sleep(min(15, max(0, deadline - clock() - 25)))
+    raise PreparationError("verification_deadline_exceeded")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("profile", help="New, unused profile name; never an account-bearing profile")
+    parser.add_argument("profile", nargs="?", help="New, unused profile name; never an account-bearing profile")
+    parser.add_argument("--verify-instance", help="Verify only an exact running headless instance; caller owns cleanup")
     parser.add_argument("--timeout", type=int, default=600, help="Preparation budget, 60–600 seconds; cleanup up to 30 extra")
     args = parser.parse_args()
+    if bool(args.profile) == bool(args.verify_instance):
+        parser.error("choose a new profile or --verify-instance")
     # Never silently exchange a restricted agent session for operator authority.
     if os.environ.get("PINCHTAB_SESSION"):
         print("Preparation requires explicit operator authorization; agent session unchanged", file=sys.stderr)
@@ -212,10 +249,15 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
     try:
-        result = prepare(args.profile, Backend(), args.timeout)
+        if args.verify_instance:
+            verify_existing(args.verify_instance, Backend(), args.timeout)
+            result = {"status": "trust_verified", "requires_acquisition_check": True}
+        else:
+            result = prepare(args.profile, Backend(), args.timeout)
     except Exception as exc:
         code = str(exc) if isinstance(exc, PreparationError) else "preparation_failed"
-        print(f"PinchTab preparation blocked: {code}; retained profile is not cleared", file=sys.stderr)
+        operation = 'verification' if args.verify_instance else 'preparation'
+        print(f"PinchTab {operation} blocked: {code}; retained profile is not cleared", file=sys.stderr)
         return 1
     print(json.dumps(result))
     return 0

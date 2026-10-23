@@ -51,6 +51,57 @@ class FakeBackend:
 
 
 class PreparationTests(unittest.TestCase):
+    def verify_backend(self, probes=(False, True), rows=None):
+        backend = MagicMock()
+        backend.cli_json.return_value = rows if rows is not None else [
+            {"id": "inst_test", "profileId": "prof_test", "status": "running", "mode": "headless"}]
+        backend.probe.side_effect = probes
+        return backend
+
+    def run_verify(self, backend, timeout=60):
+        elapsed = [0]
+        def sleep(seconds):
+            elapsed[0] += seconds
+        return mod.verify_existing('inst_test', backend, timeout, clock=lambda: elapsed[0], sleep=sleep)
+
+    def test_existing_verification_only_probes_exact_instance(self):
+        backend = self.verify_backend()
+        self.run_verify(backend)
+        self.assertEqual(backend.probe.call_count, 2)
+        backend.create.assert_not_called()
+        backend.start.assert_not_called()
+        backend.stop_owned.assert_not_called()
+
+    def test_existing_verification_retries_only_one_probe_deadline(self):
+        deadline = mod.PreparationError('trust_probe_deadline_exceeded')
+        backend = self.verify_backend((deadline, True))
+        self.run_verify(backend)
+        for probes in [(deadline, deadline), (mod.PreparationError('trust_probe_inconclusive'),), (False, False, False)]:
+            backend = self.verify_backend(probes)
+            with self.assertRaises(mod.PreparationError):
+                self.run_verify(backend)
+            backend.stop_owned.assert_not_called()
+
+    def test_existing_verification_rejects_missing_foreign_or_changed_identity(self):
+        base = {"id": "inst_test", "profileId": "prof_test", "status": "running", "mode": "headless"}
+        for rows in ([], [base, base], [{**base, 'mode':'headed'}], [{**base, 'attached':True}], [{**base, 'status':'starting'}]):
+            backend = self.verify_backend(rows=rows)
+            with self.assertRaises(mod.PreparationError):
+                self.run_verify(backend)
+            backend.probe.assert_not_called()
+        backend = self.verify_backend()
+        backend.cli_json.side_effect = [[base], [{**base, 'profileId':'prof_changed'}]]
+        with self.assertRaises(mod.PreparationError):
+            self.run_verify(backend)
+        self.assertEqual(backend.probe.call_count, 1)
+
+    def test_existing_verification_bounds_before_access(self):
+        for instance, timeout in [('inst_test', 59), ('inst_test', 121), ('../other', 60)]:
+            backend = self.verify_backend()
+            with self.assertRaises(mod.PreparationError):
+                mod.verify_existing(instance, backend, timeout)
+            backend.cli_json.assert_not_called()
+
     def run_prepare(self, backend, timeout=60):
         elapsed = [0]
         def sleep(seconds):

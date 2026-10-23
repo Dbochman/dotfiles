@@ -221,6 +221,47 @@ compilation, and whitespace checks passed. The new retry and headed resolver
 were narrowly deployed with backups under
 `/tmp/pinchtab-preparation-retry.piHJWT/`; no shared daemon was restarted.
 
+### Financial migration completion and Chromium retirement — October 22
+
+Completed the remaining finance consumers: Eversource, National Grid gas and
+electric, and PennyMac now default to dedicated trust-gated PinchTab profiles.
+BWSC remains migrated and BoA's existing exact-profile raw-CDP path is unchanged.
+All five migrated scrape paths passed read-only HTTP/browser checks with exact
+payload parity. The owner renewed expired Eversource/National Grid sessions over
+VNC; canonical state was promoted after validation with private backups and
+temporary login files removed. No agent submitted passwords or imported data.
+
+National Grid exposed a repeatable cold-start readiness gap: a prepared profile
+could accept six canaries before revocation data took effect. Added opt-in
+`acquire PROFILE --trust-timeout 120`, used by finance only. It keeps the browser
+credential-free while repeating the unchanged gate, permits one whole-probe
+timeout retry, and requires a complete fresh pass. Other inconclusive results
+and exhausted budgets abort; no cached clearance or certificate exceptions.
+The verification-only mode never creates/stops profiles; acquisition retains
+ownership. Ordinary acquisition keeps its existing 20-second gate. Deployed
+the paired helpers with backup `/tmp/finance-trust-wait-deploy.yndbnH/`.
+
+All direct/manual scraper launches now explicitly select installed Google
+Chrome, with an AST regression test against reintroducing implicit downloaded
+Chromium. The finance Playwright package was the only registered consumer of
+revision 1223, and neither binary was running. Moved exactly `chromium-1223`
+and `chromium_headless_shell-1223` (about 531 MB) out of the Mini's active cache
+to `~/.Trash/retired-finance-chromium-20261022-kegchji4/`; recovery remains possible.
+No other cache entries, financial data, credentials, browser profiles, or
+installed Chrome were removed. This is not clearance for Chromium embedded
+inside unrelated desktop applications.
+
+Verification after retirement: BWSC's real HTTP/PinchTab parity check passed,
+the credential-free PinchTab input/response/storage fixture passed, and installed
+Chrome 155.0.8059.86 launched successfully with both download paths absent.
+All owned migration instances were stopped. Weekly contract-v2 preflight passed;
+the existing financial LaunchAgent remained running and its API returned 200.
+679 financial tests plus 84 subtests, 30 helper tests plus 25 subtests, four Node
+gate tests, compilation/shell syntax, whitespace, and `sync.sh validate` passed.
+No full weekly scrape, artifact/database import, schedule change, or shared
+service restart was performed. Future unattended re-authentication remains
+unproven; the attended runs establish session reuse and browser/data compatibility.
+
 Chrome documents [CRLSets as its emergency revocation mechanism](https://www.chromium.org/Home/chromium-security/crlsets/)
 and [component updates as asynchronous startup work](https://github.com/chromium/chromium/blob/main/components/component_updater/README.md).
 Local diagnostic source is retained at

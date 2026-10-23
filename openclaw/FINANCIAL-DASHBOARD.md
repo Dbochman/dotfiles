@@ -15,8 +15,9 @@ Weekly browser recovery now inherits the managed headless helper's
 fails closed before caller navigation if public TLS checks fail or are
 inconclusive. This is reported through the existing profile-preflight failure
 path; prior financial data is preserved. HTTP-first scraping, daily cache-only
-Plaid refresh, and their schedules are unchanged. No credential-bearing scrape
-was run to validate this security change.
+Plaid refresh, and their schedules are unchanged. The initial gate was tested
+without credentials; subsequent attended provider migration checks are recorded
+under PinchTab consolidation below.
 
 Daily sync records a bounded Plaid error code (for example `NO_ACCOUNTS`), HTTP
 status fallback, or exception class instead of a truncated raw SDK exception.
@@ -217,25 +218,52 @@ alone.
 
 ### PinchTab consolidation status (October 22)
 
-BWSC now uses `financial_browser.py` for headless browser recovery and guarded
-renewal; HTTP remains the preferred path and contract v2 is unchanged. The
-dedicated `finance-bwsc-v3` profile is trust-checked on every acquisition before
-validated session state enters an ephemeral Playwright context. The client uses
-`no_defaults=True`, does not alter shared/default browser contexts, and disables
-downloads for this API-only provider. Per-provider locking serializes ownership;
-cleanup closes its context and stops/verifies only an instance it started.
-`FINANCE_BWSC_BROWSER=playwright` is an attended rollback, never an automatic
-fallback; the weekly wrapper does not forward that override.
+All remaining headless browser recovery and guarded renewal now use
+`financial_browser.py`; HTTP remains preferred and contract v2 is unchanged.
 
-Both paths initially found expired saved state. The owner completed VNC login
-in a separately trust-checked headed browser's ephemeral context. The fresh
-session passed HTTP and PinchTab read-only validation with **exact payload
-parity**, then replaced canonical session state with a mode-0600 backup under
-`~/Backups/finance-bwsc-pinchtab-20261022-99mrk62a/`. No agent submitted credentials,
-and no financial artifact/import or full weekly rerun was required. Future
-unattended login is not proven by this attended test. Other providers and BWSC's
-headed/manual compatibility paths still use existing browser tooling; retain
-finance-owned Chromium revision 1223 until those consumers are migrated.
+| Provider | Dedicated PinchTab profile | Read-only migration check |
+|---|---|---|
+| BWSC | `finance-bwsc-v3` | HTTP/browser exact payload parity |
+| Eversource | `finance-eversource` | HTTP/browser exact payload parity |
+| National Grid gas and electric | `finance-national-grid` | Both sources: exact payload parity |
+| PennyMac | `finance-pennymac` | HTTP/browser exact payload parity |
+
+BoA's existing `finance` raw-CDP path is unchanged. The adapter trust-checks
+every acquisition before validated state enters an ephemeral context, connects
+with `no_defaults=True`, and never uses shared/default contexts. Downloads remain
+disabled except Eversource's existing download contract. Provider locks serialize
+lifecycle ownership, including both National Grid sources. Cleanup closes its
+context and stops/verifies only an instance it started.
+
+Cold-start testing exposed revocation-data readiness beyond 20 seconds even in
+a prepared profile. Finance explicitly requests `acquire PROFILE --trust-timeout
+120`: bounded credential-free waiting, unchanged complete trust-pass criteria,
+at most one whole-probe-timeout retry, and fail-closed handling of other
+uncertainty. The helper subprocess ceiling is 180 seconds, within the weekly
+420-second child budget. Other PinchTab consumers keep ordinary acquisition.
+
+The owner renewed expired BWSC, Eversource, and National Grid sessions over VNC
+in separately trust-checked ephemeral headed contexts. Validated state was
+promoted only after read-only checks, with private mode-0600 backups under
+`~/Backups/finance-<provider>-pinchtab-20261022-*/`. Temporary login state copies
+were removed. No agent submitted passwords, imported financial artifacts, or
+reran the full weekly job. Attended validation does not prove future unattended
+login will succeed.
+
+All headed/manual compatibility launch sites explicitly select installed Chrome
+(`channel="chrome"`). `FINANCE_<PROVIDER>_BROWSER=playwright` is an explicit
+attended compatibility override, never automatic fallback; the weekly wrapper
+does not forward it. These manual paths are not blanket-cleared by the managed
+gate. Keep Playwright >=1.60 as a protocol client; do not install its Chromium.
+For initial setup, prepare each missing dedicated profile with
+`pinchtab-headless-instance prepare PROFILE --timeout 600` before scheduled use.
+
+The Mini's unused `chromium-1223` and `chromium_headless_shell-1223` directories
+(about 531 MB) were moved out of `~/Library/Caches/ms-playwright/` to recoverable
+`~/.Trash/retired-finance-chromium-20261022-kegchji4/`. Installed Chrome, ffmpeg,
+Playwright clients, browser profiles, and financial data were retained. The
+dashboard API and weekly configuration preflight remain healthy; no service
+restart or schedule change was needed.
 
 ### How guarded browser self-heal works
 
@@ -472,7 +500,8 @@ git clone <url> ~/repos/financial-dashboard
 cd ~/repos/financial-dashboard
 /opt/homebrew/bin/python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
-./venv/bin/playwright install chromium
+# Install Google Chrome and deploy PinchTab/trust helpers (see consolidation above).
+# Do not install Playwright's downloaded Chromium.
 ```
 
 ### 3. Verify imports and initialize DB

@@ -64,14 +64,19 @@ else: sys.exit(3)
 ''')
         cli.chmod(0o755)
         node = self.root / 'node'
-        node.write_text('#!/bin/sh\nexit "$GATE_STATUS"\n')
+        hosts = ['github.com', 'pypi.org'] + [f'{kind}-{variant}-{chain}.we-have-a-problem.com'
+            for chain in ('emudhra', 'aaa-emudhra') for kind in ('dv', 'ov', 'ev') for variant in ('g3b', 'g3c')]
+        report = {'results': [{'host':host, 'result':'control_passed' if host in hosts[:2] else 'rejected'} for host in hosts]}
+        node.write_text('#!/usr/bin/env python3\nimport os,sys\nprint(' + repr(json.dumps(report)) + ')\nsys.exit(int(os.environ["GATE_STATUS"]))\n')
         node.chmod(0o755)
         marker = self.root / 'started'
         env = {**os.environ, 'PINCHTAB_CONFIG': str(config_file), 'PINCHTAB_BIN': str(cli), 'PINCHTAB_TRUST_NODE': str(node), 'CALL_LOG': str(log), 'INSTANCE_JSON': json.dumps([self.instance]), 'START_MARKER': str(marker)}
-        for status, new in [('1', '0'), ('2', '0'), ('0', '0'), ('1', '1'), ('0', '1')]:
+        for status, new, options in [('1', '0', []), ('2', '0', []), ('0', '0', []), ('1', '1', []), ('0', '1', []),
+                                     ('0', '1', ['--trust-timeout', '60']), ('2', '1', ['--trust-timeout', '60']),
+                                     ('2', '0', ['--trust-timeout', '60'])]:
             marker.unlink(missing_ok=True)
             log.write_text('')
-            result = subprocess.run(['bash', str(ROOT / 'openclaw/bin/pinchtab-headless-instance'), 'acquire', 'audit'], env={**env, 'GATE_STATUS': status, 'FAKE_NEW': new}, capture_output=True, text=True)
+            result = subprocess.run(['bash', str(ROOT / 'openclaw/bin/pinchtab-headless-instance'), 'acquire', 'audit', *options], env={**env, 'GATE_STATUS': status, 'FAKE_NEW': new}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0 if status == '0' else 1, result.stderr)
             self.assertEqual(result.stdout, f'inst_test\t{new}\n' if status == '0' else '')
             self.assertEqual('instance stop' in log.read_text(), new == '1' and status != '0')
