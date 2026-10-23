@@ -302,6 +302,140 @@ Primary references: [Google fixed release](https://chromereleases.googleblog.com
 [upstream fix](https://chromium.googlesource.com/v8/v8/+/c6bfbe7c4e84),
 [Playwright branded browser support](https://playwright.dev/docs/browsers#google-chrome--microsoft-edge).
 
+### Desktop-runtime follow-up — October 22 evening
+
+Read-only checks reached Mini, Crosstown, dylans-mac and the main Windows
+desktop. Mac evidence combines app/framework plists, embedded version strings,
+and process executable names without arguments. Windows checks read the files
+of the running Discord and Codex GUI executables. These are installed-file
+observations, **not process-memory probes or exploitability tests**. No app was
+launched, quit, replaced or retired during this pass; profiles and data were
+not read. No whole advisory finding is cleared by this pass.
+
+| Host | Inactive update candidates | Observed embedded runtime |
+| --- | --- | --- |
+| Crosstown | Claude 1.1.2685; Discord 0.0.371; Slack 4.47.72 | Electron 39.5.0 / Chromium 142.0.7444.265; 37.6.0 / 138.0.7204.251; 39.2.7 / 142.0.7444.235 |
+| Crosstown | Linear 1.32.4; Spotify 1.2.82.428 | Electron 41.3.0 / Chromium 146.0.7680.188; CEF / Chromium 143.0.7499.147 |
+| dylans-mac | Cursor 3.2.16; Notion 7.25.0; Linear 1.32.4 | Electron 39.8.1 / Chromium 142.0.7444.265; 42.3.3 / 148.0.7778.218; 41.3.0 / 146.0.7680.188 |
+| dylans-mac | OpenVPN Connect 3.7.1; Spotify 1.2.90.451 | Electron 28.2.10 / Chromium 120.0.6099.291; CEF / Chromium 146.0.7680.179 |
+| dylans-mac | Granola 7.568.0; Orca 1.4.182 | Electron 44.0.0 / Chromium 152.0.7977.54; 43.1.0 / 150.0.7871.47 |
+
+Prioritize supported vendor updates or owner-approved retirement, preserving
+data. Being inactive reduces immediate exposure, but does not remove an app.
+The table is an update queue, not a claim that every app has every listed CVE.
+For example, Linear's Chromium 146.0.7680.188 exceeds the February/March
+upstream fixed versions, but its Electron 41.3.0 predates the June 11645
+backport. Vendor-specific changes still need verification after updating.
+
+Important advisory-specific evidence:
+
+- **85046:** running Claude on dylans-mac is Electron 44.2.0. Although its
+  embedded Chromium is 152.0.7977.76, [Electron's release](https://releases.electronjs.org/release/v44.2.0)
+  includes [PR 53479](https://github.com/electron/electron/pull/53479), which
+  explicitly backports V8 fix `e0562d87ad9c` for Chromium issue 542403045.
+  Do not flag it solely for being below Chrome's 152.0.7977.82 cutoff.
+- dylans-mac Slack is Chromium 152.0.7977.130 and Crosstown Notion is
+  152.0.7977.167. Both exceed that cutoff. Granola's Electron 44.0.0 predates
+  the verified backport and remains an update candidate; Orca also requires
+  vendor-fix verification. Mini's running Spotify contains Chromium
+  151.0.7922.138 and remains a CEF/vendor-backport question, not clearance.
+- All three Macs' 1Password bundles contain Electron 42.11.1 / Chromium
+  148.0.7778.280. Crosstown already has stable 8.12.42; Mini and dylans-mac
+  have 8.12.40. [The vendor's latest stable release](https://releases.1password.com/mac/stable/)
+  is 8.12.42, so updating the other two does not by itself establish a new
+  embedded engine. [Upstream V8 14.8.178.38 compiler source](https://github.com/v8/v8/blob/14.8.178.38/src/compiler/js-call-reducer.cc)
+  and its Maglev source lack the sort-inlining functions changed by
+  [the 85046 fix](https://github.com/v8/v8/commit/e0562d87ad9c17042b581582c99237d798572e67).
+  This is evidence against a blanket older-version finding, not proof about
+  vendor custom code. No password-manager interruption or security downgrade.
+- Windows running Discord's file still reports Electron 42.11.15 / Chromium
+  148.0.7778.280; Codex GUI file version is 155.0.8059.80. Its separately
+  accepted Node-helper risk remains unchanged. Neither app was restarted.
+- **Separate actionable vendor advisory:** installed OpenVPN Connect 3.7.1
+  predates [3.8.2's privileged-helper fix for CVE-2026-9560](https://openvpn.net/connect-docs/macos-release-notes/).
+  Vendor notes now also list 3.9.0 with a native Network Extension migration.
+  Updating may require administrator approval and network-extension consent;
+  do not replace only the UI bundle or disturb VPN configuration. Ask whether
+  this client is still needed before an attended upgrade or full retirement.
+- Slack's [October 20 release 4.52.182](https://slack.com/release-notes/mac)
+  recommends updating for security improvements. Both laptop copies are older;
+  dylans-mac's copy is running, so arrange a graceful restart rather than
+  force-quit it. Current app releases for other candidates were located, but
+  installer signatures and replacement runtime versions still need validation.
+
+The five cached findings remain partial/unknown until their remaining scope is
+resolved. Their snapshot-bound partial receipts now describe these specific
+remaining actions rather than asking to rediscover embedded versions. The
+cache-only briefing output was checked after import: 30 unresolved assessments,
+171 backlog, and no new resolution warnings. Cache, checkpoint, health and
+continuation files were byte-identical before/after receipt import. No collector
+assessment, finding count, continuation cap or schedule was changed; no briefing
+was sent. App update/retirement selection is awaiting the owner.
+
+Protected metadata, receipt input and previous receipts are retained under
+`~/.local/state/security-inventory/2026-10-22-fleet-followup/desktop-runtime-review.SQeyqP/`.
+
+### Approved desktop updates and Orca retirement — October 22 late evening
+
+Owner approved updating inactive candidates, then specifically retiring Orca
+while preserving its data. **Slack is explicitly deferred** on both laptops;
+its App Store channel was not replaced with a direct-download build. Running
+apps on the Mini, dylans-mac and Windows were not force-quit or replaced.
+
+| Host | Installed updates | Verified embedded runtime |
+| --- | --- | --- |
+| Crosstown | Claude 3.6556.2 | Electron 44.9.3 / Chromium 152.0.7977.167 |
+| Crosstown | Discord 0.0.419 | Electron 42.11.15 / Chromium 148.0.7778.280 |
+| Both laptops | Linear 1.32.7 | Electron 44.9.1 / Chromium 152.0.7977.167 |
+| Both laptops | Spotify 1.3.6.1921 | Chromium 151.0.7922.138 |
+| dylans-mac | Cursor 3.27.6 | Electron 42.11.16 / Chromium 148.0.7778.280 |
+| dylans-mac | Notion 7.40.1 | Electron 44.9.1 / Chromium 152.0.7977.167 |
+| dylans-mac | Granola 7.668.2 | Electron 44.4.2 / Chromium 152.0.7977.130 |
+
+All nine app replacements passed strict deep code-signature verification,
+expected vendor Team ID and bundle-ID checks, and Gatekeeper assessment before
+and after installation. Versions were reread from their active paths. Each old
+bundle was ZIP-archived and integrity-tested before replacement; the unarchived
+superseded bundle was removed only after replacement verification. Recovery
+archives contain old code: retain for recovery, not routine execution. App data
+and profiles were not read, reset or migrated by our updater. Apps were not
+launched for GUI testing. Crosstown's original Spotify failed signature
+verification at `Contents/MacOS/Spotify.sig`; it was archived, not executed, and
+replaced with a fully verified vendor copy. No incoming signature check was
+relaxed, fuse changed, or app re-signed.
+
+Orca 1.4.182 on dylans-mac is absent from `/Applications` and deregistered from
+LaunchServices. Its validated recovery ZIP is
+`~/.Trash/retired-Orca-91iv0uyc/Orca.app.zip`; application data is untouched.
+No running app process or matching LaunchAgent/daemon was found. The background
+items query returned exit 1, so login/background-item coverage is not claimed.
+
+Owner completed the signed **OpenVPN Connect 3.8.2 (6009)** installer on
+dylans-mac. App, helper-framework and helper-launch receipts agree on 3.8.2-6009.
+The installed privileged helper's SHA-256 matches the signed installer payload;
+its signature verifies and helper/agent processes were restarted during the
+installation. This addresses the vendor's CVE-2026-9560 helper fix, **not the
+browser gap**: the new app still embeds Electron 37.3.1 / Chromium 138.0.7204.235.
+The vendor's notes list 3.9.0 and a Network Extension migration, but a candidate
+3.9.0 DMG URL returned HTML, not an installer; it was neither trusted nor
+installed. Obtain a verified vendor 3.9.0 package before that follow-up.
+
+Remaining browser work is the held Slack update, OpenVPN's older embedded
+engine, and vendor applicability/backport evidence (notably Spotify, whose
+newest inspected release still uses Chromium 151). Granola's new Chromium
+exceeds the 85046 cutoff. No blanket Node/TLS/browser clearance follows from
+these updates. No passwords, VPN configuration, or account data were inspected.
+
+Protected recovery archives and per-app verification records are on each host:
+`~/.local/state/desktop-runtime-update.mNv1CM/` (Crosstown) and
+`~/.local/state/desktop-runtime-update.bv4CIf/` (dylans-mac). Central rollout
+evidence and before-images are under
+`~/.local/state/security-inventory/2026-10-22-fleet-followup/desktop-runtime-rollout.OZuKRU/`.
+Scoped inventory reconciliation updates only these changed bundles, adds their
+observed embedded Chromium versions, and excludes retired Orca from active
+matching. Five partial briefing receipts now omit completed work; no whole
+finding is closed and assessment cache/checkpoint/cap/schedules stay unchanged.
+
 ## Node security rollout — 2026-10-21 (deployed, with explicit gaps)
 
 ### October 22 attended remediation — 20:19 UTC
