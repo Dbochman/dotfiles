@@ -16,6 +16,96 @@ The goal is to keep dependencies fresh enough that security CVEs and
 bug fixes flow through, while protecting load-bearing integrations
 from breaking changes that need careful migration.
 
+## Bundled browsers and consolidation — October 22, 2026
+
+Attended inventory distinguished embedded Chromium from application version
+numbers and checked vendor backports for **CVE-2026-11645 only**. Chrome's
+upstream fixed release is 149.0.7827.103 on macOS. Electron 42.4.0 backported
+the fix into Chromium 148 (upstream V8 commit `c6bfbe7c4e84`, issue 506689381);
+Electron 41.8.0 also carries it. A major-version comparison alone would wrongly
+flag newer Electron 42 applications.
+
+- Installed Chrome on Mini/Crosstown/dylans-mac: 155.0.8059.86,
+  155.0.8059.86, and 156.0.8078.47. Prisma's actual embedded Chrome on
+  dylans-mac is 155.0.8059.85. These exceed this CVE's version floor.
+- 1Password on all three Macs uses Electron 42.11.1, covered by the backport.
+  Crosstown Notion uses Electron 44.9.1. On dylans-mac, Claude/Slack/Granola/
+  Orca use Electron 44.2.0/44.4.5/44.0.0/43.1.0, respectively.
+- Older inactive candidates still require vendor updates or retirement:
+  Crosstown Claude, Discord, Linear, Slack, and Spotify; dylans-mac Cursor,
+  Notion, Linear, OpenVPN Connect, and Spotify. Custom-vendor backports remain
+  unverified; these observations are not exploitability tests.
+- Main Windows Codex package 26.1016.8622.0 now embeds Chromium 155.0.8059.80;
+  active Discord embeds Electron 42.11.15 / Chromium 148.0.7778.280 (backport
+  covered). Edge/WebView2 155.0.4283.62 exceed their fixed release. This does
+  **not** close the separately accepted Windows Node-helper gap.
+- With explicit owner approval, retired Crosstown 1Clipboard 0.1.8
+  (Electron 0.35.6 / Chromium 45.0.2454.85). App is recoverable at
+  `~/.Trash/retired-1Clipboard-20261022.D1P7br/1Clipboard.app`; its main binary
+  execute bits were removed, and LaunchServices registration was removed.
+  Application data/settings were preserved. No process or LaunchAgent matched;
+  the narrow login-item lookup timed out, so no blanket login-item claim.
+
+### Consolidation rollout and blocking evidence
+
+- Owner approved PinchTab consolidation, installed Chrome for website tooling,
+  and retirement of obsolete downloads after verifying consumers. The Mini
+  website work is on `fix/system-chrome-browser-tooling`, based on the existing
+  held Node-security branch, not published or deployed to the website.
+- Local and CI E2E/prerender now explicitly use `channel: 'chrome'` with isolated
+  profiles. Prerender owns a loopback Vite preview server on an allocated port;
+  removed its broad `pkill` cleanup. Playwright client update is scoped to
+  1.64.1 and its two companion packages, with browser download disabled.
+- Laptop website edits are narrow local branch patches on their older checkouts,
+  not a pull/reset. Crosstown's sitemap change and dylans-mac's session notes,
+  untracked AGENTS file and agent directory remain intact. Their older prerender
+  cleanup is not run during the isolated browser verification.
+- Amazon skill migration is **staged, not deployed**. Skill-creator guidance
+  preserved purchase/credential approval boundaries and replaced historical
+  shared-browser kills with explicit PinchTab instance/tab ownership and a
+  fail-closed acquisition step. A future attended login uses a dedicated profile;
+  no cookies were copied or accounts accessed.
+- Migration audit used a new agent session. Instance creation returned HTTP 403;
+  owner explicitly approved the existing operator connection **for that dedicated
+  test instance only**. The existing acquisition gate then failed all three
+  bounded attempts: two ordinary controls passed, six incident chains were
+  rejected, six were accepted. It stopped the new instance; no matching running
+  instance remained. This is fresh trust evidence, not permission to bypass
+  the check or a blanket assessment of existing profiles.
+- Financial automation is unchanged: BoA already uses narrow raw CDP to
+  PinchTab; other providers still need their Playwright authentication/storage/
+  network-response contracts migrated and tested. Keep Mini Chromium revision
+  1223 while that consumer remains. No scheduled scrape, re-authentication,
+  credential access, shared browser restart, or cache/assessment clearing occurred.
+- Retired full/headless Chromium revision 1208 on Mini and dylans-mac, and
+  revision 1200 on Crosstown. Verified no cache-owned browser processes, traced
+  package registration links, changed both laptop website launch sites, and
+  tested installed Chrome in isolated credential-free fixtures. Repeat checks
+  after moving the downloads also passed. Mini 1208's registered owner was an
+  old one-off npm executor; finance owns 1223, and OpenClaw's newer client pins
+  1243. No package registration, profile, cookie, or finance state was removed.
+  The six downloads remain recoverable (about 1.5 GiB, not freed disk space):
+  Mini `~/.Trash/retired-playwright-20261022.8awnxV`, Crosstown
+  `~/.Trash/retired-playwright-20261022.YrqcUD`, dylans-mac
+  `~/.Trash/retired-playwright-20261022.lFRI6x`. Do not restore these as secure
+  browsers. Laptop pre-edit source copies are in each host's
+  `/tmp/browser-consolidation-20261022/`; their original source remains in Git.
+- Mini validation: 301 unit tests, 32 browser smoke tests, lint, typechecks,
+  route verification, and hard bundle budgets pass. The pre-existing soft chunk
+  budget remains exceeded. Playwright 1.58.2 completed smoke assertions but hung
+  on shutdown; 1.64.1 rerun completed normally in 24.3 seconds. Laptop proof is
+  limited to browser launch, local fixture interaction and clean shutdown; their
+  stale checkouts were not broadly upgraded or run against private services.
+- Next: investigate the fresh-profile certificate rejection failure, then prove
+  an isolated provider adapter before changing financial production defaults.
+  Runtime consolidation does not remediate Chromium embedded in desktop apps.
+
+Primary references: [Google fixed release](https://chromereleases.googleblog.com/2026/06/stable-channel-update-for-desktop_0153744567.html),
+[Electron 42.4.0](https://github.com/electron/electron/releases/tag/v42.4.0),
+[backport PR](https://github.com/electron/electron/pull/51934),
+[upstream fix](https://chromium.googlesource.com/v8/v8/+/c6bfbe7c4e84),
+[Playwright branded browser support](https://playwright.dev/docs/browsers#google-chrome--microsoft-edge).
+
 ## Node security rollout — 2026-10-21 (deployed, with explicit gaps)
 
 ### October 22 attended remediation — 20:19 UTC
@@ -261,6 +351,35 @@ These additional observations are recorded here, not manually promoted into the
 collector's published assessment cache. Its daily cap and preserved checkpoint
 remain unchanged. Reachy remains muted; accepted Windows runtime risk and the
 offline cabin desktop remain separate outstanding items.
+
+#### October 22 outstanding-only briefing correction — deployed
+
+Owner requested that Dylan's briefing raise outstanding issues, not completed
+maintenance. The cache-only summary now excludes all `not_applicable` findings
+and exact finding/asset snapshots covered by attended-resolution evidence. The
+collector itself never writes these receipts. New assessment content, inputs,
+assets or check timestamps invalidate the receipt; seven-day expiry prevents
+permanent suppression. Missing/invalid evidence retains outstanding findings,
+with a warning for invalid evidence. No completed-work recap is supplied.
+
+Imported seven private, evidence-backed resolutions from the attended review:
+Crosstown Screen Sharing version finding; Reachy's two repaired kernel findings;
+the three Macs' CoreGraphics and grouped Apple OS findings; the PAN-OS mismatch
+on dylans-mac; and CVE-2025-39964 for both Reachy and EchoNest. These resolve the
+specific cached snapshots only. Partial multi-host observations, source-only
+supply-chain checks, accepted Windows runtime risk, and unknown browser/provider
+coverage were not treated as resolution.
+
+Deployed the helper with no scheduler/gateway restart or briefing delivery.
+The October 23 08:00 cache-only preview excludes the three stale repair alerts
+and shows 30 outstanding/unverified assessments (previously 37), with five
+unknown changes and 25 additional changes. The verification backlog remains
+171 and collection/continuation warnings remain visible. The cache, checkpoint,
+health and continuation ledger are unchanged; the underlying assessment pass
+is still incomplete. Receipt import and read-only preview do not claim delivery.
+Recovery helper and the private import receipt are under
+`/tmp/security-briefing-fix.etBMMj/`; the durable owner-only ledger is
+`~/.local/state/security-advisories/resolutions.json`.
 
 ### October 22 fleet follow-up (historical progress; superseded above where noted)
 
