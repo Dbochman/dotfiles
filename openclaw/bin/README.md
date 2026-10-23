@@ -200,6 +200,18 @@ delivered. Five cached changes maximum plus additional-change/backlog counts
 bound the briefing input; its prompt prioritizes at most three. Neither the
 collector nor the briefing patches, retires, restarts, merges or sends test alerts.
 
+The briefing now prefers at most three `actionGroups`, formed before truncation
+from recent outstanding findings with exactly matching status, complete asset
+set, remaining summary and next action. It never infers equivalent remediation
+from product names. Each group includes its finding count and at most three
+sample titles/evidence entries; existing per-finding fields remain compatible.
+Reconciled prose defines the remaining scope, not the historical full asset set.
+Totals remain finding counts, not group counts. The prompt omits truncation
+counts from normal prose, distinguishes outstanding findings from overlapping
+pending advisory checks, and explains paused/in-progress/failed or capped
+collection separately from the cached review date. No collection or assessment
+semantics, continuation allowances or delivery state change.
+
 Attended verification can reconcile a stale finding before the collector finishes:
 `security-advisory-collector.py --record-resolutions /absolute/private/receipt.json`.
 This explicit local import never invokes collection, a model, or delivery. The

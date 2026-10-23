@@ -609,6 +609,30 @@ def outstanding_findings(cache, state, now=None):
     return outstanding, warnings
 
 
+def briefing_action_groups(changes):
+    """Group exact remaining-work matches before applying the display limit.
+
+    Never infer equivalent remediation from product names or merge statuses or
+    asset scopes. Findings and their reconciliation receipts remain untouched.
+    """
+    groups = {}
+    for finding in changes:
+        key = (finding["status"], tuple(sorted(finding["asset_ids"])),
+               finding["summary"], finding["action"])
+        if key not in groups:
+            groups[key] = {k: finding[k] for k in
+                           ("status", "asset_ids", "summary", "action")}
+            groups[key].update(findingCount=0, titles=[], evidence=[])
+        group = groups[key]
+        group["findingCount"] += 1
+        if len(group["titles"]) < 3:
+            group["titles"].append(finding["title"])
+        for source in finding["evidence"]:
+            if len(group["evidence"]) < 3 and source not in group["evidence"]:
+                group["evidence"].append(source)
+    return list(groups.values())[:3]
+
+
 def briefing_summary(state=STATE, now=None):
     """Bounded cache-only read; never network, infer, mark delivered, or write."""
     try:
@@ -641,6 +665,7 @@ def briefing_summary(state=STATE, now=None):
         changes = [f for f in outstanding if age_hours(f["changed_at"], now) < 48]
         rank = {"affected": 0, "possibly_affected": 1, "unknown": 2, "not_applicable": 3}
         changes.sort(key=lambda f: (rank[f["status"]], f["slug"]))
+        action_groups = briefing_action_groups(changes)
         fields = ("title", "status", "asset_ids", "summary", "action", "evidence", "changed_at", "checked_at")
         return {"status": "stale" if stale else "partial" if warnings else "ok",
                 "generatedAt": cache["generated_at"], "inventoryAt": cache["inventory_at"],
@@ -651,6 +676,10 @@ def briefing_summary(state=STATE, now=None):
                 "changes": [{k: f[k] for k in fields} for f in changes[:5]],
                 "additionalChanges": max(0, len(changes) - 5),
                 "unresolved": len(outstanding),
+                "actionGroups": action_groups,
+                "recentOutstanding": len(changes),
+                "otherRecentFindings": len(changes) - sum(
+                    group["findingCount"] for group in action_groups),
                 "deliveryConfirmed": False}
     except (OSError, ValueError, KeyError, TypeError):
         return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False}

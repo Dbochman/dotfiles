@@ -312,6 +312,50 @@ class AdvisoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mod.age_hours((self.now + timedelta(days=2)).isoformat())
 
+    def test_action_groups_group_before_limit_without_mutating_findings(self):
+        base = {"status": "unknown", "asset_ids": ["a", "b"],
+                "summary": "Coverage unverified", "action": "Check vendor",
+                "title": "First", "evidence": [{"url": self.url, "quote": "Evidence"}]}
+        changes = [dict(base, title=f"Related {i}") for i in range(6)]
+        changes += [dict(base, action="Check a different vendor"),
+                    dict(base, action="Check another runtime")]
+        before = copy.deepcopy(changes)
+        groups = mod.briefing_action_groups(changes)
+        self.assertEqual(len(groups), 3)
+        self.assertEqual(groups[0]["findingCount"], 6)
+        self.assertEqual(len(groups[0]["titles"]), 3)
+        self.assertEqual(len(groups[0]["evidence"]), 1)
+        self.assertEqual(changes, before)
+
+    def test_action_groups_keep_status_scope_and_remaining_text_separate(self):
+        base = {"status": "affected", "asset_ids": ["a"], "summary": "Check",
+                "action": "Update", "title": "Finding", "evidence": []}
+        for different in (dict(base, status="unknown"), dict(base, asset_ids=["b"]),
+                          dict(base, summary="Deferred")):
+            self.assertEqual(len(mod.briefing_action_groups([base, different])), 2)
+
+    def test_summary_counts_and_collection_health_survive_grouping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            base = cache["findings"]["node-test"]
+            for i in range(7):
+                cache["findings"][f"related-{i}"] = dict(base, slug=f"related-{i}")
+            cache["backlog"] = 171
+            self.seed_summary(state, cache)
+            mod.write_private(state / "health.json", {"status": "paused"})
+            mod.write_private(state / "continuation.json", {
+                "status": "capped", "passes_used": 3, "pass_limit": 3})
+            result = mod.briefing_summary(state, self.now)
+            self.assertEqual(result["unresolved"], 8)
+            self.assertEqual(result["recentOutstanding"], 8)
+            self.assertEqual(result["additionalChanges"], 3)
+            self.assertEqual(result["otherRecentFindings"], 0)
+            self.assertEqual(result["actionGroups"][0]["findingCount"], 8)
+            self.assertEqual(result["backlog"], 171)
+            self.assertIn("collection_paused", result["warnings"])
+            self.assertIn("continuation_capped", result["warnings"])
+
     def resolution(self, finding):
         return {"slug": finding["slug"], "finding_hash": mod.digest(finding),
                 "asset_ids": finding["asset_ids"], "verified_at": self.stamp,
