@@ -667,6 +667,12 @@ def briefing_summary(state=STATE, now=None):
         changes.sort(key=lambda f: (rank[f["status"]], f["slug"]))
         action_groups = briefing_action_groups(changes)
         fields = ("title", "status", "asset_ids", "summary", "action", "evidence", "changed_at", "checked_at")
+        # Candidates are not urgency verdicts. The briefing must also require
+        # supported serious/time-sensitive impact and a concrete immediate action.
+        # Keep older unresolved exposure eligible; a 48-hour window is not closure.
+        attention = [f for f in outstanding if
+                     f["status"] in {"affected", "possibly_affected"} and f["evidence"]]
+        attention.sort(key=lambda f: (rank[f["status"]], f["slug"]))
         return {"status": "stale" if stale else "partial" if warnings else "ok",
                 "generatedAt": cache["generated_at"], "inventoryAt": cache["inventory_at"],
                 "coverage": "partial", "clearance": False, "warnings": warnings,
@@ -677,6 +683,7 @@ def briefing_summary(state=STATE, now=None):
                 "additionalChanges": max(0, len(changes) - 5),
                 "unresolved": len(outstanding),
                 "actionGroups": action_groups,
+                "attentionCandidates": [{k: f[k] for k in fields} for f in attention[:5]],
                 "recentOutstanding": len(changes),
                 "otherRecentFindings": len(changes) - sum(
                     group["findingCount"] for group in action_groups),

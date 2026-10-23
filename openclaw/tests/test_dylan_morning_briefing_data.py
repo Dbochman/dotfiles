@@ -77,10 +77,13 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
         self.assertIn("SECURITY WATCH (cached, notification-only)", prompt)
         self.assertIn("never fetch advisories or run another command", prompt)
         self.assertEqual(job["schedule"]["expr"], "0 8 * * *")
-        self.assertIn("Prefer actionGroups when present", prompt)
-        self.assertIn("These counts overlap: never add them together", prompt)
-        self.assertIn("daily pass allowance is exhausted", prompt)
-        self.assertIn("must not expand that scope", prompt)
+        self.assertIn("Use attentionCandidates only when present", prompt)
+        self.assertIn("omit the entire Security watch section", prompt)
+        self.assertIn("a specific available action Dylan needs to take or approve now", prompt)
+        self.assertIn("never promote unknown to affected", prompt)
+        self.assertIn("Their omission does not resolve any finding", prompt)
+        self.assertIn("No independent security status block without a qualifying urgent action", prompt)
+        self.assertNotIn("Always explain collection warnings", prompt)
 
     def seed_handoff(self, payload, *, job_id=None, day=13):
         with sqlite3.connect(briefing.STATE_DB) as connection:

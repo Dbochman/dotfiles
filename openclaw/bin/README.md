@@ -191,7 +191,7 @@ refresh. The current plist names the October 22 inventory: after a new scoped
 survey, update that exact argument and reload only this LaunchAgent. Do not
 redate old observations or treat a successful advisory poll as a fleet resurvey.
 
-Only outstanding assessments enter the briefing. `not_applicable` findings are
+Only outstanding assessments enter the briefing input. `not_applicable` findings are
 excluded even when newly changed; completed maintenance is not a daily recap.
 New/materially revised outstanding assessments remain eligible for 48 hours
 (tolerating a missed briefing); stable unresolved findings are consolidated into a count.
@@ -200,17 +200,27 @@ delivered. Five cached changes maximum plus additional-change/backlog counts
 bound the briefing input; its prompt prioritizes at most three. Neither the
 collector nor the briefing patches, retires, restarts, merges or sends test alerts.
 
-The briefing now prefers at most three `actionGroups`, formed before truncation
+Operational diagnostics include at most three `actionGroups`, formed before truncation
 from recent outstanding findings with exactly matching status, complete asset
 set, remaining summary and next action. It never infers equivalent remediation
 from product names. Each group includes its finding count and at most three
 sample titles/evidence entries; existing per-finding fields remain compatible.
 Reconciled prose defines the remaining scope, not the historical full asset set.
-Totals remain finding counts, not group counts. The prompt omits truncation
-counts from normal prose, distinguishes outstanding findings from overlapping
-pending advisory checks, and explains paused/in-progress/failed or capped
-collection separately from the cached review date. No collection or assessment
-semantics, continuation allowances or delivery state change.
+Totals remain finding counts, not group counts.
+
+At the owner's request, the delivered morning briefing is **urgent attention
+only**. `attentionCandidates` supplies at most five outstanding `affected` or
+`possibly_affected` assessments with primary evidence, including older unresolved
+findings outside the 48-hour changes window. These are candidates, not urgency
+verdicts: the prompt additionally requires supported serious, time-sensitive
+impact and a specific available action the owner needs to take or approve now.
+Severity labels or old versions alone do not qualify. Unknowns, generic vendor
+verification, deferred maintenance, backlog/coverage counts and collector health
+remain available through `--security-status` and `--progress`, but do not create
+a briefing section. With no qualifying urgent action, omit the section entirely;
+do not issue an all-clear. Preserve uncertainty and observation dates, and do
+not re-raise a deferred decision without materially changed immediate risk.
+No assessment, resolution, continuation allowance or delivery state changes.
 
 Attended verification can reconcile a stale finding before the collector finishes:
 `security-advisory-collector.py --record-resolutions /absolute/private/receipt.json`.

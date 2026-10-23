@@ -334,6 +334,37 @@ class AdvisoryTests(unittest.TestCase):
                           dict(base, summary="Deferred")):
             self.assertEqual(len(mod.briefing_action_groups([base, different])), 2)
 
+    def test_attention_excludes_unknown_and_unsupported_without_resolving_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            base = cache["findings"]["node-test"]
+            cache["findings"] = {
+                "unknown": dict(base, slug="unknown", status="unknown"),
+                "unsupported": dict(base, slug="unsupported", evidence=[])}
+            self.seed_summary(state, cache)
+            before = {p.name: p.read_bytes() for p in state.iterdir()}
+            result = mod.briefing_summary(state, self.now)
+            self.assertEqual(result["attentionCandidates"], [])
+            self.assertEqual(result["unresolved"], 2)
+            self.assertEqual(len(result["actionGroups"]), 2)
+            self.assertFalse(result["clearance"])
+            self.assertEqual(before, {p.name: p.read_bytes() for p in state.iterdir()})
+
+    def test_attention_preserves_older_exposure_candidates_and_uncertainty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.resolution_cache()
+            base = cache["findings"]["node-test"]
+            base["changed_at"] = (self.now - timedelta(days=3)).isoformat()
+            cache["findings"]["possible"] = dict(base, slug="possible", status="possibly_affected")
+            self.seed_summary(state, cache)
+            result = mod.briefing_summary(state, self.now)
+            self.assertEqual(result["changes"], [])
+            self.assertEqual([f["status"] for f in result["attentionCandidates"]],
+                             ["affected", "possibly_affected"])
+            self.assertEqual(result["attentionCandidates"][0]["checked_at"], base["checked_at"])
+
     def test_summary_counts_and_collection_health_survive_grouping(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
