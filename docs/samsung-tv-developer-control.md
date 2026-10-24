@@ -678,3 +678,181 @@ reference and lookup guidance are deployed atomically and byte-verified; the
 Mini's CLI symlink uses the tracked helper directly. The final Peacock payload
 adds a second encoding layer for title punctuation; that layer is decoder-tested
 but has not yet been exercised in another live request.
+
+## Performance and advertising assessment (2026-10-24)
+
+The owner wants less advertising and better responsiveness, not storage recovery,
+and does not use Samsung TV Plus, personalized recommendations or built-in voice
+assistants. The initial assessment inspected the TV without changing preferences, registry
+flags, services, application state or Home routing. Temporary root staging and
+owned SDB cleanup were verified.
+
+Two process-counter samples, approximately 3.51 and 8.47 seconds, showed 82.1%
+and 88.3% aggregate CPU idle respectively. `CLK_TCK` is **250**, not 100; do not
+interpret raw process ticks with a desktop default. The second sample had 0.02%
+I/O wait. These are short observations during the existing Peacock session,
+not a controlled menu-latency benchmark. Available memory was about 423 MiB;
+compressed swap was nearly full, which alone does not prove current thrashing.
+Spotify remained resident at about 126.5 MiB RSS and Bixby's capsule viewer at
+43.8 MiB RSS. RSS includes shared pages and cannot be summed as guaranteed savings.
+
+Read-only checks found concrete first-pass candidates:
+
+| Preference | Observed type/value | Proposed change |
+| --- | --- | --- |
+| `db/was/preload_by_country` | String `true` | String `false`; verify after catalog refresh/reboot |
+| `db/menu/autorun_tv_plus` | Boolean True | Boolean false |
+| `db/si_service/voice_recog_enable` | Boolean True | Boolean false |
+| `db/multi-assistant/prelaunch_mode` | Boolean True | Boolean false |
+| `db/menu/voice/wakeupless_status` | Int32 0 | Already off; no change |
+| `db/menu/voice/voice_activated` | Absent | Do not create a foreign-firmware key |
+
+Viewing Information Services/interest-based advertising consent had not yet been
+inspected during this initial assessment. The subsequent opt-out and verification
+are recorded below. Opting out of personalization does not establish an ad-free
+Home screen. Use the same menu/workload for controlled latency comparisons.
+
+The installed units confirm negated `ConditionPathExists` stop markers for
+`pisa-service.service` (`pisa-service`), `canalysis-service.service`
+(`canalysis-daemon`), and the context-aware agent/service (their matching names).
+All four markers under `/opt/usr/share/systemd/system/` were absent. These are
+candidates for separate reversible tests, not a tested disable set. PISA has
+path/socket triggers and multiple units restart automatically; killing their
+processes alone is not durable. `data-service.service` is required by the
+context-aware service. Do not blindly import a runtime mask list. The media
+analytics unit was already failed/inactive with no restart loop observed.
+
+[Quiet Tizen's profile](https://github.com/jss8649/quiet-tizen/blob/main/profiles/un75u8000ffxza-1300.9.json)
+is for UN75U8000FFXZA / Tizen 9.0 / .NET 6.0.9, not this LS03B / Tizen 6.5 /
+.NET 3.1 setup. Of its application IDs, this inventory contains 8/10 advertising,
+17/17 voice, and 7/13 context targets. Its TV Plus ID is absent; this TV uses
+`com.samsung.tv.tvplus` and `com.samsung.tv.tvPlusDeeplinker`. Its Bixby-provisioning
+and voice-client unit names are absent too. The local package registry has the
+expected TEXT `app_disable`, `app_onboot`, and `app_autorestart` fields. Selected
+rows use `true`/`false`; ACR/canalysis permit auto-restart and targeted-ad-service
+permits both boot start and auto-restart.
+
+The [cleanup planner](https://github.com/jss8649/quiet-tizen/blob/main/tools/plan_cleanup.py)
+provides a useful pattern: consistent SQLite snapshot, exact row/field guards,
+transactional changes and field-specific restore. It does not itself enforce
+actual TV model/firmware, stop running processes, apply preferences or prove
+cross-reboot behavior. Any future registry plan needs this TV's fresh snapshot
+and a reviewed target list; do not apply the supplied profile wholesale.
+
+Preserve Art Mode/ambient components, SmartThings/remote and wake integration,
+HDMI/audio/network/Bluetooth, accessibility/TTS, app/account managers, the
+current Home/settings/browser, and the requested streaming apps. The
+[earlier debloat guide's protected-package list](https://github.com/ardazeytin/samsung-tizen-tv-debloat#part-5--never-remove-these)
+is useful as a deletion exclusion; its Tizen 4.0 access limitations do not describe
+our verified root route. No platform-package deletion is proposed. Existing
+app-preload preferences can be restored by Samsung catalog refreshes, as
+[Quiet Tizen documents](https://github.com/jss8649/quiet-tizen/blob/main/docs/03-cleanup.md);
+no enforcement daemon or boot modification has been added.
+
+## Applied privacy and performance changes (2026-10-24)
+
+The owner authorized this sequence: opt out of Viewing Information Services and
+interest-based advertising, stop PISA/content analysis using their verified
+markers, then disable TV Plus autorun, voice recognition and assistant prelaunch.
+
+The normal settings overlay closed before navigation completed. Opening the
+installed `tv6pbVMQFF.PrivacyChoices` app and selecting its Terms & Conditions /
+Privacy Policy entry opened `org.tizen.wizard`. Both optional consent boxes were
+initially checked. Only those two boxes were unchecked; the owner reviewed the
+terms and selected OK. A fresh Privacy Choices instance and reopened consent
+page visibly confirmed both remained unchecked. A warm developer launch had
+acknowledged the request without bringing the page forward, so the verification
+used a graceful restart of the Privacy Choices app only.
+
+Applied and immediately verified:
+
+| Target | Result |
+| --- | --- |
+| Viewing Information Services | Unchecked after save and reopening |
+| Interest-Based Advertisements | Unchecked after save and reopening |
+| `pisa-service.service` | Inactive, MainPID 0; explicit start skipped with ConditionResult=no |
+| `canalysis-service.service` | Inactive, MainPID 0; explicit start skipped with ConditionResult=no |
+| `db/menu/autorun_tv_plus` | Boolean True → False |
+| `db/si_service/voice_recog_enable` | Boolean True → False |
+| `db/multi-assistant/prelaunch_mode` | Boolean True → False |
+
+The marker files are `/opt/usr/share/systemd/system/pisa-service` and
+`/opt/usr/share/systemd/system/canalysis-daemon`. Both are empty, mode 0644,
+numeric UID/GID 0, with Smack floor label `_`, matching readable vendor condition
+markers. Only the new marker files were labeled; no Smack policy was changed.
+The original service-unit hashes still match. This change does not mask the
+separate `contents-recognition-service.service` or change package registry flags.
+
+Two firmware behaviors required adapting the operational checks:
+
+- PISA exits with status 255 on stop. After confirming MainPID 0, clear only that
+  unit's stop-failure state, then test the vendor start guard. The first tests
+  were rolled back and PISA was independently observed running again before the
+  final application. The initial private `User`-labeled marker was replaced by
+  the readable marker described above; its label alone did not resolve the stop
+  exit-status handling.
+- Content analysis did not finish on SIGTERM within systemd's existing 90-second
+  stop timeout. The first short verification window requested rollback, and the
+  service was observed active again afterward. The final change issued a normal
+  asynchronous stop and waited outside the temporary root session. Systemd used
+  its existing timeout behavior (ExecMainStatus 9, Result=timeout). After PID 0
+  was verified, its failure state was cleared and a fresh start request was
+  blocked by the marker. No global stop timeout or kill policy was changed.
+
+Rollback records are stored privately on both machines:
+
+- TV: `/opt/usr/share/openclaw-tv-backups/20261024-privacy-performance/`.
+  The final phases are `pisa-final`, `canalysis-final`, and `preferences`, each
+  with `restore.sh` and its before-state records. Earlier attempt records are
+  retained separately; use the final phase records for the applied state.
+- Mini: `~/.local/share/samsung-tv-tools/changes/20261024-privacy-performance/`.
+  This includes the pinned-asset root runner, reviewed per-phase apply scripts,
+  private consent captures, verification results and progress record.
+
+The TV rejects executing the saved unsigned shell script by pathname. Feed the
+reviewed restore file through standard input (`/bin/bash < PATH/restore.sh`)
+inside the authorized root session instead. The root runner similarly sends a
+base64-encoded script through stdin to preserve literal quoting/backslashes.
+PISA restoration through this route was exercised successfully. Preferences
+restore the three recorded Boolean values; service restoration removes only its
+new empty marker and restarts the service only if it was originally active.
+Verify actual service state afterward because a nonblocking start is not proof.
+Do not restore a whole database or use an earlier attempt's snapshot over later
+changes. Privacy consent restoration, if requested, belongs in the same visible
+UI with owner review of any terms confirmation.
+
+Background app preloading, context services, Home routing, Art Mode and the
+streaming app packages were outside this selected phase. A Home request was sent
+for the owner's usability check. No controlled before/after latency improvement
+or reboot persistence is claimed; the saved flags and markers still need a
+separate full-reboot check. Disabling personalization does not guarantee removal
+of all sponsored Home content.
+
+A fresh root health check after the Home request confirmed both services remained
+inactive (MainPID 0, ConditionResult=no, NRestarts 0), all three preferences still
+read False, and PISA's path activator was waiting normally. The TV REST endpoint
+still reported power on. Twenty-three final rollback-record files were copied
+to the Mini; all three restore-script hashes matched the TV originals. Temporary
+root staging and the owned host SDB listener were cleaned up. The owner's
+subjective usability check was completed separately, as recorded below.
+
+An additional responsiveness check sampled process counters for 8.51 seconds
+after the Home request. Aggregate CPU idle time was 72.08%, I/O wait 0.01%,
+and available memory 309,368 KiB (about 302 MiB). Both disabled services remained
+inactive with MainPID 0, ConditionResult=no, Result=success and NRestarts 0.
+The SDK diagnostic and its owned host SDB listener were cleaned up afterward;
+the private sample is retained with the change records as `post-change-home.txt`.
+
+This sample does not establish a speed improvement. The earlier 8.47-second
+sample had 88.26% CPU idle time and 433,528 KiB available memory, under a
+different foreground/background workload. Neither sample measured visible
+navigation latency, and the sampling shell itself used CPU. Nearly full logical
+zram also does not, by itself, establish active swap thrashing. Automated inputs
+were stopped for the owner's comparison of Home/Settings and streaming-app
+navigation. The owner reported **“About the same”**: no noticeable improvement
+was established. Treat this phase as verified privacy/background-service
+reduction, not a demonstrated responsiveness fix. No privacy settings were
+reenabled to create an artificial comparison. The next useful test is a normal
+restart to clear accumulated app sessions, verify preference/marker persistence,
+and repeat the same navigation check. The owner deferred that restart until later;
+no restart was performed in this phase.
