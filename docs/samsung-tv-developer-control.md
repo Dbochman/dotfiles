@@ -135,7 +135,9 @@ inside a URL, itself carried in `PAYLOAD={"values":"URL"}`. A public watch URL
 alone was insufficient. The public Pilot UUID works as `pvid`; the separate
 `GMO_...` content ID did not. Search results and **Pilot, S1 E1** highlighted in
 the episode list were captured. The final native helper restarted Peacock and
-submitted the exact Pilot PLAY request; owner playback confirmation is pending.
+submitted the exact Pilot PLAY request. The owner subsequently confirmed
+**The Office S1E1, Pilot** playing. A read-only check confirmed Peacock remained
+foreground in the same process; no additional playback request was sent.
 See the skill's [app reference](../openclaw/skills/samsung-tv/references/apps.md)
 for commands, exact formats and hashed public source evidence.
 

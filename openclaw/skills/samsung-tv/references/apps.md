@@ -15,7 +15,7 @@ served web app. Recheck IDs after a reinstall.
 | Prime Video | `org.tizen.primevideo` | 5.3.22 | Verified native GTI detail route |
 | Apple TV | `com.samsung.tv.aria-video` | 16.2.0 | Verified native URL details/play |
 | HBO Max | `5b8c3eb16b.BeamCTVDev` | 6.0.0 | Verified fresh-start, intact-string payload |
-| Peacock | `gzcc4LRFBF.Peacock` | 7.7.203 | Verified search/episode details; native play submitted |
+| Peacock | `gzcc4LRFBF.Peacock` | 7.7.203 | Verified search/episode details; Pilot playback owner-confirmed |
 | Spotify | `rJeHak5zRg.Spotify` | 2.1.71 | Verified Frame-only Connect helper |
 | Crunchyroll | `OGLLvqej7u.CrunchyrollWebApp` | 15.6.12 | Inspect Smart Hub resume payload |
 | Twitch | `Jz7aUrV2Q4.Twitch` | 12.0.2 | Samsung `PAYLOAD` containing a full Twitch URL |
@@ -33,7 +33,7 @@ the vendor `PAYLOAD` described here.
 
 - **Prime Video:** Fallout S2E1 selected directly; owner confirmed playback after selecting its visible Play button.
 - **Apple TV:** Severance S1E2 **Half Loop** opened directly; playback confirmed by owner.
-- **Peacock:** The Office search and S1E1 Pilot selection visually verified; native play submitted, owner playback confirmation pending.
+- **Peacock:** The Office search and S1E1 Pilot selection visually verified; direct Pilot playback confirmed by the owner.
 - **Crunchyroll:** native app focused; “Session expired” / `WCP-UN-0` login screen.
   Stop playback testing until the owner completes fresh login; do not retry credentials.
 - **HBO Max:** The Last of Us show selected directly; direct video playback confirmed by owner.
@@ -304,8 +304,11 @@ series page with **Pilot, S1 E1** highlighted, verified in a fresh capture.
 The internal public-page `contentId` (`GMO_00000000059625_01`) did not navigate;
 use the public episode URL's UUID as `pvid`, not that internal ID. The final
 helper gracefully restarted Peacock without debugging and submitted the Pilot
-play request. Its focused surface was black; owner playback confirmation is
-pending. Search and episode details were verified through the equivalent Tizen
+play request. Its focused surface was black; the owner subsequently confirmed
+**The Office — Pilot** playing while a read-only foreground check still identified
+the same Peacock process. No replay was needed for confirmation. This establishes
+the tested episode route, not every title or account entitlement. Search and
+episode details were verified through the equivalent Tizen
 ApplicationControl payload; the helper's standalone series command is based on
 the inspected parser and has not been separately screen-tested.
 
@@ -334,8 +337,7 @@ substitute for native app control.
 
 ## Remaining validation
 
-Peacock's submitted play request still needs owner confirmation; its standalone series
-command has not been separately screen-tested. Crunchyroll requires owner login first. Each new route needs a known target,
+Peacock's standalone series command has not been separately screen-tested. Crunchyroll requires owner login first. Each new route needs a known target,
 a bounded request, and observed identity/playback before promotion to supported
 commands. Root was used for static inspection and temporary UI captures only;
 no app patch or persistent root controller was installed.
