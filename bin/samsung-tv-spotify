@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Control Spotify on the Crosstown Frame using an explicitly targeted client."""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+from urllib.parse import urlsplit
+
+VERSION = "0.10.3-frame.1"
+COMMIT = "980cf0c3137518423638c8b0a4ca6d3ea5cf962c"
+FRAME = "Samsung The Frame 65"
+APP = "rJeHak5zRg.Spotify"
+REPO = Path(__file__).resolve().parent.parent
+
+
+def content_uri(value):
+    if any(ord(c) < 32 for c in value):
+        raise ValueError("Use a Spotify track, album or playlist URI/link")
+    value = value.strip()
+    if re.fullmatch(r"spotify:(track|album|playlist):[A-Za-z0-9]{22}", value):
+        return value
+    url = urlsplit(value)
+    if (url.scheme != "https" or url.hostname != "open.spotify.com" or url.username is not None
+            or url.password is not None or url.port not in {None, 443}):
+        raise ValueError("Use an exact Spotify HTTPS link or content URI")
+    match = re.fullmatch(r"/(track|album|playlist)/([A-Za-z0-9]{22})/?", url.path)
+    if not match:
+        raise ValueError("Use a Spotify track, album or playlist link")
+    return "spotify:" + match[1] + ":" + match[2]
+
+
+def verified_binary():
+    directory = Path.home() / ".local/share/samsung-tv-tools" / ("spogo-" + VERSION)
+    binary = directory / "spogo"
+    patch = REPO / "openclaw/skills/samsung-tv/patches/spogo-0.10.3-explicit-device.patch"
+    receipt = json.loads((directory / "build.json").read_text())
+    if (receipt.get("version") != VERSION or receipt.get("source_commit") != COMMIT
+            or receipt.get("patch_sha256") != hashlib.sha256(patch.read_bytes()).hexdigest()
+            or receipt.get("binary_sha256") != hashlib.sha256(binary.read_bytes()).hexdigest()):
+        raise RuntimeError("Targeted Spotify build does not match the reviewed source")
+    return binary
+
+
+def invoke(binary, args, device=None):
+    command = [str(binary), "--engine", "connect", "--json", "--no-input", "--timeout", "10s"]
+    if device:
+        command += ["--device", device]
+    result = subprocess.run(command + args, capture_output=True, text=True, timeout=40)
+    if result.returncode:
+        # Raw service errors can contain session URLs. Do not echo them.
+        raise RuntimeError("Spotify operation failed; no automatic retry or fallback was attempted")
+    return json.loads(result.stdout)
+
+
+def select_frame(data):
+    devices = data if isinstance(data, list) else data.get("devices", [])
+    matches = [d for d in devices if d.get("name") == FRAME and d.get("type", "").lower() == "tv"]
+    if len(matches) != 1 or not matches[0].get("id") or matches[0].get("is_restricted"):
+        raise RuntimeError("Frame device is missing, ambiguous or restricted; no playback request sent")
+    return matches[0]["id"]
+
+
+def summarize_status(data, expected=None):
+    device = data.get("device") or {}
+    item = data.get("item") or {}
+    on_frame = device.get("name") == FRAME and device.get("type", "").lower() == "tv"
+    result = {"frame_active": on_frame, "frame_playing": on_frame and data.get("is_playing") is True,
+              "audio_verified": False}
+    if on_frame:
+        result.update({"title": item.get("name"), "uri": item.get("uri")})
+    if expected:
+        result["requested_track_matches"] = on_frame and item.get("uri") == expected
+    return result
+
+
+def operate(action, content=None):
+    uri = content_uri(content) if content else None
+    binary = verified_binary()
+    if action == "status":
+        return summarize_status(invoke(binary, ["status"]), uri)
+    if action in {"play", "resume"}:
+        subprocess.run([str(REPO / "bin/samsung-tv-dev"), "launch", APP],
+                       check=True, stdout=subprocess.DEVNULL, timeout=90)
+    device = select_frame(invoke(binary, ["device", "list"]))
+    command = ["play", uri] if action == "play" else (["play"] if action == "resume" else ["pause"])
+    invoke(binary, command, device=device)
+    result = {"request_accepted": True, "target": FRAME, "action": action}
+    # Poll reads only. Never repeat a playback write because state is delayed.
+    for attempt in range(3):
+        state = summarize_status(invoke(binary, ["status"]), uri if uri and uri.startswith("spotify:track:") else None)
+        result["observed"] = state
+        if action == "pause" and state["frame_active"] and not state["frame_playing"]:
+            break
+        if action != "pause" and state["frame_playing"] and state.get("requested_track_matches", True):
+            break
+        if attempt < 2:
+            time.sleep(1)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=["play", "pause", "resume", "status"])
+    parser.add_argument("content", nargs="?")
+    args = parser.parse_args()
+    if args.action == "play" and not args.content:
+        parser.error("play requires a content URI or link")
+    if args.action in {"pause", "resume"} and args.content:
+        parser.error("pause/resume take no content argument")
+    lock_path = Path.home() / ".cache/samsung-tv-spotify/control.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with lock_path.open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print(json.dumps(operate(args.action, args.content), indent=2))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise SystemExit(str(exc))

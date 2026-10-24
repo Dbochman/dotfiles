@@ -1,0 +1,205 @@
+diff --git a/internal/spotify/connect_commands.go b/internal/spotify/connect_commands.go
+index aaf20d7..506260b 100644
+--- a/internal/spotify/connect_commands.go
++++ b/internal/spotify/connect_commands.go
+@@ -49,6 +49,11 @@ func (c *ConnectClient) transferViaWebAPI(ctx context.Context, deviceID string)
+ 
+ func (c *ConnectClient) play(ctx context.Context, uri string) error {
+ 	return withConnectStateErr(ctx, c, func(state connectState) error {
++		var err error
++		state, err = c.explicitTargetState(state)
++		if err != nil {
++			return err
++		}
+ 		if state.activeDeviceID == "" {
+ 			if targetID := resolveConnectTargetDeviceID(state, c.device); targetID != "" {
+ 				state.activeDeviceID = targetID
+@@ -99,6 +104,11 @@ func (c *ConnectClient) seek(ctx context.Context, positionMS int) error {
+ func (c *ConnectClient) volume(ctx context.Context, volume int) error {
+ 	volume = clampVolume(volume)
+ 	return withConnectStateErr(ctx, c, func(state connectState) error {
++		var err error
++		state, err = c.explicitTargetState(state)
++		if err != nil {
++			return err
++		}
+ 		fromID := connectTransferSourceID(state)
+ 		if fromID == "" || state.activeDeviceID == "" {
+ 			return errors.New("missing device id")
+@@ -172,6 +182,10 @@ func (c *ConnectClient) sendDirectCommand(ctx context.Context, endpoint string,
+ 			},
+ 		}
+ 	}
++	// A cached active-device route must never override an explicit selector.
++	if strings.TrimSpace(c.device) != "" {
++		return c.sendStateCommand(ctx, endpoint, payload)
++	}
+ 	fromID, toID, ok := c.commandRoute()
+ 	if !ok {
+ 		return c.sendStateCommand(ctx, endpoint, payload)
+@@ -275,3 +289,31 @@ func repeatFlags(mode string) (bool, bool) {
+ 		return false, false
+ 	}
+ }
++
++// explicitTargetState preserves read-only playback reporting while routing writes
++// to the requested device. Missing/ambiguous/restricted targets never fall back.
++func (c *ConnectClient) explicitTargetState(state connectState) (connectState, error) {
++	selector := strings.TrimSpace(c.device)
++	if selector == "" {
++		return state, nil
++	}
++	devices := mapDevices(state)
++	var matches []Device
++	for _, device := range devices {
++		if device.ID == selector {
++			matches = []Device{device}
++			break
++		}
++		if strings.EqualFold(device.Name, selector) {
++			matches = append(matches, device)
++		}
++	}
++	if len(matches) != 1 || matches[0].ID == "" {
++		return state, errors.New("explicit device is missing or ambiguous; no playback command sent")
++	}
++	if matches[0].Restricted {
++		return state, errors.New("explicit device is restricted; no playback command sent")
++	}
++	state.activeDeviceID = matches[0].ID
++	return state, nil
++}
+diff --git a/internal/spotify/connect_state_map.go b/internal/spotify/connect_state_map.go
+index c17b3f3..1b522fb 100644
+--- a/internal/spotify/connect_state_map.go
++++ b/internal/spotify/connect_state_map.go
+@@ -19,10 +19,11 @@ func mapDevices(state connectState) []Device {
+ 			name = getString(deviceMap, "device_name")
+ 		}
+ 		device := Device{
+-			ID:     id,
+-			Name:   name,
+-			Type:   getString(deviceMap, "device_type"),
+-			Active: id == state.activeDeviceID,
++			ID:         id,
++			Name:       name,
++			Type:       getString(deviceMap, "device_type"),
++			Active:     id == state.activeDeviceID,
++			Restricted: getBool(deviceMap, "is_restricted"),
+ 		}
+ 		device.Volume = getInt(deviceMap, "volume")
+ 		if device.Volume == 0 {
+diff --git a/internal/spotify/connect_transport.go b/internal/spotify/connect_transport.go
+index 0b8dc84..f6e77fa 100644
+--- a/internal/spotify/connect_transport.go
++++ b/internal/spotify/connect_transport.go
+@@ -184,6 +184,11 @@ func (c *ConnectClient) registerDevice(ctx context.Context, auth connectAuth, co
+ }
+ 
+ func (c *ConnectClient) sendPlayerCommand(ctx context.Context, state connectState, endpoint string, payload map[string]any) error {
++	var err error
++	state, err = c.explicitTargetState(state)
++	if err != nil {
++		return err
++	}
+ 	if payload == nil {
+ 		payload = map[string]any{
+ 			"command": map[string]any{
+--- /dev/null
++++ b/internal/spotify/connect_targeting_test.go
+@@ -0,0 +1,95 @@
++package spotify
++
++import (
++	"context"
++	"net/http"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestExplicitTargetOverridesActiveAndCachedRoute(t *testing.T) {
++	commands := map[string]func(*ConnectClient) error{
++		"play":     func(c *ConnectClient) error { return c.Play(context.Background(), "spotify:track:test") },
++		"pause":    func(c *ConnectClient) error { return c.Pause(context.Background()) },
++		"next":     func(c *ConnectClient) error { return c.Next(context.Background()) },
++		"previous": func(c *ConnectClient) error { return c.Previous(context.Background()) },
++		"seek":     func(c *ConnectClient) error { return c.Seek(context.Background(), 1000) },
++		"shuffle":  func(c *ConnectClient) error { return c.Shuffle(context.Background(), true) },
++		"repeat":   func(c *ConnectClient) error { return c.Repeat(context.Background(), "off") },
++		"volume":   func(c *ConnectClient) error { return c.Volume(context.Background(), 20) },
++	}
++	for name, command := range commands {
++		t.Run(name, func(t *testing.T) {
++			writes := 0
++			client := newRegisteredConnectClientForTests(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
++				if strings.Contains(req.URL.Path, "/devices/hobs_") {
++					return jsonResponse(200, map[string]any{
++						"devices":          map[string]any{"frame": map[string]any{"name": "Frame"}, "other": map[string]any{"name": "Phone"}},
++						"active_device_id": "other",
++					}), nil
++				}
++				writes++
++				if !strings.HasSuffix(req.URL.Path, "/to/frame") {
++					t.Fatalf("wrong target: %s", req.URL.Path)
++				}
++				return textResponse(200, "ok"), nil
++			}))
++			client.device = "frame"
++			client.cachedActiveDeviceID = "other"
++			client.cachedOriginDeviceID = "controller"
++			client.cachedRouteAt = time.Now()
++			if err := command(client); err != nil {
++				t.Fatal(err)
++			}
++			if writes != 1 {
++				t.Fatalf("writes=%d", writes)
++			}
++		})
++	}
++}
++
++func TestExplicitTargetFailsClosed(t *testing.T) {
++	for _, test := range []struct {
++		name, selector string
++		devices        map[string]any
++	}{
++		{"missing", "missing", map[string]any{"other": map[string]any{"name": "Phone"}}},
++		{"ambiguous", "Frame", map[string]any{"a": map[string]any{"name": "Frame"}, "b": map[string]any{"name": "Frame"}}},
++		{"restricted", "frame", map[string]any{"frame": map[string]any{"name": "Frame", "is_restricted": true}}},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			for _, command := range []func(*ConnectClient) error{
++				func(c *ConnectClient) error { return c.Play(context.Background(), "spotify:track:test") },
++				func(c *ConnectClient) error { return c.Pause(context.Background()) },
++				func(c *ConnectClient) error { return c.Volume(context.Background(), 20) },
++			} {
++				client := newRegisteredConnectClientForTests(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
++					if strings.Contains(req.URL.Path, "/devices/hobs_") {
++						return jsonResponse(200, map[string]any{"devices": test.devices, "active_device_id": "other"}), nil
++					}
++					t.Fatalf("unexpected command/fallback: %s", req.URL.Path)
++					return nil, nil
++				}))
++				client.device = test.selector
++				if err := command(client); err == nil {
++					t.Fatal("expected failure")
++				}
++			}
++		})
++	}
++}
++
++func TestExplicitTargetDoesNotFalsifyPlaybackStatus(t *testing.T) {
++	client := newRegisteredConnectClientForTests(roundTripperFunc(func(req *http.Request) (*http.Response, error) {
++		return jsonResponse(200, map[string]any{"devices": map[string]any{"frame": map[string]any{"name": "Frame"}, "other": map[string]any{"name": "Phone"}}, "active_device_id": "other", "player_state": map[string]any{"is_paused": true}}), nil
++	}))
++	client.device = "frame"
++	status, err := client.Playback(context.Background())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if status.Device.ID != "other" {
++		t.Fatal("status must reflect actual active device")
++	}
++}

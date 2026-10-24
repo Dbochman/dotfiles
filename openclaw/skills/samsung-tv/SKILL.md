@@ -1,90 +1,204 @@
 ---
 name: samsung-tv
-description: Control Samsung The Frame TV. Use when asked about TV, television, art mode, Samsung Frame, turning on/off the TV, or changing TV input/volume/apps.
-allowed-tools: Bash(samsung-tv:*)
-metadata: {"openclaw":{"emoji":"T","requires":{"bins":["samsung-tv"]}}}
+description: Control the Crosstown Samsung Frame TV, resolve and play YouTube videos, Netflix, Apple TV, HBO Max and Peacock content, Spotify, and Twitch channels in their native apps, and operate remote keys, volume, inputs, power, and Art Mode.
+allowed-tools: Bash(samsung-tv:*), Bash(samsung-tv-dev:*), Bash(samsung-tv-spotify:*), Bash(python3:*), Bash(websearch:*)
+metadata: {"openclaw":{"emoji":"T","requires":{"bins":["samsung-tv","samsung-tv-dev"]}}}
 ---
 
-# Samsung TV Control
+# Crosstown Samsung Frame
 
-Control Samsung The Frame TVs via the `samsung-tv` CLI. Uses WebSocket protocol (port 8002) over Tailscale subnet routing.
+Use `samsung-tv-dev` for installed-app discovery, app launches, content links,
+browser navigation, focused-app inspection, and LAN wake. It runs through SSH on the **Crosstown MacBook,
+`dylans-macbook-pro`**, whose TV-facing address is `192.168.165.109`.
+The TV is `192.168.165.2`, model QN65LS03BAFXZA, firmware 1720.7 / Tizen 6.5.
+`dylans-mac` is a different Mac, not this developer host.
 
-## Available Commands
+Use the existing `samsung-tv` CLI for remote buttons, volume, power-off and
+Art Mode. Those WebSocket operations originate on the Mini over the existing
+Tailscale subnet route; they do not require a developer-shell session.
 
-### Show TV status
-```bash
-samsung-tv status
+## Choose the operation
+
+- **Find content by title:** read [title lookup](references/lookup.md). Search for
+  candidate provider links, then use `scripts/content_lookup.py` to check YouTube
+  title/channel metadata or resolve Netflix's actual season/episode IDs. The
+  lookup is read-only; send the resolved link to the playback helper only for a
+  play request. Clarify meaningful ambiguity instead of selecting the first hit.
+- **Open an app:** discover its exact installed ID, then launch it. App IDs from
+  Samsung's store, Tizen and the native player can differ. Do not guess IDs or
+  fuzzy-select the first ambiguous match.
+- **Play a YouTube video:** use `youtube` below. It targets the YouTube TV app,
+  not the Internet browser. Accept the user's link/ID, or find the intended
+  public video with available search tools. Clarify ambiguous titles.
+- **Play content in another app:** read [content routing](references/content.md).
+  For Prime Video, Apple TV, HBO Max, Peacock, Spotify, Crunchyroll or Twitch,
+  consult the [installed-app survey](references/apps.md) for real app IDs,
+  lookup options and the distinction between inspected and verified routes.
+  Discover its link handlers and submit an appropriate link to that explicit app.
+  App launch does not establish content selection, autoplay, or subscription access.
+- **Play Netflix content:** use `netflix` with an exact content ID or Netflix
+  watch/title link. It gracefully restarts Netflix to deliver the request;
+  this briefly interrupts current Netflix playback. The normal SDK account
+  suffices. Read [content routing](references/content.md) for episode resolution
+  and verification. Use ordinary `launch` when only opening the app is wanted.
+- **Open/play Apple TV content:** use `apple-tv URL` for details or
+  `apple-tv-play URL` for playback. Resolve the exact movie/show/episode link;
+  these native requests work without restarting the app. Read
+  [Apple TV routing](references/apps.md#apple-tv) for lookup and verification.
+- **Open/play HBO Max content:** use `max-show ID_OR_URL`, `max-play ID_OR_URL`,
+  or `max-search TITLE`. Resolve the exact video for an episode request. These
+  commands gracefully restart HBO Max; see [Max routing](references/apps.md#hbo-max).
+- **Open/play Peacock content:** use `peacock-episode ID_OR_URL` for episode
+  details or `peacock-play ID_OR_URL` for that episode's playback; `peacock-show`
+  opens a series and `peacock-search` accepts title text. Commands gracefully
+  restart Peacock. Read [Peacock routing](references/apps.md#peacock) for ID
+  resolution and the current verification limits.
+- **Open Prime Video content:** use `prime-video GTI` with the exact provider
+  episode/movie GTI. Read [Prime routing](references/apps.md#prime-video).
+  This opens content; inspect the page before choosing its Play button.
+- **Play Spotify on the TV:** use `samsung-tv-spotify play URI`, `pause`,
+  `resume`, or `status [TRACK_URI]`. Read [Spotify control](references/apps.md#spotify)
+  for title lookup and the isolated client. Do not use Homebrew `spogo` for TV
+  playback; it does not reliably honor the selected device.
+- **Open a Twitch channel:** use `twitch` with its channel login or exact HTTPS
+  channel link. It gracefully restarts Twitch to consume the link, briefly
+  interrupting current Twitch playback. Live channels can autoplay; offline
+  channels show their page. Use ordinary `launch` just to open the app.
+  Read [app validation](references/apps.md) for evidence and limitations.
+  VOD links are not yet supported by this command.
+- **Open a web page:** use `open` only when a browser is wanted. Never silently
+  substitute browser playback for an app request.
+- **Pause, volume, input, Art Mode:** use the remote operations below.
+
+A user's request to open/play/control content authorizes that ordinary action;
+perform it without an extra confirmation. Stop for login, purchases, ambiguous
+content selection, or a new on-screen authorization that needs the owner.
+
+## App and content commands
+
+```sh
+samsung-tv status                         # REST power/reachability; no WS wake
+samsung-tv-dev status                     # Developer connection/capabilities
+samsung-tv-dev foreground                 # Focused app; not pixels, menus, or playback
+samsung-tv-dev screenshot --output /tmp/frame-UNIQUE.png # New private local PNG
+samsung-tv-dev apps YouTube                # Filter installed names/IDs
+samsung-tv-dev apps                        # Full installed catalog when needed
+samsung-tv-dev app-info 9Ur5IzDKqV.TizenYouTube
+samsung-tv-dev launch 9Ur5IzDKqV.TizenYouTube
+samsung-tv-dev app-state com.samsung.tv.cobalt-yt
+samsung-tv-dev youtube 'https://www.youtube.com/watch?v=VIDEO_ID'
+samsung-tv-dev youtube-state VIDEO_ID      # Read player-reported state; not screen proof
+samsung-tv-dev netflix 'https://www.netflix.com/watch/80094030' # Example: Our Planet S1E3
+samsung-tv-dev twitch 'https://www.twitch.tv/bobross'
+samsung-tv-dev apple-tv 'https://tv.apple.com/episode/umc.cmc.23qox5n6larygqgg6u74fvyj'
+samsung-tv-dev apple-tv-play 'https://tv.apple.com/episode/umc.cmc.23qox5n6larygqgg6u74fvyj'
+samsung-tv-dev max-search 'The Last of Us'
+samsung-tv-dev max-show '93ba22b1-833e-47ba-ae94-8ee7b9eefa9a'
+samsung-tv-dev max-play 'https://play.hbomax.com/video/watch/dae9e532-3714-4f2e-b758-fb9a13def902'
+samsung-tv-dev peacock-search 'The Office'
+samsung-tv-dev peacock-episode '58fabbf4-9291-3575-bcdc-bd25eee192c8'
+samsung-tv-dev peacock-play '58fabbf4-9291-3575-bcdc-bd25eee192c8'
+samsung-tv-dev browser                    # Launch Internet, retain current page
+samsung-tv-dev open 'https://example.com/' # Navigate Internet
+samsung-tv-dev launch APP_ID --url 'CONTENT_URI'
 ```
 
-### Power on/off
-```bash
-samsung-tv power <name> on     # Wake-on-LAN (same LAN only!)
-samsung-tv power <name> off    # WebSocket power off
+Replace placeholders; always quote links. `youtube` accepts ordinary watch,
+short, shorts, live and embed links or an 11-character ID; `t`/`start` offsets
+are supported. It uses local DIAL discovery and YouTube's playback-control API,
+keeps session values in memory, and has no browser fallback. The generic
+`launch --url` path is useful for apps that handle Tizen `view` URIs; it did
+**not** select the video in our YouTube test. Use the dedicated command there.
+
+`netflix` accepts numeric content IDs or exact `netflix.com` / `www.netflix.com`
+HTTPS watch/title links. Query parameters are not forwarded. Use an episode's
+watch ID for an exact episode; a series title ID leaves episode choice to Netflix.
+Netflix controls saved progress, profile selection and entitlement. Do not call
+`netflix` to check status: each call can restart the app and change playback.
+An accepted request remains separate from observed playback.
+
+## Remote, power and Art Mode
+
+```sh
+samsung-tv-dev wake                       # LAN WoL from Crosstown Mac
+samsung-tv power frame off
+samsung-tv key frame KEY_PLAY
+samsung-tv key frame KEY_PAUSE
+samsung-tv key frame KEY_STOP
+samsung-tv key frame KEY_RETURN
+samsung-tv key frame KEY_HOME
+samsung-tv key frame KEY_ENTER
+samsung-tv key frame KEY_UP               # Also DOWN / LEFT / RIGHT
+samsung-tv keys frame LEFT ENTER          # Short observed batch, one WS connection
+samsung-tv key frame KEY_HDMI1
+samsung-tv volume frame up                # Or down / signed number of presses
+samsung-tv mute frame                     # Toggle, not an absolute mute setting
+samsung-tv art frame                      # Read Art Mode (opens WS)
+samsung-tv art frame on                   # Or off
+samsung-tv art frame list
+samsung-tv art frame select ART_ID
 ```
 
-### Volume / mute
-```bash
-samsung-tv volume <name> up         # Volume up 1 step
-samsung-tv volume <name> down       # Volume down 1 step
-samsung-tv volume <name> 5          # Volume up 5 steps
-samsung-tv volume <name> -5         # Volume down 5 steps
-samsung-tv mute <name>              # Toggle mute
-```
+Volume numbers count key presses; they are not an absolute volume level.
+`keys` accepts 1–16 navigation/transport keys, closes its connection, and never
+retries a partially sent batch. Inspect the screen before resuming after failure.
+Avoid unbounded or blind key sequences. `mute` is a toggle: do not claim a known
+muted state when the starting state is unknown. `wake` sends a packet; check
+power afterward. Do not send WoL from the Mini and assume it crossed Tailscale.
+A WebSocket connection can light the panel/show a notification; use REST status
+for passive checks. Stop after a connection timeout or prompt rather than repeatedly
+triggering approval dialogs or toggles.
 
-### Send remote key
-```bash
-samsung-tv key <name> KEY_HOME
-samsung-tv key <name> KEY_SOURCE
-samsung-tv key <name> KEY_HDMI1
-samsung-tv key <name> KEY_HDMI2
-samsung-tv key <name> KEY_RETURN
-samsung-tv key <name> KEY_ENTER
-samsung-tv key <name> KEY_UP
-samsung-tv key <name> KEY_DOWN
-samsung-tv key <name> KEY_LEFT
-samsung-tv key <name> KEY_RIGHT
-```
+## Verification and recovery
 
-### Apps
-```bash
-samsung-tv app <name> list              # List installed apps
-samsung-tv app <name> launch netflix    # Launch by fuzzy name
-samsung-tv app <name> launch 3201907018807  # Launch by app ID
-samsung-tv app <name> close netflix     # Close app
-```
+The helper distinguishes `launch_acknowledged`, `uri_submitted`,
+`playback_request_accepted`, and `playback_verified`. A running process is not
+proof of foreground display or playback. Confirm actual playback through reliable
+player state when available, or ask what the owner sees. Otherwise report the
+request as sent/accepted, not “now playing.” Avoid resending a successful playback
+request just to check status; that restarts the video.
 
-### Art mode (Frame TV only)
-```bash
-samsung-tv art <name>                   # Show art mode state
-samsung-tv art <name> on                # Enter art mode
-samsung-tv art <name> off               # Exit art mode
-samsung-tv art <name> list              # List available artwork
-samsung-tv art <name> select <id>       # Display specific artwork
-```
+Use `foreground` after an app launch to identify the focused window's application.
+It checks focus before and after PID-to-app mapping; unstable or unmapped focus
+does not verify an app. `foreground_verified` confirms that mapping only, not
+the current page, selected profile, highlighted control, panel power, or playback.
+Do not claim to see Netflix's home screen or chooser from a focused Netflix PID.
 
-## TVs
+For visual navigation, use `screenshot --output NEW_LOCAL_PNG`, then inspect that
+file with the available image-viewing tool. The owner authorized temporary root
+for this purpose. The helper uses the reviewed archive-launcher route, captures
+the focused application's surface, transfers only that image, and removes its
+TV staging. It checks root identity, focus stability, source hashes and cleanup.
+No kernel-memory exploit, UEP change, or persistent root daemon is involved.
+Netflix screenshots were visually verified on 2026-10-24, including readable
+menus and selection highlighting. Prefer capture → a small number of purposeful
+remote keys → fresh capture. Do not treat the image as a live stream, a complete
+composite of system overlays, or proof that protected video is playing. Store
+screenshots outside Git and avoid capturing login/payment details unnecessarily.
 
-### Crosstown residence
-- **Samsung The Frame 65** — QN65LS03BAFXZA, 2022 (`192.168.165.2`, MAC `${SAMSUNG_TV_MAC}`)
+After a YouTube play request, use `youtube-state VIDEO_ID` for supporting evidence
+without starting a stopped app or changing playback. A matching video and playing
+state produce `requested_video_playing_in_api: true`, but **not** verified visible
+playback: this TV reported the requested video and advancing time while the owner
+still saw its account chooser. `playback_verified` therefore remains false.
+Treat screen observation as authoritative when it conflicts with the API.
 
-TV names are fuzzy-matched (e.g. "frame" for Samsung The Frame 65).
+If an account chooser is visible, use the owner's requested profile. Inspect a
+fresh screenshot for the highlighted tile and send only the necessary keys.
+If capture fails or the highlight is ambiguous, ask the owner. Dylan's profile was selected
+with Enter when highlighted on 2026-10-24; do not assume it will always be highlighted.
+Confirm the chooser closed. If the owner sees the home screen, one fresh request
+for the already-requested video is appropriate after that state change. Do not
+infer successful profile selection from API playback state.
 
-## Known App IDs
+If developer access fails, check the Crosstown Mac's SSH reachability and that
+its LAN address still matches the TV's Developer IP. If an SDB server already
+exists, leave it alone. The helper owns only its temporary server, listener,
+and staging files; it reports uncertain cleanup as a failure. Do not replace
+it with arbitrary SDK shell injection, install a root controller, alter Home
+routing, or disable TV security settings to complete ordinary controls.
 
-Netflix, YouTube, Spotify, Disney+, Hulu, Prime Video, HBO Max / Max, Apple TV, Plex, Paramount+, Peacock, Tubi — all fuzzy-matched by name.
-
-## Network
-
-TV is on the Crosstown LAN (`192.168.165.0/24`). The Mac Mini reaches it via Tailscale subnet routing through `dylans-mac` (must be awake at Crosstown).
-
-**Wake-on-LAN limitation**: WoL uses broadcast packets which don't traverse Tailscale subnet routing. Power-on only works from `dylans-mac` (same LAN). Power-off works from anywhere via WebSocket.
-
-TV config is in `~/.openclaw/samsung-tvs.json`. Auth tokens are cached at `~/.cache/samsung-tv/<name>/token.txt`.
-
-## Notes
-
-- Always run `samsung-tv status` first to check if the TV is reachable and powered on
-- First connection to a new TV requires physical "Allow" on the TV remote
-- Art mode commands only work on Samsung The Frame models
-- Volume uses remote key simulation (KEY_VOLUP/KEY_VOLDOWN) — there's no direct volume API
-- If TV shows UNREACHABLE, the subnet router (`dylans-mac`) may be asleep or offline
+The browser and stock curl accepted compromised eMudhra test chains on
+2026-10-24. Avoid sensitive browser logins until remediated; this finding does
+not imply every streaming app uses the same trust path. For maintainer diagnostics
+and evidence, see `/Users/dbochman/dotfiles/docs/samsung-tv-developer-control.md`.

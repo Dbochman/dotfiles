@@ -1,0 +1,989 @@
+#!/usr/bin/env python3
+"""Bounded Samsung TV developer controls through the Crosstown Mac.
+
+Usage: samsung-tv-dev status | apps [QUERY] | launch APP_ID [--url URI]
+       samsung-tv-dev browser | open URL | app-info APP_ID | app-state APP_ID
+       samsung-tv-dev youtube VIDEO_URL_OR_ID | youtube-state [VIDEO_URL_OR_ID] | wake | foreground
+       samsung-tv-dev netflix CONTENT_URL_OR_ID  # Restarts Netflix to select content
+       samsung-tv-dev twitch CHANNEL_OR_URL     # Restarts Twitch to select channel
+       samsung-tv-dev apple-tv URL | apple-tv-play URL
+       samsung-tv-dev prime-video GTI          # Opens exact content; no blind Play key
+       samsung-tv-dev max-show ID_OR_URL | max-play ID_OR_URL | max-search TITLE
+       samsung-tv-dev peacock-episode ID_OR_URL | peacock-play ID_OR_URL
+       samsung-tv-dev peacock-show SERIES_ID | peacock-search TITLE
+       samsung-tv-dev screenshot --output NEW_LOCAL_PNG
+Uses an already enabled Developer Mode and an already installed, verified SDB.
+Content/navigation uses the owner-authorized SDK-user package-name execution
+path. Screenshots use owner-authorized temporary root; no arbitrary shell
+interface or TV app installation is exposed.
+"""
+
+import argparse
+import asyncio
+import base64
+from concurrent.futures import ThreadPoolExecutor
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shlex
+import signal
+import socket
+import subprocess
+import sys
+import time
+import tempfile
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+
+HOST = "dylans-macbook-pro"
+TARGET = "192.168.165.2:26101"
+BROWSER = "com.samsung.tv.knox-browser"
+NETFLIX = "org.tizen.netflix-app"
+TWITCH = "Jz7aUrV2Q4.Twitch"
+APPLE_TV = "com.samsung.tv.aria-video"
+PRIME_VIDEO = "org.tizen.primevideo"
+HBO_MAX = "5b8c3eb16b.BeamCTVDev"
+PEACOCK = "gzcc4LRFBF.Peacock"
+CALLBACK_HOST = "192.168.165.109"
+TV_MAC = "A0:D7:F3:B2:C0:AC"
+SDB_RELATIVE = ".local/share/samsung-tv-tools/sdb-4.2.36/sdb"
+SDB_SHA256 = "05db410d2e36e85147f95b20bae6296a71c54dab0e1ec79f9e11b89c4b6bd2cd"
+ROOT_RELATIVE = ".local/share/samsung-tv-tools/archive-root-0.0.12"
+ROOT_MANIFEST_SHA256 = "72e3db26a3f03b28bec69050029f93a0b948c922c1104f31137354f63274736f"
+CAPABILITIES = {
+    "platform_version", "platform_build_version", "cpu_arch", "profile_name",
+    "secure_protocol", "intershell_support", "sdbd_rootperm", "rootonoff_support",
+    "can_launch", "log_enable", "appcmd_support", "pkgcmd_debugmode",
+}
+
+
+def server_pid():
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-nP", "-iTCP:26099", "-sTCP:LISTEN", "-Fp"],
+        capture_output=True, text=True, timeout=5,
+    )
+    if result.returncode not in (0, 1) or result.stderr.strip():
+        raise RuntimeError("Cannot inspect the SDB listener; refusing to proceed")
+    pids = {int(line[1:]) for line in result.stdout.splitlines() if line.startswith("p")}
+    if len(pids) > 1:
+        raise RuntimeError("Multiple SDB listeners; refusing to interfere")
+    return next(iter(pids), None)
+
+
+def sdb_command(sdb, args, timeout=12):
+    result = subprocess.run([str(sdb), *args], capture_output=True, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(f"SDB {args[-1]} failed (exit {result.returncode})")
+    return result.stdout
+
+
+def stop_owned_server(pid, sdb):
+    if pid is None:
+        return
+    # Never kill a pre-existing server or a replacement that took over its port.
+    current = server_pid()
+    if current is None:
+        return
+    if current != pid:
+        raise RuntimeError("SDB server ownership changed; no server was stopped")
+    # SDB rewrites argv[0] to just 'sdb'; Rosetta also maps translated images.
+    # Check the mapped executable, not a command-line prefix.
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-a", "-p", str(pid), "-d", "txt", "-Fn"],
+        capture_output=True, text=True, timeout=5,
+    )
+    mapped = {line[1:] for line in result.stdout.splitlines() if line.startswith("n")}
+    if str(sdb) not in mapped:
+        raise RuntimeError("Cannot confirm SDB process ownership; no server was stopped")
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(10):
+        if server_pid() != pid:
+            return
+        time.sleep(0.1)
+    raise RuntimeError("Owned SDB server did not stop; inspect its PID before retrying")
+
+
+def validate_app_id(value):
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", value):
+        raise ValueError("Use an installed application ID from apps, not a name or path")
+    return value
+
+
+def validate_uri(value, browser=False):
+    if len(value) > 4096 or any(ord(c) < 33 or ord(c) == 127 for c in value):
+        raise ValueError("URI must be at most 4096 characters with no whitespace/control characters")
+    parts = urlsplit(value)
+    if not parts.scheme or parts.scheme in {"javascript", "data", "file", "about", "chrome", "intent"}:
+        raise ValueError("Use a web URL or an application's content URI")
+    if browser and parts.scheme not in {"http", "https"}:
+        raise ValueError("Browser navigation requires http or https")
+    if parts.scheme in {"http", "https"} and not parts.hostname:
+        raise ValueError("Web URL requires a host")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError("Credentials in URIs are not supported")
+    return value
+
+
+def installed_apps(sdb):
+    raw = sdb_command(sdb, ["-s", TARGET, "shell", "0", "applist"])
+    return [{"name": name, "id": app_id} for name, app_id in
+            re.findall(r"^\s*'([^']+)'\s+'([^']+)'", raw, re.M)]
+
+
+def injection_argument(command):
+    encoded = base64.b64encode(command.encode()).decode()
+    argument = "0 appinstall tpk new2.tpk`printf${IFS}%s${IFS}" + encoded + "|base64${IFS}-d|bash`.tpk"
+    if len(argument.encode()) > 510:
+        raise ValueError("SDK command exceeds the package-name transport bound")
+    return argument
+
+
+def guarded_sdk_command(remote, gate):
+    # appinstall can evaluate its package name again after the script exits.
+    # Check for the script before creating its gate, so cleanup stays complete.
+    return f"test -f {remote}&&/bin/mkdir {gate} 2>/dev/null&&{{ . {remote};}}"
+
+
+def sdk_capture(sdb, command, output_limit=65536):
+    """Capture one allowlisted operation as UID 901, with bounded cleanup."""
+    token = secrets.token_hex(8)
+    remote = f"/home/owner/share/tmp/sdk_tools/.oc-tv-{token}.sh"
+    gate = f"/tmp/oc-tv-{token}"
+    staged = False
+    cleaned = False
+
+    def inject(body):
+        return subprocess.run(
+            [str(sdb), "-s", TARGET, "shell", injection_argument(body)],
+            capture_output=True, text=True, timeout=25,
+        )
+
+    try:
+        with socket.socket() as listener:
+            listener.bind((CALLBACK_HOST, 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            script = (
+                f"trap '/bin/rm -f {remote}; /bin/rmdir {gate} 2>/dev/null' EXIT\n"
+                f"exec 3<>/dev/tcp/{CALLBACK_HOST}/{port} || exit 72\n"
+                f"printf '{token}\\n' >&3\nexec >&3 2>&3\n"
+                'if test "$(id -u)" != 901; then echo unexpected_uid; exit 73; fi\n'
+                + command + "\nresult=$?\n"
+                f"/bin/rm -f {remote}; /bin/rmdir {gate}\n"
+                f"if test ! -e {remote} && test ! -e {gate}; then echo __OC_CLEANUP__=1; fi\n"
+                'printf "__OC_RESULT__=%s\\n" "$result"\n'
+            )
+            with tempfile.TemporaryDirectory(prefix="samsung-tv-control-") as directory:
+                path = Path(directory) / "operation.sh"
+                path.write_text(script)
+                staged = True
+                sdb_command(sdb, ["-s", TARGET, "push", str(path), remote])
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(inject, guarded_sdk_command(remote, gate))
+                deadline = time.monotonic() + 20
+                while True:
+                    listener.settimeout(max(0.01, deadline - time.monotonic()))
+                    connection, peer = listener.accept()
+                    if peer[0] == TARGET.split(":")[0]:
+                        break
+                    connection.close()
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("No callback from the TV")
+                with connection:
+                    chunks = bytearray()
+                    while True:
+                        connection.settimeout(max(0.01, deadline - time.monotonic()))
+                        chunk = connection.recv(4096)
+                        if not chunk:
+                            break
+                        chunks.extend(chunk)
+                        if len(chunks) > output_limit:
+                            raise RuntimeError("TV response exceeded the output bound")
+                # appinstall often exits 1 for the synthetic package name.
+                # The authenticated callback, not that transport code, is authoritative.
+                future.result(timeout=5)
+                first, _, output = chunks.decode("utf-8", errors="replace").partition("\n")
+                if first != token:
+                    raise RuntimeError("TV callback proof mismatch")
+                lines = output.splitlines()
+                cleaned = "__OC_CLEANUP__=1" in lines
+                if not cleaned:
+                    raise RuntimeError("TV temporary-file cleanup was not confirmed")
+                if not lines or lines[-1] != "__OC_RESULT__=0":
+                    raise RuntimeError("TV operation failed; do not assume the requested action occurred")
+                return "\n".join(line for line in lines if not line.startswith("__OC_"))
+    finally:
+        if staged and not cleaned:
+            try:
+                inject(f"/bin/rm -f {remote}; /bin/rmdir {gate} 2>/dev/null")
+            finally:
+                print("TV cleanup attempted after failure; not independently confirmed. "
+                      f"Inspect only {remote} and {gate} before retrying.", file=sys.stderr)
+
+
+def native_launch_command(app_id, uri=None):
+    args = ["/usr/bin/launch_app", validate_app_id(app_id)]
+    if uri:
+        args += ["__APP_SVC_OP_TYPE__", "http://tizen.org/appcontrol/operation/view",
+                 "__APP_SVC_URI__", validate_uri(uri)]
+    return shlex.join(args)
+
+
+def apple_tv_url(value, play=False):
+    if any(ord(c) < 32 for c in value):
+        raise ValueError("Use an Apple TV movie, show or episode HTTPS link")
+    url = urlsplit(value.strip())
+    if (url.scheme != "https" or url.hostname != "tv.apple.com"
+            or url.username is not None or url.password is not None or url.port not in {None, 443}):
+        raise ValueError("Use an exact tv.apple.com HTTPS link")
+    match = re.fullmatch(r"/(?:[a-z]{2}/)?(movie|show|episode)/(?:[A-Za-z0-9%._~-]+/)?(umc\.cmc\.[a-z0-9]{1,40})/?", url.path)
+    if not match or any(part in {".", ".."} for part in url.path.split("/")):
+        raise ValueError("Use an Apple TV movie, show or episode content link")
+    # Canonical provider identity only; discard tracking, profile and diagnostic parameters.
+    canonical = "https://tv.apple.com/" + match[1] + "/" + match[2]
+    return canonical + ("?action=play" if play else ""), match[2]
+
+
+def apple_tv_request(sdb, value, play=False):
+    url, content_id = apple_tv_url(value, play)
+    if APPLE_TV not in {app["id"] for app in installed_apps(sdb)}:
+        raise RuntimeError("Apple TV is not installed")
+    payload = json.dumps({"values": url}, separators=(",", ":"))
+    raw = sdk_capture(sdb, shlex.join(["/usr/bin/launch_app", APPLE_TV, "PAYLOAD", payload]))
+    if "successfully launched" not in raw:
+        raise RuntimeError("Apple TV content launch was not acknowledged; inspect before retrying")
+    return {"app": APPLE_TV, "requested_content_id": content_id, "action": "play" if play else "details",
+            "launch_acknowledged": True, "content_request_submitted": True,
+            "root_required": False, "browser_fallback": False,
+            "screen_observed": False, "playback_verified": False}
+
+
+def prime_video_gti(value):
+    if not re.fullmatch(r"amzn1\.dv\.gti\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value):
+        raise ValueError("Use an exact Prime Video episode/movie GTI resolved from provider metadata")
+    return value
+
+
+def prime_video_request(sdb, value):
+    gti = prime_video_gti(value)
+    if PRIME_VIDEO not in {app["id"] for app in installed_apps(sdb)}:
+        raise RuntimeError("Prime Video is not installed")
+    payload = json.dumps({"values": gti}, separators=(",", ":"))
+    raw = sdk_capture(sdb, shlex.join(["/usr/bin/launch_app", PRIME_VIDEO, "PAYLOAD", payload]))
+    if "successfully launched" not in raw:
+        raise RuntimeError("Prime Video content launch was not acknowledged; inspect before retrying")
+    return {"app": PRIME_VIDEO, "requested_content_id": gti, "action": "details",
+            "launch_acknowledged": True, "content_request_submitted": True,
+            "root_required": False, "browser_fallback": False,
+            "screen_observed": False, "playback_verified": False}
+
+
+def max_target(value, kind):
+    if kind not in {"show", "video", "search"}:
+        raise ValueError("Unsupported HBO Max target type")
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise ValueError("HBO Max input must not contain control characters")
+    if kind == "search":
+        value = value.strip()
+        if not value or len(value) > 120 or any(c in value for c in ",?"):
+            raise ValueError("Use a search title of 1–120 characters without commas or question marks")
+        return value
+    uuid = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    if re.fullmatch(uuid, value):
+        return value
+    url = urlsplit(value)
+    if (url.scheme != "https" or url.hostname not in {"play.hbomax.com", "play.max.com"}
+            or url.username is not None or url.password is not None or url.port not in {None, 443}):
+        raise ValueError("Use a content UUID or exact HBO Max playback HTTPS link")
+    prefix = "show" if kind == "show" else "video/watch"
+    match = re.fullmatch("/" + prefix + "/(" + uuid + ")/?", url.path)
+    if not match:
+        raise ValueError("The HBO Max link must match the requested show or video action")
+    return match[1]
+
+
+def cold_payload_request(sdb, app_id, label, payload):
+    if not payload or len(payload.encode("utf-8")) > 1000 or "\x00" in payload:
+        raise ValueError("Content payload is empty or exceeds the bounded launcher input")
+    if app_id not in {app["id"] for app in installed_apps(sdb)}:
+        raise RuntimeError(f"{label} is not installed")
+    restarted = app_running(sdb, app_id, label)
+    if restarted:
+        sdk_capture(sdb, shlex.join(["/usr/bin/app_launcher", "--terminate=" + app_id]))
+        for attempt in range(6):
+            if not app_running(sdb, app_id, label):
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError(f"{label} did not stop; content request was not sent")
+    # launch_app splits commas into array values. aul_test preserves one string.
+    # A fresh WRT process consumes the payload without requiring a warm appcontrol event.
+    # This diagnostic CLI exits with the returned PID, which is usually nonzero.
+    # Normalize that transport status and require its positive-PID success record.
+    raw = sdk_capture(sdb, shlex.join(["/usr/bin/aul_test", "launch", app_id, "PAYLOAD", payload]) + " || true")
+    acknowledgements = re.findall(r"^\.\.\. test successful ret = ([1-9][0-9]*)\s*$", raw, re.M)
+    if len(acknowledgements) != 1:
+        raise RuntimeError(f"{label} content launch was not acknowledged; inspect before retrying")
+    return {"app": app_id, "pid": int(acknowledgements[0]), "restart_performed": restarted,
+            "launch_acknowledged": True, "content_request_submitted": True,
+            "root_required": False, "browser_fallback": False,
+            "screen_observed": False, "playback_verified": False}
+
+
+def max_request(sdb, value, kind):
+    target = max_target(value, kind)
+    result = cold_payload_request(sdb, HBO_MAX, "HBO Max", f"id={target},type={kind}")
+    result.update({"requested_target": target, "target_type": kind})
+    return result
+
+
+def peacock_payload(value, kind):
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise ValueError("Peacock input must not contain control characters")
+    if kind == "search":
+        target = value.strip()
+        if not target or len(target) > 120:
+            raise ValueError("Use a search title of 1–120 characters")
+        data = {"search": target}
+    elif kind in {"episode", "play", "show"}:
+        target = value
+        pattern = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+        if kind == "show":
+            pattern = r"[0-9]{1,25}"
+        if not re.fullmatch(pattern, target):
+            url = urlsplit(value)
+            if (url.scheme != "https" or url.hostname not in {"www.peacocktv.com", "peacocktv.com"}
+                    or url.username is not None or url.password is not None
+                    or url.port not in {None, 443}):
+                raise ValueError("Use a Peacock content ID or exact provider HTTPS link")
+            path = r"/(?:watch-online|watch/asset)/tv/[^/]+/[0-9]+/seasons/[0-9]+/episodes/[^/]+/(" + pattern + r")/?"
+            if kind == "show":
+                path = r"/(?:watch-online|watch/asset)/tv/[^/]+/(" + pattern + r")/?"
+            match = re.fullmatch(path, url.path)
+            if not match:
+                raise ValueError("Peacock link must identify the requested series or exact episode")
+            target = match[1]
+        data = ({"type": "SERIES", "action": "PDP", "providerSeriesId": target}
+                if kind == "show" else
+                {"type": "EPISODE", "action": "PLAY" if kind == "play" else "PDP", "pvid": target})
+    else:
+        raise ValueError("Unsupported Peacock target type")
+    # Samsung decodes the whole URL before extracting the parameter; the worker
+    # then decodes that parameter. Preserve &, # and % in titles across both passes.
+    encoded = quote(quote(json.dumps(data, separators=(",", ":")), safe=""), safe="")
+    link = "https://www.peacocktv.com/deeplink?deeplinkData=" + encoded
+    payload = json.dumps({"values": link}, separators=(",", ":"))
+    if len(payload.encode("utf-8")) > 1000:
+        raise ValueError("Peacock request exceeds the bounded launcher input")
+    return target, payload
+
+
+def peacock_request(sdb, value, kind):
+    target, payload = peacock_payload(value, kind)
+    result = cold_payload_request(sdb, PEACOCK, "Peacock", payload)
+    result.update({"requested_target": target, "target_type": "episode" if kind == "play" else kind,
+                   "action": "play" if kind == "play" else "search" if kind == "search" else "details"})
+    return result
+
+
+def twitch_channel(value):
+    if any(ord(c) < 32 for c in value):
+        raise ValueError("Use a Twitch channel login or exact HTTPS channel link")
+    value = value.strip()
+    if "://" in value:
+        url = urlsplit(value)
+        if (url.scheme != "https" or url.hostname not in {"twitch.tv", "www.twitch.tv"}
+                or url.username is not None or url.password is not None
+                or url.port not in {None, 443} or url.query or url.fragment):
+            raise ValueError("Use a Twitch channel login or exact HTTPS channel link")
+        value = url.path.removeprefix("/").removesuffix("/")
+    if (not re.fullmatch(r"[A-Za-z0-9_]{1,25}", value)
+            or value.lower() in {"directory", "downloads", "search", "settings", "videos",
+                                 "subscriptions", "inventory", "wallet", "prime", "following",
+                                 "turbo", "login", "signup", "jobs", "p", "products"}):
+        raise ValueError("Use a Twitch channel login; VOD links are not yet supported")
+    return value.lower()
+
+
+def twitch_play(sdb, value):
+    channel = twitch_channel(value)
+    if TWITCH not in {app["id"] for app in installed_apps(sdb)}:
+        raise RuntimeError("Twitch is not installed")
+    # The Samsung URL parser runs on app-shell startup, not warm appcontrol.
+    restarted = app_running(sdb, TWITCH, "Twitch")
+    if restarted:
+        sdk_capture(sdb, shlex.join(["/usr/bin/app_launcher", "--terminate=" + TWITCH]))
+        for attempt in range(6):
+            if not app_running(sdb, TWITCH, "Twitch"):
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("Twitch did not stop; content request was not sent")
+    raw = sdk_capture(sdb, shlex.join([
+        "/usr/bin/launch_app", TWITCH, "PAYLOAD", "https://www.twitch.tv/" + channel]))
+    if "successfully launched" not in raw:
+        raise RuntimeError("Twitch content launch was not acknowledged; inspect before retrying")
+    return {"app": TWITCH, "requested_channel": channel, "launch_acknowledged": True,
+            "restart_performed": restarted,
+            "content_request_submitted": True, "root_required": False,
+            "browser_fallback": False, "screen_observed": False, "playback_verified": False}
+
+
+def netflix_video(value):
+    value = value.strip()
+    if re.fullmatch(r"[1-9][0-9]{0,11}", value):
+        return value
+    url = urlsplit(value)
+    if (url.scheme != "https" or url.hostname not in {"netflix.com", "www.netflix.com"}
+            or url.username is not None or url.password is not None
+            or url.port not in {None, 443} or any(ord(c) < 32 for c in value)):
+        raise ValueError("Use a Netflix watch/title HTTPS link or numeric content ID")
+    match = re.fullmatch(r"/(?:watch|title)/([1-9][0-9]{0,11})/?", url.path)
+    if not match:
+        raise ValueError("Use a Netflix watch/title HTTPS link or numeric content ID")
+    return match[1]
+
+
+def netflix_launch_command(value):
+    content_id = netflix_video(value)
+    # Verified on LS03B/1720.7. The running-app sendSystemCommand binding is a
+    # no-op; these fields must reach CreateLaunchParameter on a fresh process.
+    return shlex.join(["/usr/bin/launch_app", NETFLIX, "action_play_url",
+                       f"m={content_id}&trackId=15539201&showMovieInfoOnly=false",
+                       "NETFLIX_SOURCE_TYPE", "4"])
+
+
+def app_running(sdb, app_id, label):
+    # app_launcher exits 1 for the valid "not running" result. Accept only its
+    # recognized state text, never treat an arbitrary failure as stopped.
+    raw = sdk_capture(sdb, shlex.join([
+        "/usr/bin/app_launcher", "--is-running=" + validate_app_id(app_id)]) + " || true")
+    states = re.findall(r"^result: (running|not running)\s*$", raw, re.M)
+    if len(states) != 1:
+        raise RuntimeError(f"{label} running state is unknown; no launch attempted")
+    return states[0] == "running"
+
+
+def netflix_running(sdb):
+    return app_running(sdb, NETFLIX, "Netflix")
+
+
+def netflix_play(sdb, value):
+    content_id = netflix_video(value)
+    if NETFLIX not in {app["id"] for app in installed_apps(sdb)}:
+        raise RuntimeError("Netflix is not installed")
+    restarted = netflix_running(sdb)
+    if restarted:
+        sdk_capture(sdb, shlex.join(["/usr/bin/app_launcher", "--terminate=" + NETFLIX]))
+        for attempt in range(6):
+            if not netflix_running(sdb):
+                break
+            time.sleep(0.5)
+        else:
+            raise RuntimeError("Netflix did not stop; content request was not sent")
+    raw = sdk_capture(sdb, netflix_launch_command(content_id))
+    if "successfully launched" not in raw:
+        raise RuntimeError("Netflix content launch was not acknowledged; inspect before retrying")
+    return {"app": NETFLIX, "requested_content_id": content_id,
+            "restart_performed": restarted, "launch_acknowledged": True,
+            "content_request_submitted": True, "root_required": False,
+            "browser_fallback": False, "screen_observed": False,
+            "playback_verified": False}
+
+
+def foreground_command():
+    return r'''focused=$(/usr/bin/aul_window get_focused_pid) || exit 1
+printf '%s\n' "$focused"
+pid=$(printf '%s\n' "$focused" | sed -n 's/^\[get_focused_pid\] result: \([0-9][0-9]*\)$/\1/p')
+case "$pid" in ''|*[!0-9]*) exit 1;; esac
+if test "$pid" -gt 0; then
+  /usr/bin/aul_test get_app_bypid "$pid" & task_pid=$!
+  ( sleep 4; kill -TERM "$task_pid" 2>/dev/null ) & guard_pid=$!
+  wait "$task_pid"
+  kill "$guard_pid" 2>/dev/null; wait "$guard_pid" 2>/dev/null
+fi
+/usr/bin/aul_window get_focused_pid'''
+
+
+def foreground_summary(raw):
+    pids = re.findall(r"^\[get_focused_pid\] result: (-?\d+)\s*$", raw, re.M)
+    if len(pids) != 2:
+        raise RuntimeError("TV did not return both foreground observations")
+    before, after = map(int, pids)
+    stable = before == after
+    match = re.search(r"^pkgname = ([A-Za-z0-9_][A-Za-z0-9_.-]{0,127}), pid = (\d+)\s*$", raw, re.M)
+    app = match[1] if stable and match and int(match[2]) == after else None
+    return {"focused_pid": after if after > 0 else None, "app": app,
+            "focus_stable": stable, "foreground_verified": app is not None,
+            "screen_observed": False, "ui_tree_available": False,
+            "playback_verified": False}
+
+
+def focused_capture_path(raw, directory, pid):
+    windows = set()
+    for line in raw.splitlines():
+        match = re.match(r"\s*\d+\s+(0x[0-9a-f]+)\s+\d+\s+(\d+)\s+"
+                         r"\d+\s+\d+\s+-?\d+\s+-?\d+\s+O(?:\s|$)", line)
+        if match and int(match[2]) == pid:
+            windows.add(match[1])
+    if len(windows) != 1:
+        raise RuntimeError("Cannot identify one focused window in the compositor capture")
+    window = windows.pop()
+    pattern = re.escape(directory) + r"/topvwins-\d{8}\.\d{6}/" + re.escape(window) + r"_0\.png SAVED"
+    paths = {line.removesuffix(" SAVED") for line in raw.splitlines()
+             if re.fullmatch(pattern, line)}
+    if len(paths) != 1:
+        raise RuntimeError("Compositor did not confirm a PNG for the focused window")
+    return paths.pop()
+
+
+def screenshot(sdb):
+    """One owner-authorized, temporary root session; capture the focused app only."""
+    assets = Path.home() / ROOT_RELATIVE
+    manifest = (assets / "manifest.json").read_bytes()
+    if hashlib.sha256(manifest).hexdigest() != ROOT_MANIFEST_SHA256:
+        raise RuntimeError("Root asset manifest does not match the reviewed release")
+    for name, digest in json.loads(manifest)["files"].items():
+        if hashlib.sha256((assets / name).read_bytes()).hexdigest() != digest:
+            raise RuntimeError("Root assets changed; refusing to execute them")
+    sys.path.insert(0, str(assets))
+    from samsung_tv_root import archive_root
+    from samsung_tv_root.sdb import SdbClient, CaptureResult
+
+    # Use the existing nonce/peer-checked Python transport, not the standalone
+    # executable's callback listener, which failed on this Mac.
+    def capture(client, command, **kwargs):
+        return CaptureResult(output=sdk_capture(sdb, command) + "\n[exit:0]\n",
+                             transport_returncode=1)
+
+    def require_shell(client):
+        if sdk_capture(sdb, "id -u").strip() != "901":
+            raise RuntimeError("Unexpected SDK identity")
+
+    previous_capture, previous_require = SdbClient.capture, SdbClient.require_shell_injection
+    previous_sdb = os.environ.get("SDB")
+    before = foreground_summary(sdk_capture(sdb, foreground_command()))
+    if not before["foreground_verified"]:
+        raise RuntimeError("No stable focused app to capture")
+    directory = "/tmp/oc-screen-" + secrets.token_hex(8)
+    try:
+        SdbClient.capture, SdbClient.require_shell_injection = capture, require_shell
+        os.environ["SDB"] = str(sdb)
+        command = (f'test "$(id -u)" = 0 || exit 1\numask 077\nmkdir {directory}\n'
+                   '/usr/bin/enlightenment_info -topvwins\n'
+                   f'/usr/bin/enlightenment_info -dump topvwins {directory}\n'
+                   f'chown -R 901:901 {directory}\n')
+        evidence = asyncio.run(archive_root.probe(
+            TARGET.split(":")[0], runtime="3.1", callback_host=CALLBACK_HOST,
+            bind_host=CALLBACK_HOST, accept_timeout=20, command_timeout=12,
+            commands=(command,), payloads=assets / "payloads"))
+        operation = evidence["commands"][0]
+        if (not evidence["authenticated"] or evidence["uid"] != 0 or evidence["euid"] != 0
+                or not evidence["staging_cleaned"] or not evidence["system_files_unchanged"]
+                or operation["exit_code"] != 0 or operation["timed_out"]):
+            raise RuntimeError("Root capture or its cleanup was not verified")
+        remote = focused_capture_path(operation["stdout"], directory, before["focused_pid"])
+        encoded = sdk_capture(sdb, "/usr/bin/base64 " + remote, output_limit=16 * 1024 * 1024)
+        data = base64.b64decode("".join(encoded.split()), validate=True)
+        if not data.startswith(b"\x89PNG\r\n\x1a\n") or len(data) < 24:
+            raise RuntimeError("Capture did not contain a PNG")
+        after = foreground_summary(sdk_capture(sdb, foreground_command()))
+        if (not after["foreground_verified"] or before["focused_pid"] != after["focused_pid"]
+                or before["app"] != after["app"]):
+            raise RuntimeError("App focus changed during capture; discard the image")
+        return {"app": after["app"], "focused_pid": after["focused_pid"],
+                "capture_scope": "focused_app_surface", "root_verified": True,
+                "system_files_unchanged": True, "root_staging_cleaned": True,
+                "width": int.from_bytes(data[16:20], "big"),
+                "height": int.from_bytes(data[20:24], "big"),
+                "playback_verified": False, "image_sha256": hashlib.sha256(data).hexdigest(),
+                "image_base64": base64.b64encode(data).decode("ascii")}
+    finally:
+        SdbClient.capture, SdbClient.require_shell_injection = previous_capture, previous_require
+        if previous_sdb is None:
+            os.environ.pop("SDB", None)
+        else:
+            os.environ["SDB"] = previous_sdb
+        # Only this run's generated PNGs/directories; no broad TV cleanup.
+        sdk_capture(sdb, f"rm -f {directory}/topvwins-*/*.png; "
+                    f"rmdir {directory}/topvwins-* 2>/dev/null; rmdir {directory} 2>/dev/null; "
+                    f"test ! -e {directory}")
+
+
+def manifest_summary(raw, app_id):
+    # Parse only the requested application's metadata; never print whole manifests.
+    root = ET.fromstring(raw)
+    apps = [e for e in root.iter() if e.get("appid") == app_id]
+    controls = []
+    links = {}
+    allowed_metadata = {"app.link", "nativeID", "launch_dial.link", "launch_search_q.link",
+                        "launch_search_v.link", "launch_social_v.link", "casting.protocol.dial"}
+    for app in apps:
+        for element in app.iter():
+            if element.tag.rsplit("}", 1)[-1] in {"app-control", "app-service"}:
+                controls.append({kind: [child.get("name") for child in element.iter()
+                                       if child.tag.rsplit("}", 1)[-1] == kind]
+                                 for kind in ("operation", "uri", "mime")})
+            if element.tag.rsplit("}", 1)[-1] == "metadata":
+                key = element.get("key", "").rsplit("/", 1)[-1]
+                if key in allowed_metadata:
+                    links[key] = element.get("value")
+    return {"app": app_id, "controls": controls, "link_metadata": links, "playback_verified": False}
+
+
+def youtube_video(value):
+    """Accept a video ID or a specific YouTube video URL, never a search guess."""
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", value):
+        return value, 0
+    validate_uri(value, browser=True)
+    parts = urlsplit(value)
+    query = parse_qs(parts.query)
+    if parts.hostname == "youtu.be":
+        video = parts.path.strip("/")
+    elif parts.hostname in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        if parts.path == "/watch":
+            video = query.get("v", [""])[0]
+        elif re.fullmatch(r"/(shorts|live|embed)/[A-Za-z0-9_-]{11}/?", parts.path):
+            video = parts.path.strip("/").split("/")[1]
+        else:
+            video = ""
+    else:
+        video = ""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video):
+        raise ValueError("Provide a specific YouTube video link or 11-character video ID")
+    start = query.get("t", query.get("start", ["0"]))[0]
+    if start.isdigit():
+        seconds = int(start)
+    else:
+        match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", start)
+        if not match or not any(match.groups()):
+            raise ValueError("Unsupported video start time")
+        seconds = sum(int(n or 0) * scale for n, scale in zip(match.groups(), (3600, 60, 1)))
+    if seconds > 604800:
+        raise ValueError("Video start time is out of bounds")
+    return video, seconds
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def youtube_request(url, data=None):
+    """Fixed endpoints only; no raw errors, response bodies, or session-token logs."""
+    request = urllib.request.Request(url, data=data, headers={
+        "Origin": "https://www.youtube.com",
+        "Content-Type": ("text/plain; charset=utf-8" if url.startswith("http://192.168.165.2:")
+                         else "application/x-www-form-urlencoded"),
+        "User-Agent": "OpenClaw-TV-Control/1.0",
+    })
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(request, timeout=8) as response:
+            raw = response.read(1048577)
+            if len(raw) > 1048576:
+                raise RuntimeError("YouTube control response exceeded the size bound")
+            return raw
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"YouTube control endpoint returned HTTP {error.code}; no automatic retry") from None
+    except (OSError, urllib.error.URLError):
+        raise RuntimeError("YouTube control request failed or timed out; do not assume playback changed") from None
+
+
+def lounge_events(raw):
+    # BrowserChannel responses contain length-prefixed JSON frames.
+    rest = raw.decode("utf-8")
+    decoder = json.JSONDecoder()
+    while "[" in rest:
+        rest = rest[rest.index("["):]
+        events, end = decoder.raw_decode(rest)
+        rest = rest[end:]
+        yield from events
+
+
+def lounge_session(raw):
+    values = {}
+    for event in lounge_events(raw):
+        if not isinstance(event, list) or len(event) < 2:
+            continue
+        payload = event[1]
+        if (isinstance(payload, list) and len(payload) >= 2
+                and isinstance(payload[0], str) and payload[0] in {"c", "S"}):
+            values[payload[0]] = payload[1]
+        if all(isinstance(values.get(key), str) and values[key] for key in ("c", "S")):
+            return values["c"], values["S"]
+    raise RuntimeError("YouTube did not establish a playback-control session")
+
+
+def youtube_connection(start_app):
+    dial_url = "http://192.168.165.2:8080/ws/apps/YouTube"
+    root = ET.fromstring(youtube_request(dial_url))
+    if root.findtext("{*}name") != "YouTube":
+        raise RuntimeError("Unexpected TV application endpoint")
+    if root.findtext("{*}state") != "running":
+        if not start_app:
+            return None
+        youtube_request(dial_url, b"")
+        for _ in range(3):
+            time.sleep(1)
+            root = ET.fromstring(youtube_request(dial_url))
+            if root.findtext("{*}state") == "running":
+                break
+        else:
+            raise RuntimeError("YouTube did not start; check the TV before retrying")
+    screen = root.findtext("{*}additionalData/{*}screenId")
+    if not screen:
+        raise RuntimeError("YouTube did not advertise a local screen ID; pairing may be required")
+    base = "https://www.youtube.com/api/lounge"
+    result = json.loads(youtube_request(base + "/pairing/get_lounge_token_batch",
+                                       urlencode({"screen_ids": screen}).encode()))
+    screens = result.get("screens", [])
+    if len(screens) != 1 or not screens[0].get("loungeToken"):
+        raise RuntimeError("YouTube did not authorize the TV control session")
+    if screens[0].get("screenId", screen) != screen:
+        raise RuntimeError("YouTube returned a different screen; aborting")
+    token = screens[0]["loungeToken"]
+    common = {"CVER": "1", "VER": "8", "loungeIdToken": token}
+    session_query = dict(common, RID="1", app="youtube-desktop", device="REMOTE_CONTROL",
+                         id="openclaw-" + secrets.token_hex(8), name="OpenClaw")
+    session, google_session = lounge_session(youtube_request(
+        base + "/bc/bind?" + urlencode(session_query), b""))
+    return base, common, session, google_session
+
+
+def youtube_play(value):
+    video, seconds = youtube_video(value)
+    base, common, session, google_session = youtube_connection(start_app=True)
+    play_query = dict(common, RID="2", SID=session, gsessionid=google_session)
+    body = {"count": "1", "req0__sc": "setPlaylist", "req0_videoId": video,
+            "req0_videoIds": video, "req0_currentIndex": "0", "req0_currentTime": str(seconds)}
+    youtube_request(base + "/bc/bind?" + urlencode(play_query), urlencode(body).encode())
+    return {"app": "YouTube", "transport": "youtube-lounge", "video_id": video,
+            "start_seconds": seconds, "playback_request_accepted": True,
+            "playback_verified": False, "browser_fallback": False}
+
+
+def youtube_state(expected=None):
+    expected_id = youtube_video(expected)[0] if expected else None
+    connection = youtube_connection(start_app=False)
+    if connection is None:
+        return {"app": "YouTube", "running": False, "playback_verified": False}
+    base, common, session, google_session = connection
+    query = dict(common, SID=session, gsessionid=google_session)
+    youtube_request(base + "/bc/bind?" + urlencode(dict(query, RID="2")),
+                    urlencode({"count": "1", "req0__sc": "getNowPlaying"}).encode())
+    raw = youtube_request(base + "/bc/bind?" + urlencode(
+        dict(query, RID="rpc", CI="1", TYPE="xmlhttp", AID="0")))
+    result = {"app": "YouTube", "running": True, "playback_verified": False,
+              "screen_observed": False, "profile_selection_verified": False}
+    for event in lounge_events(raw):
+        if not isinstance(event, list) or len(event) < 2:
+            continue
+        payload = event[1]
+        if (not isinstance(payload, list) or len(payload) < 2
+                or payload[0] != "nowPlaying" or not isinstance(payload[1], dict)):
+            continue
+        data = payload[1]
+        video = data.get("videoId", "")
+        if not isinstance(video, str) or not re.fullmatch(r"[A-Za-z0-9_-]{11}", video):
+            continue
+        state = str(data.get("state", "unknown"))
+        result.update({"video_id": video, "state": state,
+                       "api_reports_playing": state == "1",
+                       "requested_video_playing_in_api": state == "1"})
+        try:
+            seconds = float(data.get("currentTime", ""))
+            if 0 <= seconds <= 604800:
+                result["current_seconds"] = seconds
+        except (TypeError, ValueError):
+            pass
+        if expected_id:
+            result["requested_video_matches"] = video == expected_id
+            result["requested_video_playing_in_api"] = state == "1" and video == expected_id
+    return result
+
+
+def local_operation(command, query=None, uri=None):
+    if command == "youtube":
+        return youtube_play(query)
+    if command == "youtube-state":
+        return youtube_state(query)
+    if command == "wake":
+        packet = b"\xff" * 6 + bytes.fromhex(TV_MAC.replace(":", "")) * 16
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            udp.bind((CALLBACK_HOST, 0))
+            udp.sendto(packet, ("192.168.165.255", 9))
+        return {"wake_packet_sent": True, "power_on_verified": False}
+    sdb = Path.home() / SDB_RELATIVE
+    if not sdb.is_file() or hashlib.sha256(sdb.read_bytes()).hexdigest() != SDB_SHA256:
+        raise RuntimeError("Verified SDB 4.2.36 is missing; see the Samsung TV runbook")
+    lock_path = Path.home() / ".cache/samsung-tv-dev/control.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with lock_path.open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Another developer control operation is active") from None
+        if server_pid() is not None:
+            raise RuntimeError("An SDB server already exists; leaving it untouched")
+        # Check device reachability before starting the network-listening server.
+        with socket.create_connection(("192.168.165.2", 26101), timeout=4):
+            pass
+        owned_pid = None
+        try:
+            try:
+                sdb_command(sdb, ["start-server"])
+            finally:
+                # A failed/timed-out starter can still have spawned its daemon.
+                owned_pid = server_pid()
+            if owned_pid is None:
+                raise RuntimeError("SDB server did not start")
+            sdb_command(sdb, ["connect", TARGET])
+            if sdb_command(sdb, ["-s", TARGET, "get-state"]).strip() != "device":
+                raise RuntimeError("TV did not enter the connected device state")
+            prefix = ["-s", TARGET]
+            if command == "status":
+                raw = sdb_command(sdb, prefix + ["capability"])
+                values = dict(line.split(":", 1) for line in raw.splitlines() if ":" in line)
+                return {"connected": True, "capabilities": {
+                    key: value for key, value in values.items() if key in CAPABILITIES
+                }}
+            if command == "apps":
+                return {"apps": [app for app in installed_apps(sdb)
+                                 if not query or query.lower() in (app["name"] + " " + app["id"]).lower()]}
+            if command == "foreground":
+                return foreground_summary(sdk_capture(sdb, foreground_command()))
+            if command == "screenshot":
+                return screenshot(sdb)
+            if command == "netflix":
+                return netflix_play(sdb, query)
+            if command in {"max-show", "max-play", "max-search"}:
+                return max_request(sdb, query, {"max-show": "show", "max-play": "video", "max-search": "search"}[command])
+            if command in {"peacock-episode", "peacock-play", "peacock-show", "peacock-search"}:
+                return peacock_request(sdb, query, command.removeprefix("peacock-"))
+            if command == "prime-video":
+                return prime_video_request(sdb, query)
+            if command == "twitch":
+                return twitch_play(sdb, query)
+            if command in {"apple-tv", "apple-tv-play"}:
+                return apple_tv_request(sdb, query, play=command == "apple-tv-play")
+            app_id = BROWSER if command in {"browser", "open"} else validate_app_id(query)
+            if app_id not in {app["id"] for app in installed_apps(sdb)}:
+                raise RuntimeError("Application ID is not installed; use apps to discover it")
+            if command == "app-state":
+                raw = sdk_capture(sdb, shlex.join(["/usr/bin/app_launcher", "--is-running=" + app_id]))
+                if "result: running" not in raw and "result: not running" not in raw:
+                    raise RuntimeError("TV did not return a recognized application state")
+                return {"app": app_id, "running": "result: running" in raw,
+                        "foreground_verified": False, "playback_verified": False}
+            if command == "app-info":
+                needle = shlex.quote('appid="' + app_id + '"')
+                raw = sdk_capture(sdb,
+                    "found=0; for p in /usr/share/packages/*.xml /opt/share/packages/*.xml; do "
+                    f"if test -f \"$p\" && grep -Fq {needle} \"$p\"; then cat \"$p\"; found=1; break; fi; "
+                    "done; test \"$found\" = 1")
+                return manifest_summary(raw, app_id)
+            if command == "open" or uri:
+                target_uri = validate_uri(query, browser=True) if command == "open" else uri
+                raw = sdk_capture(sdb, native_launch_command(app_id, target_uri))
+                if "successfully launched" not in raw:
+                    raise RuntimeError("Native launcher did not acknowledge the request")
+                return {"app": app_id, "launch_acknowledged": True, "uri_submitted": True,
+                        "uri_scheme": urlsplit(target_uri).scheme, "screen_observed": False,
+                        "playback_verified": False}
+            raw = sdb_command(sdb, prefix + ["shell", "0", "execute", app_id])
+            match = re.search(r"successfully launched pid\s*=\s*(\d+)", raw)
+            if not match:
+                raise RuntimeError("TV did not acknowledge a successful application launch")
+            return {"app": app_id, "launch_acknowledged": True, "pid": int(match[1]),
+                    "screen_observed": False, "playback_verified": False}
+        finally:
+            stop_owned_server(owned_pid, sdb)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--local", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("command", choices=["status", "browser", "apps", "launch", "open", "app-info", "app-state", "youtube", "youtube-state", "netflix", "twitch", "prime-video", "max-show", "max-play", "max-search", "peacock-episode", "peacock-play", "peacock-show", "peacock-search", "apple-tv", "apple-tv-play", "wake", "foreground", "screenshot"])
+    parser.add_argument("query", nargs="?")
+    parser.add_argument("--url", help="Content URI delivered to the explicitly selected app")
+    parser.add_argument("--output", help="New local PNG path for screenshot (never overwritten)")
+    args = parser.parse_args()
+    if args.command in {"status", "browser", "wake", "foreground", "screenshot"} and args.query is not None:
+        parser.error("This command takes no positional argument")
+    if args.output and args.command != "screenshot":
+        parser.error("--output is only supported with screenshot")
+    if args.command == "screenshot" and not args.local:
+        if not args.output:
+            parser.error("screenshot requires --output NEW_LOCAL_PNG")
+        if Path(args.output).exists() or not Path(args.output).parent.is_dir():
+            parser.error("Output must be a new file in an existing directory")
+    if args.command in {"launch", "open", "app-info", "app-state", "youtube", "netflix", "twitch", "prime-video", "max-show", "max-play", "max-search", "peacock-episode", "peacock-play", "peacock-show", "peacock-search", "apple-tv", "apple-tv-play"} and not args.query:
+        parser.error("This command requires an application ID or URL")
+    if args.url and args.command != "launch":
+        parser.error("--url is only supported with launch")
+    if args.command in {"launch", "app-info", "app-state"}:
+        validate_app_id(args.query)
+    if args.command == "open":
+        validate_uri(args.query, browser=True)
+    if args.command == "youtube" or (args.command == "youtube-state" and args.query):
+        youtube_video(args.query)
+    if args.command == "netflix":
+        netflix_video(args.query)
+    if args.command in {"max-show", "max-play", "max-search"}:
+        max_target(args.query, {"max-show": "show", "max-play": "video", "max-search": "search"}[args.command])
+    if args.command in {"peacock-episode", "peacock-play", "peacock-show", "peacock-search"}:
+        peacock_payload(args.query, args.command.removeprefix("peacock-"))
+    if args.command == "prime-video":
+        prime_video_gti(args.query)
+    if args.command == "twitch":
+        twitch_channel(args.query)
+    if args.command in {"apple-tv", "apple-tv-play"}:
+        apple_tv_url(args.query, play=args.command == "apple-tv-play")
+    if args.url:
+        validate_uri(args.url)
+    if args.local:
+        print(json.dumps(local_operation(args.command, args.query, args.url), indent=2))
+    else:
+        remote = ["python3", "-", "--local", args.command]
+        if args.query is not None:
+            remote.append(args.query)
+        if args.url:
+            remote.extend(["--url", args.url])
+        result = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", HOST, shlex.join(remote)],
+            input=Path(__file__).read_text(), text=True, timeout=180,
+            capture_output=args.command == "screenshot",
+        )
+        if args.command == "screenshot":
+            if result.returncode:
+                print(result.stderr, file=sys.stderr, end="")
+            else:
+                evidence = json.loads(result.stdout)
+                data = base64.b64decode(evidence.pop("image_base64"), validate=True)
+                if hashlib.sha256(data).hexdigest() != evidence["image_sha256"]:
+                    raise RuntimeError("Screenshot transfer digest mismatch")
+                fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as output:
+                    output.write(data)
+                evidence["path"] = str(Path(args.output).resolve())
+                print(json.dumps(evidence, indent=2))
+        raise SystemExit(result.returncode)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.TimeoutExpired:
+        print("Developer control timed out; check the TV and owned staging before retrying", file=sys.stderr)
+        raise SystemExit(1)
+    except (OSError, RuntimeError, ValueError, ET.ParseError) as error:
+        print(f"Developer control failed: {error}", file=sys.stderr)
+        raise SystemExit(1)

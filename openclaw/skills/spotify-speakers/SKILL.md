@@ -1,7 +1,7 @@
 ---
 name: spotify-speakers
 description: Play music via Spotify and control Google Home speakers. Use when asked to play music, songs, artists, playlists, podcasts, or control speakers/volume/audio.
-allowed-tools: Bash(spogo:*) Bash(catt:*)
+allowed-tools: Bash(spogo:*) Bash(catt:*) Bash(samsung-tv-spotify:*)
 metadata: {"openclaw":{"emoji":"M","requires":{"bins":["spogo","catt"]}}}
 ---
 
@@ -33,6 +33,14 @@ spogo play spotify:playlist:<id>          # play a playlist by URI
 ```
 
 ### Devices
+
+For the **Crosstown Frame TV**, use `samsung-tv-spotify play URI`, `pause`,
+`resume`, or `status [TRACK_URI]`; see the [TV control notes](../samsung-tv/references/apps.md#spotify).
+That helper uses a tested isolated client with explicit device targeting.
+Homebrew `spogo` 0.1.0 remains unchanged and must not be used to target TV
+playback: its Connect path ignores `--device`. Read-only search and metadata
+through `spogo` remain usable.
+
 ```bash
 spogo device list                  # list Spotify Connect devices
 spogo device set "Kitchen speaker" # transfer playback to a device

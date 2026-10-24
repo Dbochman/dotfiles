@@ -11,6 +11,7 @@ Usage:
   samsung-tv volume <name> up|down|N     Volume up/down (N = number of presses, negative = down)
   samsung-tv mute <name>                Toggle mute
   samsung-tv key <name> <KEY_NAME>      Send remote key (KEY_HOME, KEY_SOURCE, etc.)
+  samsung-tv keys <name> <KEY>...       Send up to 16 navigation/transport keys in one connection
   samsung-tv app <name> list            List installed apps
   samsung-tv app <name> launch <app>    Launch app by ID or fuzzy name
   samsung-tv app <name> close <app>     Close app by ID or fuzzy name
@@ -239,6 +240,29 @@ def cmd_key(name, info, key):
     tv.close()
 
 
+def cmd_keys(name, info, keys):
+    """Short, observed navigation sequences; never retry partially sent batches."""
+    normalized = [key.upper() if key.upper().startswith("KEY_") else "KEY_" + key.upper()
+                  for key in keys]
+    allowed = {"KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT", "KEY_ENTER",
+               "KEY_RETURN", "KEY_PLAY", "KEY_PAUSE", "KEY_STOP"}
+    if not 1 <= len(normalized) <= 16 or any(key not in allowed for key in normalized):
+        print("Use 1–16 navigation or playback keys; inspect the screen between batches.", file=sys.stderr)
+        raise SystemExit(1)
+    tv = get_tv(info["ip"], name)
+    sent = 0
+    try:
+        for key in normalized:
+            tv.send_key(key, key_press_delay=0.35)
+            sent += 1
+        print(f"Sent {sent} keys to {name}; verify the resulting screen")
+    except Exception:
+        print(f"Batch interrupted after {sent} sends; inspect before retrying", file=sys.stderr)
+        raise
+    finally:
+        tv.close()
+
+
 def cmd_app_list(name, info):
     """List apps using REST API for known apps (WS app_list often returns empty)."""
     try:
@@ -417,6 +441,10 @@ def main():
     elif cmd == "key" and len(rest) >= 2:
         name, info = resolve_tv(rest[0], tvs)
         cmd_key(name, info, rest[1])
+
+    elif cmd == "keys" and len(rest) >= 2:
+        name, info = resolve_tv(rest[0], tvs)
+        cmd_keys(name, info, rest[1:])
 
     elif cmd == "app" and len(rest) >= 2:
         name, info = resolve_tv(rest[0], tvs)
