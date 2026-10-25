@@ -43,3 +43,4 @@ prefix_rule(
         "git diff --cached --check --ext-diff --",
     ],
 )
+prefix_rule(pattern=["/sbin/route", "-n", "get", "192.168.165.2"], decision="allow")
