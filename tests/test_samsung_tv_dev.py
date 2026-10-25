@@ -96,6 +96,31 @@ class ControlInputTests(unittest.TestCase):
 
 
 class SDKCallbackTests(unittest.TestCase):
+    def test_early_exit_and_errexit_still_report_failure_and_cleanup(self):
+        for command in ("exit 17", "set -e; false; echo should-not-run"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                remote, gate = Path(directory) / "operation.sh", Path(directory) / "gate"
+                remote.touch()
+                gate.mkdir()
+                result = subprocess.run(["/bin/sh", "-c", tv.sdk_operation_body(
+                    command, remote, gate)], capture_output=True, text=True, check=True)
+                self.assertFalse(remote.exists())
+                self.assertFalse(gate.exists())
+                self.assertIn("__OC_CLEANUP__=1", result.stdout)
+                self.assertIn("__OC_RESULT__=" + ("17" if command == "exit 17" else "1"), result.stdout)
+                self.assertNotIn("should-not-run", result.stdout)
+
+    def test_nonempty_gate_does_not_claim_cleanup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            remote, gate = Path(directory) / "operation.sh", Path(directory) / "gate"
+            remote.touch()
+            gate.mkdir()
+            (gate / "unexpected").touch()
+            result = subprocess.run(["/bin/sh", "-c", tv.sdk_operation_body(
+                "true", remote, gate)], capture_output=True, text=True, check=True)
+            self.assertNotIn("__OC_CLEANUP__=1", result.stdout)
+            self.assertTrue((gate / "unexpected").exists())
+
     def test_repeated_transport_does_not_recreate_cleaned_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             remote, gate = Path(directory) / "operation.sh", Path(directory) / "gate"

@@ -84,6 +84,39 @@ profile chooser, maturity gate or unavailable title may still need attention.
 The command does not force a profile, playback offset or restart-from-beginning.
 A series ID can select Netflix's preferred episode instead of a particular one.
 
+### Profile selection and series resume
+
+Successful OpenClaw follow-up on 2026-10-24, subsequently confirmed by the owner:
+
+1. `samsung-tv power frame on` verified the panel was already on without sending
+   a power key. Launching Netflix and capturing its UI revealed a promotional
+   screensaver. One `KEY_RETURN`, followed by a fresh capture, revealed the
+   vertical profile chooser.
+2. Julia's blue tile was at the top; Dylan's yellow tile was immediately below.
+   Only the highlighted profile's name appeared. Navigate toward the requested
+   tile from the observed highlight, then confirm its name before Enter. In
+   this layout, Dylan → Julia is one Up; the run's Down/Up detour is unnecessary.
+3. Enter on the visibly highlighted **Julia** tile opened Netflix home with the
+   blue avatar at top left. The subsequent native content request used the
+   selected profile across the helper's graceful Netflix restart.
+4. Public metadata lookup confirmed *Love Is Blind* series ID `80996601`.
+   `samsung-tv-dev netflix 80996601` reached an episode with resume progress;
+   it did not force episode one. The resulting capture contained the show and
+   episode labels and subtitles over a black protected-video layer. The owner
+   later confirmed that the request worked.
+
+For a general series request, let Netflix choose the selected profile's saved
+or preferred episode. This observation does not guarantee an exact timestamp or
+future profile persistence: inspect any chooser/gate that reappears. Resolve an
+exact watch ID for an explicit season/episode request. Do not hard-code this
+household's current episode as a future target.
+
+Use screenshots at meaningful state changes: chooser revealed, requested
+profile highlighted, profile entered, and content result. Do not relaunch or
+restart playback for verification. Subtitles can also appear in previews, so
+one subtitle-bearing capture alone does not establish sustained episode
+playback. Owner confirmation closes that uncertainty; stop probing afterward.
+
 ### Earlier tests and app/profile control
 
 Attended tests on 2026-10-24, QN65LS03BAFXZA / firmware 1720.7:

@@ -13,6 +13,70 @@ tv = module_from_spec(spec_from_loader(loader.name, loader))
 loader.exec_module(tv)
 
 
+class PowerOnTests(unittest.TestCase):
+    def run_power(self, states):
+        remote = MagicMock()
+        with patch.object(tv, "read_power", side_effect=states), \
+                patch.object(tv, "get_tv", return_value=remote) as connect, \
+                patch.object(tv, "send_wake") as wake, patch.object(tv.time, "sleep"):
+            result = tv.ensure_power_on("Frame", {"ip": "test"})
+        return result, remote, connect, wake
+
+    def test_already_on_never_connects_or_wakes(self):
+        result, remote, connect, wake = self.run_power(["on"])
+        self.assertTrue(result["power_on_verified"])
+        connect.assert_not_called()
+        wake.assert_not_called()
+        remote.send_key.assert_not_called()
+
+    def test_connection_itself_wakes_panel_without_toggle(self):
+        result, remote, connect, wake = self.run_power(["standby", "on"])
+        self.assertTrue(result["power_on_verified"])
+        remote.send_key.assert_not_called()
+        remote.close.assert_called_once()
+
+    def test_standby_gets_one_key_and_verified_poll(self):
+        result, remote, connect, wake = self.run_power(["standby", "standby", "on"])
+        self.assertTrue(result["power_on_verified"])
+        self.assertTrue(result["power_key_sent"])
+        remote.send_key.assert_called_once_with("KEY_POWER")
+        remote.close.assert_called_once()
+
+    def test_unknown_after_connection_does_not_toggle(self):
+        result, remote, connect, wake = self.run_power(["standby", "unknown"])
+        self.assertFalse(result["power_on_verified"])
+        remote.send_key.assert_not_called()
+        remote.close.assert_called_once()
+
+    def test_lan_wake_followed_by_remote_fallback(self):
+        result, remote, connect, wake = self.run_power(
+            ["unknown"] + ["standby"] * 7 + ["on"])
+        self.assertTrue(result["power_on_verified"])
+        wake.assert_called_once()
+        remote.send_key.assert_called_once_with("KEY_POWER")
+
+    def test_unreachable_after_wake_never_toggles(self):
+        result, remote, connect, wake = self.run_power(["unknown"] * 7)
+        self.assertFalse(result["power_on_verified"])
+        wake.assert_called_once()
+        connect.assert_not_called()
+
+    def test_failed_toggle_is_not_repeated(self):
+        result, remote, connect, wake = self.run_power(["standby"] * 8)
+        self.assertFalse(result["power_on_verified"])
+        remote.send_key.assert_called_once_with("KEY_POWER")
+
+    def test_send_failure_closes_and_does_not_retry(self):
+        remote = MagicMock()
+        remote.send_key.side_effect = RuntimeError("disconnected")
+        with patch.object(tv, "read_power", return_value="standby"), \
+                patch.object(tv, "get_tv", return_value=remote):
+            with self.assertRaisesRegex(RuntimeError, "disconnected"):
+                tv.ensure_power_on("Frame", {"ip": "test"})
+        remote.send_key.assert_called_once()
+        remote.close.assert_called_once()
+
+
 class RemoteBatchTests(unittest.TestCase):
     def test_bounded_navigation_uses_one_connection_and_closes_it(self):
         remote = MagicMock()

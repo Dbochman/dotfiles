@@ -150,6 +150,17 @@ def guarded_sdk_command(remote, gate):
     return f"test -f {remote}&&/bin/mkdir {gate} 2>/dev/null&&{{ . {remote};}}"
 
 
+def sdk_operation_body(command, remote, gate):
+    # A command may use exit (e.g. no focused window in standby). Isolate it
+    # so the caller still reports its result and independently proves cleanup.
+    return (
+        "(\n" + command + "\n)\nresult=$?\n"
+        f"/bin/rm -f {remote}; /bin/rmdir {gate}\n"
+        f"if test ! -e {remote} && test ! -e {gate}; then echo __OC_CLEANUP__=1; fi\n"
+        'printf "__OC_RESULT__=%s\\n" "$result"\n'
+    )
+
+
 def sdk_capture(sdb, command, output_limit=65536):
     """Capture one allowlisted operation as UID 901, with bounded cleanup."""
     token = secrets.token_hex(8)
@@ -174,10 +185,7 @@ def sdk_capture(sdb, command, output_limit=65536):
                 f"exec 3<>/dev/tcp/{CALLBACK_HOST}/{port} || exit 72\n"
                 f"printf '{token}\\n' >&3\nexec >&3 2>&3\n"
                 'if test "$(id -u)" != 901; then echo unexpected_uid; exit 73; fi\n'
-                + command + "\nresult=$?\n"
-                f"/bin/rm -f {remote}; /bin/rmdir {gate}\n"
-                f"if test ! -e {remote} && test ! -e {gate}; then echo __OC_CLEANUP__=1; fi\n"
-                'printf "__OC_RESULT__=%s\\n" "$result"\n'
+                + sdk_operation_body(command, remote, gate)
             )
             with tempfile.TemporaryDirectory(prefix="samsung-tv-control-") as directory:
                 path = Path(directory) / "operation.sh"
@@ -216,7 +224,8 @@ def sdk_capture(sdb, command, output_limit=65536):
                 if not cleaned:
                     raise RuntimeError("TV temporary-file cleanup was not confirmed")
                 if not lines or lines[-1] != "__OC_RESULT__=0":
-                    raise RuntimeError("TV operation failed; do not assume the requested action occurred")
+                    raise RuntimeError("TV operation failed; temporary-file cleanup confirmed. "
+                                       "Do not assume the requested action occurred")
                 return "\n".join(line for line in lines if not line.startswith("__OC_"))
     finally:
         if staged and not cleaned:

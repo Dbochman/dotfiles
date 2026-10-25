@@ -6,7 +6,7 @@ Connects by IP so it works over Tailscale subnet routing.
 
 Usage:
   samsung-tv status                     Show TV status (power, volume, app)
-  samsung-tv power <name> on            Power on via Wake-on-LAN (same LAN only)
+  samsung-tv power <name> on            Ensure power on; verify before any toggle
   samsung-tv power <name> off           Power off
   samsung-tv volume <name> up|down|N     Volume up/down (N = number of presses, negative = down)
   samsung-tv mute <name>                Toggle mute
@@ -27,6 +27,8 @@ TV names are fuzzy-matched (e.g. "frame" for "Samsung The Frame 65").
 
 import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 import time
 
@@ -173,21 +175,74 @@ def cmd_status(_args):
             print(f"    Power:  UNREACHABLE")
 
 
-def cmd_power_on(name, info):
+def read_power(info):
+    """Passive REST query; no WebSocket connection or token required."""
+    from samsungtvws import SamsungTVWS
     try:
-        from wakeonlan import send_magic_packet
-    except ImportError:
-        print("Error: wakeonlan not installed. Run: pip3 install wakeonlan", file=sys.stderr)
-        sys.exit(1)
+        data = SamsungTVWS(host=info["ip"], timeout=3).rest_device_info()
+        return str(data.get("device", data).get("PowerState", "unknown")).lower()
+    except Exception:
+        return "unknown"
 
+
+def send_wake(info):
+    # The Mini is across a subnet route. This pinned helper sends from the
+    # Crosstown LAN; never claim that broadcasting locally crossed Tailscale.
+    if info["ip"] == "192.168.165.2":
+        helper = Path(__file__).resolve().with_name("samsung-tv-dev")
+        subprocess.run([str(helper), "wake"], check=True, timeout=35,
+                       stdout=subprocess.DEVNULL)
+        return
+    from wakeonlan import send_magic_packet
     mac = info.get("mac")
     if not mac:
-        print(f"No MAC address configured for {name}", file=sys.stderr)
-        sys.exit(1)
-
+        raise RuntimeError("No MAC address configured for LAN wake")
     send_magic_packet(mac)
-    print(f"Sent Wake-on-LAN to {name} ({mac})")
-    print("Note: WoL only works from the same LAN (not over Tailscale)")
+
+
+def poll_power(info):
+    for _ in range(5):
+        state = read_power(info)
+        if state == "on":
+            return state
+        time.sleep(1)
+    return read_power(info)
+
+
+def ensure_power_on(name, info):
+    result = {"power_on_verified": False, "wake_packet_sent": False,
+              "power_key_sent": False}
+    state = read_power(info)
+    if state not in ("on", "standby"):
+        send_wake(info)
+        result["wake_packet_sent"] = True
+        state = poll_power(info)
+    if state == "standby":
+        remote = get_tv(info["ip"], name)
+        try:
+            # Opening WS can itself wake the panel. Never toggle it back off.
+            state = read_power(info)
+            if state == "standby":
+                remote.send_key("KEY_POWER")
+                result["power_key_sent"] = True
+                state = poll_power(info)
+        finally:
+            remote.close()
+    result.update(power=state, power_on_verified=state == "on")
+    return result
+
+
+def cmd_power_on(name, info):
+    try:
+        result = ensure_power_on(name, info)
+    except Exception as exc:
+        print(f"Power-on failed; do not assume the TV is on: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(result))
+    if not result["power_on_verified"]:
+        print("Power-on unverified; no blind power-toggle retry. Check connectivity or an approval prompt.",
+              file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_power_off(name, info):

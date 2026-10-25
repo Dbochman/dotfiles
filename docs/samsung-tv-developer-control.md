@@ -5,6 +5,134 @@ T-PTMAKUC-1720.7, Tizen 6.5 / ARMv7. Developer Mode is enabled for the
 Crosstown MacBook's LAN address, 192.168.165.109. The TV is 192.168.165.2.
 Use SSH host `dylans-macbook-pro`; `dylans-mac` is a different machine.
 
+## Current maintenance state
+
+As of the completed 2026-10-24 full restart, all 24 targeted app-disable records
+and six vendor stop markers survived. Targeted voice, advertising and TV Plus
+processes were absent in initial and delayed checks. Shared audio services
+started normally. Four extra AOV/far-field runtime masks were reapplied after
+verification; those masks expire at every full reboot.
+
+See the [privacy catalogue's current status and remaining checks](samsung-tv-privacy-catalogue.md#current-status-and-remaining-checks)
+for the authoritative summary, recovery versions and resource baseline. Earlier
+dated sections below describe their phase's observations, not current pending
+work. Full-restart persistence is now observed; separate standby/wake and
+post-restart playback/integration checks remain outstanding.
+
+## OpenClaw standby/capture recovery (2026-10-24)
+
+The Love Is Blind / Julia-profile request exposed a sequencing problem:
+OpenClaw launched Netflix before checking panel power, treated the acknowledgment
+as visible launch, and stopped after an ineffective LAN wake. Its later
+`KEY_POWER` request did produce REST `on`. No profile selection or playback was
+established by that exchange.
+
+The original capture error was **unconfirmed SDK staging cleanup**, not a missing
+screenshot utility or loss of root access. The SDK wrapper allowed an operation's
+`exit` to bypass its result/cleanup footer; foreground detection has such early
+exits. This is consistent with capture attempted in standby, though the original
+error did not retain enough foreground output to prove which branch ran. Both
+exact staging paths named in the failure were subsequently verified absent.
+The wrapper now isolates operation exits in a subshell, reports command failure
+separately from cleanup, and still rejects unconfirmed cleanup.
+
+Use `samsung-tv power frame on` before an authorized app/play request:
+
+- Already-on returns verified status without opening a WebSocket or sending keys.
+- Confirmed standby opens the remote, rechecks power (connection can wake the
+  panel), and sends one `KEY_POWER` only if still in standby, then polls status.
+- Unknown/unreachable first tries LAN WoL through the Crosstown Mac. An unknown
+  state never authorizes a toggle. Failure exits nonzero; do not blindly retry.
+
+The deployed skill requires power verification, observed profile selection, and
+one bounded screenshot recovery after a state change when cleanup is confirmed.
+Unconfirmed cleanup still requires maintainer inspection of the reported paths.
+Screenshot evidence is private under
+`~/.local/share/samsung-tv-tools/changes/20261024-openclaw-diagnostic/`.
+This investigation does not establish Julia's selected profile or requested
+content playback. It also does not complete the separate standby/privacy-guard
+validation described in the privacy catalogue.
+
+Validation: all 80 Samsung TV unit tests passed, including early shell exits,
+failed cleanup, standby fallback, connection-induced wake, unknown power state,
+and no-repeat behavior. Python syntax and Git whitespace checks passed. The
+updated helper captured Netflix's promotional screen with root/staging cleanup
+verified; the new power-on command reported already-on without sending a packet
+or key. The corrected skill copy is deployed on the Mini and both CLI paths
+resolve to tracked sources. A fresh off/on cycle with the new orchestration was
+not performed, to avoid interrupting viewing; its fallback is unit-tested and
+the original exchange supplies evidence for the underlying remote power command.
+
+Subsequent successful OpenClaw attempt: the corrected power check returned
+already-on, screenshot capture worked, and Return dismissed Netflix's screensaver
+to reveal the chooser. Captures showed Julia's highlighted blue profile, then
+Netflix home with that avatar after Enter. A single native *Love Is Blind*
+series request reached an episode with resume progress and readable subtitles;
+the owner subsequently confirmed success. The [Netflix skill reference](../openclaw/skills/samsung-tv/references/content.md#profile-selection-and-series-resume)
+records the reusable sequence. This closes the original profile/content request,
+but the attempt began already-on and does not add a fresh standby wake test.
+
+## Full remote restart (maintainer operation)
+
+Verified on this exact model/firmware through the Crosstown MacBook on
+2026-10-24. The exact TV-side command dispatched by the gated root-owned job was:
+
+```sh
+/usr/bin/busctl --system --timeout=5 call \
+  org.tizen.system.deviced \
+  /Org/Tizen/System/DeviceD/Power \
+  org.tizen.system.deviced.power Reboot s Unknown
+```
+
+Live introspection confirmed `Reboot(s) -> i`; the changed kernel boot ID and
+reset uptime established the actual restart. `Unknown` is the generic reason
+used in this verified call. This is not a factory-reset operation. The firmware
+lacks `reboot.target` and `systemd-reboot.service`, so `systemctl reboot` failed;
+`/usr/sbin/reboot` is a symlink to systemctl and is not an independent fallback.
+There is no `samsung-tv-dev reboot` subcommand. Ordinary remote off/on or WoL
+does not establish a fresh kernel boot.
+
+Use this only for an owner-authorized full restart. An explicit reboot request
+already supplies interruption authorization. The command must be dispatched
+after the temporary root session has cleaned up, using the verified two-phase
+procedure; do not run it directly inside an active archive-root probe.
+
+1. Capture the current boot ID, guard state and recovery location. Verify the
+   target/model and check that `fw-update-service.service`,
+   `fw-usb-update-service.service`, `swu-core-tv.service`,
+   `bootmode-swu-standalone.service` and `bootmode-system-update.service` are
+   inactive. An active update scheduler alone is not an active installation.
+2. In the reviewed root session, stage a uniquely named, collected transient
+   timer with `--on-active=90s`, `AccuracySec=1s`, and a bounded dispatch service.
+   Its inline command checks a unique readiness marker, removes its own gate
+   files, repeats the update checks, then executes the command above. Without
+   the marker it exits without rebooting. Do not install a persistent boot hook.
+3. Wait for verified root staging removal, unchanged protected system files and
+   owned host SDB cleanup. Only then use a separate SDK session to create the
+   readiness marker, checking the original boot ID and at least 20 seconds
+   remaining before dispatch. That SDK session must also finish cleanup before
+   dispatch. This is an internal cleanup gate, not another user-approval prompt.
+   If cleanup or timing is uncertain, leave the gate unarmed and inspect/clean
+   only the owned transient job.
+4. Observe reconnection, then require a changed `/proc/sys/kernel/random/boot_id`
+   and reset `/proc/uptime`. Reachable SDB, an API acknowledgment or a visible
+   startup screen alone is insufficient. Check persistent flags/markers and
+   process absence **before** restoring extra runtime masks, then verify shared
+   audio and the foreground app. Record the owner's screen observation separately.
+5. Allow startup work to settle and label the measured workload. The verified
+   run's early two-minute sample was still busy; its later baseline started at
+   259 seconds, on idle HDMI, and is not directly comparable to Netflix playback.
+
+Reviewed scripts and evidence are in the Mini's protected local directory
+`~/.local/share/samsung-tv-tools/changes/20261024-reboot-baseline/`:
+`schedule-vendor.sh`, `approve-vendor.sh`, `schedule-vendor.txt`,
+`approve-vendor.txt`, `postboot.txt`, `postboot-delayed.txt`, and
+`startup-verification.json`. The root runner is
+`~/.local/share/samsung-tv-tools/changes/20261024-privacy-performance/root-run.py`.
+These are evidence from one run: their boot ID, timer name, gate and deadlines
+must be regenerated for a later invocation, not replayed verbatim. Review the
+runner and pinned assets before reuse. Preserve the original records.
+
 ## Working controls
 
 From the dotfiles checkout on the Mini:
@@ -824,8 +952,9 @@ UI with owner review of any terms confirmation.
 Background app preloading, context services, Home routing, Art Mode and the
 streaming app packages were outside this selected phase. A Home request was sent
 for the owner's usability check. No controlled before/after latency improvement
-or reboot persistence is claimed; the saved flags and markers still need a
-separate full-reboot check. Disabling personalization does not guarantee removal
+was established in this phase. The later full restart verified the targeted
+app flags and stop markers; see the current maintenance summary above.
+Disabling personalization does not guarantee removal
 of all sponsored Home content.
 
 A fresh root health check after the Home request confirmed both services remained
@@ -852,7 +981,114 @@ were stopped for the owner's comparison of Home/Settings and streaming-app
 navigation. The owner reported **“About the same”**: no noticeable improvement
 was established. Treat this phase as verified privacy/background-service
 reduction, not a demonstrated responsiveness fix. No privacy settings were
-reenabled to create an artificial comparison. The next useful test is a normal
-restart to clear accumulated app sessions, verify preference/marker persistence,
-and repeat the same navigation check. The owner deferred that restart until later;
-no restart was performed in this phase.
+reenabled to create an artificial comparison. The owner deferred a restart during
+this phase, then authorized the later full restart documented above. The same
+subjective navigation comparison has not yet been repeated after that restart.
+
+### Owner-confirmed integration checks after cleanup
+
+On 2026-10-24, the owner successfully lowered TV volume by one through Google
+Home and confirmed the SmartThings iOS app still worked. This establishes those
+observed control paths after the changes; it does not establish every app
+function, remote wake, Art Mode behavior, or persistence after a full restart.
+The owner subsequently verified that SmartThings iOS can both pause and resume
+Netflix. Google failed on phrases using "the TV" and "pause Netflix". With the
+exact device name, Google recognized Samsung The Frame 65 but explicitly said it
+could not pause media playback on the TV. Simple name ambiguity did not explain
+that result. The owner then disabled iPhone Wi-Fi and verified both pause and
+resume over cellular, establishing SmartThings cloud playback control as well.
+The owner then verified that Google Home's iOS playback buttons also pause and
+resume Netflix. Google device sync completed, but exact-name voice commands
+still failed. The observed failure is therefore specific to the voice-control
+path; playback control through the Google Home app and SmartThings cloud works.
+The exact voice-assistant backend cause has not been established.
+
+Google also reported no media playing while the owner reported Netflix playing
+on the TV. The owner had not previously verified that capability, so its status
+is unresolved, not a confirmed cleanup regression. Samsung documents generic
+Google Home play/pause commands through SmartThings, while Netflix documents
+Google Assistant control for Chromecast and selected Google Cast TVs. Neither
+establishes native Netflix playback-state reporting on this exact Frame. Keep
+device controls, media transport commands, and now-playing metadata as separate
+checks; do not reenable content recognition merely to expose playback state.
+
+References: [Samsung Google Home commands](https://www.samsung.com/za/support/apps-services/control-your-tv-or-soundbar-by-connecting-google-home-bixby-or-alexa/)
+and [Netflix Google Home support](https://help.netflix.com/en/node/55587).
+
+Read-only follow-up found the TV powered on over Wi-Fi and Netflix as its stable
+foreground app. The local UPnP AVTransport service advertised Play/Pause but
+reported `NO_MEDIA_PRESENT`, zero tracks, no current URI/metadata and no current
+transport actions. This describes the UPnP renderer, not Netflix's internal
+player or SmartThings' cloud state; do not use it to infer Netflix is stopped or
+that Google queries this endpoint. No playback commands were sent by these
+diagnostics.
+
+SmartThings explicitly documents device-named Google pause/play commands in its
+[integration guide](https://blog.smartthings.com/partner-spotlight/try-this-control-your-samsung-tv-with-hey-google/).
+Google models [transport commands](https://developers.home.google.com/cloud-to-cloud/traits/transportcontrol)
+separately from media state. Google's raw advertised traits have not been read,
+but the successful Google Home app playback test means we must not describe
+pause/resume as generally unavailable through its integration. Resync did not
+resolve voice control. Reconnecting a working account is not the next step.
+A candidate workaround is a uniquely named voice-triggered automation with a
+direct `device.command.MediaPause` or `device.command.MediaResume` action,
+rather than an assistant custom command repeating the failing phrase. Google
+documents these actions, but the editor must accept this specific TV and the
+automation must be tested before claiming it works. No automation was created.
+References: [MediaPause](https://developers.home.google.com/automations/schema/reference/entity/sht_device/media_pause_command),
+[MediaResume](https://developers.home.google.com/automations/schema/reference/entity/sht_device/media_resume_command),
+and [voice starter](https://developers.home.google.com/automations/schema/reference/entity/assistant/ok_google_event).
+No account
+relink, device removal, router change, firmware update, consent change or TV
+restart was performed. No existing SmartThings API client was found in the
+scoped control tooling, so the account's actual cloud capabilities/state remain
+uninspected. Google Home's preferred-video-device setting is documented for
+Cast-compatible devices; it is not an established fix for this SmartThings TV.
+
+### Further background-service review (2026-10-24)
+
+The subsequent [privacy and dependency catalogue](samsung-tv-privacy-catalogue.md)
+records 35 app entries, TV Plus activation paths, shared-library consumers,
+the ad agent's live Home Media client, and scoped network observations. Use its
+updated dependency findings when planning trials. The owner subsequently
+authorized the four-group batch; its application and native no-restart fix are
+recorded in the catalogue's maintenance section. The review below predates it.
+
+The owner selected further background cleanup after tabling the Google voice
+issue. This phase inspected live process counters, vendor units and selected
+app-lifecycle fields from the expanded baseline. No services were stopped,
+registry flags changed, or restart performed. Quiet Tizen's reference profile
+targets a different model and Tizen version; it is not a ready-to-apply Frame
+profile.
+
+| Candidate | Verified evidence | Next step |
+| --- | --- | --- |
+| PISA `adagent-service` | Still running; its vendor unit uses the same negated `pisa-service` marker already installed. Approximately 7.3 MiB RSS. | First narrow stop trial candidate. The marker blocks subsequent unit starts, but does not terminate an existing process. App-level preloading is also recorded, so verify actual process absence and later restart persistence. |
+| Bixby capsule viewer / Alexa client | Resident at approximately 72 / 13 MiB RSS; both have app-level preload enabled in the baseline registry. | Inspect and test app-specific graceful closure before changing preload behavior. Disabling voice preferences did not prove these processes had exited. |
+| TV Plus provider | `slive-provider-daemon` is active and has a vendor stop-marker condition, but also DBus/path activation. A TV Plus process is resident. | Establish caller/dependency scope before a separate trial; do not infer isolation from the unit's empty RequiredBy field. |
+
+A 3.33-second sample used the TV's measured CLK_TCK of 250 and 4 KiB pages.
+Bixby used approximately 1.9% of one core, Alexa 1.2%, and the ad agent 0.1%.
+This short, instrumented sample does not establish a sustained bottleneck or
+predict navigation improvement. RSS includes shared pages and is not equivalent
+to reclaimable memory. One unrelated process exited during `/proc` enumeration;
+the selected candidates were present in both samples. SDK diagnostic staging
+and the owned host SDB listener were confirmed cleaned up. Root unit inspection
+also completed its cleanup checks.
+
+The selected Bixby, Alexa, ad-agent, TV Plus provider and voice registry entries
+all report `app_support_disable=false`. The targeted-ad service additionally
+records on-boot, autorestart and preload enabled. These are lifecycle clues,
+not permission to overwrite the package registry. Voice units also demonstrate
+why unit state alone is insufficient: `org.tizen.voice-app.service` is a
+oneshot launcher with MainPID 0 while its app process remains resident.
+
+Keep SmartThings, context services, screen analysis, KPI services, Art Mode and
+shared media/network services outside the next narrow trial. The separate
+contents-recognition service lacks the verified PISA/canalysis marker mechanism;
+do not invent a marker or apply broad runtime masks. Any new trial needs its own
+before-state and rollback records. In particular, the existing PISA marker is
+shared: removing it to restart only the ad agent would also permit PISA to start.
+The earlier PISA rollback remains intact, and the expanded baseline was not
+modified. Private review evidence is retained on the Mini under
+`~/.local/share/samsung-tv-tools/changes/20261024-background-review/`.

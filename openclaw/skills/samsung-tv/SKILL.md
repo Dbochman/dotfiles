@@ -13,7 +13,7 @@ browser navigation, focused-app inspection, and LAN wake. It runs through SSH on
 The TV is `192.168.165.2`, model QN65LS03BAFXZA, firmware 1720.7 / Tizen 6.5.
 `dylans-mac` is a different Mac, not this developer host.
 
-Use the existing `samsung-tv` CLI for remote buttons, volume, power-off and
+Use the existing `samsung-tv` CLI for remote buttons, volume, power and
 Art Mode. Those WebSocket operations originate on the Mini over the existing
 Tailscale subnet route; they do not require a developer-shell session.
 
@@ -74,6 +74,24 @@ A user's request to open/play/control content authorizes that ordinary action;
 perform it without an extra confirmation. Stop for login, purchases, ambiguous
 content selection, or a new on-screen authorization that needs the owner.
 
+## Before opening or playing content
+
+1. Run `samsung-tv power frame on` and require `power_on_verified: true`
+   before launching an app or capturing its UI. Already-on is a passive REST
+   check. Confirmed standby uses one remote connection, rechecks power, and
+   sends at most one power key if still in standby. Unknown/unreachable uses
+   LAN wake from Crosstown first; unknown state never authorizes a blind toggle.
+   Failure means stop and report the specific obstacle, not "Netflix is open."
+2. Launch the requested app, then capture and inspect its current UI. An app
+   launch acknowledgment or focused PID can exist while the panel is off.
+3. For a requested profile, inspect the chooser or account UI and select that
+   exact profile before submitting content. Do not assume the previous profile,
+   infer it from playback, or blindly press Enter. If the home screen is visible,
+   use observed navigation to its profile switcher, then verify the selection.
+
+Title lookup can run independently, but power-on, app launch, capture, profile
+selection and playback must follow their dependencies in that order.
+
 ## App and content commands
 
 ```sh
@@ -121,6 +139,7 @@ An accepted request remains separate from observed playback.
 
 ```sh
 samsung-tv-dev wake                       # LAN WoL from Crosstown Mac
+samsung-tv power frame on                 # Verified power-on; safe already-on check
 samsung-tv power frame off
 samsung-tv key frame KEY_PLAY
 samsung-tv key frame KEY_PAUSE
@@ -143,11 +162,29 @@ Volume numbers count key presses; they are not an absolute volume level.
 `keys` accepts 1–16 navigation/transport keys, closes its connection, and never
 retries a partially sent batch. Inspect the screen before resuming after failure.
 Avoid unbounded or blind key sequences. `mute` is a toggle: do not claim a known
-muted state when the starting state is unknown. `wake` sends a packet; check
-power afterward. Do not send WoL from the Mini and assume it crossed Tailscale.
+muted state when the starting state is unknown. `wake` sends a packet only;
+use `power frame on` for ordinary wake requests and to recover from unsuccessful
+WoL. Do not stop at failed WoL and ask the owner to use a remote when the verified
+remote fallback remains available. Do not send WoL from the Mini and assume it
+crossed Tailscale.
 A WebSocket connection can light the panel/show a notification; use REST status
 for passive checks. Stop after a connection timeout or prompt rather than repeatedly
 triggering approval dialogs or toggles.
+
+For an owner-requested **full TV restart**, use the maintainer procedure in
+`/Users/dbochman/dotfiles/docs/samsung-tv-developer-control.md`, section
+"Full remote restart (maintainer operation)". A full remote restart was verified
+through Tizen's vendor API; ordinary off/on is not reboot proof, and there is no
+`samsung-tv-dev reboot` command. The procedure gates dispatch on completed
+temporary-root cleanup and verifies a changed boot ID. Do not substitute a
+forced reboot or run the raw reboot request inside a live root probe.
+
+Current privacy guards and remaining checks are summarized in
+`/Users/dbochman/dotfiles/docs/samsung-tv-privacy-catalogue.md`. Four additional
+AOV/far-field masks are temporary to each boot; the app flags and vendor stop
+markers are persistent and survived the verified restart. An inactive voice
+service or an AOV gate's exit 123 is not a reason to re-enable it for ordinary
+playback or cloud remote control.
 
 ## Verification and recovery
 
@@ -176,6 +213,15 @@ remote keys → fresh capture. Do not treat the image as a live stream, a comple
 composite of system overlays, or proof that protected video is playing. Store
 screenshots outside Git and avoid capturing login/payment details unnecessarily.
 
+If capture fails, read its actual error and check REST power. A standby/no-focus
+failure does not establish that screenshots are unavailable. When the helper
+confirms cleanup, verify power-on, allow the UI to settle, then retry capture
+once with a new output path. If cleanup is unconfirmed, stop developer operations
+until a maintainer verifies the exact reported staging paths; do not bypass that
+guard. Stop on ownership/hash/root verification errors. After a bounded retry
+fails, describe that failure and ask what the owner sees; do not ask them to
+identify a profile before attempting this supported recovery.
+
 After a YouTube play request, use `youtube-state VIDEO_ID` for supporting evidence
 without starting a stopped app or changing playback. A matching video and playing
 state produce `requested_video_playing_in_api: true`, but **not** verified visible
@@ -185,11 +231,34 @@ Treat screen observation as authoritative when it conflicts with the API.
 
 If an account chooser is visible, use the owner's requested profile. Inspect a
 fresh screenshot for the highlighted tile and send only the necessary keys.
-If capture fails or the highlight is ambiguous, ask the owner. Dylan's profile was selected
+For **Netflix**, the owner confirmed on 2026-10-24 that **Julia's profile is blue
+and at the top of the profile list**. Use this as a navigation hint; confirm the
+Julia label and current highlight before selecting, since layout/order can change.
+This chooser shows the name beside the highlighted profile only. If Dylan's
+yellow tile is highlighted directly below Julia's blue tile, move Up once and
+capture to confirm Julia; do not explore unrelated profiles to find her name.
+If capture still fails after the recovery above or the highlight is ambiguous,
+ask the owner. Dylan's profile was selected
 with Enter when highlighted on 2026-10-24; do not assume it will always be highlighted.
 Confirm the chooser closed. If the owner sees the home screen, one fresh request
 for the already-requested video is appropriate after that state change. Do not
 infer successful profile selection from API playback state.
+
+Netflix-specific recovery and resume behavior from the successful follow-up:
+
+- A full-screen promotional screensaver can hide the chooser. When a fresh
+  capture identifies that state, one `KEY_RETURN` dismissed it in the verified
+  run. Capture again; do not use Return indiscriminately during playback.
+- After Enter on Julia, the chooser closed and Netflix home showed her blue
+  avatar at top left. That observed transition confirms selection; highlighting
+  a profile alone does not.
+- For a general "put on SHOW under PROFILE" request, select the profile first
+  and use the resolved series ID to let Netflix choose its saved/preferred
+  episode. Do not substitute episode one or the latest episode. An explicit
+  episode request still needs its exact watch ID. See [Netflix routing](references/content.md#profile-selection-and-series-resume).
+- Once the owner confirms playback, stop verification and leave it running.
+  A black video layer can coexist with readable episode/subtitle overlays;
+  report those as supporting evidence, not independent proof of moving video.
 
 If developer access fails, check the Crosstown Mac's SSH reachability and that
 its LAN address still matches the TV's Developer IP. If an SDB server already
