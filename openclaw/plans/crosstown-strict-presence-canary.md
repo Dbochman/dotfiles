@@ -54,6 +54,27 @@ healthy with zero pending or leased deliveries, dead letters, or ready spool
 files; the sole open incident was the expected shadowed occupied-activity
 observation.
 
+## October 25 privacy-test investigation
+
+The repository privacy check incorrectly classified the all-zero MAC literal
+used to reject invalid bindings as a household identifier. Both reported hits
+were that same sentinel in the tracked scanner and canary validator. The test
+now exempts only the exact null address and still checks other MAC literals and
+private emails, including when they appear alongside the sentinel.
+
+No production scanner or approval was changed. Read-only checks confirmed that
+the Mini and Crosstown scanner bytes each match their existing approved hash.
+Those deployed versions predate the tracked multi-address Crosstown support;
+the current source is not approved on either host. Crosstown still uses its
+compatible schema-v1 bindings, while the Mini uses the separate Cabin
+schema-v2 contract. Any scanner upgrade remains a distinct canary and
+approval-gated rollout, not a remedy for this false positive.
+
+The owner confirmed there are no additional addresses to enroll beyond the
+existing site-specific Crosstown and Cabin bindings. The multi-address rollout
+is therefore deferred with no current operational need; retain the approved
+production scanners.
+
 ## October 4 phone replacement repair
 
 At the October 4 repair, Dylan's new phone and Julia's inherited phone received

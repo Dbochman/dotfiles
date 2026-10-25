@@ -23,6 +23,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 REFRESH = REPO_ROOT / "openclaw" / "bin" / "openclaw-refresh-secrets"
 NEST = REPO_ROOT / "openclaw" / "bin" / "nest"
 
+
+def has_literal_private_identity(content: str) -> bool:
+    email = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+    mac = re.compile(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
+    private_email = any(
+        not value.lower().endswith(("@example.com", "@example.invalid"))
+        for value in email.findall(content)
+    )
+    # The all-zero address is an invalid-device sentinel used by validators,
+    # not a household identity. Keep detecting every other MAC literal.
+    private_mac = any(value != "00:00:00:00:00:00" for value in mac.findall(content))
+    return private_email or private_mac
+
+
 CACHE_ONLY_KEYS = [
     "DYLAN_EMAIL",
     "JULIA_EMAIL",
@@ -788,9 +802,23 @@ esac
                 content = (REPO_ROOT / relative).read_text(encoding="utf-8")
                 self.assertNotRegex(content, r"chat_id:\d{2,}")
 
+    def test_private_identity_detector_exempts_only_the_null_mac(self) -> None:
+        cases = (
+            ('address == "00:00:00:00:00:00"', False),
+            ("operator@example.com", False),
+            ("OPERATOR@EXAMPLE.INVALID", False),
+            ("00:00:00:00:00:01", True),
+            ("02:00:00:00:00:11", True),
+            ("AA:BB:CC:DD:EE:02", True),
+            ("00:00:00:00:00:00 02:00:00:00:00:11", True),
+            ("00:00:00:00:00:00 operator@private.test", True),
+            ("operator@example.com.private.test", True),
+        )
+        for content, expected in cases:
+            with self.subTest(content=content):
+                self.assertEqual(has_literal_private_identity(content), expected)
+
     def test_active_automation_uses_structural_private_placeholders(self) -> None:
-        email = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-        mac = re.compile(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}")
         failures: list[str] = []
         roots = (
             REPO_ROOT / "openclaw" / "skills",
@@ -805,12 +833,7 @@ esac
                     content = path.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
                     continue
-                private_emails = [
-                    value for value in email.findall(content)
-                    if not value.lower().endswith("@example.com")
-                    and not value.lower().endswith("@example.invalid")
-                ]
-                if private_emails or mac.search(content):
+                if has_literal_private_identity(content):
                     failures.append(str(path.relative_to(REPO_ROOT)))
         self.assertFalse(
             sorted(set(failures)),

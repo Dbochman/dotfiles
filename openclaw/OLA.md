@@ -44,10 +44,13 @@ bash -n openclaw/bin/openclaw-refresh-secrets \
   openclaw/bin/dotfiles-pull.command
 ```
 
-The retirement and secret-refresh behavior passed. The broader secret-cache
-suite also checks repository-wide private identifiers; its pre-existing
-failure identifies two unchanged presence scripts. That unrelated finding
-must not be mistaken for a retirement or refresh failure.
+The retirement and secret-refresh behavior passed. The broader suite initially
+flagged two unchanged presence validators because they reject the literal
+`00:00:00:00:00:00` address. Investigation confirmed this is a non-identifying
+invalid-address sentinel, not a leaked household MAC. The privacy check now
+exempts only that sentinel, with regression cases preserving detection of
+other MACs and private emails. All 21 secret-cache and retirement tests pass;
+no production presence-script change was needed.
 
 ## Historical material and restoration
 
