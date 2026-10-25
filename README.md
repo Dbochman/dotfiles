@@ -49,6 +49,7 @@ Codex loads the rules; validate them locally with
 - `ssh_config` - Uses 1Password SSH Agent by default, with dedicated on-disk keys for a few Tailscale hosts
 - `docs/setup-1password.md` - Guide for SSH keys and environment variables
 - `docs/ssh-host-access.md` - Workstation, Mac mini, RTX 5090 desktop, Crosstown MBP, and Reachy SSH trust topology and recovery
+- `docs/tailscale-security.md` - Applied EchoNest isolation, Funnel retirement, policy verification, enrollment, and recovery
 - `docs/setup-devcontainer-ssh.md` - Devcontainer aliases, connection path, and latency checks
 - `.claude/docs/cmux-remote-sessions.md` - Persistent cmux/SSH/tmux sessions and Codex orchestration
 

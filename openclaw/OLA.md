@@ -3,8 +3,29 @@
 Implementation notes and shareable feedback from the first attended setup are
 recorded in [`OLA-FEEDBACK.md`](OLA-FEEDBACK.md).
 
-OpenClaw uses Ola as a narrowly scoped messaging channel through three
-interfaces:
+## Current deployment
+
+As of October 24, 2026, the public wake callback is retired. Its HTTPS-10000
+Funnel route has been removed, and `ai.openclaw.ola-webhook-bridge` is unloaded
+and persistently disabled through launchd. The retained bridge log's last
+accepted callback was July 29. Private Tailscale Serve routes remain unchanged.
+Ola's MCP configuration and credentials are retained; this change stops
+webhook-triggered wakes, not outbound MCP access.
+
+On October 25, the owner removed the member-wide `funnel` node attribute from
+the tailnet policy. The Mini's live capabilities no longer advertise Funnel
+or Funnel ports; its private Serve routes remain unchanged. Restoring a public
+callback now also requires an explicit policy change granting Funnel access.
+The wider policy and recovery contract is documented in
+[Tailscale security operations](../docs/tailscale-security.md).
+
+The implementation below is retained for an explicitly requested restoration.
+Routine dotfiles pulls refresh installed files without bootstrapping an
+unloaded bridge. Do not re-enable the public callback as routine maintenance.
+
+## Architecture
+
+The optional Ola callback integration has three interfaces:
 
 - Ola's remote Streamable HTTP MCP server provides `get_inbox`,
   `get_messages`, and `send_message`;
@@ -62,11 +83,13 @@ webhook secret requires an attended cache refresh and a bridge restart, but no
 OpenClaw restart. Rotating the private OpenClaw hook token requires refreshing
 both the bridge and gateway processes so their in-memory values remain equal.
 
-## Public callback
+## Optional public callback (currently disabled)
 
 Keep the OpenClaw gateway loopback-bound and retain the existing tailnet-only
-Serve route on port 443. A separate Tailscale Funnel exposes only the bridge's
-wake path on allowed HTTPS port 10000:
+Serve route on port 443. If restoration is explicitly approved, a separate
+Tailscale Funnel would expose only the bridge's wake path on HTTPS port 10000.
+The current policy does not permit this command; review a device-scoped grant
+before using it:
 
 ```bash
 tailscale funnel --bg --yes \
@@ -88,7 +111,7 @@ Do not switch `gateway.tailscale.mode` to `funnel`; that would publish the full
 gateway surface. Confirm `tailscale funnel status --json` shows a single public
 handler for `/hooks/wake` on port 10000 while private Serve remains on port 443.
 
-Targeted rollback:
+To retire only this public route, preserving private Serve:
 
 ```bash
 tailscale funnel --yes \
@@ -97,6 +120,32 @@ tailscale funnel --yes \
   http://127.0.0.1:18790/hooks/wake \
   off
 ```
+
+Then persistently disable and unload only the bridge:
+
+```bash
+launchctl disable "gui/$(id -u)/ai.openclaw.ola-webhook-bridge"
+launchctl bootout "gui/$(id -u)/ai.openclaw.ola-webhook-bridge"
+```
+
+Verify that no enabled `AllowFunnel` entry remains, the private port-443 Serve
+handlers match their saved configuration, port 18790 no longer listens, and
+`launchctl print-disabled "gui/$(id -u)"` lists the bridge as disabled. Do not
+use `tailscale funnel reset`, which can remove unrelated Serve configuration.
+
+For an owner-requested restoration, verify credentials and code first, then:
+
+```bash
+launchctl enable "gui/$(id -u)/ai.openclaw.ola-webhook-bridge"
+launchctl bootstrap "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/ai.openclaw.ola-webhook-bridge.plist"
+```
+
+Require the loopback health check to pass before restoring the exact Funnel
+mapping above. Both the retired listener and the revoked policy capability
+need explicit restoration; enabling launchd alone does not publish a route.
+Check Ola's delivery
+configuration and circuit-breaker state before testing a fresh callback.
 
 ## Attended enrollment and deployment
 

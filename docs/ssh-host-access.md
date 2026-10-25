@@ -7,6 +7,13 @@ Pro, and Reachy Mini. It describes the deployed state as verified on September
 `authorized_keys`, `known_hosts`, and machine-specific overrides remain local to
 their hosts and must never be committed.
 
+The October 25 tailnet changes are recorded in
+[Tailscale security operations](tailscale-security.md). EchoNest can receive
+authorized administration but cannot initiate connections into the personal
+tailnet. New or re-enrolled device addresses require policy review; a valid SSH
+key alone does not establish network access. Existing host-to-host identities
+below were not changed by that rollout.
+
 ## Hosts
 
 | Role | SSH endpoint | Account | Network |

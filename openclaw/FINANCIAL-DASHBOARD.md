@@ -110,6 +110,12 @@ for dashboard income and Forecast cash flow.
 - `payroll-link --tailscale-funnel --no-browser` is a one-time ADP-capable
   Link flow. It exposes only a random, signed-webhook route through a temporary
   Tailscale Funnel on `8443`, never the existing OpenClaw `443` service.
+  **Unavailable under the current tailnet policy:** Funnel permission was
+  removed on October 25, 2026. A new enrollment using this mode requires an
+  explicitly approved temporary, device-scoped exception and verified cleanup;
+  do not restore member-wide Funnel access. Existing payroll sync and scheduled
+  finance jobs do not require this callback. See
+  [Tailscale security operations](../docs/tailscale-security.md).
 - The route verifies Plaid's `Plaid-Verification` JWT and raw-body hash, then
   is removed after the session. `payroll-funnel-cleanup` removes a stale route
   after an interrupted flow.
