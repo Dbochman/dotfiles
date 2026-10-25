@@ -10,8 +10,10 @@ files, device inventory, and probe results remain in protected local state.
   removed. No Funnel grant remains in the saved policy, and the Mini no longer
   advertises the Funnel capability or permitted Funnel ports.
 - **Ola public wake is retired.** Its HTTPS-10000 route was removed and its
-  bridge was unloaded and persistently disabled. Private Serve routes and Ola
-  MCP access were retained. See [Ola operations](../openclaw/OLA.md).
+  bridge was unloaded and persistently disabled. The subsequent full retirement
+  removed the MCP connection, heartbeat routine, local hook credentials, and
+  installed bridge files. The owner confirmed provider revocation. Private
+  Serve routes remain intact. See [Ola retirement](../openclaw/OLA.md).
 - **EchoNest cannot initiate personal-tailnet connections.** The all-source
   network grant was replaced with `ipset:trusted-existing-devices`, containing
   the IPv4 and IPv6 addresses of the other twelve enrolled devices. Their

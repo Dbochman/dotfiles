@@ -646,7 +646,6 @@ SCRIPTS_DEPLOYED=0
 NEST_EVENT_RUNTIME_CHANGED=0
 NEST_ACTIVITY_RUNTIME_CHANGED=0
 CABIN_ENTRY_RUNTIME_CHANGED=0
-OLA_BRIDGE_RUNTIME_CHANGED=0
 CAT_DASHBOARD_RUNTIME_CHANGED=0
 ROOMBA_DASHBOARD_RUNTIME_CHANGED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
@@ -686,11 +685,6 @@ for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do
     cabin-entry-verifier.py|cabin-entry-verifier-wrapper.sh)
       if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
         CABIN_ENTRY_RUNTIME_CHANGED=1
-      fi
-      ;;
-    ola-webhook-bridge.py|ola-webhook-bridge-wrapper.sh)
-      if [ ! -f "$BIN_DST/$fname" ] || ! cmp -s "$script" "$BIN_DST/$fname"; then
-        OLA_BRIDGE_RUNTIME_CHANGED=1
       fi
       ;;
     cat-dashboard.py)
@@ -951,60 +945,6 @@ if [ -e "$AIRTHINGS_SNAPSHOT_DST" ] || [ -L "$AIRTHINGS_SNAPSHOT_DST" ]; then
     fi
   elif [ "$AIRTHINGS_SNAPSHOT_CHANGED" -eq 1 ]; then
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) airthings-snapshot: refreshed installed plist; LaunchAgent remains unloaded" >> "$LOG"
-  fi
-fi
-
-# Refresh the Ola HMAC bridge only after attended secret enrollment and
-# bootstrap have installed its plist. A routine pull must never publish a new
-# callback listener merely because its tracked implementation exists.
-OLA_BRIDGE_LABEL="ai.openclaw.ola-webhook-bridge"
-OLA_BRIDGE_SRC="$REPO/openclaw/launchagents/$OLA_BRIDGE_LABEL.plist"
-OLA_BRIDGE_DST="$HOME/Library/LaunchAgents/$OLA_BRIDGE_LABEL.plist"
-if [ -e "$OLA_BRIDGE_DST" ] || [ -L "$OLA_BRIDGE_DST" ]; then
-  if [ ! -f "$OLA_BRIDGE_SRC" ] || [ -L "$OLA_BRIDGE_SRC" ] \
-    || [ ! -f "$OLA_BRIDGE_DST" ] || [ -L "$OLA_BRIDGE_DST" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ola-webhook: FATAL installed LaunchAgent is unavailable or unsafe" >> "$LOG"
-    exit 1
-  fi
-
-  OLA_BRIDGE_AGENT_CHANGED=0
-  if ! cmp -s "$OLA_BRIDGE_SRC" "$OLA_BRIDGE_DST"; then
-    atomic_install_managed_file "$OLA_BRIDGE_SRC" "$OLA_BRIDGE_DST" 644
-    OLA_BRIDGE_AGENT_CHANGED=1
-  fi
-
-  OLA_BRIDGE_DOMAIN="gui/$(id -u)"
-  if launchctl print "$OLA_BRIDGE_DOMAIN/$OLA_BRIDGE_LABEL" >/dev/null 2>&1; then
-    if [ "$OLA_BRIDGE_AGENT_CHANGED" -eq 1 ] || [ "$OLA_BRIDGE_RUNTIME_CHANGED" -eq 1 ]; then
-      launchctl bootout "$OLA_BRIDGE_DOMAIN/$OLA_BRIDGE_LABEL" >/dev/null 2>&1 || true
-      OLA_BRIDGE_RELOAD_OK=0
-      for OLA_BRIDGE_RELOAD_ATTEMPT in 1 2 3; do
-        if launchctl bootstrap "$OLA_BRIDGE_DOMAIN" "$OLA_BRIDGE_DST"; then
-          OLA_BRIDGE_RELOAD_OK=1
-          break
-        fi
-        sleep 1
-      done
-      if [ "$OLA_BRIDGE_RELOAD_OK" -ne 1 ]; then
-        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ola-webhook: FATAL bridge reload failed" >> "$LOG"
-        exit 1
-      fi
-      OLA_BRIDGE_HEALTH_OK=0
-      for OLA_BRIDGE_HEALTH_ATTEMPT in 1 2 3 4 5 6 7 8 9 10; do
-        if [ "$(/usr/bin/curl -fsS --max-time 2 http://127.0.0.1:18790/healthz 2>/dev/null || true)" = '{"ok":true}' ]; then
-          OLA_BRIDGE_HEALTH_OK=1
-          break
-        fi
-        sleep 1
-      done
-      if [ "$OLA_BRIDGE_HEALTH_OK" -ne 1 ]; then
-        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ola-webhook: FATAL bridge reload did not become healthy" >> "$LOG"
-        exit 1
-      fi
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ola-webhook: reloaded installed bridge" >> "$LOG"
-    fi
-  elif [ "$OLA_BRIDGE_AGENT_CHANGED" -eq 1 ] || [ "$OLA_BRIDGE_RUNTIME_CHANGED" -eq 1 ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) ola-webhook: refreshed installed files; LaunchAgent remains unloaded pending explicit bootstrap" >> "$LOG"
   fi
 fi
 

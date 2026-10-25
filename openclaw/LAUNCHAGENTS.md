@@ -86,7 +86,6 @@ or LaunchAgent plists changed during this remediation.
 | `ai.openclaw.nest-event-listener` | `nest-event-listener-wrapper.sh` | — | Multi-camera Nest SDM Pub/Sub consumer and durable shadow outbox |
 | `ai.openclaw.nest-activity-reviewer` | `nest-activity-reviewer-wrapper.sh` | — | Cabin-only image-grounded commentary over explicit iMessage RPC bridge transport, hard-limited to one send attempt/hour |
 | `ai.openclaw.cabin-entry-verifier` | `cabin-entry-verifier-wrapper.sh` | — | Ordered Cabin Ring driveway → front-door consumer; exact Kitchen stills at +30/+60 seconds, ephemeral media, fixed positive confirmation |
-| `ai.openclaw.ola-webhook-bridge` | `ola-webhook-bridge-wrapper.sh` | 18790 loopback when enabled | Disabled October 24, 2026; public Funnel removed. Retained for explicit restoration. |
 | `ai.openclaw.reachy-gateway-tunnel` (disabled rollback) | `ssh -R` | Reachy loopback 18789 | Legacy direct Mac-mini tunnel, retained as `ai.openclaw.reachy-gateway-tunnel.plist.disabled` and never loaded beside the MBP relay |
 | `ai.openclaw.reachy-gateway-upstream` | `ssh -L` | Crosstown MBP loopback 28789 | Carries the Mac mini's loopback-only gateway to the always-on Crosstown MBP without exposing it on Tailscale or the LAN |
 | `ai.openclaw.reachy-gateway-relay` | `ssh -R` | Reachy loopback 18789 | Runs on the Crosstown MBP and publishes its private upstream gateway hop only on Reachy's loopback interface |
@@ -169,30 +168,14 @@ attended-install only: routine pulls may refresh it only after its plist
 already exists, and cannot initialize its state, register its consumer, arm a
 canary, or bootstrap it.
 
-### Ola Webhook Bridge
+### Retired Ola bridge
 
-The bridge is unloaded and persistently disabled as of October 24, 2026, and
-its public Funnel route is removed. Private Serve and Ola MCP access are
-unchanged. The following describes the retained implementation, not an active
-public listener. See [`OLA.md`](OLA.md) for retirement checks and restoration.
-
-When explicitly enabled, `ai.openclaw.ola-webhook-bridge` is the authentication
-boundary between Ola's public callback and OpenClaw's loopback-only
-`/hooks/wake` endpoint. Its former Funnel route exposed only the bridge path on
-HTTPS port 10000. Funnel permission was also removed from the tailnet policy on
-October 25; routine deployment must not restore it. The Python service
-binds to `127.0.0.1:18790`, verifies `X-Hub-Signature-256` over the raw request
-body, requires a JSON-object envelope, then discards its fields and sends a
-fixed content-free wake to `127.0.0.1:18789` with the separate private OpenClaw
-hook token. It does not inspect or log message content and never invokes `op`.
-
-Initial secret enrollment and bootstrap are attended. Routine script updates
-flow through the normal `~/.openclaw/bin` deployment, which reloads an already
-loaded bridge when its runtime changes but never performs the first bootstrap.
-The LaunchAgent must not be bootstrapped until `OLA_WEBHOOK_SECRET` and
-`OLA_HOOK_TOKEN` are both present in the protected cache. See
-[`OLA.md`](OLA.md) for enrollment, verification, rotation, Funnel routing, and
-rollback.
+Ola was fully retired on October 25, 2026. The public route and Funnel grant,
+MCP connection, heartbeat routine, local hook, and cached credentials have
+been removed or disabled. The bridge's installed files and tracked deployment
+handling were removed; routine pulls must not recreate it. The gateway was
+restarted and its former hook returned HTTP 404. The owner confirmed provider
+revocation and termination. See [OLA.md](OLA.md) for verification and history.
 
 ### Reachy Mini Gateway Tunnel
 

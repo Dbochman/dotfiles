@@ -29,7 +29,7 @@ Each service uses one of two patterns:
 |----------|---------|-------------|
 | `dog-walk-automation.log` | `ai.openclaw.dog-walk-automation` | Fi/network dog-walk policy, route tracking, collar mode, and Roomba lifecycle |
 | `ring-event-listener.log` | `ai.openclaw.ring-event-listener` | Sole Ring FCM ingress, normalized publication, direct dings, and local signal health |
-| `ola-webhook-bridge.log` / `.err.log` | `ai.openclaw.ola-webhook-bridge` | Owner-only operational metadata and stderr for the HMAC-verifying Ola wake bridge; never callback bodies, signatures, or credentials |
+| `ola-webhook-bridge.log` / `.err.log` | Retired October 25, 2026 | Historical operational metadata retained; no active writer. See [retirement record](../OLA.md). |
 | `cielo-refresh.log` | `com.openclaw.cielo-refresh` | Safe Cielo API-refresh outcomes and bounded PinchTab fallback state; never tokens or raw responses |
 | `cielo-passive-grab.log` / `cielo-reauth-capture.log` | Cielo bounded recovery helpers | Token-free CDP capture progress for automated and attended recovery; files remain owner-only |
 | `opentable-refresh.log` | `ai.openclaw.opentable-refresh` | Weekly managed OpenTable token refresh plus one conditional retry; stdout and stderr share this file. Credential-free outcome metadata is stored owner-only at `~/.openclaw/run/opentable-refresh-status.json` for retry control and weekly health reporting. |

@@ -101,10 +101,10 @@ identity; use service-specific keys only for the named service.
 General-cache vault-backed values require an `OP_REF_<CACHE_KEY>` exact-field reference in
 the seed. This includes `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`,
 `OPENCLAW_GATEWAY_TOKEN`, the Cielo and Star Market username/password pairs,
-the Plaid client and environment secrets, all four `NEST_*` fields, and the
-three separately scoped Ola values: `OLA_API_KEY` for MCP, `OLA_HOOK_TOKEN`
-for the loopback OpenClaw hook, and `OLA_WEBHOOK_SECRET` for validating Ola's
-public HMAC-signed callback.
+the Plaid client and environment secrets, and all four `NEST_*` fields.
+Ola was retired on October 25, 2026. Its API key, hook token, and webhook
+secret are no longer required or emitted by a cache refresh. Do not restore
+their seed references or cached values during routine credential maintenance.
 
 The dedicated weekly finance cache uses these exact-field references:
 

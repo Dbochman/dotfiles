@@ -2,6 +2,10 @@
 
 Date: 2026-07-22
 
+Historical setup report. Ola was retired on October 25, 2026; see
+[the retirement record](OLA.md) for current state. The behavior below describes
+the July integration and is not an active deployment contract.
+
 ## Summary
 
 The end result is good: a new Ola message now causes an immediate signed

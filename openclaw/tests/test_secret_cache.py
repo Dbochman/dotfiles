@@ -65,9 +65,6 @@ VAULT_KEYS = [
     "NEST_CLIENT_SECRET",
     "NEST_REFRESH_TOKEN",
     "NEST_PROJECT_ID",
-    "OLA_API_KEY",
-    "OLA_HOOK_TOKEN",
-    "OLA_WEBHOOK_SECRET",
 ]
 FINANCE_VAULT_KEYS = [
     "FINANCE_EVERSOURCE_USERNAME",
@@ -368,8 +365,6 @@ esac
         self.assertEqual(stat.S_IMODE(self.cache.stat().st_mode), 0o600)
         text = self.cache.read_text(encoding="utf-8")
         self.assertNotIn("OP_REF_", text)
-        for key in ("OLA_API_KEY", "OLA_HOOK_TOKEN", "OLA_WEBHOOK_SECRET"):
-            self.assertIn(f"{key}=", text)
         self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
         expected_calls = [
             f"read:ref://{key}"
@@ -572,39 +567,26 @@ esac
         self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
         self.assertNotIn("fake-vault-", refresh_output)
 
-    def test_ola_hook_token_refresh_failure_preserves_last_good_cache(self) -> None:
-        self._write_assignments(self.seed, self.seed_values())
-        original = b"LAST_GOOD='keep the prior gateway environment'\n"
-        self.cache.parent.mkdir(parents=True, exist_ok=True)
-        self.cache.write_bytes(original)
-        self.cache.chmod(0o600)
+    def test_retired_ola_credentials_are_not_read_or_exported(self) -> None:
+        values = self.seed_values()
+        retired = ("OLA_API_KEY", "OLA_HOOK_TOKEN", "OLA_WEBHOOK_SECRET")
+        for key in retired:
+            values[f"OP_REF_{key}"] = f"ref://{key}"
+        self._write_assignments(self.seed, values)
+        self._write_assignments(self.cache, {key: "retired-test-value" for key in retired})
 
-        returncode, refresh_output = self.run_refresh_in_pty(
-            "--interactive",
-            FAKE_OP_FAIL_KEY="OLA_HOOK_TOKEN",
+        returncode, output = self.run_refresh_in_pty(
+            "--interactive", FAKE_OP_FAIL_KEY="OLA_API_KEY"
         )
 
-        self.assertNotEqual(returncode, 0)
-        self.assertEqual(self.cache.read_bytes(), original)
-        self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
-        self.assertNotIn("fake-vault-", refresh_output)
-
-    def test_ola_webhook_secret_refresh_failure_preserves_last_good_cache(self) -> None:
-        self._write_assignments(self.seed, self.seed_values())
-        original = b"LAST_GOOD='keep the prior gateway environment'\n"
-        self.cache.parent.mkdir(parents=True, exist_ok=True)
-        self.cache.write_bytes(original)
-        self.cache.chmod(0o600)
-
-        returncode, refresh_output = self.run_refresh_in_pty(
-            "--interactive",
-            FAKE_OP_FAIL_KEY="OLA_WEBHOOK_SECRET",
-        )
-
-        self.assertNotEqual(returncode, 0)
-        self.assertEqual(self.cache.read_bytes(), original)
-        self.assertEqual(list(self.cache.parent.glob(".secrets-cache.*")), [])
-        self.assertNotIn("fake-vault-", refresh_output)
+        self.assertEqual(returncode, 0, output)
+        cache = self.cache.read_text()
+        calls = self.op_log.read_text()
+        for key in retired:
+            self.assertNotIn(f"{key}=", cache)
+            self.assertNotIn(f"read:ref://{key}", calls)
+        self.assertNotIn("retired-test-value", output)
+        self.assertIn("OPENCLAW_GATEWAY_TOKEN=", cache)
 
     def test_general_refresh_does_not_require_or_export_finance_references(self) -> None:
         values = self.seed_values()
