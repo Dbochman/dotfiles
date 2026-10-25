@@ -17,7 +17,57 @@ See the [privacy catalogue's current status and remaining checks](samsung-tv-pri
 for the authoritative summary, recovery versions and resource baseline. Earlier
 dated sections below describe their phase's observations, not current pending
 work. Full-restart persistence is now observed; separate standby/wake and
-post-restart playback/integration checks remain outstanding.
+post-restart playback/integration checks remain outstanding. The October 25
+network-wake investigation below adds an attended off/wake check, without
+closing the separate privacy-guard and playback validations.
+
+## Cold-wake readiness recovery (2026-10-25)
+
+The Cyberpunk / Dylan-profile request loaded the current skill and sent LAN
+WoL through the correct Crosstown Mac. Its power helper returned
+`wake_packet_sent: true`, `power_on_verified: false`, `power: unknown` and
+stopped before app launch or profile selection. No remote connection was
+attempted, so the generic suggestion of an approval prompt was unsupported.
+
+The router still resolved `Samsung.lan` to the configured `192.168.165.2`.
+A subnet probe, known-MAC neighbor check and discovery checks found no live TV
+before IR wake. IR brought back the same IP and Wi-Fi MAC. SDB became reachable
+before ports 8001/8002; the latter initially refused connections, then recovered.
+The TV had freshly booted, and systemd recorded `msf-server.service` starting
+about 61 seconds after boot. The Wi-Fi driver reported magic-packet wake enabled.
+
+An attended reproduction turned the screen black, briefly returned REST
+`standby`, then lost REST reachability. The original helper sent WoL and
+reported failure. Continued passive observation subsequently found SDB and
+then REST `standby`; a single verified remote-power fallback produced `on`.
+This establishes a readiness-timeout defect in that reproduction. It does not
+prove every earlier wake packet arrived or that all overnight wake failures
+have the same cause. No wake preference, privacy guard, or router setting was
+changed during this investigation.
+
+The Mini's tracked `bin/samsung-tv` now waits for REST `on` **or** `standby`
+within a 90-second readiness window after one LAN wake packet (an in-flight
+request can finish after that deadline). Confirmed standby proceeds immediately
+to the existing remote fallback. The short post-key verification remains
+separate. Unknown state still cannot authorize a toggle, and no key or wake
+packet is repeatedly sent. The status command also catches failures during
+client construction; this library can query model metadata in its constructor.
+Such failures now report `UNREACHABLE` instead of an uncaught traceback.
+
+All 83 Samsung TV tests pass, including delayed standby after 64 seconds,
+delayed direct-on, immediate standby, the readiness deadline, and constructor
+failure. Syntax and whitespace checks pass. The installed Mini CLI is a symlink
+to this tracked source, so no gateway restart or separate CLI deployment is
+needed. One diagnostic callback failed during startup; both exact staging paths
+were subsequently verified absent, and later SDK/host cleanup was confirmed.
+
+Live validation with the updated helper: after one power-off command, REST
+reported standby at 5 and 15 seconds and was unreachable at 32 seconds. The
+subsequent single `power frame on` invocation completed in approximately
+47 seconds with `wake_packet_sent: true`, `power_key_sent: true`,
+`power_on_verified: true`, and `power: on`. No IR intervention was needed for
+that cycle. No app launch, profile selection, or content playback was attempted.
+This is an immediate off/wake validation, not an overnight-standby endurance test.
 
 ## OpenClaw standby/capture recovery (2026-10-24)
 

@@ -34,6 +34,7 @@ import time
 
 CONFIG_FILE = os.path.expanduser("~/.openclaw/samsung-tvs.json")
 CACHE_DIR = os.path.expanduser("~/.cache/samsung-tv")
+WAKE_READY_TIMEOUT = 90
 
 DEFAULT_TVS = {
     "Samsung The Frame 65": {
@@ -158,9 +159,8 @@ def cmd_status(_args):
     for name, info in tvs.items():
         ip = info["ip"]
         tp = token_path(name)
-        tv = SamsungTVWS(host=ip, port=8002, token_file=tp, timeout=5, name="OpenClaw")
-
         try:
+            tv = SamsungTVWS(host=ip, port=8002, token_file=tp, timeout=5, name="OpenClaw")
             device_info = tv.rest_device_info()
             dev = device_info.get("device", device_info)
             power = dev.get("PowerState", "Unknown")
@@ -209,6 +209,21 @@ def poll_power(info):
     return read_power(info)
 
 
+def wait_for_wake(info):
+    # A cold wake can start the developer port well before REST/MSF. The
+    # observed TV started MSF about 61 seconds into boot. Wait for a usable
+    # power state, including standby so the verified remote fallback can run.
+    deadline = time.monotonic() + WAKE_READY_TIMEOUT
+    while True:
+        state = read_power(info)
+        if state in ("on", "standby"):
+            return state
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return state
+        time.sleep(min(2, remaining))
+
+
 def ensure_power_on(name, info):
     result = {"power_on_verified": False, "wake_packet_sent": False,
               "power_key_sent": False}
@@ -216,7 +231,7 @@ def ensure_power_on(name, info):
     if state not in ("on", "standby"):
         send_wake(info)
         result["wake_packet_sent"] = True
-        state = poll_power(info)
+        state = wait_for_wake(info)
     if state == "standby":
         remote = get_tv(info["ip"], name)
         try:
@@ -240,7 +255,8 @@ def cmd_power_on(name, info):
         sys.exit(1)
     print(json.dumps(result))
     if not result["power_on_verified"]:
-        print("Power-on unverified; no blind power-toggle retry. Check connectivity or an approval prompt.",
+        print("Power-on unverified after bounded wake/power checks; "
+              "no blind power-toggle retry. Check TV connectivity and power state.",
               file=sys.stderr)
         sys.exit(1)
 

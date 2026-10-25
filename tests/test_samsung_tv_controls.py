@@ -16,10 +16,18 @@ loader.exec_module(tv)
 class PowerOnTests(unittest.TestCase):
     def run_power(self, states):
         remote = MagicMock()
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
         with patch.object(tv, "read_power", side_effect=states), \
                 patch.object(tv, "get_tv", return_value=remote) as connect, \
-                patch.object(tv, "send_wake") as wake, patch.object(tv.time, "sleep"):
+                patch.object(tv, "send_wake") as wake, \
+                patch.object(tv.time, "sleep", side_effect=sleep), \
+                patch.object(tv.time, "monotonic", side_effect=lambda: now[0]):
             result = tv.ensure_power_on("Frame", {"ip": "test"})
+        self.elapsed = now[0]
         return result, remote, connect, wake
 
     def test_already_on_never_connects_or_wakes(self):
@@ -50,14 +58,34 @@ class PowerOnTests(unittest.TestCase):
 
     def test_lan_wake_followed_by_remote_fallback(self):
         result, remote, connect, wake = self.run_power(
-            ["unknown"] + ["standby"] * 7 + ["on"])
+            ["unknown", "standby", "standby", "on"])
         self.assertTrue(result["power_on_verified"])
         wake.assert_called_once()
         remote.send_key.assert_called_once_with("KEY_POWER")
+        self.assertEqual(self.elapsed, 0)
+
+    def test_cold_wake_waits_for_delayed_standby_then_uses_one_key(self):
+        result, remote, connect, wake = self.run_power(
+            ["unknown"] + ["unknown"] * 32 + ["standby", "standby", "on"])
+        self.assertTrue(result["power_on_verified"])
+        self.assertEqual(self.elapsed, 64)
+        wake.assert_called_once()
+        connect.assert_called_once()
+        remote.send_key.assert_called_once_with("KEY_POWER")
+        remote.close.assert_called_once()
+
+    def test_cold_wake_reaches_on_without_remote_or_toggle(self):
+        result, remote, connect, wake = self.run_power(
+            ["unknown"] + ["unknown"] * 32 + ["on"])
+        self.assertTrue(result["power_on_verified"])
+        wake.assert_called_once()
+        connect.assert_not_called()
+        remote.send_key.assert_not_called()
 
     def test_unreachable_after_wake_never_toggles(self):
-        result, remote, connect, wake = self.run_power(["unknown"] * 7)
+        result, remote, connect, wake = self.run_power(["unknown"] * 100)
         self.assertFalse(result["power_on_verified"])
+        self.assertEqual(self.elapsed, tv.WAKE_READY_TIMEOUT)
         wake.assert_called_once()
         connect.assert_not_called()
 
@@ -75,6 +103,20 @@ class PowerOnTests(unittest.TestCase):
                 tv.ensure_power_on("Frame", {"ip": "test"})
         remote.send_key.assert_called_once()
         remote.close.assert_called_once()
+
+
+class StatusTests(unittest.TestCase):
+    def test_unreachable_during_client_initialization_is_reported(self):
+        # This client reads model metadata in its constructor, before the
+        # explicit REST call. A sleeping TV must still produce normal status.
+        library = MagicMock()
+        library.SamsungTVWS.side_effect = RuntimeError("connection refused")
+        with patch.dict(tv.sys.modules, {"samsungtvws": library}), \
+                patch.object(tv, "load_tvs", return_value={"Frame": {"ip": "test"}}), \
+                patch.object(tv, "token_path", return_value="unused"), \
+                patch.object(tv.sys, "stdout", new_callable=io.StringIO) as output:
+            tv.cmd_status([])
+        self.assertIn("Power:  UNREACHABLE", output.getvalue())
 
 
 class RemoteBatchTests(unittest.TestCase):
