@@ -34,7 +34,7 @@ spogo play spotify:playlist:<id>          # play a playlist by URI
 
 ### Devices
 
-For the **Crosstown Frame TV**, use `samsung-tv-spotify play URI`, `pause`,
+For the **Crosstown Frame TV** (Spotify Connect name **TV**), use `samsung-tv-spotify play URI`, `pause`,
 `resume`, or `status [TRACK_URI]`; see the [TV control notes](../samsung-tv/references/apps.md#spotify).
 That helper uses a tested isolated client with explicit device targeting.
 Homebrew `spogo` 0.1.0 remains unchanged and must not be used to target TV

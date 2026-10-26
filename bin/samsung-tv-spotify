@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 VERSION = "0.10.3-frame.1"
 COMMIT = "980cf0c3137518423638c8b0a4ca6d3ea5cf962c"
-FRAME = "Samsung The Frame 65"
+FRAME = "TV"
 APP = "rJeHak5zRg.Spotify"
 REPO = Path(__file__).resolve().parent.parent
 

@@ -18,6 +18,29 @@ tv = module_from_spec(spec_from_loader(loader.name, loader))
 loader.exec_module(tv)
 
 
+class RenamedTVTests(unittest.TestCase):
+    def test_aliases_resolve_same_device_with_old_or_new_config_label(self):
+        for label in ("TV", "Samsung The Frame 65"):
+            info = {"ip": tv.CROSSTOWN_TV}
+            for alias in ("TV", "frame", "crosstown", "Samsung The Frame 65"):
+                with self.subTest(label=label, alias=alias):
+                    self.assertEqual(tv.resolve_tv(alias, {label: info}), (label, info))
+
+    def test_renamed_crosstown_uses_existing_pairing_file(self):
+        remote = MagicMock()
+        with patch.object(tv, "client_classes", return_value=(remote, None)), \
+                patch.object(tv, "token_path", return_value="/existing/token") as token:
+            tv.new_tv(tv.CROSSTOWN_TV, "TV")
+        token.assert_called_once_with("Samsung The Frame 65")
+        self.assertEqual(remote.call_args.kwargs["token_file"], "/existing/token")
+
+    def test_other_tv_keeps_its_own_pairing_file(self):
+        with patch.object(tv, "client_classes", return_value=(MagicMock(), None)), \
+                patch.object(tv, "token_path") as token:
+            tv.new_tv("192.0.2.10", "Other TV")
+        token.assert_called_once_with("Other TV")
+
+
 class PowerOnTests(unittest.TestCase):
     def run_power(self, states):
         remote = MagicMock()

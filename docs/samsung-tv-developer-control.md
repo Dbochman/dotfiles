@@ -87,6 +87,118 @@ failure did not recur, but this evidence alone does not confirm the episode or
 visible playback. Sending UP before root capture setup finishes can miss the
 transient player controls, as noted in the earlier diagnostic below.
 
+## Unresolved standby wake failure (2026-10-25, later evening)
+
+The subsequent Chillhop / Spotify request used the updated Crosstown transport
+and completed the 90-second readiness wait, but returned `power: unknown`,
+`wake_packet_sent: true`, and no power key. The owner confirmed the TV remained
+off. SSH to the MacBook worked; direct MacBook-to-TV probes could not reach
+REST, WebSocket, or SDB, and the TV's ARP entry was incomplete. This is distinct
+from the earlier workstation subnet-route failure.
+
+A narrowly filtered packet capture on the MacBook's `en0` verified the expected
+102-byte UDP wake broadcast from `192.168.165.109` to `192.168.165.255:9`, with
+Ethernet broadcast destination. The TV remained unreachable afterward. A second
+diagnostic sent that magic packet directly to the known TV Wi-Fi MAC and IP;
+packet capture confirmed the unicast destination. Its temporary TV-only ARP
+mapping was removed immediately after sending, and REST remained unavailable
+for another 95 seconds. Capturing transmission from the MacBook does not prove
+receipt or processing by the sleeping TV.
+
+Neither test justifies increasing the readiness timeout or installing the
+unicast experiment as a fix. At this point, standby wake settings and the
+SmartThings wake path still needed inspection once the TV became reachable. The
+previous immediate off/wake success does not establish reliable longer standby
+wake. No TV settings, router settings, or persistent neighbor entries were
+changed in these diagnostics.
+
+At the owner's request, a subsequent diagnostic reused the existing Google
+Assistant text transport from the installed Roomba helper's `send_command`
+function, without invoking a vacuum command or changing that helper. The exact
+request was `Turn on Samsung The Frame 65`. Google acknowledged that request,
+but local REST remained unavailable through the following 86-second check and
+the follow-up `Is Samsung The Frame 65 on?` returned that it was off. This is
+not a verified wake fallback; do not equate Google's acknowledgment with actual
+TV power. The existing OAuth workflow was used without printing credentials,
+relinking an account, or changing permissions.
+
+A final bounded test sent four wake-only packets, covering both
+`255.255.255.255` and `192.168.165.255` on UDP ports 7 and 9. Packet capture
+confirmed all four transmissions; the TV remained unavailable throughout the
+95-second observation window. A fresh Crosstown DNS lookup still resolved
+`Samsung.lan` to `192.168.165.2`, and the known TV MAC was absent from the
+MacBook's neighbor cache. No address change was demonstrated. A DHCP reservation
+could stabilize future addressing, but these results do not establish it as a
+fix for the standby wake failure.
+
+After IR power-on, the same model, Wi-Fi MAC and IP returned. At the first SDK
+inspection, uptime was approximately 52 seconds: this was a fresh boot. SDB
+became available before REST; MSF was still inactive at that first check and
+subsequently started normally. The Wi-Fi driver reported magic-packet wake
+enabled, and its device wake attribute was enabled. Scoped reads of the actual
+Buxton configuration store established:
+
+- `db/menu/network/wakeOnMobile_enable`: Int32 `1`.
+- `db/menu/network/ip_remote_support`: Int32 `1`; TCP 1516 was listening.
+- `db/menu/network/wifi_power`: Boolean `true`.
+- `db/menu/system/power_control/network_standby`: Int32 `0`; applicability to
+  this consumer Frame is not established and it was not changed.
+- `db/boot/instant_on`: Int32 `1`; `db/sysman/always_instanton`: Int32 `0`.
+- The recorded power-off reason was `POWER_KEY`.
+
+Recursive `vconftool` enumeration returned no entries on this firmware, despite
+successful exact-key reads. Key-name discovery used read-only SQLite access to
+`/opt/var/lib/buxton2/system.db`, restricted to power/wake-related names, followed
+by exact-key reads. No account or pairing records were retrieved. Temporary
+root sessions verified unchanged system-file hashes and staging cleanup. One
+SDK diagnostic timed out; both exact reported staging paths were independently
+verified absent and the owned SDB server was stopped.
+
+The normal Expert Settings UI also showed Power On with Mobile and IP Remote
+enabled. An attempted off/on refresh disabled Power On with Mobile, but the
+menu closed during screenshot capture and subsequent keys did not restore it.
+The original Int32 value `1` was restored through `vconftool set -f -t int` for
+that exact key. A separate SDK read confirmed both wake-on-mobile and IP remote
+were `1` before any further power test. This was a restoration of the recorded
+baseline, not a verified wake fix or a completed UI refresh. Temporary root
+staging and the owned SDB listener were confirmed cleaned up.
+
+The subsequent bounded trial began at 01:19:18 UTC on October 26 (October 25
+locally). One off command was followed by a passive REST result of `standby`,
+then 180 seconds with no TV probes. One standard `samsung-tv power frame on`
+completed in 27.4 seconds with `power_on_verified: true`,
+`wake_packet_sent: true`, `power_key_sent: true`, and `power: on`. The owner
+confirmed the screen came on without using the remote. Post-test SDK reads
+confirmed both settings remained `1`; the boot ID differed from the original
+IR-started boot. Diagnostic staging and the owned SDB listener were cleaned up.
+This establishes one successful three-minute standby/wake cycle. It does not
+establish the cause of the earlier failure, prove the setting refresh caused
+recovery, or validate longer standby reliability. The TV was left on.
+
+During the follow-up, the owner reported renaming the device to **TV**. Use that
+name for subsequent Google Home requests; earlier exact-name commands above
+record the previous name. Local control still identifies the configured Frame
+by its fixed IP/MAC and the `frame` CLI alias.
+
+The first rename update missed Spotify's exact-name check. The resulting
+playback failure was separate from TV power: Spotify exposed an unrestricted
+device named `TV`, while the helper still required `Samsung The Frame 65`.
+Both Spotify selection and status checks now use `TV`. The local remote's
+default and installed configuration also use `TV`, with `frame`, `crosstown`,
+and the old full name retained as aliases. Its Crosstown pairing identity
+remains the original token-file namespace, independent of the display name.
+The developer/content helper targets the IP/MAC and required no rename change.
+TV and Spotify-speaker skill copies were updated together.
+
+All 103 Samsung tests passed, including renamed Spotify selection/status,
+old/new local configuration aliases, and pairing-token continuity. Live REST
+verified `TV` on, and a no-key WebSocket handshake succeeded using the existing
+pairing identity. A single request for Chillhop Radio playlist
+`6mn9kuAlefrqO6omLQxJ2N` was accepted for `TV`; Spotify reported it active and
+playing **What If I Told You** (`4BwLji03aUrqk6fmbiwqGT`). The status interface
+does not expose playlist context. The owner subsequently confirmed audible
+playback from the TV. No playback write was repeated for verification.
+
 ## Cold-wake readiness recovery (2026-10-25)
 
 The Cyberpunk / Dylan-profile request loaded the current skill and sent LAN

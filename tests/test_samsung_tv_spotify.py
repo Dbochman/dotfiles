@@ -9,10 +9,20 @@ loader = SourceFileLoader("frame_spotify", str(Path(__file__).resolve().parents[
 tv = module_from_spec(spec_from_loader(loader.name, loader))
 loader.exec_module(tv)
 TRACK = "spotify:track:2JiDi0qAXsPwhPqA2qaKGt"
-FRAME = {"id": "frame-id", "name": tv.FRAME, "type": "TV", "is_restricted": False}
+FRAME = {"id": "frame-id", "name": "TV", "type": "TV", "is_restricted": False}
 
 
 class FrameSpotifyTests(unittest.TestCase):
+    def test_renamed_tv_is_selected_and_reported_playing(self):
+        old = dict(FRAME, id="old-id", name="Samsung The Frame 65")
+        self.assertEqual(tv.select_frame([old, FRAME]), "frame-id")
+        result = tv.summarize_status({"device": FRAME, "is_playing": True,
+                                      "item": {"name": "Track", "uri": TRACK}}, TRACK)
+        self.assertTrue(result["frame_playing"])
+        self.assertTrue(result["requested_track_matches"])
+        with self.assertRaises(RuntimeError):
+            tv.select_frame([old])
+
     def test_provider_input_validation_precedes_connections(self):
         self.assertEqual(tv.content_uri("https://open.spotify.com/track/2JiDi0qAXsPwhPqA2qaKGt?si=share"), TRACK)
         for value in ("https://open.spotify.com.evil.test/track/2JiDi0qAXsPwhPqA2qaKGt",

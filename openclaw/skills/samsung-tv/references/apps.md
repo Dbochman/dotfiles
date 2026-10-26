@@ -141,8 +141,10 @@ References: [Twitch API](https://dev.twitch.tv/docs/api/reference),
 ## Spotify
 
 The existing `spotify-speakers` skill and `spogo` CLI can search and read
-metadata. Opening Spotify made **Samsung The Frame 65** discoverable as an
-unrestricted Connect device. The app's home screen and signed-in state were
+metadata. The Crosstown Frame's current Spotify Connect name is **TV** (renamed
+from **Samsung The Frame 65** on 2026-10-25). The helper matches that exact name
+and device type `TV`, requires one unrestricted match, and targets its returned
+device ID. The app's home screen and signed-in state were
 verified visually.
 
 Use the Mini's dedicated helper:
@@ -155,8 +157,10 @@ samsung-tv-spotify resume
 ```
 
 `play` accepts Spotify track, album and playlist URIs or exact HTTPS provider
-links. Album/playlist playback is supported by the upstream client but has not
-been separately tested on the TV. Resolve names with read-only `spogo search`
+links. A Chillhop Radio playlist request was accepted on 2026-10-25 and Spotify
+reported `TV` active and playing; the owner confirmed audio from the TV.
+This status interface omits playlist context. Album playback remains untested
+on the TV. Resolve names with read-only `spogo search`
 and check artist/edition metadata before playback. The helper opens the native
 TV app for play/resume, discovers a unique Frame TV, and sends its exact device
 ID through the Connect engine. Missing/ambiguous/restricted targets fail. It

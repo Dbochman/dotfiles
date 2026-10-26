@@ -23,7 +23,7 @@ Usage:
   samsung-tv art <name> select <id>     Select artwork to display
   samsung-tv help                       Show this help
 
-TV names are fuzzy-matched (e.g. "frame" for "Samsung The Frame 65").
+TV names are fuzzy-matched; "TV", "frame", and "crosstown" identify the Crosstown TV.
 """
 
 import json
@@ -239,7 +239,9 @@ def open_websocket(client):
 
 def new_tv(ip, name, timeout=5):
     remote, _rest = client_classes(ip)
-    return remote(host=ip, port=8002, token_file=token_path(name),
+    # The display-name change must not discard the existing pairing identity.
+    pairing_name = "Samsung The Frame 65" if ip == CROSSTOWN_TV else name
+    return remote(host=ip, port=8002, token_file=token_path(pairing_name),
                   timeout=timeout, name="OpenClaw")
 
 
@@ -250,7 +252,7 @@ def device_info(ip, timeout=3):
     return rest(host=ip, port=8001, timeout=timeout).rest_device_info()
 
 DEFAULT_TVS = {
-    "Samsung The Frame 65": {
+    "TV": {
         "ip": "192.168.165.2",
         "mac": "A0:D7:F3:B2:C0:AC",
     }
@@ -290,6 +292,11 @@ def load_tvs():
 def resolve_tv(query, tvs):
     """Fuzzy-match a TV name."""
     q = query.lower()
+    if q in {"tv", "frame", "crosstown", "samsung the frame 65"}:
+        crosstown = [(name, info) for name, info in tvs.items()
+                     if info.get("ip") == CROSSTOWN_TV]
+        if len(crosstown) == 1:
+            return crosstown[0]
     for name, info in tvs.items():
         if q in name.lower():
             return name, info

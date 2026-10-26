@@ -12,6 +12,11 @@ browser navigation, focused-app inspection, and LAN wake. It runs through SSH on
 `dylans-macbook-pro`**, whose TV-facing address is `192.168.165.109`.
 The TV is `192.168.165.2`, model QN65LS03BAFXZA, firmware 1720.7 / Tizen 6.5.
 `dylans-mac` is a different Mac, not this developer host.
+The owner renamed the device to **TV** on 2026-10-25; use that name for Google
+Home requests and Spotify Connect. Local remote commands accept `TV`, `frame`,
+or `crosstown`; the saved pairing token retains its original identity so the
+rename does not require another approval. The Spotify helper requires a unique,
+unrestricted device named exactly `TV` with device type `TV`.
 
 Use the existing `samsung-tv` CLI for remote buttons, volume, power and
 Art Mode. **All TV-LAN traffic goes through the always-on Crosstown MacBook**:
@@ -175,6 +180,24 @@ use `power frame on` for ordinary wake requests and to recover from unsuccessful
 WoL. Do not stop at failed WoL and ask the owner to use a remote when the verified
 remote fallback remains available. Do not send WoL from the Mini and assume it
 crossed Tailscale.
+
+For ordinary power/playback requests, if the complete `power frame on` command
+finishes with `power_on_verified: false` and `power: unknown` while Crosstown SSH
+works, report that the TV stayed unreachable after the wake attempt and any
+requested playback has not started. This does not
+establish a pairing problem; do not trigger pairing or repeat wake/toggle loops.
+Ask for remote power-on once. When the owner confirms it is on, rerun the normal
+power check and continue the original playback request after verification.
+
+Standby wake remains intermittent as of 2026-10-25. Power On with Mobile and IP
+Remote were both enabled during investigation; a later three-minute standby test
+woke successfully in 27 seconds, but longer standby reliability is unproven.
+Do not routinely toggle these settings as a fix. Google acknowledged a power-on
+request during the failed state without waking the TV, so its acknowledgment
+does not establish success or a verified fallback. Detailed evidence is in
+`/Users/dbochman/dotfiles/docs/samsung-tv-developer-control.md`, section
+"Unresolved standby wake failure".
+
 A WebSocket connection can light the panel/show a notification; use REST status
 for passive checks. Stop after a connection timeout or prompt rather than repeatedly
 triggering approval dialogs or toggles.
@@ -227,6 +250,9 @@ menus and selection highlighting. Prefer capture → a small number of purposefu
 remote keys → fresh capture. Do not treat the image as a live stream, a complete
 composite of system overlays, or proof that protected video is playing. Store
 screenshots outside Git and avoid capturing login/payment details unnecessarily.
+Settings menus can close while capture runs. If the menu has closed or focus
+has changed, reopen and inspect it before sending another toggle; a successful
+key-send result does not verify a setting changed.
 
 If capture fails, read its actual error and check REST power. A standby/no-focus
 failure does not establish that screenshots are unavailable. When the helper
