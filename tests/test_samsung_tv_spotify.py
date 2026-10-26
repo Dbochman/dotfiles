@@ -60,6 +60,39 @@ class FrameSpotifyTests(unittest.TestCase):
         launch.assert_not_called()
         self.assertEqual(invoke.call_args_list[1].kwargs["device"], "frame-id")
 
+    def test_launch_waits_for_connect_registration_before_one_play(self):
+        replies = [[], [], [FRAME], {}, {"device": FRAME, "is_playing": True,
+                                         "item": {"uri": TRACK}}]
+        with patch.object(tv, "verified_binary"), patch.object(tv.subprocess, "run") as launch, \
+                patch.object(tv.time, "sleep") as sleep, \
+                patch.object(tv, "invoke", side_effect=replies) as invoke:
+            result = tv.operate("play", TRACK)
+        launch.assert_called_once()
+        self.assertEqual(sleep.call_count, 2)
+        writes = [call for call in invoke.call_args_list if call.args[1][0] == "play"]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0].kwargs["device"], "frame-id")
+        self.assertTrue(result["observed"]["frame_playing"])
+
+    def test_registration_timeout_never_sends_play(self):
+        with patch.object(tv, "verified_binary"), patch.object(tv.subprocess, "run"), \
+                patch.object(tv.time, "sleep"), \
+                patch.object(tv, "invoke", return_value=[]) as invoke:
+            with self.assertRaises(tv.FrameUnavailable):
+                tv.operate("play", TRACK)
+        self.assertEqual(invoke.call_count, 6)
+        self.assertTrue(all(call.args[1] == ["device", "list"] for call in invoke.call_args_list))
+
+    def test_ambiguous_or_restricted_device_does_not_retry(self):
+        for devices in ([FRAME, FRAME], [dict(FRAME, is_restricted=True)]):
+            with self.subTest(devices=devices), patch.object(tv, "verified_binary"), \
+                    patch.object(tv.subprocess, "run"), patch.object(tv.time, "sleep") as sleep, \
+                    patch.object(tv, "invoke", return_value=devices) as invoke:
+                with self.assertRaises(RuntimeError):
+                    tv.operate("play", TRACK)
+                invoke.assert_called_once()
+                sleep.assert_not_called()
+
     def test_other_device_status_is_not_exposed_or_called_tv_playback(self):
         result = tv.summarize_status({"device": {"name": "Phone", "type": "Phone"},
                                       "is_playing": True, "item": {"name": "private item", "uri": TRACK}}, TRACK)

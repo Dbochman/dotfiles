@@ -20,12 +20,48 @@ tv = module_from_spec(spec_from_loader(loader.name, loader))
 loader.exec_module(tv)
 
 
+class CrosstownLANTests(unittest.TestCase):
+    def test_dhcp_address_and_actual_netmask_determine_source_and_broadcast(self):
+        for address, mask, broadcast in (("192.168.165.164", "0xffffff00", "192.168.165.255"),
+                                          ("192.168.165.109", "0xffffff80", "192.168.165.127")):
+            # Use a target within each fixture's subnet.
+            with self.subTest(address=address), \
+                    patch.object(tv, "TARGET", "192.168.165.100:26101"), \
+                    patch.object(tv.subprocess, "run", side_effect=[
+                        subprocess.CompletedProcess([], 0, " interface: en7\n", ""),
+                        subprocess.CompletedProcess([], 0, f"inet {address} netmask {mask}\n", "")]):
+                self.assertEqual(tv.crosstown_lan(), {"local_ip": address, "broadcast": broadcast,
+                                                     "interface": "en7"})
+
+    def test_vpn_route_is_rejected_without_discovery_or_broadcast(self):
+        with patch.object(tv.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 0, " interface: utun5\n", "")) as run:
+            with self.assertRaisesRegex(RuntimeError, "local Crosstown"):
+                tv.crosstown_lan()
+        self.assertEqual(run.call_count, 1)
+
+    def test_missing_or_ambiguous_local_address_is_rejected(self):
+        for addresses in ("inet 10.0.0.4 netmask 0xffffff00\n",
+                          "inet 192.168.165.164 netmask 0xffffff00\ninet 192.168.165.165 netmask 0xffffff00\n"):
+            with self.subTest(addresses=addresses), patch.object(tv.subprocess, "run", side_effect=[
+                    subprocess.CompletedProcess([], 0, " interface: en0\n", ""),
+                    subprocess.CompletedProcess([], 0, addresses, "")]):
+                with self.assertRaisesRegex(RuntimeError, "one current"):
+                    tv.crosstown_lan()
+
+
 class InfraredWakeTests(unittest.TestCase):
+    def setUp(self):
+        lan = patch.object(tv, "crosstown_lan", return_value={
+            "local_ip": "192.168.165.164", "broadcast": "192.168.165.255", "interface": "en0"})
+        lan.start()
+        self.addCleanup(lan.stop)
+
     def modules(self, mac=tv.BROADLINK_MAC, locked=False):
         device = MagicMock(devtype=0x5213, is_locked=locked)
         device.mac = bytes.fromhex(mac)
         broadlink = types.ModuleType("broadlink")
-        broadlink.hello = MagicMock(return_value=device)
+        broadlink.discover = MagicMock(return_value=[device])
         remote = types.ModuleType("broadlink.remote")
         remote.pulses_to_data = MagicMock(return_value=b"fixed-on")
         return device, broadlink, remote
@@ -50,6 +86,28 @@ class InfraredWakeTests(unittest.TestCase):
         device.send_data.assert_called_once_with(b"fixed-on")
         self.assertFalse(result["power_on_verified"])
 
+    def test_changed_rm4_address_is_selected_by_identity(self):
+        device, broadlink, remote = self.modules()
+        device.host = ("192.168.165.162", 80)
+        unrelated = MagicMock(devtype=0x5213, mac=bytes.fromhex("000000000001"))
+        broadlink.discover.return_value = [unrelated, device]
+        with patch.dict("sys.modules", {"broadlink": broadlink, "broadlink.remote": remote}):
+            self.assertTrue(tv.infrared_wake()["ir_on_sent"])
+        broadlink.discover.assert_called_once_with(timeout=4, local_ip_address="192.168.165.164",
+                                                   discover_ip_address="192.168.165.255")
+        unrelated.auth.assert_not_called()
+        unrelated.send_data.assert_not_called()
+        device.send_data.assert_called_once()
+
+    def test_absent_or_duplicate_rm4_never_sends(self):
+        for duplicate in (False, True):
+            device, broadlink, remote = self.modules()
+            broadlink.discover.return_value = [device, device] if duplicate else []
+            with patch.dict("sys.modules", {"broadlink": broadlink, "broadlink.remote": remote}):
+                with self.assertRaisesRegex(RuntimeError, "not uniquely discovered"):
+                    tv.infrared_wake()
+            device.send_data.assert_not_called()
+
     def test_ir_runs_via_crosstown_ssh_and_isolated_python(self):
         with patch.object(tv.sys, "argv", ["samsung-tv-dev", "ir-wake"]), \
                 patch.object(tv.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
@@ -67,7 +125,7 @@ class InfraredWakeTests(unittest.TestCase):
         packet, target = udp.sendto.call_args.args
         self.assertEqual(target, ("192.168.165.255", 9))
         self.assertEqual(packet, b"\xff" * 6 + bytes.fromhex("b099d736262b") * 16)
-        udp.bind.assert_called_once_with(("192.168.165.109", 0))
+        udp.bind.assert_called_once_with(("192.168.165.164", 0))
         self.assertFalse(result["power_on_verified"])
 
 
@@ -219,11 +277,12 @@ class SDKCallbackTests(unittest.TestCase):
     def run_capture(self, payload):
         listener, connection = MagicMock(), MagicMock()
         listener.__enter__.return_value = listener
-        listener.getsockname.return_value = (tv.CALLBACK_HOST, 54321)
+        listener.getsockname.return_value = ("192.168.165.164", 54321)
         listener.accept.return_value = (connection, ("192.168.165.172", 40000))
         connection.__enter__.return_value = connection
         connection.recv.side_effect = [payload, b""]
         with patch.object(tv.socket, "socket", return_value=listener), \
+                patch.object(tv, "crosstown_lan", return_value={"local_ip": "192.168.165.164"}), \
                 patch.object(tv.secrets, "token_hex", return_value="abc123"), \
                 patch.object(tv, "sdb_command"), \
                 patch.object(tv.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)), \

@@ -26,6 +26,7 @@ import base64
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -52,9 +53,7 @@ APPLE_TV = "com.samsung.tv.aria-video"
 PRIME_VIDEO = "org.tizen.primevideo"
 HBO_MAX = "5b8c3eb16b.BeamCTVDev"
 PEACOCK = "gzcc4LRFBF.Peacock"
-CALLBACK_HOST = "192.168.165.109"
 TV_MAC = "B0:99:D7:36:26:2B"
-BROADLINK_IP = "192.168.165.167"
 BROADLINK_MAC = "ec0bae8c38af"
 BROADLINK_PYTHON = ".local/share/samsung-tv-tools/broadlink-0.19.0/bin/python"
 SDB_RELATIVE = ".local/share/samsung-tv-tools/sdb-4.2.36/sdb"
@@ -66,6 +65,29 @@ CAPABILITIES = {
     "secure_protocol", "intershell_support", "sdbd_rootperm", "rootonoff_support",
     "can_launch", "log_enable", "appcmd_support", "pkgcmd_debugmode",
 }
+
+
+def crosstown_lan():
+    """Resolve the Mac's current TV-facing interface after DHCP changes."""
+    target = ipaddress.IPv4Address(TARGET.split(":")[0])
+    route = subprocess.run(["/sbin/route", "-n", "get", str(target)],
+                           check=True, capture_output=True, text=True, timeout=5)
+    match = re.search(r"^\s*interface:\s*([a-zA-Z0-9]+)\s*$", route.stdout, re.M)
+    if not match or not re.fullmatch(r"en\d+", match[1]):
+        raise RuntimeError("TV route is not a local Crosstown Ethernet/Wi-Fi interface")
+    interface = match[1]
+    addresses = subprocess.run(["/sbin/ifconfig", interface], check=True,
+                               capture_output=True, text=True, timeout=5)
+    candidates = []
+    for address, mask in re.findall(r"\binet (\d+\.\d+\.\d+\.\d+) netmask (0x[0-9a-fA-F]+)", addresses.stdout):
+        netmask = str(ipaddress.IPv4Address(int(mask, 16)))
+        network = ipaddress.IPv4Network(f"{address}/{netmask}", strict=False)
+        if target in network and network.prefixlen < 31:
+            candidates.append({"local_ip": address, "broadcast": str(network.broadcast_address),
+                               "interface": interface})
+    if len(candidates) != 1:
+        raise RuntimeError("Cannot identify one current Crosstown LAN address for the TV")
+    return candidates[0]
 
 
 def server_pid():
@@ -168,6 +190,7 @@ def sdk_operation_body(command, remote, gate):
 
 def sdk_capture(sdb, command, output_limit=65536):
     """Capture one allowlisted operation as UID 901, with bounded cleanup."""
+    callback_host = crosstown_lan()["local_ip"]
     token = secrets.token_hex(8)
     remote = f"/home/owner/share/tmp/sdk_tools/.oc-tv-{token}.sh"
     gate = f"/tmp/oc-tv-{token}"
@@ -182,12 +205,12 @@ def sdk_capture(sdb, command, output_limit=65536):
 
     try:
         with socket.socket() as listener:
-            listener.bind((CALLBACK_HOST, 0))
+            listener.bind((callback_host, 0))
             listener.listen(1)
             port = listener.getsockname()[1]
             script = (
                 f"trap '/bin/rm -f {remote}; /bin/rmdir {gate} 2>/dev/null' EXIT\n"
-                f"exec 3<>/dev/tcp/{CALLBACK_HOST}/{port} || exit 72\n"
+                f"exec 3<>/dev/tcp/{callback_host}/{port} || exit 72\n"
                 f"printf '{token}\\n' >&3\nexec >&3 2>&3\n"
                 'if test "$(id -u)" != 901; then echo unexpected_uid; exit 73; fi\n'
                 + sdk_operation_body(command, remote, gate)
@@ -566,6 +589,7 @@ def screenshot(sdb):
     for name, digest in json.loads(manifest)["files"].items():
         if hashlib.sha256((assets / name).read_bytes()).hexdigest() != digest:
             raise RuntimeError("Root assets changed; refusing to execute them")
+    callback_host = crosstown_lan()["local_ip"]
     sys.path.insert(0, str(assets))
     from samsung_tv_root import archive_root
     from samsung_tv_root.sdb import SdbClient, CaptureResult
@@ -594,8 +618,8 @@ def screenshot(sdb):
                    f'/usr/bin/enlightenment_info -dump topvwins {directory}\n'
                    f'chown -R 901:901 {directory}\n')
         evidence = asyncio.run(archive_root.probe(
-            TARGET.split(":")[0], runtime="3.1", callback_host=CALLBACK_HOST,
-            bind_host=CALLBACK_HOST, accept_timeout=20, command_timeout=12,
+            TARGET.split(":")[0], runtime="3.1", callback_host=callback_host,
+            bind_host=callback_host, accept_timeout=20, command_timeout=12,
             commands=(command,), payloads=assets / "payloads"))
         operation = evidence["commands"][0]
         if (not evidence["authenticated"] or evidence["uid"] != 0 or evidence["euid"] != 0
@@ -849,9 +873,13 @@ def infrared_wake():
     import broadlink
     from broadlink.remote import pulses_to_data
 
-    device = broadlink.hello(BROADLINK_IP, timeout=4)
-    if device.devtype != 0x5213 or device.mac.hex() != BROADLINK_MAC:
-        raise RuntimeError("RM4 Pro identity changed; no infrared command sent")
+    lan = crosstown_lan()
+    devices = broadlink.discover(timeout=4, local_ip_address=lan["local_ip"],
+                                discover_ip_address=lan["broadcast"])
+    matches = [device for device in devices if device.mac.hex() == BROADLINK_MAC]
+    if len(matches) != 1 or matches[0].devtype != 0x5213:
+        raise RuntimeError("Expected RM4 Pro not uniquely discovered on Crosstown LAN; no infrared command sent")
+    device = matches[0]
     if device.is_locked:
         raise RuntimeError("RM4 Pro local control is locked; no infrared command sent")
     if not device.auth():
@@ -873,11 +901,12 @@ def local_operation(command, query=None, uri=None):
     if command == "youtube-state":
         return youtube_state(query)
     if command == "wake":
+        lan = crosstown_lan()
         packet = b"\xff" * 6 + bytes.fromhex(TV_MAC.replace(":", "")) * 16
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
             udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            udp.bind((CALLBACK_HOST, 0))
-            udp.sendto(packet, ("192.168.165.255", 9))
+            udp.bind((lan["local_ip"], 0))
+            udp.sendto(packet, (lan["broadcast"], 9))
         return {"wake_packet_sent": True, "power_on_verified": False}
     sdb = Path.home() / SDB_RELATIVE
     if not sdb.is_file() or hashlib.sha256(sdb.read_bytes()).hexdigest() != SDB_SHA256:

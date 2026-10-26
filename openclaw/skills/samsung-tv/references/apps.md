@@ -166,6 +166,14 @@ TV app for play/resume, discovers a unique Frame TV, and sends its exact device
 ID through the Connect engine. Missing/ambiguous/restricted targets fail. It
 never transfers to an arbitrary active device or uses a browser/local-player
 fallback. Status polls are read-only; delayed state never repeats playback.
+After native app launch, device discovery allows up to six reads with two-second
+gaps for the TV to appear in Connect. Only a missing TV is retried; ambiguous or
+restricted devices and service errors fail immediately. No playback write is
+sent until the exact TV is available. This addresses the observed launch-to-
+Connect registration delay on October 26. After the owner reserved DHCP leases
+and corrected the Developer Mode host, Japanese Jazz Mix was accepted and
+Spotify reported `TV` active and playing **Feather**; audio was not independently
+confirmed for that request.
 
 On 2026-10-24, Queen's **Bohemian Rhapsody**, album **A Night At The Opera**,
 was shown in the native TV UI and reported playing on the Frame. The owner

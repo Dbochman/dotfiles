@@ -1,11 +1,57 @@
 # Crosstown Samsung TV developer control
 
-Verified 2026-10-24 on QN65LS03BAFXZA (2022 Frame), firmware
-T-PTMAKUC-1720.7, Tizen 6.5 / ARMv7. Developer Mode is enabled for the
-Crosstown MacBook's LAN address, 192.168.165.109. The TV now uses Ethernet at 192.168.165.172 (MAC B0:99:D7:36:26:2B).
+Verified on QN65LS03BAFXZA (2022 Frame), firmware T-PTMAKUC-1720.7,
+Tizen 6.5 / ARMv7. As of 2026-10-26, AmpliFi DHCP reservations are:
+
+| Device | Reserved IPv4 address |
+| --- | --- |
+| TV Ethernet (MAC B0:99:D7:36:26:2B) | `192.168.165.172` |
+| BroadLink RM4 Pro (MAC EC:0B:AE:8C:38:AF) | `192.168.165.162` |
+| Crosstown MacBook / TV Developer Mode host | `192.168.165.164` |
+
+The Mac's current source and callback address is still detected from its local
+route/interface, and the RM4 is discovered by its enrolled identity.
 Use SSH host `dylans-macbook-pro`; `dylans-mac` is a different machine.
 
 ## Current maintenance state
+
+### DHCP address drift after Ethernet/IR setup
+
+A subsequent Japanese-jazz request failed after DHCP moved the Crosstown Mac
+from `192.168.165.109` to `.164` and the RM4 Pro from `.167` to `.162`.
+The hardcoded Mac address could no longer be bound for WoL, and direct BroadLink
+discovery at its old IP failed. Discovery at the current LAN broadcast found the
+same known RM4 MAC/type, unlocked, and authentication succeeded. A discrete IR
+ON request at the rediscovered address restored the TV; the owner confirmed the
+picture. The TV's wired address and MAC remained `.172` / `B0:99:D7:36:26:2B`.
+
+`samsung-tv-dev` now derives the TV-facing Mac interface, IPv4 address and subnet
+broadcast from the current route and interface netmask. It rejects VPN routes
+and ambiguous local addresses. WoL, SDK callbacks and root screenshot callbacks
+use that current source address. Every IR request discovers the RM4 on that LAN
+and requires the enrolled MAC/type before authentication or transmission; it
+does not fall back to an arbitrary bridge or remembered IP.
+
+The gateway identifies itself as AmpliFi. The owner reported creating DHCP
+leases for TV Ethernet `192.168.165.172`, RM4 `192.168.165.162`, and Mac
+`192.168.165.164`, then changing the TV's Developer Mode host from `.109` to
+`.164`. Before this correction, TCP 26101 was reachable but SDB could not
+connect. Afterwards, the verified client connected and native Spotify launch
+succeeded. Earlier WebSocket and Spotify REST app-status checks also timed out;
+those routes were not revalidated, and the host change is not established as
+the explanation for those separate symptoms.
+
+Native Spotify launch initially finished before the TV appeared in Connect.
+The playback helper now makes up to six device-list reads, two seconds apart,
+only retrying an absent TV. Ambiguous/restricted devices and service errors
+still fail, and playback writes are never automatically repeated. The final
+Japanese Jazz Mix request (`spotify:playlist:37i9dQZF1EIf0f4Xz0vVZi`) succeeded:
+Spotify reported `TV` active and playing **Feather**. Audible output was not
+independently confirmed. The Samsung helper suite passed all 128 tests.
+
+The TV destination is still the configured `.172`; automatic discovery of a
+changed TV address is not implemented. Historical addresses in earlier test
+records below must not be treated as current binding instructions.
 
 ### Ethernet and RM4 Pro (2026-10-26)
 

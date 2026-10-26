@@ -19,6 +19,10 @@ APP = "rJeHak5zRg.Spotify"
 REPO = Path(__file__).resolve().parent.parent
 
 
+class FrameUnavailable(RuntimeError):
+    """The TV has not appeared in Spotify Connect yet."""
+
+
 def content_uri(value):
     if any(ord(c) < 32 for c in value):
         raise ValueError("Use a Spotify track, album or playlist URI/link")
@@ -61,6 +65,8 @@ def invoke(binary, args, device=None):
 def select_frame(data):
     devices = data if isinstance(data, list) else data.get("devices", [])
     matches = [d for d in devices if d.get("name") == FRAME and d.get("type", "").lower() == "tv"]
+    if not matches:
+        raise FrameUnavailable("Frame device is missing; no playback request sent")
     if len(matches) != 1 or not matches[0].get("id") or matches[0].get("is_restricted"):
         raise RuntimeError("Frame device is missing, ambiguous or restricted; no playback request sent")
     return matches[0]["id"]
@@ -87,7 +93,17 @@ def operate(action, content=None):
     if action in {"play", "resume"}:
         subprocess.run([str(REPO / "bin/samsung-tv-dev"), "launch", APP],
                        check=True, stdout=subprocess.DEVNULL, timeout=90)
-    device = select_frame(invoke(binary, ["device", "list"]))
+    # Native app launch can finish before Connect registers the TV. Retry only
+    # missing-device reads; ambiguity, restrictions and service errors fail.
+    attempts = 6 if action in {"play", "resume"} else 1
+    for attempt in range(attempts):
+        try:
+            device = select_frame(invoke(binary, ["device", "list"]))
+            break
+        except FrameUnavailable:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(2)
     command = ["play", uri] if action == "play" else (["play"] if action == "resume" else ["pause"])
     invoke(binary, command, device=device)
     result = {"request_accepted": True, "target": FRAME, "action": action}

@@ -9,7 +9,8 @@ metadata: {"openclaw":{"emoji":"T","requires":{"bins":["samsung-tv","samsung-tv-
 
 Use `samsung-tv-dev` for installed-app discovery, app launches, content links,
 browser navigation, focused-app inspection, and LAN wake. It runs through SSH on the **Crosstown MacBook,
-`dylans-macbook-pro`**, whose TV-facing address is `192.168.165.109`.
+`dylans-macbook-pro`**. Its TV-facing IPv4 address is discovered from the
+current local route/interface; do not bind to a remembered DHCP address.
 The TV uses Ethernet at `192.168.165.172`, MAC `B0:99:D7:36:26:2B`, model
 QN65LS03BAFXZA, firmware 1720.7 / Tizen 6.5. Its old Wi-Fi address/MAC are no
 longer the control or wake target.
@@ -224,8 +225,9 @@ still uses native display-on. If IR is unavailable or does not restore the TV,
 the bounded LAN wake/verified remote path remains available. Neither an IR
 acknowledgment nor a WoL packet alone confirms power-on.
 
-The RM4 Pro is `192.168.165.167`, MAC `EC:0B:AE:8C:38:AF`, with local control
-unlocked. **All BroadLink requests also run through `dylans-macbook-pro`**,
+The RM4 Pro is identified by MAC `EC:0B:AE:8C:38:AF` and model/type, with
+local control unlocked. Its IP is discovered on the current Crosstown LAN
+for every IR request; do not use a remembered IP. **All BroadLink requests also run through `dylans-macbook-pro`**,
 using its isolated BroadLink environment. Do not send directly from the Mini,
 learn a toggle as a wake command, reset the bridge, or re-pair the TV to fix wake.
 On October 26, Ethernet wake passed a short test; RM4 discrete ON restored the
@@ -233,6 +235,18 @@ picture in two seconds and did not switch off an already-on TV. The owner
 confirmed the picture. A later integrated on test succeeded using both IR and
 the network/remote fallback; do not promise a two-second wake every time.
 Long standby/overnight reliability has not been tested.
+
+A subsequent DHCP change moved the Mac and RM4 and broke the old fixed-address
+wake path. Wake broadcasts, SDK callbacks and screenshot callbacks now use the
+Mac's current LAN address; IR discovery selects the known bridge by identity.
+The owner subsequently configured AmpliFi DHCP leases for TV Ethernet `.172`,
+RM4 `.162`, and Mac `.164` (all `192.168.165.*`), and updated the TV's Developer
+Mode host to `192.168.165.164`. SDB connection and native Spotify launch then
+succeeded. Keep these reservations; dynamic discovery remains in use.
+The TV's Developer Mode host address is separate: if its TCP port is reachable
+but SDB rejects connection after the Mac moves, check that configured host IP.
+IR wake does not require SDB. Do not describe an SDB failure as an offline IR
+bridge, or claim playback started from power-on alone.
 
 Before Ethernet and IR were added, standby wake was intermittent. Power On with Mobile and IP
 Remote were both enabled during investigation; a later three-minute standby test
