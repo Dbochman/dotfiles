@@ -8,6 +8,7 @@ import json
 import shlex
 import subprocess
 import tempfile
+import types
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,87 @@ loader = SourceFileLoader("samsung_tv_dev", str(
 ))
 tv = module_from_spec(spec_from_loader(loader.name, loader))
 loader.exec_module(tv)
+
+
+class InfraredWakeTests(unittest.TestCase):
+    def modules(self, mac=tv.BROADLINK_MAC, locked=False):
+        device = MagicMock(devtype=0x5213, is_locked=locked)
+        device.mac = bytes.fromhex(mac)
+        broadlink = types.ModuleType("broadlink")
+        broadlink.hello = MagicMock(return_value=device)
+        remote = types.ModuleType("broadlink.remote")
+        remote.pulses_to_data = MagicMock(return_value=b"fixed-on")
+        return device, broadlink, remote
+
+    def test_wrong_device_or_locked_bridge_never_sends(self):
+        for mac, locked in (("000000000001", False), (tv.BROADLINK_MAC, True)):
+            device, broadlink, remote = self.modules(mac, locked)
+            with patch.dict("sys.modules", {"broadlink": broadlink, "broadlink.remote": remote}):
+                with self.assertRaises(RuntimeError):
+                    tv.infrared_wake()
+            device.auth.assert_not_called()
+            device.send_data.assert_not_called()
+
+    def test_fixed_discrete_on_code_and_no_power_claim(self):
+        device, broadlink, remote = self.modules()
+        with patch.dict("sys.modules", {"broadlink": broadlink, "broadlink.remote": remote}):
+            result = tv.local_operation("ir-wake")
+        pulses = remote.pulses_to_data.call_args.args[0]
+        bits = [1 if width > 1000 else 0 for width in pulses[3:66:2]]
+        self.assertEqual(int("".join(map(str, bits)), 2), 0xE0E09966)
+        self.assertEqual(len(pulses), 68)
+        device.send_data.assert_called_once_with(b"fixed-on")
+        self.assertFalse(result["power_on_verified"])
+
+    def test_ir_runs_via_crosstown_ssh_and_isolated_python(self):
+        with patch.object(tv.sys, "argv", ["samsung-tv-dev", "ir-wake"]), \
+                patch.object(tv.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            with self.assertRaises(SystemExit) as exit_result:
+                tv.main()
+        self.assertEqual(exit_result.exception.code, 0)
+        args = run.call_args.args[0]
+        self.assertEqual(args[-2], "dylans-macbook-pro")
+        self.assertEqual(shlex.split(args[-1]), [tv.BROADLINK_PYTHON, "-", "--local", "ir-wake"])
+
+    def test_wol_uses_ethernet_mac_and_lan_broadcast(self):
+        with patch.object(tv.socket, "socket") as factory:
+            result = tv.local_operation("wake")
+        udp = factory.return_value.__enter__.return_value
+        packet, target = udp.sendto.call_args.args
+        self.assertEqual(target, ("192.168.165.255", 9))
+        self.assertEqual(packet, b"\xff" * 6 + bytes.fromhex("b099d736262b") * 16)
+        udp.bind.assert_called_once_with(("192.168.165.109", 0))
+        self.assertFalse(result["power_on_verified"])
+
+
+class ScreenControlTests(unittest.TestCase):
+    def test_verified_native_state_does_not_claim_audio_or_physical_observation(self):
+        for action in ("on", "off"):
+            with self.subTest(action=action), \
+                    patch.object(tv, "sdk_capture", return_value=f's "lcd{action}"'):
+                result = tv.screen_control(Path("/verified/sdb"), action)
+            self.assertEqual(result["display_state"], action)
+            self.assertTrue(result["display_state_verified"])
+            self.assertFalse(result["audio_changed"])
+            self.assertFalse(result["screen_observed"])
+
+    def test_rejects_unknown_or_wrong_native_state(self):
+        for raw in ('s "lcdon"', 's "unknown"', 'i 0\ns "lcdoff"'):
+            with self.subTest(raw=raw), patch.object(tv, "sdk_capture", return_value=raw):
+                with self.assertRaisesRegex(RuntimeError, "not verified"):
+                    tv.screen_control(Path("/verified/sdb"), "off")
+
+    def test_rejects_arbitrary_state_before_tv_access(self):
+        with patch.object(tv, "sdk_capture") as capture:
+            with self.assertRaises(ValueError):
+                tv.screen_control(Path("/verified/sdb"), "off; reboot")
+        capture.assert_not_called()
+
+    def test_status_does_not_send_change_state(self):
+        with patch.object(tv, "sdk_capture", return_value='s "lcdoff"') as capture:
+            result = tv.screen_control(Path("/verified/sdb"), "status")
+        self.assertEqual(result["display_state"], "off")
+        self.assertNotIn("ChangeState", capture.call_args.args[1])
 
 
 class ServerOwnershipTests(unittest.TestCase):
@@ -138,7 +220,7 @@ class SDKCallbackTests(unittest.TestCase):
         listener, connection = MagicMock(), MagicMock()
         listener.__enter__.return_value = listener
         listener.getsockname.return_value = (tv.CALLBACK_HOST, 54321)
-        listener.accept.return_value = (connection, ("192.168.165.2", 40000))
+        listener.accept.return_value = (connection, ("192.168.165.172", 40000))
         connection.__enter__.return_value = connection
         connection.recv.side_effect = [payload, b""]
         with patch.object(tv.socket, "socket", return_value=listener), \

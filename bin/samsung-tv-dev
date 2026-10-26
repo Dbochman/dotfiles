@@ -12,6 +12,8 @@ Usage: samsung-tv-dev status | apps [QUERY] | launch APP_ID [--url URI]
        samsung-tv-dev peacock-episode ID_OR_URL | peacock-play ID_OR_URL
        samsung-tv-dev peacock-show SERIES_ID | peacock-search TITLE
        samsung-tv-dev screenshot --output NEW_LOCAL_PNG
+       samsung-tv-dev screen on|off|status  # Panel only; audio is unchanged
+       samsung-tv-dev ir-wake              # RM4 Pro discrete ON; no power toggle
 Uses an already enabled Developer Mode and an already installed, verified SDB.
 Content/navigation uses the owner-authorized SDK-user package-name execution
 path. Screenshots use owner-authorized temporary root; no arbitrary shell
@@ -42,7 +44,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 HOST = "dylans-macbook-pro"
-TARGET = "192.168.165.2:26101"
+TARGET = "192.168.165.172:26101"
 BROWSER = "com.samsung.tv.knox-browser"
 NETFLIX = "org.tizen.netflix-app"
 TWITCH = "Jz7aUrV2Q4.Twitch"
@@ -51,7 +53,10 @@ PRIME_VIDEO = "org.tizen.primevideo"
 HBO_MAX = "5b8c3eb16b.BeamCTVDev"
 PEACOCK = "gzcc4LRFBF.Peacock"
 CALLBACK_HOST = "192.168.165.109"
-TV_MAC = "A0:D7:F3:B2:C0:AC"
+TV_MAC = "B0:99:D7:36:26:2B"
+BROADLINK_IP = "192.168.165.167"
+BROADLINK_MAC = "ec0bae8c38af"
+BROADLINK_PYTHON = ".local/share/samsung-tv-tools/broadlink-0.19.0/bin/python"
 SDB_RELATIVE = ".local/share/samsung-tv-tools/sdb-4.2.36/sdb"
 SDB_SHA256 = "05db410d2e36e85147f95b20bae6296a71c54dab0e1ec79f9e11b89c4b6bd2cd"
 ROOT_RELATIVE = ".local/share/samsung-tv-tools/archive-root-0.0.12"
@@ -688,7 +693,7 @@ def youtube_request(url, data=None):
     """Fixed endpoints only; no raw errors, response bodies, or session-token logs."""
     request = urllib.request.Request(url, data=data, headers={
         "Origin": "https://www.youtube.com",
-        "Content-Type": ("text/plain; charset=utf-8" if url.startswith("http://192.168.165.2:")
+        "Content-Type": ("text/plain; charset=utf-8" if url.startswith("http://192.168.165.172:")
                          else "application/x-www-form-urlencoded"),
         "User-Agent": "OpenClaw-TV-Control/1.0",
     })
@@ -731,7 +736,7 @@ def lounge_session(raw):
 
 
 def youtube_connection(start_app):
-    dial_url = "http://192.168.165.2:8080/ws/apps/YouTube"
+    dial_url = "http://192.168.165.172:8080/ws/apps/YouTube"
     root = ET.fromstring(youtube_request(dial_url))
     if root.findtext("{*}name") != "YouTube":
         raise RuntimeError("Unexpected TV application endpoint")
@@ -818,7 +823,51 @@ def youtube_state(expected=None):
     return result
 
 
+def screen_control(sdb, action):
+    """Allowlisted SDK-user display control, with native state readback."""
+    if action not in {"on", "off", "status"}:
+        raise ValueError("screen requires on, off, or status")
+    bus = ("busctl --system call org.tizen.system.deviced "
+           "/Org/Tizen/System/DeviceD/Display org.tizen.system.deviced.display ")
+    command = "set -e\n"
+    if action != "status":
+        command += (f"result=$({bus}ChangeState s lcd{action})\n"
+                    "test \"$result\" = 'i 0' || exit 74\n")
+    command += bus + "GetState\n"
+    raw = sdk_capture(sdb, command).strip()
+    states = {'s "lcdon"': "on", 's "lcdoff"': "off"}
+    state = states.get(raw)
+    if state is None or (action != "status" and state != action):
+        raise RuntimeError("Requested display state was not verified; no power-toggle fallback")
+    return {"display_state": state, "display_state_verified": True,
+            "screen_observed": False, "audio_changed": False}
+
+
+def infrared_wake():
+    # Fixed, attended-tested Samsung discrete ON, never the remote's toggle.
+    # Timings/code: IRremoteESP8266 ir_Samsung.cpp and IRMQTTServer example.
+    import broadlink
+    from broadlink.remote import pulses_to_data
+
+    device = broadlink.hello(BROADLINK_IP, timeout=4)
+    if device.devtype != 0x5213 or device.mac.hex() != BROADLINK_MAC:
+        raise RuntimeError("RM4 Pro identity changed; no infrared command sent")
+    if device.is_locked:
+        raise RuntimeError("RM4 Pro local control is locked; no infrared command sent")
+    if not device.auth():
+        raise RuntimeError("RM4 Pro authentication failed")
+    pulses = [4480, 4480]
+    for shift in range(31, -1, -1):
+        pulses.extend([560, 1680 if (0xE0E09966 >> shift) & 1 else 560])
+    pulses.append(560)
+    pulses.append(max(26880, 108080 - sum(pulses)))
+    device.send_data(pulses_to_data(pulses))
+    return {"ir_on_sent": True, "power_on_verified": False}
+
+
 def local_operation(command, query=None, uri=None):
+    if command == "ir-wake":
+        return infrared_wake()
     if command == "youtube":
         return youtube_play(query)
     if command == "youtube-state":
@@ -843,7 +892,7 @@ def local_operation(command, query=None, uri=None):
         if server_pid() is not None:
             raise RuntimeError("An SDB server already exists; leaving it untouched")
         # Check device reachability before starting the network-listening server.
-        with socket.create_connection(("192.168.165.2", 26101), timeout=4):
+        with socket.create_connection(("192.168.165.172", 26101), timeout=4):
             pass
         owned_pid = None
         try:
@@ -858,6 +907,8 @@ def local_operation(command, query=None, uri=None):
             if sdb_command(sdb, ["-s", TARGET, "get-state"]).strip() != "device":
                 raise RuntimeError("TV did not enter the connected device state")
             prefix = ["-s", TARGET]
+            if command == "screen":
+                return screen_control(sdb, query)
             if command == "status":
                 raw = sdb_command(sdb, prefix + ["capability"])
                 values = dict(line.split(":", 1) for line in raw.splitlines() if ":" in line)
@@ -920,12 +971,14 @@ def local_operation(command, query=None, uri=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("command", choices=["status", "browser", "apps", "launch", "open", "app-info", "app-state", "youtube", "youtube-state", "netflix", "twitch", "prime-video", "max-show", "max-play", "max-search", "peacock-episode", "peacock-play", "peacock-show", "peacock-search", "apple-tv", "apple-tv-play", "wake", "foreground", "screenshot"])
+    parser.add_argument("command", choices=["status", "browser", "apps", "launch", "open", "app-info", "app-state", "youtube", "youtube-state", "netflix", "twitch", "prime-video", "max-show", "max-play", "max-search", "peacock-episode", "peacock-play", "peacock-show", "peacock-search", "apple-tv", "apple-tv-play", "wake", "ir-wake", "foreground", "screenshot", "screen"])
     parser.add_argument("query", nargs="?")
     parser.add_argument("--url", help="Content URI delivered to the explicitly selected app")
     parser.add_argument("--output", help="New local PNG path for screenshot (never overwritten)")
     args = parser.parse_args()
-    if args.command in {"status", "browser", "wake", "foreground", "screenshot"} and args.query is not None:
+    if args.command == "screen" and args.query not in {"on", "off", "status"}:
+        parser.error("screen requires on, off, or status")
+    if args.command in {"status", "browser", "wake", "ir-wake", "foreground", "screenshot"} and args.query is not None:
         parser.error("This command takes no positional argument")
     if args.output and args.command != "screenshot":
         parser.error("--output is only supported with screenshot")
@@ -961,7 +1014,9 @@ def main():
     if args.local:
         print(json.dumps(local_operation(args.command, args.query, args.url), indent=2))
     else:
-        remote = ["python3", "-", "--local", args.command]
+        # Relative to the SSH user's home, not a path expanded on the Mini.
+        python = BROADLINK_PYTHON if args.command == "ir-wake" else "python3"
+        remote = [python, "-", "--local", args.command]
         if args.query is not None:
             remote.append(args.query)
         if args.url:

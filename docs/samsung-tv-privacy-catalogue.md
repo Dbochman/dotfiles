@@ -12,7 +12,25 @@ restart. Historical findings below are labelled by phase.
 
 ## Current status and remaining checks
 
-**Verified after the full restart:** all 24 targeted app-disable records and six
+**2026-10-26 controlled restoration trial:** the owner authorized restoring
+Bixby/shared voice and standby components to investigate unreliable wake after
+Google Home off. Sixteen selected app records now have their saved pre-cleanup
+flags, AOV/far-field native activation was restored, and three voice stop markers
+were removed. The three Alexa and five advertising/TV Plus records remain
+disabled. The first ten-minute standby test still failed Google and LAN wake;
+IR recovery confirmed the restored app state survived a fresh boot. A second
+phase restored voice recognition and assistant prelaunch from false to their
+recorded original true values. A second ten-minute standby test again failed
+both Google and LAN wake. Final IR recovery verified all restored app flags,
+both true voice preferences and the removed markers survived another fresh
+boot; the TV was left on. This restoration has not fixed standby wake. AOV mode
+and network-wake preferences were not changed. The four temporary masks were
+already absent after reboot.
+This supersedes the blanket disabled-state description below; do not reapply
+voice guards during ordinary playback troubleshooting. See the
+[restoration trial and its inverse](samsung-tv-developer-control.md#controlled-voice-restoration-trial-2026-10-26).
+
+**Historical verification after the October 24 full restart:** all 24 targeted app-disable records and six
 stop markers persisted; targeted voice/advertising/TV Plus processes were absent
 in initial and delayed checks; shared audio services started normally. The owner
 confirmed the usual HDMI cable-disconnected screen. The extra four runtime masks
@@ -37,7 +55,9 @@ Remaining checks, rather than another generic reboot task:
   behavior remain unverified. Soundbar recording support exists in the installed
   code; arbitrary network-microphone activation or transmission was not established.
 
-Recovery: the original four-group cleanup uses `*-restore-v3.sh`; AOV/far-field
+Recovery: the October 26 trial has its own inverse for restoring the pre-trial
+disabled state; use its record before attempting any older group restore.
+The original four-group cleanup uses `*-restore-v3.sh`; AOV/far-field
 uses `restore-v2.sh` with its matching SQL and `RECOVERY_CURRENT`. See their
 [recovery records](#recovery-records) and [AOV guard records](#authorized-aov-and-far-field-guards).
 Retain both sets; restoring one group does not undo all maintenance.

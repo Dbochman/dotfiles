@@ -9,6 +9,7 @@ Usage:
   samsung-tv pair <name>                One attended approval attempt; no keys sent
   samsung-tv power <name> on            Ensure power on; verify before any toggle
   samsung-tv power <name> off           Power off
+  samsung-tv screen <name> on|off|status Crosstown panel only; preserves network, leaves audio unchanged
   samsung-tv volume <name> up|down|N     Volume up/down (N = number of presses, negative = down)
   samsung-tv mute <name>                Toggle mute
   samsung-tv key <name> <KEY_NAME>      Send remote key (KEY_HOME, KEY_SOURCE, etc.)
@@ -42,7 +43,7 @@ CONFIG_FILE = os.path.expanduser("~/.openclaw/samsung-tvs.json")
 CACHE_DIR = os.path.expanduser("~/.cache/samsung-tv")
 WAKE_READY_TIMEOUT = 90
 CROSSTOWN_HOST = "dylans-macbook-pro"
-CROSSTOWN_TV = "192.168.165.2"
+CROSSTOWN_TV = "192.168.165.172"
 _tunnel = None
 
 
@@ -253,8 +254,8 @@ def device_info(ip, timeout=3):
 
 DEFAULT_TVS = {
     "TV": {
-        "ip": "192.168.165.2",
-        "mac": "A0:D7:F3:B2:C0:AC",
+        "ip": "192.168.165.172",
+        "mac": "B0:99:D7:36:26:2B",
     }
 }
 
@@ -409,6 +410,14 @@ def send_wake(info):
     send_magic_packet(mac)
 
 
+def send_infrared_on():
+    helper = Path(__file__).resolve().with_name("samsung-tv-dev")
+    response = subprocess.run([str(helper), "ir-wake"], check=True,
+                              capture_output=True, text=True, timeout=25)
+    if json.loads(response.stdout).get("ir_on_sent") is not True:
+        raise RuntimeError("RM4 Pro did not acknowledge infrared ON")
+
+
 def poll_power(info):
     for _ in range(5):
         state = read_power(info)
@@ -425,7 +434,7 @@ def wait_for_wake(info):
     deadline = time.monotonic() + WAKE_READY_TIMEOUT
     while True:
         state = read_power(info)
-        if state in ("on", "standby"):
+        if state in ("on", "standby", "pictureoff"):
             return state
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -433,11 +442,36 @@ def wait_for_wake(info):
         time.sleep(min(2, remaining))
 
 
+def control_screen(info, action):
+    if info["ip"] != CROSSTOWN_TV:
+        raise RuntimeError("Native screen control is only verified for the Crosstown TV")
+    if action not in {"on", "off", "status"}:
+        raise ValueError("screen requires on, off, or status")
+    helper = Path(__file__).resolve().with_name("samsung-tv-dev")
+    response = subprocess.run([str(helper), "screen", action], check=True,
+                              stdout=subprocess.PIPE, text=True, timeout=120)
+    result = json.loads(response.stdout)
+    if (result.get("display_state_verified") is not True
+            or result.get("display_state") not in {"on", "off"}
+            or (action != "status" and result["display_state"] != action)):
+        raise RuntimeError("Native display state was not verified")
+    return result
+
+
 def ensure_power_on(name, info):
     result = {"power_on_verified": False, "wake_packet_sent": False,
-              "power_key_sent": False}
+              "power_key_sent": False, "ir_on_sent": False}
     state = read_power(info)
-    if state not in ("on", "standby"):
+    if info["ip"] == CROSSTOWN_TV and state not in ("on", "pictureoff"):
+        try:
+            send_infrared_on()
+        except (OSError, subprocess.SubprocessError, ValueError, RuntimeError):
+            # A missing/locked IR bridge must not disable the existing LAN path.
+            result["ir_unavailable"] = True
+        else:
+            result["ir_on_sent"] = True
+            state = poll_power(info)
+    if state not in ("on", "standby", "pictureoff"):
         send_wake(info)
         result["wake_packet_sent"] = True
         state = wait_for_wake(info)
@@ -452,6 +486,10 @@ def ensure_power_on(name, info):
                 state = poll_power(info)
         finally:
             remote.close()
+    if state == "pictureoff":
+        control_screen(info, "on")
+        result["display_on_requested"] = True
+        state = poll_power(info)
     result.update(power=state, power_on_verified=state == "on")
     return result
 
@@ -697,7 +735,7 @@ def main():
     required = False
     if cmd == "status":
         required = any(info["ip"] == CROSSTOWN_TV for info in tvs.values())
-    elif cmd in {"pair", "power", "volume", "mute", "key", "keys", "app", "art"} and rest:
+    elif cmd in {"pair", "power", "volume", "mute", "key", "keys", "app", "art", "screen"} and rest:
         _name, info = resolve_tv(rest[0], tvs)
         required = info["ip"] == CROSSTOWN_TV
     with tv_transport(required):
@@ -711,6 +749,10 @@ def dispatch(cmd, rest, tvs):
     elif cmd == "pair" and len(rest) == 1:
         name, info = resolve_tv(rest[0], tvs)
         cmd_pair(name, info)
+
+    elif cmd == "screen" and len(rest) == 2:
+        _name, info = resolve_tv(rest[0], tvs)
+        print(json.dumps(control_screen(info, rest[1].lower())))
 
     elif cmd == "power" and len(rest) >= 2:
         name, info = resolve_tv(rest[0], tvs)
@@ -767,6 +809,6 @@ def dispatch(cmd, rest, tvs):
 if __name__ == "__main__":
     try:
         main()
-    except (TransportError, OSError, subprocess.SubprocessError) as exc:
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
         print(f"TV control failed: {exc}", file=sys.stderr)
         raise SystemExit(1)

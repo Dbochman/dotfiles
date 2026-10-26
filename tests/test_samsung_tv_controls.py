@@ -41,7 +41,76 @@ class RenamedTVTests(unittest.TestCase):
         token.assert_called_once_with("Other TV")
 
 
+class InfraredPowerTests(unittest.TestCase):
+    def test_ir_wake_is_verified_without_network_toggle(self):
+        with patch.object(tv, "read_power", side_effect=["unknown", "standby", "on"]), \
+                patch.object(tv, "send_infrared_on") as ir, \
+                patch.object(tv, "send_wake") as wol, \
+                patch.object(tv, "get_tv") as remote, patch.object(tv.time, "sleep"):
+            result = tv.ensure_power_on("TV", {"ip": tv.CROSSTOWN_TV})
+        self.assertTrue(result["power_on_verified"])
+        self.assertTrue(result["ir_on_sent"])
+        ir.assert_called_once()
+        wol.assert_not_called()
+        remote.assert_not_called()
+
+    def test_unavailable_ir_preserves_lan_wake(self):
+        with patch.object(tv, "read_power", side_effect=["unknown", "on"]), \
+                patch.object(tv, "send_infrared_on", side_effect=RuntimeError("locked")), \
+                patch.object(tv, "send_wake") as wol:
+            result = tv.ensure_power_on("TV", {"ip": tv.CROSSTOWN_TV})
+        self.assertTrue(result["power_on_verified"])
+        self.assertTrue(result["ir_unavailable"])
+        self.assertFalse(result["ir_on_sent"])
+        wol.assert_called_once()
+
+    def test_ir_acknowledgment_is_not_power_confirmation(self):
+        with patch.object(tv, "read_power", return_value="unknown"), \
+                patch.object(tv, "send_infrared_on") as ir, \
+                patch.object(tv, "send_wake") as wol, \
+                patch.object(tv, "wait_for_wake", return_value="unknown"), \
+                patch.object(tv, "get_tv") as remote, patch.object(tv.time, "sleep"):
+            result = tv.ensure_power_on("TV", {"ip": tv.CROSSTOWN_TV})
+        self.assertFalse(result["power_on_verified"])
+        ir.assert_called_once()
+        wol.assert_called_once()
+        remote.assert_not_called()
+
+    def test_already_on_skips_ir(self):
+        with patch.object(tv, "read_power", return_value="on"), \
+                patch.object(tv, "send_infrared_on") as ir:
+            self.assertTrue(tv.ensure_power_on("TV", {"ip": tv.CROSSTOWN_TV})["power_on_verified"])
+        ir.assert_not_called()
+
+
 class PowerOnTests(unittest.TestCase):
+    def test_picture_off_restores_display_without_wol_or_power_toggle(self):
+        for states in (["pictureoff", "on"], ["unknown", "pictureoff", "on"]):
+            with self.subTest(states=states), \
+                    patch.object(tv, "control_screen") as screen:
+                result, remote, connect, wake = self.run_power(states)
+            self.assertTrue(result["power_on_verified"])
+            screen.assert_called_once_with({"ip": "test"}, "on")
+            connect.assert_not_called()
+            remote.send_key.assert_not_called()
+            self.assertEqual(wake.call_count, int(states[0] == "unknown"))
+
+    def test_failed_display_restore_does_not_toggle_or_wake(self):
+        with patch.object(tv, "read_power", return_value="pictureoff"), \
+                patch.object(tv, "control_screen", side_effect=RuntimeError("unverified")), \
+                patch.object(tv, "get_tv") as connect, patch.object(tv, "send_wake") as wake:
+            with self.assertRaisesRegex(RuntimeError, "unverified"):
+                tv.ensure_power_on("Frame", {"ip": tv.CROSSTOWN_TV})
+        connect.assert_not_called()
+        wake.assert_not_called()
+
+    def test_native_on_acknowledgment_requires_rest_on(self):
+        with patch.object(tv, "control_screen"):
+            result, remote, connect, wake = self.run_power(["pictureoff"] * 7)
+        self.assertFalse(result["power_on_verified"])
+        connect.assert_not_called()
+        wake.assert_not_called()
+
     def run_power(self, states):
         remote = MagicMock()
         now = [0.0]
@@ -133,6 +202,21 @@ class PowerOnTests(unittest.TestCase):
         remote.close.assert_called_once()
 
 
+class ScreenTests(unittest.TestCase):
+    def test_unsupported_tv_never_calls_developer_helper(self):
+        with patch.object(tv.subprocess, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "only verified"):
+                tv.control_screen({"ip": "192.0.2.1"}, "off")
+        run.assert_not_called()
+
+    def test_unverified_or_mismatched_developer_result_is_rejected(self):
+        for result in ({}, {"display_state": "on", "display_state_verified": True}):
+            response = subprocess.CompletedProcess([], 0, json.dumps(result), "")
+            with self.subTest(result=result), patch.object(tv.subprocess, "run", return_value=response):
+                with self.assertRaisesRegex(RuntimeError, "not verified"):
+                    tv.control_screen({"ip": tv.CROSSTOWN_TV}, "off")
+
+
 class StatusTests(unittest.TestCase):
     def test_unreachable_during_client_initialization_is_reported(self):
         with patch.object(tv, "device_info", side_effect=RuntimeError("connection refused")), \
@@ -169,12 +253,12 @@ class TransportTests(unittest.TestCase):
     def test_unexpected_destination_and_dead_tunnel_fail_closed(self):
         tunnel = self.tunnel()
         for url in ("http://192.168.165.3:8001/api/v2/",
-                    "http://192.168.165.2:1234/api/v2/"):
+                    "http://192.168.165.172:1234/api/v2/"):
             with self.assertRaises(tv.TransportError):
                 tunnel.route(url)
         tunnel.process.poll.return_value = 255
         with self.assertRaises(tv.TransportError):
-            tunnel.route("http://192.168.165.2:8001/api/v2/")
+            tunnel.route("http://192.168.165.172:8001/api/v2/")
 
     def test_all_control_commands_require_the_crosstown_transport(self):
         commands = ["status", "pair frame", "power frame on", "power frame off", "volume frame up",

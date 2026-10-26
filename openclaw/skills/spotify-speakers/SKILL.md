@@ -41,6 +41,13 @@ Homebrew `spogo` 0.1.0 remains unchanged and must not be used to target TV
 playback: its Connect path ignores `--device`. Read-only search and metadata
 through `spogo` remain usable.
 
+For TV power/off requests, also read the `samsung-tv` skill: the owner's
+preferred off behavior is pause playback, then native screen-off to preserve
+network control. Screen-off alone does not stop Spotify. Ordinary Google Home
+off bypasses that path. The normal TV power-on helper now uses the Crosstown
+RM4 Pro's tested discrete infrared ON command, with Ethernet wake available;
+verify power-on before starting playback. Long standby reliability is unproven.
+
 ```bash
 spogo device list                  # list Spotify Connect devices
 spogo device set "Kitchen speaker" # transfer playback to a device

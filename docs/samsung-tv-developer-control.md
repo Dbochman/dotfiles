@@ -2,10 +2,62 @@
 
 Verified 2026-10-24 on QN65LS03BAFXZA (2022 Frame), firmware
 T-PTMAKUC-1720.7, Tizen 6.5 / ARMv7. Developer Mode is enabled for the
-Crosstown MacBook's LAN address, 192.168.165.109. The TV is 192.168.165.2.
+Crosstown MacBook's LAN address, 192.168.165.109. The TV now uses Ethernet at 192.168.165.172 (MAC B0:99:D7:36:26:2B).
 Use SSH host `dylans-macbook-pro`; `dylans-mac` is a different machine.
 
 ## Current maintenance state
+
+### Ethernet and RM4 Pro (2026-10-26)
+
+The owner connected the TV to Ethernet. REST identified the same QN65LS03BAFXZA
+as `wired` at `192.168.165.172`; ARP confirmed MAC `B0:99:D7:36:26:2B`.
+Both helpers, including developer/DIAL endpoints and WoL, now target Ethernet.
+The Mini's `~/.openclaw/samsung-tvs.json` was migrated, retaining the original
+pairing identity. The earlier `.2`/`A0:D7:F3:B2:C0:AC` values below are historical
+Wi-Fi evidence. DHCP reservation status has not been checked.
+
+The owner's existing BroadLink RM4 Pro was discovered on the Crosstown LAN at
+`192.168.165.167`, MAC `EC:0B:AE:8C:38:AF`, device type `0x5213`. The owner
+disabled its local-control lock in the app, and local authentication succeeded.
+All BroadLink discovery/authentication/transmission runs on the always-on
+`dylans-macbook-pro`, invoked over SSH from the Mini; no cloud account is used.
+The isolated environment is
+`~/.local/share/samsung-tv-tools/broadlink-0.19.0/` on that Mac, with
+`broadlink==0.19.0`, `cryptography==50.0.2`, `cffi==2.0.0`,
+`pycparser==2.23`, and `typing_extensions==4.16.0`. Binary wheels were used;
+no global packages or shared services were changed.
+
+`samsung-tv-dev ir-wake` verifies the bridge's type/MAC/unlocked state and sends
+one fixed Samsung discrete ON (`E0E09966`), never a power toggle. The code and
+Samsung timings come from the
+[IRremoteESP8266 example](https://github.com/crankyoldgit/IRremoteESP8266/blob/master/examples/IRMQTTServer/IRMQTTServer.ino)
+and [protocol implementation](https://github.com/crankyoldgit/IRremoteESP8266/blob/master/src/ir_Samsung.cpp),
+encoded using [python-broadlink](https://github.com/mjg59/python-broadlink).
+An IR acknowledgment is only transmission evidence; `samsung-tv power frame on`
+checks REST power and retains the LAN path if IR is unavailable or ineffective.
+Already-on and native picture-off handling remain separate.
+
+Short attended checks, with no ten-minute holds: Google Home off followed by
+Ethernet WoL/verified remote wake reached `on`; discrete IR ON left an already-on
+TV on, and after another Google Home off restored `standby` to `on` in two
+seconds. The owner confirmed the picture returned without the remote.
+The integrated `samsung-tv power frame on` check after another Google Home off
+also succeeded, reporting `ir_on_sent`, `wake_packet_sent`, `power_key_sent`, and
+`power_on_verified` all true. That attempt required the retained network/remote
+fallback; the two-second isolated IR result is not a universal startup time.
+Developer connectivity at the new Ethernet endpoint was verified separately.
+These checks do not establish long standby or overnight reliability.
+
+### Voice restoration remains applied
+
+On 2026-10-26 the owner authorized a controlled restoration of 16 Bixby/shared
+voice and AOV/far-field app records to test the standby-wake failure. Three voice
+stop markers were removed; Alexa, advertising and TV Plus remain disabled.
+After that first trial failed, the two voice preferences changed in the earlier
+privacy/performance phase were also restored to their recorded original values.
+See the [current trial](#controlled-voice-restoration-trial-2026-10-26) before
+using older cleanup or rollback instructions. The October 24 observations below
+describe historical verification, not the current voice activation state.
 
 As of the completed 2026-10-24 full restart, all 24 targeted app-disable records
 and six vendor stop markers survived. Targeted voice, advertising and TV Plus
@@ -20,6 +72,180 @@ work. Full-restart persistence is now observed; separate standby/wake and
 post-restart playback/integration checks remain outstanding. The October 25
 network-wake investigation below adds an attended off/wake check, without
 closing the separate privacy-guard and playback validations.
+
+## Controlled voice restoration trial (2026-10-26)
+
+The owner explicitly authorized reversible restoration after reviewing Samsung's
+Keep Bixby in Standby guidance. The trial restores the 14 non-Alexa records from
+the original voice group, plus `com.samsung.tv.aov-service` and
+`com.samsung.tv.farfieldvoice`. Only their four saved app-manager flags were
+restored; executable paths and `app_support_disable` were preserved. Native
+`pkgcmd -A` for the two AOV/far-field apps ran as numeric UID/GID 5001:100 and
+returned `enable_app` / `ok`. Removed only the three verified empty vendor
+markers for voice-app, ondevice-voice and farfieldvoice. All four temporary
+AOV/far-field masks were already absent, so no unit files or overrides changed.
+
+Fresh preflight confirmed the expected model/IP, all 24 maintenance rows, marker
+metadata and original unit hashes. A consistent database backup passed integrity
+checking and was copied off the TV before mutation. Its `before.tar.gz` digest:
+`8a4280d35b454efb08b58e837d51b3ea803df737149cd2910420694a32efe13d`.
+Restoration/inverse SQL was exercised against that real baseline in memory:
+exact round-trip, preservation of every unrelated row/column, and rejection of
+executable drift all passed. This is not a claim of a live rollback test.
+
+Post-restoration readback verified all 16 records against the original values
+and all eight excluded records unchanged/disabled. Starting the original voice
+services brought back voice-app, voice-client, ondevice-voice and bixby-prov
+processes. PulseAudio, shared audio, network daemon and connman retained their
+PIDs, and the boot ID stayed unchanged. AOV mode remained `0`; voice recognition
+and assistant prelaunch stayed false. Far-field still had a failed native unit
+condition, and AOV retained its existing mode-gated failure. Restoring activation
+permission does not mean those two services are running or that microphone
+behavior has been tested. No additional voice preference was enabled.
+
+Recovery records are in
+`~/.local/share/samsung-tv-tools/changes/20261026-voice-standby-trial/` on the Mini
+and `/opt/usr/share/openclaw-tv-backups/20261026-voice-standby-trial/` on the TV.
+`restore.sh` is the applied trial; `rollback.sh` restores the disabled app flags,
+native AOV/far-field deactivation and the three original markers, then requests
+no-restart termination of only verified selected voice executables as UID 5001.
+Verify process absence and selected state with `verify.sh` after using it; do
+not overwrite the whole live database. The private `root-trial.py` uses the
+existing pinned, temporary-root transport with cleanup and system-file checks.
+The TV rejects unsigned script filenames, so staged shell scripts are supplied
+through stdin, as with the existing diagnostic path; no signing/security policy
+was changed. An initial oversized staging request and the filename-based
+precheck both failed before any service restoration. The corrected staging,
+restoration and verification all confirmed root/SDK staging and owned-SDB cleanup.
+
+Google Assistant subsequently acknowledged `Turn off TV`; REST reported
+`standby` and the owner confirmed a black screen. A ten-minute interval without
+diagnostic TV traffic ran from 13:51:55 to 14:01:55 UTC. The first subsequent
+REST check was unreachable. Google acknowledged `Turn on TV`, but passive REST
+checks remained unreachable throughout the 90-second readiness window (the last
+in-flight check finished at 98 seconds). No local wake packet or remote key was
+sent during that Google-only attempt. Restoring these services alone therefore
+did not establish a Google wake fix. This does not rule out a separate standby
+preference, firmware/network issue or a dependency not covered by this trial.
+The picture-off workaround remains available; no Google routing was changed.
+A subsequent normal OpenClaw `power frame on` attempt also failed after its
+bounded readiness wait: `wake_packet_sent: true`, `power_key_sent: false`,
+`power_on_verified: false`, `power: unknown`. No toggle loop was attempted.
+The owner was asked for IR recovery to verify the restored state after standby
+and inspect the actual Bixby standby preference. IR recovery produced a fresh
+boot (`bd757ac0-7a41-4eab-b443-2dae48922d26`); readback verified the restored flags,
+removed markers and original unit hashes survived. Bixby provider, capsule
+viewer, voice-app/client and ondevice-voice were running. The two bounded native
+activation jobs were no longer loaded. REST returned on after startup.
+
+### Second phase: restore the two earlier voice preferences
+
+The original privacy/performance records separately show that
+`db/si_service/voice_recog_enable` and `db/multi-assistant/prelaunch_mode` were
+both true before our changes. The first trial intentionally left both false
+to isolate the app/service restoration. They were then restored to true with
+typed `vconftool` writes, exact before/after guards and a failure-recovery trap.
+The two original values were checked against saved `*.before.txt` records from
+`20261024-privacy-performance/tv-rollback-records/preferences/`.
+Fresh readback confirmed both true, AOV mode still `0`, mobile wake/IP Remote
+still enabled and the same boot ID. Advertising consent and TV Plus autorun
+were not included. This re-enables voice preferences; it does not establish
+physical microphone state or activate an unverified Bixby standby enum.
+
+`preferences-restore.sh` and `preferences-rollback.sh` are saved on both the
+Mini and TV beside the first-phase records. Current full reversal is the Mini's
+`full-rollback.sh`: run the preferences inverse first, then the app/service
+inverse, through `root-trial.py`, and independently verify the resulting state.
+`full-rollback.sh`, `RECOVERY_CURRENT` and `manifest.json` are now saved on both
+the Mini and TV with matching verified hashes and identify that combined inverse.
+The database rollback alone does not undo the second-phase preferences.
+
+Google again acknowledged off and REST reported standby. A second ten-minute
+quiet interval ran from 14:12:09 to 14:22:09 UTC. REST was then unreachable;
+Google acknowledged on, but all passive checks remained unreachable through the
+readiness window (last in-flight result at 98.2 seconds). No local wake packet
+or power key was used during this second Google-only test. Thus adding the two
+original voice preferences did not restore Google wake in this trial. A separate
+normal OpenClaw wake also exhausted its readiness window with one packet, no
+power key and unknown power state. Final IR recovery brought the TV back online
+with a fresh boot ID, `2abcbfa3-d84e-4211-a241-e796e903eee6`. All 16 restored app
+records and both true voice preferences survived; all eight excluded records
+remained disabled. The three voice stop markers remained absent, all six
+original unit hashes matched, and Bixby provider/capsule viewer, voice-app/client
+and ondevice-voice were running. Shared audio and network services were active.
+Database quick checking, recovery-file digests, temporary-root/system-file
+checks, SDK staging cleanup and owned-SDB cleanup all passed. The TV was left on
+with the restoration in place; no further standby trial was started.
+
+The far-field unit still reported a false condition after restoration. Its
+`Conditions` property serialized as `[unprintable]`, so this check did not
+identify which individual native condition failed. Scoped voice-key discovery
+found `assistant_farfield` and `wakeupless_status`, not a verified mapping for
+the Bixby standby UI option. Do not interpret this as proof that the option is
+available or absent on this model, or change an unknown enum to enable it.
+No new Keep Bixby in Standby setting has been enabled. These results establish
+failure despite the selected restoration, not a proven root cause or exclusion
+of every native-voice dependency.
+
+## Native picture-off workaround (2026-10-26)
+
+Another overnight failure reproduced with the correct Crosstown transport and
+the full 90-second wake wait. The Google Assistant text request `Turn on TV`
+reported that TV was unavailable; the owner independently confirmed Google Home
+iOS also reported unreachable and could not wake it. IR restored the same IP
+and MAC with a fresh boot. Mobile wake and IP Remote remained enabled; the
+Wi-Fi driver still advertised magic-packet wake. No previous-boot journal was
+available. The actual network unit, `NW-Daemon-service.service`, was active;
+`NW-Daemon.service` is not its unit name. These checks do not establish a root
+cause or implicate prior privacy guards.
+
+The owner prefers black with connectivity retained and usually turns off via
+Google Home voice. Native picture-off provides an OpenClaw alternative, but
+ordinary Google Home off still bypasses it. No cloud routing or TV power policy
+was changed. A static address would not explain this observed failure: the TV
+returned on the same address, and Google's cloud path was unavailable too.
+
+`KEY_PICTURE_OFF` had no visible effect on this Frame: the owner still saw the
+HDMI-disconnected screen. The native display service did work, as ordinary SDK
+UID 901, without root:
+
+```text
+bus:       org.tizen.system.deviced
+object:    /Org/Tizen/System/DeviceD/Display
+interface: org.tizen.system.deviced.display
+ChangeState s lcdoff -> i 0; GetState -> s "lcdoff"
+ChangeState s lcdon  -> i 0; GetState -> s "lcdon"
+```
+
+The owner confirmed black after `lcdoff`. After 270 seconds without diagnostic
+TV traffic, REST remained available and reported `pictureoff`; SDK readback
+still showed `lcdoff`, GetScreenState was `0`, and the boot ID was unchanged.
+GetScreenState initially lagged at `1` immediately after blanking, so that
+immediate value alone is not authoritative. The updated normal `power frame on`
+helper restored `lcdon`, verified REST `on`, and the owner confirmed the picture
+returned without using the remote. No wake packet or power key was sent.
+
+Commands: `samsung-tv screen frame on|off|status` and
+`samsung-tv-dev screen on|off|status`. They use the existing owned SDB lifecycle,
+SDK callback verification and staging cleanup. State changes require native
+success and matching readback; no blind power fallback. Normal power-on now
+recognizes `pictureoff`, including after its wake-readiness wait. Already-on
+remains a passive REST check. All 112 Samsung regression tests pass.
+
+This leaves the TV running with its panel off; it is not a verified low-power
+standby mode. Audio is unchanged, so ordinary off requests must pause playback
+first and distinguish pause verification from display verification. Overnight
+endurance and Google Home voice-off integration remain unverified/unresolved.
+Restore with `samsung-tv power frame on`. No persistent service, keepalive,
+network setting or voice/privacy guard was added or changed.
+
+Samsung's [IP control worksheet](https://image-us.samsung.com/SamsungUS/samsungbusiness/tv-ci-resources/Samsung-IP-Control.pdf)
+notes that standby can close the IP server and suggests Keep Bixby in Standby
+on supported far-field models. That is a separate option requiring review of
+its interaction with the owner's native-voice privacy choices; it was not
+enabled here. The existing `network_standby=0` key's applicability is still
+unknown and it was not changed. Samsung's [Picture Off support article](https://www.samsung.com/uk/support/tv-audio-video/how-do-i-turn-off-my-samsung-tv-picture-but-not-the-sound/)
+also distinguishes disabling the picture from stopping audio.
 
 ## Crosstown transport and pairing recovery (2026-10-25)
 

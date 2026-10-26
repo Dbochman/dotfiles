@@ -10,7 +10,9 @@ metadata: {"openclaw":{"emoji":"T","requires":{"bins":["samsung-tv","samsung-tv-
 Use `samsung-tv-dev` for installed-app discovery, app launches, content links,
 browser navigation, focused-app inspection, and LAN wake. It runs through SSH on the **Crosstown MacBook,
 `dylans-macbook-pro`**, whose TV-facing address is `192.168.165.109`.
-The TV is `192.168.165.2`, model QN65LS03BAFXZA, firmware 1720.7 / Tizen 6.5.
+The TV uses Ethernet at `192.168.165.172`, MAC `B0:99:D7:36:26:2B`, model
+QN65LS03BAFXZA, firmware 1720.7 / Tizen 6.5. Its old Wi-Fi address/MAC are no
+longer the control or wake target.
 `dylans-mac` is a different Mac, not this developer host.
 The owner renamed the device to **TV** on 2026-10-25; use that name for Google
 Home requests and Spotify Connect. Local remote commands accept `TV`, `frame`,
@@ -89,9 +91,12 @@ content selection, or a new on-screen authorization that needs the owner.
 
 1. Run `samsung-tv power frame on` and require `power_on_verified: true`
    before launching an app or capturing its UI. Already-on is a passive REST
-   check. Confirmed standby uses one remote connection, rechecks power, and
-   sends at most one power key if still in standby. Unknown/unreachable uses
-   LAN wake from Crosstown first; unknown state never authorizes a blind toggle.
+   check. `pictureoff` restores the display through the SDK and verifies REST
+   `on`, without WoL or a power toggle. Standby or unreachable first uses the
+   RM4 Pro's discrete IR ON through Crosstown, then verifies REST power. If
+   needed, the helper falls back to LAN wake and a remote connection that
+   rechecks power before sending at most one power key in confirmed standby.
+   Unknown state never authorizes a blind toggle.
    Allow the helper's bounded 90-second readiness wait after LAN wake; a cold
    boot can expose the developer port before REST and remote control are ready.
    Failure means stop and report the specific obstacle, not "Netflix is open."
@@ -151,9 +156,12 @@ An accepted request remains separate from observed playback.
 ## Remote, power and Art Mode
 
 ```sh
-samsung-tv-dev wake                       # LAN WoL from Crosstown Mac
+samsung-tv-dev wake                       # Ethernet WoL from Crosstown Mac; packet only
+samsung-tv-dev ir-wake                    # RM4 Pro discrete ON; transmission only
 samsung-tv power frame on                 # Verified power-on; safe already-on check
-samsung-tv power frame off
+samsung-tv screen frame off               # Black screen, network stays running; audio unchanged
+samsung-tv screen frame status            # Native display state through SDK
+samsung-tv power frame off                # Actual standby; use the normal on helper to wake
 samsung-tv key frame KEY_PLAY
 samsung-tv key frame KEY_PAUSE
 samsung-tv key frame KEY_STOP
@@ -170,6 +178,26 @@ samsung-tv art frame on                   # Or off
 samsung-tv art frame list
 samsung-tv art frame select ART_ID
 ```
+
+The owner's preferred ordinary **off/sleep** result is a black screen with
+network control available. Pause active playback first (for Spotify, use
+`samsung-tv-spotify pause` and check its result; otherwise use the app's pause
+control and verify where supported), then `samsung-tv screen frame off`.
+The screen command alone leaves audio unchanged: do not claim silence from
+display-state readback. If pausing cannot be verified, report that limitation.
+For an explicit screen-only request, leave playback alone. Do not open a remote
+WebSocket or send more navigation keys after blanking, since these can relight
+the panel. Use REST `samsung-tv status` for subsequent reachability checks.
+If screen-off fails, report failure without falling back to a power toggle.
+Use `power frame off` only when actual standby/power-off is specifically wanted.
+
+This is picture-off while the TV remains running, not low-power standby.
+On 2026-10-26 the owner confirmed black, REST reported `pictureoff`, and both
+REST and SDK remained available after 4.5 minutes without diagnostic traffic.
+The normal `power frame on` helper restored the picture without the remote.
+Overnight endurance is not yet verified. Ordinary Google Home voice/app off
+still follows Samsung's power path and bypasses this workaround; do not claim
+it was changed or that Google Home can recover an unreachable TV.
 
 Volume numbers count key presses; they are not an absolute volume level.
 `keys` accepts 1–16 navigation/transport keys, closes its connection, and never
@@ -189,12 +217,30 @@ establish a pairing problem; do not trigger pairing or repeat wake/toggle loops.
 Ask for remote power-on once. When the owner confirms it is on, rerun the normal
 power check and continue the original playback request after verification.
 
-Standby wake remains intermittent as of 2026-10-25. Power On with Mobile and IP
+The normal `power frame on` helper now tries the attended-tested RM4 Pro
+**discrete ON** command when the TV is in standby or unreachable, then checks
+REST power before continuing. An already-on TV sends nothing; `pictureoff`
+still uses native display-on. If IR is unavailable or does not restore the TV,
+the bounded LAN wake/verified remote path remains available. Neither an IR
+acknowledgment nor a WoL packet alone confirms power-on.
+
+The RM4 Pro is `192.168.165.167`, MAC `EC:0B:AE:8C:38:AF`, with local control
+unlocked. **All BroadLink requests also run through `dylans-macbook-pro`**,
+using its isolated BroadLink environment. Do not send directly from the Mini,
+learn a toggle as a wake command, reset the bridge, or re-pair the TV to fix wake.
+On October 26, Ethernet wake passed a short test; RM4 discrete ON restored the
+picture in two seconds and did not switch off an already-on TV. The owner
+confirmed the picture. A later integrated on test succeeded using both IR and
+the network/remote fallback; do not promise a two-second wake every time.
+Long standby/overnight reliability has not been tested.
+
+Before Ethernet and IR were added, standby wake was intermittent. Power On with Mobile and IP
 Remote were both enabled during investigation; a later three-minute standby test
 woke successfully in 27 seconds, but longer standby reliability is unproven.
 Do not routinely toggle these settings as a fix. Google acknowledged a power-on
-request during the failed state without waking the TV, so its acknowledgment
-does not establish success or a verified fallback. Detailed evidence is in
+request during an earlier failed state without waking the TV. On October 26,
+both Assistant and the owner's Google Home iOS app reported TV unavailable;
+neither woke it. A cloud acknowledgment does not establish success or a verified fallback. Detailed evidence is in
 `/Users/dbochman/dotfiles/docs/samsung-tv-developer-control.md`, section
 "Unresolved standby wake failure".
 
@@ -217,12 +263,18 @@ through Tizen's vendor API; ordinary off/on is not reboot proof, and there is no
 temporary-root cleanup and verifies a changed boot ID. Do not substitute a
 forced reboot or run the raw reboot request inside a live root probe.
 
-Current privacy guards and remaining checks are summarized in
-`/Users/dbochman/dotfiles/docs/samsung-tv-privacy-catalogue.md`. Four additional
-AOV/far-field masks are temporary to each boot; the app flags and vendor stop
-markers are persistent and survived the verified restart. An inactive voice
-service or an AOV gate's exit 123 is not a reason to re-enable it for ordinary
-playback or cloud remote control.
+Current privacy state and remaining checks are summarized in
+`/Users/dbochman/dotfiles/docs/samsung-tv-privacy-catalogue.md`. On October 26,
+the owner authorized a controlled restoration of 16 Bixby/shared voice and
+AOV/far-field app records and removal of three voice stop markers to test wake
+reliability. After the first test failed, voice recognition and assistant
+prelaunch were also restored to their recorded original true values. Alexa,
+advertising and TV Plus remain disabled; AOV mode was not changed. Do not reapply the older voice-disable batch during this trial.
+An inactive voice service or AOV gate's exit 123 is not a reason to change
+additional settings for ordinary playback. The runbook records the trial and
+its separate inverse. Both ten-minute trials (services alone, then services
+plus original voice preferences) failed Google and LAN wake. Do not describe
+the restoration as a fix or repeat it as a routine playback recovery.
 
 ## Verification and recovery
 
