@@ -21,6 +21,72 @@ post-restart playback/integration checks remain outstanding. The October 25
 network-wake investigation below adds an attended off/wake check, without
 closing the separate privacy-guard and playback validations.
 
+## Crosstown transport and pairing recovery (2026-10-25)
+
+Julia's control attempt exposed a separate transport failure: Mini-to-TV subnet
+traffic depended on the other Crosstown workstation, which was offline, while
+SSH developer commands through the always-on MacBook succeeded. All TV-LAN
+connections now use `dylans-macbook-pro`. The Mini's `samsung-tv` CLI creates
+short-lived loopback SSH forwards for REST and WebSocket ports 8001/8002;
+`samsung-tv-dev` already performs its LAN operations on that MacBook. There is
+no direct subnet fallback. SSH failures report a transport problem rather than
+asserting the TV is off or awaiting approval.
+
+HTTPS and WSS are preserved through the forwards. Credentials stay on the Mini
+in a private token file. Each command owns and cleans up its SSH process, and a
+closed parent stdin pipe also releases SSH after abrupt parent termination.
+This adds no persistent service, dependencies, or tailnet routing changes.
+
+Moving the connection source required attended pairing during this migration.
+The TV also emitted `ms.remote.touchEnable` / `ms.remote.touchDisable` before
+its connection acknowledgement; the library rejected those notices. The helper
+now tolerates those specific notices within a bounded handshake, still requiring
+`ms.channel.connect` before saving a token. Unauthorized or unexpected responses
+close the connection without retrying. `samsung-tv pair frame` makes one
+60-second approval attempt and sends no keys. One accepted request saved the
+token, and a fresh connection authenticated successfully with it.
+
+All 96 Samsung TV tests passed. Live checks verified the expected TV identity,
+HTTP/HTTPS REST, and authenticated remote WebSocket access while direct Python
+socket connections from the Mini to the TV were deliberately blocked. Art
+WebSocket URL routing was checked without changing Art Mode. Normal cleanup and
+SSH exit after abrupt parent termination were also verified. No remote keys,
+power changes, or playback commands were sent during these transport checks;
+the attended off/wake cycle below predates this routing change.
+
+### Public Netflix lookup recovery
+
+The same request also reproduced `IncompleteRead` on both urllib attempts to
+read Netflix's public page for *Below* (`81652677`). The system curl client
+retrieved the complete page and the existing parser matched the exact title.
+`content_lookup.py` now falls back to `/usr/bin/curl` only after both urllib
+attempts are incomplete. The fallback disables user curl configuration, checks
+each redirect against the provider allowlist before requesting it, caps the
+body at 8 MiB and the fallback at 25 seconds, and rejects failed or partial
+downloads. It uses no account session or new dependency.
+
+The deployed helper resolved all six episodes and independently resolved
+Limited Series episode 1, *Come Home Year*, to `81943170`. This verifies public
+metadata, not profile viewing history or playback. All 99 Samsung TV tests
+passed, including fallback failure, redirect-boundary, and size-limit checks.
+
+### OpenClaw replay
+
+An isolated main-agent gateway session replayed Julia's *Below* request with her
+later clarification to use Dylan's profile. It loaded the deployed skill,
+verified power, launched Netflix, used the repaired remote connection, visually
+selected Dylan's yellow profile, and submitted the native series-play request.
+The replay had begun before the lookup fix was deployed and resolved title
+identity from Netflix's public page instead. No iMessage reply was delivered.
+
+Post-launch captures showed a rating overlay and later subtitles over protected
+black video. The agent correctly reported playback as not fully verified: no
+identifying episode controls or visible video were captured. Capture staging
+cleanup was confirmed. The CLI request succeeded and the prior remote-key
+failure did not recur, but this evidence alone does not confirm the episode or
+visible playback. Sending UP before root capture setup finishes can miss the
+transient player controls, as noted in the earlier diagnostic below.
+
 ## Cold-wake readiness recovery (2026-10-25)
 
 The Cyberpunk / Dylan-profile request loaded the current skill and sent LAN
@@ -513,9 +579,11 @@ routing guidance in `references/content.md`. It is deployed as a real copy to
 tracked helper. The active gateway reports the skill **eligible and model-visible**
 with no missing requirements. No gateway restart was needed.
 
-The developer/content helper runs on the Crosstown Mac over SSH; standard
-WebSocket keys, volume and Art Mode remain on the existing Mini-side `samsung-tv`
-CLI. The skill explains this split and keeps wake broadcasts on the Crosstown LAN.
+The developer/content helper runs on the Crosstown MacBook over SSH. The
+Mini-side `samsung-tv` CLI sends REST, WebSocket keys, volume, and Art Mode
+connections through SSH forwards on the same MacBook. Wake broadcasts also
+originate on the Crosstown LAN; TV control does not depend on the other
+workstation's subnet route.
 The standard install process already links all tracked `bin/` files and copies
 the skill tree, so this uses the existing deployment contract.
 

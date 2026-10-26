@@ -2,10 +2,11 @@
 """samsung-tv — CLI for controlling Samsung The Frame TVs.
 
 Uses samsungtvws (NickWaterton fork) for WebSocket control and art mode.
-Connects by IP so it works over Tailscale subnet routing.
+Crosstown TV connections travel through its always-on MacBook over SSH.
 
 Usage:
   samsung-tv status                     Show TV status (power, volume, app)
+  samsung-tv pair <name>                One attended approval attempt; no keys sent
   samsung-tv power <name> on            Ensure power on; verify before any toggle
   samsung-tv power <name> off           Power off
   samsung-tv volume <name> up|down|N     Volume up/down (N = number of presses, negative = down)
@@ -28,13 +29,225 @@ TV names are fuzzy-matched (e.g. "frame" for "Samsung The Frame 65").
 import json
 import os
 from pathlib import Path
+import selectors
+import socket
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
+from urllib.parse import urlsplit, urlunsplit
 
 CONFIG_FILE = os.path.expanduser("~/.openclaw/samsung-tvs.json")
 CACHE_DIR = os.path.expanduser("~/.cache/samsung-tv")
 WAKE_READY_TIMEOUT = 90
+CROSSTOWN_HOST = "dylans-macbook-pro"
+CROSSTOWN_TV = "192.168.165.2"
+_tunnel = None
+
+
+class TransportError(RuntimeError):
+    """The required Crosstown SSH transport is unavailable."""
+
+
+class CrosstownTunnel:
+    """One owned SSH process, two loopback forwards, no subnet-route fallback."""
+
+    def __init__(self):
+        self.ports = {}
+        self.process = None
+        self.errors = None
+
+    def __enter__(self):
+        reservations = []
+        try:
+            for port in (8001, 8002):
+                listener = socket.socket()
+                reservations.append(listener)
+                listener.bind(("127.0.0.1", 0))
+                self.ports[port] = listener.getsockname()[1]
+        finally:
+            for listener in reservations:
+                listener.close()
+        # SSH must own both ports. A competing bind fails closed; never replace
+        # an existing listener or reuse somebody else's control connection.
+        args = ["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                "-o", "ConnectionAttempts=1", "-o", "ExitOnForwardFailure=yes",
+                "-o", "ControlMaster=no", "-o", "ControlPath=none",
+                "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2"]
+        for remote, local in self.ports.items():
+            args += ["-L", f"127.0.0.1:{local}:{CROSSTOWN_TV}:{remote}"]
+        # The private stdin pipe ties the remote command to this parent. Even
+        # an abrupt parent exit closes it, so SSH doesn't remain as an orphaned
+        # -N tunnel. No shared daemon or persistent remote helper is created.
+        args += [CROSSTOWN_HOST,
+                 "printf 'OPENCLAW_TV_FORWARD_READY\\n'; exec /bin/cat >/dev/null"]
+        try:
+            self.errors = tempfile.TemporaryFile()
+            self.process = subprocess.Popen(args, stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE, stderr=self.errors)
+            deadline = time.monotonic() + 8
+            self.check_alive()
+            # Read readiness from our authenticated SSH process, not by
+            # probing ports that a competing local process could have bound.
+            ready = b""
+            with selectors.DefaultSelector() as selector:
+                selector.register(self.process.stdout, selectors.EVENT_READ)
+                while time.monotonic() < deadline:
+                    self.check_alive()
+                    if not selector.select(max(0, deadline - time.monotonic())):
+                        break
+                    chunk = os.read(self.process.stdout.fileno(), 128)
+                    if not chunk:
+                        break
+                    ready += chunk
+                    if ready == b"OPENCLAW_TV_FORWARD_READY\n":
+                        self.check_alive()
+                        return self
+                    if len(ready) > 128 or b"\n" in ready:
+                        break
+            raise TransportError("Crosstown SSH forwards did not become ready")
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
+
+    def check_alive(self):
+        if self.process is None or self.process.poll() is not None:
+            raise TransportError("Crosstown SSH connection unavailable; check dylans-macbook-pro")
+
+    def route(self, url):
+        self.check_alive()
+        parts = urlsplit(url)
+        if parts.hostname != CROSSTOWN_TV or parts.port not in self.ports:
+            raise TransportError("Unexpected TV destination; refusing to bypass Crosstown")
+        # Preserve HTTPS/WSS even though the local forward uses an ephemeral
+        # port. The library otherwise infers TLS from the literal port 8002.
+        return urlunsplit(parts._replace(netloc=f"127.0.0.1:{self.ports[parts.port]}"))
+
+    def __exit__(self, *_args):
+        try:
+            if self.process is not None and self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=5)
+        finally:
+            if self.process is not None and self.process.stdin is not None:
+                self.process.stdin.close()
+            if self.process is not None and self.process.stdout is not None:
+                self.process.stdout.close()
+            if self.errors is not None:
+                self.errors.close()
+
+
+@contextmanager
+def tv_transport(required):
+    global _tunnel
+    if not required:
+        yield
+        return
+    with CrosstownTunnel() as tunnel:
+        _tunnel = tunnel
+        try:
+            yield
+        finally:
+            _tunnel = None
+
+
+def client_classes(ip):
+    from samsungtvws import SamsungTVWS
+    from samsungtvws.rest import SamsungTVRest
+    if ip != CROSSTOWN_TV:
+        return SamsungTVWS, SamsungTVRest
+    tunnel = _tunnel
+    if tunnel is None:
+        raise TransportError("Crosstown TV requires its SSH transport")
+    tunnel.check_alive()
+    from samsungtvws.art import SamsungTVArt
+
+    class RoutedConnection:
+        def open(self):
+            return open_websocket(self)
+
+        def _format_rest_url(self, *args, **kwargs):
+            return tunnel.route(super()._format_rest_url(*args, **kwargs))
+
+        def _format_websocket_url(self, *args, **kwargs):
+            return tunnel.route(super()._format_websocket_url(*args, **kwargs))
+
+    class RoutedRest(RoutedConnection, SamsungTVRest):
+        pass
+
+    class RoutedRestOwner:
+        def _get_rest_api(self):
+            if self._rest_api is None:
+                self._rest_api = RoutedRest(self.host, self.port, self.timeout)
+            return self._rest_api
+
+    class RoutedArt(RoutedRestOwner, RoutedConnection, SamsungTVArt):
+        pass
+
+    class RoutedTV(RoutedRestOwner, RoutedConnection, SamsungTVWS):
+        def art(self, timeout=5):
+            return RoutedArt(self.host, token=self.token, token_file=self.token_file,
+                             port=self.port, timeout=timeout,
+                             key_press_delay=self.key_press_delay, name=self.name)
+
+    return RoutedTV, RoutedRest
+
+
+def open_websocket(client):
+    """Bounded library-compatible handshake, including the Frame's touch notice."""
+    from samsungtvws import connection as protocol
+    if client.connection:
+        return client.connection
+    timeout = client.timeout or 5
+    deadline = time.monotonic() + timeout
+    connection = protocol.websocket.create_connection(
+        client._format_websocket_url(client.endpoint), timeout,
+        sslopt={"cert_reqs": protocol.ssl.CERT_NONE} if client._is_ssl_connection() else {},
+        connection="Connection: Upgrade",
+    )
+    ignored = (*protocol.IGNORE_EVENTS_AT_STARTUP,
+               "ms.remote.touchEnable", "ms.remote.touchDisable")
+    try:
+        for _ in range(16):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("TV remote handshake timed out")
+            connection.settimeout(remaining)
+            response = protocol.helper.process_api_response(connection.recv())
+            event = response.get("event")
+            client._websocket_event(event, response)
+            if event in ignored:
+                continue
+            if event == protocol.MS_CHANNEL_UNAUTHORIZED:
+                raise protocol.exceptions.UnauthorizedError("TV connection approval required")
+            if event != protocol.MS_CHANNEL_CONNECT_EVENT:
+                raise protocol.exceptions.ConnectionFailure("Unexpected TV handshake event")
+            client._check_for_token(response)
+            connection.settimeout(timeout)
+            client.connection = connection
+            return connection
+        raise TimeoutError("TV remote handshake exceeded its event limit")
+    except BaseException:
+        connection.close()
+        raise
+
+
+def new_tv(ip, name, timeout=5):
+    remote, _rest = client_classes(ip)
+    return remote(host=ip, port=8002, token_file=token_path(name),
+                  timeout=timeout, name="OpenClaw")
+
+
+def device_info(ip, timeout=3):
+    _remote, rest = client_classes(ip)
+    # Use the REST client directly: no token, model-year constructor request,
+    # or implicit WebSocket open on newer TVs.
+    return rest(host=ip, port=8001, timeout=timeout).rest_device_info()
 
 DEFAULT_TVS = {
     "Samsung The Frame 65": {
@@ -90,30 +303,25 @@ def token_path(name):
     """Get token file path for a TV."""
     slug = name.lower().replace(" ", "_")
     d = os.path.join(CACHE_DIR, slug)
-    os.makedirs(d, exist_ok=True)
-    return os.path.join(d, "token.txt")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    path = os.path.join(d, "token.txt")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+    return path
 
 
 def get_tv(ip, name, timeout=5):
     """Connect to a Samsung TV."""
     try:
-        from samsungtvws import SamsungTVWS
-    except ImportError:
-        print("Error: samsungtvws not installed. Run:", file=sys.stderr)
-        print('  pip3 install "git+https://github.com/NickWaterton/samsung-tv-ws-api.git#egg=samsungtvws[encrypted]"', file=sys.stderr)
-        sys.exit(1)
-
-    tp = token_path(name)
-    try:
-        tv = SamsungTVWS(
-            host=ip,
-            port=8002,
-            token_file=tp,
-            timeout=timeout,
-            name="OpenClaw",
-        )
+        tv = new_tv(ip, name, timeout)
         tv.open()
         return tv
+    except TransportError:
+        raise
     except Exception as e:
         print(f"Error connecting to {name} ({ip}): {e}", file=sys.stderr)
         sys.exit(1)
@@ -150,25 +358,19 @@ def cmd_status(_args):
     # connection notification, even with a saved token. Use `samsung-tv art`
     # explicitly when art-mode info is needed.
     tvs = load_tvs()
-    try:
-        from samsungtvws import SamsungTVWS
-    except ImportError:
-        print("Error: samsungtvws not installed.", file=sys.stderr)
-        sys.exit(1)
-
     for name, info in tvs.items():
         ip = info["ip"]
-        tp = token_path(name)
         try:
-            tv = SamsungTVWS(host=ip, port=8002, token_file=tp, timeout=5, name="OpenClaw")
-            device_info = tv.rest_device_info()
-            dev = device_info.get("device", device_info)
+            data = device_info(ip, timeout=5)
+            dev = data.get("device", data)
             power = dev.get("PowerState", "Unknown")
             model = dev.get("modelName", "Unknown")
             print(f"  {name}")
             print(f"    Model:  {model}")
             print(f"    IP:     {ip}")
             print(f"    Power:  {power}")
+        except TransportError:
+            raise
         except Exception:
             print(f"  {name}")
             print(f"    IP:     {ip}")
@@ -177,18 +379,18 @@ def cmd_status(_args):
 
 def read_power(info):
     """Passive REST query; no WebSocket connection or token required."""
-    from samsungtvws import SamsungTVWS
     try:
-        data = SamsungTVWS(host=info["ip"], timeout=3).rest_device_info()
+        data = device_info(info["ip"])
         return str(data.get("device", data).get("PowerState", "unknown")).lower()
+    except TransportError:
+        raise
     except Exception:
         return "unknown"
 
 
 def send_wake(info):
-    # The Mini is across a subnet route. This pinned helper sends from the
-    # Crosstown LAN; never claim that broadcasting locally crossed Tailscale.
-    if info["ip"] == "192.168.165.2":
+    # Wake broadcasts originate on the same Crosstown LAN as REST/WebSockets.
+    if info["ip"] == CROSSTOWN_TV:
         helper = Path(__file__).resolve().with_name("samsung-tv-dev")
         subprocess.run([str(helper), "wake"], check=True, timeout=35,
                        stdout=subprocess.DEVNULL)
@@ -268,6 +470,17 @@ def cmd_power_off(name, info):
     tv.close()
 
 
+def cmd_pair(name, info):
+    print("Waiting up to 60 seconds for one TV connection approval; no keys will be sent.",
+          flush=True)
+    tv = new_tv(info["ip"], name, timeout=60)
+    try:
+        tv.open()
+        print(f"Pairing verified for {name}; TV token saved locally.")
+    finally:
+        tv.close()
+
+
 def cmd_volume(name, info, direction):
     """Send volume up/down key presses. direction: 'up', 'down', or a number of presses."""
     tv = get_tv(info["ip"], name)
@@ -336,14 +549,7 @@ def cmd_keys(name, info, keys):
 
 def cmd_app_list(name, info):
     """List apps using REST API for known apps (WS app_list often returns empty)."""
-    try:
-        from samsungtvws import SamsungTVWS
-    except ImportError:
-        print("Error: samsungtvws not installed.", file=sys.stderr)
-        sys.exit(1)
-
-    tp = token_path(name)
-    tv = SamsungTVWS(host=info["ip"], port=8002, token_file=tp, timeout=5, name="OpenClaw")
+    tv = new_tv(info["ip"], name)
 
     # Check each known app via REST API (deduplicate by app ID)
     found = []
@@ -359,6 +565,8 @@ def cmd_app_list(name, info):
                 visible = " [VISIBLE]" if status.get("visible") else ""
                 print(f"  {status['name']:30s}  {app_id}  {running}{visible}")
                 found.append(status)
+        except TransportError:
+            raise
         except Exception:
             pass
 
@@ -368,14 +576,7 @@ def cmd_app_list(name, info):
 
 def cmd_app_launch(name, info, app_query):
     """Launch app via REST API (more reliable than WebSocket run_app)."""
-    try:
-        from samsungtvws import SamsungTVWS
-    except ImportError:
-        print("Error: samsungtvws not installed.", file=sys.stderr)
-        sys.exit(1)
-
-    tp = token_path(name)
-    tv = SamsungTVWS(host=info["ip"], port=8002, token_file=tp, timeout=10, name="OpenClaw")
+    tv = new_tv(info["ip"], name, timeout=10)
     app_id = resolve_app_id(app_query)
     result = tv.rest_app_run(app_id)
     if result:
@@ -486,9 +687,23 @@ def main():
     cmd = sys.argv[1]
     rest = sys.argv[2:]
     tvs = load_tvs()
+    required = False
+    if cmd == "status":
+        required = any(info["ip"] == CROSSTOWN_TV for info in tvs.values())
+    elif cmd in {"pair", "power", "volume", "mute", "key", "keys", "app", "art"} and rest:
+        _name, info = resolve_tv(rest[0], tvs)
+        required = info["ip"] == CROSSTOWN_TV
+    with tv_transport(required):
+        dispatch(cmd, rest, tvs)
 
+
+def dispatch(cmd, rest, tvs):
     if cmd == "status":
         cmd_status(rest)
+
+    elif cmd == "pair" and len(rest) == 1:
+        name, info = resolve_tv(rest[0], tvs)
+        cmd_pair(name, info)
 
     elif cmd == "power" and len(rest) >= 2:
         name, info = resolve_tv(rest[0], tvs)
@@ -543,4 +758,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (TransportError, OSError, subprocess.SubprocessError) as exc:
+        print(f"TV control failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)

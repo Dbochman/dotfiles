@@ -127,15 +127,59 @@ class ContentResolutionTests(unittest.TestCase):
                 handler.redirect_request(Request("https://www.netflix.com/title/123"), None, 302,
                                          "Found", {}, target)
 
-    def test_truncated_response_gets_only_one_retry(self):
+    def test_truncated_response_retries_then_uses_one_complete_fallback(self):
         failure = lookup.IncompleteRead(b"partial metadata")
         with patch.object(lookup, "fetch_once", side_effect=[failure, "complete"]) as fetch:
             self.assertEqual(lookup.fetch("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS), "complete")
             self.assertEqual(fetch.call_count, 2)
-        with patch.object(lookup, "fetch_once", side_effect=failure) as fetch:
-            with self.assertRaises(lookup.IncompleteRead):
-                lookup.fetch("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS)
+        with patch.object(lookup, "fetch_once", side_effect=failure) as fetch, \
+                patch.object(lookup, "fetch_curl", return_value="complete") as fallback:
+            self.assertEqual(lookup.fetch("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS), "complete")
             self.assertEqual(fetch.call_count, 2)
+            fallback.assert_called_once()
+
+    def curl_response(self, body=b"complete", status=b"200\n", code=0):
+        def run(args, **kwargs):
+            self.assertEqual(args[:2], ["/usr/bin/curl", "-q"])
+            self.assertNotIn("--location", args)
+            self.assertIn("--max-filesize", args)
+            self.assertLessEqual(kwargs["timeout"], 26)
+            Path(args[args.index("--output") + 1]).write_bytes(body)
+            return lookup.subprocess.CompletedProcess(args, code, stdout=status, stderr=b"private response")
+        return run
+
+    def test_curl_fallback_returns_only_complete_successful_body(self):
+        with patch.object(lookup.subprocess, "run", side_effect=self.curl_response()):
+            self.assertEqual(lookup.fetch_curl("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS), "complete")
+        for code in (18, 28, 63):  # Partial response, timeout, size exceeded.
+            with self.subTest(code=code), patch.object(lookup.subprocess, "run",
+                    side_effect=self.curl_response(body=b"partial", code=code)) as run:
+                with self.assertRaisesRegex(ValueError, "download failed"):
+                    lookup.fetch_curl("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS)
+                self.assertEqual(run.call_count, 1)
+
+    def test_curl_fallback_checks_each_redirect_before_requesting_it(self):
+        for target in ("https://evil.test/private", "http://www.netflix.com/title/123"):
+            with self.subTest(target=target), patch.object(lookup.subprocess, "run",
+                    side_effect=self.curl_response(status=("302\n" + target).encode())) as run:
+                with self.assertRaises(ValueError):
+                    lookup.fetch_curl("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS)
+                self.assertEqual(run.call_count, 1)
+        responses = [self.curl_response(status=b"302\nhttps://www.netflix.com/us/title/123"),
+                     self.curl_response()]
+        with patch.object(lookup.subprocess, "run", side_effect=lambda *a, **k: responses.pop(0)(*a, **k)):
+            self.assertEqual(lookup.fetch_curl("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS), "complete")
+
+    def test_curl_fallback_bounds_redirects_and_body(self):
+        with patch.object(lookup.subprocess, "run", side_effect=self.curl_response(
+                status=b"302\nhttps://www.netflix.com/title/123")) as run:
+            with self.assertRaisesRegex(ValueError, "redirect limit"):
+                lookup.fetch_curl("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS)
+            self.assertEqual(run.call_count, 6)
+        with patch.object(lookup, "MAX_BYTES", 3), patch.object(lookup.subprocess, "run",
+                side_effect=self.curl_response()):
+            with self.assertRaisesRegex(ValueError, "size limit"):
+                lookup.fetch_curl("https://www.netflix.com/title/123", lookup.NETFLIX_HOSTS)
 
 
 if __name__ == "__main__":

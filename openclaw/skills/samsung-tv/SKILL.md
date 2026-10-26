@@ -14,8 +14,14 @@ The TV is `192.168.165.2`, model QN65LS03BAFXZA, firmware 1720.7 / Tizen 6.5.
 `dylans-mac` is a different Mac, not this developer host.
 
 Use the existing `samsung-tv` CLI for remote buttons, volume, power and
-Art Mode. Those WebSocket operations originate on the Mini over the existing
-Tailscale subnet route; they do not require a developer-shell session.
+Art Mode. **All TV-LAN traffic goes through the always-on Crosstown MacBook**:
+`samsung-tv` creates temporary SSH forwards for REST/status and WebSockets,
+while `samsung-tv-dev` runs its LAN operations there directly. Credentials stay
+on the Mini; the forwards close when the command finishes. No developer-shell
+session is needed for ordinary remote controls. Do not use the Mini's direct
+subnet route or `dylans-mac` as a fallback: that route depends on a workstation
+that can go offline. If SSH to `dylans-macbook-pro` fails, report that transport
+failure rather than concluding the TV is off or needs an approval prompt.
 
 ## Choose the operation
 
@@ -81,6 +87,8 @@ content selection, or a new on-screen authorization that needs the owner.
    check. Confirmed standby uses one remote connection, rechecks power, and
    sends at most one power key if still in standby. Unknown/unreachable uses
    LAN wake from Crosstown first; unknown state never authorizes a blind toggle.
+   Allow the helper's bounded 90-second readiness wait after LAN wake; a cold
+   boot can expose the developer port before REST and remote control are ready.
    Failure means stop and report the specific obstacle, not "Netflix is open."
 2. Launch the requested app, then capture and inspect its current UI. An app
    launch acknowledgment or focused PID can exist while the panel is off.
@@ -170,6 +178,13 @@ crossed Tailscale.
 A WebSocket connection can light the panel/show a notification; use REST status
 for passive checks. Stop after a connection timeout or prompt rather than repeatedly
 triggering approval dialogs or toggles.
+
+After a transport change or revoked TV approval, use `samsung-tv pair frame`
+only with the owner present and authorizing the connection. It opens one request,
+waits up to 60 seconds for approval, saves the token on the Mini, and sends no
+keys. Do not repeatedly run navigation commands to get paired. Ordinary commands
+keep their short handshake timeout; pairing is not an automatic retry. Inform
+the owner when a single pairing request is waiting and stop if it fails.
 
 For an owner-requested **full TV restart**, use the maintainer procedure in
 `/Users/dbochman/dotfiles/docs/samsung-tv-developer-control.md`, section

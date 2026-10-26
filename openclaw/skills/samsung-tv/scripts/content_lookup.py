@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 from http.client import IncompleteRead
 import json
 import re
+import subprocess
 import sys
+import tempfile
+import time
 import unicodedata
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -58,11 +61,52 @@ def fetch_once(url, hosts):
 
 def fetch(url, hosts):
     # Observed Netflix transport truncation is intermittent. Discard the entire
-    # partial response and retry once; never parse partial metadata as success.
+    # partial response and retry once, then try the independent system client.
+    # Never parse partial metadata as success.
     try:
         return fetch_once(url, hosts)
     except IncompleteRead:
-        return fetch_once(url, hosts)
+        try:
+            return fetch_once(url, hosts)
+        except IncompleteRead:
+            return fetch_curl(url, hosts)
+
+
+def fetch_curl(url, hosts):
+    """Recover repeated urllib truncation with macOS curl; never use partial data."""
+    # curl 8.7 shipped on this Mac enforces max-filesize during streaming too.
+    # Disable user curl configuration; follow redirects ourselves so each host
+    # is checked before a request. No cookies, credentials, or browser session.
+    deadline = time.monotonic() + 25
+    with tempfile.TemporaryDirectory(prefix="tv-public-metadata-") as directory:
+        path = directory + "/body"
+        for _ in range(6):
+            checked_url(url, hosts)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Public metadata download timed out")
+            result = subprocess.run([
+                "/usr/bin/curl", "-q", "--silent", "--show-error", "--fail",
+                "--proto", "=https", "--http1.1", "--connect-timeout", "5",
+                "--max-time", str(remaining), "--max-filesize", str(MAX_BYTES),
+                "--user-agent", "Mozilla/5.0", "--header", "Accept-Language: en-US,en;q=0.9",
+                "--header", "Accept-Encoding: identity", "--output", path,
+                "--write-out", "%{http_code}\\n%{redirect_url}", "--url", url,
+            ], capture_output=True, timeout=remaining + 1)
+            if result.returncode:
+                raise ValueError("Public metadata download failed; use an observed app lookup")
+            status, _, redirect = result.stdout.decode("utf-8").partition("\n")
+            if status in {"301", "302", "303", "307", "308"} and redirect:
+                url = redirect
+                continue
+            if status != "200":
+                raise ValueError("Public metadata returned an unexpected HTTP status")
+            with open(path, "rb") as body:
+                data = body.read(MAX_BYTES + 1)
+            if len(data) > MAX_BYTES:
+                raise ValueError("Public metadata exceeded the size limit")
+            return data.decode("utf-8")
+    raise ValueError("Public metadata exceeded the redirect limit")
 
 
 def netflix_id(value):

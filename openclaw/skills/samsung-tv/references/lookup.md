@@ -2,7 +2,8 @@
 
 OpenClaw performs discovery and intent matching; `scripts/content_lookup.py`
 extracts provider metadata deterministically. The script runs on the Mini using
-Python's standard library. It reads public pages only, needs no new API keys or
+Python's standard library, with the existing macOS `/usr/bin/curl` as a fallback
+after repeated incomplete HTTP responses. It reads public pages only, needs no new API keys or
 account session, and never connects to the TV or starts playback.
 
 ## Discover the provider link
@@ -165,7 +166,14 @@ These lookups did not operate the TV. Earlier attended tests verified native
 Netflix episode playback and YouTube playback separately. The Netflix parser
 uses public page data, not a promised stable API. It decodes JSON-shaped data
 without executing JavaScript and fails on changed/ambiguous structure. A
-truncated response gets one retry; partial responses are never used.
+truncated response gets one urllib retry, then one bounded curl fallback if that
+retry is also incomplete. Curl uses no user configuration or cookie jar, checks
+each redirect against the same provider allowlist, and enforces the 8 MiB size
+limit and a 25-second total fallback deadline. Partial responses are never used.
+
+On 2026-10-25, both urllib attempts for *Below* (`81652677`) ended with
+`IncompleteRead`, while the system curl client retrieved the complete public
+page. The fallback resolved the exact matching title and episode metadata.
 
 Sources: [Netflix title page](https://www.netflix.com/title/80049832),
 [YouTube video](https://www.youtube.com/watch?v=XmtXC_n6X6Q), and its
