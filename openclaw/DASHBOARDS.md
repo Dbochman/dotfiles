@@ -402,6 +402,11 @@ Serves the eight-page Cabin issue to the home LAN and Tailscale tailnet. Plain
 checkboxes and observation fields use shared SQLite state so Julia can update
 the magazine from her phone; capture notes, prompts, and photos stay on the
 existing durable capture-spool path.
+Text drafts now save while typing and survive reloads through a local pending
+outbox plus shared state. Explicitly submitted notes/prompts are readable beneath
+their form. The current November preview is `/vol-1-no-03-draft-v2/`; the server
+root still opens historical Volume One. See the [magazine skill](skills/cabin-magazine/SKILL.md)
+for generation, authored-page revisions, and illustration contracts.
 
 The Mac Mini's persistent startup definition is
 `~/Library/LaunchAgents/ai.openclaw.cabin-magazine.plist`, copied from the tracked

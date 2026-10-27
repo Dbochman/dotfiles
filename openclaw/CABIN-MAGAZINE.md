@@ -16,13 +16,15 @@ exposure or router port forwarding is intended.
 
 ## What It Shows
 
-- **October issue** — the eight-page `vol-1-no-02-draft-v2` magazine with its
+- **November working issue** — the eight-page `vol-1-no-03-draft-v2` magazine with its
   cover, monthly work, look-ahead, cooking, gardening, design, long-term, and
   possibilities pages
 - **Shared checklists** — punchlist steps, shopping items, recipe completion,
   and other ordinary checkboxes restored from server-side state
-- **Shared observations** — `textarea[data-observation]` values restored by
-  issue, page, and element ID
+- **Shared observations and text drafts** — saved while typing, with pending
+  edits retained locally and restored by issue, page, and stable element ID
+- **Readable journal entries** — submitted notes and prompt responses remain
+  visible beneath the form after reload, before and after ingest
 - **Existing capture surfaces** — field notes, prompts, and recipe photos
   continue through the Cabin repository's durable capture spool and are not
   written to the checklist-state database
@@ -32,7 +34,7 @@ exposure or router port forwarding is intended.
 | Source | Frequency | Data |
 |--------|-----------|------|
 | Cabin repository `site/` | On page request | Magazine HTML, CSS, scripts, and checked-in media |
-| `~/.openclaw/cabin-magazine/state.sqlite` | On control change after 500 ms | Per-issue, per-page checkbox and observation values |
+| `~/.openclaw/cabin-magazine/state.sqlite` | On input/change after 500 ms and page-hide flush | Per-issue, per-page checkbox, observation, and unsubmitted text-draft values |
 | Cabin capture spool and journal database | On capture submission and five-second ingest poll | Field notes, prompts, photos, receipts, and canonical evidence |
 | Compiled Cabin kitchen catalog | On cooking-page request | Reviewed recipes, shopping quantities, and recipe-card metadata |
 
@@ -40,13 +42,21 @@ exposure or router port forwarding is intended.
 
 `GET /api/state?issue=<issueId>&page=<pageId>` returns element values for one
 page. `POST /api/state` upserts one `{issueId, pageId, elementId, value}` JSON
-record. The state endpoint is same-origin, while all capture-marked controls
-remain on the separate `/api/inputs` spool path.
+record. Draft form values use `draft:<article>:<field>` keys; autosaving does
+not submit them or make them journal evidence. Explicit submission remains on
+the separate `/api/inputs` spool path. `GET /api/journal` requires `issueId`,
+`pageId`, and `articleId` and returns recent submitted notes/prompts from the
+validated spool and canonical journal, without storage paths or credentials.
+
+The [Cabin magazine skill](skills/cabin-magazine/SKILL.md) documents the two
+authoring paths, current catalog/data contracts, and reviewed illustrations.
+The generic draft CLI cannot regenerate the authored `-v2` pages. The root URL
+still serves historical Volume One; use the explicit November URL above.
 
 The LaunchAgent runs:
 
 ```text
-/opt/homebrew/opt/node@22/bin/node /Users/dbochman/Repos/cabin/scripts/serve.js --host=0.0.0.0 --port=8555
+/Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin/node /Users/dbochman/Repos/cabin/scripts/serve.js --host=0.0.0.0 --port=8555
 ```
 
 The all-interface bind makes the service reachable over the LAN and Tailscale;
@@ -58,7 +68,7 @@ the Mini remains behind NAT with no public port forwarding.
 |------|------|
 | Server | `/Users/dbochman/Repos/cabin/scripts/serve.js` |
 | Shared-state client | `/Users/dbochman/Repos/cabin/site/assets/state-sync.js` |
-| Magazine pages | `/Users/dbochman/Repos/cabin/site/vol-1-no-02-draft-v2/` |
+| Current magazine pages | `/Users/dbochman/Repos/cabin/site/vol-1-no-03-draft-v2/` |
 | State database | `~/.openclaw/cabin-magazine/state.sqlite` |
 | Capture runtime | `/Users/dbochman/Repos/cabin/data/` |
 | LaunchAgent | `openclaw/launchagents/ai.openclaw.cabin-magazine.plist` |
@@ -69,8 +79,8 @@ the Mini remains behind NAT with no public port forwarding.
 
 ```bash
 ssh dylans-mac-mini 'curl -fsS http://127.0.0.1:8555/api/health'
-curl -fsS http://dylans-mac-mini:8555/vol-1-no-02-draft-v2/
-curl -fsS http://dylans-mac-mini.tail3e55f9.ts.net:8555/vol-1-no-02-draft-v2/
+curl -fsS http://dylans-mac-mini:8555/vol-1-no-03-draft-v2/
+curl -fsS http://dylans-mac-mini.tail3e55f9.ts.net:8555/vol-1-no-03-draft-v2/
 ```
 
 Installing or reloading the LaunchAgent is an attended deployment step and is
