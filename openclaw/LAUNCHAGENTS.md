@@ -674,6 +674,22 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 |-------|----------|---------|-------------|
 | `com.openclaw.presence-crosstown` | 2min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale. **Must NOT be loaded on Mini** — the script ARP-scans `192.168.165.x`, which the Mini isn't on, so the scan returns nothing and Tailscale `file cp` to self fails. A misplaced copy ran on Mini until 2026-05-10. |
 
+Presence runtime repair (2026-10-28): the Crosstown scanner LaunchAgent includes
+`~/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin` in PATH.
+The Mini's Cabin scanner and presence receiver use the existing
+`~/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin` runtime.
+These jobs must not depend on removed Homebrew Node links or an unusable
+`/usr/local/bin/node` fallback. Their schedules remain two minutes for
+Crosstown and five minutes for Cabin.
+
+When changing these runtime paths, validate `presence-detect.sh validate-config`
+for the appropriate site under the job environment before reloading. Verify a
+fresh scan, successful transfer, receipt on the Mini, and successful presence
+evaluation: the scanner can exit zero even when Taildrop fails. The repair was
+verified with successful job exits and fresh inputs for both houses in the
+combined presence state. Usage-push and the separate presence-event adapter
+are outside this repair.
+
 The Crosstown source plist is deployed as a regular file on the MacBook rather
 than shared live with the Mini checkout. After changing it, copy the source,
 bootstrap or kickstart it on the MacBook, and compare the deployed file with the
