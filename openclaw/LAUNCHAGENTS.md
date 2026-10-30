@@ -759,3 +759,7 @@ Every new LaunchAgent script MUST follow these rules:
 - **Cielo verification**: require `cielo-auth.py check` to report a protected refresh token and the `web-token-refresh-v1` contract after the first successful rotation. A zero LaunchAgent exit is necessary but not sufficient. Refresh `http://127.0.0.1:8558/api/status?refresh=true` and require the `cielo` object to have no `error`. If the chain is rejected, run the skill's `cielo-reauth --attended start` / `finish` sequence; access-only browser capture is explicitly non-durable.
 - **Pre-upgrade backup**: `ai.openclaw.gateway.plist.pre-upgrade` exists as safety backup — `npm install -g openclaw` may overwrite the plist via post-install hook.
 - **Prefix convention**: Newer agents use `ai.openclaw.*`, older ones use `com.openclaw.*`. Both are functionally equivalent.
+
+Presence runtime repair (2026-10-28): com.openclaw.presence-receive uses ~/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin in PATH for post-ingestion evaluation; Homebrew Node is absent. Verify fresh scan ingestion and evaluation together after runtime changes.
+
+The Cabin presence scanner uses the same managed Node 22 PATH; its live 300-second interval is preserved (source default 900 seconds).

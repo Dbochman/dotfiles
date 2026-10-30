@@ -324,6 +324,33 @@
         "to": "chat_id:${DYLAN_CHAT_ID}",
         "cooldownMs": 21600000
       }
+    },
+    {
+      "id": "5a944b86-6f87-4e3a-9148-0eb1a86440e3",
+      "name": "cabin-deck-alerts-resume-20261102",
+      "description": "Restore cabin home-event alerts after Dylan-requested deck-work snooze through Sunday Nov 1.",
+      "enabled": true,
+      "deleteAfterRun": true,
+      "createdAtMs": 1793374916618,
+      "updatedAtMs": 1793374916618,
+      "schedule": {
+        "kind": "at",
+        "at": "2026-11-02T05:00:00.000Z"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "command",
+        "argv": [
+          "/opt/homebrew/bin/python3",
+          "/Users/dbochman/.openclaw/home-events/deck-snooze-20261030/switch.py",
+          "resume"
+        ]
+      },
+      "delivery": {
+        "mode": "none",
+        "channel": "last"
+      }
     }
   ]
 }

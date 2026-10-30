@@ -150,6 +150,13 @@ Match originalhost dylans-mac exec "test -f ~/.ssh/id_mini_to_mac"
   IdentitiesOnly yes
   IdentityAgent none
 
+# On the Mini, a host-scoped key for reading cabin files on Julia's laptop.
+Match originalhost julias-macbook-air exec "test -f ~/.ssh/id_mini_to_julia_air"
+  User juliajoy
+  IdentityFile ~/.ssh/id_mini_to_julia_air
+  IdentitiesOnly yes
+  IdentityAgent none
+
 # Dedicated key for work MBP, bypasses 1Password agent.
 Match originalhost dylans-work-mbp exec "test -f ~/.ssh/id_work_mbp"
   IdentityFile ~/.ssh/id_work_mbp
