@@ -420,6 +420,41 @@ Both finance jobs are deterministic exact-argv `payload.kind: command` jobs with
 
 The separate notifier is the detailed alert delivery path for completed wrapper runs. It resolves only Dylan's validated numeric chat ID from the tightly scoped `OPENCLAW_FINANCE_ALERT_CHAT_ID` environment value or by reading one exact `DYLAN_CHAT_ID=<digits>` assignment from a single verified owner-only secrets-cache file descriptor; it never sources that cache. Fixed `/opt/homebrew/bin/imsg` runs in a new process group with bounded stdout/stderr and timeout cleanup. Alerts transition atomically through `pending`, `inflight`, and `sent`; a sent record is cleanup-only, so an unlink/fsync failure cannot resend it every 15 minutes. Invalid and orphan entries are moved to the owner-only sibling quarantine without blocking valid UUID records, and safe run health is written to `weekly-scrape-alert-notifier-status.json`. Failed sends retain 15-minute-to-six-hour bounded backoff. A crash or ambiguous transport result after external send but before the durable `sent` transition can still produce one later duplicate because `imsg` exposes no idempotency key; the notifier deliberately prefers rare at-least-once delivery to silent loss. `--canary` exercises only target resolution and delivery with a fixed message and cannot invoke financial work. Do not run the canary without an attended notification test.
 
+### Weekly report data and health contract
+
+`openclaw-weekly-report.py` reads the main agent's canonical
+`~/.openclaw/agents/main/agent/openclaw-agent.sqlite` in a read-only transaction.
+It counts assistant model responses and tool-call blocks from plain/compressed
+`transcript_events` and retained reset/deletion archives, deduplicating event IDs
+within each session. Delivery mirrors and synthetic transcript deliveries are
+excluded. The installed Homebrew Python 3.14 supplies standard-library Zstandard;
+no new package is required. Missing codecs, unsupported cold archives, malformed
+records or failed database reads produce **unavailable**, never plausible zeros
+or a fallback to stale migrated JSONL copies. Legacy JSONL is used only without
+the canonical database, excludes migration/backup/trajectory copies and requires
+timestamps establishing coverage for the requested week.
+
+Activity covers the main agent including automation. “Active sessions” counts
+transcript session IDs, not people or human conversations. Windows are week to
+date through the displayed Eastern time; the preceding comparison uses the same
+local weekday/time across DST changes. Cron errors and skipped runs are separate
+historical counts; a successful manual recovery does not rewrite failed-run history.
+
+Health checks cover the Mini. A protected, fresh OpenTable success receipt newer
+than launchd's old failure suppresses the stale repair warning and displays the
+verification time. Newer failures, missing jobs and stale/invalid verification
+remain visible. An unavailable CrisisMode scan is not a clean scan; the report
+does not infer that all critical services are healthy from these limited probes.
+
+November 1 repair: the old JSONL reader missed SQLite activity, yielding zero
+model turns/sessions/tools. Live corrected snapshot found 1,509 model turns,
+35 sessions and 1,420 tool calls. Two skipped cron runs had been classified as
+failures; the one real weekly error was the financial scrape, whose protected
+latest status separately showed all seven sources recovered. OpenTable's
+07:21 EST successful refresh superseded the October 28 launchd failure.
+The report helper was updated in place; schedule, delivery configuration and
+gateway were unchanged, and no replacement iMessage was sent.
+
 ### Julia morning triage account routing
 
 `gws-julia-morning-triage-0001` uses raw Gmail API resource commands. With

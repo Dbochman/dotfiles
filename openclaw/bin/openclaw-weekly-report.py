@@ -13,12 +13,18 @@ import sqlite3
 import stat
 import subprocess
 import sys
+from contextlib import closing
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
+
+try:
+    from compression import zstd
+except ImportError:
+    zstd = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from openclaw_cron_sqlite import connect as connect_cron
@@ -28,6 +34,8 @@ HOME = Path.home()
 LOCAL_TZ = ZoneInfo("America/New_York")
 UTC = timezone.utc
 SESSIONS_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
+SESSION_DB = HOME / ".openclaw" / "agents" / "main" / "agent" / "openclaw-agent.sqlite"
+MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024
 CRON_DB = HOME / ".openclaw" / "state" / "openclaw.sqlite"
 CRON_STORE_KEY = str(HOME / ".openclaw" / "cron" / "jobs.json")
 MESSAGES_DB = HOME / "Library" / "Messages" / "chat.db"
@@ -50,21 +58,6 @@ def parse_timestamp(value):
     return parsed.astimezone(UTC)
 
 
-def json_lines(path):
-    try:
-        lines = path.read_text(errors="replace").splitlines()
-    except OSError:
-        return
-
-    for line in lines:
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict):
-            yield record
-
-
 def session_files():
     if not SESSIONS_DIR.is_dir():
         return []
@@ -74,16 +67,79 @@ def session_files():
         path
         for path in SESSIONS_DIR.glob("*.jsonl*")
         if ".trajectory." not in path.name
+        and (path.name.endswith(".jsonl") or ".jsonl.reset." in path.name
+             or ".jsonl.deleted." in path.name)
+        and not any(marker in path.name for marker in (".migrated", ".bak", ".zst"))
     ]
+
+
+class ActivityUnavailable(Exception):
+    pass
+
+
+def decode_transcript(payload, compressed=False):
+    if compressed:
+        if zstd is None:
+            raise ActivityUnavailable("compressed transcripts require Python 3.14")
+        decoder = zstd.ZstdDecompressor()
+        payload = decoder.decompress(payload, max_length=MAX_TRANSCRIPT_BYTES + 1)
+        if not decoder.eof or decoder.unused_data:
+            raise ActivityUnavailable("invalid or oversized compressed transcript")
+    if len(payload) > MAX_TRANSCRIPT_BYTES:
+        raise ActivityUnavailable("oversized transcript")
+    return payload
+
+
+def session_records():
+    """Read canonical events, not active-context projections or migrated copies.
+
+    Reset/deleted archives retain historical activity; event IDs deduplicate
+    overlapping generations. Never fall back to stale files after a DB error.
+    No transcript content is written or included in the report.
+    """
+    if SESSION_DB.exists():
+        with closing(sqlite3.connect(SESSION_DB.as_uri() + "?mode=ro", uri=True, timeout=5)) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("BEGIN")
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "transcript_events" not in tables:
+                raise ActivityUnavailable("unsupported session database schema")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(transcript_events)")}
+            blob_column = "event_zstd" if "event_zstd" in columns else "NULL"
+            for session_id, plain, blob in conn.execute(
+                f"SELECT session_id, event_json, {blob_column} FROM transcript_events"
+            ):
+                yield session_id, json.loads(decode_transcript(blob if blob is not None else plain, blob is not None))
+            if "session_transcript_archives" in tables:
+                for session_id, encoding, blob in conn.execute(
+                    "SELECT session_id, encoding, archive_blob FROM session_transcript_archives"
+                ):
+                    if encoding not in {"zstd", "jsonl"}:
+                        raise ActivityUnavailable("unsupported archive encoding")
+                    for line in decode_transcript(blob, encoding == "zstd").splitlines():
+                        if line.strip():
+                            yield session_id, json.loads(line)
+            if "session_transcript_cold_archives" in tables and conn.execute(
+                "SELECT 1 FROM session_transcript_cold_archives LIMIT 1"
+            ).fetchone():
+                raise ActivityUnavailable("cold archive coverage requires reader support")
+        return
+    paths = session_files()
+    if not paths:
+        raise ActivityUnavailable("session source missing")
+    for path in paths:
+        for line in path.read_text().splitlines():
+            if line.strip():
+                yield path.name.split(".jsonl", 1)[0], json.loads(line)
 
 
 def week_windows(now):
     local_now = now.astimezone(LOCAL_TZ)
     monday = local_now.date() - timedelta(days=local_now.weekday())
     current_start = datetime.combine(monday, datetime.min.time(), LOCAL_TZ).astimezone(UTC)
-    previous_start = current_start - timedelta(days=7)
-    # Compare the same elapsed portion of the preceding week.
-    previous_end = now - timedelta(days=7)
+    previous_start = (datetime.combine(monday, datetime.min.time(), LOCAL_TZ) - timedelta(days=7)).astimezone(UTC)
+    # Compare the same local weekday/time, including weeks with a DST change.
+    previous_end = (local_now - timedelta(days=7)).astimezone(UTC)
     return (current_start, now), (previous_start, previous_end)
 
 
@@ -95,19 +151,38 @@ def collect_session_activity(start, end):
         "rate_limits": 0,
         "daily": Counter(),
         "models": Counter(),
+        "available": True,
+        "error": None,
     }
 
-    for path in session_files():
-        session_id = path.name.split(".jsonl", 1)[0]
-        for record in json_lines(path):
+    seen = set()
+    latest_timestamp = None
+    try:
+        for session_id, record in session_records():
+            if not isinstance(record, dict):
+                raise ActivityUnavailable("malformed transcript record")
             timestamp = parse_timestamp(record.get("timestamp"))
-            if timestamp is None or not start <= timestamp < end:
-                continue
+            if timestamp is not None:
+                latest_timestamp = max(latest_timestamp or timestamp, timestamp)
             message = record.get("message")
             if record.get("type") != "message" or not isinstance(message, dict):
                 continue
             if message.get("role") != "assistant":
                 continue
+            if (message.get("model") == "delivery-mirror" or message.get("openclawDelivery")
+                    or message.get("api") == "openclaw-transcript"):
+                continue
+            if timestamp is None:
+                raise ActivityUnavailable("assistant event timestamp missing or invalid")
+            if not start <= timestamp < end:
+                continue
+            event_id = record.get("id")
+            if not isinstance(event_id, str) or not event_id:
+                raise ActivityUnavailable("assistant event identity missing")
+            identity = (session_id, event_id)
+            if identity in seen:
+                continue
+            seen.add(identity)
 
             activity["model_turns"] += 1
             activity["sessions"].add(session_id)
@@ -116,9 +191,11 @@ def collect_session_activity(start, end):
             model = message.get("model") or record.get("modelId")
             if isinstance(model, str) and model and model != "delivery-mirror":
                 activity["models"][model] += 1
+            else:
+                activity["models"]["unknown"] += 1
 
             error_message = str(message.get("errorMessage") or "").lower()
-            if "rate limit" in error_message or "429" in error_message:
+            if re.search(r"rate[ _-]?limit|\b429\b", error_message):
                 activity["rate_limits"] += 1
 
             content = message.get("content")
@@ -129,20 +206,26 @@ def collect_session_activity(start, end):
                 for block in content
                 if isinstance(block, dict) and block.get("type") in {"toolCall", "tool_use"}
             )
+        if not SESSION_DB.exists() and (latest_timestamp is None or latest_timestamp < start):
+            raise ActivityUnavailable("legacy transcripts do not establish coverage for this week")
+    except Exception as exc:
+        # Never expose exception text containing database/transcript content.
+        activity["available"] = False
+        activity["error"] = str(exc) if isinstance(exc, ActivityUnavailable) else "session source unreadable"
 
     activity["sessions"] = len(activity["sessions"])
     return activity
 
 
 def collect_cron_runs(start, end):
-    runs = {"completed": 0, "failed": 0, "delivered": 0}
+    runs = {"completed": 0, "failed": 0, "skipped": 0, "delivered": 0, "available": False}
     if not CRON_DB.is_file():
         return runs
 
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
     try:
-        with connect_cron(CRON_DB) as conn:
+        with closing(connect_cron(CRON_DB)) as conn:
             rows = conn.execute(
                 """
                 SELECT status, delivered
@@ -151,16 +234,21 @@ def collect_cron_runs(start, end):
                 """,
                 (CRON_STORE_KEY, start_ms, end_ms),
             ).fetchall()
-    except sqlite3.Error:
+    except (OSError, sqlite3.Error):
         return runs
 
     for status, delivered in rows:
         if status == "ok":
             runs["completed"] += 1
-        else:
+        elif status == "error":
             runs["failed"] += 1
+        elif status == "skipped":
+            runs["skipped"] += 1
+        else:
+            return runs
         if delivered:
             runs["delivered"] += 1
+    runs["available"] = True
     return runs
 
 
@@ -297,7 +385,8 @@ def read_opentable_refresh_status():
         ):
             return None
         value = json.loads(path.read_text(encoding="utf-8"))
-        if set(value) != expected_fields or value["schema_version"] != 1:
+        if (set(value) != expected_fields or type(value["schema_version"]) is not int
+                or value["schema_version"] != 1):
             return None
         if value["attempt_kind"] not in {"manual", "scheduled"}:
             return None
@@ -319,6 +408,8 @@ def read_opentable_refresh_status():
             value[f"_{field}"] = parsed
         if value["last_success_at"] is not None and parse_timestamp(value["last_success_at"]) is None:
             return None
+        if value["outcome"] == "success" and parse_timestamp(value["last_success_at"]) != value["_completed_at"]:
+            return None
     except (OSError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
         return None
     return value
@@ -327,28 +418,40 @@ def read_opentable_refresh_status():
 def opentable_attention(now):
     status = launchd_status("ai.openclaw.opentable-refresh")
     log_path = HOME / ".openclaw" / "logs" / "opentable-refresh.log"
-    if not status["loaded"] or status["exit_code"] in (None, 0):
-        return None
+    if not status["loaded"]:
+        return "OpenTable refresh job is not loaded; scheduled refresh unavailable"
+    refresh = read_opentable_refresh_status()
     try:
         failed_at = datetime.fromtimestamp(log_path.stat().st_mtime, LOCAL_TZ)
     except OSError:
-        return "OpenTable token refresh last exited with an error"
-    if now.astimezone(LOCAL_TZ) - failed_at > timedelta(days=8):
-        return None
-    refresh = read_opentable_refresh_status()
-    if refresh and refresh["outcome"] == "failed":
+        failed_at = None
+    if refresh:
         completed = refresh["_completed_at"]
-        if abs((failed_at.astimezone(UTC) - completed).total_seconds()) <= 3600:
-            if refresh["attempt_kind"] == "scheduled":
-                attempt = f"scheduled attempt {refresh['attempt_number']}/2"
-            else:
-                attempt = "a manual attempt"
+        if completed > now or refresh["_started_at"] > completed:
+            return "OpenTable refresh verification unavailable (invalid status time)"
+        if now - completed > timedelta(days=8):
+            return "OpenTable refresh verification is stale; current authentication unknown"
+        # A manual recovery does not reset launchd's old LastExitStatus. Use
+        # its protected success receipt when it supersedes that old failure.
+        newer_launch_failure = (
+            status["exit_code"] not in (None, 0) and failed_at is not None
+            and failed_at.astimezone(UTC) > completed + timedelta(seconds=5)
+        )
+        if refresh["outcome"] == "success" and not newer_launch_failure:
+            if status["exit_code"] not in (None, 0) and failed_at is None:
+                return "OpenTable refresh succeeded, but the launchd failure time is unknown; review scheduling"
+            return None
+        if not newer_launch_failure:
+            attempt = (f"scheduled attempt {refresh['attempt_number']}/2"
+                       if refresh["attempt_kind"] == "scheduled" else "a manual attempt")
             return (
-                f"OpenTable token refresh failed {failed_at.strftime('%a %m/%d')} after "
-                f"{attempt} at {refresh['stage']} ({refresh['reason_code']}); "
-                "it needs separate auth repair"
+                f"OpenTable token refresh failed {completed.astimezone(LOCAL_TZ).strftime('%a %m/%d')} "
+                f"after {attempt} at {refresh['stage']} ({refresh['reason_code']}); recovery not yet verified"
             )
-    return f"OpenTable token refresh failed {failed_at.strftime('%a %m/%d')}; it needs separate auth repair"
+    if status["exit_code"] not in (None, 0):
+        when = f" {failed_at.strftime('%a %m/%d')}" if failed_at else ""
+        return f"OpenTable refresh job last failed{when}; current authentication not verified"
+    return "OpenTable refresh verification unavailable; current authentication unknown"
 
 
 def parse_json_documents(text):
@@ -392,6 +495,8 @@ def crisismode_summary():
         return "unavailable", []
     scan = scans[-1]
     score = scan.get("score")
+    if type(score) not in (int, float) or not 0 <= score <= 100:
+        return "unavailable", []
     actionable = []
     for finding in scan.get("findings", []):
         if not isinstance(finding, dict) or finding.get("id") in CRISISMODE_EXCLUSIONS:
@@ -440,27 +545,31 @@ def report(now):
     )
     lines = [
         f"OpenClaw Weekly Report ({period})",
+        f"Week to date through {now.astimezone(LOCAL_TZ).strftime('%a %H:%M %Z')}; prev compares the same local weekday/time.",
         "",
-        "Activity:",
-        f"- Model turns: {current['model_turns']} (prev: {previous['model_turns']})",
-        f"- Conversations: {current['sessions']} (prev: {previous['sessions']})",
-        f"- Tool calls: {current['tool_calls']} (prev: {previous['tool_calls']})",
+        "Activity (main agent, including automation):",
+        f"- Model turns: {activity_metric(current, 'model_turns')} (prev: {activity_metric(previous, 'model_turns')})",
+        f"- Active sessions: {activity_metric(current, 'sessions')} (prev: {activity_metric(previous, 'sessions')})",
+        f"- Tool calls: {activity_metric(current, 'tool_calls')} (prev: {activity_metric(previous, 'tool_calls')})",
         f"- iMessages: {format_messages(current_messages)} (prev: {format_messages(previous_messages)})",
-        f"- Busiest day: {busiest_day(current['daily'])}",
-        f"- Model mix: {format_models(current['models'])}",
+        f"- Busiest day: {busiest_day(current['daily']) if current['available'] else 'unavailable'}",
+        f"- Model mix: {format_models(current['models']) if current['available'] else 'unavailable'}",
         "",
         "Automation:",
-        f"- Scheduled runs: {current_runs['completed']} completed, {current_runs['failed']} failed",
-        f"- Cron deliveries: {current_runs['delivered']}",
-        f"- Model rate-limit responses: {current['rate_limits']}",
+        (f"- Scheduled runs: {current_runs['completed']} completed, {current_runs['failed']} failed, {current_runs['skipped']} skipped"
+         if current_runs['available'] else "- Scheduled runs: unavailable (cron source unreadable)"),
+        f"- Cron deliveries: {current_runs['delivered'] if current_runs['available'] else 'unavailable'}",
+        f"- Model rate-limit responses: {activity_metric(current, 'rate_limits')}",
         "",
-        "Health:",
+        "Health (Mac Mini):",
         f"- Gateway: {gateway_health()}",
         f"- iMessage: {imessage_health()}",
         f"- Disk: {apfs_disk_usage()}",
     ]
 
-    if crisis_findings:
+    if crisis_score == "unavailable":
+        lines.append("- CrisisMode: unavailable (scan not verified)")
+    elif crisis_findings:
         lines.append(f"- CrisisMode: {crisis_score}/100 raw; attention: {'; '.join(crisis_findings[:2])}")
     else:
         lines.append(
@@ -472,8 +581,18 @@ def report(now):
     if attention:
         lines.append(f"- Attention: {attention}")
     else:
-        lines.append("- Services: critical OpenClaw services healthy")
+        refresh = read_opentable_refresh_status()
+        if refresh:
+            when = refresh['_completed_at'].astimezone(LOCAL_TZ).strftime('%a %m/%d %H:%M %Z')
+            lines.append(f"- OpenTable: last verified refresh succeeded {when}")
+    for label, activity in (("current", current), ("previous", previous)):
+        if not activity["available"]:
+            lines.append(f"- Data quality: {label} activity unavailable ({activity['error']})")
     return "\n".join(lines)
+
+
+def activity_metric(activity, name):
+    return str(activity[name]) if activity["available"] else "unavailable"
 
 
 def main():
