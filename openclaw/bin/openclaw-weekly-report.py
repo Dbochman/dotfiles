@@ -6,6 +6,7 @@ instead of transient gateway logs. It is designed to be called by the weekly
 cron agent, which should return its stdout verbatim.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -458,6 +459,27 @@ def opentable_attention(now):
     return "OpenTable refresh verification unavailable; current authentication unknown"
 
 
+CABIN_DEPLOY_LABEL = "ai.openclaw.cabin-public-deploy"
+
+
+def cabin_deploy_attention(now):
+    """One line when the nightly shared-magazine deploy needs attention, else None.
+
+    Optional: any failure to evaluate it is itself reported, never raised.
+    """
+    try:
+        if not launchd_status(CABIN_DEPLOY_LABEL)["loaded"]:
+            return "Cabin public deploy job is not loaded; the shared magazine will not update"
+        spec = importlib.util.spec_from_file_location(
+            "cabin_public_deploy_status", Path(__file__).with_name("cabin-public-deploy-status.py")
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.monitoring_warning(now=now)
+    except Exception:
+        return "Cabin public deploy status could not be evaluated; the shared magazine may not be updating"
+
+
 def parse_json_documents(text):
     """Extract JSON documents from CLIs that prepend progress output."""
     decoder = json.JSONDecoder()
@@ -654,6 +676,9 @@ def report(now):
         if refresh:
             when = refresh['_completed_at'].astimezone(LOCAL_TZ).strftime('%a %m/%d %H:%M %Z')
             lines.append(f"- OpenTable: last verified refresh succeeded {when}")
+    deploy_attention = cabin_deploy_attention(now)
+    if deploy_attention:
+        lines.append(f"- Attention: {deploy_attention}")
     for label, activity in (("current", current), ("previous", previous)):
         if not activity["available"]:
             lines.append(f"- Data quality: {label} activity unavailable ({activity['error']})")

@@ -42,6 +42,21 @@ def security_summary(now=None):
         return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False,
                 "monitoringWarning": "Security monitoring is unavailable; no usable review could be loaded."}
 
+
+def cabin_deploy_summary(now=None):
+    """Optional health integration must not break calendar/mail collection."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "cabin_public_deploy_status", Path(__file__).with_name("cabin-public-deploy-status.py")
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.briefing_summary(now=now)
+    except Exception:
+        return {"status": "unavailable",
+                "monitoringWarning": "Cabin public deploy status could not be loaded; the shared magazine may not be updating."}
+
+
 ACCOUNT = os.environ.get("DYLAN_EMAIL", "")
 STATE_DB = Path(os.environ.get("OPENCLAW_STATE_DB", str(Path.home() / ".openclaw/state/openclaw.sqlite")))
 CRON_STORE_KEY = str(Path.home() / ".openclaw/cron/jobs.json")
@@ -465,6 +480,7 @@ def collect_data(
             "schemaVersion": 1,
             "date": local_now.date().isoformat(),
             "security": security_summary(local_now),
+            "cabinDeploy": cabin_deploy_summary(local_now),
             "triage": {"status": "unavailable", "reason": "missing_account"},
             "postTriage": {"status": "skipped", "reason": "triage_unavailable"},
             "calendar": {"status": "unavailable", "reason": "missing_account"},
@@ -485,6 +501,7 @@ def collect_data(
         "schemaVersion": 1,
         "date": local_now.date().isoformat(),
         "security": security_summary(local_now),
+        "cabinDeploy": cabin_deploy_summary(local_now),
         "triage": handoff,
         "calendar": collect_calendar(
             deadline=deadline, clock=clock, runner=runner, sleeper=sleeper
@@ -505,9 +522,13 @@ def main(argv=None) -> int:
     mode.add_argument("--publish-handoff", type=Path)
     mode.add_argument("--triage-status", action="store_true")
     mode.add_argument("--security-status", action="store_true")
+    mode.add_argument("--cabin-deploy-status", action="store_true")
     args = parser.parse_args(argv)
     if args.security_status:
         print(json.dumps(security_summary()))
+        return 0
+    if args.cabin_deploy_status:
+        print(json.dumps(cabin_deploy_summary()))
         return 0
     if args.publish_handoff:
         try:
@@ -546,6 +567,7 @@ def main(argv=None) -> int:
             "schemaVersion": 1,
             "date": datetime.now(TIME_ZONE).date().isoformat(),
             "security": security_summary(),
+            "cabinDeploy": cabin_deploy_summary(),
             "triage": {"status": "unavailable", "reason": "internal_error"},
             "postTriage": {"status": "skipped", "reason": "triage_unavailable"},
             "calendar": {"status": "unavailable", "reason": "internal_error"},

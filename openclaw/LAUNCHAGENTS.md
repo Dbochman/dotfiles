@@ -1,5 +1,24 @@
 # LaunchAgents
 
+### Cabin shared-magazine nightly deploy (November 1, 2026)
+
+`ai.openclaw.cabin-public-deploy` is Mini-only and attended-installed from the
+cabin repo (`scripts/launchd/`), not from `launchagents/` here. It runs at 03:40
+Mini local time with `ProcessType Background`. `~/.openclaw/bin/cabin-public-nightly`
+resets a dedicated checkout (`~/.openclaw/cabin-public/repo`) to `origin/main`
+and runs `scripts/deploy-public.sh --if-changed`, which rebuilds the issues in
+`public-issues.json` and uploads to the Access-protected Cloudflare Pages site
+only when the result changed. It uses no 1Password, never touches the live
+magazine checkout, and fails closed, leaving the last good site up. Private state
+is a 0600 `~/.local/state/cabin-public-deploy/status.json`; logs are
+`~/.openclaw/logs/cabin-public-deploy.log` and `.err.log`.
+
+Health: the morning briefing (`cabinDeploy`) and the weekly report read the status
+file through `bin/cabin-public-deploy-status.py` and surface a failed, missing,
+unreadable or 36-hour-stale result. The weekly report also flags an unloaded
+agent. No gateway or other LaunchAgent reload is needed. See
+[the helper contract](bin/README.md#gateway--maintenance).
+
 ### Daily security advisory cache (October 22, 2026)
 
 `com.dylanbochman.security-advisories` is attended-installed on the Mini only.
