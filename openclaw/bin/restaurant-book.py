@@ -79,6 +79,14 @@ class ProviderUnavailable(RuntimeError):
     """A provider could not supply a strict, safe result."""
 
 
+class ReservationGuardUnavailable(ProviderUnavailable):
+    """Preserve only the coordinator's normalized per-provider read states."""
+
+    def __init__(self, statuses: dict[str, dict[str, Any]]):
+        super().__init__("one or more reservation guards are unavailable")
+        self.statuses = statuses
+
+
 class ProviderBudgetExhausted(RuntimeError):
     """A bounded provider search exhausted its total call budget."""
 
@@ -1974,7 +1982,10 @@ class OpenTableProvider:
         del final
         if not self.reservations_command.is_file() or self.reservations_command.is_symlink():
             raise ProviderUnavailable("OpenTable reservation reader is unavailable")
-        payload, returncode = self._json_command([str(self.reservations_command), "--json"])
+        # Includes bounded trust acquisition and one persisted-session refresh.
+        payload, returncode = self._json_command(
+            [str(self.reservations_command), "--json"], timeout_seconds=720
+        )
         if returncode != 0 or payload.get("success") is not True or payload.get("provider") != "opentable":
             raise ProviderUnavailable("OpenTable reservation read failed")
         checked_at = parse_timestamp(payload.get("checked_at"), "OpenTable checked_at")
@@ -2245,7 +2256,9 @@ class OpenTableProvider:
         instance_id = ""
         started = "0"
         try:
-            lease = self._browser_command("acquire", "opentable")
+            lease = self._browser_command(
+                "acquire", "opentable", "--trust-timeout", "120", timeout_seconds=180
+            )
             parts = lease.split("\t")
             if len(parts) != 2 or not re.fullmatch(r"[A-Za-z0-9_.:-]{4,160}", parts[0]) or parts[1] not in {"0", "1"}:
                 raise ProviderUnavailable("OpenTable browser returned an invalid lease")
@@ -2688,7 +2701,7 @@ class Coordinator:
                 statuses[name]["reservations"] = "unavailable"
                 errors.append(name)
         if errors:
-            raise ProviderUnavailable("one or more reservation guards are unavailable")
+            raise ReservationGuardUnavailable(statuses)
         return reservations, statuses
 
     def _search_both(
@@ -2779,8 +2792,8 @@ class Coordinator:
         checked_at = timestamp(self.now())
         try:
             reservations, statuses = self._read_both()
-        except ProviderUnavailable:
-            statuses = {
+        except ProviderUnavailable as exc:
+            statuses = exc.statuses if isinstance(exc, ReservationGuardUnavailable) else {
                 name: {"reservations": "unavailable", "search": "not_attempted", "candidates": 0}
                 for name in PLATFORMS
             }

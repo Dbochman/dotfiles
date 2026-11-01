@@ -610,6 +610,9 @@ trust gate: 12 affected chains rejected and two ordinary controls accepted,
 with bounded readiness retries. Failure returns no instance and preserves
 existing/shared browsers; see [bin/README.md](bin/README.md#headless-browser-trust-gate).
 This does not gate browser startup background traffic or Cielo's separate path.
+OpenTable reservation reads, token refresh, attended booking, and coordinator
+discovery opt into the bounded 120-second trust wait. Their caller deadlines
+include that wait; all certificate checks remain mandatory.
 OpenTable's 4:00 AM refresh records a credential-free,
 owner-only status under `~/.openclaw/run/`; a failed first attempt receives one
 bounded retry at 4:30 AM, while a recent success makes that second slot a no-op.

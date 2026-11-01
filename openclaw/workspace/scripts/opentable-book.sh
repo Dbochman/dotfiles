@@ -378,7 +378,7 @@ if [[ ! -x "$PINCHTAB_INSTANCE_HELPER" ]]; then
 fi
 
 if ! IFS=$'\t' read -r PINCHTAB_INSTANCE_ID PINCHTAB_INSTANCE_STARTED \
-  < <("$PINCHTAB_INSTANCE_HELPER" acquire opentable 2>/dev/null); then
+  < <("$PINCHTAB_INSTANCE_HELPER" acquire opentable --trust-timeout 120 2>/dev/null); then
   emit_error "$MODE" "browser_acquire_failed" "Could not acquire the managed OpenTable browser"
   exit 1
 fi

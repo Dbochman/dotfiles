@@ -481,6 +481,9 @@ class RestaurantBookTests(unittest.TestCase):
                 result = self.coordinator.plan(JOB_ID)
                 self.assertEqual(result["status"], "blocked")
                 self.assertEqual(result["reason"], "reservation_guard_unavailable")
+                other = "opentable" if provider_name == "resy" else "resy"
+                self.assertEqual(result["providers"][provider_name]["reservations"], "unavailable")
+                self.assertEqual(result["providers"][other]["reservations"], "ok")
                 self.assertEqual(self.resy.searches, 0)
                 self.assertEqual(self.opentable.searches, 0)
 

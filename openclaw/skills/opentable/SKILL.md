@@ -22,7 +22,11 @@ opentable-reservations --json
 ```
 
 This reservation-read command uses the dedicated authenticated `opentable` PinchTab
-profile. It succeeds only when that browser token matches the protected
+profile. Browser acquisition allows up to 120 seconds for the complete trust
+check, within a 180-second caller deadline. The reader's one persisted-session
+refresh has a 240-second deadline; the coordinator bounds the whole reservation
+read to 720 seconds. These are time budgets, not permission to skip any check.
+It succeeds only when that browser token matches the protected
 expected-account binding and the page proves the entire upcoming list is
 loaded. Pagination, virtualization, opaque cards, count mismatches, login
 overlays, and parsing uncertainty fail closed. A successful response contains

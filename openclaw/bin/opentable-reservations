@@ -586,7 +586,7 @@ def refresh_persisted_session() -> None:
         completed = subprocess.run(
             [str(helper), "--persisted-session-only"],
             capture_output=True,
-            timeout=120,
+            timeout=240,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -705,7 +705,9 @@ def main(argv: list[str]) -> int:
     try:
         expected_account_hash, bound_token_hash = load_account_binding()
         try:
-            instance_id, started = parse_lease(run_helper(helper, "acquire", PROVIDER))
+            instance_id, started = parse_lease(run_helper(
+                helper, "acquire", PROVIDER, "--trust-timeout", "120", timeout=180
+            ))
         except LookupError as exc:
             raise LookupError("browser_acquire_failed") from exc
         try:

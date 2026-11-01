@@ -523,7 +523,7 @@ acquire_pinchtab_instance() {
   fi
 
   if ! IFS=$'\t' read -r PINCHTAB_INSTANCE_ID PINCHTAB_INSTANCE_STARTED \
-    < <("$PINCHTAB_INSTANCE_HELPER" acquire opentable); then
+    < <("$PINCHTAB_INSTANCE_HELPER" acquire opentable --trust-timeout 120); then
     log "ERROR: Could not acquire a managed headless PinchTab instance"
     return 1
   fi

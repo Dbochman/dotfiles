@@ -29,6 +29,8 @@ venue, payment, cancellation, or provider override.
 - Reads upcoming reservations from both Resy and OpenTable before search and
   again while holding the shared booking-mutation lock. A missing, stale,
   malformed, unauthenticated, or ambiguous provider read blocks all booking.
+  A blocked result preserves each provider's actual read status; one unavailable
+  provider does not imply that both failed.
 - Searches both providers within a strict total-call budget, rejects unknown
   or disallowed payment terms, and selects one candidate deterministically.
   A partial or unavailable search from either provider blocks mutation.

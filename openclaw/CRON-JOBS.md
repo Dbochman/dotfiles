@@ -851,7 +851,11 @@ closed. Raising any cap is a separate payment-authorization change.
 `restaurant-book run` reads both reservation accounts fail-closed, searches
 both Resy and OpenTable under strict call budgets, and selects one eligible
 candidate only when both searches complete. A partial provider result blocks
-mutation. The OpenTable browser guard and API token must carry the same
+mutation. A reservation-guard failure preserves the individual provider states
+instead of marking a successful provider unavailable. OpenTable acquisition
+uses a 120-second trust budget (180-second caller deadline), and the coordinator
+allows 720 seconds for the read including one bounded persisted-session refresh.
+The OpenTable browser guard and API token must carry the same
 protected account/token attestation. The coordinator repeats both account
 guards next to the mutation boundary, requires exact provider read-back after
 booking, and never tries the other provider after a mutation is attempted or
@@ -859,6 +863,8 @@ its outcome is ambiguous. Its `plan` subcommand is read-only rehearsal only
 and must not appear in a live cron prompt. Cron agents must not invoke
 provider-specific reservation/search/booking commands or ask for an
 exact-restaurant approval around the coordinator.
+
+November 1 recovery: OpenTable browser acquisition timed out during certificate validation, and its saved session subsequently required sign-in. The guarded email-verification helper restored the expected account. Resy passed its cache-only reservation read; the former coordinator error had incorrectly labeled both providers unavailable when either failed. After the timing/reporting repairs, the November read-only plan passed both account guards and both searches but returned `no_availability` within the existing scope. No booking, cancellation, calendar event, or live coordinator retry was performed. The 97 targeted coordinator/OpenTable tests passed. A deployed cold-start reservation read also passed after releasing only the recovery-owned browser instance, confirming the saved session survived restart.
 
 Every prompt sends exactly one status message because cron delivery is
 disabled. A `confirmed` result may create the requested calendar event only
