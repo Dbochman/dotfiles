@@ -53,7 +53,7 @@ PROVIDER_MODE_PATH = (
 PINCHTAB_INSTANCE_HELPER = Path.home() / ".openclaw" / "bin" / "pinchtab-headless-instance"
 COMMAND_TIMEOUT_SECONDS = 420
 CONTRACT_PREFLIGHT_TIMEOUT_SECONDS = 30
-PROFILE_PREFLIGHT_TIMEOUT_SECONDS = 45
+PROFILE_PREFLIGHT_TIMEOUT_SECONDS = 180
 BOA_TAB_OPERATION_TIMEOUT_SECONDS = 30
 BOA_POST_BOOTSTRAP_VERIFY_DELAYS_SECONDS = (1, 2, 4)
 PROCESS_GROUP_GRACE_SECONDS = 5
@@ -1232,7 +1232,7 @@ def ensure_boa_profile(env):
     """
     browser_env = scrub_child_environment(env)
     completed = _run_captured(
-        [str(PINCHTAB_INSTANCE_HELPER), "acquire", "finance"],
+        [str(PINCHTAB_INSTANCE_HELPER), "acquire", "finance", "--trust-timeout", "120"],
         browser_env,
         PROFILE_PREFLIGHT_TIMEOUT_SECONDS,
     )

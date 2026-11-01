@@ -1,6 +1,30 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {canaries, controls, classify, check} = require('../bin/pinchtab-browser-trust.cjs');
+const {canaries, controls, classify, check, probeOptions, CDP} = require('../bin/pinchtab-browser-trust.cjs');
+
+test('extended probe budget is explicit and bounded', () => {
+  assert.deepEqual(probeOptions(['1234']), {port: '1234', seconds: 20});
+  assert.deepEqual(probeOptions(['1234', '--timeout-seconds', '90']), {port: '1234', seconds: 90});
+  for (const args of [[], ['1234', '90'], ['1234', '--other', '90'],
+    ['1234', '--timeout-seconds', '19'], ['1234', '--timeout-seconds', '91'],
+    ['1234', '--timeout-seconds', 'NaN'], ['1234', '--timeout-seconds', '30.5']]) {
+    assert.throws(() => probeOptions(args));
+  }
+});
+
+test('slow CDP responses can finish; exhausted commands remain failed deadlines', async () => {
+  const listeners = {};
+  const socket = {
+    addEventListener: (name, fn) => { listeners[name] = fn; },
+    send: text => { setTimeout(() => listeners.message({data: JSON.stringify({id: JSON.parse(text).id, result: {ok: true}})}), 20); }
+  };
+  const cdp = new CDP(socket, 1000);
+  assert.deepEqual(await cdp.send('Page.navigate'), {ok: true});
+  socket.send = () => {};
+  cdp.commandTimeout = 1;
+  await assert.rejects(cdp.send('Page.navigate'), {code: 'TRUST_TIMEOUT'});
+  assert.equal(cdp.pending.size, 0);
+});
 
 function secure(host) {
   const [kind, variant] = host.split('-');

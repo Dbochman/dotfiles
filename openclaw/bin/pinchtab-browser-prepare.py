@@ -125,8 +125,17 @@ class Backend:
             raise PreparationError("invalid_bridge_port")
         self.run([self.cli, "--server", f"http://127.0.0.1:{port}", "health"], timeout=5)
         cdp_port = resolver.resolve(instance, self.config, self.config_root)
-        result = subprocess.run([self.node, str(HERE / "pinchtab-browser-trust.cjs"), str(cdp_port)],
-                                capture_output=True, text=True, timeout=self.budget(timeout))
+        budget = self.budget(timeout)
+        probe_seconds = min(90, int(budget) - 2)
+        if probe_seconds < 20:
+            raise PreparationError("trust_probe_deadline_exceeded")
+        try:
+            result = subprocess.run(
+                [self.node, str(HERE / "pinchtab-browser-trust.cjs"), str(cdp_port),
+                 "--timeout-seconds", str(probe_seconds)],
+                capture_output=True, text=True, timeout=budget)
+        except subprocess.TimeoutExpired:
+            raise PreparationError("trust_probe_deadline_exceeded") from None
         return gate_state(result)
 
     def stop_owned(self, profile_id):
@@ -174,7 +183,7 @@ def prepare(name, backend, timeout=600, clock=time.monotonic, sleep=time.sleep):
             attempt += 1
             retry_reason = None
             try:
-                passed = backend.probe(rows[0], timeout=22)
+                passed = backend.probe(rows[0], timeout=92)
             except PreparationError as exc:
                 if str(exc) != "trust_probe_deadline_exceeded" or deadline_retries >= 1:
                     raise
@@ -222,7 +231,7 @@ def verify_existing(instance_id, backend, timeout=120, clock=time.monotonic, sle
             raise PreparationError("verification_identity_changed")
         profile_id = row["profileId"]
         try:
-            if backend.probe(row, timeout=22):
+            if backend.probe(row, timeout=92):
                 return
         except PreparationError as exc:
             if str(exc) != "trust_probe_deadline_exceeded" or deadline_retries >= 1:

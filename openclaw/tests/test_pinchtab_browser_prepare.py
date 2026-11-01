@@ -233,6 +233,27 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.PreparationError, "trust_probe_deadline_exceeded"):
             mod.gate_state(result)
 
+    def test_probe_uses_remaining_budget_and_normalizes_parent_timeout(self):
+        backend = object.__new__(mod.Backend)
+        backend.cli = 'pinchtab'
+        backend.node = 'node'
+        backend.config = {}
+        backend.config_root = Path('/unused')
+        resolver = MagicMock()
+        resolver.resolve.return_value = 1234
+        row = {'port': 9868}
+        with patch.object(mod.importlib.util, 'module_from_spec', return_value=resolver), patch.object(
+            mod.importlib.util, 'spec_from_file_location'
+        ), patch.object(backend, 'run'), patch.object(backend, 'budget', return_value=37), patch.object(
+            mod.subprocess, 'run', return_value=self.report()
+        ) as run:
+            self.assertTrue(backend.probe(row, timeout=92))
+            self.assertEqual(run.call_args.args[0][-2:], ['--timeout-seconds', '35'])
+            self.assertEqual(run.call_args.kwargs['timeout'], 37)
+            run.side_effect = subprocess.TimeoutExpired('node', 37)
+            with self.assertRaisesRegex(mod.PreparationError, 'trust_probe_deadline_exceeded'):
+                backend.probe(row, timeout=92)
+
     def test_single_probe_deadline_retries_but_requires_complete_fresh_pass(self):
         backend = FakeBackend((mod.PreparationError("trust_probe_deadline_exceeded"), True))
         result = self.run_prepare(backend, timeout=120)

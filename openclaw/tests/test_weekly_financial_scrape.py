@@ -1226,6 +1226,8 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                 str(weekly_financial_scrape.PINCHTAB_INSTANCE_HELPER),
                 "acquire",
                 "finance",
+                "--trust-timeout",
+                "120",
             ],
             self.BASE_ENV,
             weekly_financial_scrape.PROFILE_PREFLIGHT_TIMEOUT_SECONDS,

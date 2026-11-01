@@ -24,8 +24,9 @@ function classify(host, navigation, response) {
 }
 
 class CDP {
-  constructor(socket) {
+  constructor(socket, commandTimeout = 10000) {
     this.socket = socket;
+    this.commandTimeout = commandTimeout;
     this.next = 0;
     this.pending = new Map();
     this.listeners = new Set();
@@ -53,8 +54,8 @@ class CDP {
       const id = ++this.next;
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error('CDP timeout'));
-      }, 10000);
+        reject(Object.assign(new Error('CDP timeout'), {code: 'TRUST_TIMEOUT'}));
+      }, this.commandTimeout);
       this.pending.set(id, {resolve, reject, timer});
       this.socket.send(JSON.stringify({id, method, params, ...(sessionId ? {sessionId} : {})}));
     });
@@ -99,7 +100,18 @@ async function check(cdp) {
   }
 }
 
-async function main(port) {
+function probeOptions(args) {
+  if (args.length !== 1 && !(args.length === 3 && args[1] === '--timeout-seconds')) {
+    throw new Error('Invalid probe arguments');
+  }
+  const seconds = args.length === 1 ? 20 : Number(args[2]);
+  if (!Number.isInteger(seconds) || seconds < 20 || seconds > 90) {
+    throw new Error('Invalid probe deadline');
+  }
+  return {port: args[0], seconds};
+}
+
+async function main(port, seconds) {
   if (!/^\d{1,5}$/.test(port || '') || Number(port) < 1 || Number(port) > 65535) {
     throw new Error('Expected an explicit loopback CDP port');
   }
@@ -121,7 +133,9 @@ async function main(port) {
     socket.addEventListener('error', () => {clearTimeout(timeout); reject(new Error('CDP connect failed'));}, {once: true});
   });
   try {
-    const cdp = new CDP(socket);
+    // Cold certificate checks can exceed 25 seconds. Only explicit bounded
+    // acquisition opts into more time; the default probe remains 20 seconds.
+    const cdp = new CDP(socket, seconds === 20 ? 10000 : Math.min(40000, (seconds - 5) * 1000));
     for (let attempt = 1; attempt <= 3; attempt++) {
       const results = await check(cdp);
       const counts = results.reduce((all, row) => {all[row.result] = (all[row.result] || 0) + 1; return all;}, {});
@@ -134,10 +148,17 @@ async function main(port) {
   } finally { socket.close(); }
 }
 
-module.exports = {canaries, controls, classify, check};
+module.exports = {canaries, controls, classify, check, probeOptions, CDP};
 if (require.main === module) {
+  let options;
+  try { options = probeOptions(process.argv.slice(2)); }
+  catch { console.error('Invalid browser trust probe options'); process.exit(2); }
   // Absolute ceiling includes cleanup; disposeOnDetach handles unexpected exit.
-  const deadline = setTimeout(() => {console.error('Browser trust check deadline exceeded'); process.exit(2);}, 20000);
-  main(process.argv[2]).then(code => {clearTimeout(deadline); process.exitCode = code;})
-    .catch(() => {clearTimeout(deadline); console.error('Browser trust check inconclusive; refusing clearance'); process.exitCode = 2;});
+  const deadline = setTimeout(() => {console.error('Browser trust check deadline exceeded'); process.exit(2);}, options.seconds * 1000);
+  main(options.port, options.seconds).then(code => {clearTimeout(deadline); process.exitCode = code;})
+    .catch(error => {
+      clearTimeout(deadline);
+      console.error(error.code === 'TRUST_TIMEOUT' ? 'Browser trust check deadline exceeded' : 'Browser trust check inconclusive; refusing clearance');
+      process.exitCode = 2;
+    });
 }
