@@ -496,6 +496,10 @@ reads only its managed-instance configuration, validates the bridge-port match,
 and resolves the loopback debugging port. `pinchtab-browser-trust.cjs` uses the
 pinned Node 24 runtime and built-in WebSocket support; no npm package is needed.
 The wrapper resolves its own real path so Homebrew symlinks work too.
+For legacy profile directories named after the profile, the resolver requires
+the name's deterministic PinchTab ID, a contained configuration path, and matching
+state-directory and bridge-port metadata. It does not bypass certificate checks
+when a restarted instance uses that layout.
 
 The gate creates a disposable browser context, disables page JavaScript and
 cache use in four diagnostic tabs, and requires all 12 incident canaries to

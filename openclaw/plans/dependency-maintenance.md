@@ -74,6 +74,65 @@ were preserved; no fleet changes, remediation, briefing delivery, commit or push
 was performed. The helper still warns about the October 22 device observations;
 existing resolution-receipt review and historical continuation diagnostics remain.
 
+## Browser and Tailscale update rollout — November 1, 2026
+
+Owner authorized browser and Tailscale updates after the live triage below.
+Work performed around 18:15–18:30 UTC; this is a partial rollout, not fleet-wide
+clearance or a replacement for the dated fleet inventory.
+
+| Host | Applied and verified | Remaining |
+| --- | --- | --- |
+| Mini | Chrome 156.0.8078.80 installed through Google Updater; both default and finance PinchTab processes map the new framework. Firefox 159.0 already installed; running executable and XUL inode match the installed files. App Store Tailscale updated to 1.104.4; running backend reports that version, Running/online, with Tailscale SSH still disabled. | Authenticated remote gateway UI not tested. |
+| Crosstown | Chrome 156.0.8078.80 installed through Google Updater. Signed/notarized standalone Tailscale 1.104.4 package installed its app payload. | Chrome relaunch and Firefox 158.0.1 → 159 remain pending. Tailscale package postinstall failed opening the GUI (`procNotFound`, -600); the old 1.98.8 extension was still active immediately afterward. A detached user-session quit/open attempt was followed by loss of tailnet reachability. New extension activation is **not verified**. Owner asked to open Tailscale locally and report connection/prompt/error state. |
+| dylans-mac | On owner-confirmed reconnection, Chrome 156.0.8078.80 passed renewed strict deep signature, Google Team ID and Gatekeeper checks, then replaced 156.0.8078.76 with the prior app retained for rollback. Verified the running process maps 156.0.8078.80. Tailscale backend remains 1.104.4, Running/online, with Tailscale SSH disabled. | No remaining update in this host's checked Chrome/Tailscale scope. |
+| Windows | No change. | Managed `desktop-compute status --scope windows` still reports unavailable. |
+
+Mini browser restart was scoped to the two idle PinchTab instances, with their
+existing profiles and ports retained; the shared orchestrator was not restarted.
+Automation tabs were recycled, not preserved as open tabs. Both deployed
+`pinchtab-headless-instance acquire ... --trust-timeout 120` checks subsequently
+passed the complete certificate gate. Relaunch exposed the resolver's assumption
+that every profile directory uses a `prof_...` ID. The default profile instead
+uses `profiles/default`. The tracked/deployed resolver now permits this legacy
+layout only with a matching deterministic profile ID, a contained path, matching
+state directory and bridge port. Certificate checks and unknown-state rejection
+remain intact. All 28 browser preparation/trust Python tests passed, including
+new mismatched-identity, stale-port/state and symlink-escape cases; Python compile,
+deployment hash comparison and `git diff --check` passed.
+
+The Mini Tailscale restart dropped its foreground Serve session. Runtime gateway
+configuration still specifies loopback port 18789 with Tailscale Serve enabled.
+Restored that existing gateway target with background HTTPS on port 443, retaining
+the pre-restoration Serve configuration privately. Serve now reports its HTTPS
+listener. The local gateway, finance 8585 and forecast 8586 each return HTTP 200.
+The tailnet HTTPS check returned HTTP 403 with a proxy-related response; no
+authenticated or remote-client UI success is claimed. No Funnel, ACL, account,
+credential, trust-policy or gateway-process change was made.
+
+Rollback/staging artifacts are private machine-local temporary directories:
+
+- Mini update staging, previous resolver and Serve snapshot:
+  `/var/folders/g4/yf4myw6x7g7c0yr5tnf9h9200000gn/T/browser-tailscale-update-mzmh4nt2`.
+  Chrome pre-update application clone: sibling `chrome-update-w6mz48b4`.
+  Verified Mozilla Firefox 159.0 image is staged here for Crosstown; it passed
+  strict deep signature verification, Mozilla Team ID and Gatekeeper assessment.
+- Crosstown Tailscale package, pre-update app clone, safe state hashes and installer
+  logs: `/var/folders/py/yqsbrfvn067fm01h0wb0dkl40000gn/T/tailscale-security-update-9h246qze`.
+  Chrome pre-update clone: sibling `chrome-update-nji_peeo`.
+- dylans-mac verified Chrome staging:
+  `/var/folders/35/2bxtys815rgc0xhltnkbsnw80000gp/T/chrome-security-update-zb34jfbf`.
+
+App clones are named `.saved-app` to avoid registering duplicate applications;
+they are emergency rollback artifacts, not safe versions to relaunch routinely.
+On the subsequent dylans-mac reconnection, Chrome's native restart request closed
+the old browser but did not immediately reopen it. Opening the installed app
+with `--restore-last-session` started the verified new runtime; browser content
+was not inspected. Its staging directory now contains the old `Chrome.saved-app`
+and safe installation/verification receipts. The vendor disk image was unmounted
+after verification. Crosstown's SSH transport remained unreachable on this follow-up.
+No security finding was marked resolved, no inventory date was refreshed, and
+no changes were committed or pushed during this rollout.
+
 ## Live triage of the 20 flagged reviews — November 1, 2026
 
 Read-only follow-up to the completed 227-review catch-up. Checked the Mini,

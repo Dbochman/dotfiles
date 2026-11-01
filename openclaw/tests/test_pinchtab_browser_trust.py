@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,32 @@ class BrowserTrustTests(unittest.TestCase):
             self.child.write_text(json.dumps({'server': {'port': '19868'}, 'browser': {'remoteDebuggingPort': value}}))
             with self.subTest(value=value), self.assertRaises(ValueError):
                 port.resolve(self.instance, self.config, self.root)
+
+    def test_named_profile_fallback_requires_bound_identity_and_matching_state(self):
+        instance = {**self.instance, 'profileName': 'default',
+                    'profileId': 'prof_' + hashlib.sha256(b'default').hexdigest()[:8]}
+        child = self.root / 'profiles/default/.pinchtab-state/config.json'
+        child.parent.mkdir(parents=True)
+        config = {'server': {'port': '19868', 'stateDir': str(child.parent)},
+                  'browser': {'remoteDebuggingPort': 19869}}
+        child.write_text(json.dumps(config))
+        self.assertEqual(port.resolve(instance, self.config, self.root), 19869)
+        for patch in [{'profileName': '../default'}, {'profileId': 'prof_wrong'},
+                      {'port': '19870'}]:
+            with self.subTest(patch=patch), self.assertRaises(ValueError):
+                port.resolve({**instance, **patch}, self.config, self.root)
+        config['server']['stateDir'] = str(self.root / 'elsewhere')
+        child.write_text(json.dumps(config))
+        with self.assertRaises(ValueError):
+            port.resolve(instance, self.config, self.root)
+
+    def test_named_profile_fallback_rejects_symlink_escape(self):
+        instance = {**self.instance, 'profileName': 'default', 'profileId': 'prof_37a8eec1'}
+        outside = self.root / 'outside'
+        outside.mkdir()
+        (self.root / 'profiles/default').symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            port.resolve(instance, self.config, self.root)
 
     def test_attended_headed_resolution_requires_explicit_exact_mode(self):
         headed = {**self.instance, 'mode': 'headed'}

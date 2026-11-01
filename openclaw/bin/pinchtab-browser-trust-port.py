@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Resolve only the selected managed instance's loopback CDP port; print no tokens."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,22 @@ def resolve(instance, config, config_root, *, mode="headless"):
         raise ValueError("Invalid managed profile identity")
     state = Path(config.get("server", {}).get("stateDir") or config_root).expanduser()
     base = Path(config.get("profiles", {}).get("baseDir") or state / "profiles").expanduser()
-    child = json.loads((base / profile_id / ".pinchtab-state/config.json").read_text())
+    child_path = base / profile_id / ".pinchtab-state/config.json"
+    if not child_path.exists():
+        # PinchTab also retains legacy directories named after the profile.
+        # Bind this fallback to its deterministic ID, never an arbitrary path.
+        name = instance.get("profileName", "")
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name)
+                or "prof_" + hashlib.sha256(name.encode()).hexdigest()[:8] != profile_id):
+            raise ValueError("Invalid named profile identity")
+        child_path = base / name / ".pinchtab-state/config.json"
+        if not child_path.resolve().is_relative_to(base.resolve()):
+            raise ValueError("Profile configuration outside managed directory")
+        child = json.loads(child_path.read_text())
+        if Path(child.get("server", {}).get("stateDir", "")).resolve() != child_path.parent.resolve():
+            raise ValueError("Stale named profile configuration")
+    else:
+        child = json.loads(child_path.read_text())
     if str(child["server"]["port"]) != str(instance["port"]):
         raise ValueError("Stale instance configuration")
     port = child["browser"]["remoteDebuggingPort"]
