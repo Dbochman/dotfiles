@@ -1,156 +1,96 @@
 # CrisisMode on Mac Mini
 
-Infrastructure health monitoring for the OpenClaw Mac Mini, powered by [CrisisMode](https://github.com/trs-80/crisismode) v0.4.0.
+The Mini uses [CrisisMode v0.10.0](https://github.com/trs-80/crisismode/releases/tag/v0.10.0)
+(commit `f38c795`) for read-only local health scans. The weekly report owns the
+scheduled scan; `crisismode-health-scan-0001` was retired into
+`weekly-report-0001` (Sundays at 3 PM Eastern).
 
-## Architecture
-
-```
-crisismode CLI (wrapper)
-  └─ node ~/repos/crisismode/dist/cli/index.js
-       ├─ Zero-config service detection (PG, Redis, etcd, Kafka ports)
-       ├─ Bundled check plugins (disk, memory, DNS, HTTP, TLS)
-       ├─ AI diagnosis via Claude (requires ANTHROPIC_API_KEY)
-       └─ MCP server (staged — OpenClaw MCP support not yet wired)
-
-OpenClaw agent
-  └─ crisismode skill (Bash(crisismode:*))
-       └─ Agent can run any crisismode CLI command on demand
-```
-
-## What's Deployed
-
-### Mac Mini (`dylans-mac-mini`)
+## Deployment
 
 | Component | Location |
 |-----------|----------|
-| Repo | `~/repos/crisismode` (cloned from GitHub, built with pnpm) |
+| Versioned source and build | `~/.local/share/openclaw/vendor/crisismode-v0.10.0` |
+| Node runtime | `~/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node` |
 | CLI wrapper | `~/.openclaw/bin/crisismode` |
-| Skill | `~/.openclaw/skills/crisismode/SKILL.md` |
 | Config | `~/.crisismode/crisismode.yaml` |
-| MCP entry point | `~/repos/crisismode/mcp-entry.mjs` (staged, not active) |
+| Custom health plugins | `~/.crisismode/checks/` |
+| Skill | `~/.openclaw/skills/crisismode/SKILL.md` |
+| Previous 0.8.0 source/build | `~/repos/crisismode` (preserved for rollback) |
 
-### Dotfiles (`~/repos/dotfiles`)
+Tracked sources live in `openclaw/bin/crisismode`, `openclaw/crisismode/`, and
+`openclaw/skills/crisismode/`. `dotfiles-pull.command` copies the wrapper, config,
+plugins and skill; it **does not install/build the versioned dependency**.
+Stage and verify that dependency before deploying the wrapper on another Mini.
+The old untracked `mcp-entry.mjs` is preserved; this change does not activate MCP.
 
-| File | Purpose |
-|------|---------|
-| `openclaw/bin/crisismode` | CLI wrapper (deployed to Mini by dotfiles-pull) |
-| `openclaw/skills/crisismode/SKILL.md` | OpenClaw skill definition |
-| `openclaw/crisismode/crisismode.yaml` | Site config (deployed to `~/.crisismode/`) |
-| `openclaw/crisismode/checks/` | Custom check plugins (gateway and launchd) |
-| `openclaw/cron/jobs.json` | Includes `crisismode-health-scan-0001` cron job |
-| `openclaw/bin/dotfiles-pull.command` | Updated: deploys wrapper, skill, config, and check plugins |
+## Config and scope
 
-### dotfiles-pull Integration
+Upstream searches `--config`, then `CRISISMODE_CONFIG`, then the working directory;
+it does **not** automatically discover `~/.crisismode/crisismode.yaml`. The wrapper
+sets that file as the default environment path, preserving explicit overrides.
+The weekly helper passes the path explicitly and scans from its directory, so
+an unrelated repository's config/discovery files cannot change the scheduled scope.
+Missing/invalid config fails visibly instead of falling back to a phantom database.
 
-The `dotfiles-pull.command` script handles:
-- Copying the `crisismode` wrapper to `~/.openclaw/bin/` (with `chmod +x`)
-- Deploying `crisismode.yaml` to `~/.crisismode/`
-- Deploying custom check plugins to `~/.crisismode/checks/`
-- Deploying the skill to `~/.openclaw/skills/crisismode/`
-- Smoke testing that `crisismode` resolves on PATH
+The config explicitly declares `local-dns` and `local-disk`. Version 0.10 requires
+at least one target or service; the old empty list is no longer valid. PostgreSQL
+is not configured on this Mini and is not excluded by finding ID.
 
-## Custom Check Plugins
+Two local plugins supplement those targets:
 
-Two custom plugins are deployed to `~/.crisismode/checks/`:
+- `check-openclaw-gateway`: loopback `/health` plus launchd process status.
+- `check-launchd-services`: gateway, Nest/Usage dashboards, snapshot and presence
+  LaunchAgents. This checks job state, not complete end-to-end service behavior.
 
-| Plugin | What It Checks |
-|--------|---------------|
-| check-openclaw-gateway | HTTP `/health` endpoint + launchctl process status (PID, exit code) |
-| check-launchd-services | Critical gateway, dashboard, snapshot, and presence LaunchAgents |
+These checks cover the Mini, not Crosstown or every household service. Upstream
+labels generic plugin findings **best-effort**; the weekly report preserves that
+qualification. Scan triage checks local interfaces, gateway, DNS and internet
+access. No recovery commands are executed.
 
-## Health Scan Cron Job
+## Reporting contract
 
-**Job ID:** `crisismode-health-scan-0001`
-**Schedule:** 9AM and 9PM ET daily (`0 9,21 * * *`)
-**Behavior:** Errors-only alerting — runs `crisismode scan --json`, ignores PG-001 and benign DNS split-brain, only messages Dylan when score < 70 or critical/warning findings.
+`openclaw-weekly-report.py` runs `crisismode scan --config ... --json` with a
+45-second timeout and no AI-summary API key. It requires a successful process,
+a valid score and nonempty findings. It reports all nonhealthy findings and
+nonhealthy signal evidence, missing expected checks, blocked coverage, and failed
+or unverified network triage. Missing scans are unavailable, never clean.
 
-## Current Health Scan
+Finding IDs are positional and must not be allowlisted. There are no `PG-001`
+or `DNS-002` exemptions. If DNS reports only differing answer sets while its
+reachability and lookup signals pass, the report states those facts and leaves
+the cause unverified. Different answers alone do not establish a benign dual-stack
+condition; resolver failures, latency, DNSSEC errors and other DNS evidence remain
+visible. The raw upstream score is not adjusted.
 
-Running `crisismode scan` on the Mini combines built-in findings with the two custom service checks:
+## Updating and rollback
 
-| ID | Service | Status | Notes |
-|----|---------|--------|-------|
-| PG-001 | PostgreSQL | unknown | Auto-probe on port 5432, no PG running (expected) |
-| DNS-002 | DNS | recovering/healthy | Dual-stack resolvers (IPv4 + IPv6) sometimes trigger split-brain warning — benign on home network |
-| DISK-003 | Disk | healthy | ~63% used, 684GB free |
-| PLUG-001 | check-launchd-services | healthy | Critical services running |
-| PLUG-002 | check-openclaw-gateway | healthy | HTTP 200, gateway PID active |
-
-The retired BlueBubbles check was removed when native iMessage became the sole Messages transport on 2026-06-27.
-
-## MCP Server Status
-
-CrisisMode ships an MCP server (`mcp-entry.mjs`) exposing tools over stdio:
-- `crisismode_scan` — zero-config health scan
-- `crisismode_diagnose` — AI-powered diagnosis
-- `crisismode_status` — quick UP/DOWN probe
-- `crisismode_list_agents` — list recovery agents
-
-**Status:** Entry point created and tested. OpenClaw v2026.3.13 accepts `mcpServers` in config but logs `"ignoring N MCP servers"` — not yet wired into the agent runtime. Revisit on next OpenClaw release.
-
-## Usage
+Review the pinned tag's instructions, dependency hooks and build entry points.
+Use a separate versioned Git worktree, preserving the old checkout and its
+untracked MCP shim. The 0.10.0 build uses the repository's pinned pnpm 10.30.3:
 
 ```bash
-# Quick health scan
-crisismode scan
-
-# Machine-readable JSON
-crisismode scan --json
-
-# Diagnose a specific finding
-crisismode diagnose DNS-002
-
-# Ask a question (requires ANTHROPIC_API_KEY)
-crisismode ask "is disk usage trending up"
-
-# List available agents
-crisismode agent list
-
-# Demo mode (no infra needed)
-crisismode demo
+# From the reviewed v0.10.0 worktree, with the pinned Node 24 runtime on PATH:
+corepack pnpm install --frozen-lockfile --ignore-scripts
+corepack pnpm --filter @crisismode/agent-sdk run build
+corepack pnpm exec tsc
+node scripts/copy-json-assets.mjs
 ```
 
-## Updating CrisisMode
+Run the upstream scan/config/evidence tests and the dotfiles weekly-report tests,
+then scan with the candidate CLI and tracked config before activation. Back up
+the deployed wrapper, config, helper and skill into a private temporary directory;
+replace each file atomically. Deploy config before the new wrapper. Confirm
+`crisismode --version`, a successful JSON scan, expected check coverage and the
+weekly helper's rendered health lines. No daemon restart is needed.
 
-```bash
-ssh dylans-mac-mini
-cd ~/repos/crisismode
-git pull
-PATH=/opt/homebrew/opt/node@22/bin:$PATH npx -y pnpm install && npx -y pnpm build
-```
+For rollback, restore the backed-up wrapper, config, helper and skill together.
+The previous `~/repos/crisismode/dist/cli/index.js` and Node 22.23.4 remain intact.
+Do not delete the versioned worktree while a deployed wrapper points to it.
 
----
+## November 1, 2026 verification
 
-## Future Enhancements
-
-### MCP Gateway Integration
-
-When OpenClaw adds MCP support to the agent runtime (currently v2026.3.13 accepts but ignores `mcpServers`), wire in the CrisisMode MCP server for native tool access:
-
-```json
-{
-  "mcpServers": {
-    "crisismode": {
-      "command": "/opt/homebrew/opt/node@22/bin/node",
-      "args": ["/Users/dbochman/repos/crisismode/mcp-entry.mjs"],
-      "cwd": "/Users/dbochman/repos/crisismode"
-    }
-  }
-}
-```
-
-The entry point (`mcp-entry.mjs`) is already tested and deployed.
-
-### Additional Check Plugins
-
-- **check-openclaw-dashboards**: HTTP probes for Nest (8550) and Usage (8551) dashboards + data freshness checks against history JSONL files
-- **check-presence-detection**: Verify presence scan is running on MacBook Pro, state file is fresh
-- **check-cielo-token**: Verify Cielo AC token refresh LaunchAgent is working (token age < 30min)
-
-### Recovery Playbooks
-
-Write CrisisMode markdown playbooks for common Mini recovery scenarios:
-- Native iMessage recovery (`imsg status --json`, gateway channel probe, then gateway kickstart if the attached RPC worker is unhealthy)
-- Gateway restart with secrets reload
-- Stale secrets refresh (`openclaw-refresh-secrets`)
-- Full service restart sequence after reboot
+The candidate 0.10.0 scan with the explicit config returned 90/100: disk and both
+local plugins healthy; DNS answer-set differences remained visible, with resolver
+reachability and lookup checks passing. Local/network triage passed. No PostgreSQL
+finding was present. This snapshot is evidence for the deployment, not a permanent
+health guarantee.

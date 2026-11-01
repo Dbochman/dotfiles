@@ -41,7 +41,11 @@ CRON_STORE_KEY = str(HOME / ".openclaw" / "cron" / "jobs.json")
 MESSAGES_DB = HOME / "Library" / "Messages" / "chat.db"
 IMSG_BIN = "/opt/homebrew/bin/imsg"
 GATEWAY_URL = "http://127.0.0.1:18789/health"
-CRISISMODE_EXCLUSIONS = {"PG-001", "DNS-002"}
+CRISISMODE_CONFIG = HOME / ".crisismode" / "crisismode.yaml"
+CRISISMODE_SERVICES = {
+    "dns (local-dns)", "disk (local-disk)",
+    "plugin (check-launchd-services)", "plugin (check-openclaw-gateway)",
+}
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=UTC)
 
 
@@ -477,14 +481,20 @@ def parse_json_documents(text):
 def crisismode_summary():
     try:
         result = subprocess.run(
-            ["crisismode", "scan", "--json"],
+            ["crisismode", "scan", "--config", str(CRISISMODE_CONFIG), "--json"],
+            cwd=CRISISMODE_CONFIG.parent,
+            # The deterministic report does not need an external AI summary.
+            env={**os.environ, "ANTHROPIC_API_KEY": ""},
             capture_output=True,
             text=True,
             timeout=45,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return "unavailable", []
+        return "unavailable", [], []
+
+    if result.returncode != 0:
+        return "unavailable", [], []
 
     scans = [
         document
@@ -492,18 +502,73 @@ def crisismode_summary():
         if isinstance(document, dict) and isinstance(document.get("findings"), list)
     ]
     if not scans:
-        return "unavailable", []
-    scan = scans[-1]
+        return "unavailable", [], []
+    return summarize_crisismode_scan(scans[-1])
+
+
+def summarize_crisismode_scan(scan):
+    """Use current evidence, never positional IDs, to describe local health."""
     score = scan.get("score")
     if type(score) not in (int, float) or not 0 <= score <= 100:
-        return "unavailable", []
+        return "unavailable", [], []
+    findings = scan.get("findings")
+    if not isinstance(findings, list) or not findings or any(
+        not isinstance(finding, dict) for finding in findings
+    ):
+        return "unavailable", [], []
     actionable = []
-    for finding in scan.get("findings", []):
-        if not isinstance(finding, dict) or finding.get("id") in CRISISMODE_EXCLUSIONS:
+    notes = []
+    for finding in findings:
+        service = str(finding.get("service") or "unidentified check")
+        signals = finding.get("signals")
+        if not isinstance(signals, list) or any(not isinstance(s, dict) for s in signals):
+            actionable.append(f"{service}: invalid signal evidence")
             continue
-        if finding.get("status") in {"warning", "critical", "unknown", "recovering"}:
-            actionable.append(str(finding.get("summary") or finding.get("id")))
-    return str(score) if score is not None else "unavailable", actionable
+        bad_signals = [s for s in signals if s.get("status") not in ("healthy", "info")]
+        if finding.get("status") != "healthy" or bad_signals:
+            evidence = {s.get("source"): s for s in signals if isinstance(s.get("source"), str)}
+            if (service == "dns (local-dns)" and finding.get("status") == "recovering"
+                    and len(bad_signals) == 1
+                    and evidence.get("resolver_reachability", {}).get("status") == "healthy"
+                    and evidence.get("resolution_correctness", {}).get("status") == "healthy"
+                    and bad_signals[0].get("source") == "zone_consistency"
+                    and bad_signals[0].get("detail") ==
+                    "Split-brain detected: resolvers returning different answers for the same hostname."):
+                # Explain the evidence without claiming differing answers are benign.
+                summary = "answer sets differ; reachability and lookup checks passed; cause unverified"
+            else:
+                summary = str(finding.get("summary") or "health not verified")
+                if bad_signals:
+                    sources = ", ".join(str(s.get("source") or "unknown signal") for s in bad_signals)
+                    summary += f" (signals: {sources})"
+            actionable.append(f"{service}: {summary}")
+
+    seen = {f.get("service") for f in findings if isinstance(f.get("service"), str)}
+    for service in sorted(CRISISMODE_SERVICES - seen):
+        actionable.append(f"coverage missing: {service}")
+    best_effort = sum(f.get("bestEffort") is True for f in findings)
+    if best_effort:
+        notes.append(f"{best_effort} checks labeled best-effort by upstream")
+    triage = scan.get("triage")
+    if not isinstance(triage, dict) or not isinstance(triage.get("layers"), list) or not triage["layers"]:
+        actionable.append("network triage unavailable")
+    else:
+        incomplete = [l for l in triage["layers"] if not isinstance(l, dict)
+                      or l.get("status") not in ("pass", "skipped")]
+        if triage.get("verdict") != "healthy" or incomplete:
+            actionable.append(f"network triage: {triage.get('verdict') or 'unknown'}; "
+                              f"{len(incomplete)} failed or unverified layers")
+    visibility = scan.get("visibility")
+    if not isinstance(visibility, dict) or any(
+        not isinstance(visibility.get(key), list) for key in ("watching", "blocked", "invisible")
+    ):
+        actionable.append("scan coverage unavailable")
+    else:
+        if visibility["blocked"]:
+            actionable.append(f"coverage blocked: {len(visibility['blocked'])} detected services")
+        if visibility["invisible"]:
+            notes.append(f"{len(visibility['invisible'])} documented visibility limits")
+    return str(score), actionable, notes
 
 
 def format_models(models):
@@ -537,7 +602,7 @@ def report(now):
     current_runs = collect_cron_runs(current_start, current_end)
     current_messages = imessage_messages(current_start, current_end)
     previous_messages = imessage_messages(previous_start, previous_end)
-    crisis_score, crisis_findings = crisismode_summary()
+    crisis_score, crisis_findings, crisis_notes = crisismode_summary()
 
     period = (
         f"{current_start.astimezone(LOCAL_TZ).strftime('%a %m/%d')}"
@@ -570,12 +635,16 @@ def report(now):
     if crisis_score == "unavailable":
         lines.append("- CrisisMode: unavailable (scan not verified)")
     elif crisis_findings:
-        lines.append(f"- CrisisMode: {crisis_score}/100 raw; attention: {'; '.join(crisis_findings[:2])}")
+        detail = '; '.join(crisis_findings[:2])
+        if len(crisis_findings) > 2:
+            detail += f"; {len(crisis_findings) - 2} additional findings (run crisismode scan --json)"
+        lines.append(f"- CrisisMode: {crisis_score}/100 raw; attention: {detail}")
     else:
         lines.append(
-            f"- CrisisMode: {crisis_score}/100 raw; no actionable findings "
-            "after excluding the unused PostgreSQL probe and benign dual-stack DNS split"
+            f"- CrisisMode: {crisis_score}/100 raw; no actionable findings in checked Mini services"
         )
+    if crisis_notes:
+        lines.append(f"- CrisisMode coverage: {'; '.join(crisis_notes)}; Mini scope only")
 
     attention = opentable_attention(now)
     if attention:

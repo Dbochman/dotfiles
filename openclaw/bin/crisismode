@@ -1,4 +1,7 @@
 #!/bin/bash
 # crisismode — Infrastructure health scan and recovery CLI
-CRISISMODE_DIR="$HOME/repos/crisismode"
-exec /Users/dbochman/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin/node "$CRISISMODE_DIR/dist/cli/index.js" "$@"
+set -euo pipefail
+CRISISMODE_DIR="$HOME/.local/share/openclaw/vendor/crisismode-v0.10.0"
+# Upstream does not discover ~/.crisismode automatically. --config still wins.
+export CRISISMODE_CONFIG="${CRISISMODE_CONFIG:-$HOME/.crisismode/crisismode.yaml}"
+exec /Users/dbochman/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin/node "$CRISISMODE_DIR/dist/cli/index.js" "$@"

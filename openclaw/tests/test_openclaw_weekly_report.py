@@ -22,6 +22,81 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(REPORT)
 
 
+class CrisisModeWeeklyReportTests(unittest.TestCase):
+    def scan(self):
+        return {
+            "type": "scan", "score": 100,
+            "findings": [{"id": f"CHECK-{i}", "service": service, "status": "healthy",
+                          "summary": "Healthy", "signals": []}
+                         for i, service in enumerate(sorted(REPORT.CRISISMODE_SERVICES))],
+            "triage": {"verdict": "healthy", "layers": [{"layer": "dns", "status": "pass"}]},
+            "visibility": {"watching": [], "blocked": [], "invisible": []},
+        }
+
+    def test_old_excluded_ids_and_all_nonhealthy_statuses_remain_visible(self):
+        for finding_id in ("PG-001", "DNS-002", "DNS-001"):
+            for status in ("unhealthy", "critical", "warning", "unknown", "recovering", "degraded", None):
+                with self.subTest(finding_id=finding_id, status=status):
+                    scan = self.scan()
+                    scan["findings"][0].update(id=finding_id, status=status, summary="Real failure")
+                    score, attention, notes = REPORT.summarize_crisismode_scan(scan)
+                    self.assertEqual(score, "100")
+                    self.assertTrue(any("Real failure" in item for item in attention))
+
+    def test_dns_split_is_explained_but_not_suppressed(self):
+        scan = self.scan()
+        dns = next(f for f in scan["findings"] if f["service"] == "dns (local-dns)")
+        dns.update(status="recovering", summary="DNS degraded", signals=[
+            {"source": "resolver_reachability", "status": "healthy"},
+            {"source": "resolution_correctness", "status": "healthy"},
+            {"source": "zone_consistency", "status": "critical", "detail":
+             "Split-brain detected: resolvers returning different answers for the same hostname."},
+        ])
+        attention = REPORT.summarize_crisismode_scan(scan)[1]
+        self.assertIn("cause unverified", attention[0])
+        dns["signals"][0]["status"] = "warning"
+        attention = REPORT.summarize_crisismode_scan(scan)[1]
+        self.assertIn("resolver_reachability", attention[0])
+        self.assertNotIn("checks passed", attention[0])
+        dns["status"] = "healthy"
+        self.assertTrue(REPORT.summarize_crisismode_scan(scan)[1])
+
+    def test_partial_coverage_and_network_failure_are_not_clean(self):
+        scan = self.scan()
+        removed = scan["findings"].pop()
+        scan["findings"][0]["bestEffort"] = True
+        scan["triage"] = {"verdict": "network", "layers": [{"status": "fail"}]}
+        scan["visibility"]["blocked"] = [{"label": "service"}]
+        score, attention, notes = REPORT.summarize_crisismode_scan(scan)
+        self.assertIn("coverage missing: " + removed["service"], attention)
+        self.assertTrue(any("network triage: network" in a for a in attention))
+        self.assertTrue(any("coverage blocked" in a for a in attention))
+        self.assertIn("1 checks labeled best-effort by upstream", notes)
+        del scan["triage"]
+        del scan["visibility"]
+        attention = REPORT.summarize_crisismode_scan(scan)[1]
+        self.assertIn("network triage unavailable", attention)
+        self.assertIn("scan coverage unavailable", attention)
+
+    def test_empty_or_malformed_scans_are_unavailable(self):
+        for changes in ({"score": True}, {"score": float("nan")}, {"score": 101},
+                        {"findings": []}, {"findings": [None]}, {"findings": None}):
+            with self.subTest(changes=changes):
+                self.assertEqual(REPORT.summarize_crisismode_scan(self.scan() | changes),
+                                 ("unavailable", [], []))
+
+    def test_scan_uses_explicit_config_and_rejects_failed_process(self):
+        result = mock.Mock(returncode=0, stdout=json.dumps(self.scan()))
+        with mock.patch.object(REPORT.subprocess, "run", return_value=result) as run:
+            self.assertEqual(REPORT.crisismode_summary(), ("100", [], []))
+            self.assertEqual(run.call_args.args[0],
+                             ["crisismode", "scan", "--config", str(REPORT.CRISISMODE_CONFIG), "--json"])
+            self.assertEqual(run.call_args.kwargs["cwd"], REPORT.CRISISMODE_CONFIG.parent)
+            self.assertEqual(run.call_args.kwargs["env"]["ANTHROPIC_API_KEY"], "")
+            result.returncode = 1
+            self.assertEqual(REPORT.crisismode_summary(), ("unavailable", [], []))
+
+
 class OpenTableWeeklyReportTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -273,7 +348,7 @@ class ActivityReportTests(unittest.TestCase):
     def test_report_does_not_invent_activity_or_healthy_scan(self):
         with (mock.patch.object(REPORT, "collect_cron_runs", return_value={"available": False}),
               mock.patch.object(REPORT, "imessage_messages", return_value=None),
-              mock.patch.object(REPORT, "crisismode_summary", return_value=("unavailable", [])),
+              mock.patch.object(REPORT, "crisismode_summary", return_value=("unavailable", [], [])),
               mock.patch.object(REPORT, "gateway_health", return_value="unreachable"),
               mock.patch.object(REPORT, "imessage_health", return_value="unavailable"),
               mock.patch.object(REPORT, "apfs_disk_usage", return_value="unavailable"),

@@ -7,7 +7,7 @@ metadata: {"openclaw":{"emoji":"🏥","requires":{"bins":["crisismode"]}}}
 
 # CrisisMode — Infrastructure Health & Recovery
 
-Monitor and diagnose the Mac Mini's infrastructure health using CrisisMode. Runs zero-config health scans, AI-powered diagnosis, and can plan recovery actions.
+Monitor and diagnose the Mac Mini's infrastructure health using CrisisMode. Uses the pinned CrisisMode 0.10.0 CLI, the explicit Mini config, and local health plugins. It can also diagnose findings and plan recovery actions.
 
 ## Commands
 
@@ -15,7 +15,7 @@ Monitor and diagnose the Mac Mini's infrastructure health using CrisisMode. Runs
 ```bash
 crisismode scan
 ```
-Returns a scored health summary (0-100) with findings for all detected services and check plugins (disk, memory, DNS, HTTP, TLS).
+Returns a raw health score (0–100), DNS/disk findings, local gateway and launchd plugin results, network triage and coverage information. This is Mini scope, not a health guarantee for Crosstown or every household service.
 
 ### Machine-readable scan
 ```bash
@@ -31,8 +31,7 @@ Fast UP/DOWN check for all configured services.
 
 ### Diagnose a specific finding
 ```bash
-crisismode diagnose DISK-003
-crisismode diagnose DNS-002
+crisismode diagnose <ID-from-the-current-scan>
 ```
 Drill into a specific finding ID from the scan output. Runs deeper inspection with severity levels.
 
@@ -68,29 +67,25 @@ Walks through a simulated PostgreSQL recovery — useful for understanding the r
 
 ## Health Score
 
-The scan produces a score from 0-100:
-- **90-100**: Healthy
-- **70-89**: Minor issues, monitor
-- **50-69**: Degraded, investigate
-- **0-49**: Critical, action required
+The raw 0–100 score is a weighted summary, not an all-clear. A score of 90 can
+still include a DNS warning. Report the findings and coverage alongside the
+score; never change the score or discard a failure to make the headline look healthy.
 
 ## Finding IDs
 
-Each finding has an ID like `DISK-003`, `DNS-002`, `PG-001`. Use these IDs with `crisismode diagnose <ID>` to drill deeper.
+Finding IDs are positional and change when targets/order change. Use an ID from the current scan with `crisismode diagnose <ID>`. Never ignore or allowlist a finding by ID. Read its service, status, signals, triage and visibility evidence; `unhealthy`, `unknown`, missing checks and blocked coverage all need to remain visible. Preserve upstream best-effort labels on plugin checks.
 
-## Bundled Check Plugins
+## Installed checks and configuration
 
-| Plugin | What It Checks |
-|--------|---------------|
-| check-disk-usage | Filesystem usage (warn 80%, critical 90%) |
-| check-memory-usage | System memory utilization |
-| check-dns-resolution | DNS resolver health |
-| check-http-endpoint | HTTP connectivity to localhost |
-| check-certificate-expiry | TLS cert validity on localhost:443 |
+The wrapper pins `~/.local/share/openclaw/vendor/crisismode-v0.10.0` and defaults
+`CRISISMODE_CONFIG` to `~/.crisismode/crisismode.yaml`; an explicit `--config`
+still wins. Upstream does not auto-discover that home-directory config.
+The tracked source is `~/dotfiles/openclaw/crisismode/crisismode.yaml`.
 
-## Configuration
-
-Config file at `~/.crisismode/crisismode.yaml` (auto-detected). Without config, scan uses zero-config auto-detection on standard ports.
+The config declares local DNS and disk targets; v0.10 rejects an empty target list.
+Plugins in `~/.crisismode/checks/` check gateway HTTP/launchd status and the selected
+Mini LaunchAgents. Memory, TLS and remote hosts are not implied by this scope.
+The weekly report owns scheduled scans; the old standalone scan cron is retired.
 
 ## When to Use This Skill
 
@@ -103,7 +98,7 @@ Config file at `~/.crisismode/crisismode.yaml` (auto-detected). Without config, 
 ## Architecture
 
 ```
-crisismode scan → auto-detect services → run check plugins → score & report
+crisismode scan → explicit Mini config + network triage → local checks/plugins → score & coverage
 crisismode diagnose → deep inspection → AI analysis → recommendations
 crisismode recover → plan → validate → execute (dry-run default)
 ```
@@ -112,11 +107,22 @@ All recovery operations are **dry-run by default** — they show the plan withou
 
 ## Troubleshooting
 
-### PG-001 unknown error
-Expected if no PostgreSQL is running. CrisisMode auto-probes port 5432 — ignore if not applicable.
+### Unexpected PostgreSQL finding
+
+PostgreSQL is not configured on this Mini. Verify the effective config and any
+environment-derived targets; do not simply suppress the finding. Missing or
+invalid config should be reported as an error.
 
 ### DNS split-brain warning
-Dual-stack resolvers (IPv4 + IPv6) may return different results. Usually benign on home networks.
 
-### Low health score
-Run `crisismode scan --json` and examine individual findings. Drill into critical ones with `crisismode diagnose <ID>`.
+Compare `resolver_reachability`, `resolution_correctness` and `zone_consistency`.
+If reachability and lookup checks pass but answer sets differ, say exactly that
+and leave the cause unverified. Do not assume dual-stack/CDN differences are
+benign without separate evidence. Timeouts, SERVFAIL, NXDOMAIN, DNSSEC errors,
+latency and real resolver failures must remain visible.
+
+### Low health score or incomplete scan
+
+Run `crisismode scan --json` and examine findings and coverage. A high score does
+not override an unhealthy finding, failed triage or missing check. An unavailable
+scan is not a clean scan. Use the current finding ID for deeper diagnosis.

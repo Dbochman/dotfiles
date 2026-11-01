@@ -10,12 +10,13 @@ metadata:
 execution:
   mode: dry-run
 
+# v0.10 requires a nonempty target/service list. These are the same local
+# checks scan would inject, explicitly scoped to this Mini; no PostgreSQL target.
+# Gateway and launchd health plugins are installed in ~/.crisismode/checks/.
 targets:
-  # No targets needed — scan uses zero-config auto-detection for:
-  #   - Service probing: PostgreSQL (5432), Redis (6379), etcd (2379), Kafka (9092)
-  #   - Bundled check plugins: disk, memory, DNS, HTTP, TLS
-  #
-  # Custom check plugins for Mini-specific services (gateway, native iMessage,
-  # Nest/Usage dashboards) can be added to ~/.crisismode/checks/ later.
-  # See: crisismode init --plugin <name>
-  []
+  - name: local-dns
+    kind: dns
+    primary: { host: auto, port: 53 }
+  - name: local-disk
+    kind: disk
+    primary: { host: auto, port: 0 }

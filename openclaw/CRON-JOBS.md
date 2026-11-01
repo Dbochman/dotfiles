@@ -444,7 +444,12 @@ Health checks cover the Mini. A protected, fresh OpenTable success receipt newer
 than launchd's old failure suppresses the stale repair warning and displays the
 verification time. Newer failures, missing jobs and stale/invalid verification
 remain visible. An unavailable CrisisMode scan is not a clean scan; the report
-does not infer that all critical services are healthy from these limited probes.
+does not infer that all critical services are healthy from these limited probes. CrisisMode
+0.10.0 uses the explicit Mini config (DNS/disk plus the gateway/launchd plugins).
+The report has no finding-ID exclusions: DNS answer differences remain unverified,
+and nonhealthy signals, missing checks, blocked coverage and triage failures stay
+visible. Plugin best-effort labels are retained; the raw score is not adjusted.
+The scan runs from the config directory with its external AI summary disabled.
 
 November 1 repair: the old JSONL reader missed SQLite activity, yielding zero
 model turns/sessions/tools. Live corrected snapshot found 1,509 model turns,
