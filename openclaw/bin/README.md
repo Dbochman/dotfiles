@@ -79,6 +79,17 @@ and remove only that host's obsolete unreachable entry. WSL and offline hosts
 remain separate gaps. File versions are not proof of in-memory contents,
 backports, application launch paths or exploitability.
 
+`cabin-public-deploy-status.py` is a read-only health summary for the nightly
+shared-magazine deploy (`ai.openclaw.cabin-public-deploy`, defined and installed
+from the cabin repo's `scripts/launchd/`, not from this repo). It reads only the
+protected 0600 `~/.local/state/cabin-public-deploy/status.json` and returns at
+most one short warning: a failed run, a missing, unreadable or future-dated
+status, or no result for 36 hours. It never runs the job or reads logs. Both
+`dylan-morning-briefing-data.py` (`cabinDeploy`, `--cabin-deploy-status`) and
+`openclaw-weekly-report.py` (an `Attention:` line, plus a not-loaded check) load
+it from the same directory, so deploy it with them. A failure to evaluate is
+itself reported, never raised.
+
 `security-advisory-collector.py` is a Mini-only, notification-only daily review.
 The attended-installed `com.dylanbochman.security-advisories` LaunchAgent runs
 at 07:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.

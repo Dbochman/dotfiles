@@ -701,6 +701,18 @@ fleet clearance. No cache read is a delivery receipt. Use the helper's
 collection or sending a briefing. Deploy only this job's message through the
 supported cron edit API; preserve all other fields and jobs.
 
+It also adds a `cabinDeploy` section for the nightly shared-magazine deploy
+(`ai.openclaw.cabin-public-deploy`, 03:40 local). `cabin-public-deploy-status.py`
+reads only its private 0600 `status.json` in
+`~/.local/state/cabin-public-deploy/` (regular file, owned by the user, at most
+4 KB, fixed fields) and returns a nonempty `cabinDeploy.monitoringWarning` for a
+failed run, a missing or unreadable status, an invalid time, or no result for 36
+hours. A fresh deployed or unchanged result is silent. The prompt includes the
+warning as one brief operations note, not a security finding, and omits the line
+when it is null; no all-clear is added. Use the helper's `--cabin-deploy-status`
+mode to verify integration. The prompt clause reaches the live job only through
+the supported cron edit API.
+
 The approved `b7119197-b8e5-4f7d-9af2-edd268637cc8` job runs silently at 7:40 AM ET
 with a 900-second budget, leaving five minutes before the existing 8 AM
 read-only briefing. It mirrors Julia's reviewed policy: classify unread mail,
