@@ -84,7 +84,7 @@ The attended-installed `com.dylanbochman.security-advisories` LaunchAgent runs
 at 07:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.
 It reads pwn.watch's complete JSON incident index in bounded discovery batches,
 matches against a minimized inventory with high-reasoning, tool-free local
-OpenClaw inference (`openai/gpt-5.6-sol`), then fetches up to three approved
+OpenClaw inference (`openai/gpt-6.1-sol`), then fetches up to three approved
 publisher pages for each of up to twelve pending matches per run. This uses
 existing configured model access; it does not install dependencies or grant
 the model shell, browser, messaging or remediation tools. Only product/version,
@@ -94,7 +94,11 @@ private source paths, IPs, accounts and freeform survey notes are excluded.
 Publisher domains are code-reviewed, proxies/automatic redirects are disabled,
 and at most three redirects are followed after revalidating every destination
 against the same exact-domain/HTTPS/public-DNS rules. Responses are
-size/time limited. Source material is untrusted data. Assessment references must
+size/time limited. The exact incident index has a 4 MB / 2,500-incident ceiling;
+incident details, publisher evidence and redirected responses retain the 1 MB
+ceiling. URLs containing raw spaces or control characters are rejected before
+DNS/request handling, so malformed evidence links do not abort a batch or
+prevent checking its other approved sources. Source material is untrusted data. Assessment references must
 use fetched URLs and exact supporting excerpts. These checks establish citation
 provenance, **not infallible model reasoning or proven exploitability**. No usable
 primary evidence means unknown. Source-only dependencies, old observations,
@@ -155,8 +159,12 @@ Each complete batch is strictly validated before acceptance.
 Invalid JSON or selection structure/names gets one corrective retry of that batch,
 within the same deadline. Nothing is silently dropped or guessed; a second invalid
 response fails collection and preserves the prior cache. Model-call timeouts get
-one retry in discovery and verification; discovery correction and timeout retries
-share a two-attempt ceiling, not nested retry budgets. The 30-minute hard deadline
+one retry in discovery and verification. Verification also permits one corrective
+retry when an evidence URL/quote fails strict validation, explicitly requesting
+an exact fetched URL and a verbatim quote of at most 25 words. Invalid output
+is never published or echoed. Correction and timeout retries share a two-attempt
+ceiling in each stage, not nested retry budgets. Successful checkpoint validation
+is unchanged. The 30-minute hard deadline
 and operator stop are never retried within a pass. Other transport failures are
 not retried here. Progress exposes only attempt counts and fixed rejection codes,
 never rejected model output. The daily LaunchAgent has no KeepAlive retry loop;
@@ -215,9 +223,13 @@ findings outside the 48-hour changes window. These are candidates, not urgency
 verdicts: the prompt additionally requires supported serious, time-sensitive
 impact and a specific available action the owner needs to take or approve now.
 Severity labels or old versions alone do not qualify. Unknowns, generic vendor
-verification, deferred maintenance, backlog/coverage counts and collector health
-remain available through `--security-status` and `--progress`, but do not create
-a briefing section. With no qualifying urgent action, omit the section entirely;
+verification, deferred maintenance and routine backlog/coverage counts remain
+available through `--security-status` and `--progress`, but do not create an
+advisory section. A separate `monitoringWarning` must appear even without an
+urgent advisory when the cache is unavailable/stale, the latest collection
+failed, or device observations are older than seven days. Preserve its dates;
+this warns about monitoring coverage, not a vulnerability or compromise. With
+no qualifying urgent action and no monitoring warning, omit the section;
 do not issue an all-clear. Preserve uncertainty and observation dates, and do
 not re-raise a deferred decision without materially changed immediate risk.
 No assessment, resolution, continuation allowance or delivery state changes.

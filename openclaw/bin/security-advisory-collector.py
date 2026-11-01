@@ -22,7 +22,11 @@ import urllib.parse
 import urllib.request
 
 STATE = Path.home() / ".local/state/security-advisories"
-MODEL = "openai/gpt-5.6-sol"
+MODEL = "openai/gpt-6.1-sol"
+FEED_URL = "https://pwn.watch/incidents.json"
+FEED_MAX_BYTES = 4_000_000
+FEED_MAX_INCIDENTS = 2500
+SOURCE_MAX_BYTES = 1_000_000
 DISCOVERY_BATCH_SIZE = 20
 PASS_LIMIT = 3
 RUNTIME = Path.home() / ".local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin"
@@ -102,6 +106,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def validate_url(url, hosts):
+    # urlsplit can silently strip controls; http.client rejects raw spaces later
+    # with InvalidURL, outside the collector's per-source ValueError handling.
+    if not isinstance(url, str) or re.search(r"[\x00-\x20\x7f]", url):
+        raise ValueError("invalid_source_url")
     p = urllib.parse.urlsplit(url)
     if (p.scheme != "https" or p.hostname not in hosts or p.username or p.password
             or p.port not in (None, 443) or p.fragment):
@@ -114,6 +122,7 @@ def validate_url(url, hosts):
 
 
 def fetch(url, hosts):
+    feed_request = url == FEED_URL and hosts == {"pwn.watch"}
     opener = urllib.request.build_opener(
         urllib.request.ProxyHandler({}), NoRedirect(),
         urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=CA)))
@@ -133,8 +142,11 @@ def fetch(url, hosts):
         with response:
             if response.headers.get_content_type() not in ("application/json", "text/html", "text/plain"):
                 raise ValueError("unsupported_source_type")
-            raw = response.read(1_000_001)
-            if len(raw) > 1_000_000:
+            # Only the exact index gets headroom for feed growth. Detail pages,
+            # publishers, and redirects retain the smaller source limit.
+            limit = FEED_MAX_BYTES if feed_request and url == FEED_URL else SOURCE_MAX_BYTES
+            raw = response.read(limit + 1)
+            if len(raw) > limit:
                 raise ValueError("source_too_large")
             return raw.decode("utf-8", errors="replace")
 
@@ -313,15 +325,28 @@ def select_batch(compact, advisories, products, unknown, reviewer, progress):
             data["retry_instruction"] = "Regenerate the complete batch using the exact allowed names."
 
 
-def review_with_timeout_retry(reviewer, data, progress):
+def review_with_retry(reviewer, data, progress, validator=lambda value: value):
+    data = dict(data)
+    retry_reason = None
     for attempt in range(1, 3):
         progress(attempt=attempt, attempt_limit=2,
-                 **({"retry_reason": "model_timeout"} if attempt == 2 else {}))
+                 **({"retry_reason": retry_reason} if retry_reason else {}))
         try:
-            return reviewer(VERIFY, data)
+            return validator(reviewer(VERIFY, data))
         except subprocess.TimeoutExpired:
             if attempt == 2:
                 raise
+            retry_reason = "model_timeout"
+        except ValueError as exc:
+            if str(exc) != "invalid_evidence" or attempt == 2:
+                raise
+            retry_reason = "invalid_evidence"
+            data["retry_reason"] = retry_reason
+            data["retry_instruction"] = (
+                "Regenerate the assessment. Each evidence URL must exactly match a primary_sources key. "
+                "Copy each quote verbatim as a contiguous substring of that source, at most 25 words; "
+                "do not paraphrase, normalize characters, or join excerpts. If no source supports "
+                "a claim, report unknown with no evidence rather than inventing a citation.")
 
 
 VERIFY = """Assess this advisory against the supplied inventory and fetched primary evidence.
@@ -373,12 +398,12 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
     compact = compact_inventory(inventory)
     observed_at = inventory_timestamp(inventory)
     progress(phase="feed", step="fetching")
-    index = json.loads(fetcher("https://pwn.watch/incidents.json", {"pwn.watch"}))
+    index = json.loads(fetcher(FEED_URL, {"pwn.watch"}))
     if age_hours(index["generatedAt"]) > 48:
         raise ValueError("stale_feed")
     incidents = {i["slug"]: {k: i.get(k) for k in FIELDS} for i in index["incidents"]
                  if not i.get("isExample") and re.fullmatch(r"[a-z0-9-]{1,160}", i["slug"])}
-    if not incidents or len(incidents) > 1000:
+    if not incidents or len(incidents) > FEED_MAX_INCIDENTS:
         raise ValueError("feed_size")
     # Checkpoints are internal work, never briefing input. Invalidate on review
     # policy changes; per-incident hashes permit feed growth/reordering without
@@ -477,11 +502,11 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
                 def review_progress(**fields):
                     progress(phase="verification", step="model", pending=len(pending),
                              checked=checked - 1, review_limit=min(12, len(pending)), errors=errors, **fields)
-                result = validate_assessment(review_with_timeout_retry(reviewer, {
+                result = review_with_retry(reviewer, {
                     "advisory": incidents[slug], "inventory_columns": compact["columns"],
                     "components": rows, "unknown_assets": match["unknown_assets"],
                     "oldest_observation_at": observed_at, "primary_sources": sources,
-                }, review_progress), assets, sources)
+                }, review_progress, validator=lambda value: validate_assessment(value, assets, sources))
             else:
                 result = {"status": "unknown", "asset_ids": sorted(assets),
                           "summary": "Potential inventory match; primary-source verification unavailable.",
@@ -633,6 +658,19 @@ def briefing_action_groups(changes):
     return list(groups.values())[:3]
 
 
+def monitoring_warning(warnings, generated_at, inventory_at):
+    """Operational coverage warning, separate from advisory urgency judgments."""
+    reviewed = datetime.fromisoformat(generated_at.replace("Z", "+00:00")).date().isoformat()
+    if "advisory_cache_stale" in warnings:
+        return f"Security monitoring is stale; the last published review is from {reviewed}."
+    if "latest_collection_failed" in warnings:
+        return f"Security monitoring failed on its latest run; the last published review is from {reviewed}."
+    if "inventory_refresh_needed" in warnings:
+        observed = datetime.fromisoformat(inventory_at.replace("Z", "+00:00")).date().isoformat()
+        return f"Security review uses outdated device observations from {observed}; current exposure is not confirmed."
+    return None
+
+
 def briefing_summary(state=STATE, now=None):
     """Bounded cache-only read; never network, infer, mark delivered, or write."""
     try:
@@ -676,6 +714,7 @@ def briefing_summary(state=STATE, now=None):
         return {"status": "stale" if stale else "partial" if warnings else "ok",
                 "generatedAt": cache["generated_at"], "inventoryAt": cache["inventory_at"],
                 "coverage": "partial", "clearance": False, "warnings": warnings,
+                "monitoringWarning": monitoring_warning(warnings, cache["generated_at"], cache["inventory_at"]),
                 "backlog": cache["backlog"], "unknownAssets": cache["unknown_assets"],
                 "continuation": {k: continuation[k] for k in
                     ("status", "passes_used", "pass_limit", "next_pass_at") if k in continuation},
@@ -689,7 +728,8 @@ def briefing_summary(state=STATE, now=None):
                     group["findingCount"] for group in action_groups),
                 "deliveryConfirmed": False}
     except (OSError, ValueError, KeyError, TypeError):
-        return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False}
+        return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False,
+                "monitoringWarning": "Security monitoring is unavailable; no usable review could be loaded."}
 
 
 def progress_summary(state=STATE, now=None):

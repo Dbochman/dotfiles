@@ -82,7 +82,9 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
         self.assertIn("a specific available action Dylan needs to take or approve now", prompt)
         self.assertIn("never promote unknown to affected", prompt)
         self.assertIn("Their omission does not resolve any finding", prompt)
-        self.assertIn("No independent security status block without a qualifying urgent action", prompt)
+        self.assertIn("MONITORING HEALTH EXCEPTION", prompt)
+        self.assertIn("always include it as one brief Security monitoring warning", prompt)
+        self.assertIn("Do not hide these warnings under the urgent-advisory filter", prompt)
         self.assertNotIn("Always explain collection warnings", prompt)
 
     def seed_handoff(self, payload, *, job_id=None, day=13):

@@ -691,6 +691,10 @@ does no advisory fetching or inference. The existing 08:00 schedule, mail and
 calendar contracts remain unchanged. New/material changes stay eligible for
 48 hours; unchanged unresolved items become a count. Missing/stale cache,
 verification backlog and inventory older than seven days remain explicit.
+The prompt always includes a nonempty `security.monitoringWarning` for missing
+or stale results, a failed collection, or outdated device observations, even
+when no finding qualifies for the urgent-advisory section. This is a monitoring
+coverage warning, not a vulnerability or compromise claim.
 Model assessments are evidence-qualified notifications, not remediation or
 fleet clearance. No cache read is a delivery receipt. Use the helper's
 `--security-status` mode to verify integration without running mail/calendar

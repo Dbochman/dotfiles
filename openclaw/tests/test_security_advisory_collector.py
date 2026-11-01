@@ -271,6 +271,29 @@ class AdvisoryTests(unittest.TestCase):
         detail = {"sources": [{"url": f"https://nodejs.org/{i}"} for i in range(10)]}
         self.assertEqual(len(mod.source_urls(detail, incident)), 3)
 
+    def test_raw_url_spaces_and_controls_rejected_before_dns(self):
+        with patch.object(mod.socket, 'getaddrinfo') as dns:
+            for bad in (' ', '\n', '\r', '\t', '\x00', '\x7f'):
+                with self.subTest(character=repr(bad)), self.assertRaisesRegex(ValueError, 'invalid_source_url'):
+                    mod.validate_url('https://nodejs.org/a' + bad + 'b', mod.PUBLISHERS)
+            dns.assert_not_called()
+            dns.return_value = [(0, 0, 0, '', ('8.8.8.8', 443))]
+            mod.validate_url('https://nodejs.org/a%20b', mod.PUBLISHERS)
+
+    def test_bad_source_url_does_not_discard_other_primary_evidence(self):
+        def fetch(url, hosts):
+            if url.endswith('node-test.json'):
+                return json.dumps({'sources': [{'url': 'https://nodejs.org/raw space'}, {'url': self.url}]})
+            if url.startswith('https://nodejs.org/'):
+                mod.validate_url(url, hosts)
+                return self.text
+            return self.fetch(url, hosts)
+        with patch.object(mod.socket, 'getaddrinfo', return_value=[(0, 0, 0, '', ('8.8.8.8', 443))]):
+            result = self.collect(fetcher=fetch)
+        self.assertEqual(result['verification_errors'], 0)
+        self.assertEqual(result['backlog'], 0)
+        self.assertEqual(result['findings']['node-test']['evidence'], [{'url': self.url, 'quote': self.text}])
+
     def test_redirect_revalidates_target_before_request(self):
         from email.message import Message
         from io import BytesIO
@@ -287,6 +310,84 @@ class AdvisoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unapproved_source'):
                 mod.fetch('https://nodejs.org/a', mod.PUBLISHERS)
         self.assertEqual(opener.open.call_count, 1)
+
+    def test_feed_growth_has_a_separate_bounded_limit(self):
+        from email.message import Message
+        from io import BytesIO
+        from unittest.mock import Mock
+        for url, hosts, size, allowed, read_limit in [
+            (mod.FEED_URL, {'pwn.watch'}, 1_280_000, True, mod.FEED_MAX_BYTES),
+            (mod.FEED_URL, {'pwn.watch'}, mod.FEED_MAX_BYTES + 1, False, mod.FEED_MAX_BYTES),
+            ('https://pwn.watch/i/test.json', {'pwn.watch'}, 1_000_001, False, mod.SOURCE_MAX_BYTES),
+            ('https://nodejs.org/security', mod.PUBLISHERS, 1_000_001, False, mod.SOURCE_MAX_BYTES),
+        ]:
+            with self.subTest(url=url, size=size):
+                response = BytesIO(b'x' * size)
+                response.headers = Message()
+                response.headers['Content-Type'] = 'application/json'
+                opener = Mock()
+                opener.open.return_value = response
+                with patch.object(mod, 'validate_url'), patch.object(
+                    mod.urllib.request, 'build_opener', return_value=opener
+                ), patch.object(response, 'read', wraps=response.read) as read:
+                    if allowed:
+                        self.assertEqual(len(mod.fetch(url, hosts)), size)
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'source_too_large'):
+                            mod.fetch(url, hosts)
+                    read.assert_called_once_with(read_limit + 1)
+
+    def test_feed_count_has_growth_headroom_but_stays_bounded(self):
+        for count in (1001, mod.FEED_MAX_INCIDENTS + 1):
+            index = {'generatedAt': self.stamp, 'incidents': [
+                {**self.incident, 'slug': f'test-{n}'} for n in range(count)]}
+            kwargs = {'fetcher': lambda *_: json.dumps(index),
+                      'reviewer': lambda *_: {'matches': []}}
+            if count <= mod.FEED_MAX_INCIDENTS:
+                self.assertEqual(self.collect(**kwargs)['advisories_screened'], count)
+            else:
+                with self.assertRaisesRegex(ValueError, 'feed_size'):
+                    self.collect(**kwargs)
+
+    def test_redirected_feed_does_not_expand_detail_limit(self):
+        from email.message import Message
+        from io import BytesIO
+        from unittest.mock import Mock
+        headers = Message()
+        headers['Location'] = 'https://pwn.watch/i/test.json'
+        error = mod.urllib.error.HTTPError(mod.FEED_URL, 302, 'redirect', headers, BytesIO())
+        response = BytesIO(b'x' * 1_000_001)
+        response.headers = Message()
+        response.headers['Content-Type'] = 'application/json'
+        opener = Mock()
+        opener.open.side_effect = [error, response]
+        with patch.object(mod, 'validate_url'), patch.object(
+            mod.urllib.request, 'build_opener', return_value=opener
+        ):
+            with self.assertRaisesRegex(ValueError, 'source_too_large'):
+                mod.fetch(mod.FEED_URL, {'pwn.watch'})
+
+    def test_monitoring_warning_is_independent_of_urgent_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            cache = self.collect()
+            cache['findings'] = {}
+            mod.write_private(state / 'cache.json', cache)
+            mod.write_private(state / 'health.json', {'status': 'ok'})
+            fresh = mod.briefing_summary(state, self.now)
+            self.assertIsNone(fresh['monitoringWarning'])
+            stale = mod.briefing_summary(state, self.now + timedelta(days=2))
+            self.assertEqual(stale['attentionCandidates'], [])
+            self.assertIn('monitoring is stale', stale['monitoringWarning'])
+            self.assertIn(self.now.date().isoformat(), stale['monitoringWarning'])
+            mod.write_private(state / 'health.json', {'status': 'failed'})
+            self.assertIn('failed on its latest run', mod.briefing_summary(state, self.now)['monitoringWarning'])
+            mod.write_private(state / 'health.json', {'status': 'ok'})
+            cache['inventory_at'] = (self.now - timedelta(days=8)).isoformat()
+            mod.write_private(state / 'cache.json', cache)
+            self.assertIn('outdated device observations', mod.briefing_summary(state, self.now)['monitoringWarning'])
+            (state / 'cache.json').unlink()
+            self.assertIn('unavailable', mod.briefing_summary(state, self.now)['monitoringWarning'])
 
     def test_cache_only_summary_staleness_and_repeated_read(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -847,16 +948,62 @@ class AdvisoryTests(unittest.TestCase):
         from unittest.mock import Mock
         timeout = mod.subprocess.TimeoutExpired("model", 240)
         review = Mock(side_effect=[timeout, {"ok": True}])
-        self.assertEqual(mod.review_with_timeout_retry(review, {}, lambda **_: None), {"ok": True})
+        self.assertEqual(mod.review_with_retry(review, {}, lambda **_: None), {"ok": True})
         review = Mock(side_effect=timeout)
         with self.assertRaises(mod.subprocess.TimeoutExpired):
-            mod.review_with_timeout_retry(review, {}, lambda **_: None)
+            mod.review_with_retry(review, {}, lambda **_: None)
         self.assertEqual(review.call_count, 2)
         for error in (mod.CollectionDeadline(), mod.CollectionStopped(), ValueError("invalid")):
             review = Mock(side_effect=error)
             with self.assertRaises(type(error)):
-                mod.review_with_timeout_retry(review, {}, lambda **_: None)
+                mod.review_with_retry(review, {}, lambda **_: None)
             self.assertEqual(review.call_count, 1)
+
+    def test_verification_corrects_invalid_citation_before_publishing(self):
+        calls = []
+        def review(prompt, data):
+            value = self.review(prompt, data)
+            if prompt == mod.VERIFY:
+                calls.append(copy.deepcopy(data))
+                if len(calls) == 1:
+                    value['evidence'][0]['quote'] = 'invented quotation'
+            return value
+        result = self.collect(reviewer=review)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1]['retry_reason'], 'invalid_evidence')
+        self.assertIn('at most 25 words', calls[1]['retry_instruction'])
+        self.assertNotIn('invented quotation', json.dumps(calls[1]))
+        self.assertEqual(result['backlog'], 0)
+        self.assertEqual(result['findings']['node-test']['evidence'][0]['quote'], self.text)
+
+    def test_repeated_invalid_citation_preserves_previous_finding(self):
+        previous = self.collect()
+        previous['findings']['node-test']['input_hash'] = 'outdated'
+        calls = []
+        def review(prompt, data):
+            value = self.review(prompt, data)
+            if prompt == mod.VERIFY:
+                calls.append(1)
+                value['evidence'][0]['quote'] = 'invented quotation'
+            return value
+        result = self.collect(previous, reviewer=review)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result['verification_errors'], 1)
+        self.assertEqual(result['backlog'], 1)
+        self.assertEqual(result['findings'], previous['findings'])
+
+    def test_verification_citation_and_timeout_share_two_attempt_budget(self):
+        from unittest.mock import Mock
+        good = self.review(mod.VERIFY, {})
+        bad = copy.deepcopy(good)
+        bad['evidence'][0]['quote'] = 'invented quotation'
+        timeout = mod.subprocess.TimeoutExpired('model', 240)
+        for attempts, error in (([timeout, bad], ValueError), ([bad, timeout], mod.subprocess.TimeoutExpired)):
+            review = Mock(side_effect=attempts)
+            with self.assertRaises(error):
+                mod.review_with_retry(review, {}, lambda **_: None,
+                    validator=lambda value: mod.validate_assessment(value, {'mini'}, {self.url: self.text}))
+            self.assertEqual(review.call_count, 2)
 
 
 class ContinuationTests(unittest.TestCase):

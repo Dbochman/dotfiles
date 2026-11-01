@@ -39,7 +39,8 @@ def security_summary(now=None):
         spec.loader.exec_module(module)
         return module.briefing_summary(now=now)
     except Exception:
-        return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False}
+        return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False,
+                "monitoringWarning": "Security monitoring is unavailable; no usable review could be loaded."}
 
 ACCOUNT = os.environ.get("DYLAN_EMAIL", "")
 STATE_DB = Path(os.environ.get("OPENCLAW_STATE_DB", str(Path.home() / ".openclaw/state/openclaw.sqlite")))

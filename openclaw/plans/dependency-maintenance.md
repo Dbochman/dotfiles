@@ -16,6 +16,140 @@ The goal is to keep dependencies fresh enough that security CVEs and
 bug fixes flow through, while protecting load-bearing integrations
 from breaking changes that need careful migration.
 
+## Security advisory monitoring repair — November 1, 2026
+
+The daily collector failed October 24–November 1 because the incident index
+grew beyond its 1 MB response limit. On November 1 the valid index was about
+1.28 MB with 854 incidents. Recovery also exposed an unavailable
+`openai/gpt-5.6-sol` model pin. The briefing's urgent-findings-only policy had
+hidden collection failures and the stale October 22 cache.
+
+- Raised only the exact incident index ceiling to 4 MB / 2,500 incidents;
+  detail pages, publisher sources and redirects retain their 1 MB limit and
+  existing destination validation.
+- Moved this collector to `openai/gpt-6.1-sol`, retaining high reasoning and
+  local tool-free inference. A live request through existing account access
+  succeeded. Global model configuration and authentication were unchanged.
+- Added a deterministic `monitoringWarning` for unavailable/stale cache, failed
+  collection or device observations older than seven days. The deployed Dylan
+  briefing prompt always includes this warning independently of advisory urgency.
+  Verified the live prompt and preserved its schedule, model, delivery and
+  unrelated instructions; no briefing was sent during validation.
+- Deployed the collector and cache-only briefing helper with private rollback
+  copies. The 120 targeted collector, briefing and cron-contract tests passed,
+  along with Python syntax checks. A controlled attended collection finished at
+  14:29 UTC with `status=ok`: all 854 advisories screened, two source-backed
+  reviews validated, zero verification errors and 227 reviews still pending.
+  The 24-minute soft limit stopped new reviews as designed; a fresh cache was
+  published. The cache-only morning helper no longer reports stale results or
+  collection failure. The daily continuation ledger was preserved, including
+  the original failed attempt; the next scheduled window receives its normal
+  allowance without a manual reset.
+- Device observations remain dated October 22 and require a separate attended
+  resurvey. Do not refresh their timestamps merely because collection succeeds.
+
+The owner subsequently requested immediate processing of all 227 pending reviews.
+The attended catch-up completed at 16:08 UTC on November 1. Every original queue
+entry has a newly validated, published assessment matching its checkpoint, and
+both the collector and cache-only morning helper report zero verification backlog.
+Outcomes for those 227: 1 affected, 19 possibly affected, 11 not applicable and
+196 unknown, all qualified by the dated inventory and available primary evidence.
+Unknown does not mean unaffected; this is not a current fleet clearance.
+
+The catch-up exposed two collector issues, now fixed and deployed:
+
+- Invalid evidence citations now get one corrective attempt within the existing
+  two-attempt model budget, shared with timeout retries. Exact source matching
+  and the 25-word ceiling remain mandatory; repeated invalid output preserves
+  the previous finding and stays pending. Both repeatedly rejected reviews
+  recovered with validated citations.
+- A source URL containing a raw space raised `InvalidURL` outside the intended
+  per-source error handling and stopped one batch. Reject raw spaces/control
+  characters before parsing or DNS, then continue checking other approved
+  sources. The interrupted batch's two completed reviews resumed from checkpoint.
+
+All 82 collector tests, Python syntax checks and diff checks passed. Both deployed
+collector copies match tracked source. The daily continuation ledger and schedule
+were preserved; no fleet changes, remediation, briefing delivery, commit or push
+was performed. The helper still warns about the October 22 device observations;
+existing resolution-receipt review and historical continuation diagnostics remain.
+
+## Live triage of the 20 flagged reviews — November 1, 2026
+
+Read-only follow-up to the completed 227-review catch-up. Checked the Mini,
+Crosstown MacBook, dylans-mac and Reachy at approximately 17:59–18:10 UTC.
+Windows' managed helper remained unavailable on two checks; the documented
+maintenance transport check found its Mini loopback SSH tunnel refused the
+connection. No Windows version claim was refreshed. No app installation,
+restart, robot action, trust-store change, finding suppression or cache rewrite
+was performed. The October 22 fleet inventory is still dated evidence; these
+notes do not silently refresh it or constitute a new compromise assessment.
+
+### Fresh observations
+
+| Component | Mini | Crosstown MacBook | dylans-mac |
+| --- | --- | --- | --- |
+| Chrome installed | 156.0.8078.74 | 156.0.8078.76 | 156.0.8078.76 |
+| Chrome mapped into observed processes | 155.0.8059.80 | 156.0.8078.76 | 156.0.8078.76 |
+| Firefox installed | 159.0 | 158.0.1 | Not present in checked application location |
+| Tailscale app/CLI | 1.104.1 | 1.98.8 | 1.104.4 |
+| Tailscale SSH (`RunSSH`) | Disabled | Disabled | Disabled |
+| Tailscale Serve | Configured | Not configured | Not configured |
+
+Chrome's mapped framework observation establishes a pending relaunch on the
+Mini in addition to the newer update requirement. Firefox's installed version
+does not establish the version already loaded by a long-running process.
+Mini Serve has two host endpoints with one observed mount each and no Unix
+socket backend; capability-policy applicability was not established. Do not
+declare all Serve issues absent solely from these counts.
+
+Reachy still runs `6.18.50+rpt-rpi-v8`, package `1:6.18.50-1+rpt1`.
+Both its cached package policy and a fresh HTTPS read of Raspberry Pi's official
+Trixie arm64 package index offer that same version. POSIX timers and MPTCP are
+compiled in, MPTCP is enabled, and IPv4 listeners require reachability review.
+No qemu/Firecracker/libvirtd/dockerd process or loaded tun/vhost/kvm module was
+observed. These checks establish neither external Internet reachability nor
+vendor backport absence. The installed changelog had no mentions of the three
+kernel CVEs below; missing changelog mentions are not proof of missing patches.
+
+Reachy's app environment contains Brotli 1.2.0 and Pillow 11.3.0; a running
+Python process maps both native libraries. No `olefile` distribution or module
+was found in that environment. This narrows the reported FPX path, not every
+possible Python import path or image-decoding vulnerability. On dylans-mac,
+Homebrew's active links now select Brotli 1.2.1 and FreeType 2.15.0; the older
+Brotli keg remains installed. Crosstown's recorded FreeType is 2.14.3.
+
+### All 20 findings and disposition
+
+| Finding | Attended disposition / next action |
+| --- | --- |
+| [Chrome October 2026 update](https://chromereleases.googleblog.com/2026/10/stable-channel-update-for-desktop_02107719452.html) | Current update task on all three Macs: installed and observed running versions are below Google's October 29 Windows/Mac 156.0.8078.79/.80 release. Coordinate the Mini's automation/browser relaunch. Windows requires reconnection and a fresh check. |
+| [Chromium CVE-2026-11645](https://cveawg.mitre.org/api/cve/CVE-2026-11645) | Narrow the old Chromium 148 matches using the previously verified Electron 42.4.0 backport, reconfirmed in [upstream PR #51934](https://github.com/electron/electron/pull/51934). Cursor 42.11.16, Discord 42.11.15 and 1Password 42.11.1 exceed that Electron fix release. OpenVPN's Chromium 138 remains a vendor-backport gap. |
+| [Chromium CVE-2026-2441](https://cveawg.mitre.org/api/cve/CVE-2026-2441) | OpenVPN Connect 3.8.2 on dylans-mac still embeds Electron 37.3.1 / Chromium 138.0.7204.235, below the Chrome 145.0.7632.75 boundary. No OpenVPN UI process observed; vendor patch evidence still needed. |
+| [Chromium CVE-2026-5281](https://cveawg.mitre.org/api/cve/CVE-2026-5281) | Same OpenVPN bundle; the CNA also requires an already-compromised renderer. Do not treat installed metadata as a demonstrated exploit. |
+| [Chromium CVE-2026-85046](https://cveawg.mitre.org/api/cve/CVE-2026-85046) | OpenVPN, Spotify's Chromium 151 and dylans-mac's Claude Electron 44.2.0 / Chromium 152.0.7977.76 remain candidates against the 152.0.7977.82 floor. Newer Granola/Linear/Notion and Crosstown Claude builds exceed that floor; older Electron branches require backport evidence. |
+| [Chromium CVE-2026-87491](https://cveawg.mitre.org/api/cve/CVE-2026-87491) | The 153.0.8010.36 Chrome boundary still leaves vendor-bundled Chromium 138/148/151/152 candidates. Group by owning application; do not patch embedded frameworks manually or assume upstream Chrome ranges prove downstream exposure. |
+| [Chromium CVE-2026-3909 / 3910](https://cveawg.mitre.org/api/cve/CVE-2026-3909) | OpenVPN's Chromium 138 is the concrete older bundle below Chrome 146.0.7680.75. Other checked current Chrome installations exceed that floor. |
+| [Chromium CVE-2025-14174](https://cveawg.mitre.org/api/cve/CVE-2025-14174) | OpenVPN's Chromium 138 is the concrete older Mac bundle below Chrome 143.0.7499.110; actual ANGLE use and vendor coverage remain unverified. |
+| [Chromium CVE-2025-10585](https://cveawg.mitre.org/api/cve/CVE-2025-10585) | Same OpenVPN bundle below Chrome 140.0.7339.185. Broad service-owner asset lists are evidence gaps, not confirmed deployed vulnerable V8 instances. |
+| [Chromium CVE-2025-13223](https://cveawg.mitre.org/api/cve/CVE-2025-13223) | Same OpenVPN bundle below Chrome 142.0.7444.175. Review the owning application once for this group of alerts. |
+| [Firefox October 2026 update](https://www.mozilla.org/en-US/security/advisories/mfsa2026-118/) | Mini has Firefox 159 installed; Crosstown still has 158.0.1 and needs the vendor update/relaunch. Do not close the entire multi-host finding from the Mini's update alone. |
+| [eMudhra / Go CVE-2026-111943](https://cveawg.mitre.org/api/cve/CVE-2026-111943) | Both Macs' inspected `gh` binaries now embed Go 1.27.3; dylans-mac `op` embeds fixed Go 1.26.10. Older Go builds remain in other clients. Prior actual TLS rejection tests are stronger than build-number inference, but were not repeated here; custom stores and untested client paths remain gaps. Electron-specific distrust coverage is also vendor-dependent. |
+| [FreeType CVE-2025-27363](https://cveawg.mitre.org/api/cve/CVE-2025-27363) | The known 2.14.3 / 2.15.0 installations are outside the <=2.13.0 affected range. Unknown bundled copies do not constitute an identified affected installation. Retain an inventory gap rather than an urgent patch claim. |
+| [Reachy Infinity Core / CVE-2026-98260](https://cveawg.mitre.org/api/cve/CVE-2026-98260) | Current kernel precedes upstream 6.18.54 and has POSIX timers enabled. Local-execution and vendor-backport questions remain; obtain a vendor-confirmed patched kernel. No exploit executed. |
+| [Reachy TCP CVE-2026-98432](https://cveawg.mitre.org/api/cve/CVE-2026-98432) | Current kernel precedes upstream 6.18.56; TCP listeners and enabled MPTCP make this a priority patch-provenance/network-scope review. No WAN reachability or exploitability demonstrated. |
+| [Reachy PwnEscape CVE-2026-99999](https://cveawg.mitre.org/api/cve/CVE-2026-99999) | Current kernel precedes upstream 6.18.57, but no observed VM/guest-host networking role establishes the reported attack path. Track with the kernel update, not as a demonstrated Internet-facing VM escape. |
+| [Node/Brotli CVE-2026-111497](https://cveawg.mitre.org/api/cve/CVE-2026-111497) | Concrete next step: Reachy's loaded Brotli 1.2.0 needs a compatible 1.2.1-or-newer fix and a coordinated consumer restart. dylans-mac's active Homebrew link is already 1.2.1. Preserve separate Node/Electron/vendor runtime gaps; compiler or standalone Node updates do not patch bundled copies. |
+| [Nx Console CVE-2026-48027](https://github.com/nrwl/nx-console/security/advisories/GHSA-c9j4-9m59-847w) | No Nx extension manifests or named kitty script/LaunchAgent/update-state/temp-path indicators were found in dylans-mac's inspected standard locations. This supports lowering current-installation concern, not historical compromise clearance. Cursor's mere presence is insufficient evidence of exposure. |
+| [Pillow CVE-2026-112398](https://github.com/python-pillow/Pillow/security/advisories/GHSA-5x8w-8jj5-q52h) | Installed/loaded 11.3.0 is below the publisher's 13.0.0 fix, but `olefile` is absent from the checked app environment. The reported FPX attack prerequisite is not established; review compatibility and actual input paths before upgrading or claiming exploitation. |
+| [Tailscale Tailworm](https://tailscale.com/security-bulletins) | dylans-mac 1.104.4 meets the vendor fix. Mini 1.104.1 and Crosstown 1.98.8 remain update candidates. All three have Tailscale SSH disabled, narrowing TS-2026-014/015; Mini's active Serve warrants additional attention. Coordinate updates because they affect remote access. |
+
+Embedded Chromium/Node version mappings were checked against [Electron's release metadata](https://releases.electronjs.org/releases.json).
+OpenVPN's [current release notes](https://openvpn.net/connect-docs/macos-release-notes/)
+publish 3.9.1 and signed-package checksums, but do not establish its embedded
+Chromium version; inspect a verified package before calling that update a fix
+for these browser CVEs. No package was installed or downloaded for execution.
+
 ## Bundled browsers and consolidation — October 22, 2026
 
 Attended inventory distinguished embedded Chromium from application version

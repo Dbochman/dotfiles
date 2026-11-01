@@ -15,7 +15,9 @@ discovery reports paused without replacing the published cache. With the deploye
 60-second gaps, a persisted allowance, and stops on no progress or non-timeout
 failure. There is no KeepAlive retry loop or added schedule. Each pass still has
 a twelve-review cap; discovery uses 20-item batches and retries a model timeout
-once. Operator termination stops continuation. The briefing reads only the
+once. Verification can correct an invalid evidence citation once within that
+same two-attempt budget; the citation validator remains strict. Operator
+termination stops continuation. The briefing reads only the
 published cache, never checkpoints, and reports continuation caps/stalls.
 Dylan's existing 08:00 briefing reads its cached result. No gateway restart,
 finance/forecast timing change, or other LaunchAgent reload is required. Only
@@ -27,6 +29,13 @@ new assessments invalidate old receipts. See the collector contract below for
 the explicit import and seven-day expiry. No completed-maintenance recap is sent.
 See [the collector contract](bin/README.md#gateway--maintenance) for verification,
 backlog, freshness and delivery limitations. Run `--status` for a cache-only check.
+
+November 1 repair: the incident index now has a bounded 4 MB / 2,500-incident
+allowance; other sources retain the 1 MB ceiling. The collector uses
+`openai/gpt-6.1-sol` through existing local inference after the previous model
+pin became unavailable. Dylan's briefing displays monitoring failures, stale
+results and outdated observations independently of urgent advisory findings.
+The schedule and continuation limits are unchanged.
 
 ### Temporary runner readiness watch (October 21, 2026)
 
