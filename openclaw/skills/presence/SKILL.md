@@ -132,8 +132,18 @@ MacBook Pro (Crosstown)              Mac Mini (Cabin)
 | Agent | Host | Schedule | Purpose |
 |-------|------|----------|---------|
 | `com.openclaw.presence-cabin` | Mac Mini | Every 5 min | Scan cabin WiFi, evaluate |
-| `com.openclaw.presence-crosstown` | MacBook Pro | Every 2 min | Scan Crosstown LAN, push to Mac Mini |
+| `com.openclaw.presence-crosstown` | MacBook Pro | Every 2 min | Bounded launcher runs approved Crosstown scan and pushes to Mac Mini |
 | `com.openclaw.presence-receive` | Mac Mini | WatchPaths on `~/Downloads` + every 60s | Ingest named Crosstown Taildrop state |
+
+Crosstown's scheduled scan runs through `presence-crosstown-run.py`, with a
+60-second whole-job deadline and up to three seconds of TERM grace before KILL
+for its own child process group. A timeout returns 124 and leaves the next normal
+schedule eligible to run. Inspect fixed outcome metadata in
+`~/.openclaw/logs/presence-crosstown.log`; `completed` does not itself prove delivery.
+Always check the Mini's received scan timestamp and correlated freshness too.
+The launcher preserves approved scanner bytes and binding/occupancy semantics;
+direct manual scanner commands do not inherit its deadline. Do not interpret a
+timeout or stale snapshot as new absence evidence.
 
 The receiver remains a short-lived, idempotent job. Its 60-second fallback
 drains named scans even when a filesystem notification is missed; an empty

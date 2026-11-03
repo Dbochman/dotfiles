@@ -705,7 +705,45 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 
 | Label | Interval | Program | Description |
 |-------|----------|---------|-------------|
-| `com.openclaw.presence-crosstown` | 2min | `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale. **Must NOT be loaded on Mini** — the script ARP-scans `192.168.165.x`, which the Mini isn't on, so the scan returns nothing and Tailscale `file cp` to self fails. A misplaced copy ran on Mini until 2026-05-10. |
+| `com.openclaw.presence-crosstown` | 2min | `presence-crosstown-run.py` → approved `presence-detect.sh crosstown` | Crosstown LAN presence scan (ARP), pushes to Mini via Tailscale. **Must NOT be loaded on Mini** — the script ARP-scans `192.168.165.x`, which the Mini isn't on, so the scan returns nothing and Tailscale `file cp` to self fails. A misplaced copy ran on Mini until 2026-05-10. |
+
+Presence hang repair (2026-11-03): the Crosstown log had no completed scan
+between October 31 05:54:40 EDT and November 2 23:19:57 EST (66 hours 25 minutes,
+including the DST change). Restart restored scans, but the approved scanner's
+background ping waits and Taildrop transfer have no overall deadline. macOS
+`ping -W` is a per-packet reply wait in milliseconds, not a total runtime bound.
+The prior hung process was already gone when this investigation began, so the
+specific network/OS event that stalled it was not independently recovered.
+This gap began more than a day before the November 1 18:15–18:30 UTC Tailscale
+update/restart and subsequent loss of Crosstown tailnet connectivity documented
+in [the maintenance record](plans/dependency-maintenance.md#browser-and-tailscale-update-rollout--november-1-2026).
+That later connectivity incident does not establish the original scan-hang trigger.
+
+The Crosstown LaunchAgent now uses `/usr/bin/python3` and the standard-library
+`~/.openclaw/bin/presence-crosstown-run.py` launcher. It gives the entire approved
+scanner 60 seconds in its own process group, then TERM and at most three seconds
+of grace before KILL; launchd shutdown also cleans up that owned group. A timeout
+exits 124, allowing the existing 120-second schedule to try again. No additional
+retry loop, presence writer, identity fallback or occupancy policy is added.
+Child output is suppressed; fixed timestamp/outcome/exit/duration metadata goes
+to `~/.openclaw/logs/presence-crosstown.log`. The scanner's own operational log
+remains `presence-detect.log`. Exit zero only means the scanner completed; confirm
+fresh receipt/evaluation on the Mini separately because scanner Taildrop errors
+can still exit zero.
+
+Deploy the launcher before the plist, and reload only Crosstown's presence job.
+The Mini's normal MBP file sync maintains the launcher thereafter. Preserve the
+runtime scanner and its approval file byte-for-byte: this change does not activate
+new scanner bytes or bypass the site-local canary gate. Keep an exact plist backup
+for rollback. A launcher-only repair does not require changing device bindings or
+manually setting occupancy. Direct scanner invocations do not inherit this bound.
+Verification: five deadline/shutdown/privacy tests passed on both the Mini and
+Crosstown's Python 3.9.6, plus 30 deployment-contract tests on the Mini. The
+unchanged strict scanner completed a bounded read-only observation before
+activation. The first two scheduled runs completed at 13:44:44 and 13:46:52 UTC
+on November 3 in 8.9 and 8.1 seconds. Both scans reached the Mini and advanced
+correlated evaluation; Cabin remained confirmed vacant and Crosstown occupied,
+with fresh evidence at both sites. The scanner hash remained unchanged.
 
 Presence runtime repair (2026-10-28): the Crosstown scanner LaunchAgent includes
 `~/.local/share/openclaw/runtimes/node-v24.22.1-darwin-arm64/bin` in PATH.

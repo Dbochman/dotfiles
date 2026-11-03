@@ -6,9 +6,8 @@
     <string>com.openclaw.presence-crosstown</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/dbochman/.openclaw/workspace/scripts/presence-detect.sh</string>
-        <string>crosstown</string>
+        <string>/usr/bin/python3</string>
+        <string>/Users/dbochman/.openclaw/bin/presence-crosstown-run.py</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -21,6 +20,8 @@
     <integer>120</integer>
     <key>RunAtLoad</key>
     <true/>
+    <key>ExitTimeOut</key>
+    <integer>10</integer>
     <key>StandardOutPath</key>
     <string>/dev/null</string>
     <key>StandardErrorPath</key>

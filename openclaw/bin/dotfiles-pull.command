@@ -120,6 +120,7 @@ source "$REPO/openclaw/lib/deployment.sh"
 MBP_SSH_KEY="$HOME/.ssh/id_mini_to_mbp"
 MBP_HOST="dylans-macbook-pro"
 MBP_SYNC_PAIRS=(
+  "openclaw/bin/presence-crosstown-run.py:.openclaw/bin/presence-crosstown-run.py"
   "openclaw/workspace/scripts/presence-detect.sh:.openclaw/workspace/scripts/presence-detect.sh"
   "openclaw/skills/august-lock/august-cmd.js:.openclaw/august/august-cmd.js"
   "openclaw/rest980/start-10max.sh:.openclaw/rest980/start-10max.sh"
