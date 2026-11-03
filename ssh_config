@@ -68,18 +68,11 @@ Host desktop-jobs
   ConnectTimeout 8
   ConnectionAttempts 1
 
-# MacBook Pro at 19 Crosstown (via Tailscale)
-Host dylans-macbook-pro
+# MacBook Pro at 19 Crosstown (via Tailscale).
+# Both aliases use the machine-specific authentication rules below.
+Host dylans-macbook-pro crosstown-mac
   HostName 100.107.209.85
   User dbochman
-
-# Direct Crosstown access with a machine-specific key.
-Host crosstown-mac
-  HostName 100.107.209.85
-  User dbochman
-  IdentityFile ~/.ssh/id_crosstown
-  IdentitiesOnly yes
-  IdentityAgent none
 
 # Work MacBook Pro (via Tailscale)
 Host dylans-work-mbp
@@ -163,12 +156,12 @@ Match originalhost dylans-work-mbp exec "test -f ~/.ssh/id_work_mbp"
   IdentityAgent none
 
 # On the Mini, id_mini_to_mbp bypasses 1Password agent (hangs under launchd).
-Match originalhost dylans-macbook-pro exec "test -f ~/.ssh/id_mini_to_mbp"
+Match originalhost dylans-macbook-pro,crosstown-mac exec "test -f ~/.ssh/id_mini_to_mbp"
   IdentityFile ~/.ssh/id_mini_to_mbp
   IdentityAgent none
 
 # Dylan's laptop uses a dedicated key for direct Crosstown access.
-Match originalhost dylans-macbook-pro exec "test -f ~/.ssh/id_crosstown"
+Match originalhost dylans-macbook-pro,crosstown-mac exec "test -f ~/.ssh/id_crosstown"
   IdentityFile ~/.ssh/id_crosstown
   IdentitiesOnly yes
   IdentityAgent none

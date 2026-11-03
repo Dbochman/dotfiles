@@ -203,14 +203,16 @@ first-match-wins behavior:
 - `desktop-jobs` reaches the same listener and host key with the separate
   `~/.ssh/id_desktop_compute_jobs` identity. The server binds that identity to
   the fixed `openclaw-job-v1` dispatcher protocol.
-- `dylans-macbook-pro` identifies the Crosstown MBP.
+- `dylans-macbook-pro` and `crosstown-mac` identify the same Crosstown MBP
+  and share the machine-specific authentication rules.
 - On the Mac mini, a `Match originalhost dylans-mac` block selects
   `~/.ssh/id_mini_to_mac`, restricts authentication to that identity, and
   disables the 1Password agent.
-- On the Mac mini, a `Match originalhost dylans-macbook-pro` block selects
+- On the Mac mini, the matching block for both Crosstown aliases selects
   `~/.ssh/id_mini_to_mbp` and disables the 1Password agent.
 - On a workstation with `~/.ssh/id_crosstown`, the matching block selects that
-  dedicated local key. Without it, the default 1Password SSH agent is used.
+  dedicated local key for either alias. If neither local key exists, the
+  default 1Password SSH agent is used.
 - The default `Host *` block retains the 1Password SSH agent for ordinary
   attended access.
 
