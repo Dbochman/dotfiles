@@ -823,6 +823,7 @@ install_openclaw_guarded_helpers() {
   local spec src_rel dst_rel mode label src dst
   local helper_specs=(
     "bin/nest|bin/nest|755|shared Nest CLI"
+    "bin/nest-camera-image|bin/nest-camera-image|755|protected Nest camera request helper"
     "bin/nest-agent|bin/nest-agent|755|isolated Nest agent entry point"
     "bin/nest-oauth.py|bin/nest-oauth.py|644|private Nest OAuth exchange helper"
     "bin/nest_routing.py|bin/nest_routing.py|644|protected Nest caller routing"
@@ -885,6 +886,7 @@ publish_openclaw_standalone_skill_wrappers() {
   local skill_wrapper src dst
   local skill_wrappers=(
     nest-agent
+    nest-camera-image
     airthings
     cielo
     cielo-reauth

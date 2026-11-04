@@ -75,6 +75,7 @@ CABIN_ENTRY_VERIFIER_PLIST = (
 
 REQUIRED_HELPERS = {
     "bin/nest": "shared Nest CLI\n",
+    "bin/nest-camera-image": "protected Nest camera request helper\n",
     "bin/nest-agent": "isolated Nest agent entry point\n",
     "bin/nest-oauth.py": "private Nest OAuth helper\n",
     "bin/nest_routing.py": "protected Nest routing selector\n",
@@ -118,6 +119,7 @@ REQUIRED_HELPERS = {
 }
 STANDALONE_SKILL_WRAPPERS = {
     "nest-agent",
+    "nest-camera-image",
     "airthings",
     "cielo",
     "cielo-reauth",

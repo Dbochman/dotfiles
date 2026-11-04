@@ -39,7 +39,7 @@ adapter; restart only the usage dashboard for this reporting change.
 ## Nest Climate Dashboard
 
 The [Nest OAuth migration](NEST-OAUTH.md) preserves conventional collection and
-history. Separate agent credentials and camera routing are staged independently
+history. Separate agent credentials and camera routing operate independently
 and do not change this dashboard's credential source.
 
 **Port 8550** · [Full spec](NEST-CLIMATE-DASHBOARD.md)

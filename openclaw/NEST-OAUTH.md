@@ -1,7 +1,7 @@
 # Nest OAuth contexts
 
-The separate agent context is staged for migration; deployment and cloud
-enrollment are still pending. The migration gates and rollback are in
+The separate agent context is deployed and active on the Mini as of November 3,
+2026. The migration gates and rollback are in
 [the migration plan](plans/nest-agent-oauth-migration.md).
 
 ## Ownership and routing
@@ -80,9 +80,9 @@ exchange starts, its state is consumed even if the response fails; begin a new
 flow to retry. Failure preserves the previous token bundle.
 
 Call `nest-agent raw` privately to complete activation and verify inventory.
-Do not log device identifiers. Live consent/state forwarding, concurrent access
-under both clients, token renewal, and device controls still require the runbook's
-live validation. Offline tests use fake credentials and transports only.
+Do not log device identifiers. Live consent/state forwarding, concurrent access under both clients, token
+renewal, and the production canaries passed on November 3. Repeat those checks
+when enrolling another identity. Offline tests use fake credentials and transports only.
 
 The conventional flow uses `nest reauth` and `nest reauth --stdin` with the same
 protection. Its successful exchange creates `~/.cache/nest-sdm/oauth-tokens.json`,
@@ -130,6 +130,54 @@ Offline verification on November 3, 2026:
   point to the main checkout, and the Peekaboo nested-symlink guard rejected its
   existing link. Focused installer/deployer fixtures passed; no install was run.
 
-No live OAuth grant, routing, device setting, or running service was changed.
-Google requires an initial device-list call to complete a new grant; that live
-gate remains pending. See [Nest account authorization](https://developers.google.com/nest/device-access/authorize).
+These offline results preceded the production rollout below. Google requires an
+initial device-list call to complete a new grant; it was completed for this
+migration. See [Nest account authorization](https://developers.google.com/nest/device-access/authorize).
+
+## Production rollout — November 3, 2026
+
+- Created **OpenClaw Nest Agent** as a web OAuth client with the AI-agent flag
+  enabled, and linked a second Device Access project. The old client, project,
+  grant, Pub/Sub configuration, and event policy remain in service.
+- The new client registers only `http://127.0.0.1:18797/oauth/callback`. A temporary
+  loopback listener received the callback, checked state, piped it into the
+  deployed exchange, and closed. Future enrollment must start an attended
+  listener on that address or use the full callback URL through private stdin.
+  Do not change this client's redirect without coordinated configuration review.
+- Saved the client, secret, project, redirect, and refresh token in the dedicated
+  1Password item; exact recovery references live in the protected agent directory.
+  Runtime requests remain independent of 1Password.
+- Both grants independently list four thermostats and three cameras. Matching
+  used structure/site names as well as type, room, and custom name to disambiguate
+  the two Living Room thermostats. New camera bindings use discovered resources.
+- A live refresh-token exchange passed. Both site Eco dry runs passed. A
+  same-state `Philly Solarium OFF` command passed with readback; all thermostat
+  modes, Eco states, and setpoints remained unchanged.
+- Kitchen and Living Room Wired returned valid private JPEGs. The production
+  `nest-camera-image` route also captured and cleaned up a Kitchen frame. No
+  media was sent or retained.
+- **Known device exception:** the non-wired Living Room camera returns HTTP 400
+  under both the old and new grants. Its binding remains active. The owner
+  suspects low battery/underspecified USB power; power recovery is outside this
+  credential migration. A successful live capture from this camera is still
+  unverified; this is not an authentication fallback or a cutover regression.
+- Enabled the protected camera routing switch and deployed agent commands in
+  `nest-thermostat`, `cabin-routines`, and `crosstown-routines`. The camera helper
+  and all three model-analysis capture adapters use the isolated context.
+- Reloaded only the reviewer, entry verifier, and event-camera worker. Climate
+  dashboard and event-listener PIDs were preserved; both HTTP health endpoints,
+  conventional inventory, worker configuration checks, and climate collection
+  remained healthy.
+- Published `nest-agent` and `nest-camera-image` in the standalone command path.
+  Explicitly enabled the camera skill's existing disabled entry after its helper
+  canary passed. Gateway `skills.status` confirms all four migrated skills are
+  eligible and model-visible; no gateway restart was needed.
+- Final deployment-contract tests (30), camera-helper tests (13), config
+  validation, and the installer dry run on the production checkout passed. A
+  duplicate top-level `nest-agent` shim was removed so installation and managed
+  pull publish the same canonical runtime command.
+
+Rollback manifests and before-files are owner-only under
+`~/.openclaw/state/rollouts/nest-oauth-20261103-*/`. Roll back routing and skill
+files together; preserve grants and tokens. The unrelated unavailable camera
+should be rechecked after its power supply recovers.

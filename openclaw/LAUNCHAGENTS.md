@@ -145,8 +145,8 @@ See [Cabin Magazine](CABIN-MAGAZINE.md) for state and recovery paths.
 
 ### Nest Event Listener and Cabin Reviewer
 
-The staged [Nest OAuth split](NEST-OAUTH.md) leaves snapshot collection and
-event ingestion on their conventional credentials. After attended cutover,
+The production [Nest OAuth split](NEST-OAUTH.md) leaves snapshot collection and
+event ingestion on their conventional credentials. After the November 3 cutover,
 the reviewer, entry verifier, and home-event camera worker select `nest-agent`
 through protected `nest-agent/routing.json`. The managed pull installs routing
 dependencies before callers and reloads affected workers when the routing

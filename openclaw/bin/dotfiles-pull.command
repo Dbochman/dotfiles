@@ -618,6 +618,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) wrappers: deployed $WRAPPER_DEPLOYED to $BI
 # PATH too.
 STANDALONE_SKILL_WRAPPERS=(
   nest-agent
+  nest-camera-image
   airthings
   cielo
   cielo-reauth

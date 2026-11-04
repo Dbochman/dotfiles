@@ -1,9 +1,11 @@
 # Nest agent OAuth migration
 
-**Status:** Prepared on November 3, 2026. No new credentials or cloud resources
-created; no production routing changed. Authorization hardening and separate
-credential routing are implemented in an isolated checkout; deployment, account
-authorization, and live cutover validation remain. See [operations](../NEST-OAUTH.md).
+**Status:** Deployed and active on November 3, 2026. The new agent client/project,
+protected credentials, token renewal, inventory matching, thermostat canary,
+and two available camera canaries passed. All four migrated skills are visible
+in the running gateway. The non-wired Living Room camera returns HTTP 400 with
+both grants; its suspected power issue is an existing device exception, not a
+migration regression. See [production validation and rollback](../NEST-OAUTH.md).
 
 ## Decision
 
@@ -71,7 +73,7 @@ project resource identifier must never be forwarded directly to the new API.
 There must remain one event publisher/subscription path. Leave Pub/Sub disabled
 on the new Device Access project initially to avoid duplicate household events.
 
-## Implemented support (pending deployment)
+## Implemented and deployed support
 
 1. Add an explicit `nest-agent` wrapper and one validated agent context loader.
    Bind the OAuth client, Device Access project, token directory, and camera
@@ -84,7 +86,7 @@ on the new Device Access project initially to avoid duplicate household events.
 3. Reserve `~/.openclaw/nest-agent/` for the new context: `credentials/` for
    credentials, `tokens/` for refresh/access tokens, and `config/cameras.json`
    for exact camera bindings. Directories must be owner-only, credential files
-   mode 0600, with symlink rejection and atomic writes. These paths are implemented but have not been created in production.
+   mode 0600, with symlink rejection and atomic writes. These paths are now deployed in production.
 4. Key cached tokens to their client/project identity. A fresh legacy access token
    must never satisfy an agent request. Clear inherited `NEST_*` credential and
    cache overrides before loading the selected context. Keep weather/location
@@ -196,6 +198,6 @@ do not assume that restoring configuration can recover a revoked Google grant.
   for any changed LaunchAgents. Update operational docs alongside the eventual
   deployed contract, including explicit conventional versus agent ownership.
 
-Preparation is complete when this design and the baseline are reviewable.
-Production migration remains pending until deployment, new-project consent,
-the validation gates, and cutover are completed.
+Production migration is complete with the documented unavailable-camera
+exception. Preserve this runbook for future reenrollment and rollback; recheck
+the non-wired Living Room camera once power is restored.

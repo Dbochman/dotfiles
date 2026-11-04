@@ -357,7 +357,7 @@ nonzero. `--dry-run` performs only reads. See
 
 ### 1. Nest SDM API
 
-The staged [separate agent context](NEST-OAUTH.md) keeps conventional climate
+The production [separate agent context](NEST-OAUTH.md) keeps conventional climate
 collection on the existing HomeAutomation client/project. Agent commands use
 `nest-agent` only after separate enrollment. Secure `nest reauth --stdin`
 exchanges create a client/project-bound `oauth-tokens.json` bundle that takes
