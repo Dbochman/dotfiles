@@ -3,6 +3,8 @@
 The separate agent context is deployed and active on the Mini as of November 3,
 2026. The migration gates and rollback are in
 [the migration plan](plans/nest-agent-oauth-migration.md).
+The [Google maintenance completion record](GOOGLE-OAUTH-MAINTENANCE.md) also
+covers the inactivity notice and Workspace client classification.
 
 ## Ownership and routing
 
@@ -10,7 +12,7 @@ The separate agent context is deployed and active on the Mini as of November 3,
 | --- | --- |
 | Conventional `nest`, climate snapshot/dashboard, event ingestion | Existing HomeAutomation context, combined protected cache, `~/.cache/nest-sdm/`, existing camera/event policy |
 | Explicit `nest-agent` thermostat/read commands | `~/.openclaw/nest-agent/credentials/client.json`, `tokens/oauth-tokens.json` |
-| Agent still/video helper, activity reviewer, entry verifier, home-event camera worker | Conventional before cutover; `nest-agent` after the protected routing switch is enabled |
+| Agent still/video helper, activity reviewer, entry verifier, home-event camera worker | `nest-agent`; the protected routing switch is enabled in production |
 
 Agent commands ignore inherited credential, token-cache, project, and camera
 policy overrides. Their client **and** project must differ from the conventional
@@ -43,7 +45,7 @@ chmod 700 ~/.openclaw/nest-agent ~/.openclaw/nest-agent/{credentials,tokens,conf
   "client_id": "op://OpenClaw/OpenClaw Nest Agent/clientID",
   "client_secret": "op://OpenClaw/OpenClaw Nest Agent/client_secret",
   "project_id": "op://OpenClaw/OpenClaw Nest Agent/project_id",
-  "redirect_uri": "https://www.google.com"
+  "redirect_uri": "http://127.0.0.1:18797/oauth/callback"
 }
 ```
 

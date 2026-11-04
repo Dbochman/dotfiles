@@ -393,6 +393,9 @@ uses only the new context; installation does not enable routing or enroll secret
 | Script | Description |
 |--------|-------------|
 | `nest` | CLI wrapper for Google Nest SDM API + Open-Meteo weather. Handles OAuth token refresh, protected exact-resource still/video capture, thermostat status, history recording, and dashboard management. |
+| `nest-agent` | Explicit agent entry point with isolated client/project credentials, bound tokens, and exact camera policy; rejects conventional credential fallback. |
+| `nest-oauth.py` | Internal secure callback exchange, private context loading, and atomic token renewal; its token output is for the CLI's private pipe, not diagnostics. |
+| `nest_routing.py` | Reads the protected camera routing switch for all four model-driven capture callers. |
 | `nest-camera-snap.py` | Captures a JPEG frame or bounded H.264 MP4 from a Nest camera via WebRTC (SDM API). Uses `aiortc`, pins the working H.264 profile, and patches Nest's non-standard ICE candidates. |
 | `nest-camera-image` | Creates exact-resource, owner-only, short-lived Nest request stills or 1-30 second videos for native OpenClaw delivery; validates JPEG/MP4 structure and exposes token-scoped cleanup without arbitrary paths. |
 | `nest-activity-reviewer.py` | Presence-gated Cabin reviewer. Captures a temporary live frame, retains only privacy-safe analysis diagnostics, and sends qualifying text through explicit `imsg rpc` bridge transport with a validated receipt and one-attempt-per-hour limit. |

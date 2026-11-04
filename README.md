@@ -38,6 +38,8 @@ Codex loads the rules; validate them locally with
 - `.claude/hooks/` - Pre-tool hooks (no-rm safety, continuous learning)
 
 ### OpenClaw Operations
+- [Google OAuth maintenance](openclaw/GOOGLE-OAUTH-MAINTENANCE.md) - Completed inactivity-notice review, Workspace agent classification, Nest migration, and remaining device follow-up
+- [Nest OAuth operations](openclaw/NEST-OAUTH.md) - Production credential routing, secure authorization, validation, and rollback
 - `openclaw/CRON-JOBS.md` - SQLite-backed cron lifecycle, one-shot safety, and canonical restaurant-coordinator runbook
 - `openclaw/DASHBOARDS.md` - Dashboard catalog, ports, data cadence, and service ownership
 - `openclaw/FINANCIAL-DASHBOARD.md` - Financial source, cache-only Plaid sync, and forecast-baseline contract

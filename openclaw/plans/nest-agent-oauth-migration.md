@@ -6,17 +6,19 @@ and two available camera canaries passed. All four migrated skills are visible
 in the running gateway. The non-wired Living Room camera returns HTTP 400 with
 both grants; its suspected power issue is an existing device exception, not a
 migration regression. See [production validation and rollback](../NEST-OAUTH.md).
+The [Google maintenance completion record](../GOOGLE-OAUTH-MAINTENANCE.md)
+covers the related inactivity and Workspace classification notices.
 
 ## Decision
 
-Create a separate **OpenClaw Nest Agent** OAuth client, marked as agentic, and a
-second Device Access project with the same display name. Keep the existing
+Production now uses a separate **OpenClaw Nest Agent** OAuth client, marked as
+agentic, and a second Device Access project with the same display name. The existing
 **HomeAutomation** client and Device Access project for conventional collection
-and event ingestion. Move agent callers to the new project only after its
-credentials, device permissions, and exact camera bindings pass validation.
+and event ingestion remain in place. Agent callers moved to the new project after
+its credentials, device permissions, and exact camera bindings passed validation.
 
 Google permits up to three Device Access projects per account, each with a
-unique OAuth client. The account currently has one project. The registration
+unique OAuth client. The account had one project before migration and now has two. The registration
 fee is per account, not per additional project; an unexpected payment or new
 terms prompt requires review before proceeding. See Google's
 [project creation requirements](https://developers.google.com/nest/device-access/project/create).
@@ -24,16 +26,16 @@ terms prompt requires review before proceeding. See Google's
 Do **not** replace the OAuth client on the existing Device Access project.
 Google documents that this would invalidate existing access tokens. A second
 project provides a path to validate the new integration alongside the old one;
-successful concurrent authorization still needs to be demonstrated locally.
+concurrent authorization was demonstrated locally for both inventories and
+the available camera canaries.
 See [modifying a project](https://developers.google.com/nest/device-access/project/modify).
 
-The November 11 Workspace MCP deadline does not require a Nest cutover.
-The Workspace client has already been marked agentic. Google requires separate
-clients for agent and conventional workflows; a new agentic client can still
-be created after the existing-client classification becomes fixed. See
+The November 11 AI-agent classification notice was reviewed separately from
+the Nest migration. The Workspace client has been marked agentic, and Nest now
+has separate clients for agent and conventional workflows. See
 [OAuth client classification](https://support.google.com/cloud/answer/15549257?hl=en).
 
-## Verified baseline
+## Verified pre-migration baseline
 
 - Device Access Console lists one active Sandbox project, **HomeAutomation**.
 - Its OAuth client matches the protected `NEST_CLIENT_ID` used by the Mini.
