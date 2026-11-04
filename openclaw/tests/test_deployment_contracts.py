@@ -74,6 +74,10 @@ CABIN_ENTRY_VERIFIER_PLIST = (
 )
 
 REQUIRED_HELPERS = {
+    "bin/nest": "shared Nest CLI\n",
+    "bin/nest-agent": "isolated Nest agent entry point\n",
+    "bin/nest-oauth.py": "private Nest OAuth helper\n",
+    "bin/nest_routing.py": "protected Nest routing selector\n",
     "bin/airthings": "airthings wrapper\n",
     "bin/airthings-history-import": "airthings history importer\n",
     "bin/airthings-snapshot": "airthings snapshot wrapper\n",
@@ -605,7 +609,7 @@ class DeploymentContractTests(unittest.TestCase):
         for relative, contents in REQUIRED_HELPERS.items():
             deployed = destination / relative
             self.assertEqual(deployed.read_text(encoding="utf-8"), contents)
-            mode = 0o644 if relative.startswith("bin/pinchtab-browser-") else 0o755
+            mode = 0o644 if relative.startswith("bin/pinchtab-browser-") or relative in {"bin/nest-oauth.py", "bin/nest_routing.py"} else 0o755
             self.assertEqual(stat.S_IMODE(deployed.stat().st_mode), mode)
         for _, (destination_relative, contents) in REQUIRED_PROTECTED_FILES.items():
             deployed = destination / destination_relative
@@ -1315,7 +1319,7 @@ class DeploymentContractTests(unittest.TestCase):
             'NEST_ACTIVITY_AGENT_LABEL="ai.openclaw.nest-activity-reviewer"',
             pull_text,
         )
-        self.assertIn("NEST_ACTIVITY_RUNTIME_CHANGED=0", pull_text)
+        self.assertIn("NEST_ACTIVITY_RUNTIME_CHANGED=$NEST_ROUTING_CHANGED", pull_text)
         self.assertIn(
             "nest-activity-reviewer.py|nest-activity-reviewer-wrapper.sh",
             pull_text,
@@ -1452,7 +1456,7 @@ class DeploymentContractTests(unittest.TestCase):
             'CABIN_ENTRY_AGENT_LABEL="ai.openclaw.cabin-entry-verifier"',
             pull_text,
         )
-        self.assertIn("CABIN_ENTRY_RUNTIME_CHANGED=0", pull_text)
+        self.assertIn("CABIN_ENTRY_RUNTIME_CHANGED=$NEST_ROUTING_CHANGED", pull_text)
         self.assertIn(
             "cabin-entry-verifier.py|cabin-entry-verifier-wrapper.sh",
             pull_text,

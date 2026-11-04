@@ -118,24 +118,19 @@ The Google OAuth refresh token has been revoked. Common causes:
 2. **User revoked access** or **password change** — need to re-authorize
 
 **Re-auth flow:**
-1. Run `openclaw-refresh-secrets --interactive` so the protected cache contains `NEST_CLIENT_ID`, `NEST_CLIENT_SECRET`, and `NEST_PROJECT_ID`
-2. Open auth URL:
-   ```
-   https://nestservices.google.com/partnerconnections/<PROJECT_ID>/auth?redirect_uri=https://www.google.com&access_type=offline&prompt=consent&client_id=<CLIENT_ID>&response_type=code&scope=https://www.googleapis.com/auth/sdm.service
-   ```
-3. Authorize and copy the `code=` parameter from the redirect URL
-4. Exchange the code:
-   ```bash
-   curl -s -X POST "https://www.googleapis.com/oauth2/v4/token" \
-     -d "client_id=<CLIENT_ID>" \
-     -d "client_secret=<CLIENT_SECRET>" \
-     -d "code=<AUTH_CODE>" \
-     -d "grant_type=authorization_code" \
-     -d "redirect_uri=https://www.google.com"
-   ```
-5. `nest reauth <code-or-redirect-url>` writes the new refresh/access tokens atomically to owner-only local token files
-6. Store the rotated refresh token in its exact 1Password field, then run `openclaw-refresh-secrets --interactive` to update the combined cache
-7. Never write token values with `echo`, print the token response, or call `op` from a LaunchAgent
+1. In an attended terminal, run `openclaw-refresh-secrets --interactive` if the conventional protected credentials need refreshing.
+2. Run `nest reauth` and open its generated consent URL. Keep all required devices selected. The URL carries a single-use state that expires after ten minutes.
+3. Supply the **full callback URL**, including `code` and `state`, to `nest reauth --stdin` through a private pipe. Never put it in command arguments, shell history, chat, or logs. Bare codes and callbacks from a different or expired flow are rejected.
+4. Verify inventory with `nest raw` without logging private device identifiers. New tokens are stored atomically in an owner-only, client/project-bound bundle. A failed exchange preserves the previous tokens; start a new flow before retrying.
+5. Never print token responses or call `op` from a LaunchAgent. See [Nest OAuth operations](../../NEST-OAUTH.md) for hidden terminal input and separate agent enrollment.
+
+**Staged agent migration:** `nest-agent` has a separate client, project, token
+store, and camera policy. Missing configuration fails without conventional
+credential fallback. After enrollment and cutover validation, update this skill's
+agent examples to `nest-agent`; conventional collectors keep `nest`. Agent
+authorization uses `nest-agent reauth` / `nest-agent reauth --stdin` and the
+isolated `openclaw-refresh-secrets --nest-agent --interactive` workflow.
+Do not switch a caller merely because the new binary is present.
 
 ### "Can't link to HomeAutomation"
 The OAuth consent screen is blocking auth. Check:

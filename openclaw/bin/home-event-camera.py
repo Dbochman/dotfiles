@@ -21,6 +21,17 @@ from typing import Any, Callable, Mapping
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from nest_routing import selected_binary  # noqa: E402
+
+
+def _routed_nest_binary(conventional):
+    try:
+        return selected_binary(conventional)
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        raise CameraError("nest_routing_unavailable") from error
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from home_event_bus import (  # noqa: E402
     EventStore,
     HomeEventError,
@@ -208,7 +219,7 @@ class CameraCommands:
         image_path: Path,
     ) -> None:
         if provider == "nest":
-            arguments = [NEST_BIN, "camera", "snap-config", alias, str(image_path)]
+            arguments = [str(_routed_nest_binary(NEST_BIN)), "camera", "snap-config", alias, str(image_path)]
             code = "nest_capture_command_failed"
         elif provider == "ring":
             arguments = [RING_BIN, "_snapshot-bound", site, alias, str(image_path)]

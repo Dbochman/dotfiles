@@ -43,6 +43,17 @@ from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import quote
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from nest_routing import selected_binary  # noqa: E402
+
+
+def _routed_nest_binary(conventional):
+    try:
+        return selected_binary(conventional)
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        raise ReviewerError("nest_routing_unavailable") from error
+
+
 SERVICE_NAME = "nest-activity-reviewer"
 SCHEMA_VERSION = 2
 NEST_LISTENER_SCHEMA_VERSION = 3
@@ -937,7 +948,7 @@ class ProcessCommands:
     def capture(self, image_path: Path) -> None:
         self._run(
             [
-                str(NEST_BIN),
+                str(_routed_nest_binary(NEST_BIN)),
                 "camera",
                 "snap-config",
                 CAMERA_ALIAS,
@@ -1755,7 +1766,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 code="database_permissions_invalid",
             )
             ListenerOutbox(settings.database_path).max_id()
-            for binary in (NEST_BIN, OPENCLAW_BIN, IMSG_BIN):
+            for binary in (_routed_nest_binary(NEST_BIN), OPENCLAW_BIN, IMSG_BIN):
                 if not binary.is_file() or not os.access(binary, os.X_OK):
                     raise ReviewerError("runtime_dependency_unavailable")
             if (

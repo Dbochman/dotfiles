@@ -37,6 +37,17 @@ import time
 from typing import Any, Callable, Mapping, Sequence
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from nest_routing import selected_binary  # noqa: E402
+
+
+def _routed_nest_binary(conventional):
+    try:
+        return selected_binary(conventional)
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        raise VerifierError("nest_routing_unavailable") from error
+
+
 BIN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BIN_DIR))
 
@@ -919,7 +930,7 @@ class VerifierCommands(reviewer.ProcessCommands):
     def capture(self, image_path: Path) -> None:
         self._run(
             [
-                str(NEST_BIN),
+                str(_routed_nest_binary(NEST_BIN)),
                 "camera",
                 "snap-config",
                 CAMERA_ALIAS,
@@ -1441,7 +1452,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         verifier = CabinEntryVerifier(settings)
         if arguments.command == "check-config":
             verifier.initialize()
-            for binary in (NEST_BIN, OPENCLAW_BIN, IMSG_BIN):
+            for binary in (_routed_nest_binary(NEST_BIN), OPENCLAW_BIN, IMSG_BIN):
                 if not binary.is_file() or not os.access(binary, os.X_OK):
                     raise VerifierError("runtime_dependency_unavailable")
             print(

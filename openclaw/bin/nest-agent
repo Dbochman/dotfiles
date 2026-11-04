@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Explicit agent entry point. Credentials are loaded only by nest-oauth.py.
+set -euo pipefail
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ "${1:-}" == "configure" ]]; then
+  [[ "$#" -eq 2 && "$2" == "--interactive" ]] || {
+    echo 'Usage: nest-agent configure --interactive' >&2; exit 2;
+  }
+  exec /usr/bin/python3 "$SCRIPT_DIR/nest-oauth.py" configure --context agent
+fi
+export NEST_AUTH_CONTEXT=agent
+exec /bin/bash "$SCRIPT_DIR/nest" "$@"

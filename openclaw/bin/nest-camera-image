@@ -20,6 +20,17 @@ import time
 from typing import Callable
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from nest_routing import selected_binary  # noqa: E402
+
+
+def _routed_nest_binary(conventional):
+    try:
+        return selected_binary(conventional)
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        raise PublicError("nest_routing_unavailable") from error
+
+
 ALLOWED_ALIASES = frozenset(("Kitchen", "Living Room", "Living Room Wired"))
 DEFAULT_TTL_SECONDS = 15 * 60
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -44,7 +55,7 @@ def _media_directory() -> Path:
 
 
 def _nest_binary() -> Path:
-    path = Path.home() / ".openclaw" / "bin" / "nest"
+    path = _routed_nest_binary(Path.home() / ".openclaw" / "bin" / "nest")
     try:
         metadata = path.lstat()
     except OSError as error:

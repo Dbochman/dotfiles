@@ -357,6 +357,12 @@ nonzero. `--dry-run` performs only reads. See
 
 ### 1. Nest SDM API
 
+The staged [separate agent context](NEST-OAUTH.md) keeps conventional climate
+collection on the existing HomeAutomation client/project. Agent commands use
+`nest-agent` only after separate enrollment. Secure `nest reauth --stdin`
+exchanges create a client/project-bound `oauth-tokens.json` bundle that takes
+priority over legacy token files; callbacks and secrets are never CLI arguments.
+
 - **Base URL:** `https://smartdevicemanagement.googleapis.com/v1/enterprises/{project_id}`
 - **Auth:** OAuth 2.0 bearer token (60-min expiry, auto-refresh)
 - **Credentials:** 1Password vault "OpenClaw", item "Google Nest" (fields: `clientID`, `client_secret`, `refresh_token`, `project_id`)

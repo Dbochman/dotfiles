@@ -385,6 +385,11 @@ repositories together; see [BoA operations](../FINANCIAL-DASHBOARD.md).
 
 ### Nest Integration
 
+See [Nest OAuth contexts](../NEST-OAUTH.md) for secure callback exchange,
+isolated agent enrollment, and the protected camera-routing cutover switch.
+Deploy `nest-oauth.py` and `nest_routing.py` before their callers. `nest-agent`
+uses only the new context; installation does not enable routing or enroll secrets.
+
 | Script | Description |
 |--------|-------------|
 | `nest` | CLI wrapper for Google Nest SDM API + Open-Meteo weather. Handles OAuth token refresh, protected exact-resource still/video capture, thermostat status, history recording, and dashboard management. |

@@ -822,6 +822,10 @@ install_openclaw_guarded_helpers() {
   local openclaw_home="${2%/}"
   local spec src_rel dst_rel mode label src dst
   local helper_specs=(
+    "bin/nest|bin/nest|755|shared Nest CLI"
+    "bin/nest-agent|bin/nest-agent|755|isolated Nest agent entry point"
+    "bin/nest-oauth.py|bin/nest-oauth.py|644|private Nest OAuth exchange helper"
+    "bin/nest_routing.py|bin/nest_routing.py|644|protected Nest caller routing"
     "bin/airthings|bin/airthings|755|Airthings local monitor wrapper"
     "bin/airthings-history-import|bin/airthings-history-import|755|Airthings attended history importer"
     "bin/airthings-snapshot|bin/airthings-snapshot|755|Airthings scheduled snapshot wrapper"

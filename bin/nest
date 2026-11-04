@@ -12,6 +12,8 @@ export CURL_CA_BUNDLE="$SSL_CERT_FILE"
 # LaunchAgent-safe credential sources. API credentials come from the protected
 # OpenClaw cache; only a real interactive terminal may fall back to exact-field
 # `op read` calls supplied through OP_REF_NEST_* environment variables.
+AUTH_CONTEXT="${NEST_AUTH_CONTEXT:-conventional}"
+case "$AUTH_CONTEXT" in conventional|agent) ;; *) echo "Invalid Nest credential context" >&2; exit 2 ;; esac
 CACHE_DIR="${NEST_CACHE_DIR:-${HOME}/.cache/nest-sdm}"
 TOKEN_TTL=3300
 SECRETS_CACHE="${OPENCLAW_SECRETS_CACHE:-${HOME}/.openclaw/.secrets-cache}"
@@ -36,6 +38,44 @@ LOCATION_FILE="${HOME}/.openclaw/nest-location.conf"
 # unattended capture path reads this protected file instead of mutable Google
 # room or custom display names.
 NEST_EVENT_CAMERA_CONFIG="${NEST_EVENT_CONFIG:-${HOME}/.openclaw/nest-events/config/cameras.json}"
+
+# Resolve the helper relative to this source, including the Homebrew symlink.
+NEST_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$NEST_SOURCE" ]]; do
+  NEST_SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$NEST_SOURCE")" && pwd)
+  NEST_SOURCE=$(readlink "$NEST_SOURCE")
+  [[ "$NEST_SOURCE" = /* ]] || NEST_SOURCE="$NEST_SOURCE_DIR/$NEST_SOURCE"
+done
+NEST_SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$NEST_SOURCE")" && pwd)
+NEST_OAUTH_HELPER="$NEST_SOURCE_DIR/nest-oauth.py"
+if [[ ! -f "$NEST_OAUTH_HELPER" && -f "$NEST_SOURCE_DIR/../openclaw/bin/nest-oauth.py" ]]; then
+  NEST_OAUTH_HELPER="$NEST_SOURCE_DIR/../openclaw/bin/nest-oauth.py"
+fi
+if [[ "$AUTH_CONTEXT" == agent ]]; then
+  unset NEST_CLIENT_ID NEST_CLIENT_SECRET NEST_REFRESH_TOKEN NEST_PROJECT_ID
+  unset NEST_CACHE_DIR NEST_REAUTH_REDIRECT_URI NEST_EVENT_CONFIG
+  CACHE_DIR="$HOME/.openclaw/nest-agent/tokens"
+  NEST_EVENT_CAMERA_CONFIG="$HOME/.openclaw/nest-agent/config/cameras.json"
+fi
+
+_oauth_helper() {
+  if [[ "$AUTH_CONTEXT" == agent ]]; then
+    /usr/bin/python3 "$NEST_OAUTH_HELPER" "$@" --context agent
+    return
+  fi
+  local client_id client_secret project_id refresh_token=""
+  client_id=$(_nest_credential NEST_CLIENT_ID) || return
+  client_secret=$(_nest_credential NEST_CLIENT_SECRET) || return
+  project_id=$(_nest_credential NEST_PROJECT_ID) || return
+  # A bound token bundle takes priority over this optional legacy seed.
+  if [[ "$1" == token && ! -e "$CACHE_DIR/oauth-tokens.json" ]]; then
+    refresh_token=$(_nest_credential NEST_REFRESH_TOKEN) || return
+  fi
+  /usr/bin/python3 "$NEST_OAUTH_HELPER" "$@" --context conventional 3< <(
+    printf '%s\0' "$client_id" "$client_secret" "$project_id" "$CACHE_DIR" \
+      "${NEST_REAUTH_REDIRECT_URI:-https://www.google.com}" "$refresh_token"
+  )
+}
 
 _validate_coordinates() {
   python3 - "$1" "$2" <<'PY'
@@ -197,6 +237,7 @@ _interactive_op_read() {
 }
 
 _nest_credential() {
+  [[ "$AUTH_CONTEXT" == conventional ]] || { echo "Legacy Nest credential access refused" >&2; return 1; }
   local key="$1"
   local value
 
@@ -252,6 +293,10 @@ PY
 )
 
 _get_access_token() {
+  if [[ "$AUTH_CONTEXT" == agent || -e "$CACHE_DIR/oauth-tokens.json" || -L "$CACHE_DIR/oauth-tokens.json" ]]; then
+    _oauth_helper token
+    return
+  fi
   mkdir -p "$CACHE_DIR"
   chmod 700 "$CACHE_DIR"
   local token_cache="$CACHE_DIR/access_token"
@@ -327,6 +372,7 @@ sys.stdout.write(token)
 }
 
 _project_id() {
+  if [[ "$AUTH_CONTEXT" == agent ]]; then _oauth_helper project; return; fi
   _nest_credential NEST_PROJECT_ID
 }
 
@@ -1343,107 +1389,11 @@ HELP
 }
 
 cmd_reauth() {
-  # Re-run Google Device Access OAuth consent to add newly-paired Nest devices.
-  # Required whenever a device is added in the Google Home app after initial setup —
-  # SDM only exposes devices that were ticked on the consent screen at grant time.
-  #
-  # Two-step (non-interactive) flow so it works fine over SSH/`!` shell-out:
-  #   1) `nest reauth`             → prints the consent URL
-  #   2) `nest reauth <code-or-redirect-url>` → exchanges code for tokens
-  local client_id client_secret project_id redirect_uri code resp
-  local refresh_token access_token input="${1:-}"
-
-  client_id=$(_nest_credential NEST_CLIENT_ID)
-  client_secret=$(_nest_credential NEST_CLIENT_SECRET)
-  project_id=$(_nest_credential NEST_PROJECT_ID)
-  redirect_uri="${NEST_REAUTH_REDIRECT_URI:-https://www.google.com}"
-
-  if [[ -z "$client_id" || -z "$project_id" || -z "$client_secret" ]]; then
-    echo "Missing client_id, client_secret, or project_id from the protected cache" >&2
-    echo "Run openclaw-refresh-secrets --interactive before retrying" >&2
-    exit 1
-  fi
-
-  if [[ -z "$input" ]]; then
-    cat <<EOF
-1) Open this URL in a browser. On the consent screen, tick EVERY device you
-   want SDM to see — both previously-authorized AND any newly-added ones.
-   Anything left unticked becomes invisible to the API.
-
-   https://nestservices.google.com/partnerconnections/${project_id}/auth?redirect_uri=${redirect_uri}&access_type=offline&prompt=consent&client_id=${client_id}&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fsdm.service
-
-2) After consenting, the browser will redirect to a URL like:
-     ${redirect_uri}/?code=<LONG_CODE>&scope=...
-
-3) Run:  nest reauth '<that-redirect-URL-or-bare-code>'
-EOF
-    return 0
-  fi
-
-  # Extract code from full URL or accept bare code
-  if [[ "$input" == *"code="* ]]; then
-    code="${input#*code=}"
-    code="${code%%&*}"
-  else
-    code="$input"
-  fi
-
-  if [[ -z "$code" ]]; then
-    echo "No code provided" >&2
-    exit 1
-  fi
-
-  echo "Exchanging code for tokens..."
-  if ! resp=$(curl -sS --fail-with-body -X POST "https://www.googleapis.com/oauth2/v4/token" \
-    -d "client_id=${client_id}" \
-    -d "client_secret=${client_secret}" \
-    -d "code=${code}" \
-    -d "grant_type=authorization_code" \
-    --data-urlencode "redirect_uri=${redirect_uri}"); then
-    echo "Failed to exchange the Nest authorization code" >&2
-    return 1
-  fi
-
-  local token_pair
-  if ! token_pair=$(printf '%s' "$resp" | python3 -c '
-import json
-import sys
-
-try:
-    data = json.load(sys.stdin)
-except (json.JSONDecodeError, UnicodeDecodeError):
-    sys.exit(1)
-if not isinstance(data, dict) or "error" in data:
-    sys.exit(1)
-refresh = data.get("refresh_token")
-access = data.get("access_token")
-if not all(isinstance(value, str) and value and not any(char.isspace() for char in value) for value in (refresh, access)):
-    sys.exit(1)
-sys.stdout.write(refresh + "\t" + access)
-' 2>/dev/null); then
-    echo "Failed to obtain a Nest refresh token" >&2
-    return 1
-  fi
-  IFS=$'\t' read -r refresh_token access_token <<< "$token_pair"
-
-  mkdir -p "$CACHE_DIR"
-  _write_private_value_file "$CACHE_DIR/refresh_token" "$refresh_token"
-  _write_private_value_file "$CACHE_DIR/access_token" "$access_token"
-
-  echo "✓ New refresh_token + access_token saved to $CACHE_DIR"
-  echo "  (Update 1Password 'Google Nest' item's refresh_token field if you"
-  echo "   want it in the combined cache, run openclaw-refresh-secrets --interactive.)"
-  echo
-  echo "Visible devices now:"
-  _api GET /devices | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for d in data.get('devices', []):
-    t = d['type'].split('.')[-1]
-    name = d['parentRelations'][0].get('displayName') if d.get('parentRelations') else '?'
-    custom = d['traits'].get('sdm.devices.traits.Info', {}).get('customName') or ''
-    print(f'  {t:14}  {name:20}  {custom}')
-"
+  case "${1:-}" in
+    "") [[ "$#" -eq 0 ]] || return 2; _oauth_helper begin ;;
+    --stdin) [[ "$#" -eq 1 ]] || return 2; _oauth_helper finish ;;
+    *) echo "Use nest reauth, then nest reauth --stdin with the full callback URL on stdin. Codes in arguments are refused." >&2; return 2 ;;
+  esac
 }
 
 _capture_camera_id() {
@@ -1732,6 +1682,18 @@ cmd_raw() {
   _api GET /devices | python3 -m json.tool
 }
 
+if [[ "$AUTH_CONTEXT" == agent ]]; then
+  case "${1:-help}" in
+    help|--help|-h)
+      echo 'Usage: nest-agent status|raw|set|mode|eco|eco-site|camera snap-config|camera clip-config|reauth [--stdin]'
+      exit 0 ;;
+    status|raw|set|mode|eco|eco-site|reauth) ;;
+    camera) case "${2:-}" in snap-config|clip-config) ;; *) echo 'Unsupported Nest agent camera command' >&2; exit 2 ;; esac ;;
+    *) echo 'Unsupported Nest agent command' >&2; exit 2 ;;
+  esac
+  _oauth_helper validate
+fi
+
 case "${1:-help}" in
   status)           cmd_status ;;
   weather)          cmd_weather ;;
@@ -1784,7 +1746,7 @@ case "${1:-help}" in
   history)          cmd_history "${2:-24}" "${3:-}" ;;
   dashboard)        cmd_dashboard "${2:-open}" ;;
   raw)              cmd_raw ;;
-  reauth)           cmd_reauth "${2:-}" ;;
+  reauth)           cmd_reauth "${@:2}" ;;
   help|--help|-h)   cmd_help ;;
   *)                echo "Unknown command: $1. Run 'nest help'." >&2; exit 1 ;;
 esac

@@ -567,6 +567,15 @@ HOME_EVENT_CAMERA_CHANGED=0
 HOME_EVENT_VACANCY_CHANGED=0
 HOME_EVENT_WHISKER_CHANGED=0
 HOME_EVENT_ACTION_CHANGED=0
+# These modules must be installed before any Nest caller imports them.
+NEST_ROUTING_CHANGED=0
+if [ ! -f "$BIN_DST/nest_routing.py" ] || ! cmp -s "$BIN_SRC/nest_routing.py" "$BIN_DST/nest_routing.py"; then
+  NEST_ROUTING_CHANGED=1
+  HOME_EVENT_CAMERA_CHANGED=1
+fi
+atomic_install_managed_file "$BIN_SRC/nest-oauth.py" "$BIN_DST/nest-oauth.py" 644
+atomic_install_managed_file "$BIN_SRC/nest_routing.py" "$BIN_DST/nest_routing.py" 644
+
 for wrapper in "$BIN_SRC"/*; do
   [ -f "$wrapper" ] || continue
   fname=$(basename "$wrapper")
@@ -645,8 +654,8 @@ fi
 # Deploy dashboard and utility scripts to ~/.openclaw/bin/
 SCRIPTS_DEPLOYED=0
 NEST_EVENT_RUNTIME_CHANGED=0
-NEST_ACTIVITY_RUNTIME_CHANGED=0
-CABIN_ENTRY_RUNTIME_CHANGED=0
+NEST_ACTIVITY_RUNTIME_CHANGED=$NEST_ROUTING_CHANGED
+CABIN_ENTRY_RUNTIME_CHANGED=$NEST_ROUTING_CHANGED
 CAT_DASHBOARD_RUNTIME_CHANGED=0
 ROOMBA_DASHBOARD_RUNTIME_CHANGED=0
 for script in "$BIN_SRC"/*.py "$BIN_SRC"/*.sh; do

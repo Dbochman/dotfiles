@@ -145,6 +145,13 @@ See [Cabin Magazine](CABIN-MAGAZINE.md) for state and recovery paths.
 
 ### Nest Event Listener and Cabin Reviewer
 
+The staged [Nest OAuth split](NEST-OAUTH.md) leaves snapshot collection and
+event ingestion on their conventional credentials. After attended cutover,
+the reviewer, entry verifier, and home-event camera worker select `nest-agent`
+through protected `nest-agent/routing.json`. The managed pull installs routing
+dependencies before callers and reloads affected workers when the routing
+module changes. It never enrolls credentials or enables the switch.
+
 `ai.openclaw.nest-event-listener` is a Mac Mini service with one pull
 subscription covering the authorized Cabin and Crosstown cameras. It remains
 shadow-only: motion/person deliveries are validated,

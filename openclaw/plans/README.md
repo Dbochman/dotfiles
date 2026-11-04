@@ -6,6 +6,7 @@ Implementation plans, specs, and proposals for OpenClaw integrations.
 
 | Plan | Summary |
 |------|---------|
+| [nest-agent-oauth-migration](nest-agent-oauth-migration.md) | Prepared parallel Nest agent client/project migration, isolated credentials, caller routing, validation, and rollback |
 | [post-upgrade-review-2026-10-11](post-upgrade-review-2026-10-11.md) | Claude authentication/permissions audit, plugin provenance follow-up, and protected backup review |
 | [maintenance-repairs-2026-10](maintenance-repairs-2026-10.md) | Queued dashboard, cron deployment, authentication, finance, Roomba, and heartbeat repairs from the October 10 review |
 | [camera-dashboard](camera-dashboard.md) | Image-first Cabin/Crosstown camera wall with exact still capture, protected caching, and session-scoped refresh |
