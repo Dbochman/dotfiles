@@ -1,8 +1,8 @@
 ---
 name: crosstown-routines
 description: Run Crosstown (Boston) routines like goodnight, away, and welcome home. Use when the user says goodnight, good night, bedtime, going to bed, leaving, heading out, we're home, or asks to run a routine AND they are at Crosstown (Boston).
-allowed-tools: Bash(hue:*) Bash(nest:*) Bash(speaker:*) Bash(crosstown-roomba:*) Bash(cielo:*) Bash(august:*) Bash(samsung-tv:*)
-metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest","crosstown-roomba","cielo","august","samsung-tv"]}}}
+allowed-tools: Bash(hue:*) Bash(nest-agent:*) Bash(speaker:*) Bash(crosstown-roomba:*) Bash(cielo:*) Bash(august:*) Bash(samsung-tv:*)
+metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest-agent","crosstown-roomba","cielo","august","samsung-tv"]}}}
 ---
 
 # Crosstown Routines (Boston)
@@ -20,7 +20,7 @@ Predefined routines for the **Crosstown (Boston — Crosstown residence)** home.
 Steps:
 1. Turn off all lights except bedroom: `hue --crosstown all-off`
 2. Set bedroom to dim warm light: `hue --crosstown on bedroom 5` then `hue --crosstown color bedroom warm`
-3. Set thermostat to eco: `nest eco crosstown on`
+3. Set thermostat to eco: `nest-agent eco crosstown on`
 4. Stop speakers: `speaker stop bedroom` and `speaker stop living`
 5. Turn off non-bedroom AC units: `cielo off living` (leave bedroom Cielo as-is)
 6. Turn off TV: `samsung-tv power off`
@@ -34,7 +34,7 @@ Confirm: "Goodnight! Lights off, thermostat in eco, speakers stopped, TV off, do
 
 Steps:
 1. Turn off all lights: `hue --crosstown all-off`
-2. Set thermostat to eco: `nest eco crosstown on`
+2. Set thermostat to eco: `nest-agent eco crosstown on`
 3. Stop speakers: `speaker stop bedroom` and `speaker stop living`
 4. Lock front door: `august lock`
 5. Turn off all AC units: `cielo off all`
@@ -49,8 +49,8 @@ Confirm: "Away mode set. All lights off, thermostat in eco, audio stopped, door 
 Steps:
 1. Turn on main lights: `hue --crosstown on entryway 100` then `hue --crosstown on kitchen 80` then `hue --crosstown on living 60`
 2. Set warm color: `hue --crosstown color kitchen warm` then `hue --crosstown color living warm`
-3. Disable eco: `nest eco crosstown off`
-4. Set comfortable temperature: `nest set crosstown 70`
+3. Disable eco: `nest-agent eco crosstown off`
+4. Set comfortable temperature: `nest-agent set crosstown 70`
 5. Dock both Roombas: `crosstown-roomba dock all`
 6. Restore AC to comfortable: `cielo on living --mode cool --temp 72` (summer) or skip (winter)
 
@@ -76,10 +76,10 @@ Steps:
 1. Turn on kitchen and living room lights: `hue --crosstown on kitchen 100` then `hue --crosstown on living 80`
 2. Set daylight color: `hue --crosstown color kitchen daylight` then `hue --crosstown color living daylight`
 3. Turn on entryway: `hue --crosstown on entryway 100`
-4. Disable eco: `nest eco crosstown off`
-5. Check thermostat status: `nest status`
+4. Disable eco: `nest-agent eco crosstown off`
+5. Check thermostat status: `nest-agent status`
 
-Confirm with current temperature readings from `nest status`.
+Confirm with current temperature readings from `nest-agent status`.
 
 ## Custom Adjustments
 

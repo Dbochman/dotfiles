@@ -884,6 +884,7 @@ publish_openclaw_standalone_skill_wrappers() {
   local standalone_bin_dir="${OPENCLAW_STANDALONE_BIN_DIR:-/opt/homebrew/bin}"
   local skill_wrapper src dst
   local skill_wrappers=(
+    nest-agent
     airthings
     cielo
     cielo-reauth

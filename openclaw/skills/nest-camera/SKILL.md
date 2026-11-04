@@ -11,6 +11,10 @@ Capture fresh, ephemeral stills or short live clips through the protected
 exact-resource camera configuration. Keep this request path separate from
 automatic Nest event monitoring and presence mode.
 
+The production helper routes through `nest-agent` and the separate agent camera
+policy. Authentication or binding failure must stop capture; never retry using
+conventional `nest` credentials or the event listener’s resource identifiers.
+
 ## Authorization
 
 - Proceed only when source metadata explicitly identifies both a direct

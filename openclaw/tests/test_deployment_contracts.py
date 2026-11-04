@@ -117,6 +117,7 @@ REQUIRED_HELPERS = {
     "workspace/scripts/grab-cielo-tokens.py": "cielo capture helper\n",
 }
 STANDALONE_SKILL_WRAPPERS = {
+    "nest-agent",
     "airthings",
     "cielo",
     "cielo-reauth",

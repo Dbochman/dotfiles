@@ -1,8 +1,8 @@
 ---
 name: cabin-routines
 description: Run cabin routines like goodnight, away, and welcome home. Use when the user says goodnight, good night, bedtime, going to bed, leaving, heading out, we're home, or asks to run a routine.
-allowed-tools: Bash(hue:*) Bash(nest:*) Bash(catt:*) Bash(spogo:*) Bash(roomba:*)
-metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest"]}}}
+allowed-tools: Bash(hue:*) Bash(nest-agent:*) Bash(catt:*) Bash(spogo:*) Bash(roomba:*)
+metadata: {"openclaw":{"emoji":"H","requires":{"bins":["hue","nest-agent"]}}}
 ---
 
 # Cabin Routines (Philly)
@@ -18,7 +18,7 @@ Predefined routines for the **Cabin (Philly)** home. These only apply to Cabin â
 Steps:
 1. Turn off all lights except bedroom: `hue --cabin all-off`
 2. Set bedroom to dim warm light: `hue --cabin on bedroom 5` then `hue --cabin color bedroom warm`
-3. Set all thermostats to eco: `nest eco solarium on` then `nest eco "philly living" on` then `nest eco bedroom on`
+3. Set all thermostats to eco: `nest-agent eco solarium on` then `nest-agent eco "philly living" on` then `nest-agent eco bedroom on`
 4. Stop all speakers: `catt -d "Kitchen speaker" stop` and `catt -d "Bedroom speaker" stop`
 5. Pause Spotify: `spogo pause`
 
@@ -30,7 +30,7 @@ Confirm: "Goodnight! Lights off, thermostats in eco mode, speakers stopped. Bedr
 
 Steps:
 1. Turn off all lights: `hue --cabin all-off`
-2. Set all thermostats to eco: `nest eco solarium on` then `nest eco "philly living" on` then `nest eco bedroom on`
+2. Set all thermostats to eco: `nest-agent eco solarium on` then `nest-agent eco "philly living" on` then `nest-agent eco bedroom on`
 3. Stop all speakers: `catt -d "Kitchen speaker" stop` and `catt -d "Bedroom speaker" stop`
 4. Pause Spotify: `spogo pause`
 
@@ -45,8 +45,8 @@ Confirm: "Away mode set. All lights off, thermostats in eco, audio stopped. Floo
 Steps:
 1. Turn on main lights: `hue --cabin on kitchen 80` then `hue --cabin on living 60` then `hue --cabin on hallway 100`
 2. Set warm color: `hue --cabin color kitchen warm` then `hue --cabin color living warm`
-3. Disable eco on main rooms: `nest eco "philly living" off` then `nest eco bedroom off`
-4. Set comfortable temperature: `nest set "philly living" 70` then `nest set bedroom 68`
+3. Disable eco on main rooms: `nest-agent eco "philly living" off` then `nest-agent eco bedroom off`
+4. Set comfortable temperature: `nest-agent set "philly living" 70` then `nest-agent set bedroom 68`
 
 5. Dock both Roombas: `roomba dock floomba` then `roomba dock philly`
 
@@ -72,10 +72,10 @@ Steps:
 1. Turn on kitchen and living room lights: `hue --cabin on kitchen 100` then `hue --cabin on living 80`
 2. Set daylight color: `hue --cabin color kitchen daylight` then `hue --cabin color living daylight`
 3. Turn on hallway: `hue --cabin on hallway 100`
-4. Disable eco on all rooms: `nest eco solarium off` then `nest eco "philly living" off` then `nest eco bedroom off`
-5. Check thermostat status: `nest status`
+4. Disable eco on all rooms: `nest-agent eco solarium off` then `nest-agent eco "philly living" off` then `nest-agent eco bedroom off`
+5. Check thermostat status: `nest-agent status`
 
-Confirm with current temperature readings from `nest status`.
+Confirm with current temperature readings from `nest-agent status`.
 
 ## Custom Adjustments
 
