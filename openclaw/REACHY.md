@@ -70,6 +70,20 @@ Reachy's loopback port `18789`.
 The Crosstown MBP has AC system sleep disabled with `sudo pmset -c sleep 0`.
 Display sleep and battery sleep remain enabled.
 
+### Recovery when Tailscale is unavailable
+
+As of November 8, 2026, the Cabin Mini and Crosstown MBP have bidirectional
+ZeroTier SSH recovery. From the Mini, use `ssh crosstown-recovery` to reach the
+MBP; see the [SSH recovery runbook](../docs/ssh-host-access.md#cabin-and-crosstown-recovery-over-zerotier)
+for reverse access and host-key handling. The recovery session reached
+Reachy's LAN SSH port while Crosstown's Tailscale was stopped.
+
+The gateway upstream still targets the Mini over Tailscale, and the Mini's
+`reachyctl` relay still selects the normal Crosstown alias. Neither switches
+automatically to ZeroTier. Use the recovery shell to repair the primary path;
+an end-to-end Reachy application failover has not been tested. Keep gateway
+listeners on loopback during recovery.
+
 ## Voice and turn ownership
 
 ClawBody's deployed `.env` selects:
@@ -287,7 +301,7 @@ and SSH recovery procedure.
 
 - Keep OpenClaw bound to `127.0.0.1:18789` and `::1:18789`.
 - Keep both SSH forwards bound to loopback; do not publish gateway port `18789`
-  on the LAN or Tailscale.
+  on the LAN, Tailscale, or ZeroTier.
 - Use `BatchMode`, `IdentityAgent=none`, strict host-key checking, keepalives,
   and the dedicated Reachy identity in the persistent services.
 - Keep the Reachy `.env`, control socket, relay selector, and continuity state

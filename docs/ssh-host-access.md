@@ -2,8 +2,9 @@
 
 This document records the private SSH topology used by Dylan's workstation,
 the OpenClaw Mac mini, the RTX 5090 desktop, the always-on Crosstown MacBook
-Pro, and Reachy Mini. It describes the deployed state as verified on September
-6, 2026. Private keys,
+Pro, and Reachy Mini. The base topology was verified September 6, 2026;
+bidirectional Cabin–Crosstown ZeroTier recovery was added and tested November
+8, 2026. Private keys,
 `authorized_keys`, `known_hosts`, and machine-specific overrides remain local to
 their hosts and must never be committed.
 
@@ -19,9 +20,9 @@ below were not changed by that rollout.
 | Role | SSH endpoint | Account | Network |
 | --- | --- | --- | --- |
 | Dylan's workstation | `dylans-mac` | `dylanbochman` | Tailscale |
-| OpenClaw Mac mini | `dylans-mac-mini` / `100.104.114.1` | `dbochman` | Tailscale and Cabin LAN |
+| OpenClaw Mac mini | Primary: `dylans-mac-mini` / `100.104.114.1`; recovery: `10.23.154.246` | `dbochman` | Tailscale, Cabin LAN, and ZeroTier recovery |
 | RTX 5090 desktop (Windows + Ubuntu WSL) | Mini-local `desktop-compute` (trusted) and `desktop-jobs` (restricted) / `127.0.0.1:22022` | `openclaw` | Reverse SSH over Tailscale |
-| Crosstown MBP | `dylans-macbook-pro` / `100.107.209.85` | `dbochman` | Tailscale and `192.168.165.0/24` |
+| Crosstown MBP | Primary: `dylans-macbook-pro` / `100.107.209.85`; recovery: `crosstown-recovery` / `10.23.154.208` | `dbochman` | Tailscale, Crosstown LAN (`192.168.165.0/24`), and ZeroTier recovery |
 | Reachy Mini | `192.168.165.129` | `pollen` | Crosstown LAN |
 
 The workstation and Crosstown MBP may both report the local hostname
@@ -33,6 +34,11 @@ tracked aliases, exact Tailscale IPs, or Reachy's exact LAN IP shown above.
 Configured November 8, 2026. Both Macs have the official ZeroTier One 1.16.2
 package and its system LaunchDaemon. The Cabin Mini uses Starlink; Crosstown
 uses AmpliFi. The owner's phone is separately paired with Crosstown Teleport.
+
+Use this path for manual administration when Tailscale cannot connect. It is
+available in both directions without changing either site's normal internet
+route. The phone's Teleport pairing provides a separate way into Crosstown;
+the Mac-to-Mac backup uses ZeroTier, not the Teleport app.
 
 From the Cabin Mini:
 
@@ -87,6 +93,38 @@ A plain `tailscale up` can refuse to reconnect because this non-default setting
 must be supplied explicitly. Arm and verify an independent restoration path
 before future disconnection tests; do not reset Tailscale preferences.
 
+### Health checks and failure handling
+
+On either Mac, inspect the vendor-managed system service and network status:
+
+```bash
+launchctl print system/com.zerotier.one | grep -E 'state =|pid =|last exit code'
+sudo /usr/local/bin/zerotier-cli info
+sudo /usr/local/bin/zerotier-cli listnetworks
+```
+
+The recovery network should show `OK` and `PRIVATE`, with that Mac's expected
+address. `ONLINE` or `TUNNELED` alone does not prove the peer is reachable. From
+the Mini, verify a fresh authenticated connection without SSH multiplexing:
+
+```bash
+ssh -o ControlMaster=no -o ControlPath=none crosstown-recovery 'id -un'
+```
+
+Use the reverse command above from Crosstown to check the Mini. Ping is not a
+reliable acceptance test here: Crosstown accepted SSH during verification
+while inbound ICMP timed out. If SSH fails, check service state, network
+authorization, assigned addresses, and the selected SSH identity before
+changing routes or firewall settings. A newly installed client may need time
+to establish its peer path.
+
+The existing Reachy gateway forwards, presence/Taildrop transfers, and other
+Tailscale-based jobs do not switch to ZeroTier automatically. Use the recovery
+shell to repair their primary connection. Reachy's LAN SSH port was tested;
+an end-to-end Reachy application failover was not performed. Do not treat the
+backup as a replacement for either site's internet service or for console
+access when a Mac cannot boot.
+
 ## Access matrix
 
 | From | To | Authentication | Purpose |
@@ -95,10 +133,12 @@ before future disconnection tests; do not reset Tailscale preferences.
 | Dylan's workstation | Mac mini | Existing `dylans-mac-mini` policy; dedicated local key when configured, otherwise the 1Password agent | OpenClaw administration |
 | Mac mini | Dylan's workstation | `~/.ssh/id_mini_to_mac`, selected for `dylans-mac` with `IdentitiesOnly yes` and `IdentityAgent none` | Unattended deployment verification and workstation administration |
 | Mac mini | Crosstown MBP | `~/.ssh/id_mini_to_mbp`, selected for `dylans-macbook-pro` with `IdentityAgent none` | Reachy relay control, Crosstown presence, August, Roomba, and LAN operations |
+| Mac mini | Crosstown MBP over ZeroTier | Same `~/.ssh/id_mini_to_mbp`, selected by `crosstown-recovery`; existing host key pinned | Manual recovery independent of Tailscale |
 | Mac mini operator | RTX 5090 desktop WSL | `~/.ssh/id_openclaw_desktop`, selected by the Mini-local `desktop-compute` alias | Trusted interactive maintenance |
 | OpenClaw jobs | RTX 5090 desktop WSL | `~/.ssh/id_desktop_compute_jobs`, selected by `desktop-jobs` and forced through the root-owned dispatcher | Fixed-root transfer, hash-approved execution, bounded tmux monitoring, and verified artifact retrieval |
 | RTX 5090 desktop WSL | Mac mini | `~/.ssh/id_desktop_compute_tunnel`, restricted on the Mini to reverse forwarding on `127.0.0.1:22022` with no shell | Persistent private transport back to the Mini |
 | Crosstown MBP | Mac mini | MBP `~/.ssh/id_rsa` (an ED25519 key despite its legacy filename) to `dbochman@100.104.114.1` | Persistent loopback gateway upstream |
+| Crosstown MBP | Mac mini over ZeroTier | Same MBP `~/.ssh/id_rsa` to `dbochman@10.23.154.246`; existing host key pinned | Manual recovery independent of Tailscale |
 | Crosstown MBP | Reachy | `~/.ssh/openclaw-reachy` to `pollen@192.168.165.129` | Primary `reachyctl` and reverse gateway relay |
 | Mac mini | Reachy | The same dedicated `~/.ssh/openclaw-reachy` identity over the existing Crosstown subnet route | Legacy gateway and direct-control rollback |
 
@@ -264,14 +304,18 @@ first-match-wins behavior:
   the fixed `openclaw-job-v1` dispatcher protocol.
 - `dylans-macbook-pro` and `crosstown-mac` identify the same Crosstown MBP
   and share the machine-specific authentication rules.
+- `crosstown-recovery` selects that Mac's ZeroTier address, reuses its trusted
+  numeric Tailscale host-key entry, and requires noninteractive authentication
+  with strict host-key checking.
 - On the Mac mini, a `Match originalhost dylans-mac` block selects
   `~/.ssh/id_mini_to_mac`, restricts authentication to that identity, and
   disables the 1Password agent.
-- On the Mac mini, the matching block for both Crosstown aliases selects
+- On the Mac mini, the matching block for all three Crosstown aliases selects
   `~/.ssh/id_mini_to_mbp` and disables the 1Password agent.
 - On a workstation with `~/.ssh/id_crosstown`, the matching block selects that
-  dedicated local key for either alias. If neither local key exists, the
-  default 1Password SSH agent is used.
+  dedicated local key for all three aliases. If neither local key exists,
+  ordinary Crosstown aliases use the default 1Password SSH agent; the recovery
+  alias is intended for an already-provisioned unattended identity.
 - The default `Host *` block retains the 1Password SSH agent for ordinary
   attended access.
 
@@ -366,6 +410,10 @@ All commands should complete noninteractively. An authentication prompt,
 configuration failure for an unattended path.
 
 ## Recovery and rotation
+
+For a Tailscale connectivity outage between the two Macs, first use
+[ZeroTier recovery](#cabin-and-crosstown-recovery-over-zerotier). Repairing the
+primary path does not require changing SSH keys or weakening tailnet policy.
 
 For a host-key warning, stop and compare the presented fingerprint through a
 second trusted path or the host console. Do not blindly remove `known_hosts`

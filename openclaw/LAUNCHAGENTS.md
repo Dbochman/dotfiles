@@ -708,6 +708,23 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 |-------|---------|-------------|
 | `com.openclaw.bt-connect` | `/bin/ln -sf bt_op.command` | Creates symlink for Bluetooth operations script |
 
+## ZeroTier recovery service (both Macs)
+
+Added November 8, 2026: ZeroTier One 1.16.2 provides manual SSH recovery between
+the Cabin Mini and Crosstown Mac in both directions. Its official installer
+owns `/Library/LaunchDaemons/com.zerotier.one.plist`, a root system LaunchDaemon
+with `KeepAlive` enabled. This is not an OpenClaw per-user LaunchAgent or a
+plist deployed from this repository.
+
+Use `ssh crosstown-recovery` from the Mini. Reverse access, service checks,
+verification evidence, and Tailscale restoration commands are in the
+[SSH recovery runbook](../docs/ssh-host-access.md#cabin-and-crosstown-recovery-over-zerotier).
+Both Macs retain their normal DNS and default routes. The Reachy gateway
+upstream, presence/Taildrop transfers, and other jobs still use their existing
+Tailscale targets; installing ZeroTier does not give those jobs automatic
+failover. The Crosstown ZeroTier service-restart test passed; an attended
+full reboot test remains outstanding.
+
 ## MacBook Pro (Crosstown)
 
 | Label | Interval | Program | Description |

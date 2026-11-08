@@ -4,6 +4,9 @@ Verified October 25, 2026. This runbook records the deployed network boundary;
 it is not a deployable policy. Exact addresses, account identities, policy
 files, device inventory, and probe results remain in protected local state.
 
+Independent Cabin–Crosstown recovery access was added November 8, 2026, as
+described below. This addition did not change the October tailnet policy.
+
 ## Applied controls
 
 - **Funnel is disabled by policy.** The member-wide `funnel` node attribute was
@@ -84,6 +87,34 @@ host-key handling; ordinary OpenSSH authentication is distinct from Tailscale
 SSH's check-mode authorization.
 
 ## Recovery
+
+### Connectivity recovery over ZeroTier
+
+The Cabin Mini and Crosstown Mac have an independently authorized private
+ZeroTier network for manual SSH recovery in both directions. From the Mini,
+use `ssh crosstown-recovery`; the reverse command and exact endpoints are in
+[SSH host access](ssh-host-access.md#cabin-and-crosstown-recovery-over-zerotier).
+The owner's phone also has an existing official Teleport pairing to Crosstown.
+
+Use this access to diagnose or restore Tailscale before considering policy
+rollback. A connectivity outage alone is not a reason to restore broad tailnet
+grants, remove EchoNest isolation, or enable Funnel. ZeroTier does not override
+default routes or DNS, and existing services do not fail over automatically.
+
+Tailscale grants and Tailnet Lock do not govern ZeroTier traffic. Its boundary
+is separate: ZeroTier membership authorization, the destination's host
+firewall, and each service's authentication. Services listening on all
+interfaces may also be reachable through ZeroTier. Keep recovery membership
+limited to intended trusted devices; no EchoNest enrollment was performed as
+part of this setup.
+
+Fresh SSH was verified both ways, including Mini-to-Crosstown with Crosstown's
+Tailscale stopped. Internet, host, and power failures remain shared
+dependencies. See the linked runbook for the service-restart check, the
+pending attended reboot test, and the required `--accept-routes` option when
+restoring Crosstown's existing Tailscale configuration.
+
+### October policy rollback
 
 The October rollout's protected evidence is under
 `~/.local/state/tailscale-hardening/20261024-223551/` on the Mini. The operator
