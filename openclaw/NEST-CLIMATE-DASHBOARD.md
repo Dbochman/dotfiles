@@ -4,7 +4,7 @@
 
 Single-file Python HTTP server with embedded Chart.js UI. Monitors thermostats,
 air conditioners, indoor air quality, and weather across two locations via four
-heating/cooling systems and one local sensor. Serves at port 8550 on the Mac
+heating/cooling systems and two air-quality sensors. Serves at port 8550 on the Mac
 Mini with home-LAN and Tailscale-tailnet access.
 
 ---
@@ -16,6 +16,7 @@ Mini with home-LAN and Tailscale-tailnet access.
 | Cabin (Philly) | Nest (central HVAC) | Solarium, Living Room, Bedroom | `nest` |
 | Cabin (Philly) | Midea (local AC) | Air Conditioner, Lil Air Conditioner | `midea` |
 | Cabin (Philly) | Airthings Wave Enhance (local BLE) | Living Room | `airthings` |
+| Crosstown (19Crosstown) | Airvalent via ATOM Lite and Crosstown Mac | Living Room (CO₂ only) | `airvalent` |
 | Crosstown (19Crosstown) | Cielo (minisplit AC) | Living Room, Basement, Dylan's Office, Bedroom | `cielo` |
 | Crosstown (19Crosstown) | Mysa (baseboard heater) | Cat Room, Basement door, Movie room | `mysa` |
 
@@ -49,6 +50,7 @@ Mac Mini (dylans-mac-mini)
 |-------|----------|---------|------|
 | `ai.openclaw.nest-snapshot` | 30 min (StartInterval) | `/opt/homebrew/bin/nest snapshot` | `~/.openclaw/logs/nest-cron.{log,err.log}` |
 | `ai.openclaw.airthings-snapshot` | 5 min (StartInterval) | `~/.openclaw/bin/airthings-snapshot` | stderr only: `~/.openclaw/logs/airthings-snapshot.err.log` |
+| `ai.openclaw.airvalent-snapshot` | 5 min (StartInterval) | `~/.openclaw/bin/airvalent-snapshot` | safe failures; private `~/.openclaw/airvalent/status.json` |
 | `ai.openclaw.nest-dashboard` | KeepAlive | `python3 ~/.openclaw/bin/nest-dashboard.py` | `~/.openclaw/logs/nest-dashboard.{log,err.log}` |
 
 The snapshot agent shows `-` for PID in `launchctl list` — this is normal (runs and exits).
@@ -89,12 +91,20 @@ that qualified during the episode (CO2-only alerts do not wait for VOCs), and
 fresh presence for recipients of the initial alert; suppressed recoveries are
 not queued for later delivery.
 
-The history API retains the original full and Airthings-only records so charts
-keep their native sampling cadence. For cards and `/api/current`, the dashboard
-uses the latest non-sampler record as the complete HVAC/weather base and
-overlays only newer `airthings_ble_sampler_v1` rooms by exact structure, room,
-and source. A five-minute sensor row therefore refreshes the Airthings card
-without replacing the Nest, Cielo, Mysa, or Midea inventory.
+The history API retains full snapshots and independent Airthings/Airvalent
+samples. Current-state merging uses the latest full HVAC/weather base and the
+newest observation for each exact structure, room, and source. A separate sensor
+missing from a full snapshot remains present; an older sensor sample cannot
+replace a newer same-source room. Hourly downsampling keeps each stream.
+
+Crosstown Airvalent CO₂ is collected every five minutes through the always-on
+Crosstown Mac and encrypted ATOM API. The current card also reads its private
+cache health: failed reads or data older than 15 minutes show unavailable/stale,
+with last-known values explicitly labeled. `read_at` is Bluetooth read time;
+the device's measurement timestamp remains unknown. The source has no verified
+temperature/humidity decoding and is excluded from HVAC-duty calculations.
+See [Bluetooth bridges](bluetooth/README.md#scheduled-monitoring-and-dashboard)
+for runtime, binding, timeout, lost-bond handling, and recovery details.
 
 ### Room Name Convention
 
@@ -534,6 +544,8 @@ live stream and cannot retrieve historical Nest Aware footage.
 | `openclaw/bin/mysa-status.py` | `~/.openclaw/bin/` on Mini | Mysa API wrapper (JSON output) |
 | `openclaw/bin/airthings` | `~/.openclaw/bin/` and `/opt/homebrew/bin/` | Read-only Airthings runtime wrapper |
 | `openclaw/bin/airthings-history-import` | `~/.openclaw/bin/` on Mini | Attended, guarded Airthings CSV history importer |
+| `openclaw/bluetooth/` | `~/.openclaw/bluetooth/` on Mini | Locked Airvalent collector and freshness projection |
+| `openclaw/bin/airvalent` / `airvalent-snapshot` | `~/.openclaw/bin/` on Mini | Cached skill status and scheduled sampler |
 | `openclaw/bin/airthings-snapshot` | `~/.openclaw/bin/` on Mini | Non-model five-minute exact-device sampler |
 | `openclaw/bin/nest-history-append` | `~/.openclaw/bin/` on Mini | Shared validated, locked climate-history appender |
 | `openclaw/skills/airthings-monitor/` | `~/.openclaw/skills/airthings-monitor/` | OpenClaw skill, BLE reader, and locked dependency manifest |

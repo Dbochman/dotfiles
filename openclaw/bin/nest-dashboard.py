@@ -26,6 +26,11 @@ MAX_HOURS = 8760  # 1 year
 DOWNSAMPLE_THRESHOLD_HOURS = 168  # 7 days — beyond this, keep ~1 per hour
 VACANCY_PEOPLE = ("Dylan", "Julia")
 AIRTHINGS_SAMPLER_ORIGIN = "airthings_ble_sampler_v1"
+AIRVALENT_SAMPLER_ORIGIN = "airvalent_ble_sampler_v1"
+SAMPLER_ORIGINS = {AIRTHINGS_SAMPLER_ORIGIN, AIRVALENT_SAMPLER_ORIGIN}
+sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "bluetooth")))
+from airvalent_state import cached_status as airvalent_status, dashboard_room as airvalent_room
+
 
 
 def load_snapshots(hours):
@@ -76,7 +81,7 @@ def load_snapshots(hours):
 
 
 def _downsample_hourly(records):
-    """Keep approximately one snapshot per hour."""
+    """Keep one full snapshot and each independent sensor stream per hour."""
     buckets = {}
     for rec in records:
         ts_str = rec.get("timestamp", "")
@@ -85,12 +90,12 @@ def _downsample_hourly(records):
         except (ValueError, AttributeError):
             continue
         # Bucket key: date + hour
-        key = ts.strftime("%Y-%m-%d-%H")
+        key = (ts.strftime("%Y-%m-%d-%H"), rec.get("history_origin") if rec.get("history_origin") in SAMPLER_ORIGINS else "full")
         # Keep the one closest to the hour boundary (minute closest to 0)
         if key not in buckets or ts.minute < _ts_minute(buckets[key]):
             buckets[key] = rec
     # Return in chronological order
-    return [buckets[k] for k in sorted(buckets.keys())]
+    return sorted(buckets.values(), key=lambda rec: rec.get("timestamp", ""))
 
 
 def _ts_minute(rec):
@@ -116,7 +121,7 @@ def _current_room_key(room):
 
 
 def merge_current_snapshot(records):
-    """Overlay newer Airthings-only rows onto the latest full snapshot.
+    """Overlay independent sensor rows onto the latest full snapshot.
 
     Five-minute Airthings samples intentionally contain only one sensor room.
     Treating the newest record as the complete current state hides every HVAC
@@ -136,7 +141,7 @@ def merge_current_snapshot(records):
         (
             index
             for index in range(len(usable) - 1, -1, -1)
-            if usable[index].get("history_origin") != AIRTHINGS_SAMPLER_ORIGIN
+            if usable[index].get("history_origin") not in SAMPLER_ORIGINS
         ),
         None,
     )
@@ -150,13 +155,14 @@ def merge_current_snapshot(records):
             for room in current.get("rooms", [])
             if isinstance(room, dict) and _current_room_key(room) is not None
         ]
-        overlay_records = usable[base_index + 1 :]
+        overlay_records = usable
 
     room_indexes = {
         _current_room_key(room): index for index, room in enumerate(current["rooms"])
     }
+    room_times = {key: current.get("timestamp") or "" for key in room_indexes}
     for record in overlay_records:
-        if record.get("history_origin") != AIRTHINGS_SAMPLER_ORIGIN:
+        if record.get("history_origin") not in SAMPLER_ORIGINS:
             continue
         for room in record.get("rooms", []):
             if not isinstance(room, dict):
@@ -164,15 +170,28 @@ def merge_current_snapshot(records):
             key = _current_room_key(room)
             if key is None:
                 continue
+            timestamp = record.get("timestamp") or ""
+            if key in room_times and timestamp <= room_times[key]:
+                continue
             replacement = copy.deepcopy(room)
+            room_times[key] = timestamp
             if key in room_indexes:
                 current["rooms"][room_indexes[key]] = replacement
             else:
                 room_indexes[key] = len(current["rooms"])
                 current["rooms"].append(replacement)
         if isinstance(record.get("timestamp"), str):
-            current["timestamp"] = record["timestamp"]
+            current["timestamp"] = max(current.get("timestamp") or "", record["timestamp"])
     current.pop("history_origin", None)
+    return current
+
+
+def current_snapshot(records):
+    """Add current Airvalent health without rewriting historical observations."""
+    current = merge_current_snapshot(records) or {"timestamp": None, "rooms": [], "weather": {}}
+    room = airvalent_room(airvalent_status())
+    current["rooms"] = [r for r in current["rooms"] if _current_room_key(r) != _current_room_key(room)]
+    current["rooms"].append(room)
     return current
 
 
@@ -296,7 +315,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "downsampled": clamped_hours > DOWNSAMPLE_THRESHOLD_HOURS,
             },
             "snapshots": records,
-            "current": merge_current_snapshot(current_records),
+            "current": current_snapshot(current_records),
             "presence": presence,
         })
 
@@ -304,7 +323,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Load today + yesterday and merge newer sensor-only observations onto
         # the latest full multi-provider snapshot.
         records, _ = load_snapshots(24)
-        current = merge_current_snapshot(records)
+        current = current_snapshot(records)
         if current:
             self._respond(200, current)
         else:
@@ -574,13 +593,13 @@ function vacancyStateView(occupancy) {
 const colorCache = {};
 // For disambiguated names like "Bedroom (XTown)", derive a variant of the base color
 const STRUCTURE_COLOR_SHIFT = { 'Cabin': 0, 'XTown': 40 };
-const SOURCE_COLOR_SHIFT = { 'Nest': 0, 'Cielo': 18, 'Mysa': 36, 'Midea': 54, 'Airthings': 72 };
+const SOURCE_COLOR_SHIFT = { 'Nest': 0, 'Cielo': 18, 'Mysa': 36, 'Midea': 54, 'Airthings': 72, 'Airvalent': 90 };
 function roomColor(name) {
   // In filtered view, bare names like "Living Room" need structure-aware lookup
   const cacheKey = currentStructure + ':' + name;
   if (colorCache[cacheKey]) return colorCache[cacheKey];
-  const sourceMatch = name.match(/ \((Nest|Cielo|Mysa|Midea|Airthings)\)/);
-  const colorName = name.replace(/ \((Nest|Cielo|Mysa|Midea|Airthings)\)/, '');
+  const sourceMatch = name.match(/ \((Nest|Cielo|Mysa|Midea|Airthings|Airvalent)\)/);
+  const colorName = name.replace(/ \((Nest|Cielo|Mysa|Midea|Airthings|Airvalent)\)/, '');
   let c;
   // Check structure-specific color first (for colliding names like Living Room, Bedroom)
   if (currentStructure === '19Crosstown') {
@@ -678,6 +697,7 @@ const SOURCE_LABELS = {
   mysa: 'Mysa',
   midea: 'Midea',
   airthings: 'Airthings',
+  airvalent: 'Airvalent',
 };
 
 function sourceLabel(source) {
@@ -873,14 +893,21 @@ function renderLocationGroups(snapshot, presenceState) {
     for (const r of rooms) {
       const label = displayName(r.room) + (hasSourceCollision(r) ? ` (${sourceLabel(r.source)})` : '');
       const cardColor = roomColorForCard(r.room);
-      const isOffline = r.connectivity === 'OFFLINE';
+      const isAirvalent = r.source === 'airvalent';
+      const readAge = r.read_at ? (Date.now() - Date.parse(r.read_at)) / 1000 : Infinity;
+      const sensorStale = isAirvalent && (!Number.isFinite(readAge) || readAge > 900 || readAge < -60);
+      const isOffline = r.connectivity === 'OFFLINE' || sensorStale;
       const hasTemp = Number.isFinite(r.temp_f);
       const hasSetpoint = Number.isFinite(r.setpoint_f);
       const hasHumidity = Number.isFinite(r.humidity);
       let hvacLabel = r.source !== 'midea' && r.eco && r.eco !== 'OFF' ? 'ECO' : (r.hvac || '—');
       if (r.source === 'mysa' && r.duty_pct != null) hvacLabel = r.duty_pct > 0 ? `${r.duty_pct}% duty` : 'OFF';
       const statusBits = [];
-      if (r.source === 'airthings') {
+      if (isAirvalent) {
+        statusBits.push(isOffline ? (['reauth_required', 'bond_unavailable'].includes(r.error) ? 'Needs pairing' : (sensorStale && r.read_at ? 'Stale' : 'Unavailable')) : 'CO₂');
+        if (Number.isFinite(readAge)) statusBits.push(`Read ${Math.max(0, Math.floor(readAge / 60))} min ago`);
+        if (isOffline && Number.isFinite(r.last_known_co2_ppm)) statusBits.push(`Last known ${r.last_known_co2_ppm} ppm`);
+      } else if (r.source === 'airthings') {
         if (isOffline) {
           statusBits.push('OFFLINE');
         } else {
@@ -906,7 +933,7 @@ function renderLocationGroups(snapshot, presenceState) {
       if (r.source && r.source !== 'nest') statusBits.push(`<span class="card-tag">${r.source}</span>`);
       html += `<div class="card">
         <div class="card-label">${label}</div>
-        <div class="card-value" style="color:${cardColor}">${hasTemp ? `${r.temp_f.toFixed(1)}°F` : 'Unavailable'}</div>
+        <div class="card-value" style="color:${cardColor}">${isAirvalent ? (!isOffline && Number.isFinite(r.co2_ppm) ? `${r.co2_ppm.toFixed(0)} ppm` : 'Unavailable') : (hasTemp ? `${r.temp_f.toFixed(1)}°F` : 'Unavailable')}</div>
         <div class="card-sub">${statusBits.join(' · ')}</div>
       </div>`;
     }
@@ -1019,7 +1046,7 @@ function computeHvacDuty(snapshots) {
   const roomNames = new Set();
   for (const s of snapshots) {
     for (const r of filterRooms(s.rooms || [])) {
-      if (r.source !== 'airthings') roomNames.add(roomSeriesName(r));
+      if (!['airthings', 'airvalent'].includes(r.source)) roomNames.add(roomSeriesName(r));
     }
   }
 
@@ -1030,7 +1057,7 @@ function computeHvacDuty(snapshots) {
     const d = new Date(s.timestamp);
     const hourKey = d.toISOString().slice(0, 13) + ':00:00Z'; // YYYY-MM-DDTHH:00:00Z
     for (const r of filterRooms(s.rooms || [])) {
-      if (r.source === 'airthings') continue;
+      if (['airthings', 'airvalent'].includes(r.source)) continue;
       const name = roomSeriesName(r);
       if (!buckets[name]) continue;
       if (r.connectivity === 'OFFLINE' || !r.hvac || r.hvac === '?') continue;
@@ -1240,7 +1267,7 @@ async function refresh() {
   currentPresence = data.presence || [];
 
   // Pre-compute which room short names collide across structures
-  computeDisplayCollisions(snaps);
+  computeDisplayCollisions(current ? [...snaps, current] : snaps);
 
   currentSnapshot = current;
   // Render climate updates even if presence is temporarily unavailable.

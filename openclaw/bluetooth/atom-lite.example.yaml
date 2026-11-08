@@ -1,0 +1,35 @@
+# Original M5Stack ATOM Lite (ESP32-PICO-D4, 4 MB), not AtomS3.
+# Copy to a private per-device build directory and choose a unique name.
+esphome:
+  name: ble-bridge-01
+  friendly_name: Bluetooth Bridge 01
+  min_version: 2026.10.2
+
+esp32:
+  variant: esp32
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+  reboot_timeout: 0s
+
+# Network credentials are provisioned locally over USB with Improv.
+wifi:
+  reboot_timeout: 0s
+improv_serial:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+bluetooth_proxy:
+  active: true

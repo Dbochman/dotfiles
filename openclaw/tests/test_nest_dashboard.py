@@ -247,6 +247,28 @@ class CurrentSnapshotMergeTests(unittest.TestCase):
         self.assertEqual(current["rooms"], sampler["rooms"])
 
 
+class MultiSensorMergeTests(unittest.TestCase):
+    def test_full_snapshot_keeps_independent_older_sensor_room(self):
+        records = [
+            {"timestamp": "2026-11-08T13:00:00Z", "history_origin": "airvalent_ble_sampler_v1",
+             "rooms": [{"room": "19Crosstown Living Room", "source": "airvalent", "co2_ppm": 660}]},
+            {"timestamp": "2026-11-08T13:01:00Z", "rooms": [
+                {"room": "19Crosstown Living Room", "source": "cielo", "temp_f": 72}]},
+            {"timestamp": "2026-11-08T13:02:00Z", "history_origin": "airthings_ble_sampler_v1",
+             "rooms": [{"room": "Living Room", "source": "airthings", "co2_ppm": 700}]},
+        ]
+        current = nest_dashboard.merge_current_snapshot(records)
+        self.assertEqual({r["source"] for r in current["rooms"]}, {"airvalent", "cielo", "airthings"})
+        self.assertEqual(current["timestamp"], records[-1]["timestamp"])
+
+    def test_hourly_downsample_retains_each_stream(self):
+        records = [{"timestamp": f"2026-11-08T13:{minute:02d}:00Z", "rooms": [], **origin}
+                   for minute, origin in [(0, {}), (1, {"history_origin": "airvalent_ble_sampler_v1"}),
+                                         (2, {"history_origin": "airthings_ble_sampler_v1"}),
+                                         (5, {"history_origin": "airvalent_ble_sampler_v1"})]]
+        self.assertEqual(nest_dashboard._downsample_hourly(records), records[:3])
+
+
 class PresenceHtmlContractTests(unittest.TestCase):
     def test_presence_refresh_is_faster_than_climate_refresh(self):
         html = nest_dashboard.DASHBOARD_HTML
@@ -348,6 +370,31 @@ const localStorage = {
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_airvalent_cards_charts_and_staleness(self):
+        self.run_ui(r"""
+const timestamp = new Date().toISOString();
+const air = {room: '19Crosstown Living Room', source: 'airvalent', co2_ppm: 660,
+  connectivity: 'ONLINE', read_at: timestamp, last_known_co2_ppm: 660};
+const snapshot = {timestamp, rooms: [air,
+  {room: '19Crosstown Living Room', source: 'cielo', temp_f: 72, hvac: 'OFF'}]};
+computeDisplayCollisions([snapshot]);
+renderLocationGroups(snapshot, null);
+assert.ok(nodes.locationGroups.innerHTML.includes('Living Room (Airvalent)'));
+assert.ok(nodes.locationGroups.innerHTML.includes('660 ppm'));
+assert.ok(nodes.locationGroups.innerHTML.includes('72.0°F'));
+const series = buildTimeSeries([snapshot]);
+assert.equal(series['Living Room (Airvalent)'].co2[0].y, 660);
+assert.ok(!Object.keys(computeHvacDuty([snapshot])).some(n => n.includes('Airvalent')));
+air.read_at = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+renderLocationGroups(snapshot, null);
+assert.ok(nodes.locationGroups.innerHTML.includes('Stale'));
+assert.ok(nodes.locationGroups.innerHTML.includes('Last known 660 ppm'));
+assert.ok(nodes.locationGroups.innerHTML.includes('Unavailable'));
+air.error = 'reauth_required';
+renderLocationGroups(snapshot, null);
+assert.ok(nodes.locationGroups.innerHTML.includes('Needs pairing'));
+""")
+
     def test_only_stored_cabin_units_are_hidden_from_cards_and_charts(self):
         self.run_ui(r"""
 const rooms = [
@@ -418,7 +465,6 @@ class ClimateSourceHtmlContractTests(unittest.TestCase):
                 self.assertIn(field, html)
         self.assertIn('canvas id="co2Chart"', html)
         self.assertIn('canvas id="vocChart"', html)
-        self.assertIn("r.source !== 'airthings'", html)
         self.assertIn("const current = data.current ||", html)
         self.assertIn("renderLocationGroups(current, currentPresenceState)", html)
         self.assertIn("renderLocationGroups(currentSnapshot, state)", html)

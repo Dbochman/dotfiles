@@ -830,6 +830,12 @@ install_openclaw_guarded_helpers() {
     "bin/airthings|bin/airthings|755|Airthings local monitor wrapper"
     "bin/airthings-history-import|bin/airthings-history-import|755|Airthings attended history importer"
     "bin/airthings-snapshot|bin/airthings-snapshot|755|Airthings scheduled snapshot wrapper"
+    "bin/airvalent|bin/airvalent|755|Airvalent cached status wrapper"
+    "bin/airvalent-snapshot|bin/airvalent-snapshot|755|Airvalent scheduled snapshot wrapper"
+    "bluetooth/airvalent_monitor.py|bluetooth/airvalent_monitor.py|644|Airvalent bridge collector"
+    "bluetooth/airvalent_state.py|bluetooth/airvalent_state.py|644|Airvalent freshness projection"
+    "bluetooth/pyproject.toml|bluetooth/pyproject.toml|644|Airvalent runtime manifest"
+    "bluetooth/uv.lock|bluetooth/uv.lock|644|Airvalent runtime lock"
     "bin/august|bin/august|755|August guarded unlock wrapper"
     "bin/cielo|bin/cielo|755|Cielo guarded control wrapper"
     "bin/cielo-auth.py|bin/cielo-auth.py|755|Cielo atomic auth helper"
@@ -888,6 +894,7 @@ publish_openclaw_standalone_skill_wrappers() {
     nest-agent
     nest-camera-image
     airthings
+    airvalent
     cielo
     cielo-reauth
     litter-robot
@@ -982,6 +989,25 @@ install_openclaw_litter_robot_runtime() {
     EXIT_CODE=1
     return 1
   fi
+}
+
+install_openclaw_airvalent_runtime() {
+  local openclaw_home="${1%/}"
+  local project_dir="$openclaw_home/bluetooth"
+  local venv_dir="$openclaw_home/venvs/airvalent-monitor"
+  if [[ "$DRY_RUN" = true ]]; then
+    log "  [dry-run] Would sync locked Airvalent runtime: $venv_dir"
+    return 0
+  fi
+  if [[ -L "$project_dir" || -L "$openclaw_home/venvs" || -L "$venv_dir" \
+      || ! -f "$project_dir/pyproject.toml" || ! -f "$project_dir/uv.lock" \
+      || ! -x /opt/homebrew/bin/python3.14 || ! -x /opt/homebrew/bin/uv ]]; then
+    log_error "Required locked Airvalent runtime inputs are unavailable"
+    return 1
+  fi
+  mkdir -p "$openclaw_home/venvs"
+  UV_PROJECT_ENVIRONMENT="$venv_dir" UV_PYTHON=/opt/homebrew/bin/python3.14 \
+    /opt/homebrew/bin/uv sync --frozen --no-dev --project "$project_dir"
 }
 
 install_openclaw_airthings_runtime() {
@@ -1487,6 +1513,14 @@ install_dotfiles() {
         fi
         if ! install_openclaw_litter_robot_runtime "$HOME/.openclaw"; then
           EXIT_CODE=1
+        fi
+        if ! install_openclaw_airvalent_runtime "$HOME/.openclaw"; then
+          EXIT_CODE=1
+        elif [[ -f "$HOME/.openclaw/airvalent/connection.json" && -f "$HOME/.openclaw/airvalent/services.json" ]]; then
+          install_managed_launchagent \
+            "$DOTFILES_DIR/openclaw/launchagents/ai.openclaw.airvalent-snapshot.plist" \
+            "$HOME/Library/LaunchAgents/ai.openclaw.airvalent-snapshot.plist" \
+            "ai.openclaw.airvalent-snapshot"
         fi
         if ! install_openclaw_airthings_runtime "$HOME/.openclaw"; then
           EXIT_CODE=1

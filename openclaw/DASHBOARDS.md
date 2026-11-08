@@ -24,7 +24,7 @@ adapter; restart only the usage dashboard for this reporting change.
 
 | Port | Dashboard | URL | Data Refresh |
 |------|-----------|-----|-------------|
-| 8550 | [Nest Climate](#nest-climate-dashboard) | http://dylans-mac-mini:8550 | 1 min (presence cards) · 5 min (charts/Airthings) · 30 min (HVAC) |
+| 8550 | [Nest Climate](#nest-climate-dashboard) | http://dylans-mac-mini:8550 | 1 min (presence cards) · 5 min (charts/air quality) · 30 min (HVAC) |
 | 8551 | [OpenClaw Usage](#openclaw-usage-dashboard) | http://dylans-mac-mini:8551 | 5 min (UI) · 15 min (snapshots) |
 | 8552 | [Dog Walk](#dog-walk-dashboard) | http://dylans-mac-mini:8552 | 5 min (UI) · event-driven (JSONL) |
 | 8553 | [Roomba](#roomba-dashboard) | http://dylans-mac-mini:8553 | 5 min (UI) · 15 min (Cabin Assistant) · event-driven (JSONL) |
@@ -69,7 +69,7 @@ two locations via four heating/cooling systems and one local Wave Enhance.
   successful measurement collection. See [policy and rollout](plans/cabin-air-quality-notifications.md).
 - **HVAC Duty Cycle** — hourly Active % bar chart using real Mysa duty,
   Midea fan percentage while active, and binary activity for Nest/Cielo;
-  Airthings is excluded
+  Airthings and Airvalent are excluded
 
 ### Data Sources
 
@@ -80,6 +80,7 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 | Mysa API | 30 min | Baseboard heater temps + duty cycle (Crosstown) |
 | Midea local LAN | 30 min | Portable/window AC status, setpoints, and energy telemetry (Cabin) |
 | Airthings local BLE + attended CSV history | 5 min dedicated sampler | Wave Enhance CO2, VOC, temperature, humidity, pressure, noise, light, and battery (Cabin); idempotent UTC CSV backfills share the same room series |
+| Airvalent via ATOM Lite / Crosstown Mac | 5 min dedicated sampler | Crosstown Living Room CO₂; failed or >15-minute-old reads are marked unavailable/stale |
 | Open-Meteo | 30 min | Outdoor weather (no API key needed) |
 | Presence scanner | Crosstown 2 min; Cabin 5 min; presence cards poll every 1 min | WiFi-based occupancy per location; climate charts retain their 5-minute UI refresh |
 
@@ -92,6 +93,7 @@ two locations via four heating/cooling systems and one local Wave Enhance.
 | Crosstown (19Crosstown) | Mysa baseboard | Cat Room, Basement door, Movie room |
 | Cabin (Philly) | Midea AC | Air Conditioner, Lil Air Conditioner |
 | Cabin (Philly) | Airthings Wave Enhance | Living Room |
+| Crosstown (19Crosstown) | Airvalent | Living Room (CO₂) |
 
 ### Files
 

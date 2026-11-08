@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${OPENCLAW_HOME:-$HOME/.openclaw}/venvs/airvalent-monitor/bin/python" \
+  "${OPENCLAW_HOME:-$HOME/.openclaw}/bluetooth/airvalent_monitor.py" collect --json
