@@ -28,6 +28,65 @@ The workstation and Crosstown MBP may both report the local hostname
 `Mac.lan`. Do not use that ambiguous Bonjour name for automation. Use the
 tracked aliases, exact Tailscale IPs, or Reachy's exact LAN IP shown above.
 
+## Cabin and Crosstown recovery over ZeroTier
+
+Configured November 8, 2026. Both Macs have the official ZeroTier One 1.16.2
+package and its system LaunchDaemon. The Cabin Mini uses Starlink; Crosstown
+uses AmpliFi. The owner's phone is separately paired with Crosstown Teleport.
+
+From the Cabin Mini:
+
+```bash
+ssh crosstown-recovery
+```
+
+From the Crosstown Mac, the reverse path uses its existing Mini-authorized key:
+
+```bash
+ssh -o HostKeyAlias=100.104.114.1 -o StrictHostKeyChecking=yes \
+  -o IdentityAgent=none -o IdentitiesOnly=yes -i ~/.ssh/id_rsa \
+  dbochman@10.23.154.246
+```
+
+Fresh authenticated SSH was verified in both directions. Neither path needs
+new SSH keys or changes to `authorized_keys`.
+
+The `crosstown-recovery` alias uses Crosstown's ZeroTier address, its existing SSH
+identity policy and the already-trusted Tailscale host key via `HostKeyAlias`.
+Strict host-key checking is enabled. The normal `crosstown-mac` and
+`dylans-macbook-pro` aliases continue to use Tailscale. The alias is not an
+automatic failover mechanism for existing jobs.
+
+The private ZeroTier network uses `10.23.154.0/24`; the Mini is
+`10.23.154.246` and Crosstown is `10.23.154.208`. Keep these managed assignments
+stable in ZeroTier Central. Both clients accept managed private addresses and
+routes, with `allowDefault`, `allowGlobal`, and `allowDNS` disabled. Only this
+subnet is currently advertised. Review future controller route changes for
+overlap with either LAN or Tailscale routes.
+
+Use Crosstown as an SSH jump host or an SSH forwarding endpoint for its LAN
+devices. No whole-LAN subnet route, default-route override, DNS override,
+router port forward, or new SSH key was added. This path still depends on both
+internet connections, both Macs, and power; it does not provide ISP failover.
+
+Verification established a fresh SSH session over ZeroTier while Crosstown's
+Tailscale backend was `Stopped`, and confirmed Reachy's LAN SSH port remained
+reachable from that session. The primary Tailscale SSH path recovered, and a
+fresh recovery SSH session also succeeded after restarting Crosstown's
+ZeroTier service. Both Macs retained their original default routes and DNS.
+ZeroTier's active peer endpoints were public internet addresses. Full reboot
+verification requires a later attended maintenance window.
+
+When restoring Tailscale on Crosstown, preserve its existing route acceptance:
+
+```bash
+TAILSCALE_BE_CLI=1 /Applications/Tailscale.app/Contents/MacOS/Tailscale up --accept-routes
+```
+
+A plain `tailscale up` can refuse to reconnect because this non-default setting
+must be supplied explicitly. Arm and verify an independent restoration path
+before future disconnection tests; do not reset Tailscale preferences.
+
 ## Access matrix
 
 | From | To | Authentication | Purpose |
