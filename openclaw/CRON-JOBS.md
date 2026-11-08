@@ -686,7 +686,7 @@ semantics. Delivery success alone is not evidence of a complete briefing.
 ### Dylan morning briefing data path
 
 The helper also adds an optional `security` section from the private advisory
-cache. Its separate Mini LaunchAgent collects at 07:15 local time; the briefing
+cache. Its separate Mini LaunchAgent collects at 00:15 local time; the briefing
 does no advisory fetching or inference. The existing 08:00 schedule, mail and
 calendar contracts remain unchanged. New/material changes stay eligible for
 48 hours; unchanged unresolved items become a count. Missing/stale cache,
@@ -991,3 +991,15 @@ deployable registry and preserved in
 | `weekly-activity-report` | 2026-03-24 | Consolidated into `weekly-report-0001` |
 | `weekly-security-reminder` | 2026-03-24 | Consolidated into `weekly-report-0001` |
 | `weekly-upgrade-verify-0001` | 2026-03-12 | Weekly auto-upgrade removed; upgrades now manual |
+
+
+### Security backlog capacity repair — November 8, 2026
+
+Dylan authorized draining the pending-review queue and increasing daily capacity.
+The advisory LaunchAgent now starts at 00:15 local time with `--review-limit 96`
+and `--pass-limit 12`; it stops on completion, no progress, failure or its durable
+budget. The 08:00 briefing schedule is unchanged. Pending review counts and
+capped/stalled/blocked/stopped status now enter its mandatory monitoring warning,
+independently of urgency and alongside stale-inventory warnings. Zero pending
+reviews is not zero unresolved vulnerabilities or fleet clearance. Current
+October 22 inventory remains dated; this capacity change is not a host resurvey.

@@ -485,6 +485,8 @@ class AdvisoryTests(unittest.TestCase):
             self.assertEqual(result["otherRecentFindings"], 0)
             self.assertEqual(result["actionGroups"][0]["findingCount"], 8)
             self.assertEqual(result["backlog"], 171)
+            self.assertIn("171 pending assessments", result["monitoringWarning"])
+            self.assertIn("Catch-up is capped", result["monitoringWarning"])
             self.assertIn("collection_paused", result["warnings"])
             self.assertIn("continuation_capped", result["warnings"])
 
@@ -672,6 +674,27 @@ class AdvisoryTests(unittest.TestCase):
         second = self.collect(first, fetcher=fetch, reviewer=review)
         self.assertEqual(len(second["findings"]), 13)
         self.assertEqual(second["backlog"], 0)
+
+    def test_explicit_larger_review_budget_drains_without_changing_assessments(self):
+        incidents = [{**self.incident, "slug": f"node-test-{n}"} for n in range(25)]
+        def fetch(url, hosts):
+            if url == mod.FEED_URL:
+                return json.dumps({"generatedAt": self.stamp, "incidents": incidents})
+            if url.endswith(".json"):
+                return json.dumps({"sources": [{"url": self.url}]})
+            return self.text
+        def review(prompt, data):
+            if prompt == mod.SELECT:
+                return {"matches": [{"slug": x["slug"], "products": ["Node.js"], "unknown_assets": []}
+                                    for x in data["advisories"]]}
+            return self.review(prompt, data)
+        result = mod.collect(self.inventory, {}, fetcher=fetch, reviewer=review, review_limit=96)
+        self.assertEqual(result["backlog"], 0)
+        self.assertEqual(len(result["findings"]), 25)
+        self.assertTrue(all(f["status"] == "affected" for f in result["findings"].values()))
+        for invalid in [0, 97, True]:
+            with self.assertRaisesRegex(ValueError, "invalid_review_limit"):
+                mod.collect(self.inventory, {}, review_limit=invalid)
 
     def test_changed_actionable_finding_precedes_unreviewed_backlog(self):
         first = self.collect()
@@ -1040,6 +1063,24 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 3)
         self.assertEqual((self.state / "continuation.json").stat().st_mode & 0o777, 0o600)
 
+    def test_explicit_budget_increase_preserves_used_passes(self):
+        self.continue_run(run=self.run_pass())
+        self.args.pass_limit = 5
+        self.continue_run(run=self.run_pass())
+        self.assertEqual(len(self.calls), 5)
+        self.assertEqual(self.ledger()["passes_used"], 5)
+        self.continue_run(run=self.run_pass())
+        self.assertEqual(len(self.calls), 5)
+
+    def test_budget_increase_never_reopens_stop_or_failure(self):
+        for status in ["stopped", "blocked", "stalled", "complete"]:
+            mod.write_private(self.state / "continuation.json", {
+                "window": "2026-10-22", "passes_used": 1, "pass_limit": 3, "status": status})
+            self.args.pass_limit = 12
+            self.continue_run(run=self.run_pass())
+            self.assertEqual(self.calls, [])
+            self.assertEqual(self.ledger()["status"], status)
+
     def test_complete_and_failure_and_no_progress_stop(self):
         for health, advance, status in (({"backlog": 0}, True, "complete"),
                 ({"status": "failed", "error_type": "ValueError"}, True, "blocked"),
@@ -1069,8 +1110,8 @@ class ContinuationTests(unittest.TestCase):
         self.now += timedelta(days=1)
         self.continue_run(run=self.run_pass())
         self.assertEqual(len(self.calls), 6)
-        self.assertEqual(mod.continuation_window(self.now.replace(hour=7, minute=14)), "2026-10-22")
-        self.assertEqual(mod.continuation_window(self.now.replace(hour=7, minute=15)), "2026-10-23")
+        self.assertEqual(mod.continuation_window(self.now.replace(hour=0, minute=14)), "2026-10-22")
+        self.assertEqual(mod.continuation_window(self.now.replace(hour=0, minute=15)), "2026-10-23")
 
     def test_stop_during_backoff_is_not_retried(self):
         def stop(_):

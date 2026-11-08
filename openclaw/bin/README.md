@@ -92,11 +92,11 @@ itself reported, never raised.
 
 `security-advisory-collector.py` is a Mini-only, notification-only daily review.
 The attended-installed `com.dylanbochman.security-advisories` LaunchAgent runs
-at 07:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.
+at 00:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.
 It reads pwn.watch's complete JSON incident index in bounded discovery batches,
 matches against a minimized inventory with high-reasoning, tool-free local
 OpenClaw inference (`openai/gpt-6.1-sol`), then fetches up to three approved
-publisher pages for each of up to twelve pending matches per run. This uses
+publisher pages for each of up to the configured review limit (deployed: 96) per run. This uses
 existing configured model access; it does not install dependencies or grant
 the model shell, browser, messaging or remediation tools. Only product/version,
 evidence type, running/source-only state and asset labels enter model inputs;
@@ -141,20 +141,25 @@ pass may publish validated findings with an explicit remaining backlog. The hard
 the next daily or attended one-shot run. An in-flight unit may need to be repeated.
 Model-process cleanup is also time-bounded, including when a detached descendant
 holds a pipe open; cleanup must not swallow the original collection deadline.
-The twelve-review cap remains per pass. The daily LaunchAgent now supplies
-`--continue-pending`: a locked supervisor runs at most three passes per local
-07:15-to-07:15 window, with 60 seconds between passes. That permits at most 36
-advisory reviews (each with at most two model attempts) and roughly 92 minutes
-of collection/backoff plus bounded cleanup
-per window. `continuation.json` reserves each pass before starting it, so crashes
-and restarts do not reset the allowance. The next daily window resets the budget;
-there is no KeepAlive or extra scheduled trigger. Ordinary manual invocations
-without this flag remain one-shot and are not automatic continuation.
+Capacity is explicitly configurable: `--review-limit 1..96` (default 12)
+and `--pass-limit 1..12` (default 3). The deployed daily job runs at 00:15
+with 96 reviews/pass and twelve passes/window, stopping early at zero pending
+work. Each pass still has the 24-minute soft / 30-minute hard deadline,
+60-second inter-pass backoff, checkpointing and exclusive locks. This is at
+most 1,152 review attempts and about 6 hours 12 minutes including child cleanup
+and backoff per window, not a completion-time guarantee. No KeepAlive loop.
+The supervisor reserves each pass durably before starting. An explicit cap
+increase preserves all consumed reservations and may reopen only `capped`,
+never `stopped`, `stalled`, `blocked`, or `complete`. A lower cap grants no new
+passes; the next 00:15 window resets the allowance. Manual invocations without
+`--continue-pending` remain one-shot. Review freshness remains 24 hours for
+unknowns and seven days otherwise; no assessment semantics or evidence checks
+were weakened to lower the queue count.
 
 Continuation requires a saved checkpoint change and unfinished work: paused
 discovery, a verification backlog, or a model/collection timeout. Completion,
 no saved progress, schema/transport/storage failures, operator termination, or
-the three-pass cap stops the supervisor. Stopped/blocked/capped cycles remain
+the configured pass cap stops the supervisor. Stopped/blocked/capped cycles remain
 stopped for that window even after a restart; inspect rather than clearing their
 ledger to evade the cap. The published cache and checkpoint are never deleted.
 Progress and the briefing expose continuation status/counts; no new notification
@@ -184,7 +189,7 @@ an external continuously restarting job.
 Inspect live operational progress without network/model calls:
 `python3 ~/.local/libexec/security-advisory-collector.py --progress`.
 This reports discovery batches, source-fetch/model-review stages, attempted reviews
-(out of at most twelve), errors, elapsed time and remaining 30-minute deadline budget.
+(out of the configured limit), errors, elapsed time and remaining 30-minute deadline budget.
 It also reports reused discovery counts, resumed reviews at reconciliation, and
 whether a completed pass stopped starting work at its soft time budget.
 `seconds_since_update` measures the last stage transition, not a heartbeat or proof
@@ -198,7 +203,7 @@ Per-advisory failures retain old findings and count toward backlog. Unchanged
 inputs are reverified after seven days (unknowns after 24 hours); changed feed/inventory inputs are queued
 again. Discovery omission never resolves a prior finding. Changed/expired
 affected or possibly-affected findings are reconciled first, then backlog is
-oldest-check first, with twelve reviews/run. Model selection is advisory, not completeness proof.
+oldest-check first, within the configured per-pass review limit. Model selection is advisory, not completeness proof.
 The existing GitHub runner readiness watch remains separate and authoritative
 for its deployment gate.
 
@@ -591,3 +596,15 @@ requires reacquisition. The diagnostic does not repair the browser's CA data.
 | `airthings-history-import` | Imports UTC Airthings dashboard CSV history into the same Airthings room series without duplicating timestamps. This is an attended operator tool, not a scheduled or model-invocable command. |
 | `airthings-snapshot` | Scheduled local-only collector for the exact Airthings binding. It does not call Nest, weather, HVAC providers, or the home-event bus. |
 | `nest-history-append` | Serializes all ordinary climate JSONL writes and rejects unsafe history paths. The attended Airthings importer takes the same lock while merging a backfill. |
+
+
+### Security backlog capacity repair — November 8, 2026
+
+Dylan authorized draining the pending-review queue and increasing daily capacity.
+The advisory LaunchAgent now starts at 00:15 local time with `--review-limit 96`
+and `--pass-limit 12`; it stops on completion, no progress, failure or its durable
+budget. The 08:00 briefing schedule is unchanged. Pending review counts and
+capped/stalled/blocked/stopped status now enter its mandatory monitoring warning,
+independently of urgency and alongside stale-inventory warnings. Zero pending
+reviews is not zero unresolved vulnerabilities or fleet clearance. Current
+October 22 inventory remains dated; this capacity change is not a host resurvey.

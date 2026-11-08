@@ -390,7 +390,9 @@ def validate_assessment(value, assets, sources):
 
 
 def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progress=lambda **_: None,
-            checkpoint=None, save_checkpoint=lambda _: None, should_pause=lambda: False):
+            checkpoint=None, save_checkpoint=lambda _: None, should_pause=lambda: False, review_limit=12):
+    if type(review_limit) is not int or not 1 <= review_limit <= 96:
+        raise ValueError("invalid_review_limit")
     stamp = now or now_iso()
     if inventory.get("schema_version") != 1:
         raise ValueError("inventory_schema")
@@ -480,8 +482,8 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
     attempted = 0
     budget_exhausted = False
     progress(phase="verification", step="queued", pending=len(pending), checked=0,
-             review_limit=min(12, len(pending)), errors=0, resumed_reviews=resumed_reviews)
-    for checked, (slug, match, key) in enumerate(pending[:12], 1):
+             review_limit=min(review_limit, len(pending)), errors=0, resumed_reviews=resumed_reviews)
+    for checked, (slug, match, key) in enumerate(pending[:review_limit], 1):
         if should_pause():
             budget_exhausted = True
             break
@@ -490,7 +492,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         assets = set(match["unknown_assets"]) | {a for row in rows for a in row[-1]}
         sources = {}
         progress(phase="verification", step="sources", pending=len(pending),
-                 checked=checked - 1, review_limit=min(12, len(pending)), errors=errors)
+                 checked=checked - 1, review_limit=min(review_limit, len(pending)), errors=errors)
         try:
             detail = json.loads(fetcher(f"https://pwn.watch/i/{slug}.json", {"pwn.watch"}))
             for url in source_urls(detail, incidents[slug]):
@@ -501,7 +503,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
             if sources:
                 def review_progress(**fields):
                     progress(phase="verification", step="model", pending=len(pending),
-                             checked=checked - 1, review_limit=min(12, len(pending)), errors=errors, **fields)
+                             checked=checked - 1, review_limit=min(review_limit, len(pending)), errors=errors, **fields)
                 result = review_with_retry(reviewer, {
                     "advisory": incidents[slug], "inventory_columns": compact["columns"],
                     "components": rows, "unknown_assets": match["unknown_assets"],
@@ -530,7 +532,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         # Disk failures must escape rather than masquerading as review failures.
         save_checkpoint(work)
         progress(phase="verification", step="review_finished", pending=len(pending),
-                 checked=checked, review_limit=min(12, len(pending)), errors=errors)
+                 checked=checked, review_limit=min(review_limit, len(pending)), errors=errors)
     return {"schema_version": 1, "generated_at": stamp, "inventory_at": observed_at,
             "inventory_coverage": "partial", "clearance": False, "delivery_confirmed": False,
             "model": MODEL, "feed_at": index["generatedAt"], "advisories_screened": len(incidents),
@@ -711,10 +713,16 @@ def briefing_summary(state=STATE, now=None):
         attention = [f for f in outstanding if
                      f["status"] in {"affected", "possibly_affected"} and f["evidence"]]
         attention.sort(key=lambda f: (rank[f["status"]], f["slug"]))
+        health_warning = monitoring_warning(warnings, cache["generated_at"], cache["inventory_at"])
+        if cache["backlog"]:
+            queue_warning = f"Last published security review has {cache['backlog']} pending assessments."
+            if continuation_status in {"capped", "stalled", "blocked", "stopped"}:
+                queue_warning += f" Catch-up is {continuation_status}."
+            health_warning = " ".join(filter(None, [health_warning, queue_warning]))
         return {"status": "stale" if stale else "partial" if warnings else "ok",
                 "generatedAt": cache["generated_at"], "inventoryAt": cache["inventory_at"],
                 "coverage": "partial", "clearance": False, "warnings": warnings,
-                "monitoringWarning": monitoring_warning(warnings, cache["generated_at"], cache["inventory_at"]),
+                "monitoringWarning": health_warning,
                 "backlog": cache["backlog"], "unknownAssets": cache["unknown_assets"],
                 "continuation": {k: continuation[k] for k in
                     ("status", "passes_used", "pass_limit", "next_pass_at") if k in continuation},
@@ -772,7 +780,7 @@ def optional_private(path):
 def continuation_window(now=None):
     local = now or datetime.now().astimezone()
     day = local.date()
-    if (local.hour, local.minute) < (7, 15):
+    if (local.hour, local.minute) < (0, 15):
         day -= timedelta(days=1)
     return day.isoformat()
 
@@ -786,7 +794,8 @@ def pending_work(health):
 
 def invoke_pass(args):
     process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
-                                "--inventory", str(args.inventory), "--state-dir", str(args.state_dir)])
+                                "--inventory", str(args.inventory), "--state-dir", str(args.state_dir),
+                                "--review-limit", str(getattr(args, "review_limit", 12))])
     try:
         return process.wait(timeout=1830)
     except BaseException:
@@ -803,11 +812,14 @@ def invoke_pass(args):
 
 
 def continue_collection(args, run=invoke_pass, sleeper=time.sleep, now=None):
-    """At most three durable pass reservations per local 07:15 window.
+    """Bounded durable pass reservations per local 00:15 window.
 
     No KeepAlive/relaunch loop. The worker retains its independent collection
     lock and deadline. Failed/unfinished work never becomes a briefing cache.
     """
+    pass_limit = getattr(args, "pass_limit", PASS_LIMIT)
+    if type(pass_limit) is not int or not 1 <= pass_limit <= 12:
+        raise ValueError("invalid_pass_limit")
     path = args.state_dir / "continuation.json"
     with (args.state_dir / "continuation.lock").open("a") as lock:
         try:
@@ -817,10 +829,16 @@ def continue_collection(args, run=invoke_pass, sleeper=time.sleep, now=None):
         window = continuation_window(now)
         ledger = optional_private(path)
         if ledger.get("window") != window:
-            ledger = {"window": window, "passes_used": 0, "pass_limit": PASS_LIMIT}
-        if (type(ledger.get("passes_used")) is not int or not 0 <= ledger["passes_used"] <= PASS_LIMIT
-                or ledger.get("pass_limit") != PASS_LIMIT):
+            ledger = {"window": window, "passes_used": 0, "pass_limit": pass_limit}
+        old_limit = ledger.get("pass_limit")
+        if (type(ledger.get("passes_used")) is not int or type(old_limit) is not int
+                or not 1 <= old_limit <= 12 or not 0 <= ledger["passes_used"] <= old_limit):
             raise ValueError("invalid_continuation_ledger")
+        # Explicit budget increases preserve consumed reservations; never erase
+        # a stop, failure, or stall. A capped window alone may use new capacity.
+        if ledger.get("status") == "capped" and pass_limit > old_limit:
+            ledger["status"] = "waiting"
+        ledger["pass_limit"] = max(pass_limit, ledger["passes_used"])
         if ledger.get("status") in {"complete", "blocked", "stalled", "stopped", "capped"}:
             return 0
         def save(status):
@@ -831,8 +849,8 @@ def continue_collection(args, run=invoke_pass, sleeper=time.sleep, now=None):
             raise CollectionStopped("collection_stopped")
         signal.signal(signal.SIGTERM, stop)
         try:
-            while ledger["passes_used"] < PASS_LIMIT:
-                # Never reset the allowance during an invocation crossing 07:15.
+            while ledger["passes_used"] < pass_limit:
+                # Never reset the allowance during an invocation crossing 00:15.
                 before = digest(optional_private(args.state_dir / "checkpoint.json"))
                 old_start = optional_private(args.state_dir / "health.json").get("started_at")
                 ledger["passes_used"] += 1
@@ -849,7 +867,7 @@ def continue_collection(args, run=invoke_pass, sleeper=time.sleep, now=None):
                 if digest(optional_private(args.state_dir / "checkpoint.json")) == before:
                     save("stalled")
                     return 1
-                if ledger["passes_used"] == PASS_LIMIT:
+                if ledger["passes_used"] == pass_limit:
                     break
                 ledger["next_pass_at"] = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
                 save("waiting")
@@ -870,8 +888,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--state-dir", type=Path, default=STATE)
+    parser.add_argument("--review-limit", type=int, choices=range(1, 97), default=12,
+                        metavar="1..96", help="Maximum reviews per 30-minute pass")
+    parser.add_argument("--pass-limit", type=int, choices=range(1, 13), default=PASS_LIMIT,
+                        metavar="1..12", help="Durable pass budget per local 00:15 window")
     parser.add_argument("--continue-pending", action="store_true",
-                        help="Run up to three checkpointed passes per local 07:15 window")
+                        help="Run checkpointed passes within the configured durable daily budget")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--status", action="store_true")
     mode.add_argument("--progress", action="store_true", help="Read private collection progress; no network or model calls")
@@ -933,7 +955,8 @@ def main():
             result = collect(read_private(args.inventory), previous, progress=report_progress,
                              checkpoint=checkpoint,
                              save_checkpoint=lambda work: write_private(args.state_dir / "checkpoint.json", work),
-                             should_pause=lambda: time.monotonic() >= soft_deadline)
+                             should_pause=lambda: time.monotonic() >= soft_deadline,
+                             review_limit=args.review_limit)
             write_private(args.state_dir / "cache.json", result)
             health = {"status": "ok", "checked_at": now_iso(), "backlog": result["backlog"],
                       **{k: result[k] for k in ("discovery_reused", "resumed_reviews", "budget_exhausted")}}

@@ -10,9 +10,11 @@
         <string>--inventory</string>
         <string>/Users/dbochman/.local/state/security-inventory/2026-10-22-fleet-followup/inventory.json</string>
         <string>--continue-pending</string>
+        <string>--review-limit</string><string>96</string>
+        <string>--pass-limit</string><string>12</string>
     </array>
     <key>StartCalendarInterval</key>
-    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>15</integer></dict>
     <key>ProcessType</key><string>Background</string>
     <key>EnvironmentVariables</key>
     <dict>

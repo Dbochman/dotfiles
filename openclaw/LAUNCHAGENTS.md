@@ -22,7 +22,7 @@ agent. No gateway or other LaunchAgent reload is needed. See
 ### Daily security advisory cache (October 22, 2026)
 
 `com.dylanbochman.security-advisories` is attended-installed on the Mini only.
-It runs at 07:15 Mini local time (America/New_York), using Homebrew Python and
+It runs at 00:15 Mini local time (America/New_York), using Homebrew Python and
 `~/.local/libexec/security-advisory-collector.py`. The dated inventory argument
 must be updated after an attended resurvey; it does not silently refresh hosts.
 State/logs are private under `~/.local/state/security-advisories/`. The process
@@ -30,10 +30,10 @@ is locked, bounded to 30 minutes per pass and has no direct notification/remedia
 Private checkpoints retain validated discovery batches and successful reviews
 across interruptions. At 24 minutes it stops starting new work; incomplete
 discovery reports paused without replacing the published cache. With the deployed
-`--continue-pending` flag, at most three passes run per local 07:15 window, with
+`--continue-pending` flag, at most twelve passes run per local 00:15 window, with
 60-second gaps, a persisted allowance, and stops on no progress or non-timeout
 failure. There is no KeepAlive retry loop or added schedule. Each pass still has
-a twelve-review cap; discovery uses 20-item batches and retries a model timeout
+a 96-review cap; discovery uses 20-item batches and retries a model timeout
 once. Verification can correct an invalid evidence citation once within that
 same two-attempt budget; the citation validator remains strict. Operator
 termination stops continuation. The briefing reads only the
@@ -859,3 +859,15 @@ Every new LaunchAgent script MUST follow these rules:
 Presence runtime repair (2026-10-28): com.openclaw.presence-receive uses ~/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin in PATH for post-ingestion evaluation; Homebrew Node is absent. Verify fresh scan ingestion and evaluation together after runtime changes.
 
 The Cabin presence scanner uses the same managed Node 22 PATH; its live 300-second interval is preserved (source default 900 seconds).
+
+
+### Security backlog capacity repair — November 8, 2026
+
+Dylan authorized draining the pending-review queue and increasing daily capacity.
+The advisory LaunchAgent now starts at 00:15 local time with `--review-limit 96`
+and `--pass-limit 12`; it stops on completion, no progress, failure or its durable
+budget. The 08:00 briefing schedule is unchanged. Pending review counts and
+capped/stalled/blocked/stopped status now enter its mandatory monitoring warning,
+independently of urgency and alongside stale-inventory warnings. Zero pending
+reviews is not zero unresolved vulnerabilities or fleet clearance. Current
+October 22 inventory remains dated; this capacity change is not a host resurvey.
