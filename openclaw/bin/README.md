@@ -97,7 +97,7 @@ bounded current-news research, not collector inference or backlog processing.
 The following collector details describe retained manual/legacy functionality.
 
 `security-advisory-collector.py` is a Mini-only, notification-only review.
-The attended-installed `com.dylanbochman.security-advisories` LaunchAgent runs
+The now-disabled `com.dylanbochman.security-advisories` LaunchAgent previously ran
 at 00:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.
 It reads pwn.watch's complete JSON incident index in bounded discovery batches,
 matches against a minimized inventory with high-reasoning, tool-free local
@@ -148,7 +148,7 @@ the next daily or attended one-shot run. An in-flight unit may need to be repeat
 Model-process cleanup is also time-bounded, including when a detached descendant
 holds a pipe open; cleanup must not swallow the original collection deadline.
 Capacity is explicitly configurable: `--review-limit 1..96` (default 12)
-and `--pass-limit 1..12` (default 3). The deployed daily job runs at 00:15
+and `--pass-limit 1..12` (default 3). The retired daily job ran at 00:15
 with 96 reviews/pass and twelve passes/window, stopping early at zero pending
 work. Each pass still has the 24-minute soft / 30-minute hard deadline,
 60-second inter-pass backoff, checkpointing and exclusive locks. This is at
@@ -296,6 +296,10 @@ observations retain their original semantics. Playwright protocol-client presenc
 does not prove a downloaded browser exists. Update only verified component facts
 and preserve older unrelated observation dates; changing inventory invalidates
 matching checkpoints naturally, without resetting or deleting them.
+
+**Legacy deployment reference only:** Do not load or enable this collector without
+a new explicit request from Dylan. The current briefing must not be reconnected to
+its review cache. The following describes the retired deployment.
 
 Scoped deployment: install the collector as 0644 in `~/.local/libexec/`, keep
 the tracked morning helper and cron prompt together, create its 0700 state
@@ -604,13 +608,18 @@ requires reacquisition. The diagnostic does not repair the browser's CA data.
 | `nest-history-append` | Serializes all ordinary climate JSONL writes and rejects unsafe history paths. The attended Airthings importer takes the same lock while merging a backfill. |
 
 
-### Security backlog capacity repair — November 8, 2026
+### Historical security backlog capacity repair — November 8, 2026
+
+**Superseded later the same day:** Dylan disabled the daily collector entirely.
+Its LaunchAgent is disabled/unloaded and has no schedule. The 08:00 briefing now
+checks recent vulnerability news directly, with no review-cache or backlog warnings.
+The details below are historical, not instructions to resume collection.
 
 Dylan authorized draining the pending-review queue and increasing daily capacity.
-The advisory LaunchAgent now starts at 00:15 local time with `--review-limit 96`
+The advisory LaunchAgent temporarily ran at 00:15 local time with `--review-limit 96`
 and `--pass-limit 12`; it stops on completion, no progress, failure or its durable
 budget. The 08:00 briefing schedule is unchanged. Pending review counts and
-capped/stalled/blocked/stopped status now enter its mandatory monitoring warning,
+capped/stalled/blocked/stopped status entered its mandatory monitoring warning,
 independently of urgency and alongside stale-inventory warnings. Zero pending
 reviews is not zero unresolved vulnerabilities or fleet clearance. Current
 October 22 inventory remains dated; this capacity change is not a host resurvey.

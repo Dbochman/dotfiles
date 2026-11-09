@@ -989,13 +989,18 @@ deployable registry and preserved in
 | `weekly-upgrade-verify-0001` | 2026-03-12 | Weekly auto-upgrade removed; upgrades now manual |
 
 
-### Security backlog capacity repair — November 8, 2026
+### Historical security backlog capacity repair — November 8, 2026
+
+**Superseded later the same day:** Dylan disabled the daily collector entirely.
+Its LaunchAgent is disabled/unloaded and has no schedule. The 08:00 briefing now
+checks recent vulnerability news directly, with no review-cache or backlog warnings.
+The details below are historical, not instructions to resume collection.
 
 Dylan authorized draining the pending-review queue and increasing daily capacity.
-The advisory LaunchAgent now starts at 00:15 local time with `--review-limit 96`
+The advisory LaunchAgent temporarily ran at 00:15 local time with `--review-limit 96`
 and `--pass-limit 12`; it stops on completion, no progress, failure or its durable
 budget. The 08:00 briefing schedule is unchanged. Pending review counts and
-capped/stalled/blocked/stopped status now enter its mandatory monitoring warning,
+capped/stalled/blocked/stopped status entered its mandatory monitoring warning,
 independently of urgency and alongside stale-inventory warnings. Zero pending
 reviews is not zero unresolved vulnerabilities or fleet clearance. Current
 October 22 inventory remains dated; this capacity change is not a host resurvey.

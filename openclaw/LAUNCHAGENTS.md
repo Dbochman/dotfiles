@@ -19,7 +19,7 @@ unreadable or 36-hour-stale result. The weekly report also flags an unloaded
 agent. No gateway or other LaunchAgent reload is needed. See
 [the helper contract](bin/README.md#gateway--maintenance).
 
-### Daily security advisory cache (October 22, 2026)
+### Retired daily security advisory cache (disabled November 8, 2026)
 
 **Disabled by Dylan on November 8, 2026.** The security advisory LaunchAgent
 is unloaded and launchctl-disabled on the Mini. Its canonical and installed plists
@@ -31,7 +31,7 @@ it neither invokes this collector nor reads its review cache.
 Historical collector configuration (no longer scheduled):
 
 `com.dylanbochman.security-advisories` is attended-installed on the Mini only.
-It runs at 00:15 Mini local time (America/New_York), using Homebrew Python and
+It previously ran at 00:15 Mini local time (America/New_York), using Homebrew Python and
 `~/.local/libexec/security-advisory-collector.py`. The dated inventory argument
 must be updated after an attended resurvey; it does not silently refresh hosts.
 State/logs are private under `~/.local/state/security-advisories/`. The process
@@ -873,13 +873,18 @@ Presence runtime repair (2026-10-28): com.openclaw.presence-receive uses ~/.loca
 The Cabin presence scanner uses the same managed Node 22 PATH; its live 300-second interval is preserved (source default 900 seconds).
 
 
-### Security backlog capacity repair — November 8, 2026
+### Historical security backlog capacity repair — November 8, 2026
+
+**Superseded later the same day:** Dylan disabled the daily collector entirely.
+Its LaunchAgent is disabled/unloaded and has no schedule. The 08:00 briefing now
+checks recent vulnerability news directly, with no review-cache or backlog warnings.
+The details below are historical, not instructions to resume collection.
 
 Dylan authorized draining the pending-review queue and increasing daily capacity.
-The advisory LaunchAgent now starts at 00:15 local time with `--review-limit 96`
+The advisory LaunchAgent temporarily ran at 00:15 local time with `--review-limit 96`
 and `--pass-limit 12`; it stops on completion, no progress, failure or its durable
 budget. The 08:00 briefing schedule is unchanged. Pending review counts and
-capped/stalled/blocked/stopped status now enter its mandatory monitoring warning,
+capped/stalled/blocked/stopped status entered its mandatory monitoring warning,
 independently of urgency and alongside stale-inventory warnings. Zero pending
 reviews is not zero unresolved vulnerabilities or fleet clearance. Current
 October 22 inventory remains dated; this capacity change is not a host resurvey.
