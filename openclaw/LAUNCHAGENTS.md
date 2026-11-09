@@ -21,6 +21,15 @@ agent. No gateway or other LaunchAgent reload is needed. See
 
 ### Daily security advisory cache (October 22, 2026)
 
+**Disabled by Dylan on November 8, 2026.** The security advisory LaunchAgent
+is unloaded and launchctl-disabled on the Mini. Its canonical and installed plists
+have `Disabled=true` and no `StartCalendarInterval`. Do not re-enable during sync.
+Existing collector code/state is retained for explicitly requested manual use only.
+Dylan's 08:00 briefing now performs bounded vulnerability-news research itself;
+it neither invokes this collector nor reads its review cache.
+
+Historical collector configuration (no longer scheduled):
+
 `com.dylanbochman.security-advisories` is attended-installed on the Mini only.
 It runs at 00:15 Mini local time (America/New_York), using Homebrew Python and
 `~/.local/libexec/security-advisory-collector.py`. The dated inventory argument

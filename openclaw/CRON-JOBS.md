@@ -685,21 +685,16 @@ semantics. Delivery success alone is not evidence of a complete briefing.
 
 ### Dylan morning briefing data path
 
-The helper also adds an optional `security` section from the private advisory
-cache. Its separate Mini LaunchAgent collects at 00:15 local time; the briefing
-does no advisory fetching or inference. The existing 08:00 schedule, mail and
-calendar contracts remain unchanged. New/material changes stay eligible for
-48 hours; unchanged unresolved items become a count. Missing/stale cache,
-verification backlog and inventory older than seven days remain explicit.
-The prompt always includes a nonempty `security.monitoringWarning` for missing
-or stale results, a failed collection, or outdated device observations, even
-when no finding qualifies for the urgent-advisory section. This is a monitoring
-coverage warning, not a vulnerability or compromise claim.
-Model assessments are evidence-qualified notifications, not remediation or
-fleet clearance. No cache read is a delivery receipt. Use the helper's
-`--security-status` mode to verify integration without running mail/calendar
-collection or sending a briefing. Deploy only this job's message through the
-supported cron edit API; preserve all other fields and jobs.
+As of November 8, 2026, the separate daily security scanner is disabled.
+The helper's `security` object contains historical inventory product names and date,
+not cached findings. Dylan's unchanged 08:00 briefing performs up to three web
+searches and three primary-source reads (90 seconds maximum), looking for new or
+materially updated vulnerabilities in the last 48 hours, exceptionally seven days.
+Only particularly notable or inventory-relevant news appears, at most three bullets
+with primary links and qualified relevance. No scanning, remediation, old-review
+backlogs, stale-scanner warnings, or all-clear claims. The turn timeout is 360 seconds;
+mail/calendar's single command and 150-second helper deadline remain unchanged.
+`--security-status` verifies inventory hints without mail/calendar or delivery.
 
 It also adds a `cabinDeploy` section for the nightly shared-magazine deploy
 (`ai.openclaw.cabin-public-deploy`, 03:40 local). `cabin-public-deploy-status.py`
@@ -762,9 +757,10 @@ only scheduled cleanup actor. Expected Calendar or Gmail failures are returned
 as bounded `unavailable`/`partial` status objects with exit zero so the other
 section can still be delivered.
 The collector has a 150-second global deadline, while the agent turn has a
-240-second timeout so partial data can still be composed before cron aborts.
+360-second timeout to allow bounded news research and composition before cron aborts.
 
-The optional `security` section is cache-only and outstanding-only. The helper
+Historical security-cache integration (retired November 8, 2026; not used by the current briefing):
+The optional `security` section was cache-only and outstanding-only. The helper
 filters `not_applicable` findings and exact cached snapshots reconciled by
 attended-resolution receipts before ranking changes or counting unresolved work.
 It does not supply completed-maintenance recaps. Unknowns and collection/coverage

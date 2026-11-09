@@ -29,18 +29,23 @@ triage = importlib.util.module_from_spec(TRIAGE_SPEC)
 TRIAGE_SPEC.loader.exec_module(triage)
 
 
+SECURITY_INVENTORY = Path.home() / ".local/state/security-inventory/2026-10-22-fleet-followup/inventory.json"
+
+
 def security_summary(now=None):
-    """Optional cache integration must not break calendar/mail collection."""
+    """Inventory hints for briefing news only; never load the retired review cache."""
+    result = {"mode": "briefing_news_only", "automatedScanning": False,
+              "clearance": False, "coverage": "partial"}
     try:
-        spec = importlib.util.spec_from_file_location(
-            "security_advisory_cache", Path(__file__).with_name("security-advisory-collector.py")
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module.briefing_summary(now=now)
-    except Exception:
-        return {"status": "unavailable", "reason": "security_cache_unavailable", "clearance": False,
-                "monitoringWarning": "Security monitoring is unavailable; no usable review could be loaded."}
+        inventory = json.loads(SECURITY_INVENTORY.read_text())
+        products = sorted({row["product"] for row in inventory["components"]
+                           if row.get("state") not in
+                           {"retired_from_active_cache", "retired_from_application_path"}})
+        return {**result, "status": "ok", "inventoryAt": inventory["generated_at"],
+                "products": products,
+                "note": "Historical product hints only; not current installation or exposure evidence."}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {**result, "status": "unavailable", "products": []}
 
 
 def cabin_deploy_summary(now=None):

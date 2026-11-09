@@ -2,26 +2,34 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key><string>com.dylanbochman.security-advisories</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/dbochman/.local/libexec/security-advisory-collector.py</string>
-        <string>--inventory</string>
-        <string>/Users/dbochman/.local/state/security-inventory/2026-10-22-fleet-followup/inventory.json</string>
-        <string>--continue-pending</string>
-        <string>--review-limit</string><string>96</string>
-        <string>--pass-limit</string><string>12</string>
-    </array>
-    <key>StartCalendarInterval</key>
-    <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>15</integer></dict>
-    <key>ProcessType</key><string>Background</string>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>HOME</key><string>/Users/dbochman</string>
-        <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string>
-    </dict>
-    <key>StandardOutPath</key><string>/Users/dbochman/.local/state/security-advisories/launchd.log</string>
-    <key>StandardErrorPath</key><string>/Users/dbochman/.local/state/security-advisories/launchd.err.log</string>
+	<key>Disabled</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/Users/dbochman</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.dylanbochman.security-advisories</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>/Users/dbochman/.local/libexec/security-advisory-collector.py</string>
+		<string>--inventory</string>
+		<string>/Users/dbochman/.local/state/security-inventory/2026-10-22-fleet-followup/inventory.json</string>
+		<string>--continue-pending</string>
+		<string>--review-limit</string>
+		<string>96</string>
+		<string>--pass-limit</string>
+		<string>12</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/dbochman/.local/state/security-advisories/launchd.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/dbochman/.local/state/security-advisories/launchd.log</string>
 </dict>
 </plist>

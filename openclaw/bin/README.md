@@ -90,7 +90,13 @@ status, or no result for 36 hours. It never runs the job or reads logs. Both
 it from the same directory, so deploy it with them. A failure to evaluate is
 itself reported, never raised.
 
-`security-advisory-collector.py` is a Mini-only, notification-only daily review.
+**November 8, 2026: daily security review disabled at Dylan's request.**
+The LaunchAgent is disabled/unloaded, its schedule removed, and old state retained.
+The briefing helper returns only historical inventory product hints; its agent does
+bounded current-news research, not collector inference or backlog processing.
+The following collector details describe retained manual/legacy functionality.
+
+`security-advisory-collector.py` is a Mini-only, notification-only review.
 The attended-installed `com.dylanbochman.security-advisories` LaunchAgent runs
 at 00:15 Mini local time (America/New_York), before Dylan's 08:00 briefing.
 It reads pwn.watch's complete JSON incident index in bounded discovery batches,

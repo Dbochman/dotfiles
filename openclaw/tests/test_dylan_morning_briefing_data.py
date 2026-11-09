@@ -70,22 +70,34 @@ class DylanMorningBriefingDataTests(unittest.TestCase):
         self.assertEqual(result["security"], cached)
         self.assertEqual(result["inbox"]["status"], "unavailable")
 
-    def test_security_prompt_preserves_single_command_and_read_only_contract(self) -> None:
+    def test_security_news_contract(self) -> None:
         jobs = json.loads((SCRIPT.parents[1] / "cron/jobs.json").read_text())["jobs"]
         job = next(j for j in jobs if j["id"] == "gws-dylan-morning-briefing-0001")
         prompt = job["payload"]["message"]
-        self.assertIn("SECURITY WATCH (cached, notification-only)", prompt)
-        self.assertIn("never fetch advisories or run another command", prompt)
+        self.assertIn("SECURITY NEWS (briefing-only, no scanning)", prompt)
+        self.assertIn("at most three targeted searches", prompt)
+        self.assertIn("do not launch another shell command", prompt)
+        self.assertIn("SHARED MAGAZINE DEPLOY HEALTH", prompt)
+        self.assertNotIn("MONITORING HEALTH EXCEPTION", prompt)
         self.assertEqual(job["schedule"]["expr"], "0 8 * * *")
-        self.assertIn("Use attentionCandidates only when present", prompt)
-        self.assertIn("omit the entire Security watch section", prompt)
-        self.assertIn("a specific available action Dylan needs to take or approve now", prompt)
-        self.assertIn("never promote unknown to affected", prompt)
-        self.assertIn("Their omission does not resolve any finding", prompt)
-        self.assertIn("MONITORING HEALTH EXCEPTION", prompt)
-        self.assertIn("always include it as one brief Security monitoring warning", prompt)
-        self.assertIn("Do not hide these warnings under the urgent-advisory filter", prompt)
-        self.assertNotIn("Always explain collection warnings", prompt)
+        self.assertEqual(job["payload"]["timeoutSeconds"], 360)
+
+    def test_security_news_inventory_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "inventory.json"
+            path.write_text(json.dumps({"generated_at": "2026-10-22T00:00:00Z",
+                "components": [{"product": "Chrome", "context": "private-path"},
+                               {"product": "Retired", "state": "retired_from_application_path"}]}))
+            with mock.patch.object(briefing, "SECURITY_INVENTORY", path), mock.patch.object(
+                briefing.importlib.util, "spec_from_file_location", side_effect=AssertionError("no cache module")
+            ):
+                result = briefing.security_summary()
+                self.assertEqual(result["products"], ["Chrome"])
+                self.assertFalse(result["automatedScanning"])
+                self.assertNotIn("monitoringWarning", result)
+                self.assertNotIn("private-path", json.dumps(result))
+                path.unlink()
+                self.assertEqual(briefing.security_summary()["status"], "unavailable")
 
     def seed_handoff(self, payload, *, job_id=None, day=13):
         with sqlite3.connect(briefing.STATE_DB) as connection:
