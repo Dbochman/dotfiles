@@ -152,8 +152,8 @@ The supervisor reserves each pass durably before starting. An explicit cap
 increase preserves all consumed reservations and may reopen only `capped`,
 never `stopped`, `stalled`, `blocked`, or `complete`. A lower cap grants no new
 passes; the next 00:15 window resets the allowance. Manual invocations without
-`--continue-pending` remain one-shot. Review freshness remains 24 hours for
-unknowns and seven days otherwise; no assessment semantics or evidence checks
+`--continue-pending` remain one-shot. Unknown model reviews back off 24/48/96/168 hours for unchanged inputs and publisher evidence;
+other reviews remain seven days; no assessment semantics or evidence checks
 were weakened to lower the queue count.
 
 Continuation requires a saved checkpoint change and unfinished work: paused
@@ -200,7 +200,7 @@ phase/counters but lack start timing and finer stages until the next invocation.
 `--status` remains the cache-only briefing view. Neither command starts collection.
 Failed collection preserves the prior cache and separately updates health.
 Per-advisory failures retain old findings and count toward backlog. Unchanged
-inputs are reverified after seven days (unknowns after 24 hours); changed feed/inventory inputs are queued
+inputs are reverified after seven days (unknowns use bounded 24/48/96/168-hour backoff); changed feed/inventory inputs are queued
 again. Discovery omission never resolves a prior finding. Changed/expired
 affected or possibly-affected findings are reconciled first, then backlog is
 oldest-check first, within the configured per-pass review limit. Model selection is advisory, not completeness proof.
@@ -608,3 +608,13 @@ capped/stalled/blocked/stopped status now enter its mandatory monitoring warning
 independently of urgency and alongside stale-inventory warnings. Zero pending
 reviews is not zero unresolved vulnerabilities or fleet clearance. Current
 October 22 inventory remains dated; this capacity change is not a host resurvey.
+
+Unknown review scheduling: each assessed unknown stores `evidence_gap`, `next_check`,
+`next_review_at`, and an unchanged-review count. Gaps distinguish unavailable primary
+evidence, missing asset inventory, and unresolved applicability (the validated action
+is its concrete next check). Approved publisher sources are probed on each collection
+even during backoff; changed content bypasses the timer, including urgent evidence not
+yet reflected in the feed. This is collection-time detection, not a push listener.
+Unchanged unknowns remain unresolved, never cleared. Legacy records acquire scheduling
+metadata on their next assessment. Existing evidence validators, failure handling,
+review limits, checkpointing and source allowlists remain in force.

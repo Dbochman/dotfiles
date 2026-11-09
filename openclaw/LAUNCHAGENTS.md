@@ -38,6 +38,9 @@ once. Verification can correct an invalid evidence citation once within that
 same two-attempt budget; the citation validator remains strict. Operator
 termination stops continuation. The briefing reads only the
 published cache, never checkpoints, and reports continuation caps/stalls.
+Unknown reviews use 24/48/96/168-hour bounded backoff, with publisher evidence
+probes on each collection and immediate eligibility for changed advisory, inventory,
+or fetched source content. Evidence-gap and next-check metadata remain in the cache.
 Dylan's existing 08:00 briefing reads its cached result. No gateway restart,
 finance/forecast timing change, or other LaunchAgent reload is required. Only
 this LaunchAgent needs reloading when its continuation arguments change.

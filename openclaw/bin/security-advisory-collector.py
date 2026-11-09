@@ -389,6 +389,55 @@ def validate_assessment(value, assets, sources):
     return result
 
 
+# Unknown is an evidence task, not a successful remediation. Cheap publisher
+# probes remain independent of the model-review timer so new evidence bypasses it.
+UNKNOWN_BACKOFF_HOURS = (24, 48, 96, 168)
+
+
+def review_interval(finding):
+    if finding.get("status") != "unknown":
+        return 168
+    count = finding.get("unchanged_unknown_count", 1)
+    if type(count) is not int or count < 1:
+        count = 1
+    return UNKNOWN_BACKOFF_HOURS[min(count, len(UNKNOWN_BACKOFF_HOURS)) - 1]
+
+
+def primary_sources(slug, incident, fetcher):
+    detail = json.loads(fetcher(f"https://pwn.watch/i/{slug}.json", {"pwn.watch"}))
+    sources = {}
+    for url in source_urls(detail, incident):
+        try:
+            sources[url] = page_text(fetcher(url, PUBLISHERS))
+        except (OSError, ValueError):
+            continue
+    return sources
+
+
+def schedule_unknown(result, old, key, sources, stamp, unknown_assets):
+    fingerprint = digest(sources)
+    result["source_hash"] = fingerprint
+    if result["status"] != "unknown":
+        return
+    unchanged = (old.get("status") == "unknown" and old.get("input_hash") == key
+                 and old.get("source_hash") == fingerprint)
+    count = min(old.get("unchanged_unknown_count", 1) + 1, 4) if unchanged else 1
+    result["unchanged_unknown_count"] = count
+    if not sources:
+        gap = "primary_evidence_unavailable"
+        check = "Retrieve the approved publisher advisory and verify its affected and fixed versions."
+    elif unknown_assets:
+        gap = "asset_inventory_missing"
+        check = "Obtain current runtime and package observations for: " + ", ".join(sorted(unknown_assets))
+    else:
+        gap = "applicability_unverified"
+        check = result["action"]
+    result["evidence_gap"] = gap
+    result["next_check"] = check
+    result["next_review_at"] = (datetime.fromisoformat(stamp) + timedelta(
+        hours=UNKNOWN_BACKOFF_HOURS[count - 1])).isoformat()
+
+
 def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progress=lambda **_: None,
             checkpoint=None, save_checkpoint=lambda _: None, should_pause=lambda: False, review_limit=12):
     if type(review_limit) is not int or not 1 <= review_limit <= 96:
@@ -458,18 +507,30 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         progress(phase="discovery", advisories=len(values), screened=len(work["discovery"]), reused=reused)
     findings = dict(previous.get("findings", {}))
     pending = []
+    probed_sources = {}
     resumed_reviews = 0
     for slug, match in matches.items():
         key = digest([contract, incidents[slug], review_inventory_hash, match])
         resumed = saved.get("findings", {}).get(slug, {})
         if (resumed.get("input_hash") == key
-                and age_hours(resumed["checked_at"]) <= (24 if resumed.get("status") == "unknown" else 168)
+                and age_hours(resumed["checked_at"]) <= review_interval(resumed)
                 and resumed["checked_at"] > findings.get(slug, {}).get("checked_at", "")):
             findings[slug] = resumed
             resumed_reviews += 1
         old = findings.get(slug, {})
-        interval = 24 if old.get("status") == "unknown" else 168
-        if old.get("input_hash") != key or age_hours(old.get("checked_at", "2000-01-01T00:00:00Z")) > interval:
+        interval = review_interval(old)
+        evidence_changed = False
+        if old.get("status") == "unknown" and old.get("input_hash") == key:
+            # Probe even while deferred: source revisions (including urgent vendor
+            # updates absent from the feed) must not wait for the backoff timer.
+            try:
+                probed_sources[slug] = primary_sources(slug, incidents[slug], fetcher)
+                if probed_sources[slug]:
+                    evidence_changed = digest(probed_sources[slug]) != old.get("source_hash")
+            except (OSError, ValueError, KeyError, TypeError):
+                pass  # A failed probe is not evidence of remediation or change.
+        if (old.get("input_hash") != key or evidence_changed
+                or age_hours(old.get("checked_at", "2000-01-01T00:00:00Z")) > interval):
             pending.append((slug, match, key))
         else:
             work["findings"][slug] = old
@@ -494,12 +555,8 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
         progress(phase="verification", step="sources", pending=len(pending),
                  checked=checked - 1, review_limit=min(review_limit, len(pending)), errors=errors)
         try:
-            detail = json.loads(fetcher(f"https://pwn.watch/i/{slug}.json", {"pwn.watch"}))
-            for url in source_urls(detail, incidents[slug]):
-                try:
-                    sources[url] = page_text(fetcher(url, PUBLISHERS))
-                except (OSError, ValueError):
-                    continue
+            sources = (probed_sources[slug] if slug in probed_sources else
+                       primary_sources(slug, incidents[slug], fetcher))
             if sources:
                 def review_progress(**fields):
                     progress(phase="verification", step="model", pending=len(pending),
@@ -520,6 +577,7 @@ def collect(inventory, previous, fetcher=fetch, reviewer=infer, now=None, progre
                                {k: incidents[slug].get(k) for k in
                                 ("cveIds", "affectedVersions", "fixedVersions", "severity")}])
             old = findings.get(slug, {})
+            schedule_unknown(result, old, key, sources, stamp, match["unknown_assets"])
             result.update(slug=slug, title=incidents[slug]["title"], input_hash=key,
                           material_hash=material, checked_at=now_iso(),
                           change_kind="changed" if old else "new",

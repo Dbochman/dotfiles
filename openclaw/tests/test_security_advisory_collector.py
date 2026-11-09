@@ -44,6 +44,63 @@ class AdvisoryTests(unittest.TestCase):
         return mod.collect(self.inventory, previous or {}, fetcher=kwargs.get("fetcher", self.fetch),
                            reviewer=kwargs.get("reviewer", self.review), now=self.stamp)
 
+    def unknown_review(self, instructions, data):
+        value = self.review(instructions, data)
+        if instructions == mod.VERIFY:
+            value["status"] = "unknown"
+        return value
+
+    def test_unknown_backoff_caps_and_resets_on_changed_evidence(self):
+        old = {}
+        for expected in (24, 48, 96, 168, 168):
+            result = {"status": "unknown", "action": "Check active runtime."}
+            mod.schedule_unknown(result, old, "key", {"url": "evidence"}, self.stamp, [])
+            self.assertEqual(mod.review_interval(result), expected)
+            self.assertEqual(result["evidence_gap"], "applicability_unverified")
+            self.assertEqual(result["next_check"], "Check active runtime.")
+            self.assertEqual(datetime.fromisoformat(result["next_review_at"]),
+                             self.now + timedelta(hours=expected))
+            old = {**result, "input_hash": "key"}
+        mod.schedule_unknown(result, old, "key", {"url": "NEW"}, self.stamp, [])
+        self.assertEqual(mod.review_interval(result), 24)
+        mod.schedule_unknown(result, old, "new-key", {}, self.stamp, [])
+        self.assertEqual(result["evidence_gap"], "primary_evidence_unavailable")
+        mod.schedule_unknown(result, old, "new-key", {"url": "evidence"}, self.stamp, ["offline"])
+        self.assertEqual(result["evidence_gap"], "asset_inventory_missing")
+        self.assertIn("offline", result["next_check"])
+
+    def test_deferred_unknown_skips_model_but_changed_source_bypasses(self):
+        first = self.collect(reviewer=self.unknown_review)
+        finding = first["findings"]["node-test"]
+        finding["unchanged_unknown_count"] = 4
+        finding["checked_at"] = (self.now - timedelta(hours=48)).isoformat()
+        calls = []
+        def review(prompt, data):
+            if prompt == mod.VERIFY:
+                calls.append(data)
+            return self.unknown_review(prompt, data)
+        self.collect(first, reviewer=review)
+        self.assertEqual(calls, [])
+        self.text = "New urgent publisher evidence."
+        result = self.collect(first, reviewer=review)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["findings"]["node-test"]["unchanged_unknown_count"], 1)
+
+    def test_changed_advisory_and_inventory_bypass_unknown_backoff(self):
+        first = self.collect(reviewer=self.unknown_review)
+        first["findings"]["node-test"]["unchanged_unknown_count"] = 4
+        calls = []
+        def review(prompt, data):
+            if prompt == mod.VERIFY:
+                calls.append(data)
+            return self.unknown_review(prompt, data)
+        self.incident["severity"] = "critical"
+        second = self.collect(first, reviewer=review)
+        self.assertEqual(len(calls), 1)
+        self.inventory["components"][0]["version"] = "2.0.0"
+        self.collect(second, reviewer=review)
+        self.assertEqual(len(calls), 2)
+
     def test_progress_stages_and_privacy(self):
         events = []
         mod.collect(self.inventory, {}, fetcher=self.fetch, reviewer=self.review,
