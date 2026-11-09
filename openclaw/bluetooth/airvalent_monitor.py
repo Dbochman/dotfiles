@@ -21,12 +21,19 @@ SERVICE = "b81c94a4-6b2b-4d41-9357-0c8229ea02df"
 CURRENT = "e8694d30-a155-4fb4-befa-548e64c88965"
 INTERVAL = "b1c48eea-4f5c-44f7-9797-73e0ce294881"
 BRIDGE = "crosstown-ble-01"
+# ESP-IDF 5.5.6: ESP_AUTH_SMP_CONN_TOUT = 0x66. This is a lost link,
+# not evidence of a rejected PIN. Retry on the next scheduled collection.
+AUTH_CONNECTION_TIMEOUT = 102
 
 
 class ReadError(Exception):
     def __init__(self, category, auth_failure_code=None):
         super().__init__(category)
         self.auth_failure_code = auth_failure_code
+
+
+def authentication_error(category, code):
+    return ReadError("ble_connection_timeout" if code == AUTH_CONNECTION_TIMEOUT else category, code)
 
 
 def decode_current(raw):
@@ -89,11 +96,11 @@ async def authenticate(cli, address, actions, reauth, recovery=None, on_recovery
             except Exception as exc:
                 raise ReadError("reauth_required") from exc
             if not paired.paired:
-                raise ReadError("reauth_required")
+                raise authentication_error("reauth_required", getattr(paired, "error", None))
         else:
             paired = await auth
             if not paired.paired:
-                raise ReadError("bond_unavailable")
+                raise authentication_error("bond_unavailable", getattr(paired, "error", None))
     finally:
         for task in (auth, requested):
             if not task.done():
@@ -202,7 +209,8 @@ async def read_sensor(cfg, chars, recovery=None, on_recovery=None):
         try:
             await authenticate(cli, address, actions, reauth, recovery, on_recovery)
         except ReadError as exc:
-            raise ReadError(str(exc), auth_failure_code) from exc
+            code = exc.auth_failure_code if exc.auth_failure_code is not None else auth_failure_code
+            raise authentication_error(str(exc), code) from exc
         if reauth.is_set():
             bonds.clear()
             await cli.execute_service(bond_action, {})
@@ -273,8 +281,9 @@ def collect(root):
         except (OSError, ValueError):
             raise ReadError("invalid_cache")
         cache["last_attempt_at"] = now_iso()
-        if cache.get("last_error") in {"reauth_required", "bond_unavailable"}:
-            # Avoid repeated unattended PIN requests after a lost peripheral bond.
+        if (cache.get("last_error") in {"reauth_required", "bond_unavailable"}
+                and cache.get("last_auth_failure_code") != AUTH_CONNECTION_TIMEOUT):
+            # Preserve credential-failure latches; recover legacy timeout latches.
             write_private(root / "status.json", cache)
             return {"ok": False, "error": cache["last_error"]}
         try:
@@ -297,6 +306,7 @@ def collect(root):
                 "collection_timeout" if isinstance(exc, TimeoutError) else "read_failed")
             cache["last_error"] = error
             cache["last_auth_failure_code"] = getattr(exc, "auth_failure_code", None)
+            cache["last_failure_at"] = now_iso()
             write_private(root / "status.json", cache)
             return {"ok": False, "error": error}
         cache.update(sample=sample, last_success_at=sample["read_at"], last_error=None, last_auth_failure_code=None, history_error=None)

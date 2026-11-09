@@ -13,7 +13,7 @@ STRUCTURE = "19Crosstown"
 STALE_SECONDS = 900
 ERRORS = {"not_collected", "invalid_cache", "binding_invalid", "bridge_unavailable",
           "sensor_unavailable", "bond_unavailable", "reauth_required", "read_failed",
-          "invalid_reading", "collection_timeout", "collector_failed"}
+          "invalid_reading", "collection_timeout", "ble_connection_timeout", "collector_failed"}
 
 
 def now_iso():

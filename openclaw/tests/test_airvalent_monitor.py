@@ -69,6 +69,42 @@ class AirvalentStateTests(unittest.TestCase):
             self.assertEqual(result['error'], 'reauth_required')
             load.assert_not_called()
 
+    def test_legacy_connection_timeout_latch_recovers_without_erasing_old_sample(self):
+        for category in ('bond_unavailable', 'reauth_required'):
+            with self.subTest(category=category), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                old = self.sample(3600)
+                state.write_private(root/'status.json', {'sample':old, 'last_error':category,
+                                                        'last_auth_failure_code':102})
+                with patch.object(monitor, 'load_binding', return_value=({}, {})), \
+                     patch.object(monitor, 'read_sensor', AsyncMock(side_effect=monitor.ReadError('sensor_unavailable'))):
+                    self.assertEqual(monitor.collect(root)['error'], 'sensor_unavailable')
+                saved = state.private_json(root/'status.json')
+                self.assertEqual(saved['sample'], old)
+                self.assertIsNotNone(saved['last_failure_at'])
+
+    def test_rejected_or_unknown_authentication_stays_latched(self):
+        for code in (None, 78, 81, 86):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                state.write_private(root/'status.json', {'last_error':'reauth_required', 'last_auth_failure_code':code})
+                with patch.object(monitor, 'load_binding') as load:
+                    self.assertEqual(monitor.collect(root)['error'], 'reauth_required')
+                    load.assert_not_called()
+
+    def test_connection_timeout_retries_next_collection_and_appends_only_success(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(monitor, 'load_binding', return_value=({}, {})), \
+                 patch.object(monitor, 'read_sensor', AsyncMock(side_effect=[
+                     monitor.authentication_error('bond_unavailable', 102), self.sample()])), \
+                 patch.object(monitor, 'append_sample') as append:
+                self.assertEqual(monitor.collect(root)['error'], 'ble_connection_timeout')
+                append.assert_not_called()
+                self.assertEqual(state.cached_status(root/'status.json')['error'], 'ble_connection_timeout')
+                self.assertTrue(monitor.collect(root)['ok'])
+                append.assert_called_once()
+
     def test_overlapping_collector_does_not_read_the_sensor(self):
         import fcntl
         with tempfile.TemporaryDirectory() as temp:
@@ -116,7 +152,7 @@ class AirvalentStateTests(unittest.TestCase):
 
 
 class AuthenticationRecoveryTests(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, recovery, accepted=True):
+    async def exercise(self, recovery, accepted=True, error=None):
         requested = asyncio.Event()
         finished = asyncio.Future()
         calls = []
@@ -125,7 +161,7 @@ class AuthenticationRecoveryTests(unittest.IsolatedAsyncioTestCase):
             return await finished
         async def execute(action, payload):
             calls.append((action.name, payload))
-            finished.set_result(SimpleNamespace(paired=accepted))
+            finished.set_result(SimpleNamespace(paired=accepted, error=error))
         cli = SimpleNamespace(bluetooth_device_pair=pair, execute_service=execute)
         claim = Mock()
         actions = [SimpleNamespace(name='airvalent_submit_passkey')]
@@ -144,6 +180,16 @@ class AuthenticationRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejected_pin_is_a_latched_error(self):
         with self.assertRaisesRegex(monitor.ReadError, '^reauth_required$'):
             await self.exercise({'pin': '000123'}, accepted=False)
+
+    async def test_link_loss_after_pin_submission_is_retryable(self):
+        with self.assertRaisesRegex(monitor.ReadError, '^ble_connection_timeout$') as error:
+            await self.exercise({'pin':'000123'}, accepted=False, error=102)
+        self.assertEqual(error.exception.auth_failure_code, 102)
+
+    async def test_link_loss_without_pin_request_is_retryable(self):
+        cli = SimpleNamespace(bluetooth_device_pair=AsyncMock(return_value=SimpleNamespace(paired=False,error=102)))
+        with self.assertRaisesRegex(monitor.ReadError, '^ble_connection_timeout$'):
+            await monitor.authenticate(cli, 123, [], asyncio.Event())
 
     async def test_only_stale_bond_gets_one_reconnect(self):
         with patch.object(monitor, 'read_sensor', AsyncMock(side_effect=[monitor.ReadError('bond_unavailable'), {'co2_ppm': 660}])) as read, \

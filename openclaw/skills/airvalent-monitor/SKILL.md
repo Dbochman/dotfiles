@@ -19,7 +19,9 @@ Only CO2 decoding is validated. Do not invent temperature, humidity, or VOC valu
 
 The scheduled collector can recover this enrolled sensor with its privately
 provisioned fixed PIN: at most one PIN submission per run, after an actual
-passkey request. Failed authentication latches until operator repair. Initial
+passkey request. Rejected or unclassified authentication failures latch until
+operator repair. `ble_connection_timeout` is a lost Bluetooth link, not a PIN
+rejection; the collector retries on its next scheduled run. Initial
 enrollment and credential changes remain attended operator workflows. Do not
 invoke the sampler, pairing tools, or PIN API actions from this skill, and never
 read or disclose the recovery PIN. Report `reauth_required` as needing repair.

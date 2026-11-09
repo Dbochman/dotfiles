@@ -120,7 +120,10 @@ The collector holds a nonblocking per-sensor lock, bounds the network attempt to
 110 seconds plus cleanup, and terminates only its own SSH process. Successful
 reads append one `airvalent_ble_sampler_v1` room through `nest-history-append` and
 its shared history lock. Ordinary failures preserve the last good cache and
-retry on the next scheduled run. Authentication failures after bounded recovery
+retry on the next scheduled run. Bluetooth authentication connection timeout
+(ESP-IDF code 102) is `ble_connection_timeout` and also retries on the next run;
+it is not evidence that the PIN was rejected. Legacy timeout-only authentication
+latches recover automatically. Other authentication failures after bounded recovery
 (or without a provisioned PIN) latch in health to avoid repeated pairing attempts.
 After correcting credentials or attended repair, an operator can clear
 `last_error` in the private status file and verify a fresh collection. The
@@ -293,3 +296,25 @@ another PIN submission. Successful samples reached the shared history and the li
 Airvalent CO₂ card and series; failed attempts and old diagnostic readings were
 not inserted as fresh history. These tests establish working bounded recovery,
 not permanent bond retention or long-term reliability.
+
+## Connection-timeout recovery (November 9, 2026)
+
+The last good reading before the outage was November 8 at 21:32:59 UTC
+(16:32:59 EST). The retained failure was `bond_unavailable` with authentication
+code 102, and subsequent five-minute jobs skipped the network because the error
+was latched. The dashboard correctly marked the retained reading stale.
+
+The installed ESP-IDF 5.5.6 headers identify 102 (`0x66`) as
+`ESP_AUTH_SMP_CONN_TOUT`: `HCI_ERR_MAX_ERR` (`0x43`) + 10 + `SMP_CONN_TOUT`
+(`0x19`). The collector now preserves the pairing-response failure code, falls
+back to the target-filtered firmware event, and classifies this specific timeout
+as retryable. It also recognizes legacy timeout latches without discarding the
+last good sample. Actual PIN failures and unknown authentication failures remain
+latched; the one-PIN-per-run limit and exact sensor binding are unchanged.
+Failure timestamps are stored separately from scheduled attempt timestamps.
+The original radio-disconnection trigger is unknown.
+
+Deployed and verified with an actual LaunchAgent run: automatic saved-PIN
+recovery at 19:27:55 UTC, a fresh 691 ppm read at 19:28:03 UTC, and the same
+new sample in the climate history and current API. No old readings were
+backfilled as current observations; the collection gap remains visible.
