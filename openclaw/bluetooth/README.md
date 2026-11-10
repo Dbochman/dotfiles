@@ -120,15 +120,21 @@ The collector holds a nonblocking per-sensor lock, bounds the network attempt to
 110 seconds plus cleanup, and terminates only its own SSH process. Successful
 reads append one `airvalent_ble_sampler_v1` room through `nest-history-append` and
 its shared history lock. Ordinary failures preserve the last good cache and
-retry on the next scheduled run. Bluetooth authentication connection timeout
-(ESP-IDF code 102) is `ble_connection_timeout` and also retries on the next run;
-it is not evidence that the PIN was rejected. Legacy timeout-only authentication
-latches recover automatically. Other authentication failures after bounded recovery
-(or without a provisioned PIN) latch in health to avoid repeated pairing attempts.
+retry automatically. Bluetooth authentication connection/response timeouts
+(ESP-IDF codes 102/99) are `ble_connection_timeout`; incomplete pairing exchanges
+and client exceptions are `authentication_incomplete`. Neither proves that the
+PIN was rejected. Retry delays grow from 5 to 10, 20, then 30 minutes; the
+five-minute job retries at or after `next_retry_at`, and success resets the delay.
+Legacy timeout-only authentication latches recover automatically. Explicit
+device rejections and missing enrollment prerequisites latch for operator repair.
 After correcting credentials or attended repair, an operator can clear
 `last_error` in the private status file and verify a fresh collection. The
-collector records recovery timestamps and numeric authentication failure codes,
-never PINs or raw Bluetooth logs.
+collector records recovery timestamps, numeric authentication failure codes,
+failure stage and exception class (never exception text), consecutive failures,
+and the next retry time. `last_network_attempt_at` distinguishes real reads from
+scheduled checks during a delay or latch. PINs and raw Bluetooth logs are never
+recorded. A brief wait for the target's authentication event ensures a delayed
+explicit rejection takes precedence over an earlier client disconnect exception.
 
 `connection.json` can specify a private IPv4 `transport_host` when Crosstown's
 mDNS resolution fails. The current private binding uses the verified LAN address
@@ -318,3 +324,33 @@ Deployed and verified with an actual LaunchAgent run: automatic saved-PIN
 recovery at 19:27:55 UTC, a fresh 691 ppm read at 19:28:03 UTC, and the same
 new sample in the climate history and current API. No old readings were
 backfilled as current observations; the collection gap remains visible.
+
+## Incomplete-authentication recovery (November 10, 2026)
+
+Collection stopped after the November 10 02:00:01 UTC reading (November 9,
+21:00:01 EST). The 02:05:42 UTC failure was `reauth_required` without a numeric
+authentication failure, shortly after a PIN submission. The old broad exception
+handler and post-pairing bond check both produced that permanent latch; the
+retained data cannot distinguish which path caused this particular failure.
+The original exception was not preserved.
+
+An instrumented live check found zero stored bonds and a connection timeout
+(code 102, disconnect reason 8). The corrected collector separates client/API
+exceptions and missing post-pairing bond confirmation from explicit device
+rejections. Ambiguous failures now retry with bounded backoff. It preserves safe
+failure-stage/type details and allows delayed target rejection events to arrive
+before classification. No firmware, PIN, sensor binding, or network routing was
+changed. This incident’s unclassified latch was released after a private state
+backup; other unclassified legacy latches are not silently cleared.
+
+The first deployed run recovered using the existing saved PIN and read 567 ppm
+at 12:38:23 UTC. The outage gap remains in history; no old readings are presented
+as fresh data.
+
+The next ordinary LaunchAgent run (no manual trigger) started at 12:43:24 UTC
+and successfully read 567 ppm at 12:43:33 UTC. Both readings reached the
+climate history/current API, with all 15 current rooms preserved. The browser
+showed the recovered Airvalent card and CO₂ series. All 53 targeted collector,
+dashboard, and history-appender tests passed. Longer-term radio reliability is
+not established by these two reads; the fix prevents ambiguous failures from
+permanently disabling collection.

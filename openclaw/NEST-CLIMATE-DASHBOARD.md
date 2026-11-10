@@ -101,6 +101,8 @@ Crosstown Airvalent CO₂ is collected every five minutes through the always-on
 Crosstown Mac and encrypted ATOM API. The current card also reads its private
 cache health: failed reads or data older than 15 minutes show unavailable/stale,
 with last-known values explicitly labeled. `read_at` is Bluetooth read time;
+incomplete authentication exchanges retry with bounded backoff, while explicit
+device rejections require operator repair. Failed attempts do not append history;
 the device's measurement timestamp remains unknown. The source has no verified
 temperature/humidity decoding and is excluded from HVAC-duty calculations.
 See [Bluetooth bridges](bluetooth/README.md#scheduled-monitoring-and-dashboard)

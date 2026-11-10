@@ -2,6 +2,7 @@
 """Bounded Airvalent reads with optional owner-provisioned PIN recovery."""
 import argparse
 import asyncio
+from datetime import datetime, timedelta, timezone
 import fcntl
 import json
 import ipaddress
@@ -24,16 +25,25 @@ BRIDGE = "crosstown-ble-01"
 # ESP-IDF 5.5.6: ESP_AUTH_SMP_CONN_TOUT = 0x66. This is a lost link,
 # not evidence of a rejected PIN. Retry on the next scheduled collection.
 AUTH_CONNECTION_TIMEOUT = 102
+AUTH_RESPONSE_TIMEOUT = 99
+AUTH_TIMEOUTS = {AUTH_CONNECTION_TIMEOUT, AUTH_RESPONSE_TIMEOUT}
 
 
 class ReadError(Exception):
-    def __init__(self, category, auth_failure_code=None):
+    def __init__(self, category, auth_failure_code=None, *, stage=None, error_type=None):
         super().__init__(category)
         self.auth_failure_code = auth_failure_code
+        self.stage = stage
+        self.error_type = error_type
 
 
 def authentication_error(category, code):
-    return ReadError("ble_connection_timeout" if code == AUTH_CONNECTION_TIMEOUT else category, code)
+    if code in AUTH_TIMEOUTS:
+        category = "ble_connection_timeout"
+    elif code and category == "authentication_incomplete":
+        # A target-reported failure wins over an ambiguous client exception.
+        category = "reauth_required"
+    return ReadError(category, code)
 
 
 def decode_current(raw):
@@ -83,6 +93,7 @@ def load_recovery(root, cfg):
 async def authenticate(cli, address, actions, reauth, recovery=None, on_recovery=None):
     auth = asyncio.create_task(cli.bluetooth_device_pair(address, timeout=20))
     requested = asyncio.create_task(reauth.wait())
+    stage = "pair_response"
     try:
         await asyncio.wait({auth, requested}, return_when=asyncio.FIRST_COMPLETED)
         if reauth.is_set() and not auth.done():
@@ -90,17 +101,26 @@ async def authenticate(cli, address, actions, reauth, recovery=None, on_recovery
             if recovery is None or pin_action is None or on_recovery is None:
                 raise ReadError("reauth_required")
             on_recovery()  # Claim the single allowed submission before sending it.
-            try:
-                await cli.execute_service(pin_action, {"passkey": int(recovery["pin"])})
-                paired = await auth
-            except Exception as exc:
-                raise ReadError("reauth_required") from exc
+            stage = "pin_submission"
+            await cli.execute_service(pin_action, {"passkey": int(recovery["pin"])})
+            stage = "pair_response_after_pin"
+            paired = await auth
             if not paired.paired:
-                raise authentication_error("reauth_required", getattr(paired, "error", None))
+                code = getattr(paired, "error", None)
+                raise authentication_error("reauth_required" if code else "authentication_incomplete", code)
         else:
             paired = await auth
             if not paired.paired:
-                raise authentication_error("bond_unavailable", getattr(paired, "error", None))
+                code = getattr(paired, "error", None)
+                raise authentication_error("bond_unavailable" if code else "authentication_incomplete", code)
+    except ReadError as exc:
+        exc.stage = exc.stage or stage
+        raise
+    except Exception as exc:
+        # A dropped API/BLE link or client timeout is not a PIN rejection.
+        # Keep only the class name; exception messages can contain identities.
+        raise ReadError("authentication_incomplete", stage=stage,
+                        error_type=type(exc).__name__) from exc
     finally:
         for task in (auth, requested):
             if not task.done():
@@ -157,6 +177,7 @@ async def read_sensor(cfg, chars, recovery=None, on_recovery=None):
         info = await cli.device_info()
         bonds = asyncio.Event()
         reauth = asyncio.Event()
+        auth_completed = asyncio.Event()
         bond_count = None
         auth_failure_code = None
 
@@ -168,6 +189,7 @@ async def read_sensor(cfg, chars, recovery=None, on_recovery=None):
             failure = re.search(r"Authentication complete success=0 mode=\d+ failure=(\d+)", message)
             if failure:
                 auth_failure_code = int(failure[1])
+                auth_completed.set()
             match = re.search(r"Stored BLE bonds now: (\d+)", message)
             if match:
                 bond_count = int(match[1])
@@ -209,14 +231,23 @@ async def read_sensor(cfg, chars, recovery=None, on_recovery=None):
         try:
             await authenticate(cli, address, actions, reauth, recovery, on_recovery)
         except ReadError as exc:
-            code = exc.auth_failure_code if exc.auth_failure_code is not None else auth_failure_code
-            raise authentication_error(str(exc), code) from exc
+            # Disconnect responses and target auth logs can arrive in either
+            # order. Briefly allow a delayed explicit rejection to take priority.
+            if str(exc) == "authentication_incomplete" and not auth_completed.is_set():
+                try:
+                    await asyncio.wait_for(auth_completed.wait(), .75)
+                except TimeoutError:
+                    pass
+            code = exc.auth_failure_code or auth_failure_code
+            classified = authentication_error(str(exc), code)
+            classified.stage, classified.error_type = exc.stage, exc.error_type
+            raise classified from exc
         if reauth.is_set():
             bonds.clear()
             await cli.execute_service(bond_action, {})
             await asyncio.wait_for(bonds.wait(), 5)
             if bond_count != 1:
-                raise ReadError("reauth_required")
+                raise ReadError("authentication_incomplete", stage="bond_confirmation")
         raw = await cli.bluetooth_gatt_read(address, chars[CURRENT], timeout=10)
         interval = await cli.bluetooth_gatt_read(address, chars[INTERVAL], timeout=10)
         if len(interval) != 2 or int.from_bytes(interval, "little") not in (60, 120, 300, 600, 900):
@@ -282,10 +313,16 @@ def collect(root):
             raise ReadError("invalid_cache")
         cache["last_attempt_at"] = now_iso()
         if (cache.get("last_error") in {"reauth_required", "bond_unavailable"}
-                and cache.get("last_auth_failure_code") != AUTH_CONNECTION_TIMEOUT):
+                and cache.get("last_auth_failure_code") not in AUTH_TIMEOUTS):
             # Preserve credential-failure latches; recover legacy timeout latches.
             write_private(root / "status.json", cache)
             return {"ok": False, "error": cache["last_error"]}
+        retry_at = cache.get("next_retry_at")
+        if retry_at and retry_at > now_iso():
+            write_private(root / "status.json", cache)
+            return {"ok": False, "error": cache.get("last_error") or "read_failed",
+                    "outcome": "backoff", "next_retry_at": retry_at}
+        cache["last_network_attempt_at"] = now_iso()
         try:
             cfg, chars = load_binding(root)
             recovery = load_recovery(root, cfg)
@@ -307,9 +344,20 @@ def collect(root):
             cache["last_error"] = error
             cache["last_auth_failure_code"] = getattr(exc, "auth_failure_code", None)
             cache["last_failure_at"] = now_iso()
+            cache["last_failure_stage"] = getattr(exc, "stage", None)
+            cache["last_failure_type"] = getattr(exc, "error_type", None)
+            failures = min(int(cache.get("consecutive_failures", 0)) + 1, 10)
+            cache["consecutive_failures"] = failures
+            # Back off uncertain failures instead of stopping monitoring forever.
+            # At most one PIN per collection, and at most two attempts/hour once
+            # failures persist. Explicit credential failures still latch above.
+            delay = min(300 * 2 ** (failures - 1), 1800)
+            cache["next_retry_at"] = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(timespec="seconds").replace("+00:00", "Z")
             write_private(root / "status.json", cache)
             return {"ok": False, "error": error}
-        cache.update(sample=sample, last_success_at=sample["read_at"], last_error=None, last_auth_failure_code=None, history_error=None)
+        cache.update(sample=sample, last_success_at=sample["read_at"], last_error=None, last_auth_failure_code=None,
+                     history_error=None, consecutive_failures=0, next_retry_at=None,
+                     last_failure_stage=None, last_failure_type=None)
         write_private(root / "status.json", cache)
         try:
             append_sample(sample)

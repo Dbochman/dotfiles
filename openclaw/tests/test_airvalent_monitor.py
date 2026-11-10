@@ -102,8 +102,49 @@ class AirvalentStateTests(unittest.TestCase):
                 self.assertEqual(monitor.collect(root)['error'], 'ble_connection_timeout')
                 append.assert_not_called()
                 self.assertEqual(state.cached_status(root/'status.json')['error'], 'ble_connection_timeout')
+                cache = state.private_json(root/'status.json')
+                cache['next_retry_at'] = '2020-01-01T00:00:00Z'
+                state.write_private(root/'status.json', cache)
                 self.assertTrue(monitor.collect(root)['ok'])
                 append.assert_called_once()
+
+    def test_ambiguous_failure_backs_off_then_recovers_without_operator(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            old = self.sample(3600)
+            state.write_private(root/'status.json', {'sample':old})
+            failure = monitor.ReadError('authentication_incomplete', stage='pair_response_after_pin',
+                                        error_type='TimeoutError')
+            with patch.object(monitor, 'load_binding', return_value=({}, {})), \
+                 patch.object(monitor, 'read_sensor', AsyncMock(side_effect=[failure, self.sample()])) as read, \
+                 patch.object(monitor, 'append_sample') as append:
+                self.assertEqual(monitor.collect(root)['error'], 'authentication_incomplete')
+                cached = state.private_json(root/'status.json')
+                self.assertEqual(cached['sample'], old)
+                self.assertEqual(cached['last_failure_type'], 'TimeoutError')
+                self.assertEqual(cached['last_failure_stage'], 'pair_response_after_pin')
+                self.assertEqual(monitor.collect(root)['outcome'], 'backoff')
+                self.assertEqual(read.await_count, 1)
+                append.assert_not_called()
+                cached['next_retry_at'] = '2020-01-01T00:00:00Z'
+                state.write_private(root/'status.json', cached)
+                self.assertTrue(monitor.collect(root)['ok'])
+                recovered = state.private_json(root/'status.json')
+                self.assertEqual(recovered['consecutive_failures'], 0)
+                self.assertIsNone(recovered['next_retry_at'])
+                append.assert_called_once()
+
+    def test_repeated_failures_cap_backoff_at_thirty_minutes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state.write_private(root/'status.json', {'consecutive_failures':9})
+            with patch.object(monitor, 'load_binding', return_value=({}, {})), \
+                 patch.object(monitor, 'read_sensor', AsyncMock(side_effect=monitor.ReadError('authentication_incomplete'))):
+                monitor.collect(root)
+            saved = state.private_json(root/'status.json')
+            delay = datetime.fromisoformat(saved['next_retry_at'].replace('Z','+00:00')) - datetime.now(timezone.utc)
+            self.assertGreater(delay.total_seconds(), 1790)
+            self.assertLessEqual(delay.total_seconds(), 1800)
 
     def test_overlapping_collector_does_not_read_the_sensor(self):
         import fcntl
@@ -152,7 +193,7 @@ class AirvalentStateTests(unittest.TestCase):
 
 
 class AuthenticationRecoveryTests(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, recovery, accepted=True, error=None):
+    async def exercise(self, recovery, accepted=True, error=None, exception=None):
         requested = asyncio.Event()
         finished = asyncio.Future()
         calls = []
@@ -161,7 +202,10 @@ class AuthenticationRecoveryTests(unittest.IsolatedAsyncioTestCase):
             return await finished
         async def execute(action, payload):
             calls.append((action.name, payload))
-            finished.set_result(SimpleNamespace(paired=accepted, error=error))
+            if exception:
+                finished.set_exception(exception)
+            else:
+                finished.set_result(SimpleNamespace(paired=accepted, error=error))
         cli = SimpleNamespace(bluetooth_device_pair=pair, execute_service=execute)
         claim = Mock()
         actions = [SimpleNamespace(name='airvalent_submit_passkey')]
@@ -179,7 +223,28 @@ class AuthenticationRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejected_pin_is_a_latched_error(self):
         with self.assertRaisesRegex(monitor.ReadError, '^reauth_required$'):
-            await self.exercise({'pin': '000123'}, accepted=False)
+            await self.exercise({'pin': '000123'}, accepted=False, error=78)
+
+    async def test_client_exception_after_pin_is_not_a_rejection(self):
+        for exc in (TimeoutError('private identity'), ConnectionError('private identity')):
+            with self.subTest(type=type(exc).__name__), self.assertRaisesRegex(monitor.ReadError, '^authentication_incomplete$') as error:
+                await self.exercise({'pin':'000123'}, exception=exc)
+            self.assertEqual(error.exception.stage, 'pair_response_after_pin')
+            self.assertEqual(error.exception.error_type, type(exc).__name__)
+            self.assertNotIn('private identity', str(error.exception))
+
+    async def test_failure_without_rejection_code_is_not_a_credential_latch(self):
+        with self.assertRaisesRegex(monitor.ReadError, '^authentication_incomplete$'):
+            await self.exercise({'pin':'000123'}, accepted=False, error=0)
+
+    async def test_smp_response_timeout_is_retryable(self):
+        with self.assertRaisesRegex(monitor.ReadError, '^ble_connection_timeout$'):
+            await self.exercise({'pin':'000123'}, accepted=False, error=99)
+
+    def test_delayed_device_rejection_overrides_incomplete_client_result(self):
+        error = monitor.authentication_error('authentication_incomplete', 78)
+        self.assertEqual(str(error), 'reauth_required')
+        self.assertEqual(error.auth_failure_code, 78)
 
     async def test_link_loss_after_pin_submission_is_retryable(self):
         with self.assertRaisesRegex(monitor.ReadError, '^ble_connection_timeout$') as error:
@@ -211,6 +276,54 @@ class AuthenticationRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class SensorTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disconnect_exception_waits_for_target_failure_before_classifying(self):
+        for code, category in ((78, 'reauth_required'), (99, 'ble_connection_timeout'),
+                               (102, 'ble_connection_timeout')):
+            with self.subTest(code=code):
+                class Client:
+                    def __init__(self, *args, **kwargs):
+                        self.pair_result = asyncio.get_running_loop().create_future()
+                    async def connect(self, **kwargs): pass
+                    async def device_info(self): return SimpleNamespace(bluetooth_proxy_feature_flags=1)
+                    def subscribe_logs(self, callback, **kwargs): self.log = callback
+                    async def list_entities_services(self):
+                        return [], [SimpleNamespace(name='airvalent_bond_status'),
+                                    SimpleNamespace(name='airvalent_submit_passkey')]
+                    async def execute_service(self, service, args):
+                        if service.name == 'airvalent_bond_status':
+                            self.log(SimpleNamespace(message=b'[airvalent_pair] Stored BLE bonds now: 1'))
+                        else:
+                            self.pair_result.set_exception(ConnectionError('private-device-identity'))
+                            # The disconnect can reach the API before its SMP failure log.
+                            asyncio.get_running_loop().call_later(.01, self.log, SimpleNamespace(
+                                message=f'[airvalent_pair] Authentication complete success=0 mode=13 failure={code} stored_bonds=0'.encode()))
+                    def subscribe_bluetooth_le_raw_advertisements(self, callback):
+                        callback(SimpleNamespace(advertisements=[SimpleNamespace(address=123,address_type=0)]))
+                        return lambda: None
+                    async def bluetooth_device_connect(self, *args, **kwargs): return lambda: None
+                    async def bluetooth_device_pair(self, *args, **kwargs):
+                        self.log(SimpleNamespace(message=b'[airvalent_pair] Enrollment code requested by target'))
+                        return await self.pair_result
+                    async def bluetooth_device_disconnect(self, *args, **kwargs): pass
+                    async def disconnect(self): pass
+                tunnel = SimpleNamespace(returncode=None, terminate=Mock(), kill=Mock(), wait=AsyncMock())
+                writer = SimpleNamespace(close=Mock(), wait_closed=AsyncMock())
+                modules = {'aioesphomeapi':SimpleNamespace(APIClient=Client),
+                           'aioesphomeapi.model':SimpleNamespace(LogLevel=SimpleNamespace(LOG_LEVEL_INFO=1))}
+                claim = Mock()
+                with patch.dict(sys.modules, modules), \
+                     patch.object(asyncio, 'create_subprocess_exec', AsyncMock(return_value=tunnel)), \
+                     patch.object(asyncio, 'open_connection', AsyncMock(return_value=(None,writer))), \
+                     self.assertRaises(monitor.ReadError) as error:
+                    await monitor.read_sensor({'expected_address':123,'api_key':'placeholder'}, {},
+                                              {'pin':'000123'}, claim)
+                self.assertEqual(str(error.exception), category)
+                self.assertEqual(error.exception.auth_failure_code, code)
+                self.assertEqual(error.exception.stage, 'pair_response_after_pin')
+                self.assertEqual(error.exception.error_type, 'ConnectionError')
+                claim.assert_called_once()
+                tunnel.terminate.assert_called_once()
+
     async def test_disconnect_failure_still_closes_owned_tunnel(self):
         class Client:
             def __init__(self, *args, **kwargs):

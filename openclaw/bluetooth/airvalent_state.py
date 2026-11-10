@@ -13,7 +13,7 @@ STRUCTURE = "19Crosstown"
 STALE_SECONDS = 900
 ERRORS = {"not_collected", "invalid_cache", "binding_invalid", "bridge_unavailable",
           "sensor_unavailable", "bond_unavailable", "reauth_required", "read_failed",
-          "invalid_reading", "collection_timeout", "ble_connection_timeout", "collector_failed"}
+          "invalid_reading", "collection_timeout", "ble_connection_timeout", "authentication_incomplete", "collector_failed"}
 
 
 def now_iso():
@@ -87,7 +87,8 @@ def project_status(cache, now=None):
             "read_at": read_at if valid else None, "measurement_at": None,
             "age_seconds": max(0, int(age)) if valid else None,
             "sample_interval_seconds": sample.get("sample_interval_seconds") if valid else None,
-            "error": error, "history_ok": cache.get("history_error") is None}
+            "error": error, "history_ok": cache.get("history_error") is None,
+            "next_retry_at": cache.get("next_retry_at")}
 
 
 def cached_status(path=None, now=None):
