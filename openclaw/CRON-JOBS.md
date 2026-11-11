@@ -685,6 +685,35 @@ semantics. Delivery success alone is not evidence of a complete briefing.
 
 ### Dylan morning briefing data path
 
+November 11 reminder repair: conversational `MEMORY.md` closures were not an
+input to the scheduled collector, so unchanged closed threads could be
+reclassified as unresolved. The shared handoff reader now reconciles explicit
+owner-scoped dispositions from private `~/.openclaw/morning-triage/resolutions/`.
+Only exact message/thread/activity snapshots are suppressed; model-written
+reason/state changes alone cannot reopen them. New messages, thread activity,
+deadlines, urgency, or draft status make a reminder eligible again. Owner/job/
+cron-store bindings prevent cross-account suppression. Unread baselines, cleanup
+receipts, immutable handoffs, and raw inventory counts remain unchanged.
+
+The attended command is `bin/morning-briefing-actions.py list|close|reopen
+--owner dylan|julia`. `close`/`reopen` require the exact `--key` returned by
+`list` and a `--reason` describing the owner's resolution. Close requires a
+current same-day handoff and refuses entries with pending drafts. This is a
+local reminder disposition, not a mailbox mutation or proof of remediation.
+Cron jobs only read dispositions; they never infer or write a closure from
+email content or a `resolved_candidate` recommendation. A missing store means
+no recorded closures; an unsafe/corrupt store keeps items visible and reports
+resolution checking unavailable. The Gmail skill records owner-requested
+closures through this helper instead of relying on conversational memory alone.
+
+Dylan's live prompt consumes the collector's `triage.resolutions` summary and
+counts remaining reminders from eligible entries, not the raw mailbox action
+count. The November 11 rollout recorded three previously closed snapshots
+(two security reminders and one obsolete appointment-preparation reminder);
+the unrelated indexing follow-up remained eligible. No triage mutation or
+briefing delivery was replayed. Actual dispositions and private item identifiers
+remain outside Git. Reversals use `reopen`; ordinary deployment preserves them.
+
 As of November 8, 2026, the separate daily security scanner is disabled.
 The helper's `security` object contains historical inventory product names and date,
 not cached findings. Dylan's unchanged 08:00 briefing performs up to three web

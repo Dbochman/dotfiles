@@ -76,6 +76,77 @@ class DurableTriageHandoffTests(unittest.TestCase):
     def target(self, owner="julia"):
         return self.root / owner / f"{self.started}.json"
 
+    def close_review(self, owner="dylan", reopen=False):
+        key = triage.resolution_candidates(self.payload)[self.payload['actionReview'][0]['threadId']]['key']
+        return triage.record_resolution(owner, key, 'Owner confirmed this reminder is done',
+            db_path=self.database, store_key=self.store, root=self.root, now=self.now, reopen=reopen)
+
+    def test_resolution_is_owner_scoped_and_preserves_counts_and_baseline(self):
+        for owner in ('dylan', 'julia'):
+            self.record(self.publish(owner), owner=owner)
+        self.assertTrue(self.close_review()['ok'])
+        dylan, baseline = self.read('dylan')
+        julia, _ = self.read('julia')
+        self.assertEqual(dylan['actionReview'], [])
+        self.assertEqual(len(julia['actionReview']), 1)
+        self.assertEqual(dylan['outcomes']['actionMessageCount'], self.payload['review']['actionMessageCount'])
+        self.assertEqual(len(baseline), 200)
+        self.assertEqual(dylan['resolutions'], {'status':'ok','suppressedThreadCount':1})
+        self.assertNotIn('review-private', json.dumps(dylan))
+        self.assertEqual((self.root/'resolutions/dylan.json').stat().st_mode & 0o777, 0o600)
+        self.close_review(reopen=True)
+        self.assertEqual(len(self.read('dylan')[0]['actionReview']), 1)
+
+    def test_resolution_filters_both_attention_and_review_without_mutating_handoff(self):
+        item = self.payload['actionReview'][0]
+        self.payload['attention'] = [{k:item.get(k,'') for k in
+            ('messageId','threadId','subject','reason','deadline','draftStatus')} | {'from':'Synthetic sender'}]
+        self.write_source()
+        self.record(self.publish('dylan'), owner='dylan')
+        original = self.target('dylan').read_bytes()
+        self.close_review()
+        current, _ = self.read('dylan')
+        self.assertEqual(current['attention'], [])
+        self.assertEqual(current['actionReview'], [])
+        self.assertEqual(self.target('dylan').read_bytes(), original)
+
+    def test_changed_prose_stays_closed_but_new_activity_message_or_draft_reopens(self):
+        self.record(self.publish('dylan'), owner='dylan')
+        self.close_review()
+        for field, value, count in [('reason','Model forgot resolution',0), ('state','needs_context',0),
+                                     ('activityKey','b'*64,1), ('messageId','new-message',1),
+                                     ('threadId','different-thread',1), ('draftStatus','existing',1),
+                                     ('deadline','2026-07-14',1), ('urgent',True,1)]:
+            with self.subTest(field=field):
+                payload = json.loads(json.dumps(self.payload))
+                payload['actionReview'][0][field] = value
+                result, _ = triage.reconcile_resolutions(payload, root=self.root, owner='dylan', store_key=self.store)
+                self.assertEqual(len(result['actionReview']), count)
+
+    def test_drafts_cannot_be_silently_closed(self):
+        self.payload['actionReview'][0]['draftStatus'] = 'existing'
+        self.write_source()
+        self.record(self.publish('dylan'), owner='dylan')
+        with self.assertRaises(ValueError): self.close_review()
+
+    def test_unavailable_resolution_store_keeps_attention_visible(self):
+        self.record(self.publish('dylan'), owner='dylan')
+        self.close_review()
+        path = self.root/'resolutions/dylan.json'
+        path.chmod(0o644)
+        current, _ = self.read('dylan')
+        self.assertEqual(len(current['actionReview']), 1)
+        self.assertEqual(current['resolutions']['status'], 'unavailable')
+
+    def test_cross_account_store_or_invalid_key_is_rejected(self):
+        self.record(self.publish('dylan'), owner='dylan')
+        self.close_review()
+        with self.assertRaises(ValueError):
+            triage.load_resolutions(self.root, 'dylan', 'other-store')
+        with self.assertRaises(ValueError):
+            triage.record_resolution('dylan', 'f'*64, 'Close', db_path=self.database,
+                                     store_key=self.store, root=self.root, now=self.now)
+
     def test_large_handoff_survives_cron_summary_limit_for_both_owners(self):
         self.assertGreater(self.source.stat().st_size, 2000)
         for owner in triage.OWNER_JOBS:

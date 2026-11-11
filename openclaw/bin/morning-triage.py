@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import fcntl
 import os
 import re
 import sqlite3
@@ -404,6 +405,139 @@ def _run_payload(
     return payload
 
 
+def resolution_candidates(payload):
+    """Exact message/activity snapshots, independent of model-written prose."""
+    grouped = {}
+    for kind in ("attention", "actionReview"):
+        for item in payload.get(kind, []):
+            if not item.get("threadId") or not item.get("messageId"):
+                continue
+            grouped.setdefault(item["threadId"], []).append((kind, item))
+    result = {}
+    for thread_id, entries in grouped.items():
+        identity = {
+            "threadId": thread_id,
+            "messages": sorted({item["messageId"] for _, item in entries}),
+            "activity": sorted({item["activityKey"] for kind, item in entries if kind == "actionReview"}),
+            "drafts": sorted({item.get("draftStatus", "none") for _, item in entries}),
+            "deadlines": sorted({item.get("deadline", "") for _, item in entries}),
+            "urgent": any(item.get("urgent", False) for _, item in entries),
+        }
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        result[thread_id] = {"key": key, "subject": entries[0][1].get("subject", ""),
+                             "hasDraft": any(value != "none" for value in identity["drafts"])}
+    return result
+
+
+def load_resolutions(root, owner, store_key):
+    if owner not in OWNER_JOBS:
+        raise ValueError("invalid_resolution_owner")
+    empty = {"schemaVersion": 1, "owner": owner, "jobId": OWNER_JOBS[owner],
+             "storeKey": store_key, "closed": []}
+    directory = root / "resolutions"
+    if not directory.exists() and not directory.is_symlink():
+        return empty
+    _private_directory(directory)
+    try:
+        value = json.loads(_private_bytes(directory / f"{owner}.json", HANDOFF_LIMIT_BYTES))
+    except FileNotFoundError:
+        return empty
+    if (not isinstance(value, dict) or set(value) != set(empty)
+            or any(value.get(k) != v for k, v in empty.items() if k != "closed")
+            or not isinstance(value["closed"], list) or len(value["closed"]) > 500):
+        raise ValueError("invalid_resolutions")
+    for entry in value["closed"]:
+        if (not isinstance(entry, dict) or set(entry) != {"key", "subject", "reason", "closedAt"}
+                or not all(isinstance(v, str) and len(v) <= 700 for v in entry.values())
+                or re.fullmatch(r"[a-f0-9]{64}", entry["key"]) is None
+                or not entry["reason"] or not entry["closedAt"]):
+            raise ValueError("invalid_resolutions")
+    return value
+
+
+def reconcile_resolutions(payload, *, root, owner, store_key):
+    """Never modify mail, immutable handoffs, or original inventory counts."""
+    if owner is None:
+        return payload, {"status": "not_configured", "suppressedThreadCount": 0}
+    try:
+        closed = {row["key"] for row in load_resolutions(root, owner, store_key)["closed"]}
+    except (OSError, ValueError, TypeError):
+        return payload, {"status": "unavailable", "suppressedThreadCount": 0}
+    suppressed = {thread for thread, item in resolution_candidates(payload).items()
+                  if item["key"] in closed and not item["hasDraft"]}
+    result = dict(payload)
+    for field in ("attention", "actionReview"):
+        if field in payload:
+            result[field] = [item for item in payload[field] if item.get("threadId") not in suppressed]
+    return result, {"status": "ok", "suppressedThreadCount": len(suppressed)}
+
+
+def current_owner_payload(owner, *, db_path, store_key, root=None, now=None):
+    """Operator selection uses the latest completed same-day handoff only."""
+    if owner not in OWNER_JOBS:
+        raise ValueError("invalid_resolution_owner")
+    today = (now or datetime.now(TIME_ZONE)).astimezone(TIME_ZONE)
+    connection = connect_cron(db_path)
+    try:
+        row = connection.execute(
+            "SELECT run_at_ms,summary,status FROM cron_run_logs WHERE store_key=? AND job_id=? ORDER BY run_at_ms DESC LIMIT 1",
+            (store_key, OWNER_JOBS[owner]),
+        ).fetchone()
+    finally:
+        connection.close()
+    if (not row or row[2] != "ok" or type(row[0]) is not int
+            or datetime.fromtimestamp(row[0] / 1000, TIME_ZONE).date() != today.date()):
+        raise ValueError("current_handoff_unavailable")
+    return _run_payload(row[1], today, run_at_ms=row[0], job_id=OWNER_JOBS[owner],
+                        store_key=store_key, root=root or HANDOFF_ROOT)
+
+
+def record_resolution(owner, key, reason, *, db_path, store_key, root=None, now=None, reopen=False):
+    """Only the attended operator command calls this; cron readers never write."""
+    if owner not in OWNER_JOBS or not re.fullmatch(r"[a-f0-9]{64}", key):
+        raise ValueError("invalid_resolution_selection")
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 700:
+        raise ValueError("resolution_reason_required")
+    root = root or HANDOFF_ROOT
+    _private_directory(root.parent)
+    _private_directory(root, create=True)
+    directory = root / "resolutions"
+    _private_directory(directory, create=True)
+    fd = os.open(directory / ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        value = load_resolutions(root, owner, store_key)
+        if not reopen:
+            payload = current_owner_payload(owner, db_path=db_path, store_key=store_key, root=root, now=now)
+            selection = [item for item in resolution_candidates(payload).values() if item["key"] == key]
+            if len(selection) != 1 or selection[0]["hasDraft"]:
+                raise ValueError("selection_changed_or_has_draft")
+        remaining = [item for item in value["closed"] if item["key"] != key]
+        if not reopen:
+            remaining.append({"key": key, "subject": selection[0]["subject"], "reason": reason.strip(),
+                              "closedAt": (now or datetime.now(TIME_ZONE)).isoformat(timespec="seconds")})
+        value["closed"] = remaining
+        content = json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
+        if len(content) > HANDOFF_LIMIT_BYTES or len(remaining) > 500:
+            raise ValueError("resolution_store_full")
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".resolution-", dir=directory)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, directory / f"{owner}.json")
+        finally:
+            temporary.unlink(missing_ok=True)
+        if load_resolutions(root, owner, store_key) != value:
+            raise ValueError("resolution_write_unverified")
+        return {"ok": True, "owner": owner, "outcome": "reopened" if reopen else "closed"}
+    finally:
+        os.close(fd)
+
+
 def load_triage_handoff(
     today: datetime,
     *,
@@ -460,6 +594,10 @@ def load_triage_handoff(
         except (OSError, ValueError, TypeError):
             return {"status": "unavailable", "reason": "invalid_handoff"}, None
 
+        owner = next((name for name, identifier in OWNER_JOBS.items() if identifier == job_id), None)
+        payload, resolutions = reconcile_resolutions(
+            payload, root=handoff_root or HANDOFF_ROOT, owner=owner, store_key=store_key,
+        )
         unread_raw = payload.get("unreadAfter")
         if not isinstance(unread_raw, list) or not all(
             isinstance(item, str) for item in unread_raw
@@ -551,6 +689,7 @@ def load_triage_handoff(
                 "trashed": safe_nonnegative_int(payload.get("trashed")),
                 "errorCount": error_count,
                 "attention": attention,
+                "resolutions": resolutions,
                 **review_fields,
             },
             set(unread_raw) if baseline_verified else None,
