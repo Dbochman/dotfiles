@@ -6,8 +6,8 @@
     <string>com.openclaw.presence-cabin</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/dbochman/.openclaw/workspace/scripts/presence-detect.sh</string>
+        <string>/usr/bin/python3</string>
+        <string>/Users/dbochman/.openclaw/bin/presence-checked-run.py</string>
         <string>cabin</string>
     </array>
     <key>EnvironmentVariables</key>

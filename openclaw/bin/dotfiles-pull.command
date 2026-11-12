@@ -1438,9 +1438,10 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
           continue
         fi
         if ! PRESENCE_DEVICE_CONFIG="$PRESENCE_BINDING_CONFIG" \
-             /bin/bash "$PRESENCE_CANDIDATE" validate-config cabin >/dev/null 2>&1; then
+             /usr/bin/python3 "$REPO/openclaw/bin/presence-checked-run.py" \
+             --scanner "$PRESENCE_CANDIDATE" validate-config cabin >/dev/null 2>>"$LOG"; then
           /bin/rm -f "$PRESENCE_CANDIDATE"
-          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN Cabin strict presence bindings invalid or insecure; preserved prior scanner" >> "$LOG"
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: WARN Cabin presence validation failed; see categorized diagnostic above; preserved prior scanner" >> "$LOG"
           continue
         fi
         if ! PRESENCE_SCANNER_HASH=$(openclaw_presence_scanner_sha256 "$PRESENCE_CANDIDATE"); then
@@ -1481,6 +1482,14 @@ if [ -d "$WORKSPACE_SRC" ] && [ -d "$WORKSPACE_DST" ]; then
     done
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) workspace: deployed $WS_SCRIPTS_DEPLOYED scripts to $SCRIPTS_DST" >> "$LOG"
   fi
+fi
+
+# Refresh only already-installed presence/vacancy jobs on the gateway. The
+# helper records the configuration actually loaded, detects live environment
+# drift even when the plist on disk is unchanged, and defers active jobs.
+if [ "$IS_GATEWAY_HOST" -eq 1 ]; then
+  /usr/bin/python3 "$REPO/openclaw/bin/refresh-presence-launchagents.py" \
+    --source-dir "$REPO/openclaw/launchagents" >> "$LOG" 2>&1
 fi
 
 # Deploy updated cron job definitions (preserves runtime state)

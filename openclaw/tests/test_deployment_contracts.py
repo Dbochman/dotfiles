@@ -74,6 +74,8 @@ CABIN_ENTRY_VERIFIER_PLIST = (
 )
 
 REQUIRED_HELPERS = {
+    "bin/presence-checked-run.py": "categorized presence startup diagnostics\n",
+    "bin/refresh-presence-launchagents.py": "idle presence LaunchAgent refresh\n",
     "bin/nest": "shared Nest CLI\n",
     "bin/nest-camera-image": "protected Nest camera request helper\n",
     "bin/nest-agent": "isolated Nest agent entry point\n",

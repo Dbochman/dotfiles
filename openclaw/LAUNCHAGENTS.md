@@ -477,7 +477,7 @@ Payroll data may still be unavailable, but the linked Plaid sources should popul
 | `ai.openclaw.home-event-action` | 30s | `home-event-action-wrapper.sh` | Processes exact policy-owned Hue and separately gated Petlibro schedule actions with fresh evidence and device readback; restores only owned state. It never invokes the operator-only audited `return-feeder-to-automation` command or automatically adopts a manual pause. |
 | `ai.openclaw.imsg-bridge-ensure` | 5min + login | `imsg-bridge-ensure` | Verifies native `imsg` bridge v2 after reboot, repairs Messages injection with a cooldown, then restarts the gateway only after readiness |
 | `ai.openclaw.airthings-snapshot` | 5min + login | `airthings-snapshot` | Reads the exact Cabin Living Room Wave Enhance over local BLE, appends one Airthings-only row, then evaluates the separately gated ventilation notifier and paired sustained-good follow-up; notification failures do not invalidate successful sensor collection |
-| `com.openclaw.presence-cabin` | 5min | `presence-detect.sh cabin` | Cabin network presence scan (Starlink controller + mesh gRPC sources); scanner bytes and identity policy unchanged |
+| `com.openclaw.presence-cabin` | 5min | `presence-checked-run.py cabin` → approved `presence-detect.sh` | Cabin network presence scan (Starlink controller + mesh gRPC sources); categorized runtime/config startup diagnostics; scanner bytes and identity policy unchanged |
 | `ai.openclaw.usage-snapshot` | 15min | `usage-snapshot.sh` | Snapshots Anthropic API usage to JSONL history |
 | `ai.openclaw.ccusage-push` | 30min | `ccusage-push.sh` | Collects local Codex CLI daily usage into an atomic mode-`0600` dashboard source |
 | `ai.openclaw.airvalent-snapshot` | 5min | `~/.openclaw/bin/airvalent-snapshot` | Exact enrolled Crosstown Airvalent CO₂ through the Crosstown Mac and encrypted ATOM API; private cache, shared history, optional owner-provisioned fixed-PIN recovery (one submission; explicit rejections latch; timeouts/incomplete exchanges retry with 5–30min backoff); no new sensor enrollment or alerts |
@@ -869,6 +869,28 @@ Every new LaunchAgent script MUST follow these rules:
 - **Prefix convention**: Newer agents use `ai.openclaw.*`, older ones use `com.openclaw.*`. Both are functionally equivalent.
 
 Presence runtime repair (2026-10-28): com.openclaw.presence-receive uses ~/.local/share/openclaw/runtimes/node-v22.23.4-darwin-arm64/bin in PATH for post-ingestion evaluation; Homebrew Node is absent. Verify fresh scan ingestion and evaluation together after runtime changes.
+
+Presence deployment refresh (2026-11-12): daily gateway deployment invokes
+`refresh-presence-launchagents.py` for already-installed Cabin scan, presence
+receive, and vacancy-action jobs. A protected configuration hash records only
+successful loads; the helper also compares each declared environment variable
+with launchd's actual loaded environment. This catches an outdated loaded PATH
+even when source and installed plist already match. The first managed refresh
+establishes the receipt. Later unchanged deployments leave jobs alone. Active
+jobs are deferred until a later deployment; unloaded jobs remain unloaded and
+absent jobs are not installed. Failed reloads restore the prior plist and
+attempt to reload it, reporting rollback failure explicitly. This does not
+refresh the gateway or unrelated services. Receipt files live under
+`~/.openclaw/state/presence-launchagents/` with a concurrent-refresh lock.
+
+`presence-checked-run.py validate-config cabin` is the diagnostic entry point
+for enrollment checks; `--scanner <candidate>` checks a staged candidate during
+deployment. It preflights the same Node selection as the approved scanner and
+distinguishes missing/disabled/unstartable Node from missing, insecure,
+unreadable, or invalid enrollment configuration. The scheduled Cabin scan uses
+the same wrapper. Only fixed reason categories reach stderr; device bindings,
+provider responses, and child stderr are never copied into these diagnostics.
+The approved scanner and its exact-source approval remain unchanged.
 
 The Cabin presence scanner uses the same managed Node 22 PATH; its live 300-second interval is preserved (source default 900 seconds).
 

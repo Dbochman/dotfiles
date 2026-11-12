@@ -4,6 +4,22 @@ Helper scripts deployed to `~/.openclaw/bin/` (and `~/bin/`) on the Mac Mini. Th
 
 ## Deployment
 
+`refresh-presence-launchagents.py` reconciles the three installed gateway
+presence/vacancy LaunchAgents during daily deployment. It compares source and
+installed plists, a receipt of the last successful load, and launchd's live
+environment. It refreshes idle jobs only, preserves unloaded/absent jobs, and
+rolls back failed refreshes. Run with `--dry-run` to inspect pending changes;
+optional positional labels restrict it to the documented three jobs. It never
+operates on the gateway or Crosstown scanner. Deploy the Cabin plist together
+with `presence-checked-run.py` before refreshing it.
+
+`presence-checked-run.py validate-config cabin` distinguishes Node runtime
+failures from enrollment failures using content-free stderr diagnostics. Its
+`cabin` mode runs the existing approved scanner after startup checks; `observe
+cabin` preserves read-only observation. Raw child stderr is suppressed and
+scanner stdout keeps its existing contract. Scanner bytes and approval files
+are not changed by either helper.
+
 `8sleep-snapshot.sh` delegates to `8sleep-snapshot.py` at the existing 06:50
 schedule. The collector reads only four Eight Sleep keys from the owner-owned
 0600 secrets cache (no shell evaluation or `op`), issues one bounded user/date

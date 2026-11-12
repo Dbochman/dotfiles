@@ -25,6 +25,16 @@ Each service uses one of two patterns:
 
 ### Plist-Owned (stdout capture)
 
+The Cabin job additionally writes startup diagnostics to `presence-cabin.log`
+through `presence-checked-run.py`. JSON diagnostics contain only job, mode,
+site and a fixed reason: `node_missing`, `node_not_executable`,
+`node_start_failed`, `config_missing`, `config_permissions`,
+`config_unreadable`, `config_invalid`, `scanner_missing`,
+`scanner_start_failed`, or `scanner_failed`. A runtime error must not be
+interpreted as a bad phone binding. Deployment validation writes these same
+categories to `dotfiles-pull.log`; refresh outcomes there distinguish unchanged,
+refreshed, deferred-active, preserved-unloaded and failed/rolled-back jobs.
+
 | Log file | Service | Description |
 |----------|---------|-------------|
 | `dog-walk-automation.log` | `ai.openclaw.dog-walk-automation` | Fi/network dog-walk policy, route tracking, collar mode, and Roomba lifecycle |

@@ -855,6 +855,8 @@ install_openclaw_guarded_helpers() {
     "bin/plant-tracker|bin/plant-tracker|755|private plant tracker wrapper"
     "bin/presence-cabin-enroll|bin/presence-cabin-enroll|755|Cabin Starlink presence enrollment helper"
     "bin/presence-cabin-mesh-enroll|bin/presence-cabin-mesh-enroll|755|Cabin Starlink mesh enrollment helper"
+    "bin/presence-checked-run.py|bin/presence-checked-run.py|755|Categorized presence startup diagnostics"
+    "bin/refresh-presence-launchagents.py|bin/refresh-presence-launchagents.py|755|Refresh installed idle presence LaunchAgents"
     "bin/presence-crosstown-canary|bin/presence-crosstown-canary|755|Crosstown strict presence canary helper"
     "bin/reolink-camera|bin/reolink-camera|755|Reolink guarded camera wrapper"
     "bin/reolink-camera-enroll|bin/reolink-camera-enroll|755|Reolink attended enrollment helper"
