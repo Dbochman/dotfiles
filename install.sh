@@ -926,6 +926,10 @@ publish_openclaw_standalone_skill_wrappers() {
       EXIT_CODE=1
       return 1
     fi
+    if [[ -f "$dst" && ! -L "$dst" && -x "$dst" ]] && cmp -s "$src" "$dst"; then
+      log_verbose "  Preserving identical standalone skill wrapper copy: $dst"
+      continue
+    fi
     link_file "$src" "$dst" || return 1
   done
 }

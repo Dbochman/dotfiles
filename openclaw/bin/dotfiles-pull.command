@@ -620,6 +620,7 @@ STANDALONE_SKILL_WRAPPERS=(
   nest-agent
   nest-camera-image
   airthings
+  airvalent
   cielo
   cielo-reauth
   litter-robot

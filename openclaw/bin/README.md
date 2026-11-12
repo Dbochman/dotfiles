@@ -4,6 +4,13 @@ Helper scripts deployed to `~/.openclaw/bin/` (and `~/bin/`) on the Mac Mini. Th
 
 ## Deployment
 
+Standalone wrapper publication includes `airvalent`. The installer accepts an
+identical executable regular-file copy as already installed; differing or
+non-executable copies still require normal conflict handling. Daily deployment
+publishes the canonical wrapper in `/opt/homebrew/bin` alongside the other
+standalone skill commands. Installer tests include the Airvalent wrappers,
+Bluetooth modules, locked runtime inputs, and their declared file modes.
+
 `refresh-presence-launchagents.py` reconciles the three installed gateway
 presence/vacancy LaunchAgents during daily deployment. It compares source and
 installed plists, a receipt of the last successful load, and launchd's live

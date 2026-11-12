@@ -84,6 +84,12 @@ REQUIRED_HELPERS = {
     "bin/airthings": "airthings wrapper\n",
     "bin/airthings-history-import": "airthings history importer\n",
     "bin/airthings-snapshot": "airthings snapshot wrapper\n",
+    "bin/airvalent": "airvalent cached status wrapper\n",
+    "bin/airvalent-snapshot": "airvalent snapshot wrapper\n",
+    "bluetooth/airvalent_monitor.py": "airvalent collector\n",
+    "bluetooth/airvalent_state.py": "airvalent freshness projection\n",
+    "bluetooth/pyproject.toml": "airvalent runtime manifest\n",
+    "bluetooth/uv.lock": "airvalent runtime lock\n",
     "bin/august": "august wrapper\n",
     "bin/cielo": "cielo wrapper\n",
     "bin/cielo-auth.py": "cielo auth helper\n",
@@ -123,6 +129,7 @@ STANDALONE_SKILL_WRAPPERS = {
     "nest-agent",
     "nest-camera-image",
     "airthings",
+    "airvalent",
     "cielo",
     "cielo-reauth",
     "litter-robot",
@@ -614,7 +621,7 @@ class DeploymentContractTests(unittest.TestCase):
         for relative, contents in REQUIRED_HELPERS.items():
             deployed = destination / relative
             self.assertEqual(deployed.read_text(encoding="utf-8"), contents)
-            mode = 0o644 if relative.startswith("bin/pinchtab-browser-") or relative in {"bin/nest-oauth.py", "bin/nest_routing.py"} else 0o755
+            mode = 0o644 if relative.startswith(("bin/pinchtab-browser-", "bluetooth/")) or relative in {"bin/nest-oauth.py", "bin/nest_routing.py"} else 0o755
             self.assertEqual(stat.S_IMODE(deployed.stat().st_mode), mode)
         for _, (destination_relative, contents) in REQUIRED_PROTECTED_FILES.items():
             deployed = destination / destination_relative
@@ -972,6 +979,42 @@ class DeploymentContractTests(unittest.TestCase):
                 published.resolve(),
                 (destination / "bin" / wrapper).resolve(),
             )
+
+    def test_standalone_wrapper_copies_preserve_identical_and_flag_conflicts(self) -> None:
+        for dry_run, contents, executable in (
+            (False, "airvalent cached status wrapper\n", True),
+            (True, "airvalent cached status wrapper\n", True),
+            (False, "different local wrapper\n", True),
+            (False, "airvalent cached status wrapper\n", False),
+        ):
+            with self.subTest(dry_run=dry_run, contents=contents, executable=executable):
+                with tempfile.TemporaryDirectory(dir=self.root) as temporary:
+                    root = Path(temporary)
+                    source, destination, standalone = root / "src", root / "home", root / "bin"
+                    self.make_guarded_helper_fixture(source)
+                    standalone.mkdir()
+                    existing = standalone / "airvalent"
+                    existing.write_text(contents)
+                    existing.chmod(0o755 if executable else 0o644)
+                    inode = existing.stat().st_ino
+                    expected_exit = 0 if executable and contents == REQUIRED_HELPERS["bin/airvalent"] else 2
+                    result = self.run_bash(
+                        '\n'.join((
+                            'source "$1"', 'DRY_RUN=false', 'QUIET=true',
+                            'VERBOSE=false', 'FORCE=false', 'ITEMS_LINKED=0',
+                            'ITEMS_SKIPPED=0', 'EXIT_CODE=0',
+                            'install_openclaw_guarded_helpers "$2" "$3" || exit 1',
+                            'OPENCLAW_STANDALONE_BIN_DIR="$4"',
+                            'DRY_RUN="$5"',
+                            'publish_openclaw_standalone_skill_wrappers "$3" || exit 1',
+                            'exit "$EXIT_CODE"',
+                        )), INSTALLER, source, destination, standalone,
+                        Path("true" if dry_run else "false"),
+                    )
+                    self.assertEqual(result.returncode, expected_exit, result.stderr)
+                    self.assertFalse(existing.is_symlink())
+                    self.assertEqual(existing.read_text(), contents)
+                    self.assertEqual(existing.stat().st_ino, inode)
 
     def test_reolink_wrappers_follow_routine_pull_and_doctor_contracts(self) -> None:
         install_text = INSTALLER.read_text(encoding="utf-8")
