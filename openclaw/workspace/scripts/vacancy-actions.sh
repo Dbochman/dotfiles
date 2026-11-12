@@ -20,7 +20,6 @@ STATE_FILE="$PRESENCE_DIR/state.json"
 MARKER_DIR="$PRESENCE_DIR/vacancy-dispatched"
 LOG_FILE="$HOME/.openclaw/logs/vacancy-actions.log"
 ROOMBA_SNOOZE_FILE="${ROOMBA_SNOOZE_FILE:-$HOME/.openclaw/dog-walk/snooze.json}"
-PRESENCE_SCANNER="${PRESENCE_SCANNER:-$HOME/.openclaw/workspace/scripts/presence-detect.sh}"
 VACANCY_ACTION_JOURNAL="${VACANCY_ACTION_JOURNAL:-$HOME/.openclaw/bin/vacancy-action-journal.py}"
 VACANCY_JOURNAL_PYTHON="${VACANCY_JOURNAL_PYTHON:-/opt/homebrew/bin/python3}"
 CROSSTOWN_VACANT_ROOMBA="${CROSSTOWN_VACANT_ROOMBA:-$HOME/.openclaw/bin/crosstown-vacant-roomba.py}"
@@ -259,15 +258,6 @@ PY
       return 0
       ;;
   esac
-}
-
-# Do not let an absent, invalid, or legacy Cabin binding semantically relocate
-# Julia's Eight Sleep side. Schema-v2 activation releases this containment
-# automatically only while the deployed scanner can validate the protected
-# exact production binding without writing presence state.
-cabin_presence_enrollment_active() {
-  [[ -x "$PRESENCE_SCANNER" ]] &&
-    "$PRESENCE_SCANNER" validate-config cabin >/dev/null 2>&1
 }
 
 mkdir -p "$MARKER_DIR"
@@ -566,20 +556,13 @@ reconcile_eightsleep_home() {
   fi
 }
 
-julia_eightsleep_location="$julia_location"
-julia_eightsleep_pinned=0
-if [[ "$julia_location" == "cabin" ]] && ! cabin_presence_enrollment_active; then
-  julia_eightsleep_location="crosstown"
-  julia_eightsleep_pinned=1
-  log "  WARN: Pinning Eight Sleep julia to crosstown until strict Cabin presence enrollment validates"
-fi
-
+# Canonical sticky presence owns routing for both residents. A separate
+# enrollment check must never relocate a resident to the opposite house.
 dylan_eightsleep_coverage="own"
 julia_eightsleep_coverage="own"
-if [[ "$julia_eightsleep_pinned" -eq 0 ]] && \
-    [[ "$dylan_location" =~ ^(crosstown|cabin)$ ]] && \
-    [[ "$julia_eightsleep_location" =~ ^(crosstown|cabin)$ ]] && \
-    [[ "$dylan_location" != "$julia_eightsleep_location" ]]; then
+if [[ "$dylan_location" =~ ^(crosstown|cabin)$ ]] && \
+    [[ "$julia_location" =~ ^(crosstown|cabin)$ ]] && \
+    [[ "$dylan_location" != "$julia_location" ]]; then
   dylan_eightsleep_coverage="both"
   julia_eightsleep_coverage="both"
 fi
@@ -587,7 +570,7 @@ fi
 reconcile_eightsleep_home \
   "Dylan" dylan "$dylan_location" "$dylan_eightsleep_coverage"
 reconcile_eightsleep_home \
-  "Julia" julia "$julia_eightsleep_location" "$julia_eightsleep_coverage"
+  "Julia" julia "$julia_location" "$julia_eightsleep_coverage"
 
 # A split transition can be observed before the resident who moved has been
 # routed to the other Pod. One bounded second pass lets the stationary
@@ -596,5 +579,5 @@ if [[ "$dylan_eightsleep_coverage" == "both" ]]; then
   reconcile_eightsleep_home \
     "Dylan" dylan "$dylan_location" "$dylan_eightsleep_coverage"
   reconcile_eightsleep_home \
-    "Julia" julia "$julia_eightsleep_location" "$julia_eightsleep_coverage"
+    "Julia" julia "$julia_location" "$julia_eightsleep_coverage"
 fi

@@ -153,45 +153,32 @@ touch -t 202001010000 "$MARKER_DIR/8sleep-julia-home"
 run_vacancy_actions
 test ! -s "$CALLS_FILE"
 
-# Before Julia's strict Cabin enrollment, a positive Cabin location moves Dylan
-# but pins Julia to Crosstown rather than trusting the permissive fallback.
+# Canonical presence routes both residents to the Cabin even if the separate
+# enrollment validator fails. This must not pin Julia to the opposite house.
 write_state possibly_vacant possibly_vacant cabin cabin
 : > "$CALLS_FILE"
 run_vacancy_actions
 
 assert_call 8sleep --location cabin home dylan
-if grep -Fq $'8sleep\t--location\tcabin\thome\tjulia' "$CALLS_FILE"; then
-  echo "unenrolled Julia was relocated to the Cabin Pod" >&2
+assert_call 8sleep --location cabin home julia
+assert_call_count 2
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin:own"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin:own"
+if grep -Fq 'Pinning Eight Sleep julia to crosstown' \
+    "$TEST_HOME/.openclaw/logs/vacancy-actions.log"; then
+  echo "canonical Cabin presence was overridden" >&2
   exit 1
 fi
-assert_call_count 1
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin:own"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown:own"
-grep -Fq 'Pinning Eight Sleep julia to crosstown' \
-  "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
 
-# The same interim pin applies when only Julia is assigned to the Cabin.
-rm -f "$MARKER_DIR/8sleep-dylan-home" "$MARKER_DIR/8sleep-julia-home"
-write_state possibly_vacant possibly_vacant crosstown cabin
-: > "$CALLS_FILE"
-run_vacancy_actions
-
-assert_call 8sleep --location crosstown home dylan
-assert_call 8sleep --location crosstown home julia
-assert_call_count 2
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown:own"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown:own"
-
-# Unknown locations are a no-op and preserve the last proven home assignment.
+# Unknown locations preserve the last proven assignment for that resident.
 write_state possibly_vacant possibly_vacant unknown cabin
 : > "$CALLS_FILE"
 run_vacancy_actions
 test ! -s "$CALLS_FILE"
-test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "crosstown:own"
-test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "crosstown:own"
+test "$(cat "$MARKER_DIR/8sleep-dylan-home")" = "cabin:own"
+test "$(cat "$MARKER_DIR/8sleep-julia-home")" = "cabin:own"
 
-# Once the deployed strict scanner validates the production enrollment, Julia
-# can move to the Cabin again. A partial failure still writes only the
+# A partial failure still writes only the
 # successful marker; the next identical state retries only the failed person.
 rm -f "$MARKER_DIR/8sleep-dylan-home" "$MARKER_DIR/8sleep-julia-home"
 write_state possibly_vacant possibly_vacant cabin cabin
@@ -290,7 +277,7 @@ grep -Fq 'cabin Roomba automation: SKIPPED (snoozed)' \
 rm -f "$MARKER_DIR/crosstown"
 write_state confirmed_vacant occupied cabin cabin
 printf '%s\n' cabin:own > "$MARKER_DIR/8sleep-dylan-home"
-printf '%s\n' crosstown:own > "$MARKER_DIR/8sleep-julia-home"
+printf '%s\n' cabin:own > "$MARKER_DIR/8sleep-julia-home"
 : > "$CALLS_FILE"
 run_vacancy_actions
 
