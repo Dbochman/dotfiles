@@ -122,10 +122,12 @@ reads append one `airvalent_ble_sampler_v1` room through `nest-history-append` a
 its shared history lock. Ordinary failures preserve the last good cache and
 retry automatically. Bluetooth authentication connection/response timeouts
 (ESP-IDF codes 102/99) are `ble_connection_timeout`; incomplete pairing exchanges
-and client exceptions are `authentication_incomplete`. Neither proves that the
+and client exceptions are `authentication_incomplete`. ESPHome's generic stack
+failure/disconnected-peer code -1 is also `authentication_incomplete`; a delayed
+target authentication failure takes precedence over that generic result. Neither proves that the
 PIN was rejected. Retry delays grow from 5 to 10, 20, then 30 minutes; the
 five-minute job retries at or after `next_retry_at`, and success resets the delay.
-Legacy timeout-only authentication latches recover automatically. Explicit
+Legacy timeout and code -1 authentication latches recover automatically. Explicit
 device rejections and missing enrollment prerequisites latch for operator repair.
 After correcting credentials or attended repair, an operator can clear
 `last_error` in the private status file and verify a fresh collection. The
@@ -302,6 +304,24 @@ another PIN submission. Successful samples reached the shared history and the li
 Airvalent CO₂ card and series; failed attempts and old diagnostic readings were
 not inserted as fresh history. These tests establish working bounded recovery,
 not permanent bond retention or long-term reliability.
+
+## Generic-stack-failure recovery (November 14, 2026)
+
+Collection stopped after the 11:19:55 UTC reading. The next pairing response
+returned -1 and was stored as `bond_unavailable`; subsequent scheduled checks
+kept that permanent latch. The deployed ESPHome source returns -1 for a missing
+connection or generic stack failure, rather than an explicit SMP rejection.
+The original connection failure remains unexplained.
+
+The collector now treats -1 as `authentication_incomplete`, applies the existing
+bounded retry backoff, and releases legacy latches carrying that exact code.
+Delayed target authentication failures take precedence over a generic stack
+result, preserving explicit rejection latches. The saved PIN and sensor binding
+were unchanged. After deploying the collector, an actual LaunchAgent run read
+successfully at 20:56:23 UTC and exited zero. The new sample reached shared
+history and the dashboard current API; all 15 rooms remained present. All 56
+targeted collector, dashboard, and history-appender tests passed. The collection
+gap remains visible and was not backfilled.
 
 ## Connection-timeout recovery (November 9, 2026)
 

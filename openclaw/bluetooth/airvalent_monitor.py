@@ -27,6 +27,10 @@ BRIDGE = "crosstown-ble-01"
 AUTH_CONNECTION_TIMEOUT = 102
 AUTH_RESPONSE_TIMEOUT = 99
 AUTH_TIMEOUTS = {AUTH_CONNECTION_TIMEOUT, AUTH_RESPONSE_TIMEOUT}
+# ESPHome forwards -1 for a disconnected peer or generic ESP_FAIL from the
+# local stack. It is not a target-reported authentication rejection.
+AUTH_STACK_FAILURE = -1
+RETRYABLE_AUTH_FAILURES = AUTH_TIMEOUTS | {AUTH_STACK_FAILURE}
 
 
 class ReadError(Exception):
@@ -40,6 +44,8 @@ class ReadError(Exception):
 def authentication_error(category, code):
     if code in AUTH_TIMEOUTS:
         category = "ble_connection_timeout"
+    elif code == AUTH_STACK_FAILURE:
+        category = "authentication_incomplete"
     elif code and category == "authentication_incomplete":
         # A target-reported failure wins over an ambiguous client exception.
         category = "reauth_required"
@@ -238,7 +244,8 @@ async def read_sensor(cfg, chars, recovery=None, on_recovery=None):
                     await asyncio.wait_for(auth_completed.wait(), .75)
                 except TimeoutError:
                     pass
-            code = exc.auth_failure_code or auth_failure_code
+            code = (auth_failure_code if auth_failure_code is not None
+                    else exc.auth_failure_code)
             classified = authentication_error(str(exc), code)
             classified.stage, classified.error_type = exc.stage, exc.error_type
             raise classified from exc
@@ -313,8 +320,8 @@ def collect(root):
             raise ReadError("invalid_cache")
         cache["last_attempt_at"] = now_iso()
         if (cache.get("last_error") in {"reauth_required", "bond_unavailable"}
-                and cache.get("last_auth_failure_code") not in AUTH_TIMEOUTS):
-            # Preserve credential-failure latches; recover legacy timeout latches.
+                and cache.get("last_auth_failure_code") not in RETRYABLE_AUTH_FAILURES):
+            # Preserve credential-failure latches; recover transient legacy latches.
             write_private(root / "status.json", cache)
             return {"ok": False, "error": cache["last_error"]}
         retry_at = cache.get("next_retry_at")
