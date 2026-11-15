@@ -1,5 +1,11 @@
 # OpenClaw Logs
 
+`resy-notify-improve.log` contains timestamped safe status objects for the
+temporary [Resy Notify improvement worker](../RESY-NOTIFY.md). It must never
+contain email bodies, credentials, booking/cancellation tokens, account routing,
+or raw provider responses. `manual_review_required` requires account
+reconciliation; do not reset the worker's state to force another attempt.
+
 Most service logs live at `~/.openclaw/logs/` on the Mac Mini (and MacBook Pro for Crosstown presence). The current generated gateway service is the exception: it writes to `~/Library/Logs/openclaw/gateway.log`. Both locations survive reboots; older `/tmp/` logs did not.
 
 ## Logging Model

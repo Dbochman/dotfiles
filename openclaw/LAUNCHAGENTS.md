@@ -1,5 +1,16 @@
 # LaunchAgents
 
+### Temporary Resy Notify improvements (November 15, 2026)
+
+`ai.openclaw.resy-notify-improve` checks Gmail every five minutes for authenticated
+Resy alerts for the approved December 12 dinner. It replaces the retired hourly
+Sarma/Oleana availability pollers. No matching email means no Resy requests.
+Its protected runtime scope authorizes strictly earlier tables, verified booking
+before free cancellation, and a stop at 6 p.m. or before the applicable
+cancellation deadline. See [RESY-NOTIFY.md](RESY-NOTIFY.md) for verification,
+limits, and handling of ambiguous outcomes. This is an attended installation;
+do not infer new authorization from its presence in the repository.
+
 ### Cabin shared-magazine nightly deploy (November 1, 2026)
 
 `ai.openclaw.cabin-public-deploy` is Mini-only and attended-installed from the

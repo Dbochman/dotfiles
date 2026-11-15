@@ -857,6 +857,12 @@ Homebrew Python interpreter and deployed helper with absolute argv entries.
 
 ### Canonical restaurant coordinator
 
+The temporary December 12, 2026 Sarma/Oleana Notify improvement workflow runs
+separately as `ai.openclaw.resy-notify-improve` under launchd, not this cron
+registry. See [RESY-NOTIFY.md](RESY-NOTIFY.md). It uses native Notify emails;
+do not recreate the retired hourly venue pollers as cron jobs or duplicate its
+email processing in a canonical restaurant booking job.
+
 The nine enabled restaurant one-shots call exactly one public entry point:
 
 ```bash

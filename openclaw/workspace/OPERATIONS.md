@@ -112,6 +112,17 @@ Use the narrowest reservation tool for the job:
 | Read upcoming OpenTable reservations | `opentable-reservations` | Read-only, complete-account proof required |
 | Attended one-off booking | `resy` or `opentable-book` through its provider skill | Fresh user authorization; OpenTable also requires its exact one-use preview approval |
 | Bounded cancellation monitoring | `restaurant-snipe` | Separately staged and approved scope; its current OpenTable runtime remains read-only |
+| December 12, 2026 Sarma/Oleana improvements | Native Resy Notify plus `resy-notify-improve.py` | Exact user-approved replacement scope; see the runbook below |
+
+The temporary December 12 dinner workflow is documented in
+`~/dotfiles/openclaw/RESY-NOTIFY.md`. Native Notify is enabled for six guests,
+6–8 p.m., at Sarma and Oleana. `ai.openclaw.resy-notify-improve` checks Gmail
+every five minutes and contacts Resy only after a fresh matching alert. The
+former hourly `restaurant-snipe` jobs for these two venues are retired. This
+worker is a LaunchAgent, not a canonical restaurant cron job. Its explicit
+replacement authorization and fee limits apply only to this dinner; the
+ordinary provider and canonical booking workflows retain their existing rules.
+Use the runbook for safe status inspection, dependency checks, and recovery.
 
 The canonical coordinator is the only provider-selection path for the nine
 tracked restaurant one-shots:

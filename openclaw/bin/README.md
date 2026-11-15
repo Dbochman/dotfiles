@@ -4,6 +4,12 @@ Helper scripts deployed to `~/.openclaw/bin/` (and `~/bin/`) on the Mac Mini. Th
 
 ## Deployment
 
+`resy-notify-improve.py` is a temporary, explicitly authorized dinner-replacement
+worker invoked directly from its tracked source by a Mini LaunchAgent. It reads
+matching Gmail alerts every five minutes, contacts Resy only after an alert,
+and verifies a replacement before canceling the old booking without a fee.
+See [RESY-NOTIFY.md](../RESY-NOTIFY.md) for the exact scope and recovery rules.
+
 Standalone wrapper publication includes `airvalent`. The installer accepts an
 identical executable regular-file copy as already installed; differing or
 non-executable copies still require normal conflict handling. Daily deployment
