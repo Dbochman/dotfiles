@@ -26,6 +26,12 @@ DEFAULT_SCAN_SECONDS = 15.0
 AIRTHINGS_MANUFACTURER_ID = 820
 SUPPORTED_MODEL = "Wave Enhance"
 SITES = {"cabin", "crosstown"}
+SAFE_READ_ERRORS = frozenset({
+    "bluetooth_unauthorized", "bluetooth_unavailable", "bluetooth_busy",
+    "bluetooth_timeout", "device_not_found", "read_failed", "model_mismatch",
+    "runtime_unavailable", "cache_unavailable", "reader_busy", "reader_timeout",
+    "reader_launch_failed", "reader_failed", "reader_cleanup_failed",
+})
 
 
 class AirthingsError(Exception):
@@ -510,6 +516,8 @@ def build_parser() -> argparse.ArgumentParser:
     status_mode.add_argument("--refresh", action="store_true")
     status_mode.add_argument("--cache-only", action="store_true", help=argparse.SUPPRESS)
     status.add_argument("--json", action="store_true")
+    status.add_argument("--reader-request", help=argparse.SUPPRESS)
+    status.add_argument("--reader-deadline", type=int, help=argparse.SUPPRESS)
 
     devices = commands.add_parser("devices")
     devices.add_argument("--json", action="store_true")
@@ -529,9 +537,16 @@ def main() -> int:
     monitor = AirthingsMonitor()
     try:
         if args.command == "status":
-            payload = asyncio.run(
-                monitor.status(args.alias, args.refresh, args.cache_only)
-            )
+            # A delayed Launch Services request must not start BLE after expiry.
+            if args.reader_deadline is not None and time.time() >= args.reader_deadline:
+                payload = {"ok": True, "devices": [
+                    offline_reading(binding, "reader_timeout") for binding in monitor.load_config()
+                    if args.alias is None or binding["alias"] == args.alias
+                ]}
+            else:
+                payload = asyncio.run(
+                    monitor.status(args.alias, args.refresh, args.cache_only)
+                )
         elif args.command == "devices":
             payload = monitor.devices()
         else:

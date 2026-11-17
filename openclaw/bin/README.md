@@ -463,7 +463,7 @@ uses only the new context; installation does not enable routing or enroll secret
 
 | Script | Description |
 |--------|-------------|
-| `airthings` | Read-only exact-device Wave Enhance wrapper. Uses a locked local BLE runtime, delegates fresh reads through the dedicated Bluetooth-authorized `Airthings Reader.app`, serializes connections, caches successful status for five minutes, and omits Bluetooth identifiers and serials from public output. |
+| `airthings` | Read-only exact-device Wave Enhance wrapper. Uses a locked local BLE runtime, delegates fresh reads through the dedicated Bluetooth-authorized `Airthings Reader.app`, serializes launches and connections, bounds each reader to 35 seconds, cleans up only exact request-owned processes, preserves specific safe errors, caches successful status for five minutes, and omits Bluetooth identifiers and serials from public output. |
 | `airthings-history-import` | Attended, dry-run-first Airthings dashboard CSV importer. Apply requires `AIRTHINGS_ALLOW_HISTORY_IMPORT=1` plus `--apply`; affected daily history files are backed up, merged idempotently, sorted, and written atomically. It is not an OpenClaw skill tool. |
 | `airvalent` | Cache-only Crosstown Airvalent CO₂ status; read-only OpenClaw skill entry point. |
 | `airvalent-snapshot` | Five-minute sampler through Crosstown Mac → encrypted ATOM API, with overlap lock, bounded reads, retained last-good cache, and shared climate-history writer. See [Bluetooth setup](../bluetooth/README.md). |

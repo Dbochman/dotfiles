@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from airthings import SAFE_READ_ERRORS
+
 
 ALIAS = "cabin-living-room-airthings"
 SITE = "cabin"
@@ -79,7 +81,8 @@ def build_history_record(payload: dict[str, Any]) -> dict[str, Any]:
     if device.get("site") != SITE or device.get("room") != ROOM:
         raise SnapshotError("binding_mismatch")
     if device.get("online") is not True:
-        raise SnapshotError("device_unavailable")
+        reason = device.get("error")
+        raise SnapshotError(reason if isinstance(reason, str) and reason in SAFE_READ_ERRORS else "device_unavailable")
     timestamp = _validated_timestamp(device.get("read_at"))
     temperature_f = _finite(device.get("temperature_f"))
     temperature_c = _finite(device.get("temperature_c"), 2)

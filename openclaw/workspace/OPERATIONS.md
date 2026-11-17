@@ -238,9 +238,14 @@ airthings devices --json
 
 - The protected binding is `~/.openclaw/airthings/config.json` (mode `0600`).
 - The locked runtime is `~/.openclaw/venvs/airthings-monitor`; macOS must list
-  and enable the Homebrew `Python.app` under Privacy & Security → Bluetooth.
+  and enable the dedicated `Airthings Reader.app` under Privacy & Security → Bluetooth.
   The wrapper uses that app identity for fresh unattended reads; Terminal's
   separate Bluetooth grant does not cover the scheduled snapshot.
+  Status uses a serialized 35-second reader watchdog and exact-request cleanup,
+  including stopped/orphaned readers; it never restarts the shared Bluetooth
+  service. Protected `state/reader-health.json` records reader diagnostics, and
+  `snapshot-status.json` preserves safe specific errors. Failed reads preserve
+  the last-good cache without returning it as a current sample.
 - Status includes CO2, VOC, temperature, humidity, pressure, ambient noise,
   light, battery, and a five-minute cache age when applicable.
 - A dedicated `ai.openclaw.airthings-snapshot` LaunchAgent requests one exact

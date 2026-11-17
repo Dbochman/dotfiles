@@ -141,9 +141,23 @@ class AirthingsSnapshotTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         health = json.loads(self.status_file.read_text())
         self.assertFalse(health["ok"])
-        self.assertEqual(health["error"], "device_unavailable")
-        self.assertNotIn("device_not_found", self.status_file.read_text())
+        self.assertEqual(health["error"], "device_not_found")
+        self.assertNotIn("must-not-escape", self.status_file.read_text())
         self.assertEqual(list(self.history.glob("*.jsonl")), [])
+
+    def test_reader_failures_are_distinct_and_unknown_errors_are_redacted(self):
+        for reason in ('reader_timeout', 'reader_cleanup_failed', 'reader_busy',
+                       'bluetooth_unauthorized', 'private-device-identifier'):
+            with self.subTest(reason=reason):
+                payload = self.payload(online=False)
+                payload['devices'][0]['error'] = reason
+                self.write_airthings(payload)
+                result = self.run_snapshot()
+                self.assertNotEqual(result.returncode, 0)
+                health = json.loads(self.status_file.read_text())
+                self.assertEqual(health['error'], reason if reason != 'private-device-identifier' else 'device_unavailable')
+                self.assertNotIn('private-device-identifier', result.stdout + result.stderr)
+                self.assertEqual(list(self.history.glob('*.jsonl')), [])
 
     def test_notification_failure_does_not_break_collection_or_leak_output(self):
         self.write_airthings(self.payload())

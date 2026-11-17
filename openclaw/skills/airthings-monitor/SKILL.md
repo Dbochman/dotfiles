@@ -11,7 +11,10 @@ Use the read-only `airthings` CLI. It talks directly to the enrolled Wave
 Enhance over Bluetooth and does not use an Airthings account or cloud API.
 Status is cache-first; when a fresh read is required, the wrapper delegates it
 through the macOS-authorized `Airthings Reader.app` identity and returns the
-updated protected cache.
+fresh result. A 35-second watchdog cleans up only its own uniquely tagged
+reader, including a stopped process, and reconciles abandoned requests on the
+next invocation. Failed refreshes preserve the last-good cache but report the
+specific safe error rather than presenting that older sample as current.
 
 ```bash
 airthings status --json

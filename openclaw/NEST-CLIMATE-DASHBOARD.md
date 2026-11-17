@@ -439,7 +439,7 @@ priority over legacy token files; callbacks and secrets are never CLI arguments.
 - **CLI:** `airthings status --json`
 - **Transport:** Local BLE through Airthings' maintained `airthings-ble` library; no account, token, or cloud API
 - **Binding:** One exact `cabin-living-room-airthings` device in an owner-only `~/.openclaw/airthings/config.json`
-- **Runtime:** Locked Python environment at `~/.openclaw/venvs/airthings-monitor`; BLE access is serialized, successful readings are cached for five minutes, and stale or explicitly refreshed reads launch the authorized Homebrew `Python.app` through Launch Services so unattended callers do not depend on Terminal's privacy grant
+- **Runtime:** Locked Python environment at `~/.openclaw/venvs/airthings-monitor`; BLE access is serialized, successful readings are cached for five minutes, and stale or explicitly refreshed reads launch the dedicated authorized `Airthings Reader.app` through Launch Services so unattended callers do not depend on Terminal's privacy grant
 - **Fields:** CO2, VOC, temperature, humidity, pressure, ambient noise, light, and calculated battery percentage
 - **Bands:** CO2 is good below 800 ppm and poor at 1000 ppm or above; VOC is good below 250 ppb and poor at 2000 ppb or above; the intermediate band is fair
 - **Boundary:** Readings are dashboard/environmental context only. They do not establish occupancy, publish home events, or authorize HVAC actions.
@@ -454,6 +454,31 @@ snapshot may still include the current Airthings row, so both writers use
 room, and timestamp is idempotent. Failed or unavailable reads append no
 measurement and update only safe protected health at
 `~/.openclaw/airthings/snapshot-status.json`.
+
+#### Reader watchdog and diagnostics
+
+The `airthings` wrapper routes status through `airthings_launch.py`. A protected
+supervisor lock prevents overlapping launches. Each refresh has a unique request
+marker, private result file and a 35-second deadline; cleanup verifies the exact command, request and
+owner before terminating its own launcher/reader, including a stopped reader.
+The next invocation reconciles an unfinished request journal before launching
+again. A delayed app launch past its deadline exits without touching Bluetooth.
+No shared Bluetooth daemon, other reader, profile or permission is reset.
+
+`state/reader-health.json` records safe reader outcome and orphan-recovery status.
+The sampler retains allowlisted errors such as `reader_timeout`, `reader_busy`,
+`bluetooth_unauthorized` and `device_not_found` in `snapshot-status.json` instead
+of collapsing all failures to `device_unavailable`. Unknown error text is
+redacted. Failed refreshes preserve the last-good cache but return unavailable;
+no fabricated current sample or failure sample is appended to climate history.
+`airthings status --cache-only --json` never launches or cleans up a reader.
+
+The November 16 outage had 32 failed samples and a stopped reader process. Data
+returned after that process resumed/exited, at 71% battery. The trigger for the
+stop remains unknown; the watchdog bounds and recovers that failure mode rather
+than asserting a battery or presence cause. Tests cover real suspended processes,
+TERM-resistant readers, orphan recovery, unrelated-process isolation, late
+launches, error redaction and a harmless real Launch Services app fixture.
 
 #### Airthings history backfill
 
@@ -609,7 +634,7 @@ ssh dbochman@dylans-mac-mini "/opt/homebrew/bin/nest snapshot"
 - **OAuth consent screen:** If GCP project is in "Testing" mode, refresh tokens expire after 7 days. Must be set to "In production" for long-lived tokens.
 - **Mysa token expiry:** Cognito tokens expire after extended inactivity. Managed credentials in `~/.openclaw/.secrets-cache` normally renew the session automatically; use interactive `mysa --login` on the Mini if managed renewal fails.
 - **Cielo token staleness:** Token refresh depends on `com.openclaw.cielo-refresh`. If `cielo-auth.py check` reports an unproven/rejected chain, use `cielo-reauth --attended start`, complete the visible login, and run `cielo-reauth finish`; post-login access-token capture alone is not a durable repair.
-- **Airthings Bluetooth permission:** macOS must list and enable `/opt/homebrew/opt/python@3.14/Frameworks/Python.framework/Versions/3.14/Resources/Python.app` under Privacy & Security → Bluetooth. Terminal's separate grant is insufficient for the scheduled snapshot. The wrapper refreshes through that app identity and reports `bluetooth_unauthorized` without exposing the device identifier if the grant is absent.
+- **Airthings Bluetooth permission:** macOS must list and enable `~/.openclaw/apps/Airthings Reader.app` under Privacy & Security → Bluetooth. Terminal's separate grant is insufficient for the scheduled snapshot. The wrapper refreshes through that app identity and reports `bluetooth_unauthorized` without exposing the device identifier if the grant is absent.
 - **1Password over SSH:** `op read` hangs under launchd. Credentials are pre-cached to `~/.cache/nest-sdm/` files with 1-year TTL.
 - **Camera snap timing:** WebRTC handshake takes 5–10 seconds; camera must be online with streaming enabled.
 - **Dylan's Office apostrophe:** Nest API uses Unicode U+2019 (smart quote) in the room name. COLORS map includes both U+2019 and U+0027 variants.
