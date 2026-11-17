@@ -34,6 +34,7 @@
     ],
     "defaultMode": "bypassPermissions"
   },
+  "model": "claude-fable-5-2[1m]",
   "hooks": {
     "PreToolUse": [
       {
@@ -77,11 +78,10 @@
     "claude-hud@claude-hud": true,
     "claude-delegator@jarrodwatts-claude-delegator": true
   },
-  "effortLevel": "xhigh",
+  "effortLevel": "high",
   "tui": "fullscreen",
   "showThinkingSummaries": true,
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
-  "voiceEnabled": true,
-  "model": "opus"
+  "voiceEnabled": true
 }
