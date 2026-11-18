@@ -894,6 +894,18 @@ attempt to reload it, reporting rollback failure explicitly. This does not
 refresh the gateway or unrelated services. Receipt files live under
 `~/.openclaw/state/presence-launchagents/` with a concurrent-refresh lock.
 
+The installed `HOME_EVENTS_PRESENCE_ENABLED` flag is an operator choice and is
+preserved when refreshing either presence job, including an unloaded job.
+Invalid values stop deployment rather than silently enabling or disabling the
+publisher. Managed PATH and program changes still refresh normally. Verify a
+fresh hash-matched `presence/home-events-outbox/producer-state.json` as well as
+the visible presence state after deployment.
+
+The home-event action worker retries only transient Petlibro schedule reads
+(three attempts, 2/4-second delays). It retains safe provider error categories
+and reads only `PETLIBRO_APPSN` from the protected secret cache for authentication
+refresh. No schedule write or historical terminal action is retried.
+
 `presence-checked-run.py validate-config cabin` is the diagnostic entry point
 for enrollment checks; `--scanner <candidate>` checks a staged candidate during
 deployment. It preflights the same Node selection as the approved scanner and

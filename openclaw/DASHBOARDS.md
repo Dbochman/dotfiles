@@ -353,6 +353,10 @@ both residents and all cats travel together. The card labels the inference
 `Feeding at …`; missing litter history is advisory, while stale presence,
 unverified destination feeding, manual pauses, and uncertain commands remain
 safety gates. A feeder-only CLI hold handles exceptional cats-stay-behind trips.
+Failed transfers in the current vacancy cycle now show a review warning even
+when their reservation is terminal and neither feeder has an owned suspension.
+An attended, verified ownership recovery clears the current warning while
+retaining the failed attempt in history.
 
 A cat-specific care view across both homes, combining Whisker Litter-Robots
 with Petlibro feeders and fountains.

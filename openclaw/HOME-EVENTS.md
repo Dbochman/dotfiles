@@ -286,6 +286,17 @@ any prior attempt in that cycle blocks another automatic attempt, including
 historical attempts from the previous policy. A blocked/failed cycle needs
 operator review, not a fabricated event or deleted reservation.
 
+Schedule-state reads retry transient network/HTTP/unavailable failures at most
+three times, with 2- and 4-second delays. Only reads are retried; schedule writes
+and terminal reservations are never replayed. Known provider failure categories
+are retained without raw responses, and a failed current-cycle transfer appears
+as blocked in status and Cat Care until attended recovery. An audited owned pause
+supersedes that historical failure for current readiness without erasing it.
+The restricted worker loads only `PETLIBRO_APPSN` from the existing owner-only
+secret cache when absent from its environment, so token expiry does not depend
+on a different dashboard refreshing authentication. The cache is parsed as data,
+never sourced or printed; no 1Password access is added.
+
 Whisker remains useful care telemetry. Its absence, history gaps, and 30-minute
 settling no longer gate feeding. A recorded litter event at the vacant home
 produces an advisory to check the travel assumption, not a new control path.
@@ -957,6 +968,18 @@ Routine pulls preserve the installed `HOME_EVENTS_NEST_ENABLED` and
 `HOME_EVENTS_AUGUST_ENABLED` values and both installed local-presence site
 flags, vacancy site flags, and Whisker site flags rather than reverting them to
 source defaults.
+Presence LaunchAgent refreshes also preserve each installed
+`HOME_EVENTS_PRESENCE_ENABLED` value, including disabled and unloaded jobs.
+The source default remains disabled for new installations.
+
+November 17, 2026 attended repair: both installed presence publisher flags were
+restored to `1`; fresh canonical and producer timestamps/hashes matched after
+the affected jobs refreshed. The owner-requested Cabin schedule pause was
+verified against an enabled Crosstown schedule, then adopted through the audited
+return-to-automation command after the normal vacancy-cycle reconciliation.
+The original November 11 failed attempt remains unchanged. Cat Care and the
+scheduled worker subsequently reported Cabin managed/paused, Crosstown enabled,
+and no feeder attention. Future physical relocation remains an organic check.
 
 Routine dotfiles pulls may update a service only after its plist is already
 installed. They must not create runtime secrets, initialize the database,

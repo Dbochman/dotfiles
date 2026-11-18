@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sqlite3
 import stat
 import subprocess
@@ -1206,7 +1207,49 @@ def _write_feeder_suspensions(root: Path, value: dict[str, Any]) -> None:
     )
 
 
+def _petlibro_environment() -> dict[str, str]:
+    """Pass only the needed cached credential through the restricted worker env."""
+    environment = dict(os.environ)
+    if environment.get("PETLIBRO_APPSN"):
+        return environment
+    cache = Path.home() / ".openclaw/.secrets-cache"
+    try:
+        descriptor = os.open(cache, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor) as handle:
+            info = os.fstat(handle.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size > MAX_INPUT_BYTES):
+                raise ValueError("unsafe_cache")
+            for line in handle:
+                key, separator, value = line.strip().removeprefix("export ").partition("=")
+                if separator and key == "PETLIBRO_APPSN":
+                    parts = shlex.split(value)
+                    if key in environment or len(parts) != 1 or not parts[0]:
+                        raise ValueError("invalid_cache")
+                    environment[key] = parts[0]
+    except FileNotFoundError:
+        pass  # A still-valid provider token can support a read without this key.
+    except (OSError, ValueError):
+        raise ActionError("feeder_environment_unavailable") from None
+    return environment
+
+
 def _petlibro_schedule_state(
+    petlibro_bin: str, selector: str, site: str, *, now: datetime
+) -> dict[str, Any]:
+    # Retry reads only. Never replay a schedule-set, a terminal reservation, or
+    # an uncertain mutation. All transfer evidence is rechecked before writing.
+    for attempt in range(3):
+        try:
+            return _petlibro_schedule_state_once(petlibro_bin, selector, site, now=now)
+        except ActionError as exc:
+            if exc.code not in {"feeder_readback_unavailable", "feeder_network_error", "feeder_http_error"} or attempt == 2:
+                raise
+            time.sleep(2 ** (attempt + 1))
+    raise AssertionError("unreachable")
+
+
+def _petlibro_schedule_state_once(
     petlibro_bin: str, selector: str, site: str, *, now: datetime
 ) -> dict[str, Any]:
     try:
@@ -1216,10 +1259,19 @@ def _petlibro_schedule_state(
             text=True,
             timeout=20,
             check=False,
+            env=_petlibro_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ActionError("feeder_readback_unavailable") from exc
     if result.returncode != 0 or not result.stdout or len(result.stdout.encode("utf-8")) > 4096:
+        if result.stdout and len(result.stdout.encode("utf-8")) <= 4096:
+            try:
+                failure = json.loads(result.stdout)
+                code = failure.get("error") if isinstance(failure, dict) else None
+            except json.JSONDecodeError:
+                code = None
+            if isinstance(code, str) and code in {"environment_missing", "auth_failed", "network_error", "http_error", "api_error", "device_offline", "config_unsafe"}:
+                raise ActionError("feeder_" + code)
         raise ActionError("feeder_readback_unavailable")
     try:
         value = json.loads(result.stdout)
@@ -1263,6 +1315,7 @@ def _petlibro_schedule_set(
             text=True,
             timeout=30,
             check=False,
+            env=_petlibro_environment(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ActionError("feeder_outcome_unknown", command_attempted=True) from exc
@@ -2391,7 +2444,7 @@ def _cat_transfer_readiness(
             sites[origin_site] = {"state": "disabled", "reason": None}
             continue
         try:
-            _cat_transfer_evidence(
+            evidence = _cat_transfer_evidence(
                 connection,
                 root=root,
                 state_path=state_path,
@@ -2413,6 +2466,19 @@ def _cat_transfer_readiness(
                 }
         else:
             sites[origin_site] = {"state": "eligible", "reason": None}
+            latest = connection.execute(
+                "SELECT o.reason_code, o.outcome FROM action_reservations r "
+                "JOIN action_outcomes o ON o.reservation_id=r.id "
+                "WHERE r.site=? AND r.target_alias='feeding_schedule' AND r.vacancy_cycle_id=? "
+                "ORDER BY r.id DESC LIMIT 1",
+                (origin_site, evidence["cycle_id"]),
+            ).fetchone()
+            owned = _load_feeder_suspensions(root)["sites"].get(origin_site, {})
+            if latest is not None and latest["outcome"] in {"failed", "outcome_unknown", "cancelled"} and not (
+                owned.get("cycle_id") == evidence["cycle_id"]
+                and owned.get("phase") == "suspended" and owned.get("last_error") is None
+            ):
+                sites[origin_site] = {"state": "blocked", "reason": latest["reason_code"]}
             if entry["trigger"] == "household_relocation":
                 cycle = _read_json(journal_root / "cycles" / f"{origin_site}.json", 4096, "vacancy_cycle_invalid")
                 contradiction = connection.execute(

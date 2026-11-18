@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -192,6 +193,62 @@ class HomeEventActionTests(unittest.TestCase):
         os.environ["FAKE_PETLIBRO_LOG"] = str(self.petlibro_log)
         os.environ["FAKE_PETLIBRO_NOW"] = NOW
         self.addCleanup(self.restore_env)
+        environment_patch = patch.object(actions, "_petlibro_environment", side_effect=lambda: dict(os.environ))
+        environment_patch.start()
+        self.addCleanup(environment_patch.stop)
+
+    def test_transient_feeder_read_retries_without_repeating_device_commands(self):
+        self.configure_relocation()
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 1)
+        real = actions._petlibro_schedule_state_once
+        calls = []
+        def transient(*args, **kwargs):
+            calls.append(args[1])
+            if len(calls) == 1:
+                raise actions.ActionError("feeder_network_error")
+            return real(*args, **kwargs)
+        with patch.object(actions, "_petlibro_schedule_state_once", side_effect=transient), patch.object(actions.time, "sleep") as sleep:
+            result = self.run_worker()
+        self.assertEqual(result["outcome"], "state_confirmed")
+        sleep.assert_called_once_with(2)
+        self.assertEqual(self.petlibro_log.read_text().splitlines(), ["cabin-feeder off"])
+
+    def test_exhausted_feeder_reads_are_bounded_and_surface_current_trip_failure(self):
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        with patch.object(actions, "_petlibro_schedule_state_once", side_effect=actions.ActionError("feeder_network_error")) as read, patch.object(actions.time, "sleep"):
+            result = self.run_worker()
+        self.assertEqual(read.call_count, 3)
+        self.assertEqual(result["outcome"], "failed")
+        self.assertFalse(self.petlibro_log.exists())
+        status = actions.safe_status(self.root, state_path=self.state_path,
+            producer_path=self.producer_path, journal_root=self.journal, clock=lambda: NOW)
+        self.assertEqual(status["cat_transfer_readiness"]["sites"]["cabin"],
+                         {"state": "blocked", "reason": "feeder_network_error"})
+        self.assertEqual(self.reserve_cat_transfer()["reserved"], 0)
+
+    def test_provider_auth_failure_is_sanitized_and_not_retried(self):
+        response = subprocess.CompletedProcess([], 1, json.dumps({"error":"environment_missing", "message":"private value"}), "private stderr")
+        with patch.object(actions.subprocess, "run", return_value=response) as run, patch.object(actions.time, "sleep") as sleep:
+            with self.assertRaisesRegex(actions.ActionError, "^feeder_environment_missing$"):
+                actions._petlibro_schedule_state(str(self.petlibro), "cabin-feeder", "cabin", now=actions.parse_time(NOW))
+        self.assertEqual(run.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_attended_recovery_clears_current_failure_without_erasing_outcome(self):
+        self.configure_relocation()
+        self.reserve_cat_transfer()
+        with patch.object(actions, "_petlibro_schedule_state", side_effect=actions.ActionError("feeder_auth_failed")):
+            self.assertEqual(self.run_worker()["outcome"], "failed")
+        devices = json.loads(self.petlibro_state.read_text())
+        devices["cabin-feeder"]["enabled"] = False
+        self.petlibro_state.write_text(json.dumps(devices))
+        self.recover_feeder()
+        status = actions.safe_status(self.root, state_path=self.state_path,
+            producer_path=self.producer_path, journal_root=self.journal, clock=lambda: NOW)
+        self.assertEqual(status["cat_transfer_readiness"]["sites"]["cabin"]["state"], "eligible")
+        self.assertEqual(self.database_row()["outcome"], "failed")
+        self.assertFalse(self.petlibro_log.exists())
 
     def restore_env(self) -> None:
         os.environ.clear()
@@ -1569,6 +1626,52 @@ class HomeEventActionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(actions.ActionError, "action_policy_invalid"):
             actions.validate_policy(invalid)
+
+
+class PetlibroEnvironmentTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.home = Path(temporary.name)
+        self.cache = self.home / ".openclaw/.secrets-cache"
+        self.cache.parent.mkdir(mode=0o700)
+        home_patch = patch.object(actions.Path, "home", return_value=self.home)
+        home_patch.start()
+        self.addCleanup(home_patch.stop)
+        env_patch = patch.dict(os.environ, {"HOME": str(self.home), "PATH": "/usr/bin:/bin"}, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+
+    def write_cache(self, text):
+        self.cache.write_text(text)
+        self.cache.chmod(0o600)
+
+    def test_loads_only_required_key_without_evaluating_shell(self):
+        marker = self.home / "must-not-exist"
+        value = '$(touch ' + str(marker) + ')'
+        self.write_cache("export PETLIBRO_APPSN='" + value + "'\nOTHER_SECRET=private\n")
+        env = actions._petlibro_environment()
+        self.assertEqual(env["PETLIBRO_APPSN"], value)
+        self.assertNotIn("OTHER_SECRET", env)
+        self.assertFalse(marker.exists())
+
+    def test_rejects_duplicate_or_readable_by_others_cache(self):
+        self.write_cache("PETLIBRO_APPSN=one\nPETLIBRO_APPSN=two\n")
+        with self.assertRaisesRegex(actions.ActionError, "feeder_environment_unavailable"):
+            actions._petlibro_environment()
+        self.write_cache("PETLIBRO_APPSN=one\n")
+        self.cache.chmod(0o644)
+        with self.assertRaisesRegex(actions.ActionError, "feeder_environment_unavailable"):
+            actions._petlibro_environment()
+
+    def test_rejects_symlink_and_preserves_supplied_environment(self):
+        target = self.home / "target"
+        target.write_text("PETLIBRO_APPSN=one\n")
+        self.cache.symlink_to(target)
+        with self.assertRaisesRegex(actions.ActionError, "feeder_environment_unavailable"):
+            actions._petlibro_environment()
+        with patch.dict(os.environ, {"PETLIBRO_APPSN": "existing"}):
+            self.assertEqual(actions._petlibro_environment()["PETLIBRO_APPSN"], "existing")
 
 
 if __name__ == "__main__":

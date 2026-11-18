@@ -562,6 +562,20 @@ class CatDashboardTests(unittest.TestCase):
         self.assertIn("Crosstown is vacant", summary["description"])
         self.assertNotIn("vacancy_cycle_mismatch", json.dumps(summary))
 
+    def test_transfer_summary_explains_failed_feeder_read(self) -> None:
+        summary = self.dashboard.summarize_transfer_state(
+            {"ok": True, "feeding_schedule_owners": {"cabin": "bus", "crosstown": "bus"},
+             "feeder_suspensions": {"sites": {}},
+             "cat_transfer_readiness": {"sites": {"cabin": {"state": "blocked", "reason": "feeder_network_error"}}}},
+            {"ok": True, "coverage_ready": True, "pending_actions": 0, "unknown_actions": 0},
+            {"ok": True, "devices": [
+                {"selector": site + "-feeder", "scheduleReadback": "verified", "scheduleEnabled": True}
+                for site in ("cabin", "crosstown")]},
+        )
+        self.assertTrue(summary["attention"])
+        self.assertIn("feeder transfer failed", summary["description"])
+        self.assertNotIn("feeder_network_error", json.dumps(summary))
+
     def test_transfer_summary_shows_pre_transfer_litter_wait(self) -> None:
         summary = self.dashboard.summarize_transfer_state(
             {

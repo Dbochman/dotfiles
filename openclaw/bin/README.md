@@ -25,6 +25,14 @@ rolls back failed refreshes. Run with `--dry-run` to inspect pending changes;
 optional positional labels restrict it to the documented three jobs. It never
 operates on the gateway or Crosstown scanner. Deploy the Cabin plist together
 with `presence-checked-run.py` before refreshing it.
+The installed `HOME_EVENTS_PRESENCE_ENABLED` flag is preserved independently
+of managed PATH/program updates, including when a job is intentionally unloaded.
+
+`home_event_action.py` retries transient Petlibro schedule reads up to three
+times with 2/4-second backoff, never schedule writes or terminal reservations.
+It passes only the needed `PETLIBRO_APPSN` cached credential into restricted
+worker calls and reports sanitized provider failure categories. Failed current
+trip transfers appear as blocked readiness in status and Cat Care.
 
 `presence-checked-run.py validate-config cabin` distinguishes Node runtime
 failures from enrollment failures using content-free stderr diagnostics. Its

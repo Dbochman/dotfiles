@@ -10,6 +10,13 @@ Most service logs live at `~/.openclaw/logs/` on the Mac Mini (and MacBook Pro f
 
 ## Logging Model
 
+`home-event-action.log` and action outcomes retain fixed Petlibro failure
+categories (for example `feeder_network_error` or `feeder_environment_missing`)
+without provider messages, raw responses, or secrets. Transient read failures
+receive at most three read attempts within a worker invocation; final failures
+remain in the audit history and current-trip readiness shows a review warning.
+No uncertain schedule mutation is automatically retried.
+
 Each service uses one of two patterns:
 
 | Pattern | How it works | Plist `StandardOutPath` |

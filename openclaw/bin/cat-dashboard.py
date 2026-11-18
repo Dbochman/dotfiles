@@ -429,7 +429,12 @@ def summarize_transfer_state(
     if blocked_sites:
         blocked_site = blocked_sites[0]
         reason = readiness_map[blocked_site].get("reason")
-        if reason == "vacancy_cycle_mismatch":
+        if str(reason).startswith("feeder_"):
+            description = (
+                f"The {SITE_NAMES[blocked_site]} feeder transfer failed its device checks. "
+                "Automatic switching needs review; check both saved feeding schedules."
+            )
+        elif reason == "vacancy_cycle_mismatch":
             description = (
                 f"{SITE_NAMES[blocked_site]} is vacant, but its protected vacancy "
                 "confirmation is out of date. OpenClaw will not change either "

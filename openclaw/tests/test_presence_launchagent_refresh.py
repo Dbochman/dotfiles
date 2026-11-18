@@ -32,6 +32,7 @@ class RefreshTests(unittest.TestCase):
         self.active = False
         self.path = "/new/bin"
         self.fail_bootstrap = False
+        self.flag = None
 
     def runner(self, *args):
         self.calls.append(args)
@@ -42,7 +43,9 @@ class RefreshTests(unittest.TestCase):
             else:
                 output = ("\tstate = " + ("running" if self.active else "not running")
                           + "\n\tdefault environment = {\n\t\tPATH => /default/bin\n\t}\n"
-                          + "\tenvironment = {\n\t\tPATH => " + self.path + "\n\t}\n")
+                          + "\tenvironment = {\n\t\tPATH => " + self.path
+                          + ("\n\t\tHOME_EVENTS_PRESENCE_ENABLED => " + self.flag if self.flag is not None else "")
+                          + "\n\t}\n")
         elif args[0] == "bootout":
             self.loaded = False
         elif args[0] == "bootstrap":
@@ -52,6 +55,7 @@ class RefreshTests(unittest.TestCase):
             else:
                 self.loaded = True
                 self.path = plistlib.loads((self.installed / self.filename).read_bytes())["EnvironmentVariables"]["PATH"]
+                self.flag = plistlib.loads((self.installed / self.filename).read_bytes())["EnvironmentVariables"].get("HOME_EVENTS_PRESENCE_ENABLED")
         return subprocess.CompletedProcess(args, code, output, "private output must not be logged")
 
     def run_refresh(self, **kwargs):
@@ -114,6 +118,42 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(self.run_refresh(dry_run=True), "would_refresh")
         self.assertEqual([x[0] for x in self.calls], ["print"])
         self.assertEqual(list(self.state.iterdir()), [])
+
+    def presence_settings(self, installed_flag, source_flag="0"):
+        self.label = "com.openclaw.presence-cabin"
+        self.filename = self.label + ".plist"
+        self.definition["Label"] = self.label
+        self.definition["EnvironmentVariables"]["HOME_EVENTS_PRESENCE_ENABLED"] = source_flag
+        (self.sources / self.filename).write_bytes(plistlib.dumps(self.definition))
+        self.definition["EnvironmentVariables"]["HOME_EVENTS_PRESENCE_ENABLED"] = installed_flag
+        (self.installed / self.filename).write_bytes(plistlib.dumps(self.definition))
+        self.flag = installed_flag
+
+    def test_refresh_preserves_enabled_publisher_and_updates_managed_path(self):
+        self.presence_settings("1")
+        self.path = "/obsolete/bin"
+        self.assertEqual(self.run_refresh(), "refreshed")
+        self.assertEqual((self.flag, self.path), ("1", "/new/bin"))
+        self.assertEqual(self.run_refresh(), "unchanged")
+
+    def test_refresh_preserves_disabled_publisher_against_enabled_template(self):
+        self.presence_settings("0", "1")
+        self.assertEqual(self.run_refresh(), "refreshed")
+        self.assertEqual(self.flag, "0")
+
+    def test_unloaded_publisher_preserves_enablement_without_starting(self):
+        self.presence_settings("1")
+        self.loaded = False
+        self.assertEqual(self.run_refresh(), "preserved_unloaded")
+        data = plistlib.loads((self.installed / self.filename).read_bytes())
+        self.assertEqual(data["EnvironmentVariables"]["HOME_EVENTS_PRESENCE_ENABLED"], "1")
+        self.assertEqual([x[0] for x in self.calls], ["print"])
+
+    def test_invalid_installed_enablement_fails_before_any_service_change(self):
+        self.presence_settings("unexpected")
+        with self.assertRaisesRegex(ValueError, "presence_enable_flag_invalid"):
+            self.run_refresh()
+        self.assertEqual(self.calls, [])
 
 
 if __name__ == "__main__":

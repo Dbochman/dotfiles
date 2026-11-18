@@ -53,9 +53,20 @@ def refresh(label, sources, installed, state, runner=launchctl, dry_run=False):
     definition = plistlib.loads(candidate)
     if definition.get("Label") != label:
         raise ValueError("label_mismatch")
+    previous = destination.read_bytes()
+    # This is an operator enablement choice, not a managed runtime default.
+    # Preserve it even for unloaded jobs; a refresh must not activate a held job.
+    if label in LABELS[:2]:
+        old_environment = plistlib.loads(previous).get("EnvironmentVariables", {})
+        flag = "HOME_EVENTS_PRESENCE_ENABLED"
+        if flag in old_environment:
+            if old_environment[flag] not in ("0", "1"):
+                raise ValueError("presence_enable_flag_invalid")
+            if definition.setdefault("EnvironmentVariables", {}).get(flag) != old_environment[flag]:
+                definition["EnvironmentVariables"][flag] = old_environment[flag]
+                candidate = plistlib.dumps(definition, sort_keys=False)
     digest = hashlib.sha256(plistlib.dumps(definition, sort_keys=True)).hexdigest()
     receipt = state / (label + ".sha256")
-    previous = destination.read_bytes()
     target = f"gui/{os.getuid()}/{label}"
     status = runner("print", target)
     if status.returncode:
