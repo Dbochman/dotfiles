@@ -65,7 +65,7 @@
 - Upcoming: Juliet (3/20/2026, Resy ID: 62834)
 
 **Music Queue (Andre):**
-- Collaborative music queue API running on DigitalOcean (192.241.153.83)
+- EchoNest collaborative music queue API: https://echone.st on DigitalOcean at **192.81.213.152** (DNS verified 2026-11-18). Reverse proxy: Caddy; live health check passed and response identified Caddy. Previous IP 192.241.153.83 is stale. Host/container nginx inventory remains unverified: public SSH timed out and Tailscale SSH lacked a trusted host key.
 - Preference mix: ambient/electronic/jazz/instrumental
 - Active queue includes: Pretty Lights, Gramatik, Tycho, Japanese, jazz, Madlib/Madvillain
 
