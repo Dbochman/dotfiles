@@ -25,5 +25,8 @@
     "extensions": [
       "./dist/index.js"
     ]
+  },
+  "overrides": {
+    "vite": "7.3.8"
   }
 }
