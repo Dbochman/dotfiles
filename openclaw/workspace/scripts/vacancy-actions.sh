@@ -11,7 +11,7 @@
 #
 # When occupied again:
 #   - Clear markers (reset for next vacancy)
-#   - (Welcome home actions handled by crosstown-routines/cabin-routines skills)
+#   - Restore Cabin living room/bedroom heat once after a verified arrival
 
 set -euo pipefail
 
@@ -25,6 +25,7 @@ VACANCY_JOURNAL_PYTHON="${VACANCY_JOURNAL_PYTHON:-/opt/homebrew/bin/python3}"
 CROSSTOWN_VACANT_ROOMBA="${CROSSTOWN_VACANT_ROOMBA:-$HOME/.openclaw/bin/crosstown-vacant-roomba.py}"
 HOME_EVENT_ACTION="${HOME_EVENT_ACTION:-$HOME/.openclaw/bin/home-event-action}"
 HOME_EVENT_ACTION_POLICY="${HOME_EVENT_ACTION_POLICY:-$HOME/.openclaw/home-events/config/action-policy.json}"
+CABIN_ARRIVAL_COMFORT="${CABIN_ARRIVAL_COMFORT:-$HOME/.openclaw/bin/cabin-arrival-comfort.py}"
 JOURNAL_RUN_ID=""
 JOURNAL_ATTEMPT_ID=""
 JOURNAL_WARNING_EMITTED=0
@@ -288,6 +289,17 @@ PY
 IFS=$'\t' read -r crosstown_occupancy cabin_occupancy dylan_location julia_location <<< "$state_values"
 
 log "Check: crosstown=$crosstown_occupancy cabin=$cabin_occupancy dylan=$dylan_location julia=$julia_location"
+
+# Separate durable arrival state: never clear/replay vacancy markers to restore
+# heat. The helper validates fresh producer-matched presence and deduplicates
+# the entire occupied stay, preserving later app/thermostat adjustments.
+if [[ -f "$CABIN_ARRIVAL_COMFORT" ]]; then
+  if ! /usr/bin/python3 "$CABIN_ARRIVAL_COMFORT" >> "$LOG_FILE" 2>&1; then
+    log "  WARN: Cabin arrival comfort not verified; inspect protected comfort state"
+  fi
+else
+  log "  WARN: Cabin arrival comfort helper unavailable"
+fi
 
 if [[ "$crosstown_occupancy" == "confirmed_vacant" ]] && \
     [[ -f "$MARKER_DIR/crosstown" ]]; then

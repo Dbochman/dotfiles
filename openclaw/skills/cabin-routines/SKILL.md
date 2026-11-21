@@ -40,6 +40,13 @@ Confirm: "Away mode set. All lights off, thermostats in eco, audio stopped. Floo
 
 ## Welcome Home
 
+Presence automation independently restores **only heating** after confirmed
+Cabin vacancy and a fresh unambiguous arrival: Living Room 70°F and Bedroom
+68°F, Eco off, HEAT mode. It runs once per stay and preserves subsequent manual
+changes; the solarium is unchanged. See [vacancy automation](../../VACANCY-AUTOMATION.md#cabin-arrival-comfort)
+for status and explicit current-stay recovery. This full routine remains an
+explicit request because it also changes lights and docks Roombas.
+
 **Triggers:** "we're home", "I'm home", "just got home", "back at the cabin", "welcome home"
 
 Steps:

@@ -724,7 +724,7 @@ from a LaunchAgent. See `BOA-SESSION-DURABILITY-HANDOFF.md`.
 | Label | Watches | Program | Description |
 |-------|---------|---------|-------------|
 | `com.openclaw.presence-receive` | `~/Downloads` + 60s fallback | `presence-receive.sh` | Validates the newest named Crosstown Taildrop file, atomically promotes it to presence state, and evaluates occupancy; periodic draining recovers missed filesystem notifications |
-| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, exact-site thermostat Eco via `nest eco-site` with full preflight and per-target readback, Cielos off where applicable, lock Crosstown, and hand Crosstown cleaning to the shared daily controller. Independently reconciles each person's detected location with Eight Sleep `home`, which leaves their other Pod side away. Failed HVAC does not clear the site marker or replay other actions. See [VACANCY-AUTOMATION.md](VACANCY-AUTOMATION.md) |
+| `com.openclaw.vacancy-actions` | `~/.openclaw/presence/state.json` | `vacancy-actions.sh` | On vacancy: lights off, exact-site thermostat Eco via `nest eco-site` with full preflight and per-target readback, Cielos off where applicable, lock Crosstown, and hand Crosstown cleaning to the shared daily controller. On verified Cabin arrival after vacancy: `cabin-arrival-comfort.py` restores Living Room/Bedroom HEAT to 70°F/68°F once per stay through `nest-agent`. Independently reconciles each person's detected location with Eight Sleep `home`, which leaves their other Pod side away. Failed HVAC does not clear the site marker or replay other actions. See [VACANCY-AUTOMATION.md](VACANCY-AUTOMATION.md) |
 
 ## Mac Mini — Run-Once (RunAtLoad only)
 

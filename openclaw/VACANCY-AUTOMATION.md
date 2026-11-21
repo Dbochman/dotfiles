@@ -103,9 +103,60 @@ history cannot be validated.
 | System | CLI | Action |
 |--------|-----|--------|
 | Eight Sleep Pods | Presence-driven `home` reconciliation | Each returning person's detected location becomes current independently |
+| Nest comfort heating | `cabin-arrival-comfort.py` via `nest-agent` | After confirmed vacancy and a fresh unambiguous arrival, disable Eco and select HEAT at 70°F in Philly Living Room and 68°F in Philly Bedroom |
 
-The general Cabin vacancy marker is also cleared; other systems are not
-automatically restored.
+The general Cabin vacancy marker is also cleared. Solarium settings, lights,
+and other devices are not restored by the heating controller.
+
+### Cabin arrival comfort
+
+The vacancy runner evaluates `cabin-arrival-comfort.py` on each presence update.
+It requires owner-only canonical state matching the protected producer hash and
+timestamp, a fresh Cabin scan, and an evaluation no older than 30 minutes.
+Confirmed Cabin vacancy arms the next arrival. An occupied Cabin must have a
+resident directly detected there with a sticky Cabin assignment; ambiguous
+positives at both homes never trigger heating. Initial installation while
+occupied only baselines the stay. A possibly-vacant interval does not rearm it.
+
+The existing welcome-home temperatures are applied only to **Philly Living
+Room (70°F)** and **Philly Bedroom (68°F)**. The solarium retains its settings.
+The helper uses the dedicated `nest-agent` context, validates the exact Cabin
+inventory with a read-only `eco-site cabin off --dry-run`, then disables Eco,
+selects HEAT, and sets the temperature for each of those two exact rooms.
+Every mutation uses the CLI's independent readback and presence is revalidated
+before each command. Missing agent credentials never fall back to conventional
+credentials.
+
+Commands are spaced by 20 seconds, including after preflight, so restoring both
+rooms takes about two to three minutes. Each CLI resolves inventory separately;
+Google's Sandbox allows only five `devices.list` and `structures.list` calls per
+minute. See [Nest rate limits](https://developers.google.com/nest/device-access/project/limits).
+Presence is checked after each delay and before the command.
+
+A locked, atomic, owner-only receipt at
+`~/.openclaw/presence/cabin-arrival-comfort/state.json` consumes the arrival
+before the first write. Later scans preserve manual app/thermostat adjustments.
+Read-only preflight failures can be retried on the next update. A failed or
+interrupted mutation is terminal for that stay and produces a warning in
+`vacancy-actions.log`; partial settings are not rolled back or blindly retried.
+The receipt distinguishes `complete`, `failed`, and `outcome_unknown`, with a
+count of confirmed steps. It is separate from the vacancy-only event journal.
+
+For an explicitly requested current-stay restoration or recovery, inspect
+presence, `nest-agent status`, and that receipt, then run only:
+
+```bash
+/usr/bin/python3 ~/.openclaw/bin/cabin-arrival-comfort.py --restore-current
+nest-agent status
+```
+
+This still requires fresh unambiguous Cabin occupancy. Never delete vacancy
+markers or replay the full vacancy routine to restore heating. Deploy the
+helper before the updated runner; both are regular files under `~/.openclaw`.
+No LaunchAgent restart is needed. Roll back by restoring the previous runner,
+leaving the receipt intact; that stops future arrival writes without changing
+current thermostat settings. The November 21 rollout explicitly restores the
+already-occupied Cabin stay after verification.
 
 ## Thermostat targeting and recovery
 
@@ -277,6 +328,8 @@ IDs and credentials are never persisted there.
 | Path | Purpose |
 |------|---------|
 | `~/.openclaw/workspace/scripts/vacancy-actions.sh` | Main script |
+| `~/.openclaw/bin/cabin-arrival-comfort.py` | Guarded once-per-arrival Cabin heating restoration |
+| `~/.openclaw/presence/cabin-arrival-comfort/state.json` | Private arrival arming, command intent, and verified-step receipt |
 | `~/.openclaw/bin/vacancy-action-journal.py` | Observation-only protected action journal helper |
 | `~/.openclaw/bin/vacancy-event-adapter.py` | Future-only journal-to-bus adapter |
 | `~/.openclaw/bin/home-event-action` | Exact ownership, reservation, status, and canary interface |

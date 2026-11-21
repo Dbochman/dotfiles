@@ -262,6 +262,15 @@ airthings devices --json
 - Do not invoke `airthings-snapshot`; the scheduled sampler is service-owned,
   not a model tool.
 
+Cabin arrival comfort is handled by `cabin-arrival-comfort.py` through the
+presence-triggered vacancy runner. After confirmed vacancy and a fresh
+unambiguous arrival, it restores Living Room HEAT to 70°F and Bedroom HEAT to
+68°F, with Eco off; the solarium is unchanged. It runs once per occupied stay
+and preserves later manual adjustments. Read the protected receipt at
+`~/.openclaw/presence/cabin-arrival-comfort/state.json` and
+[the recovery guide](../VACANCY-AUTOMATION.md#cabin-arrival-comfort) before retrying
+a failed attempt. Do not clear vacancy markers to restore heat.
+
 ## Eight Sleep Pod
 
 CLI at `/opt/homebrew/bin/8sleep`. Controls Pod 3 (King) at Crosstown by

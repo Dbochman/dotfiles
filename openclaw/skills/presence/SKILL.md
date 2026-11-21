@@ -392,3 +392,4 @@ For related tasks, switch to:
 - **dog-walk**: Separate Fi GPS-based dog walk automation; no longer uses presence as a departure gate
 - **roomba** / **crosstown-roomba**: Start or dock Roombas — presence can inform whether it's safe to vacuum
 - Vacancy automation (`com.openclaw.vacancy-actions` LaunchAgent) watches `state.json` and triggers automated actions (lights off, eco mode, Roombas start) when a location becomes `confirmed_vacant` — this is fully automated and does NOT require the presence skill to be invoked
+- Cabin arrival heating uses the same runner: after confirmed vacancy, fresh unambiguous resident arrival restores Living Room to 70°F and Bedroom to 68°F (Eco off, HEAT). It runs once per stay and preserves subsequent manual adjustments; solarium settings are unchanged. See [Cabin arrival comfort](../../VACANCY-AUTOMATION.md#cabin-arrival-comfort) for protected receipts and recovery.

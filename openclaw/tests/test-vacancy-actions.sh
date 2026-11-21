@@ -516,4 +516,19 @@ assert_call august lock
 assert_call imsg send --chat-id 171 --service imessage \
   --text "🔒 Crosstown vacant — front door locked automatically" --json
 
+# Arrival helper is evaluated even when no legacy action is due; a failure
+# stays visible without aborting the existing runner or clearing its markers.
+cat > "$TEST_HOME/.openclaw/bin/cabin-arrival-comfort.py" <<'PY'
+import os
+from pathlib import Path
+Path(os.environ['HOME'], 'arrival-helper-called').touch()
+raise SystemExit(1)
+PY
+: > "$CALLS_FILE"
+run_vacancy_actions
+test -f "$TEST_HOME/arrival-helper-called"
+test ! -s "$CALLS_FILE"
+test -f "$MARKER_DIR/crosstown"
+grep -Fq 'Cabin arrival comfort not verified' "$TEST_HOME/.openclaw/logs/vacancy-actions.log"
+
 echo "test-vacancy-actions: PASS"
