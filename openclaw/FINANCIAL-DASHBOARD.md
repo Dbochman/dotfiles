@@ -196,6 +196,39 @@ The wrapper's path allowlist is deliberately closed: Tesla accepts only healthy 
 
 The November 1 attended recovery renewed the expired Eversource, National Grid, and BoA sessions through their existing guarded flows. Read-only checks then passed, and only the four failed sources were scraped/imported with the wrapper’s current-run artifact guards under its singleton lock. All four used healthy `direct_http` paths. The protected weekly result was reconciled to `ok`, retaining the original successful Tesla/BWSC/PennyMac results; the historical scheduler failure was not rewritten. No new alert was queued. Validation: 140 targeted tests, Python/Node syntax checks, live trust probes, guarded imports, and HTTP 200 from the dashboard and forecast-baseline endpoint.
 
+**November 22 recovery.** The scheduled run imported five sources successfully;
+Eversource renewal failed and BoA stopped at identity verification. Inspection
+confirmed an expired Eversource portal token. One guarded login in an isolated,
+trust-checked `finance-eversource` context renewed its validated provider-only
+state without an MFA prompt. A source-only wrapper scrape and guarded import,
+under the weekly singleton lock with a new artifact run ID, both passed using
+`direct_http`. Its owner-only receipt is
+`~/.openclaw/financial-dashboard/eversource-recovery-status.json`, linked to the
+original weekly run. Preserve the original failure receipt; this recovery does
+not establish that the next unattended renewal will succeed. The dashboard and
+`/api/forecast-baseline` both returned HTTP 200. BoA's overnight verification
+page rejected a push request. Fresh guarded sign-ins reached phone approval;
+the first approval windows expired, then the owner approved a newly requested
+notification. Independent `--verify-auth` returned `authenticated`, and
+`--recover-source boa` successfully scraped through `browser_recovery` and
+completed the guarded import. The headless `finance` instance was preserved.
+An owner-only copy of the original weekly receipt is retained under
+`~/.openclaw/financial-dashboard/recovery-history/20261122T130002Z/`.
+The BoA result is reconciled in the weekly status, which still reports `failed`
+because the original Eversource failure is deliberately retained there; its
+separate recovery receipt records the successful direct scrape/import. Both
+sources recovered, but this was attended recovery, not a successful unattended
+weekly run. `browser_recovery` remains a degraded path, not `direct_http`.
+
+The subsequent alert exposed a reporting gap: the retained Eversource failure
+keeps the combined result failed, and the affected-source list includes BoA's
+successful but degraded browser path. Recovery calls `finish_run` again;
+because the notifier deletes delivered queue records, run-ID deduplication
+does not prevent another alert after the first record has been removed.
+Current recovery reconciliation and failure-versus-degraded alert wording
+remain follow-up fixes; the additional notification did not indicate another
+failed BoA scrape or import.
+
 **Why BoA is different.** BoA's bot detection defeats every Playwright-launched variant tried (headless old + new, channel=chrome, ignore-default-args, navigator.webdriver hidden, and force_visible). The browser fallback must attach to a Chrome that Pinchtab, not Playwright, launched. Chrome 149 also rejects Playwright's `connect_over_cdp` during `Browser.setDownloadBehavior`, so the scraper uses a narrow raw-CDP WebSocket shim instead.
 
 **How BWSC's reference hybrid path works.** The scheduled command remains
@@ -327,7 +360,9 @@ python3 ~/.openclaw/bin/weekly-financial-scrape.py --recover-source boa
 ```
 
 This uses the normal guarded scrape/import path and the weekly singleton lock;
-it preserves the other six source results and does not create a second alert.
+it preserves the other six source results. An unhealthy combined result can
+create another alert if the previous queue record has already been delivered
+and deleted; see the November 22 recovery note above.
 
 Success reports contract `2` and only the five profile names. Failure reports
 only a safe contract/cache reason and, for an incomplete cache, missing profile

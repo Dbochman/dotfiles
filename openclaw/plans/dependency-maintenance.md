@@ -16,6 +16,53 @@ The goal is to keep dependencies fresh enough that security CVEs and
 bug fixes flow through, while protecting load-bearing integrations
 from breaking changes that need careful migration.
 
+## OpenJDK Base64 advisory applicability — November 22, 2026
+
+Read-only review of [AWS bulletin 2026-189-AWS](https://aws.amazon.com/security/security-bulletins/2026-189-aws/),
+updated November 20, covering CVE-2026-114938. The vulnerable OpenJDK Base64
+decoder intrinsic requires x86-64 with AVX-512 VBMI; native ARM Java is outside
+that processor condition. AWS identifies OpenJDK 17.0.6 and later, subject to
+the vendor's patched build, and reports no evidence of exploitation as of the
+advisory update. Installed Java alone does not establish remote exploitability:
+an affected runtime must decode attacker-controlled input through that path.
+
+| Asset | November 22 evidence | Applicability |
+| --- | --- | --- |
+| Mac mini | `uname -m` = arm64; CPU Apple M1. `java_home -V` finds no registered runtime; no Java-related Homebrew package or Java process observed. `/usr/bin/java` is the macOS launcher, not evidence of an installed JDK. | No applicable native processor path |
+| Crosstown MacBook | Live SSH: arm64, Apple M2 Max. PyCharm's bundled release metadata reports Java 25.0.4, JBR-25.0.4+1-508.27-nomod, OS_ARCH aarch64; `file` confirms its Java executable is Mach-O arm64. No separately registered JVM. | Historical Java inventory match verified; this native JVM is not affected by this processor-specific issue |
+| dylans-mac | Live SSH: arm64, Apple M4 Pro; no registered JVM. | No applicable native processor path |
+| Windows main / RTX 5090 desktop and Windows Cabin | Both offline in Tailscale. Main desktop's WSL reverse-SSH listener on port 22022 refused connection. The prior Windows inventory did not establish CPU model or complete Java coverage. | Unverified; check CPU flags and installed/bundled Java when online |
+| Reachy | October 22 inventory reports aarch64; November 22 SSH through Crosstown timed out. | Historical ARM evidence only; no fresh attestation |
+
+No Java upgrades, JVM flags, service restarts, browser changes, inventory
+timestamp refreshes, or advisory-monitor changes were made. Work-managed hosts
+remain excluded. This review does not attest cloud instances, AWS accounts,
+container images, or emulated workloads. The briefing's historical Java hint
+came from PyCharm on Crosstown, not a confirmed affected server.
+
+**Windows assessment from saved context:** `DESKTOP-R9JS0OK` is the RTX 5090
+(32 GB VRAM) Windows 11 Home desktop with Ubuntu 26.04 WSL and documented
+Python/Node/CUDA/media/reconstruction workloads. Those records do not establish
+an affected Java workload. The October 22 Windows survey explicitly covered
+active Node paths, selected application metadata and two browsers; it was not
+a Java inventory and did not record the CPU model. An RTX GPU cannot identify
+the host CPU or its AVX-512 VBMI support. CurseForge was retired during the
+October TLS work, but game installations and mods were preserved, so bundled
+game Java remains a possible inventory gap, not a confirmed installation.
+`DESKTOP-4G2S6KQ` is the Cabin Windows PC and was already offline during that
+audit; saved records do not establish its CPU or Java version either. These
+facts justify targeted checks when reachable, not a confirmed-exposure claim
+or a blanket Java upgrade. Processor applicability is the first decisive
+check, followed by actual JVM builds and their untrusted-input paths.
+
+For an online x86-64 machine, collect the processor model and AVX-512 VBMI
+availability, each actual JVM vendor/version/architecture (including bundled
+and WSL/container runtimes), and whether any running application decodes
+untrusted input. Only then select the vendor's fixed build. AWS lists patched
+Corretto builds and `-XX:-UseBASE64Intrinsics` as an interim alternative when
+an affected workload cannot be patched immediately; neither is needed for the
+verified native ARM JVM above. Keep offline and cloud scope explicitly open.
+
 ## Security advisory monitoring repair — November 1, 2026
 
 The daily collector failed October 24–November 1 because the incident index
