@@ -725,6 +725,21 @@ backlogs, stale-scanner warnings, or all-clear claims. The turn timeout is 360 s
 mail/calendar's single command and 150-second helper deadline remain unchanged.
 `--security-status` verifies inventory hints without mail/calendar or delivery.
 
+November 25, 2026 source recovery update: individual dated vendor advisories are
+preferred over large archives. Failed fetches count against the existing three-read
+budget, with a read reserved for recovery. After CISA fetch failures (including 403
+and 429), use the official CISA GitHub KEV JSON:
+https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json.
+Validate catalog freshness and entry dateAdded; a new KEV addition is not necessarily
+a new disclosure. Advisory follow-up must fit the same 90-second/three-read budget.
+No repeated blocked-page retries, shell/browser fallback, or third-party primary
+confirmation. Successful sources plus unresolved failures produce a brief partial
+coverage note, not a blanket unavailable claim. Only no usable primary evidence
+produces the unavailable note. A recovered source does not establish fleet safety.
+This applies to Dylan's security-news briefing; Julia's briefing has no security-news
+section. Validate canonical/live prompt equality without replaying either briefing.
+
+
 It also adds a `cabinDeploy` section for the nightly shared-magazine deploy
 (`ai.openclaw.cabin-public-deploy`, 03:40 local). `cabin-public-deploy-status.py`
 reads only its private 0600 `status.json` in
