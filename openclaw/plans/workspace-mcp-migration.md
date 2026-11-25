@@ -1,8 +1,9 @@
 # Google Workspace usage monitoring and MCP migration
 
 Owner: Dylan. Authorized 2026-11-25. Project: `homeautomation-486703`.
-Status: monitoring configured, data collection blocked on attended Cloud Console
-sign-in; MCP implementation not started. No billing, IAM, OAuth or API enablement
+Status: authenticated dashboard access verified 2026-11-25 in the user-selected
+managed profile `codex-search-console`; first 30-day rows captured, exact data
+dates not displayed (partial coverage). MCP implementation not started. No billing, IAM, OAuth or API enablement
 changes have been made. Keep gws 0.4.4 pinned pending staged replacement.
 
 ## Measurement before tier selection
@@ -14,8 +15,17 @@ Use the existing browser-automation skill and OPERATIONS.md PinchTab workflow.
 Create a dedicated agent session before navigation. For durable authenticated
 collection, provision a dedicated low-privilege profile with attended login under
 that workflow; do not borrow personal Chrome cookies or other service profiles.
-Until that profile is configured, an isolated default session may check whether
-access is available, but must stop at sign-in. No automated login or credential
+Dylan signed into the managed `codex-search-console` profile and explicitly
+identified its automated Chrome window for this task on 2026-11-25. Discover its
+current running instance via `pinchtab instances --json` by profileName, then
+inspect tabs using that instance URL; never hard-code its port. Reuse the matching
+Workspace dashboard tab for read-only inspection with explicit --tab on every
+command. Do not navigate or close other tabs or stop this shared instance. If a
+new tab/navigation is needed, create a dedicated agent session first. If the
+profile is not running or signed in, report blocked; do not silently fall back to
+the unauthenticated default profile. Verify custom radio selection with
+`attr <ref> aria-checked`, not `checked` (which returned false for the selected
+custom radio in the observed UI). No automated login or credential
 repurposing. Only close tabs/sessions created by this monitor.
 
 Verify the selected project and 30-day range from visible page content. Capture
@@ -144,3 +154,15 @@ not increase MCP quotas; do not assume our personal Gmail accounts qualify.
 
 The older `gws-0.22-migration.md` is historical CLI compatibility research, not
 this migration's execution recipe. Revalidate it before using any commands.
+
+## First dashboard observation — November 25, 2026
+
+Verified Dylan account, homeautomation-486703, Standard tier, and 30-day radio
+aria-checked=true. Gmail: High impact, displayed project usage 0%, user usage 9%,
+0 modeled project throttles, 344 modeled user throttles. Drive: Low, 0%/0%,
+zero modeled throttles, 6.45 MiB / 1 TiB egress. Calendar: Low, 0%/1%, zero
+modeled throttles. Percentages are rounded UI values, not zero request counts.
+Exact data interval dates were not displayed, so the private snapshot is partial.
+Do not call all usage safely within limits: Gmail requires a burst/per-user quota
+investigation before a tier decision. No billing change. Scheduled reuse of this
+profile still needs validation on the next organic run.

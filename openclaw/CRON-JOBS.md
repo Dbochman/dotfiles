@@ -1061,7 +1061,8 @@ October 22 inventory remains dated; this capacity change is not a host resurvey.
 - Read-only, isolated, 180-second budget, runner delivery disabled; explicit
   deduplicated notifications to Dylan only.
 - Runbook and migration gates: `plans/workspace-mcp-migration.md`.
-- Initial status: blocked on attended Cloud Console sign-in; no actual baseline
-  yet. Private snapshots under `~/.local/state/workspace-api-monitor/`, never Git.
+- Authenticated 30-day rows captured November 25 in `codex-search-console`;
+  Gmail High with 344 modeled user throttles. Snapshot partial: exact source
+  dates absent. Private snapshots under `~/.local/state/workspace-api-monitor/`, never Git.
 - No billing/tier/IAM changes or automatic migration. Verify first baseline and
   next organic run after attended access is established.
