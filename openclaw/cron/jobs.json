@@ -382,6 +382,37 @@
         "mode": "trusted"
       },
       "updatedAtMs": 1794941165637
+    },
+    {
+      "id": "82422f20-b7a3-4c25-87b6-9f19a93907b4",
+      "declarationKey": "workspace-api-usage-monitor-20261125",
+      "name": "Google Workspace 30-day usage monitor",
+      "enabled": true,
+      "schedule": {
+        "kind": "cron",
+        "expr": "15 9 * * *",
+        "tz": "America/New_York"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Dylan authorized this monitor on 2026-11-25. Read and follow ~/dotfiles/openclaw/plans/workspace-mcp-migration.md sections Measurement before tier selection and Activation dependency and validation. This run is monitoring ONLY, not authorization to execute the migration plan. Inspect the official Google Workspace usage dashboard for project homeautomation-486703 in its 30-day view using the documented PinchTab workflow and browser-automation skill. Record actual displayed endpoint usage and modeled throttling with source dates and units to the private latest/history files specified in the runbook. Do not infer zero from missing data. Initial setup is blocked on attended sign-in and has been reported; do not repeat that unchanged blocker. Stop at login/consent/IAM barriers. No credential extraction, personal-cookie reuse, billing, IAM, API enablement, quota changes or mailbox writes. Notify Dylan via message to chat_id:171 only according to the runbook's baseline/risk/recovery/blocker dedup and weekly healthy-summary rules; persist delivery fingerprints only after confirmed delivery. No subagents. Keep final output silent when nothing requires notification; runner delivery is disabled.",
+        "timeoutSeconds": 180,
+        "toolsAllow": [
+          "*"
+        ]
+      },
+      "delivery": {
+        "mode": "none",
+        "channel": "last"
+      },
+      "scheduledToolPolicy": {
+        "version": 1,
+        "mode": "trusted"
+      },
+      "configRevision": "sha256:X0QwrYwz7M3Vun89p44LXmUvI5aDbDIGb3VjX91zkko",
+      "nextRunAtMs": 1795616100000
     }
   ]
 }

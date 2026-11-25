@@ -1054,3 +1054,14 @@ capped/stalled/blocked/stopped status entered its mandatory monitoring warning,
 independently of urgency and alongside stale-inventory warnings. Zero pending
 reviews is not zero unresolved vulnerabilities or fleet clearance. Current
 October 22 inventory remains dated; this capacity change is not a host resurvey.
+
+## Google Workspace 30-day usage monitor
+
+- Live/canonical ID: `82422f20-b7a3-4c25-87b6-9f19a93907b4`. Daily 09:15 America/New_York.
+- Read-only, isolated, 180-second budget, runner delivery disabled; explicit
+  deduplicated notifications to Dylan only.
+- Runbook and migration gates: `plans/workspace-mcp-migration.md`.
+- Initial status: blocked on attended Cloud Console sign-in; no actual baseline
+  yet. Private snapshots under `~/.local/state/workspace-api-monitor/`, never Git.
+- No billing/tier/IAM changes or automatic migration. Verify first baseline and
+  next organic run after attended access is established.
