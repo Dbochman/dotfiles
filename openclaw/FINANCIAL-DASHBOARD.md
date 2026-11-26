@@ -225,9 +225,12 @@ keeps the combined result failed, and the affected-source list includes BoA's
 successful but degraded browser path. Recovery calls `finish_run` again;
 because the notifier deletes delivered queue records, run-ID deduplication
 does not prevent another alert after the first record has been removed.
-Current recovery reconciliation and failure-versus-degraded alert wording
-remain follow-up fixes; the additional notification did not indicate another
-failed BoA scrape or import.
+The additional notification did not indicate another failed BoA scrape or
+import. This reporting gap was fixed November 26: subsequent BoA recoveries
+preserve the weekly receipt and write their own receipt and alert under the
+recovery's fresh run ID. Alerts report only that attempt and distinguish failed
+sources from successful imports via fallback. Existing receipts remain historical
+evidence; they are not rewritten to imply a new scrape.
 
 **Why BoA is different.** BoA's bot detection defeats every Playwright-launched variant tried (headless old + new, channel=chrome, ignore-default-args, navigator.webdriver hidden, and force_visible). The browser fallback must attach to a Chrome that Pinchtab, not Playwright, launched. Chrome 149 also rejects Playwright's `connect_over_cdp` during `Browser.setDownloadBehavior`, so the scraper uses a narrow raw-CDP WebSocket shim instead.
 
@@ -352,17 +355,22 @@ data access:
 python3 ~/.openclaw/bin/weekly-financial-scrape.py --preflight
 ```
 
-After an attended BoA login repair, rerun only BoA and replace its stale entry
-in the protected weekly status with:
+After an attended BoA login repair, rerun only BoA and record a separate
+protected recovery result with:
 
 ```bash
 python3 ~/.openclaw/bin/weekly-financial-scrape.py --recover-source boa
 ```
 
-This uses the normal guarded scrape/import path and the weekly singleton lock;
-it preserves the other six source results. An unhealthy combined result can
-create another alert if the previous queue record has already been delivered
-and deleted; see the November 22 recovery note above.
+This uses the normal guarded scrape/import path and the weekly singleton lock.
+It preserves the complete weekly receipt and writes mode-`0600`
+`~/.openclaw/financial-dashboard/boa-recovery-status.json`, containing only the
+new BoA result, its fresh scrape/import run ID, and `original_weekly_run_id`.
+Exit status and alert eligibility depend only on this recovery: healthy direct
+success exits zero without an alert; failure or successful browser fallback
+exits nonzero and queues a recovery-scoped alert. Older Eversource failures are
+not repeated. Read the weekly receipt as historical run evidence and the latest
+source recovery receipt alongside it when assessing current source health.
 
 Success reports contract `2` and only the five profile names. Failure reports
 only a safe contract/cache reason and, for an incomplete cache, missing profile
@@ -390,6 +398,15 @@ PennyMac no longer treats a generic portal shell as authenticated. It requires a
 Scheduled child stdout/stderr is captured only in memory under one aggregate 64 KiB ceiling and is never relayed or spilled to disk. Output must decode as strict UTF-8; oversized or undecodable output is discarded and fails the child before any authentication marker, re-authentication, or import gate can use it. Only safe source/phase/path metadata is emitted by the wrapper. MFA codes, message IDs, token-bearing URL queries, API response bodies, payment amounts, balances, and debug screenshots/HTML are excluded from unattended logs. The final safe summary is atomically persisted as owner-only mode `0600` JSON at `~/.openclaw/financial-dashboard/weekly-scrape-status.json`; it contains contract/run/time and operational results, never raw child output or account data.
 
 Every nonhealthy final outcome attempts one strict alert handoff keyed by run UUID. A successful handoff creates at most one record in the mode-`0700` `~/.openclaw/financial-dashboard/weekly-scrape-alerts/` directory; each atomic mode-`0600` record contains only allowlisted operational states plus bounded retry and `pending`/`inflight`/`sent` delivery state. The final weekly status records the alert handoff as `not_required`, `pending`, `persisted`, or `failed`, so an enqueue failure remains durably diagnosable even when the first status write succeeded. A healthy run does not attempt an alert handoff.
+
+The v2 alert schema also accepts the optional exact field
+`recovery_source: "boa"`; affected entries must then belong only to BoA. Alerts
+without that field retain weekly semantics. The notifier labels recoveries
+“Manual BoA recovery” and separates “Failed” from “Updated via fallback”; a
+degraded outcome reads “completed with fallback.” Deploy the compatible notifier
+before the wrapper when rolling out this extension. Delivery retries retain the
+same recovery UUID; a new attended attempt gets a new UUID. No scrape or live
+test notification is required to deploy this reporting change.
 
 Both `financial-scrape-0001` and the 15-minute `financial-scrape-alert-delivery-0001` are exact-argv command cron jobs, not model-backed agent turns. They set overall, no-output, and output-byte limits; nonzero helper exit is a scheduler error and both jobs have an `after: 1` generic iMessage failure alert with a six-hour cooldown. Ordinary output uses `delivery.mode: none`. A failed or degraded weekly run can therefore yield one generic scheduler alert plus, when its handoff persists, the detailed outbox alert; the bounded dual path is intentional so alert-handoff failure is not silent.
 
@@ -642,6 +659,7 @@ The CLI symlink auto-follows dotfiles changes. The plist requires re-copy since 
 | `openclaw/bin/weekly-financial-scrape.py` | `~/.openclaw/bin/weekly-financial-scrape.py` on Mini | Contract-v2 weekly scraper orchestration and durable status |
 | `openclaw/bin/financial-scrape-alert-notifier.py` | `~/.openclaw/bin/financial-scrape-alert-notifier.py` on Mini | Delivery-only durable alert consumer and attended `--canary` |
 | `~/.openclaw/financial-dashboard/weekly-scrape-status.json` | Protected runtime state on Mini | Last safe weekly run result, mode `0600` |
+| `~/.openclaw/financial-dashboard/boa-recovery-status.json` | Protected runtime state on Mini | Latest manual BoA recovery only, fresh run ID linked to the weekly receipt, mode `0600` |
 | `~/.openclaw/financial-dashboard/weekly-scrape-alerts/` | Protected runtime state on Mini | Per-run pending alert outbox, directory `0700`, files `0600` |
 | `~/.openclaw/financial-dashboard/weekly-scrape-alerts-quarantine/` | Protected runtime state on Mini | Private invalid/orphan queue quarantine, directory `0700` |
 | `~/.openclaw/financial-dashboard/weekly-scrape-alert-notifier-status.json` | Protected runtime state on Mini | Safe notifier start/completion health and bounded counts, mode `0600` |

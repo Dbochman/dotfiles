@@ -14,6 +14,13 @@ acquisition preserves upstream data; it is not evidence of a fresh scrape.
 Forecast APIs, cache-only refresh, and 07:35 ledger capture are unchanged and
 must continue honoring upstream freshness/coverage status.
 
+Manual BoA recoveries now keep a separate protected
+`~/.openclaw/financial-dashboard/boa-recovery-status.json` receipt linked to the
+original weekly run. Their alerts describe only the new BoA attempt, separating
+failed imports from successful browser fallback. The weekly receipt remains
+historical evidence; use source freshness and recovery receipts when assessing
+the current baseline. See [financial recovery reporting](FINANCIAL-DASHBOARD.md).
+
 The forecast dashboard is the planning surface that sits next to the financial dashboard on `8585`. It keeps the full interactive reallocation model in the Financial Advisor repo, layers in live household facts and mutable checklist state from local runtime storage, and starts eligible scenarios from the latest reconciled source baseline.
 
 Primary URLs:

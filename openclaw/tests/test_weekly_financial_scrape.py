@@ -19,6 +19,13 @@ weekly_financial_scrape = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = weekly_financial_scrape
 SPEC.loader.exec_module(weekly_financial_scrape)
 
+NOTIFIER_SPEC = importlib.util.spec_from_file_location(
+    "weekly_alert_consumer_contract", BIN_DIR / "financial-scrape-alert-notifier.py",
+)
+alert_notifier = importlib.util.module_from_spec(NOTIFIER_SPEC)
+sys.modules[NOTIFIER_SPEC.name] = alert_notifier
+NOTIFIER_SPEC.loader.exec_module(alert_notifier)
+
 
 class WeeklyFinancialScrapeTests(unittest.TestCase):
     RUN_ID = "11111111-2222-3333-4444-555555555555"
@@ -3660,7 +3667,16 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             self.assertEqual(Path(destination), status_path)
             self.assertFalse(Path(temporary_path).exists())
 
-    def test_boa_recovery_replaces_only_boa_and_clears_resolved_failure(self):
+    def test_successful_boa_recovery_does_not_repeat_stale_weekly_failures(self):
+        self.check_boa_recovery_outcome("ok", "ok", "direct_http", "ok")
+
+    def test_failed_boa_recovery_alert_contains_only_the_new_boa_attempt(self):
+        self.check_boa_recovery_outcome("failed", "skipped", "not_observed", "failed")
+
+    def test_degraded_boa_recovery_reports_successful_import_separately(self):
+        self.check_boa_recovery_outcome("ok", "ok", "browser_recovery", "degraded")
+
+    def check_boa_recovery_outcome(self, scrape, imported, path, expected_status):
         prior_results = [
             {
                 "source": source,
@@ -3681,6 +3697,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             "import": "skipped",
             "path": "not_observed",
         })
+        prior_results[1].update(scrape="failed", reauth="failed", **{"import": "skipped", "path": "not_observed"})
         prior = {
             "contract": 2,
             "status": "failed",
@@ -3691,12 +3708,12 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
         }
         recovered_boa = {
             "source": "boa",
-            "scrape": "ok",
+            "scrape": scrape,
             "verify_auth": "not_needed",
             "tab_bootstrap": "not_needed",
             "reauth": "not_needed",
-            "import": "ok",
-            "path": "direct_http",
+            "import": imported,
+            "path": path,
         }
         recovery_run_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         with tempfile.TemporaryDirectory() as tempdir:
@@ -3707,6 +3724,7 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             python.parent.mkdir(parents=True)
             python.touch()
             weekly_financial_scrape.write_final_status(prior, status_path)
+            original_bytes = status_path.read_bytes()
             with (
                 patch.object(weekly_financial_scrape, "REPO", repo),
                 patch.object(weekly_financial_scrape, "PYTHON", python),
@@ -3751,15 +3769,32 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
                     recovery_run_id,
                 )
 
-            final = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(status_path.read_bytes(), original_bytes)
+            receipt = status_path.parent / "boa-recovery-status.json"
+            self.assertEqual(receipt.stat().st_mode & 0o777, 0o600)
+            final = json.loads(receipt.read_text(encoding="utf-8"))
+            queue = status_path.parent / weekly_financial_scrape.ALERT_OUTBOX_NAME
+            if expected_status == "ok":
+                self.assertFalse(queue.exists())
+            else:
+                alerts = list(queue.glob("*.json"))
+                self.assertEqual(len(alerts), 1)
+                alert = json.loads(alerts[0].read_text())
+                self.assertEqual(alert["run_id"], recovery_run_id)
+                self.assertEqual(alert["recovery_source"], "boa")
+                self.assertEqual([item["source"] for item in alert["affected"]], ["boa"])
+                self.assertTrue(weekly_financial_scrape.validate_alert_payload(alert))
+                self.assertTrue(alert_notifier.validate_alert(alert))
+                self.assertIn("Manual BoA recovery", alert_notifier.format_message(alert))
+                self.assertNotIn("eversource", json.dumps(alert))
 
-        self.assertEqual(returncode, 0)
+        self.assertEqual(returncode, 0 if expected_status == "ok" else 1)
         self.assertEqual(final, json.loads(output))
-        self.assertEqual(final["status"], "ok")
-        self.assertEqual(final["alert_handoff"], "not_required")
-        self.assertEqual(final["run_id"], self.RUN_ID)
-        self.assertEqual(final["results"][:-1], prior_results[:-1])
-        self.assertEqual(final["results"][-1], {**recovered_boa, "profile_preflight": "ok"})
+        self.assertEqual(final["status"], expected_status)
+        self.assertEqual(final["alert_handoff"], "not_required" if expected_status == "ok" else "persisted")
+        self.assertEqual(final["run_id"], recovery_run_id)
+        self.assertEqual(final["original_weekly_run_id"], self.RUN_ID)
+        self.assertEqual(final["results"], [{**recovered_boa, "profile_preflight": "ok"}])
         run_boa.assert_called_once_with(
             recovery_run_id,
             self.BASE_ENV,
@@ -4105,6 +4140,36 @@ class WeeklyFinancialScrapeTests(unittest.TestCase):
             alert = json.loads(alert_path.read_text(encoding="utf-8"))
             self.assertEqual(alert["status"], "status_write_failed")
             self.assertEqual(alert["run_status"], "ok")
+
+    def test_recovery_receipt_write_failure_retains_scoped_alert(self):
+        with tempfile.TemporaryDirectory() as tempdir:
+            status_path = Path(tempdir) / "weekly.json"
+            status_path.write_bytes(b"original weekly evidence")
+            with (
+                patch.object(weekly_financial_scrape, "FINAL_STATUS_PATH", status_path),
+                patch.object(
+                    weekly_financial_scrape, "write_final_status",
+                    side_effect=weekly_financial_scrape.FinalStatusError,
+                ) as write_status,
+            ):
+                result, output = self.capture_stdout(
+                    weekly_financial_scrape.finish_run, "ok", self.RUN_ID,
+                    results=[], recovery_source="boa",
+                    original_weekly_run_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                )
+            self.assertFalse(result)
+            self.assertEqual(status_path.read_bytes(), b"original weekly evidence")
+            self.assertEqual(
+                write_status.call_args.kwargs["path"],
+                status_path.parent / "boa-recovery-status.json",
+            )
+            alert = json.loads((status_path.parent / weekly_financial_scrape.ALERT_OUTBOX_NAME
+                                / f"{self.RUN_ID}.json").read_text())
+            self.assertEqual(alert["status"], "status_write_failed")
+            self.assertEqual(alert["run_status"], "ok")
+            self.assertEqual(alert["recovery_source"], "boa")
+            self.assertTrue(alert_notifier.validate_alert(alert))
+            self.assertIn("Manual BoA recovery", alert_notifier.format_message(alert))
 
     def test_alert_enqueue_failure_makes_persistence_unhealthy(self):
         with tempfile.TemporaryDirectory() as tempdir:

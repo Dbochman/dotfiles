@@ -10,6 +10,15 @@ Most service logs live at `~/.openclaw/logs/` on the Mac Mini (and MacBook Pro f
 
 ## Logging Model
 
+Financial scrape operational receipts live outside the logs directory under
+`~/.openclaw/financial-dashboard/`: `weekly-scrape-status.json` records the
+weekly run, while `boa-recovery-status.json` records only the latest manual BoA
+attempt with its own run ID and a link to the original weekly run. Both are
+owner-only mode `0600`. The shared `weekly-scrape-alerts/` outbox carries weekly
+and recovery alerts; recovery records have `recovery_source: "boa"`. Alert text
+separates failed sources from successful fallback imports. Do not treat an older
+weekly failure as a new attempt or copy private scraper output into logs.
+
 `home-event-action.log` and action outcomes retain fixed Petlibro failure
 categories (for example `feeder_network_error` or `feeder_environment_missing`)
 without provider messages, raw responses, or secrets. Transient read failures

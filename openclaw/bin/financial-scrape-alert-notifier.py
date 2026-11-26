@@ -286,6 +286,16 @@ def validate_alert(payload, expected_run_id=None):
         "delivery_state",
         "sent_at",
     }
+    if isinstance(payload, dict) and "recovery_source" in payload:
+        expected_keys.add("recovery_source")
+        if payload["recovery_source"] != "boa":
+            return False
+        affected = payload.get("affected")
+        if not isinstance(affected, list) or any(
+            not isinstance(entry, dict) or entry.get("source") != "boa"
+            for entry in affected
+        ):
+            return False
     if not isinstance(payload, dict) or set(payload) != expected_keys:
         return False
     run_id = payload.get("run_id")
@@ -629,7 +639,11 @@ def format_message(alert):
     if not validate_alert(alert):
         raise QueueError
     status = alert["status"].replace("_", " ")
-    prefix = f"Weekly financial scrape {status}."
+    if alert["status"] == "degraded":
+        status = "completed with fallback"
+    recovery = alert.get("recovery_source") == "boa"
+    subject = "Manual BoA recovery" if recovery else "Weekly financial scrape"
+    prefix = f"{subject} {status}."
     if alert["status"] == "status_write_failed" and alert["run_status"]:
         run_status = alert["run_status"].replace("_", " ")
         prefix += f" The run outcome was {run_status}."
@@ -638,11 +652,13 @@ def format_message(alert):
     if alert["missing_profiles"]:
         names = ", ".join(name.replace("_", " ") for name in alert["missing_profiles"])
         prefix += f" Missing credential profiles: {names}."
-    suffix = " Prior data was preserved; review the protected weekly status."
+    receipt = "BoA recovery" if recovery else "weekly"
+    suffix = f" Review the protected {receipt} status."
     if not alert["affected"]:
         return prefix + suffix
 
-    detailed = []
+    failed = []
+    updated = []
     for entry in alert["affected"]:
         states = ", ".join(
             f"{key}={entry['states'][key]}"
@@ -650,8 +666,17 @@ def format_message(alert):
             if key in entry["states"]
         )
         source = entry["source"].replace("_", " ")
-        detailed.append(f"{source} ({states})" if states else source)
-    message = prefix + " Affected: " + "; ".join(detailed) + "." + suffix
+        detail = f"{source} ({states})" if states else source
+        if entry["states"].get("scrape") == "ok" and entry["states"].get("import") == "ok":
+            updated.append(detail)
+        else:
+            failed.append(detail)
+    message = prefix
+    if failed:
+        message += " Failed: " + "; ".join(failed) + ". Prior data for failed sources was preserved."
+    if updated:
+        message += " Updated via fallback: " + "; ".join(updated) + "."
+    message += suffix
     if len(message.encode("utf-8")) <= MESSAGE_MAX_BYTES:
         return message
 

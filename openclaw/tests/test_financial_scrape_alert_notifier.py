@@ -137,6 +137,38 @@ class FinancialScrapeAlertNotifierTests(unittest.TestCase):
         self.assertNotIn(self.RUN_ID, first)
         self.assertNotIn("account", first.lower())
 
+    def test_recovery_alert_is_scoped_and_legacy_weekly_alert_remains_valid(self):
+        self.assertTrue(notifier.validate_alert(self.alert()))
+        alert = self.alert(recovery_source="boa", affected=[{
+            "source": "boa", "states": {"scrape": "failed", "import": "skipped", "path": "not_observed"},
+        }])
+        self.assertTrue(notifier.validate_alert(alert))
+        message = notifier.format_message(alert)
+        self.assertIn("Manual BoA recovery failed", message)
+        self.assertNotIn("Weekly", message)
+        self.assertIn("protected BoA recovery status", message)
+        self.assertFalse(notifier.validate_alert(self.alert(recovery_source="boa")))
+        for value in (None, "eversource", "untrusted message", 7, {}):
+            self.assertFalse(notifier.validate_alert({**alert, "recovery_source": value}))
+        for value in (None, 1, "boa", [None]):
+            self.assertFalse(notifier.validate_alert({**alert, "affected": value}))
+
+    def test_successful_browser_import_is_not_labeled_failed(self):
+        fallback = {"source": "boa", "states": {
+            "scrape": "ok", "import": "ok", "path": "browser_recovery",
+        }}
+        alert = self.alert(status="degraded", recovery_source="boa", affected=[fallback])
+        self.assertTrue(notifier.validate_alert(alert))
+        message = notifier.format_message(alert)
+        self.assertIn("Manual BoA recovery completed with fallback", message)
+        self.assertIn("Updated via fallback: boa", message)
+        self.assertNotIn("failed", message.lower())
+        self.assertNotIn("preserved", message.lower())
+        weekly = self.alert(affected=[*self.alert()["affected"], fallback])
+        message = notifier.format_message(weekly)
+        self.assertIn("Failed: bwsc", message)
+        self.assertIn("Updated via fallback: boa", message)
+
     def test_message_formatter_is_total_for_maximum_valid_schema(self):
         longest = {
             field: max(values, key=len)

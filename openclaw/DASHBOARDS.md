@@ -464,7 +464,8 @@ Household financial dashboard tracking spending, income, net worth, utilities, r
 | Runtime | `~/repos/financial-dashboard/venv/bin/python3` |
 | Database | `~/repos/financial-dashboard/finance.db` (gitignored) |
 | Config | `~/repos/financial-dashboard/config.yaml` |
-| Weekly scrape status | `~/.openclaw/financial-dashboard/weekly-scrape-status.json` (owner-only mode `0600`); attended `weekly-financial-scrape.py --recover-source boa` replaces a resolved stale BoA result; finance browser trust acquisition is bounded to 120 seconds (180-second parent ceiling), with complete fresh certificate checks required |
+| Weekly scrape status | `~/.openclaw/financial-dashboard/weekly-scrape-status.json` (owner-only mode `0600`); preserved during manual BoA recovery; finance browser trust acquisition is bounded to 120 seconds (180-second parent ceiling), with complete fresh certificate checks required |
+| BoA recovery status | `~/.openclaw/financial-dashboard/boa-recovery-status.json` (owner-only mode `0600`); attended `weekly-financial-scrape.py --recover-source boa` records only the new BoA attempt with a fresh run ID linked to the weekly receipt; recovery alerts exclude stale weekly failures and distinguish successful fallback imports |
 | Weekly alert outbox | `~/.openclaw/financial-dashboard/weekly-scrape-alerts/` (directory `0700`, atomic records `0600`) |
 | Weekly alert quarantine | `~/.openclaw/financial-dashboard/weekly-scrape-alerts-quarantine/` (owner-only directory `0700`) |
 | Weekly alert notifier health | `~/.openclaw/financial-dashboard/weekly-scrape-alert-notifier-status.json` (owner-only mode `0600`) |

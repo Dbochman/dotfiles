@@ -1955,6 +1955,7 @@ def build_alert_payload(
     missing_profiles=None,
     signal_name=None,
     run_status=None,
+    recovery_source=None,
 ):
     """Build one bounded, data-free delivery record for a nonhealthy run."""
     safe_reason = reason if reason in ALERT_REASONS else None
@@ -1981,6 +1982,8 @@ def build_alert_payload(
         "delivery_state": "pending",
         "sent_at": None,
     }
+    if recovery_source is not None:
+        payload["recovery_source"] = recovery_source
     if not validate_alert_payload(payload, expected_run_id=run_id):
         raise AlertOutboxError
     return payload
@@ -2005,6 +2008,16 @@ def validate_alert_payload(payload, expected_run_id=None):
         "delivery_state",
         "sent_at",
     }
+    if isinstance(payload, dict) and "recovery_source" in payload:
+        expected_keys.add("recovery_source")
+        if payload["recovery_source"] != "boa":
+            return False
+        affected = payload.get("affected")
+        if not isinstance(affected, list) or any(
+            not isinstance(entry, dict) or entry.get("source") != "boa"
+            for entry in affected
+        ):
+            return False
     if not isinstance(payload, dict) or set(payload) != expected_keys:
         return False
     run_id = payload.get("run_id")
@@ -2220,6 +2233,8 @@ def finish_run(
     reason=None,
     missing_profiles=None,
     signal_name=None,
+    recovery_source=None,
+    original_weekly_run_id=None,
 ):
     """Persist final status and a recoverable nonhealthy alert handoff."""
     completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -2231,6 +2246,13 @@ def finish_run(
         "completed_at": completed_at,
         "alert_handoff": "pending" if alert_required else "not_required",
     }
+    status_options = {}
+    if recovery_source is not None:
+        if recovery_source != "boa" or not _canonical_run_id(original_weekly_run_id):
+            raise ValueError("invalid recovery context")
+        payload["recovery_source"] = recovery_source
+        payload["original_weekly_run_id"] = original_weekly_run_id
+        status_options["path"] = Path(FINAL_STATUS_PATH).parent / "boa-recovery-status.json"
     if results is not None:
         payload["results"] = results
     if reason is not None:
@@ -2241,7 +2263,7 @@ def finish_run(
         payload["signal"] = signal_name
     status_written = True
     try:
-        write_final_status(payload)
+        write_final_status(payload, **status_options)
     except FinalStatusError:
         status_written = False
 
@@ -2262,6 +2284,7 @@ def finish_run(
                 missing_profiles=missing_profiles,
                 signal_name=signal_name,
                 run_status=alert_run_status,
+                recovery_source=recovery_source,
             )
             enqueue_alert(alert)
         except AlertOutboxError:
@@ -2271,7 +2294,7 @@ def finish_run(
     if status_written and alert_status is not None:
         payload["alert_handoff"] = "persisted" if alert_enqueued else "failed"
         try:
-            write_final_status(payload)
+            write_final_status(payload, **status_options)
         except FinalStatusError:
             handoff_status_written = False
 
@@ -2329,7 +2352,7 @@ def report_recovery_failure(reason):
 
 
 def _execute_boa_recovery(run_id):
-    """Rerun only BoA and reconcile its result into the weekly status."""
+    """Record and alert only this recovery; preserve the original weekly receipt."""
     try:
         prior = load_final_status()
     except FinalStatusError:
@@ -2361,12 +2384,12 @@ def _execute_boa_recovery(run_id):
         provider_modes,
     )
     boa_result["profile_preflight"] = profile.status
-    results = [
-        boa_result if result["source"] == "boa" else result
-        for result in prior["results"]
-    ]
+    results = [boa_result]
     status = results_status(results)
-    persisted = finish_run(status, prior["run_id"], results=results)
+    persisted = finish_run(
+        status, run_id, results=results, recovery_source="boa",
+        original_weekly_run_id=prior["run_id"],
+    )
     return 0 if status == "ok" and persisted else 1
 
 
