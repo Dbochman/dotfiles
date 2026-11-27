@@ -32,9 +32,18 @@ Overrides: `MAGAZINE_ILLUSTRATION_MODEL`,
 running Node when its old pinned runtime is absent. Use an executable Node
 compatible with the installed OpenClaw; do not copy the obsolete pin into skills.
 
-## November's authored shell
+## Authored multi-page issues
 
-`scripts/generate-v2-illustrations.js` is a **November-specific batch**, not the
+Run with no arguments, `scripts/generate-v2-illustrations.js` is the
+**November-specific batch**. For any other authored issue, write one to five
+briefs to `site/<issue>/illustration-briefs.json` and run it with
+`--issue=<issue>` (or `--briefs=<path>`). Each brief needs `section`, `sourceId`,
+`step`, `title`, `sourceStep`, `focus`, and `description`; quote the step text as
+the recipe or project file gives it, lead-in label included (`Cut. Scrub and
+dry…`). A recipe figure whose `data-source-step` differs from the catalog step
+is dropped when the cooking page redraws the card, and a test checks this. December 2026 used this for four drawings. The script only
+writes PNGs and `illustrations.json`; placing each figure in the HTML is a
+separate step. The November batch is not the
 monthly generator. Its six hand-picked briefs cover rose mulch, leek sauté,
 granola, peanut soup, tool shadows, and snow stakes. It reuses accepted on-disk
 assets, retries a brief once, has a specific peanut-soup fallback, and stops on

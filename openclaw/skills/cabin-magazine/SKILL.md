@@ -18,7 +18,9 @@ Check repository status, branch, and the requested issue before editing.
 The live server is `ai.openclaw.cabin-magazine` on port 8555. Its root URL is
 historical Volume One; use the explicit issue URL. As of October 26, 2026,
 November's working issue is `/vol-1-no-03-draft-v2/`, with eight HTML pages.
-October's multi-page issue is `/vol-1-no-02-draft-v2/`. Do not choose an issue
+October's multi-page issue is `/vol-1-no-02-draft-v2/`. As of November 24, 2026,
+December's working issue is `/vol-1-no-04-draft-v2/` and November is frozen under
+`/archive/`. Do not choose an issue
 solely from a default CLI argument or the root page.
 
 There are two distinct authoring paths:
@@ -42,6 +44,26 @@ There are two distinct authoring paths:
 Read [data and editing](references/data-and-editing.md) for backend state,
 catalog APIs, persistence, and refresh boundaries. Read
 [illustrations](references/illustrations.md) when adding or changing artwork.
+
+## Start a new month's multi-page issue
+
+A new `-v2` issue continues the previous month's issue; it is not a fresh
+design. Before calling it done, check it against "A new month's multi-page
+issue" in `docs/MAGAZINE_STYLE_GUIDE.md`. Dylan asked for these on November 27,
+2026, after December launched without them:
+
+- **Varied photos.** A different header photo on every page, mostly taken since
+  the last issue. Never one photo repeated as every page's header.
+- **Progress photos.** Where the record (`content/journal/photos/`) or the photo
+  catalog has the same project on different dates, show a dated strip, oldest
+  first (for example the brush behind the shed, October to November).
+- **The calendar.** Look ahead keeps "Two months at a glance" for the issue month
+  and the next one, with the category legend. Cabin work dates are provisional.
+- **Drawings.** One to five instructional watercolors placed in their steps.
+  Write `site/<issue>/illustration-briefs.json`, then run
+  `node scripts/generate-v2-illustrations.js --issue=<issue>`.
+- **Record links.** Every project card carries `data-project-id`, and each such
+  page loads `../assets/record.css` and `../assets/project-updates.js`.
 
 ## Produce a useful issue
 
