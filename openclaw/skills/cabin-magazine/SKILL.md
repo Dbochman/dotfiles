@@ -52,6 +52,11 @@ design. Before calling it done, check it against "A new month's multi-page
 issue" in `docs/MAGAZINE_STYLE_GUIDE.md`. Dylan asked for these on November 27,
 2026, after December launched without them:
 
+- **Unfinished tasks.** List the previous issue's checkboxes with their saved
+  state (`GET /api/state?issue=<id>&page=<page>` on the live server) and carry
+  every unticked task into the new month page under "Carried forward from
+  <month>", with its `data-project-id`; put deadline tasks on the calendar. A
+  task leaves only when done or dropped by Dylan or Julia.
 - **Varied photos.** A different header photo on every page, mostly taken since
   the last issue. Never one photo repeated as every page's header.
 - **Progress photos.** Where the record (`content/journal/photos/`) or the photo
